@@ -177,6 +177,30 @@ def create_lka_icon_command(bus, active, critical, steer):
     dat = b"\x00\x00\x00"
   return make_can_msg(0x104c006c, dat, bus)
 
+def create_regen_paddle_command(packer, bus, regen_paddle_value):
+   values = {
+     "RegenPaddle": regen_paddle_value,
+     "Byte1": 0,
+     "Byte2": 0,
+     "Byte3": 0,
+     "Byte4": 0,
+     "Byte5": 0,
+     "Byte6": 0
+   }
+   return packer.make_can_msg("EBCMRegenPaddle", bus, values)
+
+def create_prndl2_command(packer, bus, prndl2_value, manual_mode):
+  values = {
+    "Byte0": 0x0C,
+    "Byte1": 0x0C,
+    "Byte2": 0x00,
+    "PRNDL2": prndl2_value,
+    "Byte4": 0x00,
+    "ManualMode": manual_mode,
+    "TransmissionState": 1,
+    "Byte7": 0x00
+  }
+  return packer.make_can_msg("ECMPRDNL2", bus, values)
 
 def create_gm_cc_spam_command(packer, controller, CS, actuators):
   if controller.params_.get_bool("IsMetric"):
