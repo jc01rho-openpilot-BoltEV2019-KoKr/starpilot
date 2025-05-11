@@ -134,7 +134,6 @@ class CarController(CarControllerBase):
 
     if press_regen_paddle is not None:
       can_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, press_regen_paddle))
-      can_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, press_regen_paddle))
     # Track last regen_active state for paddle spoof logic
     self.last_regen_active = regen_active
 
