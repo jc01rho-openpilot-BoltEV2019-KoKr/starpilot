@@ -192,6 +192,9 @@ private:
   QString speedLimitSource;
 
 protected:
+  // NDA neokii
+  void drawRoadLimitSpeed(QPainter &p);
+
   void paintGL() override;
   void initializeGL() override;
   void showEvent(QShowEvent *event) override;
