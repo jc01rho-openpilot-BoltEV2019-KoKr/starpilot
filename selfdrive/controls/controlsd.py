@@ -87,7 +87,7 @@ class Controls:
     self.branch = get_short_branch()
 
     # Setup sockets
-    self.pm = messaging.PubMaster(['controlsState', 'carControl', 'onroadEvents', 'frogpilotCarControl'])
+    self.pm = messaging.PubMaster(['controlsState', 'carControl', 'onroadEvents'])
 
     self.sensor_packets = ["accelerometer", "gyroscope"]
     self.camera_packets = ["roadCameraState", "driverCameraState", "wideRoadCameraState"]
@@ -209,19 +209,11 @@ class Controls:
     self.has_menu = self.CP.carName == "gm" and not (self.CP.flags & GMFlags.NO_CAMERA.value or self.CP.carFingerprint in CC_ONLY_CAR)
 
     self.error_log = ERROR_LOGS_PATH / "error.txt"
-    
-  def reset(self):
-    self.slowing_down = False
-    self.slowing_down_sound_alert = False
-
 
   def reset(self):
     self.slowing_down = False
     self.slowing_down_sound_alert = False
 
-  def reset(self):
-    self.slowing_down = False
-    self.slowing_down_sound_alert = False
 
 
   def set_initial_state(self):
@@ -310,7 +302,7 @@ class Controls:
     if self.sm['modelV2'].meta.laneChangeState == LaneChangeState.preLaneChange:
       direction = self.sm['modelV2'].meta.laneChangeDirection
       if (CS.leftBlindspot and direction == LaneChangeDirection.left) or \
-         (CS.rightBlindspot and direction == LaneChangeDirection.right):
+        (CS.rightBlindspot and direction == LaneChangeDirection.right):
         if self.frogpilot_toggles.loud_blindspot_alert:
           self.events.add(EventName.laneChangeBlockedLoud)
         else:
@@ -327,7 +319,7 @@ class Controls:
           else:
             self.events.add(EventName.noLaneAvailable)
     elif self.sm['modelV2'].meta.laneChangeState in (LaneChangeState.laneChangeStarting,
-                                                    LaneChangeState.laneChangeFinishing):
+                                                     LaneChangeState.laneChangeFinishing):
       self.events.add(EventName.laneChange)
 
     for i, pandaState in enumerate(self.sm['pandaStates']):
@@ -509,7 +501,7 @@ class Controls:
 
     # All pandas not in silent mode must have controlsAllowed when openpilot is enabled
     if self.enabled and any(not ps.controlsAllowed for ps in self.sm['pandaStates']
-           if ps.safetyModel not in IGNORED_SAFETY_MODES):
+                            if ps.safetyModel not in IGNORED_SAFETY_MODES):
       self.mismatch_counter += 1
 
     return CS
@@ -775,9 +767,9 @@ class Controls:
 
       self.display_timer -= 1
 
-    FPCC = self.update_frogpilot_variables(CS)
+    self.update_frogpilot_variables(CS)
 
-    return CC, lac_log, FPCC
+    return CC, lac_log
 
   def update_frogpilot_variables(self, CS):
     if self.frogpilot_toggles.conditional_experimental_mode or self.frogpilot_toggles.slc_fallback_experimental_mode:
@@ -787,9 +779,7 @@ class Controls:
     if self.sm['frogpilotPlan'].togglesUpdated:
       self.frogpilot_toggles = get_frogpilot_toggles()
 
-    return FPCC
-
-  def publish_logs(self, CS, start_time, CC, lac_log, FPCC):
+  def publish_logs(self, CS, start_time, CC, lac_log):
     """Send actuators and hud commands to the car, send controlsstate and MPC logging"""
 
     # Orientation and angle rates can be useful for carcontroller
@@ -934,12 +924,6 @@ class Controls:
     cc_send.carControl = CC
     self.pm.send('carControl', cc_send)
 
-    # frogpilotCarControl
-    fpcc_send = messaging.new_message('frogpilotCarControl')
-    fpcc_send.valid = CS.canValid
-    fpcc_send.frogpilotCarControl = FPCC
-    self.pm.send('frogpilotCarControl', fpcc_send)
-
   def step(self):
     start_time = time.monotonic()
 
@@ -955,10 +939,10 @@ class Controls:
       self.state_transition(CS)
 
     # Compute actuators (runs PID loops and lateral MPC)
-    CC, lac_log, FPCC = self.state_control(CS)
+    CC, lac_log = self.state_control(CS)
 
     # Publish data
-    self.publish_logs(CS, start_time, CC, lac_log, FPCC)
+    self.publish_logs(CS, start_time, CC, lac_log)
 
     self.CS_prev = CS
 
@@ -976,10 +960,6 @@ class Controls:
       if self.CP.notCar:
         self.joystick_mode = self.params.get_bool("JoystickDebugMode")
       time.sleep(0.1)
-
-      # Update FrogPilot parameters
-      if self.sm['frogpilotPlan'].togglesUpdated:
-        self.frogpilot_toggles = get_frogpilot_toggles()
 
   def controlsd_thread(self):
     e = threading.Event()

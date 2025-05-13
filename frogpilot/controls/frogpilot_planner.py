@@ -56,7 +56,8 @@ class FrogPilotPlanner:
     else:
       self.lead_one = radarState.leadOne
 
-    v_cruise_kph = min(max(controlsState.vCruise, controlsState.vCruiseCluster), V_CRUISE_MAX)
+    # v_cruise_kph = min(max(controlsState.vCruise, controlsState.vCruiseCluster), V_CRUISE_MAX)
+    v_cruise_kph = min(min(controlsState.vCruise, controlsState.vCruiseCluster), V_CRUISE_MAX)
     v_cruise = v_cruise_kph * CV.KPH_TO_MS
     v_ego = max(carState.vEgo, carState.vEgoCluster)
 
