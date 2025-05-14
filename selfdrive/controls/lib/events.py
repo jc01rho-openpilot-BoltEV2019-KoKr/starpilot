@@ -394,6 +394,58 @@ def torque_nn_load_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubM
       Priority.LOW, VisualAlert.none, AudibleAlert.engage, 5.0)
 
 
+
+
+def nda_camera_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+
+
+
+  road_limit_speed = sm['naviData'].roadLimitSpeed
+  cam_limit_speed = sm['naviData'].camLimitSpeed
+  cam_limit_speed_left_dist = sm['naviData'].camLimitSpeedLeftDist
+  section_limit_speed = sm['naviData'].sectionLimitSpeed
+  section_left_dist = sm['naviData'].sectionLeftDist
+
+  limit_speed = 0
+  left_dist = 0
+
+
+  # Determine which speed limit to use, prioritizing camera limits over section limits
+  if cam_limit_speed > 0 and cam_limit_speed_left_dist > 0:
+    limit_speed = cam_limit_speed
+    left_dist = cam_limit_speed_left_dist
+  elif section_limit_speed > 0 and section_left_dist > 0:
+    limit_speed = section_limit_speed
+    left_dist = section_left_dist
+  else:
+    # If no specific limits are active, use the road's general speed limit
+    limit_speed = road_limit_speed if 0 < road_limit_speed < 200 else 0
+
+  result = {
+    "speed_text": "",
+    "distance_text": ""
+  }
+
+  # Format the speed limit text
+  if limit_speed > 0 and limit_speed < 200:
+    result["speed_text"] = f"{limit_speed}"
+
+  # Format the distance text (if applicable)
+  if left_dist > 0:
+    if left_dist < 1000:
+      result["distance_text"] = f"{left_dist}m"
+    else:
+      result["distance_text"] = f"{left_dist / 1000.0:.1f}km"
+
+  return Alert(
+    result["speed_text"] + "km/h 📸 "+ result["distance_text"],
+    "",
+    AlertStatus.normal, AlertSize.mid,
+    Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .2)
+
+
+
+
 EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   # ********** events with no alerts **********
 
@@ -1258,7 +1310,12 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOW, VisualAlert.none, AudibleAlert.speedDown, 2.),
 
   },
+  EventName.ndaCameraWarn: {
+    ET.PERMANENT: nda_camera_alert,
+  }
 }
+
+
 
 
 if __name__ == '__main__':
