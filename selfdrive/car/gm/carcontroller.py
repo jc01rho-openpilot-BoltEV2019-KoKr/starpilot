@@ -82,14 +82,14 @@ class CarController(CarControllerBase):
                  11.749, 12.868, 13.987, 15.106, 16.225, 17.344, 18.463, 19.582, 20.701, 21.820,
                  22.939, 24.058, 25.177, 26.296]
     regen_gain_ratio = [1.01, 1.01, 1.02, 1.05, 1.08, 1.345979, 1.369975,
-                         1.376302, 1.388052, 1.370367, 1.388498, 1.386030, 1.405950, 1.387555,
-                         1.390392, 1.394946, 1.414915, 1.428535, 1.439611, 1.440106, 1.441438,
-                         1.439395, 1.446909, 1.445738]
+                        1.376302, 1.388052, 1.370367, 1.388498, 1.386030, 1.405950, 1.387555,
+                        1.390392, 1.394946, 1.414915, 1.428535, 1.439611, 1.440106, 1.441438,
+                        1.439395, 1.446909, 1.445738]
 
     gain = interp(car_velocity, speed_mps, regen_gain_ratio)
 
     pedaloffset = interp(car_velocity, [0., 3, 6, 30], [0.10, 0.175, 0.240, 0.240])
-    
+
     if press_regen_paddle:
       pedal_gas = clip((pedaloffset + (accel / gain) * 0.6), 0.0, 1.0)
     else:
@@ -263,7 +263,7 @@ class CarController(CarControllerBase):
           send_fcw = hud_alert == VisualAlert.fcw
           if self.frame % 10 == 0:
             can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, CC.enabled,
-                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
+                                                                hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
       else:
         # to keep accel steady for logs when not sending gas
         accel += self.accel_g
@@ -289,8 +289,8 @@ class CarController(CarControllerBase):
 
       # TODO: integrate this with the code block below?
       if (
-          (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
-          or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
+        (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
+        or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
       ) and CS.out.cruiseState.enabled:
         if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
           self.last_button_frame = self.frame
