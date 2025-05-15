@@ -438,10 +438,10 @@ def nda_camera_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaste
       result["distance_text"] = f"{left_dist / 1000.0:.1f}km"
 
   return Alert(
-    result["speed_text"] + "km/h 📸 "+ result["distance_text"],
+    result["speed_text"] + "km/h  📸  "+ result["distance_text"],
     "",
-    AlertStatus.normal, AlertSize.mid,
-    Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .2)
+    AlertStatus.normal, AlertSize.small,
+    Priority.LOW, VisualAlert.none, AudibleAlert.none, .2)
 
 
 
