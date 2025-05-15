@@ -365,11 +365,11 @@ Export('messaging')
 
 
 # Build other submodules
-SConscript([
-  'body/board/SConscript',
-  'opendbc/can/SConscript',
-  'panda/SConscript',
-])
+# SConscript([
+#   'body/board/SConscript',
+#   'opendbc/can/SConscript',
+  #'panda/SConscript',
+# ])
 
 # Build rednose library
 SConscript(['rednose/SConscript'])
