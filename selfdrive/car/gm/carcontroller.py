@@ -59,6 +59,8 @@ class CarController(CarControllerBase):
     self.accel_g = 0.0
     self.regen_paddle_pressed = False
     self.aego = 0.0
+    # Number of consecutive off-frames to send after regen release
+    self.off_spoof_frames = 0
 
   def calc_pedal_command(self, accel: float, long_active: bool, car_velocity) -> Tuple[float, bool]:
     if not long_active:
@@ -82,9 +84,9 @@ class CarController(CarControllerBase):
                  11.749, 12.868, 13.987, 15.106, 16.225, 17.344, 18.463, 19.582, 20.701, 21.820,
                  22.939, 24.058, 25.177, 26.296]
     regen_gain_ratio = [1.01, 1.01, 1.02, 1.05, 1.08, 1.345979, 1.369975,
-                        1.376302, 1.388052, 1.370367, 1.388498, 1.386030, 1.405950, 1.387555,
-                        1.390392, 1.394946, 1.414915, 1.428535, 1.439611, 1.440106, 1.441438,
-                        1.439395, 1.446909, 1.445738]
+                         1.376302, 1.388052, 1.370367, 1.388498, 1.386030, 1.405950, 1.387555,
+                         1.390392, 1.394946, 1.414915, 1.428535, 1.439611, 1.440106, 1.441438,
+                         1.439395, 1.446909, 1.445738]
 
     gain = interp(car_velocity, speed_mps, regen_gain_ratio)
 
@@ -95,15 +97,6 @@ class CarController(CarControllerBase):
     else:
       pedal_gas = clip((pedaloffset + accel * 0.6), 0.0, 1.0)
 
-      ####for safety.
-    pedal_gas_max = interp(car_velocity, [0.0, 5, 30], [0.21, 0.3175,  0.3525])
-    pedal_gas = clip(pedal_gas, 0.0, pedal_gas_max)
-      ####for safety. end.
-
-      ####for safety.
-    pedal_gas_max = interp(car_velocity, [0.0, 5, 30], [0.21, 0.3175,  0.3525])
-    pedal_gas = clip(pedal_gas, 0.0, pedal_gas_max)
-      ####for safety. end.
 
     return pedal_gas, press_regen_paddle
 
@@ -131,20 +124,48 @@ class CarController(CarControllerBase):
       self.regen_paddle_pressed
     )
 
-    # Send regen paddle and PRNDL2 commands at ~66Hz, avoiding steer frame timing
-    steer_phase = self.last_steer_frame % 3
-    send_prndl_frame = (self.frame % 3) != steer_phase
 
-    press_regen_paddle = None
-    if regen_active and send_prndl_frame:
-      press_regen_paddle = True
-    elif not regen_active and getattr(self, "last_regen_active", False):
-      press_regen_paddle = False
+    # Hybrid midpoint + overflow paddle/PRNDL2 scheduling (>=40Hz, avoid steer)
+    # Initialize spoof timer on first regen active
+    if regen_active and not hasattr(self, "last_spoof_frame"):
+      self.last_spoof_frame = self.frame
 
-    if press_regen_paddle is not None:
-      can_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, press_regen_paddle))
-      can_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, press_regen_paddle))
-    # Track last regen_active state for paddle spoof logic
+    # Steer-frame tracking is handled in the steer-sending block below:
+    #   we update prev_steer_frame and last_steer_frame after sending steering.
+
+    # Send midpoint spoof (halfway between last two steer frames)
+    send_spoof = False
+    if regen_active and hasattr(self, "prev_steer_frame"):
+      steer_interval = self.last_steer_frame - self.prev_steer_frame
+      half_interval = max(1, steer_interval // 2)
+      midpoint_frame = self.prev_steer_frame + half_interval
+      if self.frame == midpoint_frame:
+        send_spoof = True
+
+    # Overflow spoof: ensure no gap >25 ms without spoof
+    if regen_active and hasattr(self, "last_spoof_frame"):
+      time_since_spoof = (self.frame - self.last_spoof_frame) * DT_CTRL
+      if time_since_spoof >= 0.025 and self.frame != self.last_steer_frame:
+        send_spoof = True
+
+    # Execute spoof sends
+    if send_spoof:
+      can_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
+      can_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
+      self.last_spoof_frame = self.frame
+
+    # Send off commands for two consecutive frames on regen release
+    if not regen_active and getattr(self, "last_regen_active", False):
+      # schedule two off-frames
+      self.off_spoof_frames = 3
+    # while frames remain, send off spoof if not colliding with steer
+    if getattr(self, "off_spoof_frames", 0) > 0:
+      if self.frame != self.last_steer_frame:
+        can_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, False))
+        can_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, False))
+      self.off_spoof_frames -= 1
+
+    # Update regen_active state
     self.last_regen_active = regen_active
 
 
@@ -180,6 +201,14 @@ class CarController(CarControllerBase):
       self.apply_steer_last = apply_steer
       idx = self.lka_steering_cmd_counter % 4
       can_sends.append(gmcan.create_steering_control(self.packer_pt, CanBus.POWERTRAIN, apply_steer, idx, CC.latActive))
+
+      # After sending steering control:
+      # Update steer-frame tracking for midpoint calculation
+      if not hasattr(self, "prev_steer_frame"):
+        self.prev_steer_frame = self.last_steer_frame
+      else:
+        self.prev_steer_frame = self.last_steer_frame
+      self.last_steer_frame = self.frame
 
     if self.CP.openpilotLongitudinalControl:
       # Gas/regen, brakes, and UI commands - all at 25Hz
@@ -267,7 +296,7 @@ class CarController(CarControllerBase):
           send_fcw = hud_alert == VisualAlert.fcw
           if self.frame % 10 == 0:
             can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, CC.enabled,
-                                                                hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
+                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
       else:
         # to keep accel steady for logs when not sending gas
         accel += self.accel_g
@@ -293,8 +322,8 @@ class CarController(CarControllerBase):
 
       # TODO: integrate this with the code block below?
       if (
-        (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
-        or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
+          (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
+          or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
       ) and CS.out.cruiseState.enabled:
         if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
           self.last_button_frame = self.frame
