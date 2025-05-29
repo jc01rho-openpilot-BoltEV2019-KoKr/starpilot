@@ -66,7 +66,6 @@ class CarController(CarControllerBase):
     self.regen_paddle_pressed_changed = False
     self.regen_paddle_pressed_changed_counter = 0
     self.prev_pedal_gas = 0.0
-    self.prev_pedal_gas_on_gap_filling = 0.0
 
 
     # Midpoint + overflow spoof accumulator and flags
@@ -97,11 +96,6 @@ class CarController(CarControllerBase):
     # Detect press/release edges for smoothing
     self.regen_paddle_pressed_changed = (self.regen_paddle_pressed != self.prev_regen_paddle_pressed)
     self.prev_regen_paddle_pressed = self.regen_paddle_pressed
-    if self.regen_paddle_pressed_changed:
-      # start 200-frame blend
-      if self.regen_paddle_pressed_changed_counter > 0: # if we are already blending, set the base(prev_gas) as final gas value.
-        self.prev_pedal_gas = self.prev_pedal_gas_on_gap_filling
-      self.regen_paddle_pressed_changed_counter = 200
 
     # Regen gain ratios from bin-averaged 60–0 deceleration sweep; Calculates stronger decel from paddle
     speed_mps = [0.559, 1.678, 2.797, 3.916, 5.035, 6.154, 7.273, 8.392, 9.511, 10.63,
@@ -118,15 +112,25 @@ class CarController(CarControllerBase):
     # Compute raw pedal gas
     raw_pedal_gas = clip((pedaloffset + (accel / gain) * 0.6), 0.0, 1.0) if press_regen_paddle else clip((pedaloffset + accel * 0.6), 0.0, 1.0)
 
-    # Smooth pedal gas over blend window
+    # --- Blending logic: keep endpoints constant during blend ---
+    # Initialize blend endpoints if not present
+    if not hasattr(self, 'blend_start_gas'):
+      self.blend_start_gas = raw_pedal_gas
+      self.blend_target_gas = raw_pedal_gas
+
+    if self.regen_paddle_pressed_changed:
+      # start 200-frame blend: capture fixed endpoints
+      self.blend_start_gas = self.prev_pedal_gas  # last output
+      self.blend_target_gas = raw_pedal_gas       # new raw value
+      self.regen_paddle_pressed_changed_counter = 200
+
     if self.regen_paddle_pressed_changed_counter > 0:
       ratio = interp(self.regen_paddle_pressed_changed_counter, [200, 0], [0.0, 1.0])
-      pedal_gas = raw_pedal_gas * ratio + self.prev_pedal_gas * (1.0 - ratio)
-      self.prev_pedal_gas_on_gap_filling = pedal_gas
+      pedal_gas = self.blend_target_gas * ratio + self.blend_start_gas * (1.0 - ratio)
       self.regen_paddle_pressed_changed_counter -= 1
     else:
       pedal_gas = raw_pedal_gas
-      self.prev_pedal_gas = pedal_gas
+    self.prev_pedal_gas = pedal_gas
     # Safety cap on initial takeoff: limit pedal_gas based on vehicle speed
     pedal_gas_max = interp(car_velocity, [0.0, 5, 30], [0.22, 0.3275, 0.3725])
     pedal_gas = clip(pedal_gas, 0.0, pedal_gas_max)
