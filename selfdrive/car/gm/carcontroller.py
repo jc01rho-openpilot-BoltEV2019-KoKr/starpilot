@@ -99,7 +99,8 @@ class CarController(CarControllerBase):
     self.prev_regen_paddle_pressed = self.regen_paddle_pressed
     if self.regen_paddle_pressed_changed:
       # start 200-frame blend
-      self.prev_pedal_gas_on_gap_filling = self.prev_pedal_gas
+      if self.regen_paddle_pressed_changed_counter > 0: # if we are already blending, set the base(prev_gas) as final gas value.
+        self.prev_pedal_gas = self.prev_pedal_gas_on_gap_filling
       self.regen_paddle_pressed_changed_counter = 200
 
     # Regen gain ratios from bin-averaged 60–0 deceleration sweep; Calculates stronger decel from paddle
@@ -120,7 +121,7 @@ class CarController(CarControllerBase):
     # Smooth pedal gas over blend window
     if self.regen_paddle_pressed_changed_counter > 0:
       ratio = interp(self.regen_paddle_pressed_changed_counter, [200, 0], [0.0, 1.0])
-      pedal_gas = raw_pedal_gas * ratio + self.prev_pedal_gas_on_gap_filling * (1.0 - ratio)
+      pedal_gas = raw_pedal_gas * ratio + self.prev_pedal_gas * (1.0 - ratio)
       self.prev_pedal_gas_on_gap_filling = pedal_gas
       self.regen_paddle_pressed_changed_counter -= 1
     else:
