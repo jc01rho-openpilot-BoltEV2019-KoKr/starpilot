@@ -39,6 +39,7 @@ class CarController(CarControllerBase):
     self.frame = 0
     self.last_steer_frame = 0
     self.last_steer_ts_ns = 0
+    self.last_regen_active = False
     self.prev_steer_ts_ns = 0
     self.last_spoof_ts_ns = 0
     self.last_button_frame = 0
@@ -60,6 +61,7 @@ class CarController(CarControllerBase):
     self.accel_g = 0.0
     self.regen_paddle_pressed = False
     self.aego = 0.0
+    self.regen_paddle_timer = 0
 
     # Smoothing state for paddle blending
     self.prev_regen_paddle_pressed = False
@@ -142,6 +144,7 @@ class CarController(CarControllerBase):
     self.aego = CS.out.aEgo
     actuators = CC.actuators
     accel = brake_accel = actuators.accel
+    press_regen_paddle = False
     hud_control = CC.hudControl
     hud_alert = hud_control.visualAlert
     hud_v_cruise = hud_control.setSpeed
