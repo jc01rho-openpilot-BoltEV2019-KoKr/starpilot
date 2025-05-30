@@ -124,10 +124,10 @@ class CarController(CarControllerBase):
       # start 200-frame blend: capture fixed endpoints
       self.blend_start_gas = self.prev_pedal_gas  # last output
       self.blend_target_gas = raw_pedal_gas       # new raw value
-      self.regen_paddle_pressed_changed_counter = 200
+      self.regen_paddle_pressed_changed_counter = 500
 
     if self.regen_paddle_pressed_changed_counter > 0:
-      ratio = interp(self.regen_paddle_pressed_changed_counter, [200, 0], [0.0, 1.0])
+      ratio = interp(self.regen_paddle_pressed_changed_counter, [500, 0], [0.0, 1.0])
       pedal_gas = self.blend_target_gas * ratio + self.blend_start_gas * (1.0 - ratio)
       self.regen_paddle_pressed_changed_counter -= 1
     else:
