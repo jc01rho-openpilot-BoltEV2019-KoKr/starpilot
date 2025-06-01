@@ -28,6 +28,15 @@ PITCH_DEADZONE = 0.01  # [radians] 0.01 ≈ 1% grade
 BRAKE_PITCH_FACTOR_BP = [5., 10.]  # [m/s] smoothly revert to planned accel at low speeds
 BRAKE_PITCH_FACTOR_V = [0., 1.]  # [unitless in [0,1]]; don't touch
 
+# Enhanced constants for spoof logic safety
+SPOOF_MAX_ACCUMULATOR = 1.5  # Reduced maximum allowed accumulator value
+OFF_PULSE_TIMEOUT_NS = 50_000_000  # Reduced to 50ms timeout for off-pulse cleanup
+MIN_VALID_INTERVAL_NS = 1_000_000  # 1ms minimum valid interval
+MAX_VALID_INTERVAL_NS = 100_000_000  # 100ms maximum valid interval
+MIN_SPOOF_INTERVAL_NS = 10_000_000  # 10ms minimum between spoof messages
+MAX_TIMESTAMP_DRIFT_NS = 500_000_000  # 500ms maximum timestamp drift
+
+
 class CarController(CarControllerBase):
   def __init__(self, dbc_name, CP, VM):
     self.CP = CP
@@ -69,12 +78,16 @@ class CarController(CarControllerBase):
     self.regen_paddle_pressed_changed_counter = 0
     self.regen_paddle_timer = 0
 
-
-    # Midpoint + overflow spoof accumulator and flags
+    # Enhanced spoof accumulator and flags with safety bounds
     self.spoof_accum = 0.0
     self.spoof_mid_sent = False
     self.spoof_over_sent = False
     self.last_interval_ns = 0
+    self.spoof_message_count = 0  # Track total spoof messages sent
+
+    # Enhanced timestamp tracking for off-pulse timeout
+    self.off_pulse_start_time_ns = 0
+    self.last_off_pulse_cleanup_ns = 0
 
   def calc_pedal_command(self, accel: float, long_active: bool, car_velocity) -> Tuple[float, bool]:
 
@@ -84,7 +97,6 @@ class CarController(CarControllerBase):
       self.regen_paddle_pressed_changed = (self.regen_paddle_pressed != self.prev_regen_paddle_pressed)
       self.prev_regen_paddle_pressed = self.regen_paddle_pressed
       return 0., False
-
 
     pedaloffset = interp(car_velocity, [0., 3, 6, 30], [0.10, 0.175, 0.240, 0.240])
     pedal_gas = clip((pedaloffset + accel * 0.6), 0.0, 1.0)
@@ -145,6 +157,51 @@ class CarController(CarControllerBase):
     pedal_gas = clip(pedal_gas, 0.0, pedal_gas_max)
     return pedal_gas, press_regen_paddle
 
+  def _reset_spoof_state(self):
+    """Reset all spoof-related state variables with enhanced safety"""
+    self.spoof_accum = 0.0
+    self.spoof_mid_sent = False
+    self.spoof_over_sent = False
+    self.last_interval_ns = 0
+    self.spoof_message_count = 0  # Reset message counter
+    self.last_spoof_ts_ns = 0  # Reset last spoof timestamp
+
+  def _cleanup_off_pulse_scheduling(self):
+    """Clean up off-pulse scheduling attributes with enhanced safety"""
+    if hasattr(self, 'off_schedule_ns'):
+      delattr(self, 'off_schedule_ns')
+    if hasattr(self, 'off_sent'):
+      delattr(self, 'off_sent')
+    self.off_pulse_start_time_ns = 0
+    self.last_off_pulse_cleanup_ns = 0
+
+  def _is_timing_valid(self, now_nanos) -> bool:
+    """Enhanced timing validation for spoof message sending"""
+    # Check if last_steer_ts_ns is valid (not 0 or corrupted)
+    if self.last_steer_ts_ns <= 0:
+      return False
+
+    # Check minimum time gap since last steer message
+    if now_nanos - self.last_steer_ts_ns < 5_000_000:  # 5ms minimum
+      return False
+
+    # Enhanced: Check for reasonable timestamp (not too far in future/past)
+    if abs(now_nanos - self.last_steer_ts_ns) > MAX_TIMESTAMP_DRIFT_NS:
+      return False
+
+    # Enhanced: Check minimum interval between spoof messages
+    if self.last_spoof_ts_ns > 0 and (now_nanos - self.last_spoof_ts_ns) < MIN_SPOOF_INTERVAL_NS:
+      return False
+
+    # Enhanced: Validate timestamp is not in the future
+    if now_nanos < self.last_steer_ts_ns:
+      return False
+
+    return True
+
+  def _is_interval_valid(self, interval_ns) -> bool:
+    """Validate steering interval is within reasonable bounds"""
+    return MIN_VALID_INTERVAL_NS <= interval_ns <= MAX_VALID_INTERVAL_NS
 
   def update(self, CC, CS, now_nanos, frogpilot_toggles):
     self.CS = CS
@@ -171,70 +228,109 @@ class CarController(CarControllerBase):
     )
     regen_active = raw_regen_active
 
-    # === Spoof scheduling: midpoint + overflow (~40Hz) ===
+    # === Enhanced Spoof scheduling: midpoint + overflow (~40Hz) ===
     # Rising-edge reset on regen start
     if raw_regen_active and not self.last_regen_active:
       self.prev_steer_ts_ns = self.last_steer_ts_ns
       self.last_spoof_ts_ns = 0
-      self.spoof_accum = 0.0
-      self.spoof_mid_sent = False
-      self.spoof_over_sent = False
+      self._reset_spoof_state()
+
+    # FIXED: Enhanced cleanup on regen deactivation
+    if not raw_regen_active and self.last_regen_active:
+      self._reset_spoof_state()
+      self._cleanup_off_pulse_scheduling()  # Also cleanup off-pulse scheduling
 
     if raw_regen_active:
       # Interval between last two bus-0 steer sends
       interval_ns = self.last_steer_ts_ns - self.prev_steer_ts_ns
 
-      # New steer interval? clear per-interval flags
-      if interval_ns != self.last_interval_ns:
-        self.spoof_mid_sent = False
-        self.spoof_over_sent = False
-        self.last_interval_ns = interval_ns
+      # ENHANCED: Validate interval before using it with stricter bounds
+      if self._is_interval_valid(interval_ns) and self.prev_steer_ts_ns > 0:
+        # New steer interval? clear per-interval flags
+        if interval_ns != self.last_interval_ns:
+          self.spoof_mid_sent = False
+          self.spoof_over_sent = False
+          self.last_interval_ns = interval_ns
 
-      # Accumulate extra spoofs needed above 33Hz base to reach 40Hz
-      self.spoof_accum += (40.0/33.0 - 1.0)
+        # Accumulate extra spoofs needed above 33Hz base to reach 40Hz
+        # FIXED: More conservative accumulation rate
+        accumulation_rate = min(40.0 / 33.0 - 1.0, 0.15)  # Cap accumulation rate
+        self.spoof_accum += accumulation_rate
 
-      # Midpoint spoof: one per interval
-      if not self.spoof_mid_sent and interval_ns > 0:
-        midpoint_ns = self.prev_steer_ts_ns + interval_ns // 2
-        if now_nanos >= midpoint_ns and now_nanos - self.last_steer_ts_ns >= 5_000_000:
-          paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
-          paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
-          self.last_spoof_ts_ns = now_nanos
-          self.spoof_mid_sent = True
+        # ENHANCED: Prevent accumulator overflow with stricter bounds
+        self.spoof_accum = max(0.0, min(self.spoof_accum, SPOOF_MAX_ACCUMULATOR))
 
-      # Overflow spoof: insert extra when accumulator allows
-      if self.spoof_accum >= 0.8 and not self.spoof_over_sent and interval_ns > 0:
-        slot2_ns = self.prev_steer_ts_ns + (interval_ns * 2) // 3
-        if now_nanos >= slot2_ns and now_nanos - self.last_steer_ts_ns >= 5_000_000:
-          paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
-          paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
-          self.last_spoof_ts_ns = now_nanos
-          self.spoof_over_sent = True
-          self.spoof_accum -= 0.8
-    # === End Spoof scheduling ===
+        # ENHANCED: Rate limiting - prevent too many spoof messages
+        if self.spoof_message_count > 100:  # Reset counter periodically
+          self.spoof_message_count = 0
 
-    # === Off-pulse scheduling on regen release ===
+        # Midpoint spoof: one per interval
+        if (not self.spoof_mid_sent and
+          self._is_timing_valid(now_nanos) and
+          self.spoof_message_count < 50):  # Rate limit
+          midpoint_ns = self.prev_steer_ts_ns + interval_ns // 2
+          if now_nanos >= midpoint_ns and now_nanos < (midpoint_ns + interval_ns // 4):  # Time window
+            paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
+            paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
+            self.last_spoof_ts_ns = now_nanos
+            self.spoof_mid_sent = True
+            self.spoof_message_count += 1
+
+        # Overflow spoof: insert extra when accumulator allows
+        if (self.spoof_accum >= 0.6 and  # Reduced threshold
+          not self.spoof_over_sent and
+          self._is_timing_valid(now_nanos) and
+          self.spoof_message_count < 50):  # Rate limit
+          slot2_ns = self.prev_steer_ts_ns + (interval_ns * 2) // 3
+          if now_nanos >= slot2_ns and now_nanos < (slot2_ns + interval_ns // 4):  # Time window
+            paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
+            paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
+            self.last_spoof_ts_ns = now_nanos
+            self.spoof_over_sent = True
+            self.spoof_accum = max(0.0, self.spoof_accum - 0.6)  # Ensure non-negative
+            self.spoof_message_count += 1
+    # === End Enhanced Spoof scheduling ===
+
+    # === Enhanced Off-pulse scheduling on regen release ===
     if not raw_regen_active and self.last_regen_active:
       # schedule two off-slots at 1/3 and 2/3 of the last steer interval
-      if self.prev_steer_ts_ns and self.last_steer_ts_ns:
+      if (self.prev_steer_ts_ns and
+        self.last_steer_ts_ns and
+        self.last_steer_ts_ns > self.prev_steer_ts_ns):
         intv = self.last_steer_ts_ns - self.prev_steer_ts_ns
-        self.off_schedule_ns = [
-          self.prev_steer_ts_ns + intv // 3,
-          self.prev_steer_ts_ns + (2 * intv) // 3
-        ]
-        self.off_sent = [False, False]
+        if self._is_interval_valid(intv):  # ENHANCED: Use proper validation
+          self.off_schedule_ns = [
+            self.prev_steer_ts_ns + intv // 3,
+            self.prev_steer_ts_ns + (2 * intv) // 3
+          ]
+          self.off_sent = [False, False]
+          self.off_pulse_start_time_ns = now_nanos  # Track start time
+          self.last_off_pulse_cleanup_ns = now_nanos
 
     if hasattr(self, "off_schedule_ns"):
-      for i, t_ns in enumerate(self.off_schedule_ns):
-        if not self.off_sent[i] and now_nanos >= t_ns and now_nanos - self.last_steer_ts_ns >= 5_000_000:
-          paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, False))
-          paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, False))
-          self.off_sent[i] = True
-      # clean up once both off pulses are sent
-      if hasattr(self, "off_sent") and all(self.off_sent):
-        del self.off_schedule_ns
-        del self.off_sent
-    # === End off-pulse scheduling ===
+      # ENHANCED: Add timeout check with shorter timeout
+      time_since_start = now_nanos - self.off_pulse_start_time_ns
+      if time_since_start > OFF_PULSE_TIMEOUT_NS:
+        self._cleanup_off_pulse_scheduling()
+      else:
+        # ENHANCED: Additional safety check for cleanup frequency
+        if now_nanos - self.last_off_pulse_cleanup_ns > OFF_PULSE_TIMEOUT_NS // 2:
+          self.last_off_pulse_cleanup_ns = now_nanos
+
+        for i, t_ns in enumerate(self.off_schedule_ns):
+          if (not self.off_sent[i] and
+            now_nanos >= t_ns and
+            now_nanos < (t_ns + OFF_PULSE_TIMEOUT_NS // 4) and  # Time window
+            self._is_timing_valid(now_nanos)):
+            paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, False))
+            paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, False))
+            self.off_sent[i] = True
+
+        # ENHANCED: Clean up once both off pulses are sent OR timeout reached
+        if (hasattr(self, "off_sent") and
+          (all(self.off_sent) or time_since_start > OFF_PULSE_TIMEOUT_NS // 2)):
+          self._cleanup_off_pulse_scheduling()
+    # === End enhanced off-pulse scheduling ===
 
     # Steering (Active: 50Hz, inactive: 10Hz)
     steer_step = self.params.STEER_STEP if CC.latActive else self.params.INACTIVE_STEER_STEP
@@ -260,7 +356,8 @@ class CarController(CarControllerBase):
 
       if CC.latActive:
         new_steer = int(round(actuators.steer * self.params.STEER_MAX))
-        apply_steer = apply_driver_steer_torque_limits(new_steer, self.apply_steer_last, CS.out.steeringTorque, self.params)
+        apply_steer = apply_driver_steer_torque_limits(new_steer, self.apply_steer_last, CS.out.steeringTorque,
+                                                       self.params)
       else:
         apply_steer = 0
 
@@ -276,11 +373,9 @@ class CarController(CarControllerBase):
     self.last_regen_active = regen_active
     self.last_regen_paddle_pressed = self.regen_paddle_pressed
 
-    # Merge paddle spoof CAN frames, time-guarded only
-    if paddle_sends:
-      # wait at least 5 ms after the last bus0 steer send
-      if now_nanos - self.last_steer_ts_ns >= 5_000_000:
-        can_sends.extend(paddle_sends)
+    # ENHANCED: More robust timing validation for paddle sends with additional safety checks
+    if paddle_sends and self._is_timing_valid(now_nanos) and len(paddle_sends) <= 4:  # Limit paddle messages
+      can_sends.extend(paddle_sends)
 
     if self.CP.openpilotLongitudinalControl:
       # Gas/regen, brakes, and UI commands - all at 25Hz
@@ -291,9 +386,11 @@ class CarController(CarControllerBase):
         # TODO: include future pitch (sm['modelDataV2'].orientation.y) to account for long actuator delay
         if frogpilot_toggles.long_pitch and len(CC.orientationNED) > 1:
           self.pitch.update(CC.orientationNED[1])
-          self.accel_g = ACCELERATION_DUE_TO_GRAVITY * apply_deadzone(self.pitch.x, PITCH_DEADZONE) # driving uphill is positive pitch
+          self.accel_g = ACCELERATION_DUE_TO_GRAVITY * apply_deadzone(self.pitch.x,
+                                                                      PITCH_DEADZONE)  # driving uphill is positive pitch
           accel += self.accel_g
-          brake_accel = actuators.accel + self.accel_g * interp(CS.out.vEgo, BRAKE_PITCH_FACTOR_BP, BRAKE_PITCH_FACTOR_V)
+          brake_accel = actuators.accel + self.accel_g * interp(CS.out.vEgo, BRAKE_PITCH_FACTOR_BP,
+                                                                BRAKE_PITCH_FACTOR_V)
 
         at_full_stop = CC.longActive and CS.out.standstill
         near_stop = CC.longActive and (CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE)
@@ -325,7 +422,8 @@ class CarController(CarControllerBase):
             self.apply_gas = self.params.INACTIVE_REGEN
           if self.CP.carFingerprint in CC_ONLY_CAR:
             # gas interceptor only used for full long control on cars without ACC
-            interceptor_gas_cmd, press_regen_paddle = self.calc_pedal_command(actuators.accel, CC.longActive, CS.out.vEgo)
+            interceptor_gas_cmd, press_regen_paddle = self.calc_pedal_command(actuators.accel, CC.longActive,
+                                                                              CS.out.vEgo)
 
         if self.CP.enableGasInterceptor and self.apply_gas > self.params.INACTIVE_REGEN and CS.out.cruiseState.standstill:
           # "Tap" the accelerator pedal to re-engage ACC
@@ -360,7 +458,9 @@ class CarController(CarControllerBase):
             acc_engaged = CC.enabled
 
           # GasRegenCmdActive needs to be 1 to avoid cruise faults. It describes the ACC state, not actuation
-          can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx, acc_engaged, at_full_stop))
+          can_sends.append(
+            gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx, acc_engaged,
+                                           at_full_stop))
           can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
                                                                idx, CC.enabled, near_stop, at_full_stop, self.CP))
 
@@ -368,7 +468,7 @@ class CarController(CarControllerBase):
           send_fcw = hud_alert == VisualAlert.fcw
           if self.frame % 10 == 5:
             can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, CC.enabled,
-                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
+                                                                hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
       else:
         # to keep accel steady for logs when not sending gas
         accel += self.accel_g
@@ -390,12 +490,13 @@ class CarController(CarControllerBase):
 
       # TODO: integrate this with the code block below?
       if (
-          (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
-          or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
+        (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
+        or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
       ) and CS.out.cruiseState.enabled:
         if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
           self.last_button_frame = self.frame
-          can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.CANCEL))
+          can_sends.append(
+            gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.CANCEL))
 
     else:
       # While car is braking, cancel button causes ECM to enter a soft disable state with a fault status.
