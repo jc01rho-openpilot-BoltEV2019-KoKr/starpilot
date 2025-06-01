@@ -67,6 +67,7 @@ class CarController(CarControllerBase):
     self.prev_regen_paddle_pressed = False
     self.regen_paddle_pressed_changed = False
     self.regen_paddle_pressed_changed_counter = 0
+    self.regen_paddle_timer = 0
 
 
     # Midpoint + overflow spoof accumulator and flags
@@ -76,12 +77,14 @@ class CarController(CarControllerBase):
     self.last_interval_ns = 0
 
   def calc_pedal_command(self, accel: float, long_active: bool, car_velocity) -> Tuple[float, bool]:
+
     if not long_active:
+      self.regen_paddle_timer = max(self.regen_paddle_timer - 1, 0)
+      self.regen_paddle_pressed = self.regen_paddle_timer >= 20  # 30 frames
+      self.regen_paddle_pressed_changed = (self.regen_paddle_pressed != self.prev_regen_paddle_pressed)
+      self.prev_regen_paddle_pressed = self.regen_paddle_pressed
       return 0., False
 
-    # Regen paddle hysteresis (frame-based): hold 30 frames, with decrement dead-zone
-    if not hasattr(self, 'regen_paddle_timer'):
-      self.regen_paddle_timer = 0  # frames
 
     pedaloffset = interp(car_velocity, [0., 3, 6, 30], [0.10, 0.175, 0.240, 0.240])
     pedal_gas = clip((pedaloffset + accel * 0.6), 0.0, 1.0)
@@ -99,6 +102,8 @@ class CarController(CarControllerBase):
     # Detect press/release edges for smoothing
     self.regen_paddle_pressed_changed = (self.regen_paddle_pressed != self.prev_regen_paddle_pressed)
     self.prev_regen_paddle_pressed = self.regen_paddle_pressed
+
+
 
     # Regen gain ratios from bin-averaged 60–0 deceleration sweep; Calculates stronger decel from paddle
     # speed_mps = [0.559, 1.678, 2.797, 3.916, 5.035, 6.154, 7.273, 8.392, 9.511, 10.63,
