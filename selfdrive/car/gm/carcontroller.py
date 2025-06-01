@@ -67,9 +67,6 @@ class CarController(CarControllerBase):
     self.prev_regen_paddle_pressed = False
     self.regen_paddle_pressed_changed = False
     self.regen_paddle_pressed_changed_counter = 0
-    self.prev_pedal_gas = 0.0
-    self.blend_target_gas = 0.0
-    self.blend_start_gas = 0.0
 
 
     # Midpoint + overflow spoof accumulator and flags
@@ -114,25 +111,29 @@ class CarController(CarControllerBase):
     pedaloffset = interp(car_velocity, [0., 3, 6, 30], [0.10, 0.175, 0.240, 0.240])
 
     # Compute raw pedal gas
-    raw_pedal_gas = clip((pedaloffset + (accel / gain) * 0.6), 0.0, 1.0) if press_regen_paddle else clip((pedaloffset + accel * 0.6), 0.0, 1.0)
-    self.blend_target_gas = raw_pedal_gas       # new raw value
+    raw_pedal_gas =  clip((pedaloffset + accel * 0.6), 0.0, 1.0)
+    raw_pedal_gas_with_paddle = clip((pedaloffset + (accel / gain) * 0.6), 0.0, 1.0)
+        # new raw value
 
     # --- Blending logic: keep endpoints constant during blend ---
     if self.regen_paddle_pressed_changed:
-      # start 200-frame blend: capture fixed endpoints
-      self.blend_start_gas = self.prev_pedal_gas  # last output
-      self.regen_paddle_pressed_changed_counter = 25
+      if self.regen_paddle_pressed :
+        self.regen_paddle_pressed_changed_counter = 20
+      else:
+        self.regen_paddle_pressed_changed_counter = 0
 
-    #if self.regen_paddle_pressed_changed_counter > 0:
-    if False:
-      ratio = interp(self.regen_paddle_pressed_changed_counter, [25, 0], [0.0, 1.0])
-      pedal_gas = self.blend_target_gas * ratio + self.blend_start_gas * (1.0 - ratio)
-      self.regen_paddle_pressed_changed_counter -= 1
+    if 0 <= self.regen_paddle_pressed_changed_counter <= 25:
+      additional = interp(self.regen_paddle_pressed_changed_counter, [20,0], [0.0,raw_pedal_gas-raw_pedal_gas_with_paddle,])
+      pedal_gas = raw_pedal_gas - additional
+      if self.regen_paddle_pressed:
+        self.regen_paddle_pressed_changed_counter -= 1
+      else :
+        self.regen_paddle_pressed_changed_counter += 1
     else:
       pedal_gas = raw_pedal_gas
-    self.prev_pedal_gas = pedal_gas
+
     # Safety cap on initial takeoff: limit pedal_gas based on vehicle speed
-    pedal_gas_max = interp(car_velocity, [0.0, 5, 30], [0.22, 0.3275, 0.3725])
+    pedal_gas_max = interp(car_velocity, [0.0, 5, 30], [0.22, 0.3275, 0.3675])
     pedal_gas = clip(pedal_gas, 0.0, pedal_gas_max)
     return pedal_gas, press_regen_paddle
 
