@@ -83,15 +83,17 @@ class CarController(CarControllerBase):
     if not hasattr(self, 'regen_paddle_timer'):
       self.regen_paddle_timer = 0  # frames
 
+    pedaloffset = interp(car_velocity, [0., 3, 6, 30], [0.10, 0.175, 0.240, 0.240])
+    pedal_gas = clip((pedaloffset + accel * 0.6), 0.0, 1.0)
     # Regen paddle hysteresis (frame‑based): count frames when decelerating hard, decrement only when truly released
-    if self.aego < -0.7:
+    if pedal_gas < 0.01 and accel < -0.7:
       self.regen_paddle_timer += 1
-    elif self.aego > -0.3:
+    elif accel > -0.3:
       self.regen_paddle_timer = max(self.regen_paddle_timer - 1, 0)
     # else: hold timer between -0.7 and -0.3
 
     # Base paddle press hysteresis
-    self.regen_paddle_pressed = self.regen_paddle_timer >= 30  # 30 frames
+    self.regen_paddle_pressed = self.regen_paddle_timer >= 20  # 30 frames
     press_regen_paddle = self.regen_paddle_pressed
 
     # Detect press/release edges for smoothing
@@ -99,41 +101,42 @@ class CarController(CarControllerBase):
     self.prev_regen_paddle_pressed = self.regen_paddle_pressed
 
     # Regen gain ratios from bin-averaged 60–0 deceleration sweep; Calculates stronger decel from paddle
-    speed_mps = [0.559, 1.678, 2.797, 3.916, 5.035, 6.154, 7.273, 8.392, 9.511, 10.63,
-                 11.749, 12.868, 13.987, 15.106, 16.225, 17.344, 18.463, 19.582, 20.701, 21.820,
-                 22.939, 24.058, 25.177, 26.296]
-    regen_gain_ratio = [1.01, 1.01, 1.02, 1.05, 1.08, 1.345979, 1.369975,
-                         1.376302, 1.388052, 1.370367, 1.388498, 1.386030, 1.405950, 1.387555,
-                         1.390392, 1.394946, 1.414915, 1.428535, 1.439611, 1.440106, 1.441438,
-                         1.439395, 1.446909, 1.445738]
+    # speed_mps = [0.559, 1.678, 2.797, 3.916, 5.035, 6.154, 7.273, 8.392, 9.511, 10.63,
+    #              11.749, 12.868, 13.987, 15.106, 16.225, 17.344, 18.463, 19.582, 20.701, 21.820,
+    #              22.939, 24.058, 25.177, 26.296]
+    # regen_gain_ratio = [1.01, 1.01, 1.02, 1.05, 1.08, 1.345979, 1.369975,
+    #                      1.376302, 1.388052, 1.370367, 1.388498, 1.386030, 1.405950, 1.387555,
+    #                      1.390392, 1.394946, 1.414915, 1.428535, 1.439611, 1.440106, 1.441438,
+    #                      1.439395, 1.446909, 1.445738]
 
-    gain = interp(car_velocity, speed_mps, regen_gain_ratio)
-    pedaloffset = interp(car_velocity, [0., 3, 6, 30], [0.10, 0.175, 0.240, 0.240])
+    # gain = interp(car_velocity, speed_mps, regen_gain_ratio)
+
 
     # Compute raw pedal gas
-    raw_pedal_gas =  clip((pedaloffset + accel * 0.6), 0.0, 1.0)
-    raw_pedal_gas_with_paddle = clip((pedaloffset + (accel / gain) * 0.6), 0.0, 1.0)
+    # pedal_gas = clip((pedaloffset + accel * 0.6), 0.0, 1.0)
+    # raw_pedal_gas =  clip((pedaloffset + accel * 0.6), 0.0, 1.0)
+    # raw_pedal_gas_with_paddle = clip((pedaloffset + (accel / gain) * 0.6), 0.0, 1.0)
         # new raw value
 
-    # --- Blending logic: keep endpoints constant during blend ---
-    if self.regen_paddle_pressed_changed:
-      if self.regen_paddle_pressed :
-        self.regen_paddle_pressed_changed_counter = 20
-      else:
-        self.regen_paddle_pressed_changed_counter = 0
-
-    if 0 <= self.regen_paddle_pressed_changed_counter <= 25:
-      additional = interp(self.regen_paddle_pressed_changed_counter, [20,0], [0.0,raw_pedal_gas-raw_pedal_gas_with_paddle,])
-      pedal_gas = raw_pedal_gas - additional
-      if self.regen_paddle_pressed:
-        self.regen_paddle_pressed_changed_counter -= 1
-      else :
-        self.regen_paddle_pressed_changed_counter += 1
-    else:
-      pedal_gas = raw_pedal_gas
+    # # --- Blending logic: keep endpoints constant during blend ---
+    # if self.regen_paddle_pressed_changed:
+    #   if self.regen_paddle_pressed :
+    #     self.regen_paddle_pressed_changed_counter = 20
+    #   else:
+    #     self.regen_paddle_pressed_changed_counter = 0
+    #
+    # if 0 <= self.regen_paddle_pressed_changed_counter <= 25:
+    #   additional = interp(self.regen_paddle_pressed_changed_counter, [20,0], [0.0,raw_pedal_gas-raw_pedal_gas_with_paddle,])
+    #   pedal_gas = raw_pedal_gas - additional
+    #   if self.regen_paddle_pressed:
+    #     self.regen_paddle_pressed_changed_counter -= 1
+    #   else :
+    #     self.regen_paddle_pressed_changed_counter += 1
+    # else:
+    #   pedal_gas = raw_pedal_gas
 
     # Safety cap on initial takeoff: limit pedal_gas based on vehicle speed
-    pedal_gas_max = interp(car_velocity, [0.0, 5, 30], [0.22, 0.3275, 0.3675])
+    pedal_gas_max = interp(car_velocity, [0.0, 5, 30], [0.22, 0.3225, 0.3650])
     pedal_gas = clip(pedal_gas, 0.0, pedal_gas_max)
     return pedal_gas, press_regen_paddle
 
@@ -159,7 +162,7 @@ class CarController(CarControllerBase):
       self.CP.openpilotLongitudinalControl and
       CC.longActive and
       self.CP.enableGasInterceptor and
-      self.regen_paddle_timer >= 30  # raw hysteresis-only
+      self.regen_paddle_timer >= 20  # raw hysteresis-only
     )
     regen_active = raw_regen_active
 
