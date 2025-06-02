@@ -523,7 +523,7 @@ class CarController(CarControllerBase):
     new_actuators.steerOutputCan = self.apply_steer_last
     new_actuators.gas = self.apply_gas
     new_actuators.brake = self.apply_brake
-    new_actuators.speed = self.apply_speed
+    new_actuators.speed = 0
 
     self.frame += 1
     return new_actuators, can_sends
