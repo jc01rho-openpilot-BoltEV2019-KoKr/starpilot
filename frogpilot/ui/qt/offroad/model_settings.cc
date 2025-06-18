@@ -272,8 +272,8 @@ void FrogPilotModelPanel::showEvent(QShowEvent *event) {
     modelFileToNameMapProcessed.insert(availableModels[i], processModelName(availableModelNames[i]));
   }
 
-  modelFileToNameMap.insert("kerrygold", "Kerrygold 👀📡");
-  modelFileToNameMapProcessed.insert("kerrygold", "Kerrygold");
+  modelFileToNameMap.insert("tomb-raider", "Vikander 👀📡");
+  modelFileToNameMapProcessed.insert("tomb-raider", "Vikander");
 
   downloadableModels.clear();
   downloadableModels = availableModelNames;
