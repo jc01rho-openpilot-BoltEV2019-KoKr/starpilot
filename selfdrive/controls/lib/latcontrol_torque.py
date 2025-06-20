@@ -171,8 +171,8 @@ class LatControlTorque(LatControl):
       lookahead_lateral_jerk = 0
 
       model_good = model_data is not None and len(model_data.orientation.x) >= CONTROL_N
-      if model_good and (self.use_nnff or self.use_nnff_lite):
-        # prepare "look-ahead" desired lateral jerk
+      if model_good:
+        # prepare "look-ahead" desired lateral jerk using up-to-date actuator delay
         lookahead = interp(CS.vEgo, self.friction_look_ahead_bp, self.friction_look_ahead_v)
         friction_upper_idx = next((i for i, val in enumerate(ModelConstants.T_IDXS) if val > lookahead), 16)
         predicted_lateral_jerk = get_predicted_lateral_jerk(model_data.acceleration.y, self.t_diffs)
