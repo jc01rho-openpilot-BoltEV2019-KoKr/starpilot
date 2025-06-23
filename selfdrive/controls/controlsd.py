@@ -106,9 +106,9 @@ class Controls:
       ignore += ['roadCameraState', 'wideRoadCameraState']
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'liveCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'liveLocationKalman',
-                                   'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters', 'liveDelay', 
+                                   'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters', 'liveDelay',
                                    'testJoystick', 'frogpilotCarState', 'frogpilotPlan'] + self.camera_packets + self.sensor_packets,
-                                  ignore_alive=ignore, ignore_avg_freq=ignore+['radarState', 'testJoystick'], ignore_valid=['testJoystick', ],
+                                  ignore_alive=ignore, ignore_avg_freq=ignore+['radarState', 'testJoystick'], ignore_valid=['testJoystick', 'driverMonitoringState','frogpilotPlan','liveDelay',],
                                   frequency=int(1/DT_CTRL))
 
     self.joystick_mode = self.params.get_bool("JoystickDebugMode")
@@ -255,7 +255,7 @@ class Controls:
     if not self.CP.pcmCruise and not self.v_cruise_helper.v_cruise_initialized and resume_pressed:
       self.events.add(EventName.resumeBlocked)
 
-    if not self.CP.notCar:
+    if not self.CP.notCar and self.sm.all_checks(['driverMonitoringState']):
       self.events.add_from_msg(self.sm['driverMonitoringState'].events)
 
     # Add car events, ignore if CAN isn't valid
@@ -453,7 +453,8 @@ class Controls:
         self.events.add(EventName.modeldLagging)
 
     # Add FrogPilot events
-    self.events.add_from_msg(self.sm['frogpilotPlan'].frogpilotEvents)
+    if self.sm.all_checks(['frogpilotPlan']):
+      self.events.add_from_msg(self.sm['frogpilotPlan'].frogpilotEvents)
 
     if self.frogpilot_toggles.block_user:
       self.events.add(EventName.blockUser, static=True)
@@ -647,7 +648,7 @@ class Controls:
         self.LaC.update_live_torque_params(torque_params.latAccelFactorFiltered, torque_params.latAccelOffsetFiltered,
                                            torque_params.frictionCoefficientFiltered)
 
-      if self.sm.updated['liveDelay']:
+      if self.sm.all_checks(['liveDelay']) and self.sm.updated['liveDelay']:
         self.LaC.update_live_delay(self.sm['liveDelay'].lateralDelay)
 
     long_plan = self.sm['longitudinalPlan']

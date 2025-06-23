@@ -217,6 +217,9 @@ class NaviServer:
             self.json_road_limit = json_obj['road_limit']
             self.last_updated = time.monotonic()
 
+          if 'traffic_signal' in json_obj:
+            self.json_traffic_signal = json_obj['traffic_signal']
+
         finally:
           self.lock.release()
 
@@ -225,6 +228,7 @@ class NaviServer:
       try:
         self.lock.acquire()
         self.json_road_limit = None
+        self.json_traffic_signal = None
       finally:
         self.lock.release()
 
