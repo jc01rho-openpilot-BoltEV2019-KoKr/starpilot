@@ -55,8 +55,8 @@ DEFAULT_MODEL = "national-public-radio"
 DEFAULT_MODEL_NAME = "National Public Radio 👀📡"
 DEFAULT_MODEL_VERSION = "v6"
 
-DEFAULT_TINYGRAD_MODEL = "kerrygold"
-DEFAULT_TINYGRAD_MODEL_NAME = "Kerrygold 👀📡"
+DEFAULT_TINYGRAD_MODEL = "tomb-raider"
+DEFAULT_TINYGRAD_MODEL_NAME = "TRX 👀📡"
 DEFAULT_TINYGRAD_MODEL_VERSION = "v7"
 
 EXCLUDED_KEYS = {
