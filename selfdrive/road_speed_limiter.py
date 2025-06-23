@@ -32,7 +32,9 @@ class Port:
 class NaviServer:
   def __init__(self):
 
-    self.sm = messaging.SubMaster(['gpsLocationExternal', 'carState'])
+    # self.sm = messaging.SubMaster(['gpsLocationExternal', 'carState'])
+    self.sm = messaging.SubMaster(['gpsLocationExternal'])
+    #
 
     self.json_road_limit = None
     self.json_traffic_signal = None
@@ -71,7 +73,7 @@ class NaviServer:
   def gps_timer(self):
     try:
       if self.remote_gps_addr is not None:
-        if self.sm.updated['gpsLocationExternal']:
+        if self.sm.valid['gpsLocationExternal']  and  self.sm.updated['gpsLocationExternal']:
           self.location = self.sm['gpsLocationExternal']
 
         if self.location is not None:
@@ -217,9 +219,6 @@ class NaviServer:
             self.json_road_limit = json_obj['road_limit']
             self.last_updated = time.monotonic()
 
-          if 'traffic_signal' in json_obj:
-            self.json_traffic_signal = json_obj['traffic_signal']
-
         finally:
           self.lock.release()
 
@@ -228,7 +227,6 @@ class NaviServer:
       try:
         self.lock.acquire()
         self.json_road_limit = None
-        self.json_traffic_signal = None
       finally:
         self.lock.release()
 
@@ -268,6 +266,7 @@ class NaviServer:
 def main():
   server = NaviServer()
   naviData = messaging.pub_sock('naviData')
+  rk = Ratekeeper(25, print_delay_threshold=None)  # 25Hz로 제한
 
   with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
     try:
@@ -297,6 +296,8 @@ def main():
         naviData.send(dat.to_bytes())
         server.send_sdp(sock)
         server.check()
+
+        rk.keep_time()  # 25Hz 속도 제한 (0.04초마다 실행)
 
     except Exception as e:
       server.last_exception = e

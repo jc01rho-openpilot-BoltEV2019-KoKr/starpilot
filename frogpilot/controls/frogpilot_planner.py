@@ -44,8 +44,9 @@ class FrogPilotPlanner:
 
   def update(self, sm, frogpilot_toggles):
     self.lead_one = sm["radarState"].leadOne
-
-    v_cruise_kph = min(max(sm["controlsState"].vCruise, sm["controlsState"].vCruiseCluster), V_CRUISE_MAX)
+    
+    # v_cruise_kph = min(max(sm["controlsState"].vCruise, sm["controlsState"].vCruiseCluster), V_CRUISE_MAX)
+    v_cruise_kph = min(min(sm["controlsState"].vCruise, sm["controlsState"].vCruiseCluster), V_CRUISE_MAX)
     v_cruise = v_cruise_kph * CV.KPH_TO_MS
     v_ego = max(sm["carState"].vEgo, sm["carState"].vEgoCluster)
 

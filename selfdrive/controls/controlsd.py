@@ -106,9 +106,9 @@ class Controls:
       ignore += ['roadCameraState', 'wideRoadCameraState']
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'liveCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'liveLocationKalman',
-                                   'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters', 'liveDelay',
+                                   'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters', 'liveDelay', 'naviData',
                                    'testJoystick', 'frogpilotCarState', 'frogpilotPlan'] + self.camera_packets + self.sensor_packets,
-                                  ignore_alive=ignore, ignore_avg_freq=ignore+['radarState', 'testJoystick'], ignore_valid=['testJoystick', 'driverMonitoringState','frogpilotPlan','liveDelay',],
+                                  ignore_alive=ignore, ignore_avg_freq=ignore+['radarState', 'testJoystick'], ignore_valid=['testJoystick'],
                                   frequency=int(1/DT_CTRL))
 
     self.joystick_mode = self.params.get_bool("JoystickDebugMode")
@@ -471,8 +471,8 @@ class Controls:
     if EventName.steerTempUnavailableSilent in event_names:
       self.steerTempUnavailableSilent_shown = True
 
-    if self.belowSteerSpeed_shown and CS.vEgo >= self.CP.minSteerSpeed:
-      self.event_names_to_clear.add(EventName.belowSteerSpeed)
+    # if self.belowSteerSpeed_shown and CS.vEgo >= self.CP.minSteerSpeed:
+    #   self.event_names_to_clear.add(EventName.belowSteerSpeed)
 
     if self.resumeRequired_shown and not CS.cruiseState.standstill and not self.CP.autoResumeSng:
       self.event_names_to_clear.add(EventName.resumeRequired)
@@ -536,11 +536,15 @@ class Controls:
 
     # NDA neokii
     apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = SpeedLimiter.instance().get_max_speed(CS, self.v_cruise_helper.v_cruise_kph, self.autoNaviSpeedCtrlStart, self.autoNaviSpeedCtrlEnd)
+
+    if left_dist > 1.0 :
+      self.events.add(EventName.ndaCameraWarn)
+
     if apply_limit_speed >= 20:
       self.v_cruise_kph_limit = min(apply_limit_speed, self.v_cruise_helper.v_cruise_kph)
 
       if CS.vEgo * CV.MS_TO_KPH > apply_limit_speed:
-        self.events.add(EventName.slowingDownSpeedSound)
+      #   self.events.add(EventName.slowingDownSpeedSound)
 
         if not self.slowing_down:
           self.slowing_down_sound_alert = True
