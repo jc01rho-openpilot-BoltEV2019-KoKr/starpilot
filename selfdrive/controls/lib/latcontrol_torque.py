@@ -97,7 +97,7 @@ class LatControlTorque(LatControl):
 
       # precompute time differences between ModelConstants.T_IDXS
       self.t_diffs = np.diff(ModelConstants.T_IDXS)
-      self.desired_lat_jerk_time = lateral_delay + 0.3
+      self.desired_lat_jerk_time = lateral_delay + 0.0
 
     if self.use_nnff:
       self.pitch = FirstOrderFilter(0.0, 0.5, 0.01)
@@ -122,10 +122,10 @@ class LatControlTorque(LatControl):
       self.past_future_len = len(self.past_times) + len(self.nn_future_times)
 
   def update_live_delay(self, lateral_delay):
-    self.desired_lat_jerk_time = lateral_delay + 0.3
+    self.desired_lat_jerk_time = lateral_delay + 0.0
 
     if self.use_nnff:
-      nn_time_offset = lateral_delay + 0.2
+      nn_time_offset = lateral_delay + 0.0
       self.nn_future_times = [i + nn_time_offset for i in self.future_times]
       self.past_future_len = len(self.past_times) + len(self.nn_future_times)
 
