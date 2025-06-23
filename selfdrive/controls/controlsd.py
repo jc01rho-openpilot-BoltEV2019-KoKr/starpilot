@@ -172,6 +172,8 @@ class Controls:
     self.second = 0.0
     self.autoNaviSpeedCtrlStart = float(Params().get("AutoNaviSpeedCtrlStart"))
     self.autoNaviSpeedCtrlEnd = float(Params().get("AutoNaviSpeedCtrlEnd"))
+    self.traffic_signal_check_timer = 0
+    self.TRAFFIC_SIGNAL_CHECK_INTERVAL = 10.0  # 10초 간격
 
     self.can_log_mono_time = 0
 
@@ -192,9 +194,7 @@ class Controls:
       self.events.add(EventName.dashcamMode, static=True)
 
     # controlsd is driven by carState, expected at 100Hz
-    self.rk = Ratekeeper(100, print_delay_threshold=None)
-
-    # FrogPilot variables
+    self.rk = Ratekeeper(100, print_delay_threshold=None)    # FrogPilot variables
     self.frogpilot_toggles = get_frogpilot_toggles()
 
     self.belowSteerSpeed_shown = False
@@ -208,13 +208,14 @@ class Controls:
 
     self.display_timer = 0
 
+
     self.has_menu = self.CP.carName == "gm" and not (self.CP.flags & GMFlags.NO_CAMERA.value or self.CP.carFingerprint in CC_ONLY_CAR)
 
     self.event_names_to_clear = set()
-
   def reset(self):
     self.slowing_down = False
     self.slowing_down_sound_alert = False
+
 
   def set_initial_state(self):
     if REPLAY:
@@ -537,8 +538,20 @@ class Controls:
     # NDA neokii
     apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = SpeedLimiter.instance().get_max_speed(CS, self.v_cruise_helper.v_cruise_kph, self.autoNaviSpeedCtrlStart, self.autoNaviSpeedCtrlEnd)
 
-    if left_dist > 1.0 :
+    if CS.vEgo * CV.MS_TO_KPH > apply_limit_speed / 2.0 and left_dist > 1.0 :
       self.events.add(EventName.ndaCameraWarn)
+
+
+    self.traffic_signal_check_timer += DT_CTRL
+    if self.traffic_signal_check_timer >= self.TRAFFIC_SIGNAL_CHECK_INTERVAL:
+      if self.sm['naviData'].ts.isRedLightOn:
+        if self.sm['naviData'].ts.redLightRemainTime < 5:
+          self.events.add(EventName.trfficSingalChangingWarnImminent)
+          self.traffic_signal_check_timer = 0  # 타이머 리셋
+        else:
+          self.events.add(EventName.trfficSingalChangingWarn)
+
+
 
     if apply_limit_speed >= 20:
       self.v_cruise_kph_limit = min(apply_limit_speed, self.v_cruise_helper.v_cruise_kph)

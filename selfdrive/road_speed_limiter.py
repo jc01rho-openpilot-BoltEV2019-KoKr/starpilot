@@ -18,7 +18,7 @@ from openpilot.common.params import Params
 from openpilot.common.conversions import Conversions as CV
 import time
 
-CAMERA_SPEED_FACTOR = 1.0
+CAMERA_SPEED_FACTOR = 1.00
 terminate_flag = threading.Event()
 
 
@@ -32,9 +32,7 @@ class Port:
 class NaviServer:
   def __init__(self):
 
-    # self.sm = messaging.SubMaster(['gpsLocationExternal', 'carState'])
-    self.sm = messaging.SubMaster(['gpsLocationExternal'])
-    #
+    self.sm = messaging.SubMaster(['gpsLocationExternal', 'carState'])
 
     self.json_road_limit = None
     self.json_traffic_signal = None
@@ -144,7 +142,7 @@ class NaviServer:
         pass
 
   def update_thread(self, sm):
-    rk = Ratekeeper(10, print_delay_threshold=None)
+    rk = Ratekeeper(2, print_delay_threshold=None)
 
     while not terminate_flag.is_set():
       sm.update(0)
@@ -219,6 +217,9 @@ class NaviServer:
             self.json_road_limit = json_obj['road_limit']
             self.last_updated = time.monotonic()
 
+          if 'traffic_signal' in json_obj:
+            self.json_traffic_signal = json_obj['traffic_signal']
+
         finally:
           self.lock.release()
 
@@ -248,6 +249,10 @@ class NaviServer:
   def get_limit_val(self, key, default=None):
     return self.get_json_val(self.json_road_limit, key, default)
 
+  def get_ts_val(self, key, default=None):
+    return self.get_json_val(self.json_traffic_signal, key, default)
+
+
   def get_json_val(self, json, key, default=None):
 
     try:
@@ -265,8 +270,11 @@ class NaviServer:
 
 def main():
   server = NaviServer()
+  sm = server.sm
   naviData = messaging.pub_sock('naviData')
-  rk = Ratekeeper(25, print_delay_threshold=None)  # 25Hz로 제한
+  rk = Ratekeeper(3, print_delay_threshold=None)  # 25Hz로 제한
+
+  v_ego_q = deque(maxlen=3)
 
   with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
     try:
@@ -290,8 +298,31 @@ def main():
         dat.naviData.sectionAvgSpeed = server.get_limit_val("section_avg_speed", 0)
         dat.naviData.sectionLeftTime = server.get_limit_val("section_left_time", 0)
         dat.naviData.sectionAdjustSpeed = server.get_limit_val("section_adjust_speed", False)
+        dat.naviData.camSpeedFactor = server.get_limit_val("cam_speed_factor", CAMERA_SPEED_FACTOR)
         dat.naviData.currentRoadName = server.get_limit_val("current_road_name", "")
         dat.naviData.isNda2 = server.get_limit_val("is_nda2", False)
+
+        ts = {'isGreenLightOn': server.get_ts_val("isGreenLightOn", False),
+              'isLeftLightOn': server.get_ts_val("isLeftLightOn", False),
+              'isRedLightOn': server.get_ts_val("isRedLightOn", False),
+              'greenLightRemainTime': server.get_ts_val("greenLightRemainTime", 0),
+              'leftLightRemainTime': server.get_ts_val("leftLightRemainTime", 0),
+              'redLightRemainTime': server.get_ts_val("redLightRemainTime", 0),
+              'distance': server.get_ts_val("distance", 0)}
+        dat.naviData.ts = ts
+
+        if sm.updated['carState']:
+          v_ego_q.append(sm['carState'].vEgo)
+
+        v_ego = mean(v_ego_q) if len(v_ego_q) > 0 else 0.
+        t = (time.monotonic() - server.last_updated)
+        s = t * v_ego
+
+        if dat.naviData.camLimitSpeedLeftDist > 0:
+          dat.naviData.camLimitSpeedLeftDist = int(max(dat.naviData.camLimitSpeedLeftDist - s, 0))
+        if dat.naviData.sectionLeftDist > 0:
+          dat.naviData.sectionLeftDist = int(max(dat.naviData.sectionLeftDist - s, 0))
+
 
         naviData.send(dat.to_bytes())
         server.send_sdp(sock)
@@ -319,15 +350,23 @@ class SpeedLimiter:
   def __init__(self):
     self.slowing_down = False
     self.started_dist = 0
+    self.last_limit_speed_left_dist = 0
 
     self.sock = messaging.sub_sock("naviData")
     self.naviData = None
+    self.logMonoTime = 0
+
+    # self.haptic_feedback_speed_camera = Params().get_bool('HapticFeedbackWhenSpeedCamera')
+    self.prev_active_cam = False
     self.active_cam = False
+    self.active_cam_time = time.monotonic()
+    self.active_cam_end_time = 0
 
   def recv(self):
     try:
       dat = messaging.recv_sock(self.sock, wait=False)
       if dat is not None:
+        self.logMonoTime = dat.logMonoTime
         self.naviData = dat.naviData
     except:
       pass
@@ -344,14 +383,32 @@ class SpeedLimiter:
       return self.naviData.active and (self.naviData.camLimitSpeedLeftDist > 0 or self.naviData.sectionLeftDist > 0)
     return False
 
-  def get_cam_alert(self):
-    self.recv()
-    if self.naviData is not None:
-      left_dist = self.naviData.camLimitSpeedLeftDist
-      limit_speed = self.naviData.camLimitSpeed
-      self.active_cam = limit_speed > 0 and left_dist > 0
+###for HKG handle haptic feedback speed camera
+  # def get_cam_alert(self):
+  #   self.recv()
+    # if self.naviData is not None:
+    #   left_dist = self.naviData.camLimitSpeedLeftDist
+    #   limit_speed = self.naviData.camLimitSpeed
+    #   self.active_cam = limit_speed > 0 and left_dist > 0
+    #
+    #   if self.haptic_feedback_speed_camera:
+    #     now = time.monotonic()
+    #     if self.prev_active_cam != self.active_cam:
+    #       self.prev_active_cam = self.active_cam
+    #       if self.active_cam:
+    #         if now - self.active_cam_time > 10.0:
+    #           self.active_cam_end_time = now + 1.5
+    #           self.active_cam_time = now
+    #
+    #     if self.active_cam_end_time - time.monotonic() > 0:
+    #       return True
+    # return False
 
-    return False
+  def get_road_limit_speed(self):
+    print(self.logMonoTime)
+    if self.naviData is None or time.monotonic() - self.logMonoTime > 3.:
+      return 0
+    return self.naviData.roadLimitSpeed
 
   def get_max_speed(self, CS, v_cruise_kph, autoNaviSpeedCtrlStart=22, autoNaviSpeedCtrlEnd=11):
 
@@ -377,6 +434,9 @@ class SpeedLimiter:
       section_left_time = self.naviData.sectionLeftTime
       section_adjust_speed = self.naviData.sectionAdjustSpeed
 
+
+
+
       if is_highway is not None:
         if is_highway:
           MIN_LIMIT = 40
@@ -394,14 +454,19 @@ class SpeedLimiter:
       if cam_limit_speed_left_dist is not None and cam_limit_speed is not None and cam_limit_speed_left_dist > 0:
 
         v_ego = CS.vEgo
-        diff_speed = v_ego * 3.6 - (cam_limit_speed * CAMERA_SPEED_FACTOR)
+        diff_speed = v_ego * CV.MS_TO_KPH - (cam_limit_speed * CAMERA_SPEED_FACTOR)
 
-        starting_dist = v_ego * autoNaviSpeedCtrlStart
+
 
         if cam_type == 22:
-          safe_dist = v_ego * 3.
+          safe_dist = v_ego * 4.
+          starting_dist = v_ego * 8.
         else:
-          safe_dist = v_ego * autoNaviSpeedCtrlEnd
+          safe_dist = v_ego * 7.
+          starting_dist = v_ego * 30.
+
+        if self.slowing_down and self.last_limit_speed_left_dist - cam_limit_speed_left_dist < -(v_ego * 5):
+          self.slowing_down = False
 
         if MIN_LIMIT <= cam_limit_speed <= MAX_LIMIT and (self.slowing_down or cam_limit_speed_left_dist < starting_dist):
           if not self.slowing_down:
@@ -418,6 +483,8 @@ class SpeedLimiter:
             pp = (d / td) ** 0.6
           else:
             pp = 0
+
+          self.last_limit_speed_left_dist = cam_limit_speed_left_dist
 
           return cam_limit_speed * CAMERA_SPEED_FACTOR + int(pp * diff_speed), \
                  cam_limit_speed, cam_limit_speed_left_dist, first_started, log

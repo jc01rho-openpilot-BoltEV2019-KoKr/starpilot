@@ -450,6 +450,19 @@ def nda_camera_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaste
 
 
 
+def traffic_signal_changing_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, frogpilot_toggles: SimpleNamespace) -> Alert:
+
+  redLightRemainTime = sm['naviData'].ts.redLightRemainTime
+  # Round up to nearest 5 seconds
+  roundedTime = math.ceil(redLightRemainTime / 5.0) * 5
+
+  return Alert(
+    "🚦🔴 신호 대기" + f" {roundedTime}초",
+    "",
+    AlertStatus.frogpilot, AlertSize.small,
+    Priority.LOW, VisualAlert.none, AudibleAlert.none, 3)
+
+
 
 EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   # ********** events with no alerts **********
@@ -1317,6 +1330,23 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   },
   EventName.ndaCameraWarn: {
     ET.PERMANENT: nda_camera_alert,
+  },
+
+# return Alert(
+#   result["speed_text"] + "km/h  📸  "+ result["distance_text"],
+#   "",
+#   AlertStatus.normal, AlertSize.small,
+#   Priority.LOW, VisualAlert.none, AudibleAlert.none, .2)
+
+  EventName.trfficSingalChangingWarn: {
+    ET.PERMANENT: traffic_signal_changing_alert,
+  },
+  EventName.trfficSingalChangingWarnImminent: {
+    ET.WARNING: Alert(
+      "🚦🔴 신호가 곧 바뀝니다",
+      "",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.HIGHEST, VisualAlert.steerRequired, AudibleAlert.promptRepeat, 3.),
   },
 }
 
