@@ -1,7 +1,7 @@
 [
   {
     "name": "boot",
-    "url": "https://boot.frogpilot.download",
+    "url": "https://files.077769.xyz/api/public/dl/Cd_0bAor/boot.img.xz",
     "hash": "b997aae3f1c93de82449ef7f23f30ff482b0978f3d0ac08219366f9ce362ad7a",
     "hash_raw": "b997aae3f1c93de82449ef7f23f30ff482b0978f3d0ac08219366f9ce362ad7a",
     "size": 16029696,
@@ -66,7 +66,7 @@
   },
   {
     "name": "system",
-    "url": "https://system.frogpilot.download",
+    "url": "https://files.077769.xyz/api/public/dl/NwH1GHUm/system.img.xz",
     "hash": "be1c6bb9ee5e06779087b1b81e09b6df61d942566b0f8d4539c452179c661782",
     "hash_raw": "a5f84e68d199466fda5c9aead760b90a4cd2d2ef9a418708b9794d95bb03ec5b",
     "size": 10737418240,
