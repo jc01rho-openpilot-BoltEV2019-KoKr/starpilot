@@ -170,7 +170,7 @@ class CarController(CarControllerBase):
       # Overflow spoof: insert extra when accumulator allows
       if self.spoof_accum >= 0.5 and not self.spoof_over_sent and interval_ns > 0:
         slot2_ns = self.prev_steer_ts_ns + (interval_ns * 2) // 3
-        if now_nanos >= slot2_ns and now_nanos - self.last_steer_ts_ns >= 26_000_000:
+        if now_nanos >= slot2_ns and now_nanos - self.last_steer_ts_ns >= 24_000_000:
           paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
           paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
           self.last_spoof_ts_ns = now_nanos
