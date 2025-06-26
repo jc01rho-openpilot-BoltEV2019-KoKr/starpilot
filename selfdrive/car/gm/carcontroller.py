@@ -161,7 +161,7 @@ class CarController(CarControllerBase):
       # Midpoint spoof: one per interval
       if not self.spoof_mid_sent and interval_ns > 0:
         midpoint_ns = self.prev_steer_ts_ns + interval_ns // 2
-        if now_nanos >= midpoint_ns and now_nanos - self.last_steer_ts_ns >= 20_000_000:
+        if now_nanos >= midpoint_ns and now_nanos - self.last_steer_ts_ns >= 18_000_000:
           paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
           paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
           self.last_spoof_ts_ns = now_nanos
