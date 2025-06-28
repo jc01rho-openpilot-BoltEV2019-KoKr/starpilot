@@ -15,8 +15,8 @@ from openpilot.frogpilot.common.frogpilot_variables import MAPD_PATH, params_mem
 
 VERSION = "v2"
 
-GITHUB_VERSION_URL = f"https://github.com/FrogAi/FrogPilot-Resources/raw/Versions/mapd_version_{VERSION}.json"
-GITLAB_VERSION_URL = f"https://gitlab.com/FrogAi/FrogPilot-Resources/-/raw/Versions/mapd_version_{VERSION}.json"
+GITHUB_VERSION_URL = f"https://github.com/firestar5683/StarPilot-Resources/raw/Versions/mapd_version_{VERSION}.json"
+GITLAB_VERSION_URL = f"https://gitlab.com/firestar5683/FrogPilot-Resources/-/raw/Versions/mapd_version_{VERSION}.json"
 
 VERSION_PATH = Path("/data/media/0/osm/mapd_version")
 
@@ -30,7 +30,7 @@ def download():
 
   urls = [
     f"https://github.com/pfeiferj/openpilot-mapd/releases/download/{latest_version}/mapd",
-    f"https://gitlab.com/FrogAi/FrogPilot-Resources/-/raw/Mapd/{latest_version}"
+    f"https://gitlab.com/firestar5683/FrogPilot-Resources/-/raw/Mapd/{latest_version}"
   ]
 
   for url in urls:

@@ -343,7 +343,7 @@ class ThemeManager:
 
   @staticmethod
   def fetch_assets(repo_url):
-    repo = "FrogAi/FrogPilot-Resources"
+    repo = "firestar5683/FrogPilot-Resources"
     branches = ["Distance-Icons", "Steering-Wheels", "Themes"]
 
     assets = {
