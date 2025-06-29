@@ -460,7 +460,7 @@ def traffic_signal_changing_alert(CP: car.CarParams, CS: car.CarState, sm: messa
     "🚦🔴 신호 대기" + f" {roundedTime}초",
     "",
     AlertStatus.frogpilot, AlertSize.small,
-    Priority.LOW, VisualAlert.none, AudibleAlert.none, 3)
+    Priority.LOW, VisualAlert.none, AudibleAlert.none, .5)
 
 
 

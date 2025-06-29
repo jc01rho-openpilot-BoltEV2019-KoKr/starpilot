@@ -538,7 +538,7 @@ class Controls:
     # NDA neokii
     apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = SpeedLimiter.instance().get_max_speed(CS, self.v_cruise_helper.v_cruise_kph, self.autoNaviSpeedCtrlStart, self.autoNaviSpeedCtrlEnd)
 
-    if CS.vEgo * CV.MS_TO_KPH > apply_limit_speed / 2.0 and left_dist > 1.0 :
+    if CS.vEgo * CV.MS_TO_KPH > (apply_limit_speed / 1.5) and left_dist > 1.0 :
       self.events.add(EventName.ndaCameraWarn)
 
 
