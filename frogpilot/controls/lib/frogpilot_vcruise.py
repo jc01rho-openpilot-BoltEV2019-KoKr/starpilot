@@ -40,7 +40,7 @@ class FrogPilotVCruise:
       self.override_force_stop_timer -= DT_MDL
 
     # Mike's extended lead linear braking
-    if self.frogpilot_planner.lead_one.vLead < v_ego > CRUISING_SPEED and sm["controlsState"].enabled and self.frogpilot_planner.tracking_lead and frogpilot_toggles.human_following:
+    if self.frogpilot_planner.lead_one.vLead + 3 < v_ego > CRUISING_SPEED and sm["controlsState"].enabled and self.frogpilot_planner.tracking_lead and frogpilot_toggles.human_following:
       if not self.frogpilot_planner.frogpilot_following.following_lead:
         decel_rate = (v_ego - self.frogpilot_planner.lead_one.vLead)**2 / self.frogpilot_planner.lead_one.dRel
         self.braking_target = max(v_ego - (decel_rate * DT_MDL), self.frogpilot_planner.lead_one.vLead + CRUISING_SPEED)
