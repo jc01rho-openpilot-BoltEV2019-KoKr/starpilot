@@ -4,6 +4,7 @@ from cereal import car
 from openpilot.common.conversions import Conversions as CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.numpy_fast import interp, clip
+from collections import deque
 from openpilot.common.realtime import DT_CTRL
 from openpilot.common.params_pyx import Params
 from opendbc.can.packer import CANPacker
@@ -69,6 +70,9 @@ class CarController(CarControllerBase):
     self.spoof_mid_sent = False
     self.spoof_over_sent = False
     self.last_interval_ns = 0
+
+    # History of recent steer intervals for dynamic guard baseline
+    self.interval_history = deque(maxlen=20)
 
   def calc_pedal_command(self, accel: float, long_active: bool, car_velocity) -> Tuple[float, bool]:
     if not long_active:
@@ -153,20 +157,29 @@ class CarController(CarControllerBase):
       self.spoof_over_sent = False
 
     if raw_regen_active:
-      # Interval between last two bus-0 steer sends
-      interval_ns = self.last_steer_ts_ns - self.prev_steer_ts_ns
-      # Clamp interval to [20ms, 35ms] for optimal paddle timing
-      interval_ns = clip(interval_ns, 20_000_000, 35_000_000)
+      # Record raw steer interval
+      raw_intv = self.last_steer_ts_ns - self.prev_steer_ts_ns
+      # Append to history, ignoring zero or negative intervals
+      if raw_intv > 0:
+        self.interval_history.append(raw_intv)
 
-      # Compute dynamic guards with strict 5ms minimum (works on all, maximizes paddle on fast cars)
-      mid_guard_ns = max(5_000_000, int(interval_ns * 0.17))
-      mid_guard_ns = min(mid_guard_ns, interval_ns - 5_000_000)
+      # Determine baseline interval as 10th percentile once enough history
+      if len(self.interval_history) >= 5:
+        sorted_intv = sorted(self.interval_history)
+        idx = max(0, len(sorted_intv) // 10 - 1)
+        baseline_ns = sorted_intv[idx]
+      else:
+        baseline_ns = raw_intv
 
-      ofl_guard_ns = max(mid_guard_ns + 1_000_000, int(interval_ns * 0.66))
-      ofl_guard_ns = min(ofl_guard_ns, interval_ns - 5_000_000)
+      # Compute midpoint and overflow guards from baseline
+      # Midpoint guard: half of baseline (min 5ms)
+      mid_guard_ns = max(5_000_000, baseline_ns // 2)
+      # Overflow guard: two-thirds of baseline, at least 1ms after midpoint
+      ofl_guard_ns = max(mid_guard_ns + 1_000_000, (baseline_ns * 2) // 3)
 
       # Log timing diagnostics for paddle spoofing
       delta_after_ms = (now_nanos - self.last_steer_ts_ns) * 1e-6
+      interval_ns = baseline_ns
       next_steer_ns = self.prev_steer_ts_ns + interval_ns
       delta_before_ms = (next_steer_ns - now_nanos) * 1e-6
       cloudlog.error("paddle timing: mid_guard=%.1fms ofl_guard=%.1fms Δafter=%.1fms Δbefore=%.1fms credits=%.3f thresh=%.3f timer=%d accum=%.3f",
