@@ -155,8 +155,8 @@ class CarController(CarControllerBase):
     if raw_regen_active:
       # Interval between last two bus-0 steer sends
       interval_ns = self.last_steer_ts_ns - self.prev_steer_ts_ns
-      # Clamp interval to [20ms, 40ms] to handle jitter
-      interval_ns = clip(interval_ns, 20_000_000, 40_000_000)
+      # Clamp interval to [25ms, 35ms] to prevent mid_guard collapsing from jitter
+      interval_ns = clip(interval_ns, 25_000_000, 35_000_000)
 
       # Compute dynamic guards with strict 5ms minimum (works on all, maximizes paddle on fast cars)
       mid_guard_ns = max(5_000_000, int(interval_ns * 0.17))
