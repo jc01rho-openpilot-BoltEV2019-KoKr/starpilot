@@ -163,13 +163,15 @@ class CarController(CarControllerBase):
       if raw_intv > 0:
         self.interval_history.append(raw_intv)
 
-      # Determine baseline interval as 10th percentile once enough history
+      # Determine baseline interval as 20th percentile once enough history, with a 22 ms lower floor
       if len(self.interval_history) >= 5:
         sorted_intv = sorted(self.interval_history)
-        idx = max(0, len(sorted_intv) // 10 - 1)
+        idx = max(0, len(sorted_intv) * 2 // 10 - 1)
         baseline_ns = sorted_intv[idx]
       else:
         baseline_ns = raw_intv
+      # Prevent baseline dropping below 22 ms to avoid jitter-induced collisions
+      baseline_ns = max(baseline_ns, 22_000_000)
 
       # Compute midpoint and overflow guards from baseline
       # Midpoint guard: half of baseline (min 5ms)
