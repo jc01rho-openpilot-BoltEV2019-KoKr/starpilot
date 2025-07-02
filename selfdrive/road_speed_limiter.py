@@ -63,7 +63,7 @@ class NaviServer:
     gps_thread.start()
 
   def gps_thread(self):
-    rk = Ratekeeper(0.75, print_delay_threshold=None)
+    rk = Ratekeeper(1.0, print_delay_threshold=None)
     while not terminate_flag.is_set():
       self.gps_timer()
       rk.keep_time()
@@ -142,7 +142,7 @@ class NaviServer:
         pass
 
   def update_thread(self, sm):
-    rk = Ratekeeper(1.5, print_delay_threshold=None)
+    rk = Ratekeeper(2, print_delay_threshold=None)
 
     while not terminate_flag.is_set():
       sm.update(0)
@@ -272,7 +272,7 @@ def main():
   server = NaviServer()
   sm = server.sm
   naviData = messaging.pub_sock('naviData')
-  rk = Ratekeeper(1.25, print_delay_threshold=None)  # 25Hz로 제한
+  rk = Ratekeeper(3, print_delay_threshold=None)  # 25Hz로 제한
 
   v_ego_q = deque(maxlen=3)
 
