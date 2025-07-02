@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import json
 import os
 import select
@@ -18,16 +19,13 @@ from openpilot.common.params import Params
 from openpilot.common.conversions import Conversions as CV
 import time
 
-CAMERA_SPEED_FACTOR = 1.00
+CAMERA_SPEED_FACTOR = 1.01
 terminate_flag = threading.Event()
-
 
 class Port:
   BROADCAST_PORT = 2899
-  RECEIVE_PORT = 2843
+  RECEIVE_PORT = 3843
   LOCATION_PORT = BROADCAST_PORT
-
-
 
 class NaviServer:
   def __init__(self):
@@ -63,7 +61,7 @@ class NaviServer:
     gps_thread.start()
 
   def gps_thread(self):
-    rk = Ratekeeper(1.0, print_delay_threshold=None)
+    rk = Ratekeeper(3.0, print_delay_threshold=None)
     while not terminate_flag.is_set():
       self.gps_timer()
       rk.keep_time()
@@ -71,7 +69,7 @@ class NaviServer:
   def gps_timer(self):
     try:
       if self.remote_gps_addr is not None:
-        if self.sm.valid['gpsLocationExternal']  and  self.sm.updated['gpsLocationExternal']:
+        if self.sm.updated['gpsLocationExternal']:
           self.location = self.sm['gpsLocationExternal']
 
         if self.location is not None:
@@ -116,7 +114,7 @@ class NaviServer:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
       try:
         #sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        while True:
+        while not terminate_flag.is_set():
 
           try:
 
@@ -137,12 +135,11 @@ class NaviServer:
 
           time.sleep(5.)
           frame += 1
-
       except:
         pass
 
   def update_thread(self, sm):
-    rk = Ratekeeper(2, print_delay_threshold=None)
+    rk = Ratekeeper(10, print_delay_threshold=None)
 
     while not terminate_flag.is_set():
       sm.update(0)
@@ -228,6 +225,7 @@ class NaviServer:
       try:
         self.lock.acquire()
         self.json_road_limit = None
+        self.json_traffic_signal = None
       finally:
         self.lock.release()
 
@@ -239,6 +237,7 @@ class NaviServer:
       try:
         self.lock.acquire()
         self.json_road_limit = None
+        self.json_traffic_signal = None
       finally:
         self.lock.release()
 
@@ -251,7 +250,6 @@ class NaviServer:
 
   def get_ts_val(self, key, default=None):
     return self.get_json_val(self.json_traffic_signal, key, default)
-
 
   def get_json_val(self, json, key, default=None):
 
@@ -272,66 +270,53 @@ def main():
   server = NaviServer()
   sm = server.sm
   naviData = messaging.pub_sock('naviData')
-  rk = Ratekeeper(3, print_delay_threshold=None)  # 25Hz로 제한
-
+  rk = Ratekeeper(3.0, print_delay_threshold=None)
   v_ego_q = deque(maxlen=3)
 
-  with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-    try:
-      sock.bind(('0.0.0.0', Port.RECEIVE_PORT))
-      sock.setblocking(False)
+  while not terminate_flag.is_set():
+    dat = messaging.new_message('naviData', valid=True)
+    navi = dat.naviData
+    navi.active = server.active
+    navi.roadLimitSpeed = server.get_limit_val("road_limit_speed", 0)
+    navi.isHighway = server.get_limit_val("is_highway", False)
+    navi.camType = server.get_limit_val("cam_type", 0)
+    navi.camLimitSpeedLeftDist = server.get_limit_val("cam_limit_speed_left_dist", 0)
+    navi.camLimitSpeed = server.get_limit_val("cam_limit_speed", 0)
+    navi.sectionLimitSpeed = server.get_limit_val("section_limit_speed", 0)
+    navi.sectionLeftDist = server.get_limit_val("section_left_dist", 0)
+    navi.sectionAvgSpeed = server.get_limit_val("section_avg_speed", 0)
+    navi.sectionLeftTime = server.get_limit_val("section_left_time", 0)
+    navi.sectionAdjustSpeed = server.get_limit_val("section_adjust_speed", False)
+    navi.camSpeedFactor = server.get_limit_val("cam_speed_factor", CAMERA_SPEED_FACTOR)
+    navi.currentRoadName = server.get_limit_val("current_road_name", "")
+    navi.isNda2 = server.get_limit_val("is_nda2", False)
 
-      while True:
+    ts = {'isGreenLightOn': server.get_ts_val("isGreenLightOn", False),
+          'isLeftLightOn': server.get_ts_val("isLeftLightOn", False),
+          'isRedLightOn': server.get_ts_val("isRedLightOn", False),
+          'greenLightRemainTime': server.get_ts_val("greenLightRemainTime", 0),
+          'leftLightRemainTime': server.get_ts_val("leftLightRemainTime", 0),
+          'redLightRemainTime': server.get_ts_val("redLightRemainTime", 0),
+          'distance': server.get_ts_val("distance", 0)}
+    navi.ts = ts
 
-        server.udp_recv(sock)
+    if sm.updated['carState']:
+      v_ego_q.append(sm['carState'].vEgo)
 
-        dat = messaging.new_message('naviData', valid=True)
-        dat.init('naviData')
-        dat.naviData.active = server.active
-        dat.naviData.roadLimitSpeed = server.get_limit_val("road_limit_speed", 0)
-        dat.naviData.isHighway = server.get_limit_val("is_highway", False)
-        dat.naviData.camType = server.get_limit_val("cam_type", 0)
-        dat.naviData.camLimitSpeedLeftDist = server.get_limit_val("cam_limit_speed_left_dist", 0)
-        dat.naviData.camLimitSpeed = server.get_limit_val("cam_limit_speed", 0)
-        dat.naviData.sectionLimitSpeed = server.get_limit_val("section_limit_speed", 0)
-        dat.naviData.sectionLeftDist = server.get_limit_val("section_left_dist", 0)
-        dat.naviData.sectionAvgSpeed = server.get_limit_val("section_avg_speed", 0)
-        dat.naviData.sectionLeftTime = server.get_limit_val("section_left_time", 0)
-        dat.naviData.sectionAdjustSpeed = server.get_limit_val("section_adjust_speed", False)
-        dat.naviData.camSpeedFactor = server.get_limit_val("cam_speed_factor", CAMERA_SPEED_FACTOR)
-        dat.naviData.currentRoadName = server.get_limit_val("current_road_name", "")
-        dat.naviData.isNda2 = server.get_limit_val("is_nda2", False)
+    v_ego = mean(v_ego_q) if len(v_ego_q) > 0 else 0.
+    t = (time.monotonic() - server.last_updated)
+    s = t * v_ego
 
-        ts = {'isGreenLightOn': server.get_ts_val("isGreenLightOn", False),
-              'isLeftLightOn': server.get_ts_val("isLeftLightOn", False),
-              'isRedLightOn': server.get_ts_val("isRedLightOn", False),
-              'greenLightRemainTime': server.get_ts_val("greenLightRemainTime", 0),
-              'leftLightRemainTime': server.get_ts_val("leftLightRemainTime", 0),
-              'redLightRemainTime': server.get_ts_val("redLightRemainTime", 0),
-              'distance': server.get_ts_val("distance", 0)}
-        dat.naviData.ts = ts
-
-        if sm.updated['carState']:
-          v_ego_q.append(sm['carState'].vEgo)
-
-        v_ego = mean(v_ego_q) if len(v_ego_q) > 0 else 0.
-        t = (time.monotonic() - server.last_updated)
-        s = t * v_ego
-
-        if dat.naviData.camLimitSpeedLeftDist > 0:
-          dat.naviData.camLimitSpeedLeftDist = int(max(dat.naviData.camLimitSpeedLeftDist - s, 0))
-        if dat.naviData.sectionLeftDist > 0:
-          dat.naviData.sectionLeftDist = int(max(dat.naviData.sectionLeftDist - s, 0))
+    if navi.camLimitSpeedLeftDist > 0:
+      navi.camLimitSpeedLeftDist = int(max(navi.camLimitSpeedLeftDist - s, 0))
+    if navi.sectionLeftDist > 0:
+      navi.sectionLeftDist = int(max(navi.sectionLeftDist - s, 0))
 
 
-        naviData.send(dat.to_bytes())
-        server.send_sdp(sock)
-        server.check()
+    naviData.send(dat.to_bytes())
+    server.check()
+    rk.keep_time()
 
-        rk.keep_time()  # 25Hz 속도 제한 (0.04초마다 실행)
-
-    except Exception as e:
-      server.last_exception = e
 
 
 class SpeedLimiter:
