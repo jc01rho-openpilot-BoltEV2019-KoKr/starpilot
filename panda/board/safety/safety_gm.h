@@ -1,11 +1,11 @@
 const SteeringLimits GM_STEERING_LIMITS = {
-  .max_steer = 450,
-  .max_rate_up = 15,
-  .max_rate_down = 34,
-  .driver_torque_allowance = 78,
-  .driver_torque_factor = 6,
-  .max_rt_delta = 345,
-  .max_rt_interval = 200000,
+  .max_steer = 300,
+  .max_rate_up = 10,
+  .max_rate_down = 15,
+  .driver_torque_allowance = 65,
+  .driver_torque_factor = 4,
+  .max_rt_delta = 128,
+  .max_rt_interval = 250000,
   .type = TorqueDriverLimited,
 };
 
