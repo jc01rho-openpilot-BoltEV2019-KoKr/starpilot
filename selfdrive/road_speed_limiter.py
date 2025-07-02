@@ -164,7 +164,7 @@ class NaviServer:
   def udp_recv(self, sock):
     ret = False
     try:
-      ready = select.select([sock], [], [], 0.02)
+      ready = select.select([sock], [], [], 1.)
       ret = bool(ready[0])
       if ret:
         data, self.remote_addr = sock.recvfrom(2048)
