@@ -270,23 +270,19 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
     }
   }
 
-  // REGEN PADDLE, PRNDL: safety check
-  if (addr == 0x1F5) {
-    int prndl_value = GET_BYTE(to_send, 3) & 0xF;
-    int manual_mode = GET_BYTE(to_send, 5) & 0xF;
- 
-    // Only allow PRNDL2 spoofing while controls are allowed.
-    // Accept value 7 during regen, otherwise value 6 as default.
-    bool valid_regen_prndl = (prndl_value == 5 || prndl_value == 6 || prndl_value == 7);
-    bool valid_manual_mode = (manual_mode == 0 || manual_mode == 1 || manual_mode == 2);
- 
-    if (!controls_allowed || !valid_regen_prndl || !valid_manual_mode) {
+  // REGEN PADDLE
+  if (addr == 0xBD) {
+    bool regen_apply = GET_BIT(to_send, 7) || GET_BIT(to_send, 6) || GET_BIT(to_send, 5) || GET_BIT(to_send, 4);
+    if (!controls_allowed && regen_apply) {
       tx = false;
     }
   }
-  // REGEN PADDLE: only allow when controls are allowed
-  if (addr == 0xBD) {
-    if (!controls_allowed) {
+
+  // PRNDL2 regen check (7 for Gen0, Gen1. 5 For Gen2)
+  if (addr == 0x1F5) {
+    uint8_t prndl2 = GET_BYTE(to_send, 3) & 0xF;
+    bool prndl_apply = (prndl2 == 7) || (prndl2 == 5);
+    if (!controls_allowed && prndl_apply) {
       tx = false;
     }
   }
