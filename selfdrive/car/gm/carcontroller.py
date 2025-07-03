@@ -143,7 +143,8 @@ class CarController(CarControllerBase):
       self.CP.openpilotLongitudinalControl and
       CC.longActive and
       self.CP.enableGasInterceptor and
-      self.regen_paddle_timer >= 20  # raw hysteresis-only
+      self.regen_paddle_timer >= 20 and
+      CS.out.vEgo > 0.5  # only enable regen spoof when moving faster than 0.5 m/s
     )
     regen_active = raw_regen_active
 
