@@ -159,9 +159,11 @@ class CarController(CarControllerBase):
     if raw_regen_active:
       # Record raw steer interval
       raw_intv = self.last_steer_ts_ns - self.prev_steer_ts_ns
+      # Clamp outlier gaps (e.g. camera sync hiccups) so guard math stays stable
+      interval_ns = int(clip(raw_intv, 25_000_000, 35_000_000))
       # Append to history, ignoring zero or negative intervals
-      if raw_intv > 0:
-        self.interval_history.append(raw_intv)
+      if interval_ns > 0:
+        self.interval_history.append(interval_ns)
 
       # Determine baseline interval as 20th percentile once enough history, with a 22 ms lower floor
       if len(self.interval_history) >= 5:
@@ -169,7 +171,7 @@ class CarController(CarControllerBase):
         idx = max(0, len(sorted_intv) * 2 // 10 - 1)
         baseline_ns = sorted_intv[idx]
       else:
-        baseline_ns = raw_intv
+        baseline_ns = interval_ns
       # Prevent baseline dropping below 22 ms to avoid jitter-induced collisions
       baseline_ns = max(baseline_ns, 22_000_000)
 
@@ -181,7 +183,7 @@ class CarController(CarControllerBase):
 
       # Log timing diagnostics for paddle spoofing
       delta_after_ms = (now_nanos - self.last_steer_ts_ns) * 1e-6
-      interval_ns = baseline_ns
+      # interval_ns is the clamped interval used for midpoint/overflow timing
       next_steer_ns = self.prev_steer_ts_ns + interval_ns
       delta_before_ms = (next_steer_ns - now_nanos) * 1e-6
       cloudlog.error("paddle timing: mid_guard=%.1fms ofl_guard=%.1fms Δafter=%.1fms Δbefore=%.1fms credits=%.3f thresh=%.3f timer=%d accum=%.3f",
