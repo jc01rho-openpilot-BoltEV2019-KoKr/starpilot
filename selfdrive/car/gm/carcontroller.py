@@ -55,7 +55,7 @@ class CarController(CarControllerBase):
     self.params_ = Params()
 
     self.packer_pt = CANPacker(DBC[self.CP.carFingerprint]['pt'])
-    # self.packer_obj = CANPacker(DBC[self.CP.carFingerprint]['radar'])
+    self.packer_obj = CANPacker(DBC[self.CP.carFingerprint]['radar'])
     self.packer_ch = CANPacker(DBC[self.CP.carFingerprint]['chassis'])
 
     # FrogPilot variables
@@ -385,19 +385,19 @@ class CarController(CarControllerBase):
 
       # Radar needs to know current speed and yaw rate (50hz),
       # and that ADAS is alive (5hz, previously 10hz)
-      # if not self.CP.radarUnavailable:
-      #   tt = self.frame * DT_CTRL
-      #   time_and_headlights_step = 10
-      #   if self.frame % time_and_headlights_step == 0:
-      #     idx = (self.frame // time_and_headlights_step) % 4
-      #     can_sends.append(gmcan.create_adas_time_status(CanBus.OBSTACLE, int((tt - self.start_time) * 60), idx))
-      #     can_sends.append(gmcan.create_adas_headlights_status(self.packer_obj, CanBus.OBSTACLE))
-      #
-      #   speed_and_accelerometer_step = 2
-      #   if self.frame % speed_and_accelerometer_step == 0:
-      #     idx = (self.frame // speed_and_accelerometer_step) % 4
-      #     can_sends.append(gmcan.create_adas_steering_status(CanBus.OBSTACLE, idx))
-      #     can_sends.append(gmcan.create_adas_accelerometer_speed_status(CanBus.OBSTACLE, CS.out.vEgo, idx))
+      if not self.CP.radarUnavailable:
+        tt = self.frame * DT_CTRL
+        time_and_headlights_step = 10
+        if self.frame % time_and_headlights_step == 0:
+          idx = (self.frame // time_and_headlights_step) % 4
+          can_sends.append(gmcan.create_adas_time_status(CanBus.OBSTACLE, int((tt - self.start_time) * 60), idx))
+          can_sends.append(gmcan.create_adas_headlights_status(self.packer_obj, CanBus.OBSTACLE))
+
+        speed_and_accelerometer_step = 2
+        if self.frame % speed_and_accelerometer_step == 0:
+          idx = (self.frame // speed_and_accelerometer_step) % 4
+          can_sends.append(gmcan.create_adas_steering_status(CanBus.OBSTACLE, idx))
+          can_sends.append(gmcan.create_adas_accelerometer_speed_status(CanBus.OBSTACLE, CS.out.vEgo, idx))
 
       if self.CP.networkLocation == NetworkLocation.gateway and self.frame % (self.params.ADAS_KEEPALIVE_STEP * 2) == 0:
         can_sends += gmcan.create_adas_keepalive(CanBus.POWERTRAIN)
