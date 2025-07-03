@@ -152,8 +152,8 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     # NDA Neokii
     slowingDownSpeedSound @151;
     ndaCameraWarn @152;
-    trfficSingalChangingWarn @153;
-    trfficSingalChangingWarnImminent @154;
+#    trfficSingalChangingWarn @153;
+#    trfficSingalChangingWarnImminent @154;
 
 
     radarCanErrorDEPRECATED @15;

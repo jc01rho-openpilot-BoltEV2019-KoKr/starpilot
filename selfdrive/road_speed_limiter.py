@@ -13,7 +13,7 @@ from collections import deque
 from threading import Thread
 from cereal import messaging
 from openpilot.common.numpy_fast import clip, interp, mean
-from openpilot.common.realtime import Ratekeeper
+from openpilot.common.realtime import Ratekeeper,DT_CTRL
 from openpilot.common.params import Params
 from openpilot.common.conversions import Conversions as CV
 import time
@@ -32,7 +32,8 @@ class Port:
 class NaviServer:
   def __init__(self):
 
-    self.sm = messaging.SubMaster(['gpsLocationExternal', 'carState'])
+    # self.sm = messaging.SubMaster(['gpsLocationExternal', 'carState'] , frequency=int(1./DT_CTRL))
+    self.sm = messaging.SubMaster(['gpsLocationExternal'] , frequency=int(1./DT_CTRL))
 
     self.json_road_limit = None
     self.json_traffic_signal = None
@@ -164,7 +165,7 @@ class NaviServer:
   def udp_recv(self, sock):
     ret = False
     try:
-      ready = select.select([sock], [], [], 0.01)
+      ready = select.select([sock], [], [], 0.001)
       ret = bool(ready[0])
       if ret:
         data, self.remote_addr = sock.recvfrom(2048)
@@ -272,7 +273,7 @@ def main():
   server = NaviServer()
   sm = server.sm
   naviData = messaging.pub_sock('naviData')
-  rk = Ratekeeper(3, print_delay_threshold=None)  # 25Hz로 제한
+  rk = Ratekeeper(4, print_delay_threshold=None)  # 25Hz로 제한
 
   v_ego_q = deque(maxlen=3)
 
@@ -302,14 +303,14 @@ def main():
         dat.naviData.currentRoadName = server.get_limit_val("current_road_name", "")
         dat.naviData.isNda2 = server.get_limit_val("is_nda2", False)
 
-        ts = {'isGreenLightOn': server.get_ts_val("isGreenLightOn", False),
-              'isLeftLightOn': server.get_ts_val("isLeftLightOn", False),
-              'isRedLightOn': server.get_ts_val("isRedLightOn", False),
-              'greenLightRemainTime': server.get_ts_val("greenLightRemainTime", 0),
-              'leftLightRemainTime': server.get_ts_val("leftLightRemainTime", 0),
-              'redLightRemainTime': server.get_ts_val("redLightRemainTime", 0),
-              'distance': server.get_ts_val("distance", 0)}
-        dat.naviData.ts = ts
+        # ts = {'isGreenLightOn': server.get_ts_val("isGreenLightOn", False),
+        #       'isLeftLightOn': server.get_ts_val("isLeftLightOn", False),
+        #       'isRedLightOn': server.get_ts_val("isRedLightOn", False),
+        #       'greenLightRemainTime': server.get_ts_val("greenLightRemainTime", 0),
+        #       'leftLightRemainTime': server.get_ts_val("leftLightRemainTime", 0),
+        #       'redLightRemainTime': server.get_ts_val("redLightRemainTime", 0),
+        #       'distance': server.get_ts_val("distance", 0)}
+        # dat.naviData.ts = ts
 
         if sm.updated['carState']:
           v_ego_q.append(sm['carState'].vEgo)
