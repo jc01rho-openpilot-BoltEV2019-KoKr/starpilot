@@ -131,8 +131,8 @@ class LongitudinalPlanner:
       throttle_prob = 1.0
     return x, v, a, j, throttle_prob
 
-  def update(self, tomb_raider, sm, frogpilot_toggles):
-    if tomb_raider:
+  def update(self, tinygrad_model, sm, frogpilot_toggles):
+    if tinygrad_model:
       self.mpc.mode = 'acc'
       self.mode = 'blended' if sm['controlsState'].experimentalMode else 'acc'
     else:
@@ -215,7 +215,7 @@ class LongitudinalPlanner:
     self.a_desired = float(interp(self.dt, CONTROL_N_T_IDX, self.a_desired_trajectory))
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.a_desired + a_prev) / 2.0
 
-  def publish(self, classic_model, tomb_raider, sm, pm, frogpilot_toggles):
+  def publish(self, classic_model, tinygrad_model, sm, pm, frogpilot_toggles):
     plan_send = messaging.new_message('longitudinalPlan')
 
     plan_send.valid = sm.all_checks(service_list=['carState', 'controlsState'])
@@ -236,7 +236,7 @@ class LongitudinalPlanner:
     if classic_model:
       a_target, should_stop = get_accel_from_plan_classic(self.CP, longitudinalPlan.speeds,
                                                           longitudinalPlan.accels, vEgoStopping=frogpilot_toggles.vEgoStopping)
-    elif tomb_raider:
+    elif tinygrad_model:
       action_t =  self.CP.longitudinalActuatorDelay + DT_MDL
       output_a_target_mpc, output_should_stop_mpc = get_accel_from_plan_tomb_raider(self.v_desired_trajectory, self.a_desired_trajectory, CONTROL_N_T_IDX,
                                                                                     action_t=action_t, vEgoStopping=frogpilot_toggles.vEgoStopping)

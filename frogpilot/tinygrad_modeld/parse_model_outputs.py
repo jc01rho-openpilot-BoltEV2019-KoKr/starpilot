@@ -85,16 +85,24 @@ class Parser:
     outs[name + '_stds'] = pred_std_final.reshape(final_shape)
 
   def split_outputs(self, outs: dict[str, np.ndarray]) -> None:
+    # lane_lines
     if 'lane_lines' in outs:
       self.parse_mdn('lane_lines', outs, in_N=0, out_N=0,
-                     out_shape=(ModelConstants.NUM_LANE_LINES,ModelConstants.IDX_N,ModelConstants.LANE_LINES_WIDTH))
+                     out_shape=(ModelConstants.NUM_LANE_LINES, ModelConstants.IDX_N, ModelConstants.LANE_LINES_WIDTH))
+    # road_edges
+    if 'road_edges' in outs:
       self.parse_mdn('road_edges', outs, in_N=0, out_N=0,
-                     out_shape=(ModelConstants.NUM_ROAD_EDGES,ModelConstants.IDX_N,ModelConstants.LANE_LINES_WIDTH))
+                     out_shape=(ModelConstants.NUM_ROAD_EDGES, ModelConstants.IDX_N, ModelConstants.LANE_LINES_WIDTH))
+    # lead
+    if 'lead' in outs:
       self.parse_mdn('lead', outs, in_N=ModelConstants.LEAD_MHP_N, out_N=ModelConstants.LEAD_MHP_SELECTION,
-                     out_shape=(ModelConstants.LEAD_TRAJ_LEN,ModelConstants.LEAD_WIDTH))
-      if 'sim_pose' in outs:
-        self.parse_mdn('sim_pose', outs, in_N=0, out_N=0, out_shape=(ModelConstants.POSE_WIDTH,))
-      for k in ['lead_prob', 'lane_lines_prob']:
+                     out_shape=(ModelConstants.LEAD_TRAJ_LEN, ModelConstants.LEAD_WIDTH))
+    # sim_pose
+    if 'sim_pose' in outs:
+      self.parse_mdn('sim_pose', outs, in_N=0, out_N=0, out_shape=(ModelConstants.POSE_WIDTH,))
+    # binary crossentropy keys
+    for k in ['lead_prob', 'lane_lines_prob']:
+      if k in outs:
         self.parse_binary_crossentropy(k, outs)
 
   def parse_vision_outputs(self, outs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:

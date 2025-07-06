@@ -32,16 +32,12 @@ from openpilot.frogpilot.tinygrad_modeld.fill_model_msg import fill_model_msg, f
 from openpilot.frogpilot.tinygrad_modeld.constants import ModelConstants, Plan
 from openpilot.frogpilot.tinygrad_modeld.models.commonmodel_pyx import DrivingModelFrame, CLContext
 
-from openpilot.frogpilot.common.frogpilot_variables import get_frogpilot_toggles
+from openpilot.frogpilot.common.frogpilot_variables import get_frogpilot_toggles, MODELS_PATH
 
 
 PROCESS_NAME = "frogpilot.tinygrad_modeld.tinygrad_modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 
-VISION_PKL_PATH = Path(__file__).parent / 'models/driving_vision_tinygrad.pkl'
-POLICY_PKL_PATH = Path(__file__).parent / 'models/driving_policy_tinygrad.pkl'
-VISION_METADATA_PATH = Path(__file__).parent / 'models/driving_vision_metadata.pkl'
-POLICY_METADATA_PATH = Path(__file__).parent / 'models/driving_policy_metadata.pkl'
 
 LAT_SMOOTH_SECONDS = 0.2
 LONG_SMOOTH_SECONDS = 0.2
@@ -83,6 +79,15 @@ class ModelState:
   prev_desire: np.ndarray  # for tracking the rising edge of the pulse
 
   def __init__(self, context: CLContext):
+    # Dynamically build paths based on current model ID
+    params = Params()
+    model_id = params.get("Model", encoding="utf-8")
+    model_dir = MODELS_PATH
+    VISION_PKL_PATH = model_dir / f"{model_id}_driving_vision_tinygrad.pkl"
+    POLICY_PKL_PATH = model_dir / f"{model_id}_driving_policy_tinygrad.pkl"
+    VISION_METADATA_PATH = model_dir / f"{model_id}_driving_vision_metadata.pkl"
+    POLICY_METADATA_PATH = model_dir / f"{model_id}_driving_policy_metadata.pkl"
+
     with open(VISION_METADATA_PATH, 'rb') as f:
       vision_metadata = pickle.load(f)
       self.vision_input_shapes =  vision_metadata['input_shapes']
@@ -95,6 +100,8 @@ class ModelState:
       self.policy_input_shapes =  policy_metadata['input_shapes']
       self.policy_output_slices = policy_metadata['output_slices']
       policy_output_size = policy_metadata['output_shapes']['outputs'][1]
+      # Add policy_generation attribute after loading policy_metadata
+      self.policy_generation = policy_metadata.get("generation", policy_metadata.get("version", "v8"))
 
     self.frames = {name: DrivingModelFrame(context, ModelConstants.TEMPORAL_SKIP) for name in self.vision_input_names}
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
@@ -172,9 +179,11 @@ class ModelState:
     # TODO model only uses last value now
     self.full_prev_desired_curv[0,:-1] = self.full_prev_desired_curv[0,1:]
     self.full_prev_desired_curv[0,-1,:] = policy_outputs_dict['desired_curvature'][0, :]
-    # same thing here. setting generation via json would alow you to just say if not generation == 11 else for this and above
-    # self.numpy_inputs['prev_desired_curv'][:] = self.full_prev_desired_curv[0, self.temporal_idxs]
-    self.numpy_inputs['prev_desired_curv'][:] = 0*self.full_prev_desired_curv[0, self.temporal_idxs]
+    # Set prev_desired_curv differently depending on policy_generation
+    if getattr(self, "policy_generation", "v8") == "v9":
+      self.numpy_inputs['prev_desired_curv'][:] = 0*self.full_prev_desired_curv[0, self.temporal_idxs]
+    else:
+      self.numpy_inputs['prev_desired_curv'][:] = self.full_prev_desired_curv[0, self.temporal_idxs]
 
     combined_outputs_dict = {**vision_outputs_dict, **policy_outputs_dict}
     if SEND_RAW_PRED:

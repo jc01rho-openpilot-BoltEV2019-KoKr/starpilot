@@ -33,12 +33,22 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
       deleteModelBtn = new FrogPilotButtonsControl(title, desc, icon, {tr("DELETE"), tr("DELETE ALL")});
       QObject::connect(deleteModelBtn, &FrogPilotButtonsControl::buttonClicked, [this](int id) {
         deletableModels.clear();
+        QSet<QString> names;
         for (const QString &file : modelDir.entryList(QDir::Files)) {
-          QString modelName = modelFileToNameMapProcessed.value(QFileInfo(file).baseName());
+          QString base = QFileInfo(file).baseName();
+          QString modelId = base;
+          int idx = base.indexOf('_');
+          if (idx > 0)
+            modelId = base.left(idx);
+          QString modelName = modelFileToNameMapProcessed.value(modelId);
+          if (modelName.isEmpty()) {
+            modelName = modelFileToNameMapProcessed.value(base);
+          }
           if (!modelName.isEmpty()) {
-            deletableModels.append(modelName);
+            names.insert(modelName);
           }
         }
+        deletableModels = names.values();
         deletableModels.removeAll(processModelName(currentModel));
         deletableModels.removeAll(modelFileToNameMapProcessed.value(QString::fromStdString(params_default.get("Model"))));
 
@@ -46,13 +56,23 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
           QString modelToDelete = MultiOptionDialog::getSelection(tr("Select a driving model to delete"), deletableModels, "", this);
           if (!modelToDelete.isEmpty() && ConfirmationDialog::confirm(tr("Are you sure you want to delete the \"%1\" model?").arg(modelToDelete), tr("Delete"), this)) {
             QString modelFile = modelFileToNameMapProcessed.key(modelToDelete);
+            QString modelId = modelFile;
+            int idx = modelFile.indexOf('_');
+            if (idx > 0)
+              modelId = modelFile.left(idx);
+            if (modelFile.isEmpty()) {
+              // fallback for old models
+              modelFile = modelFileToNameMapProcessed.key(modelToDelete);
+              modelId = modelFile;
+            }
+            // Remove all files whose base name starts with modelId
             for (const QString &file : modelDir.entryList(QDir::Files)) {
-              if (QFileInfo(file).baseName() == modelFile) {
+              QString base = QFileInfo(file).baseName();
+              if (base.startsWith(modelId)) {
                 QFile::remove(modelDir.filePath(file));
-                break;
               }
             }
-            downloadableModels.append(modelFileToNameMap.value(modelFile));
+            downloadableModels.append(modelFileToNameMap.value(modelId));
             downloadableModels.sort();
 
             allModelsDownloaded = false;
@@ -60,9 +80,29 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
         } else if (id == 1) {
           if (ConfirmationDialog::confirm(tr("Are you sure you want to delete all of your downloaded driving models?"), tr("Delete"), this)) {
             for (const QString &file : modelDir.entryList(QDir::Files)) {
-              QString modelName = modelFileToNameMapProcessed.value(QFileInfo(file).baseName());
+              QString base = QFileInfo(file).baseName();
+              QString modelId = base;
+              int idx = base.indexOf('_');
+              if (idx > 0)
+                modelId = base.left(idx);
+              QString modelName = modelFileToNameMapProcessed.value(modelId);
+              if (modelName.isEmpty()) {
+                modelName = modelFileToNameMapProcessed.value(base);
+              }
               if (deletableModels.contains(modelName)) {
-                QFile::remove(modelDir.filePath(file));
+                // Remove all files whose base name starts with modelId
+                QDirIterator it(modelDir.absolutePath(), QDir::Files);
+                while (it.hasNext()) {
+                  QString f = it.next();
+                  QString b = QFileInfo(f).baseName();
+                  QString b_modelId = b;
+                  int b_idx = b.indexOf('_');
+                  if (b_idx > 0)
+                    b_modelId = b.left(b_idx);
+                  if (b_modelId == modelId) {
+                    QFile::remove(f);
+                  }
+                }
               }
             }
             downloadableModels.clear();
@@ -84,12 +124,19 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
             cancellingDownload = true;
           } else {
             for (const QString &file : modelDir.entryList(QDir::Files)) {
-              downloadableModels.removeAll(modelFileToNameMap.value(QFileInfo(file).baseName()));
+              QString base = QFileInfo(file).baseName();
+              QString modelId = base;
+              int idx = base.indexOf('_');
+              if (idx > 0)
+                modelId = base.left(idx);
+              downloadableModels.removeAll(modelFileToNameMap.value(modelId));
+              downloadableModels.removeAll(modelFileToNameMap.value(base));
             }
 
             QString modelToDownload = MultiOptionDialog::getSelection(tr("Select a driving model to download"), downloadableModels, "", this);
             if (!modelToDownload.isEmpty()) {
-              params_memory.put("ModelToDownload", modelFileToNameMap.key(modelToDownload).toStdString());
+              QString modelKey = modelFileToNameMap.key(modelToDownload);
+              params_memory.put("ModelToDownload", modelKey.toStdString());
               params_memory.put("ModelDownloadProgress", "Downloading...");
 
               downloadModelBtn->setText(0, tr("CANCEL"));
@@ -193,14 +240,22 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
     } else if (param == "SelectModel") {
       selectModelBtn = new ButtonControl(title, tr("SELECT"), desc);
       QObject::connect(selectModelBtn, &ButtonControl::clicked, [this]() {
-        QStringList selectableModels;
+        QSet<QString> selectableNames;
         for (const QString &file : modelDir.entryList(QDir::Files)) {
-          QString modelName = modelFileToNameMap.value(QFileInfo(file).baseName());
+          QString base = QFileInfo(file).baseName();
+          QString modelId = base;
+          int idx = base.indexOf('_');
+          if (idx > 0)
+            modelId = base.left(idx);
+          QString modelName = modelFileToNameMap.value(modelId);
+          if (modelName.isEmpty()) {
+            modelName = modelFileToNameMap.value(base);
+          }
           if (!modelName.isEmpty() && !modelName.contains("(Default)")) {
-            selectableModels.append(modelName);
+            selectableNames.insert(modelName);
           }
         }
-        selectableModels.append(modelFileToNameMap.value("tomb-raider"));
+        QStringList selectableModels = selectableNames.values();
         selectableModels.sort();
         selectableModels.prepend(modelFileToNameMap.value(QString::fromStdString(params_default.get("Model"))));
 
@@ -208,7 +263,9 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
         if (!modelToSelect.isEmpty()) {
           currentModel = modelToSelect;
 
-          params.put("Model", modelFileToNameMap.key(modelToSelect).toStdString());
+          QString modelKey = modelFileToNameMap.key(modelToSelect);
+          params.put("Model", modelKey.toStdString());
+          updateFrogPilotToggles();
 
           if (started) {
             if (FrogPilotConfirmationDialog::toggleReboot(this)) {
@@ -260,9 +317,7 @@ void FrogPilotModelPanel::showEvent(QShowEvent *event) {
   tuningLevel = parent->tuningLevel;
 
   availableModels = QString::fromStdString(params.get("AvailableModels")).split(",");
-  availableModels.sort();
   availableModelNames = QString::fromStdString(params.get("AvailableModelNames")).split(",");
-  availableModelNames.sort();
 
   modelFileToNameMap.clear();
   modelFileToNameMapProcessed.clear();
@@ -272,23 +327,37 @@ void FrogPilotModelPanel::showEvent(QShowEvent *event) {
     modelFileToNameMapProcessed.insert(availableModels[i], processModelName(availableModelNames[i]));
   }
 
-  modelFileToNameMap.insert("tomb-raider", "TR14 👀📡");
-  modelFileToNameMapProcessed.insert("tomb-raider", "TR14");
 
   downloadableModels.clear();
   downloadableModels = availableModelNames;
   for (const QString &file : modelDir.entryList(QDir::Files)) {
-    downloadableModels.removeAll(modelFileToNameMap.value(QFileInfo(file).baseName()));
+    QString base = QFileInfo(file).baseName();
+    QString modelId = base;
+    int idx = base.indexOf('_');
+    if (idx > 0)
+      modelId = base.left(idx);
+    downloadableModels.removeAll(modelFileToNameMap.value(modelId));
+    downloadableModels.removeAll(modelFileToNameMap.value(base));
   }
   allModelsDownloaded = downloadableModels.isEmpty();
 
   deletableModels.clear();
+  QSet<QString> names;
   for (const QString &file : modelDir.entryList(QDir::Files)) {
-    QString modelName = modelFileToNameMapProcessed.value(QFileInfo(file).baseName());
+    QString base = QFileInfo(file).baseName();
+    QString modelId = base;
+    int idx = base.indexOf('_');
+    if (idx > 0)
+      modelId = base.left(idx);
+    QString modelName = modelFileToNameMapProcessed.value(modelId);
+    if (modelName.isEmpty()) {
+      modelName = modelFileToNameMapProcessed.value(base);
+    }
     if (!modelName.isEmpty()) {
-      deletableModels.append(modelName);
+      names.insert(modelName);
     }
   }
+  deletableModels = names.values();
   deletableModels.removeAll(processModelName(currentModel));
   deletableModels.removeAll(modelFileToNameMapProcessed.value(QString::fromStdString(params_default.get("Model"))));
   noModelsDownloaded = deletableModels.isEmpty();

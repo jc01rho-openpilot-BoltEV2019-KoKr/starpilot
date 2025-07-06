@@ -38,7 +38,7 @@ def plannerd_thread():
   frogpilot_toggles = get_frogpilot_toggles()
 
   classic_model = frogpilot_toggles.classic_model
-  tomb_raider = frogpilot_toggles.model == "tomb-raider"
+  tomb_raider = frogpilot_toggles.tinygrad_model
 
   while True:
     sm.update()
