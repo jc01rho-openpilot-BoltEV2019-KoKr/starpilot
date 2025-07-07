@@ -197,13 +197,31 @@ class ModelManager:
 
   def check_models(self, boot_run, repo_url):
     available_models = set(self.available_models) - {DEFAULT_MODEL, DEFAULT_CLASSIC_MODEL}
-    def get_model_id_from_file(file):
-      stem = file.stem
-      if '_' in stem:
-        return stem.split('_')[0]
+    downloaded_models = set()
+    for model in available_models:
+      try:
+        model_index = self.available_models.index(model)
+        model_version = self.model_versions[model_index]
+      except Exception:
+        model_version = None
+
+      if model_version in ("v8", "v9"):
+        v8_v9_files = [
+          f"{model}_driving_policy_tinygrad.pkl",
+          f"{model}_driving_vision_tinygrad.pkl",
+          f"{model}_driving_policy_metadata.pkl",
+          f"{model}_driving_vision_metadata.pkl",
+        ]
+        if all((MODELS_PATH / f).is_file() for f in v8_v9_files):
+          downloaded_models.add(model)
+      elif model_version == "v7":
+        filename = f"{model}.pkl"
+        if (MODELS_PATH / filename).is_file():
+          downloaded_models.add(model)
       else:
-        return stem
-    downloaded_models = {get_model_id_from_file(path) for path in MODELS_PATH.iterdir() if path.is_file()} - {DEFAULT_MODEL, DEFAULT_CLASSIC_MODEL}
+        filename = f"{model}.thneed"
+        if (MODELS_PATH / filename).is_file():
+          downloaded_models.add(model)
 
     outdated_models = downloaded_models - available_models
     for model in outdated_models:
