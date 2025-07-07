@@ -17,6 +17,9 @@ else:
 
 from casadi import SX, vertcat
 
+import math
+
+
 MODEL_NAME = 'long'
 LONG_MPC_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPORT_DIR = os.path.join(LONG_MPC_DIR, "c_generated_code")
@@ -55,7 +58,11 @@ T_IDXS_LST = [index_function(idx, max_val=MAX_T, max_idx=N) for idx in range(N+1
 T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
+# Tinygrad model change from commaai/openpilot pull request #35567
 COMFORT_BRAKE = 2.5
+ACCELERATION_DUE_TO_GRAVITY = 9.81  # m/s^2
+# Multiplier for gravity effect, tune as needed
+BRAKE_K = 2.0  # Multiplier for gravity effect, tune as needed
 # Tinygrad model change from commaai/openpilot pull request #35567
 STOP_DISTANCE = 4.0
 
@@ -103,16 +110,18 @@ def get_T_FOLLOW(aggressive_follow=1.25, standard_follow=1.45, relaxed_follow=1.
     else:
       raise NotImplementedError("Longitudinal personality not supported")
 
-def get_stopped_equivalence_factor(v_lead):
-  return (v_lead**2) / (2 * COMFORT_BRAKE)
+def get_stopped_equivalence_factor(v_lead, pitch=0.0):
+  effective_brake = COMFORT_BRAKE + BRAKE_K * ACCELERATION_DUE_TO_GRAVITY * math.sin(pitch)
+  return (v_lead**2) / (2 * effective_brake)
 
-def get_safe_obstacle_distance(v_ego, t_follow):
-  return (v_ego**2) / (2 * COMFORT_BRAKE) + t_follow * v_ego + STOP_DISTANCE
+def get_safe_obstacle_distance(v_ego, t_follow, pitch=0.0):
+  effective_brake = COMFORT_BRAKE + BRAKE_K * ACCELERATION_DUE_TO_GRAVITY * math.sin(pitch)
+  return (v_ego**2) / (2 * effective_brake) + t_follow * v_ego + STOP_DISTANCE
 
-def desired_follow_distance(v_ego, v_lead, t_follow=None):
+def desired_follow_distance(v_ego, v_lead, t_follow=None, pitch=0.0):
   if t_follow is None:
     t_follow = get_T_FOLLOW()
-  return get_safe_obstacle_distance(v_ego, t_follow) - get_stopped_equivalence_factor(v_lead)
+  return get_safe_obstacle_distance(v_ego, t_follow, pitch=pitch) - get_stopped_equivalence_factor(v_lead, pitch=pitch)
 
 
 def gen_long_model():
@@ -356,7 +365,7 @@ class LongitudinalMpc:
     self.cruise_min_a = min_a
     self.max_a = max_a
 
-  def update(self, lead_one, lead_two, v_cruise, x, v, a, j, t_follow, trafficMode, personality=log.LongitudinalPersonality.standard):
+  def update(self, lead_one, lead_two, v_cruise, x, v, a, j, t_follow, trafficMode, personality=log.LongitudinalPersonality.standard, pitch=0.0):
     v_ego = self.x0[1]
     self.status = lead_one.status or lead_two.status
 
@@ -366,8 +375,8 @@ class LongitudinalMpc:
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance
     # and then treat that as a stopped car/obstacle at this new distance.
-    lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1])
-    lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1])
+    lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1], pitch=pitch)
+    lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1], pitch=pitch)
 
     self.params[:,0] = ACCEL_MIN
     # negative accel constraint causes problems because negative speed is not allowed
@@ -385,7 +394,7 @@ class LongitudinalMpc:
       v_cruise_clipped = np.clip(v_cruise * np.ones(N+1),
                                  v_lower,
                                  v_upper)
-      cruise_obstacle = np.cumsum(T_DIFFS * v_cruise_clipped) + get_safe_obstacle_distance(v_cruise_clipped, t_follow)
+      cruise_obstacle = np.cumsum(T_DIFFS * v_cruise_clipped) + get_safe_obstacle_distance(v_cruise_clipped, t_follow, pitch=pitch)
       x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle, cruise_obstacle])
       self.source = SOURCES[np.argmin(x_obstacles[0])]
 
@@ -431,9 +440,9 @@ class LongitudinalMpc:
     # Check if it got within lead comfort range
     # TODO This should be done cleaner
     if self.mode == 'blended':
-      if any((lead_0_obstacle - get_safe_obstacle_distance(self.x_sol[:,1], t_follow))- self.x_sol[:,0] < 0.0):
+      if any((lead_0_obstacle - get_safe_obstacle_distance(self.x_sol[:,1], t_follow, pitch=pitch))- self.x_sol[:,0] < 0.0):
         self.source = 'lead0'
-      if any((lead_1_obstacle - get_safe_obstacle_distance(self.x_sol[:,1], t_follow))- self.x_sol[:,0] < 0.0) and \
+      if any((lead_1_obstacle - get_safe_obstacle_distance(self.x_sol[:,1], t_follow, pitch=pitch))- self.x_sol[:,0] < 0.0) and \
          (lead_1_obstacle[0] - lead_0_obstacle[0]):
         self.source = 'lead1'
 
