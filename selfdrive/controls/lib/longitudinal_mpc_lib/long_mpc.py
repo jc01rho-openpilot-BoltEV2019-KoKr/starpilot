@@ -46,7 +46,12 @@ LEAD_DANGER_FACTOR = 0.75
 LIMIT_COST = 1e6
 ACADOS_SOLVER_TYPE = 'SQP_RTI'
 # Default lead acceleration decay set to 50% at 1s
+
 LEAD_ACCEL_TAU = 1.5
+
+# Compensation for vision-only lead distance overestimation (e.g., tall vehicles)
+VISION_DISTANCE_FACTOR = 0.92  # Tunable; reduces vision-only dRel for safer following
+VISION_DISTANCE_XSTD_THRESHOLD = 5.0  # Optional: threshold for xStd confidence
 
 
 # Fewer timestamps don't hurt performance and lead to
@@ -343,6 +348,10 @@ class LongitudinalMpc:
       v_lead = lead.vLead
       a_lead = lead.aLeadK
       a_lead_tau = lead.aLeadTau
+      # If this is a vision-only lead or low-confidence lead, shrink the distance slightly
+      # Only do this if the lead does NOT have radar (radar=False), or high xStd (if present)
+      if (not getattr(lead, "radar", False)) or (hasattr(lead, "xStd") and lead.xStd[0] > VISION_DISTANCE_XSTD_THRESHOLD):
+        x_lead *= VISION_DISTANCE_FACTOR
     else:
       # Fake a fast lead car, so mpc can keep running in the same mode
       x_lead = 50.0
