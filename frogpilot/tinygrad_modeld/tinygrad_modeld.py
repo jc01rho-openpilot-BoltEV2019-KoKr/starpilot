@@ -81,72 +81,116 @@ class ModelState:
   def __init__(self, context: CLContext):
     # Dynamically build paths based on current model ID
     params = Params()
+    # discover selected version (v7, v8, v9)
+    avail = (params.get("AvailableModels", encoding="utf-8") or "").split(",")
+    vers  = (params.get("ModelVersions",   encoding="utf-8") or "").split(",")
     model_id = params.get("Model", encoding="utf-8")
+    DEFAULT_TINYGRAD_MODEL_VERSION = "v8"
+    model_version = DEFAULT_TINYGRAD_MODEL_VERSION
+    if model_id in avail and len(avail)==len(vers):
+      idx = avail.index(model_id)
+      if vers[idx]:
+        model_version = vers[idx]
+    self.model_version = model_version
     model_dir = MODELS_PATH
-    VISION_PKL_PATH = model_dir / f"{model_id}_driving_vision_tinygrad.pkl"
-    POLICY_PKL_PATH = model_dir / f"{model_id}_driving_policy_tinygrad.pkl"
-    VISION_METADATA_PATH = model_dir / f"{model_id}_driving_vision_metadata.pkl"
-    POLICY_METADATA_PATH = model_dir / f"{model_id}_driving_policy_metadata.pkl"
+    if model_version == "v7":
+      # v7: single-network path
+      MODEL_PKL_PATH      = model_dir / f"{model_id}.pkl"
+      METADATA_PATH       = model_dir / f"{model_id}_metadata.pkl"
+      try:
+        with open(METADATA_PATH, 'rb') as f:
+          meta = pickle.load(f)
+      except FileNotFoundError:
+        cloudlog.error(f"Missing metadata {METADATA_PATH}, downloading...")
+        from openpilot.frogpilot.assets.model_manager import ModelManager
+        ModelManager().download_model(model_id)
+        with open(METADATA_PATH, 'rb') as f:
+          meta = pickle.load(f)
 
-    try:
-      with open(VISION_METADATA_PATH, 'rb') as f:
-        vision_metadata = pickle.load(f)
-    except FileNotFoundError:
-      cloudlog.error(f"Missing metadata {VISION_METADATA_PATH}, downloading...")
-      from openpilot.frogpilot.assets.model_manager import ModelManager
-      ModelManager().download_model(model_id)
-      with open(VISION_METADATA_PATH, 'rb') as f:
-        vision_metadata = pickle.load(f)
-    self.vision_input_shapes =  vision_metadata['input_shapes']
-    self.vision_input_names = list(self.vision_input_shapes.keys())
-    self.vision_output_slices = vision_metadata['output_slices']
-    vision_output_size = vision_metadata['output_shapes']['outputs'][1]
+      self.input_shapes     = meta['input_shapes']
+      self.output_slices    = meta['output_slices']
+      net_output_size       = meta['output_shapes']['outputs'][1]
 
-    try:
-      with open(POLICY_METADATA_PATH, 'rb') as f:
-        policy_metadata = pickle.load(f)
-    except FileNotFoundError:
-      cloudlog.error(f"Missing metadata {POLICY_METADATA_PATH}, downloading...")
-      from openpilot.frogpilot.assets.model_manager import ModelManager
-      ModelManager().download_model(model_id)
-      with open(POLICY_METADATA_PATH, 'rb') as f:
-        policy_metadata = pickle.load(f)
-    self.policy_input_shapes =  policy_metadata['input_shapes']
-    self.policy_output_slices = policy_metadata['output_slices']
-    policy_output_size = policy_metadata['output_shapes']['outputs'][1]
-    # Add policy_generation attribute after loading policy_metadata
-    self.policy_generation = policy_metadata.get("generation", policy_metadata.get("version", "v8"))
+      self.vision_input_names  = ["input_imgs", "big_input_imgs"]
+      self.vision_input_shapes = {k: self.input_shapes[k] for k in self.vision_input_names}
 
-    self.frames = {name: DrivingModelFrame(context, ModelConstants.TEMPORAL_SKIP) for name in self.vision_input_names}
-    self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
+      self.frames              = {n: DrivingModelFrame(context) for n in self.vision_input_names}
+      self.prev_desire         = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
+      self.numpy_inputs        = {
+        'desire':              np.zeros((1,ModelConstants.FULL_HISTORY_BUFFER_LEN+1,ModelConstants.DESIRE_LEN),dtype=np.float32),
+        'traffic_convention':  np.zeros((1,ModelConstants.TRAFFIC_CONVENTION_LEN),dtype=np.float32),
+        'lateral_control_params': np.zeros((1,ModelConstants.LATERAL_CONTROL_PARAMS_LEN),dtype=np.float32),
+        'prev_desired_curv':   np.zeros((1,ModelConstants.FULL_HISTORY_BUFFER_LEN+1,ModelConstants.PREV_DESIRED_CURV_LEN),dtype=np.float32),
+        'features_buffer':     np.zeros((1,ModelConstants.FULL_HISTORY_BUFFER_LEN,ModelConstants.FEATURE_LEN),dtype=np.float32),
+      }
+      self.tensor_inputs       = {k: Tensor(v,device='NPY').realize() for k,v in self.numpy_inputs.items()}
+      self.output              = np.zeros(net_output_size,dtype=np.float32)
+      self.parser              = Parser()
+      with open(MODEL_PKL_PATH,"rb") as f:
+        self.model_run        = pickle.load(f)
+    else:
+      # v8/v9: two-network path
+      VISION_PKL_PATH         = model_dir / f"{model_id}_driving_vision_tinygrad.pkl"
+      POLICY_PKL_PATH         = model_dir / f"{model_id}_driving_policy_tinygrad.pkl"
+      VISION_METADATA_PATH    = model_dir / f"{model_id}_driving_vision_metadata.pkl"
+      POLICY_METADATA_PATH    = model_dir / f"{model_id}_driving_policy_metadata.pkl"
 
-    self.full_features_buffer = np.zeros((1, ModelConstants.FULL_HISTORY_BUFFER_LEN,  ModelConstants.FEATURE_LEN), dtype=np.float32)
-    self.full_desire = np.zeros((1, ModelConstants.FULL_HISTORY_BUFFER_LEN, ModelConstants.DESIRE_LEN), dtype=np.float32)
-    self.full_prev_desired_curv = np.zeros((1, ModelConstants.FULL_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32)
-    self.temporal_idxs = slice(-1-(ModelConstants.TEMPORAL_SKIP*(ModelConstants.INPUT_HISTORY_BUFFER_LEN-1)), None, ModelConstants.TEMPORAL_SKIP)
+      try:
+        with open(VISION_METADATA_PATH, 'rb') as f:
+          vision_metadata = pickle.load(f)
+      except FileNotFoundError:
+        cloudlog.error(f"Missing metadata {VISION_METADATA_PATH}, downloading...")
+        from openpilot.frogpilot.assets.model_manager import ModelManager
+        ModelManager().download_model(model_id)
+        with open(VISION_METADATA_PATH, 'rb') as f:
+          vision_metadata = pickle.load(f)
+      self.vision_input_shapes =  vision_metadata['input_shapes']
+      self.vision_input_names = list(self.vision_input_shapes.keys())
+      self.vision_output_slices = vision_metadata['output_slices']
+      vision_output_size = vision_metadata['output_shapes']['outputs'][1]
 
-    # policy inputs
-    self.numpy_inputs = {
-      'desire': np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.DESIRE_LEN), dtype=np.float32),
-      'traffic_convention': np.zeros((1, ModelConstants.TRAFFIC_CONVENTION_LEN), dtype=np.float32),
-      'lateral_control_params': np.zeros((1, ModelConstants.LATERAL_CONTROL_PARAMS_LEN), dtype=np.float32),
-      'prev_desired_curv': np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32),
-      'features_buffer': np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN,  ModelConstants.FEATURE_LEN), dtype=np.float32),
-    }
+      try:
+        with open(POLICY_METADATA_PATH, 'rb') as f:
+          policy_metadata = pickle.load(f)
+      except FileNotFoundError:
+        cloudlog.error(f"Missing metadata {POLICY_METADATA_PATH}, downloading...")
+        from openpilot.frogpilot.assets.model_manager import ModelManager
+        ModelManager().download_model(model_id)
+        with open(POLICY_METADATA_PATH, 'rb') as f:
+          policy_metadata = pickle.load(f)
+      self.policy_input_shapes =  policy_metadata['input_shapes']
+      self.policy_output_slices = policy_metadata['output_slices']
+      policy_output_size = policy_metadata['output_shapes']['outputs'][1]
+      # Add policy_generation attribute after loading policy_metadata
+      self.policy_generation = policy_metadata.get("generation", policy_metadata.get("version", "v8"))
 
+      self.frames = {name: DrivingModelFrame(context, ModelConstants.TEMPORAL_SKIP) for name in self.vision_input_names}
+      self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
 
-    # img buffers are managed in openCL transform code
-    self.vision_inputs: dict[str, Tensor] = {}
-    self.vision_output = np.zeros(vision_output_size, dtype=np.float32)
-    self.policy_inputs = {k: Tensor(v, device='NPY').realize() for k,v in self.numpy_inputs.items()}
-    self.policy_output = np.zeros(policy_output_size, dtype=np.float32)
-    self.parser = Parser()
+      self.full_features_buffer = np.zeros((1, ModelConstants.FULL_HISTORY_BUFFER_LEN,  ModelConstants.FEATURE_LEN), dtype=np.float32)
+      self.full_desire = np.zeros((1, ModelConstants.FULL_HISTORY_BUFFER_LEN, ModelConstants.DESIRE_LEN), dtype=np.float32)
+      self.full_prev_desired_curv = np.zeros((1, ModelConstants.FULL_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32)
+      self.temporal_idxs = slice(-1-(ModelConstants.TEMPORAL_SKIP*(ModelConstants.INPUT_HISTORY_BUFFER_LEN-1)), None, ModelConstants.TEMPORAL_SKIP)
 
-    with open(VISION_PKL_PATH, "rb") as f:
-      self.vision_run = pickle.load(f)
+      # policy inputs
+      self.numpy_inputs = {
+        'desire': np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.DESIRE_LEN), dtype=np.float32),
+        'traffic_convention': np.zeros((1, ModelConstants.TRAFFIC_CONVENTION_LEN), dtype=np.float32),
+        'lateral_control_params': np.zeros((1, ModelConstants.LATERAL_CONTROL_PARAMS_LEN), dtype=np.float32),
+        'prev_desired_curv': np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32),
+        'features_buffer': np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN,  ModelConstants.FEATURE_LEN), dtype=np.float32),
+      }
+      # img buffers are managed in openCL transform code
+      self.vision_inputs: dict[str, Tensor] = {}
+      self.vision_output = np.zeros(vision_output_size, dtype=np.float32)
+      self.policy_inputs = {k: Tensor(v, device='NPY').realize() for k,v in self.numpy_inputs.items()}
+      self.policy_output = np.zeros(policy_output_size, dtype=np.float32)
+      self.parser = Parser()
 
-    with open(POLICY_PKL_PATH, "rb") as f:
-      self.policy_run = pickle.load(f)
+      with open(VISION_PKL_PATH, "rb") as f:
+        self.vision_run = pickle.load(f)
+      with open(POLICY_PKL_PATH, "rb") as f:
+        self.policy_run = pickle.load(f)
 
   def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
     parsed_model_outputs = {k: model_outputs[np.newaxis, v] for k,v in output_slices.items()}
@@ -154,6 +198,31 @@ class ModelState:
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
                 inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
+    # v7 single-network inference
+    if getattr(self, "model_version", "v8") == "v7":
+      # pulse desire
+      inputs['desire'][0]=0
+      new_desire=np.where(inputs['desire']-self.prev_desire>0.99,inputs['desire'],0)
+      self.prev_desire[:]=inputs['desire']
+      # shift buffers and assign
+      self.numpy_inputs['desire'][0,:-1]=self.numpy_inputs['desire'][0,1:]
+      self.numpy_inputs['desire'][0,-1]=new_desire
+      self.numpy_inputs['traffic_convention'][:]=inputs['traffic_convention']
+      self.numpy_inputs['lateral_control_params'][:]=inputs['lateral_control_params']
+      imgs={n:self.frames[n].prepare(bufs[n],transforms[n].flatten()) for n in self.vision_input_names}
+      # build tensor_inputs
+      if TICI:
+        for k,v in imgs.items():
+          if k not in self.tensor_inputs:
+            self.tensor_inputs[k]=qcom_tensor_from_opencl_address(v.mem_address,self.vision_input_shapes[k],dtype=dtypes.uint8)
+      else:
+        for k,v in imgs.items():
+          self.tensor_inputs[k]=Tensor(self.frames[k].buffer_from_cl(v).reshape(self.vision_input_shapes[k]),dtype=dtypes.uint8).realize()
+      if prepare_only: return None
+      out = self.model_run(**self.tensor_inputs).numpy().flatten()
+      return self.parser.parse_outputs({k:out[np.newaxis,v] for k,v in self.output_slices.items()})
+
+    # v8/v9 two-network inference continues unchanged...
     # Model decides when action is completed, so desire input is just a pulse triggered on rising edge
     inputs['desire'][0] = 0
     new_desire = np.where(inputs['desire'] - self.prev_desire > .99, inputs['desire'], 0)
