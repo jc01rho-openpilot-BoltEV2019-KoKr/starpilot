@@ -138,14 +138,13 @@ class LongitudinalPlanner:
     return x, v, a, j, throttle_prob
 
   def update(self, tinygrad_model, sm, frogpilot_toggles):
-    self.generation = frogpilot_toggles.model_version
+    if self.generation is None:
+      self.generation = getattr(frogpilot_toggles, 'model_version', None)
     if tinygrad_model:
       self.mpc.mode = 'acc'
       self.mode = 'blended' if sm['controlsState'].experimentalMode else 'acc'
     else:
       self.mpc.mode = 'blended' if sm['controlsState'].experimentalMode else 'acc'
-    if not self.mlsim:
-      self.mpc.mode = self.mode
 
     if hasattr(sm['carControl'], 'orientationNED') and len(sm['carControl'].orientationNED) == 3:
       accel_coast = get_coast_accel(sm['carControl'].orientationNED[1])
@@ -211,10 +210,6 @@ class LongitudinalPlanner:
                          personality=sm['controlsState'].personality)
     self.mpc.set_accel_limits(accel_limits_turns[0], accel_limits_turns[1])
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
-    # After deciding the MPC mode via get_mpc_mode(), ensure MPC uses that mode when not mlsim
-    dec_mpc_mode = self.get_mpc_mode()
-    if not self.mlsim:
-      self.mpc.mode = dec_mpc_mode
     self.mpc.update(self.lead_one, self.lead_two, v_cruise, x, v, a, j, sm['frogpilotPlan'].tFollow,
                     sm['frogpilotCarState'].trafficModeEnabled, personality=sm['controlsState'].personality, pitch=pitch)
 
