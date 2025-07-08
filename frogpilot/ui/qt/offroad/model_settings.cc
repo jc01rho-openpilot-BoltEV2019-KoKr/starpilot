@@ -265,6 +265,15 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
 
           QString modelKey = modelFileToNameMap.key(modelToSelect);
           params.put("Model", modelKey.toStdString());
+          // Also synchronize the ModelVersion param
+          {
+            QStringList avail = QString::fromStdString(params.get("AvailableModels")).split(",");
+            QStringList vers  = QString::fromStdString(params.get("AvailableModelVersions")).split(",");
+            int idx = avail.indexOf(modelKey);
+            if (idx >= 0 && idx < vers.size()) {
+              params.put("ModelVersion", vers[idx].toStdString());
+            }
+          }
           updateFrogPilotToggles();
 
           if (started) {
