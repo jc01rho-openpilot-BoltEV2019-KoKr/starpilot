@@ -136,26 +136,33 @@ class ModelManager:
       params_memory.remove(MODEL_DOWNLOAD_PARAM)
 
     elif model_version == "v7":
-      # Download single PKL for OG tinygrad models
-      file_extension = "pkl"
-      model_path = MODELS_PATH / f"{model_to_download}.{file_extension}"
-      model_url = f"{repo_url}/Models/{model_to_download}.{file_extension}"
-      print(f"Downloading PKL model: {model_to_download}")
-      download_file(CANCEL_DOWNLOAD_PARAM, model_path, DOWNLOAD_PROGRESS_PARAM, model_url, MODEL_DOWNLOAD_PARAM, params_memory)
+      # Download both PKL and metadata for OG tinygrad models
+      v7_filenames = [
+        f"{model_to_download}.pkl",
+        f"{model_to_download}_metadata.pkl"
+      ]
+      for filename in v7_filenames:
+        model_path = MODELS_PATH / filename
+        model_url = f"{repo_url}/Models/{filename}"
+        print(f"Downloading v7 model file: {filename}")
+        download_file(CANCEL_DOWNLOAD_PARAM, model_path, DOWNLOAD_PROGRESS_PARAM, model_url, MODEL_DOWNLOAD_PARAM, params_memory)
 
-      if params_memory.get_bool(CANCEL_DOWNLOAD_PARAM):
-        handle_error(None, "Download cancelled...", "Download cancelled...", MODEL_DOWNLOAD_PARAM, DOWNLOAD_PROGRESS_PARAM, params_memory)
-        self.downloading_model = False
-        return
+        if params_memory.get_bool(CANCEL_DOWNLOAD_PARAM):
+          handle_error(None, "Download cancelled...", "Download cancelled...", MODEL_DOWNLOAD_PARAM, DOWNLOAD_PROGRESS_PARAM, params_memory)
+          self.downloading_model = False
+          return
 
-      if verify_download(model_path, model_url):
-        print(f"Model {model_to_download} downloaded and verified successfully!")
-        params_memory.put(DOWNLOAD_PROGRESS_PARAM, "Downloaded!")
-        params_memory.remove(MODEL_DOWNLOAD_PARAM)
-      else:
-        self.handle_verification_failure(model_to_download, model_path, file_extension)
-        self.downloading_model = False
-        return
+        if verify_download(model_path, model_url):
+          print(f"File {filename} downloaded and verified successfully!")
+          params_memory.put(DOWNLOAD_PROGRESS_PARAM, f"Downloaded {filename}!")
+        else:
+          self.handle_verification_failure(filename.rsplit('.',1)[0], model_path, "pkl")
+          self.downloading_model = False
+          return
+
+      # Once both files are fetched
+      params_memory.put(DOWNLOAD_PROGRESS_PARAM, "Downloaded!")
+      params_memory.remove(MODEL_DOWNLOAD_PARAM)
 
     else:
       # Classic model: download only the .thneed file
@@ -236,14 +243,14 @@ class ModelManager:
     if params.get("Model", encoding="utf-8") not in self.available_models + [DEFAULT_TINYGRAD_MODEL]:
       params.put("Model", params_default.get("Model", encoding="utf-8"))
 
-    automatically_download_models = not boot_run and params.get_bool("AutomaticallyDownloadModels")
+    automatically_download_models = params.get_bool("AutomaticallyDownloadModels")
     if not automatically_download_models:
       return
 
     model_sizes = self.fetch_all_model_sizes(repo_url)
     if not model_sizes:
-      print("No model size data available. Skipping model checks")
-      return
+      print("No model size data available. Continuing downloads based on file existence")
+      # do not return; proceed to download missing files
 
     needs_download = False
 

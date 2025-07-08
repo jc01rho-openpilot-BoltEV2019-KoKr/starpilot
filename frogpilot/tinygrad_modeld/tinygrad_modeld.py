@@ -88,20 +88,34 @@ class ModelState:
     VISION_METADATA_PATH = model_dir / f"{model_id}_driving_vision_metadata.pkl"
     POLICY_METADATA_PATH = model_dir / f"{model_id}_driving_policy_metadata.pkl"
 
-    with open(VISION_METADATA_PATH, 'rb') as f:
-      vision_metadata = pickle.load(f)
-      self.vision_input_shapes =  vision_metadata['input_shapes']
-      self.vision_input_names = list(self.vision_input_shapes.keys())
-      self.vision_output_slices = vision_metadata['output_slices']
-      vision_output_size = vision_metadata['output_shapes']['outputs'][1]
+    try:
+      with open(VISION_METADATA_PATH, 'rb') as f:
+        vision_metadata = pickle.load(f)
+    except FileNotFoundError:
+      cloudlog.error(f"Missing metadata {VISION_METADATA_PATH}, downloading...")
+      from openpilot.frogpilot.assets.model_manager import ModelManager
+      ModelManager().download_model(model_id)
+      with open(VISION_METADATA_PATH, 'rb') as f:
+        vision_metadata = pickle.load(f)
+    self.vision_input_shapes =  vision_metadata['input_shapes']
+    self.vision_input_names = list(self.vision_input_shapes.keys())
+    self.vision_output_slices = vision_metadata['output_slices']
+    vision_output_size = vision_metadata['output_shapes']['outputs'][1]
 
-    with open(POLICY_METADATA_PATH, 'rb') as f:
-      policy_metadata = pickle.load(f)
-      self.policy_input_shapes =  policy_metadata['input_shapes']
-      self.policy_output_slices = policy_metadata['output_slices']
-      policy_output_size = policy_metadata['output_shapes']['outputs'][1]
-      # Add policy_generation attribute after loading policy_metadata
-      self.policy_generation = policy_metadata.get("generation", policy_metadata.get("version", "v8"))
+    try:
+      with open(POLICY_METADATA_PATH, 'rb') as f:
+        policy_metadata = pickle.load(f)
+    except FileNotFoundError:
+      cloudlog.error(f"Missing metadata {POLICY_METADATA_PATH}, downloading...")
+      from openpilot.frogpilot.assets.model_manager import ModelManager
+      ModelManager().download_model(model_id)
+      with open(POLICY_METADATA_PATH, 'rb') as f:
+        policy_metadata = pickle.load(f)
+    self.policy_input_shapes =  policy_metadata['input_shapes']
+    self.policy_output_slices = policy_metadata['output_slices']
+    policy_output_size = policy_metadata['output_shapes']['outputs'][1]
+    # Add policy_generation attribute after loading policy_metadata
+    self.policy_generation = policy_metadata.get("generation", policy_metadata.get("version", "v8"))
 
     self.frames = {name: DrivingModelFrame(context, ModelConstants.TEMPORAL_SKIP) for name in self.vision_input_names}
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
