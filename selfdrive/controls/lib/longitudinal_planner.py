@@ -95,8 +95,6 @@ class LongitudinalPlanner:
     self.dt = dt
     self.allow_throttle = True
 
-    self.generation = None
-
     self.a_desired = init_a
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
     self.v_model_error = 0.0
@@ -105,10 +103,6 @@ class LongitudinalPlanner:
     self.a_desired_trajectory = np.zeros(CONTROL_N)
     self.j_desired_trajectory = np.zeros(CONTROL_N)
     self.solverExecutionTime = 0.0
-
-  @property
-  def mlsim(self) -> bool:
-    return self.generation == "v8"
 
   @staticmethod
   def parse_model(model_msg, model_error, v_ego, taco_tune):
@@ -138,8 +132,6 @@ class LongitudinalPlanner:
     return x, v, a, j, throttle_prob
 
   def update(self, tinygrad_model, sm, frogpilot_toggles):
-    if self.generation is None:
-      self.generation = getattr(frogpilot_toggles, 'model_version', None)
     if tinygrad_model:
       self.mpc.mode = 'acc'
       self.mode = 'blended' if sm['controlsState'].experimentalMode else 'acc'
@@ -256,7 +248,7 @@ class LongitudinalPlanner:
       output_a_target_e2e = sm['modelV2'].action.desiredAcceleration
       output_should_stop_e2e = sm['modelV2'].action.shouldStop
 
-      if self.mode == 'acc' or not self.mlsim:
+      if self.mode == 'acc':
         a_target = output_a_target_mpc
         should_stop = output_should_stop_mpc
       else:
