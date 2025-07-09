@@ -94,6 +94,7 @@ class LongitudinalPlanner:
     self.fcw = False
     self.dt = dt
     self.allow_throttle = True
+    self.mode = 'acc'
 
     self.generation = None
 
