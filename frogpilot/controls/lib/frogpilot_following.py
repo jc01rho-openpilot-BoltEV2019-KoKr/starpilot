@@ -67,11 +67,7 @@ class FrogPilotFollowing:
 
     if sm["controlsState"].enabled and self.frogpilot_planner.tracking_lead:
       self.update_follow_values(self.frogpilot_planner.lead_one.dRel, v_ego, self.frogpilot_planner.lead_one.vLead, frogpilot_toggles)
-      if hasattr(sm['carControl'], 'orientationNED') and len(sm['carControl'].orientationNED) > 1:
-        pitch = sm['carControl'].orientationNED[1]
-      else:
-        pitch = 0.0
-      self.desired_follow_distance = int(desired_follow_distance(v_ego, self.frogpilot_planner.lead_one.vLead, self.t_follow, pitch=pitch))
+      self.desired_follow_distance = int(desired_follow_distance(v_ego, self.frogpilot_planner.lead_one.vLead, self.t_follow))
     else:
       self.desired_follow_distance = 0
 

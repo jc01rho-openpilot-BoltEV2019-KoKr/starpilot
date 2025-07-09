@@ -147,15 +147,10 @@ class LongitudinalPlanner:
     if not self.mlsim:
       self.mpc.mode = self.mode
 
-    if hasattr(sm['carControl'], 'orientationNED') and len(sm['carControl'].orientationNED) == 3:
+    if len(sm['carControl'].orientationNED) == 3:
       accel_coast = get_coast_accel(sm['carControl'].orientationNED[1])
     else:
       accel_coast = ACCEL_MAX
-
-    if hasattr(sm['carControl'], 'orientationNED') and len(sm['carControl'].orientationNED) > 1:
-      pitch = sm['carControl'].orientationNED[1]
-    else:
-      pitch = 0.0
 
     v_ego = max(sm['carState'].vEgo, sm['carState'].vEgoCluster)
     v_cruise = sm['frogpilotPlan'].vCruise
@@ -216,7 +211,7 @@ class LongitudinalPlanner:
     if not self.mlsim:
       self.mpc.mode = dec_mpc_mode
     self.mpc.update(self.lead_one, self.lead_two, v_cruise, x, v, a, j, sm['frogpilotPlan'].tFollow,
-                    sm['frogpilotCarState'].trafficModeEnabled, personality=sm['controlsState'].personality, pitch=pitch)
+                    sm['frogpilotCarState'].trafficModeEnabled, personality=sm['controlsState'].personality)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
