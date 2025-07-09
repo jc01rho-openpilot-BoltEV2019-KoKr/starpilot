@@ -110,6 +110,17 @@ class LongitudinalPlanner:
   def mlsim(self) -> bool:
     return self.generation == "v8"
 
+  def get_mpc_mode(self) -> str:
+      """
+      Determine the desired MPC mode: if not ML-SIM, MPC should follow self.mode;
+      otherwise leave MPC.mode unchanged.
+      """
+      # For non-ML-SIM generations, MPC mode tracks self.mode
+      if not self.mlsim:
+          return self.mode
+      # For ML-SIM (v8), preserve the existing MPC mode
+      return getattr(self.mpc, 'mode', 'acc')
+
   @staticmethod
   def parse_model(model_msg, model_error, v_ego, taco_tune):
     if (len(model_msg.position.x) == ModelConstants.IDX_N and
