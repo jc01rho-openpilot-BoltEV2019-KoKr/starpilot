@@ -25,6 +25,7 @@ class ModelManager:
     self.available_models = (params.get("AvailableModels", encoding="utf-8") or "").split(",")
     self.model_versions = (params.get("ModelVersions", encoding="utf-8") or "").split(",")
 
+
     self.downloading_model = False
 
   @staticmethod
@@ -301,6 +302,24 @@ class ModelManager:
       params.put("ExperimentalModels", ",".join([model["id"] for model in model_info if model.get("experimental", False)]))
       params.put("ModelVersions", ",".join(self.model_versions))
       print("Models list updated successfully")
+
+      # --- Generate per-model version JSON for offline UI ---
+      try:
+          versions_file = MODELS_PATH / ".model_versions.json"
+          version_map = {model_id: version for model_id, version in zip(self.available_models, self.model_versions)}
+          with open(versions_file, "w") as vf:
+              json.dump(version_map, vf)
+      except Exception as e:
+          print(f"Failed to write .model_versions.json: {e}")
+      # --- end JSON generation ---
+
+      # Immediately sync the active ModelVersion param
+      try:
+          current = params.get("Model", encoding="utf-8")
+          if current in version_map:
+              params.put("ModelVersion", version_map[current])
+      except Exception as e:
+          print(f"Failed to sync ModelVersion for {current}: {e}")
 
   def update_models(self, boot_run=False):
     if self.downloading_model:
