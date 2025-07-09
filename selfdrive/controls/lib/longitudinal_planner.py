@@ -95,6 +95,8 @@ class LongitudinalPlanner:
     self.dt = dt
     self.allow_throttle = True
 
+    self.generation = None
+
     self.a_desired = init_a
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
     self.v_model_error = 0.0
@@ -103,6 +105,10 @@ class LongitudinalPlanner:
     self.a_desired_trajectory = np.zeros(CONTROL_N)
     self.j_desired_trajectory = np.zeros(CONTROL_N)
     self.solverExecutionTime = 0.0
+
+  @property
+  def mlsim(self) -> bool:
+    return self.generation == "v8"
 
   @staticmethod
   def parse_model(model_msg, model_error, v_ego, taco_tune):
@@ -132,11 +138,14 @@ class LongitudinalPlanner:
     return x, v, a, j, throttle_prob
 
   def update(self, tinygrad_model, sm, frogpilot_toggles):
+    self.generation = frogpilot_toggles.model_version
     if tinygrad_model:
       self.mpc.mode = 'acc'
       self.mode = 'blended' if sm['controlsState'].experimentalMode else 'acc'
     else:
       self.mpc.mode = 'blended' if sm['controlsState'].experimentalMode else 'acc'
+    if not self.mlsim:
+      self.mpc.mode = self.mode
 
     if len(sm['carControl'].orientationNED) == 3:
       accel_coast = get_coast_accel(sm['carControl'].orientationNED[1])
@@ -197,6 +206,10 @@ class LongitudinalPlanner:
                          personality=sm['controlsState'].personality)
     self.mpc.set_accel_limits(accel_limits_turns[0], accel_limits_turns[1])
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
+    # After deciding the MPC mode via get_mpc_mode(), ensure MPC uses that mode when not mlsim
+    dec_mpc_mode = self.get_mpc_mode()
+    if not self.mlsim:
+      self.mpc.mode = dec_mpc_mode
     self.mpc.update(self.lead_one, self.lead_two, v_cruise, x, v, a, j, sm['frogpilotPlan'].tFollow,
                     sm['frogpilotCarState'].trafficModeEnabled, personality=sm['controlsState'].personality)
 
@@ -243,7 +256,7 @@ class LongitudinalPlanner:
       output_a_target_e2e = sm['modelV2'].action.desiredAcceleration
       output_should_stop_e2e = sm['modelV2'].action.shouldStop
 
-      if self.mode == 'acc':
+      if self.mode == 'acc' or not self.mlsim:
         a_target = output_a_target_mpc
         should_stop = output_should_stop_mpc
       else:

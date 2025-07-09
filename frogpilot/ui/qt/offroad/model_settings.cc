@@ -1,3 +1,6 @@
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include "frogpilot/ui/qt/offroad/model_settings.h"
 
 FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : FrogPilotListWidget(parent), parent(parent) {
@@ -137,6 +140,19 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
             if (!modelToDownload.isEmpty()) {
               QString modelKey = modelFileToNameMap.key(modelToDownload);
               params_memory.put("ModelToDownload", modelKey.toStdString());
+              // Also persist the version for this downloaded model
+              {
+                QFile vf("/data/models/.model_versions.json");
+                if (vf.open(QIODevice::ReadOnly)) {
+                  auto doc = QJsonDocument::fromJson(vf.readAll());
+                  if (doc.isObject()) {
+                    auto obj = doc.object();
+                    if (obj.contains(modelKey)) {
+                      params.put("ModelVersion", obj.value(modelKey).toString().toStdString());
+                    }
+                  }
+                }
+              }
               params_memory.put("ModelDownloadProgress", "Downloading...");
 
               downloadModelBtn->setText(0, tr("CANCEL"));
@@ -265,6 +281,19 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
 
           QString modelKey = modelFileToNameMap.key(modelToSelect);
           params.put("Model", modelKey.toStdString());
+          // Also apply stored version for selected model
+          {
+            QFile vf("/data/models/.model_versions.json");
+            if (vf.open(QIODevice::ReadOnly)) {
+              auto doc = QJsonDocument::fromJson(vf.readAll());
+              if (doc.isObject()) {
+                auto obj = doc.object();
+                if (obj.contains(modelKey)) {
+                  params.put("ModelVersion", obj.value(modelKey).toString().toStdString());
+                }
+              }
+            }
+          }
           updateFrogPilotToggles();
 
           if (started) {
@@ -318,6 +347,21 @@ void FrogPilotModelPanel::showEvent(QShowEvent *event) {
 
   availableModels = QString::fromStdString(params.get("AvailableModels")).split(",");
   availableModelNames = QString::fromStdString(params.get("AvailableModelNames")).split(",");
+
+  // Auto-generate model_versions.json so every downloaded model’s version is known
+  {
+    QStringList versionList = QString::fromStdString(params.get("AvailableModelVersions")).split(",");
+    QJsonObject versionObj;
+    int verCount = qMin(availableModels.size(), versionList.size());
+    for (int i = 0; i < verCount; ++i) {
+      versionObj.insert(availableModels[i], versionList[i]);
+    }
+    QFile out("/data/models/.model_versions.json");
+    if (out.open(QIODevice::WriteOnly)) {
+      out.write(QJsonDocument(versionObj).toJson());
+      out.close();
+    }
+  }
 
   modelFileToNameMap.clear();
   modelFileToNameMapProcessed.clear();
