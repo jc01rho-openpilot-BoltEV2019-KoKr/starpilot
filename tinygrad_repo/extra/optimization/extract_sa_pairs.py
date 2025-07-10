@@ -4,11 +4,11 @@ from tqdm import tqdm, trange
 import numpy as np
 
 # stuff needed to unpack a kernel
-from tinygrad.uop.ops import LazyOp, TernaryOps, BinaryOps, UnaryOps, ReduceOps, BufferOps, MemBuffer, ConstBuffer
+from tinygrad.ops import LazyOp, TernaryOps, BinaryOps, UnaryOps, ReduceOps, BufferOps, MemBuffer, ConstBuffer
 from tinygrad.dtype import dtypes
 from tinygrad.shape.shapetracker import ShapeTracker
 from tinygrad.shape.view import View
-from tinygrad.uop.ops import Variable
+from tinygrad.ops import Variable
 inf, nan = float('inf'), float('nan')
 from tinygrad.codegen.kernel import Opt, OptOps
 
@@ -51,7 +51,7 @@ def dataset_from_cache(fn):
       lin = Kernel(eval(ast))
     except Exception:
       continue
-    lin.apply_opts(k[:-1])
+    for opt in k[:-1]: lin.apply_opt(opt)
     act = k[-1]
     log_ratio = math.log(old_tm/new_tm)
     #print(f"ratio: {old_tm/new_tm:6.2f}x (log {log_ratio:5.2f}) from {str(act):50s} on {lin.colored_shape()}")
