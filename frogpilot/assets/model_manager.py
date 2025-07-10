@@ -13,7 +13,7 @@ from openpilot.frogpilot.assets.download_functions import GITLAB_URL, download_f
 from openpilot.frogpilot.common.frogpilot_utilities import delete_file
 from openpilot.frogpilot.common.frogpilot_variables import DEFAULT_CLASSIC_MODEL, DEFAULT_MODEL, DEFAULT_TINYGRAD_MODEL, MODELS_PATH, params, params_default, params_memory
 
-VERSION = "v17"
+VERSION = "v18"
 
 CANCEL_DOWNLOAD_PARAM = "CancelModelDownload"
 DOWNLOAD_PROGRESS_PARAM = "ModelDownloadProgress"
@@ -106,7 +106,7 @@ class ModelManager:
       self.downloading_model = False
       return
 
-    if model_version in ("v8", "v9"):
+    if model_version in ("v8", "v9", "v10"):
       # Download all PKL and metadata files for multi-file tinygrad models (v8 and v9)
       filenames = [
           f"{model_to_download}_driving_policy_tinygrad.pkl",
@@ -213,7 +213,7 @@ class ModelManager:
       except Exception:
         model_version = None
 
-      if model_version in ("v8", "v9"):
+      if model_version in ("v8", "v9", "v10"):
         v8_v9_files = [
           f"{model}_driving_policy_tinygrad.pkl",
           f"{model}_driving_vision_tinygrad.pkl",
@@ -264,7 +264,7 @@ class ModelManager:
       except Exception:
         model_version = None
 
-      if model_version in ("v8", "v9"):
+      if model_version in ("v8", "v9", "v10"):
         v8_v9_files = [
           f"{model}_driving_policy_tinygrad.pkl",
           f"{model}_driving_vision_tinygrad.pkl",
@@ -352,7 +352,7 @@ class ModelManager:
           handle_error(None, "Download cancelled...", "Download cancelled...", MODEL_DOWNLOAD_ALL_PARAM, DOWNLOAD_PROGRESS_PARAM, params_memory)
           return
 
-        if model_version in ("v8", "v9"):
+        if model_version in ("v8", "v9", "v10"):
           required_files = [
               f"{model}_driving_policy_tinygrad.pkl",
               f"{model}_driving_vision_tinygrad.pkl",

@@ -95,8 +95,14 @@ class Parser:
                      out_shape=(ModelConstants.NUM_ROAD_EDGES, ModelConstants.IDX_N, ModelConstants.LANE_LINES_WIDTH))
     # lead
     if 'lead' in outs:
-      self.parse_mdn('lead', outs, in_N=ModelConstants.LEAD_MHP_N, out_N=ModelConstants.LEAD_MHP_SELECTION,
-                     out_shape=(ModelConstants.LEAD_TRAJ_LEN, ModelConstants.LEAD_WIDTH))
+      if outs['lead'].shape[1] == 2 * ModelConstants.LEAD_MHP_SELECTION * ModelConstants.LEAD_TRAJ_LEN * ModelConstants.LEAD_WIDTH:
+          # new v9-style flat layout
+          self.parse_mdn('lead', outs, in_N=0, out_N=0,
+                         out_shape=(ModelConstants.LEAD_MHP_SELECTION, ModelConstants.LEAD_TRAJ_LEN, ModelConstants.LEAD_WIDTH))
+      else:
+          # classic/v8 layout
+          self.parse_mdn('lead', outs, in_N=ModelConstants.LEAD_MHP_N, out_N=ModelConstants.LEAD_MHP_SELECTION,
+                         out_shape=(ModelConstants.LEAD_TRAJ_LEN, ModelConstants.LEAD_WIDTH))
     # sim_pose
     if 'sim_pose' in outs:
       self.parse_mdn('sim_pose', outs, in_N=0, out_N=0, out_shape=(ModelConstants.POSE_WIDTH,))
@@ -115,8 +121,14 @@ class Parser:
     return outs
 
   def parse_policy_outputs(self, outs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    self.parse_mdn('plan', outs, in_N=ModelConstants.PLAN_MHP_N, out_N=ModelConstants.PLAN_MHP_SELECTION,
-                   out_shape=(ModelConstants.IDX_N,ModelConstants.PLAN_WIDTH))
+    if outs['plan'].shape[1] > 2 * ModelConstants.PLAN_WIDTH * ModelConstants.IDX_N:
+        # multi-hypothesis layout (v8/v9+)
+        self.parse_mdn('plan', outs, in_N=ModelConstants.PLAN_MHP_N, out_N=ModelConstants.PLAN_MHP_SELECTION,
+                       out_shape=(ModelConstants.IDX_N,ModelConstants.PLAN_WIDTH))
+    else:
+        # single-hypothesis/classic layout
+        self.parse_mdn('plan', outs, in_N=0, out_N=0,
+                       out_shape=(ModelConstants.IDX_N, ModelConstants.PLAN_WIDTH))
     self.split_outputs(outs)
     if 'lat_planner_solution' in outs:
       self.parse_mdn('lat_planner_solution', outs, in_N=0, out_N=0, out_shape=(ModelConstants.IDX_N,ModelConstants.LAT_PLANNER_SOLUTION_WIDTH))
