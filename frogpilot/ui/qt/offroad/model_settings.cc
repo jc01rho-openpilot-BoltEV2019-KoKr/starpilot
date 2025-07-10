@@ -350,7 +350,7 @@ void FrogPilotModelPanel::showEvent(QShowEvent *event) {
 
   // Auto-generate model_versions.json so every downloaded model’s version is known
   {
-    QStringList versionList = QString::fromStdString(params.get("AvailableModelVersions")).split(",");
+    QStringList versionList = QString::fromStdString(params.get("ModelVersions")).split(",");
     QJsonObject versionObj;
     int verCount = qMin(availableModels.size(), versionList.size());
     for (int i = 0; i < verCount; ++i) {
