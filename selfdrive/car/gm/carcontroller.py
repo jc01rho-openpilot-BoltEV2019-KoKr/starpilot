@@ -109,7 +109,7 @@ class CarController(CarControllerBase):
     # --- Immediate application of raw pedal gas, no blending ---
     pedal_gas = raw_pedal_gas
     # Safety cap: ramp from 22% at 0 m/s to 37.25% at 10 mph (4.47 m/s), then allow full throttle
-    pedal_gas_max = interp(car_velocity, [0.0, 4.47, 35], [0.22, 0.3675, 0.75])
+    pedal_gas_max = interp(car_velocity, [0.0, 4.47, 15], [0.22, 0.3675, 0.85])
     pedal_gas = clip(pedal_gas, 0.0, pedal_gas_max)
     return pedal_gas, press_regen_paddle
 
