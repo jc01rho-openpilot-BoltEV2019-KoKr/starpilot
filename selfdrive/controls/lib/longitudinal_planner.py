@@ -109,8 +109,7 @@ class LongitudinalPlanner:
 
   @property
   def mlsim(self) -> bool:
-    # Treat v8 and v10 generations as ML-SIM
-    return self.generation in ("v8", "v10")
+    return self.generation == "v8"
 
   def get_mpc_mode(self) -> str:
       """

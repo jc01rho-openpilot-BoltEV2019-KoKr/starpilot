@@ -2,12 +2,12 @@
 import unittest
 
 from tinygrad import Device
-from tinygrad.ops import UOp, Ops
-from tinygrad.engine.search import Opt, OptOps
+from tinygrad.uop.ops import UOp, Ops
+from tinygrad.opt.search import Opt, OptOps
 from tinygrad.dtype import dtypes
 from tinygrad.shape.shapetracker import ShapeTracker
 from tinygrad.shape.view import View
-from tinygrad.codegen.kernel import Kernel
+from tinygrad.opt.kernel import Kernel
 
 class TestOpenpilotValidhack(unittest.TestCase):
   def test_valid_removal(self):
@@ -51,10 +51,10 @@ class TestOpenpilotValidhack(unittest.TestCase):
               x19,)),
             x29,)),)),)),))
 
-    opts = [Opt(op=OptOps.UPCAST, axis=3, amt=4), Opt(op=OptOps.UNROLL, axis=1, amt=4), Opt(op=OptOps.UPCAST, axis=1, amt=4), Opt(op=OptOps.NOLOCALS, axis=None, amt=None)]
+    opts = [Opt(op=OptOps.UPCAST, axis=3, arg=4), Opt(op=OptOps.UNROLL, axis=1, arg=4), Opt(op=OptOps.UPCAST, axis=1, arg=4), Opt(op=OptOps.NOLOCALS, axis=None, arg=None)]
     kernel = Kernel(ast)
 
-    for opt in opts: kernel.apply_opt(opt)
+    kernel.apply_opts(opts)
 
     p = kernel.to_program()
     print(p.src)
@@ -108,10 +108,10 @@ class TestOpenpilotValidhack(unittest.TestCase):
               UOp(Ops.DEFINE_GLOBAL, dtypes.imagef((1, 128, 4)), arg=3, src=()),
               UOp(Ops.VIEW, dtypes.void, arg=ShapeTracker(views=(View(shape=(1, 10, 512), strides=(0, 0, 1), offset=0, mask=((0, 1), (9, 10), (0, 512)), contiguous=False),)), src=()),)),)),)),)),))
 
-    opts = [Opt(op=OptOps.UPCAST, axis=1, amt=4), Opt(op=OptOps.NOLOCALS, axis=None, amt=None)]
+    opts = [Opt(op=OptOps.UPCAST, axis=1, arg=4), Opt(op=OptOps.NOLOCALS, axis=None, arg=None)]
     kernel = Kernel(ast)
 
-    for opt in opts: kernel.apply_opt(opt)
+    kernel.apply_opts(opts)
 
     p = kernel.to_program()
     # ((idx1<1)?read_imagef(data1, smp, (int2)(idx0,0)):(float4)(0.0f,0.0f,0.0f,0.0f))

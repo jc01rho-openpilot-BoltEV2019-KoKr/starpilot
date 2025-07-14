@@ -1,12 +1,15 @@
 import numpy as np
 from openpilot.frogpilot.tinygrad_modeld.constants import ModelConstants
 
+
 def safe_exp(x, out=None):
   # -11 is around 10**14, more causes float16 overflow
   return np.exp(np.clip(x, -np.inf, 11), out=out)
 
+
 def sigmoid(x):
   return 1. / (1. + safe_exp(-x))
+
 
 def softmax(x, axis=-1):
   x -= np.max(x, axis=axis, keepdims=True)
@@ -16,6 +19,7 @@ def softmax(x, axis=-1):
     x = safe_exp(x)
   x /= np.sum(x, axis=axis, keepdims=True)
   return x
+
 
 class Parser:
   def __init__(self, ignore_missing=False):
@@ -85,30 +89,28 @@ class Parser:
     outs[name + '_stds'] = pred_std_final.reshape(final_shape)
 
   def split_outputs(self, outs: dict[str, np.ndarray]) -> None:
-    # lane_lines
+    if 'lead' in outs:
+      if outs['lead'].shape[1] == 2 * ModelConstants.LEAD_MHP_SELECTION * ModelConstants.LEAD_TRAJ_LEN * ModelConstants.LEAD_WIDTH:
+        self.parse_mdn('lead', outs, in_N=0, out_N=0,
+                       out_shape=(ModelConstants.LEAD_MHP_SELECTION, ModelConstants.LEAD_TRAJ_LEN, ModelConstants.LEAD_WIDTH))
+      else:
+        self.parse_mdn('lead', outs, in_N=ModelConstants.LEAD_MHP_N, out_N=ModelConstants.LEAD_MHP_SELECTION,
+                      out_shape=(ModelConstants.LEAD_TRAJ_LEN, ModelConstants.LEAD_WIDTH))
+    if 'plan' in outs:
+      if outs['plan'].shape[1] > 2 * ModelConstants.PLAN_WIDTH * ModelConstants.IDX_N:
+        self.parse_mdn('plan', outs, in_N=ModelConstants.PLAN_MHP_N, out_N=ModelConstants.PLAN_MHP_SELECTION,
+                       out_shape=(ModelConstants.IDX_N, ModelConstants.PLAN_WIDTH))
+      else:
+        self.parse_mdn('plan', outs, in_N=0, out_N=0,
+                      out_shape=(ModelConstants.IDX_N, ModelConstants.PLAN_WIDTH))
     if 'lane_lines' in outs:
       self.parse_mdn('lane_lines', outs, in_N=0, out_N=0,
                      out_shape=(ModelConstants.NUM_LANE_LINES, ModelConstants.IDX_N, ModelConstants.LANE_LINES_WIDTH))
-    # road_edges
-    if 'road_edges' in outs:
       self.parse_mdn('road_edges', outs, in_N=0, out_N=0,
                      out_shape=(ModelConstants.NUM_ROAD_EDGES, ModelConstants.IDX_N, ModelConstants.LANE_LINES_WIDTH))
-    # lead
-    if 'lead' in outs:
-      if outs['lead'].shape[1] == 2 * ModelConstants.LEAD_MHP_SELECTION * ModelConstants.LEAD_TRAJ_LEN * ModelConstants.LEAD_WIDTH:
-          # new v9-style flat layout
-          self.parse_mdn('lead', outs, in_N=0, out_N=0,
-                         out_shape=(ModelConstants.LEAD_MHP_SELECTION, ModelConstants.LEAD_TRAJ_LEN, ModelConstants.LEAD_WIDTH))
-      else:
-          # classic/v8 layout
-          self.parse_mdn('lead', outs, in_N=ModelConstants.LEAD_MHP_N, out_N=ModelConstants.LEAD_MHP_SELECTION,
-                         out_shape=(ModelConstants.LEAD_TRAJ_LEN, ModelConstants.LEAD_WIDTH))
-    # sim_pose
-    if 'sim_pose' in outs:
-      self.parse_mdn('sim_pose', outs, in_N=0, out_N=0, out_shape=(ModelConstants.POSE_WIDTH,))
-    # binary crossentropy keys
-    for k in ['lead_prob', 'lane_lines_prob']:
-      if k in outs:
+      if 'sim_pose' in outs:
+        self.parse_mdn('sim_pose', outs, in_N=0, out_N=0, out_shape=(ModelConstants.POSE_WIDTH,))
+      for k in ['lead_prob', 'lane_lines_prob']:
         self.parse_binary_crossentropy(k, outs)
 
   def parse_vision_outputs(self, outs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -116,22 +118,14 @@ class Parser:
     self.parse_mdn('wide_from_device_euler', outs, in_N=0, out_N=0, out_shape=(ModelConstants.WIDE_FROM_DEVICE_WIDTH,))
     self.parse_mdn('road_transform', outs, in_N=0, out_N=0, out_shape=(ModelConstants.POSE_WIDTH,))
     self.split_outputs(outs)
-    self.parse_categorical_crossentropy('desire_pred', outs, out_shape=(ModelConstants.DESIRE_PRED_LEN,ModelConstants.DESIRE_PRED_WIDTH))
+    self.parse_categorical_crossentropy('desire_pred', outs, out_shape=(ModelConstants.DESIRE_PRED_LEN, ModelConstants.DESIRE_PRED_WIDTH))
     self.parse_binary_crossentropy('meta', outs)
     return outs
 
   def parse_policy_outputs(self, outs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    if outs['plan'].shape[1] > 2 * ModelConstants.PLAN_WIDTH * ModelConstants.IDX_N:
-        # multi-hypothesis layout (v8/v9+)
-        self.parse_mdn('plan', outs, in_N=ModelConstants.PLAN_MHP_N, out_N=ModelConstants.PLAN_MHP_SELECTION,
-                       out_shape=(ModelConstants.IDX_N,ModelConstants.PLAN_WIDTH))
-    else:
-        # single-hypothesis/classic layout
-        self.parse_mdn('plan', outs, in_N=0, out_N=0,
-                       out_shape=(ModelConstants.IDX_N, ModelConstants.PLAN_WIDTH))
     self.split_outputs(outs)
     if 'lat_planner_solution' in outs:
-      self.parse_mdn('lat_planner_solution', outs, in_N=0, out_N=0, out_shape=(ModelConstants.IDX_N,ModelConstants.LAT_PLANNER_SOLUTION_WIDTH))
+      self.parse_mdn('lat_planner_solution', outs, in_N=0, out_N=0, out_shape=(ModelConstants.IDX_N, ModelConstants.LAT_PLANNER_SOLUTION_WIDTH))
     if 'desired_curvature' in outs:
       self.parse_mdn('desired_curvature', outs, in_N=0, out_N=0, out_shape=(ModelConstants.DESIRED_CURV_WIDTH,))
     self.parse_categorical_crossentropy('desire_state', outs, out_shape=(ModelConstants.DESIRE_PRED_WIDTH,))

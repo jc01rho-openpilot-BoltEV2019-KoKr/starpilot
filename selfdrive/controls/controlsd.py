@@ -671,7 +671,7 @@ class Controls:
         self.LaC.update_live_torque_params(torque_params.latAccelFactorFiltered, torque_params.latAccelOffsetFiltered,
                                            torque_params.frictionCoefficientFiltered)
 
-      if self.sm.all_checks(['liveDelay']) and self.sm.updated['liveDelay']:
+      if self.sm.updated['liveDelay']:
         self.LaC.update_live_delay(self.sm['liveDelay'].lateralDelay)
 
     long_plan = self.sm['longitudinalPlan']

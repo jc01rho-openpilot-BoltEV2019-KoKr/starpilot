@@ -108,7 +108,7 @@ class LatControlTorque(LatControl):
       self.nn_friction_override = CI.lat_torque_nn_model.friction_override
 
       # setup future time offsets
-      self.nn_time_offset = lateral_delay + 0.2
+      self.nn_time_offset = lateral_delay + 0.0
       self.future_times = [0.3, 0.6, 1.0, 1.5] # seconds in the future
       self.nn_future_times = [i + self.nn_time_offset for i in self.future_times]
 
