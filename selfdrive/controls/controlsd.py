@@ -172,10 +172,7 @@ class Controls:
     self.second = 0.0
     self.autoNaviSpeedCtrlStart = float(Params().get("AutoNaviSpeedCtrlStart"))
     self.autoNaviSpeedCtrlEnd = float(Params().get("AutoNaviSpeedCtrlEnd"))
-    self.traffic_signal_check_timer = 0
-    self.TRAFFIC_SIGNAL_CHECK_INTERVAL = 10.0  # 10초 간격
-    self.nda_camera_warn_timer = 0.0
-    self.NDA_CAMERA_WARN_INTERVAL = 0.75  # 0.75초 간격
+
 
     self.can_log_mono_time = 0
 
@@ -540,12 +537,10 @@ class Controls:
     # NDA neokii
     apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = SpeedLimiter.instance().get_max_speed(CS, self.v_cruise_helper.v_cruise_kph, self.autoNaviSpeedCtrlStart, self.autoNaviSpeedCtrlEnd)
 
-    # NDA Camera Warning - runs at 2Hz
-    self.nda_camera_warn_timer += DT_CTRL
-    if self.nda_camera_warn_timer >= self.NDA_CAMERA_WARN_INTERVAL:
+    # NDA Camera Warning - uses Ratekeeper for precise timing
+    if (self.sm.frame - self.sm.recv_frame['naviData']) * DT_CTRL > 0.75:
       if CS.vEgo * CV.MS_TO_KPH > (apply_limit_speed / 1.5) and left_dist > 1.0:
         self.events.add(EventName.ndaCameraWarn)
-      self.nda_camera_warn_timer = 0.0
 
 
     # self.traffic_signal_check_timer += DT_CTRL
