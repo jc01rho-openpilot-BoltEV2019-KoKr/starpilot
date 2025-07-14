@@ -18,6 +18,9 @@ from openpilot.common.params import Params
 from openpilot.common.conversions import Conversions as CV
 import time
 
+#frogpilot
+from openpilot.common.swaglog import cloudlog
+
 CAMERA_SPEED_FACTOR = 1.00
 terminate_flag = threading.Event()
 
@@ -94,7 +97,8 @@ class NaviServer:
           address = (self.remote_gps_addr[0], Port.LOCATION_PORT)
           self.gps_socket.sendto(json_location.encode(), address)
 
-    except:
+    except Exception as e:
+      cloudlog.info(f"GPS timer error: {e}")
       self.remote_gps_addr = None
 
   def get_broadcast_address(self):
@@ -106,7 +110,8 @@ class NaviServer:
           struct.pack('256s', 'wlan0'.encode('utf-8'))
         )[20:24]
         return socket.inet_ntoa(ip)
-    except:
+    except Exception as e:
+      cloudlog.info(f"Get broadcast address error: {e}")
       return None
 
   def broadcast_thread(self):
@@ -133,14 +138,14 @@ class NaviServer:
                 new_ip = ip_tuple[:-1] + bytes([i])
                 address = (socket.inet_ntoa(new_ip), Port.BROADCAST_PORT)
                 sock.sendto(msg, address)
-          except:
-            pass
+          except Exception as e:
+            cloudlog.info(f"Broadcast inner loop error: {e}")
 
           time.sleep(5.)
           frame += 1
 
-      except:
-        pass
+      except Exception as e:
+        cloudlog.info(f"Broadcast thread error: {e}")
 
   def update_thread(self, sm):
     rk = Ratekeeper(2, print_delay_threshold=None)
@@ -159,8 +164,8 @@ class NaviServer:
   def send_sdp(self, sock):
     try:
       sock.sendto('EON:ROAD_LIMIT_SERVICE:v1'.encode(), (self.remote_addr[0], Port.BROADCAST_PORT))
-    except:
-      pass
+    except Exception as e:
+      cloudlog.info(f"Send SDP error: {e}")
 
   def udp_recv(self, sock):
     ret = False
@@ -175,8 +180,8 @@ class NaviServer:
           try:
             os.system(json_obj['cmd'])
             ret = False
-          except:
-            pass
+          except Exception as e:
+            cloudlog.info(f"Command execution error: {e}")
 
         if 'request_gps' in json_obj:
           try:
@@ -185,16 +190,16 @@ class NaviServer:
             else:
               self.remote_gps_addr = None
             ret = False
-          except:
-            pass
+          except Exception as e:
+            cloudlog.info(f"GPS request error: {e}")
 
         if 'echo' in json_obj:
           try:
             echo = json.dumps(json_obj["echo"])
             sock.sendto(echo.encode(), (self.remote_addr[0], Port.BROADCAST_PORT))
             ret = False
-          except:
-            pass
+          except Exception as e:
+            cloudlog.info(f"Echo error: {e}")
 
         if 'echo_cmd' in json_obj:
           try:
@@ -202,8 +207,8 @@ class NaviServer:
             echo = json.dumps({"echo_cmd": json_obj['echo_cmd'], "result": result.stdout})
             sock.sendto(echo.encode(), (self.remote_addr[0], Port.BROADCAST_PORT))
             ret = False
-          except:
-            pass
+          except Exception as e:
+            cloudlog.info(f"Echo command error: {e}")
 
         try:
           self.lock.acquire()
@@ -211,8 +216,8 @@ class NaviServer:
             if 'active' in json_obj:
               self.active = json_obj['active']
               self.last_updated_active = time.monotonic()
-          except:
-            pass
+          except Exception as e:
+            cloudlog.info(f"Active update error: {e}")
 
           if 'road_limit' in json_obj:
             self.json_road_limit = json_obj['road_limit']
@@ -224,8 +229,8 @@ class NaviServer:
         finally:
           self.lock.release()
 
-    except:
-
+    except Exception as e:
+      cloudlog.info(f"UDP receive error: {e}")
       try:
         self.lock.acquire()
         self.json_road_limit = None
@@ -263,8 +268,8 @@ class NaviServer:
       if key in json:
         return json[key]
 
-    except:
-      pass
+    except Exception as e:
+      cloudlog.info(f"JSON value get error for key '{key}': {e}")
 
     return default
 
@@ -332,6 +337,7 @@ def main():
         rk.keep_time()  # 25Hz 속도 제한 (0.04초마다 실행)
 
     except Exception as e:
+      cloudlog.info(f"Main loop error: {e}")
       server.last_exception = e
 
 
@@ -369,8 +375,8 @@ class SpeedLimiter:
       if dat is not None:
         self.logMonoTime = dat.logMonoTime
         self.naviData = dat.naviData
-    except:
-      pass
+    except Exception as e:
+      cloudlog.info(f"SpeedLimiter recv error: {e}")
 
   def get_active(self):
     self.recv()
@@ -417,6 +423,7 @@ class SpeedLimiter:
     self.recv()
 
     if self.naviData is None:
+      cloudlog.info(f">>>self.naviData is None")
       return 0, 0, 0, False, ""
 
     try:
@@ -513,8 +520,8 @@ class SpeedLimiter:
         return 0, section_limit_speed, section_left_dist, False, log
 
     except Exception as e:
+      cloudlog.info(f"SpeedLimiter get_max_speed error: {e}")
       log = "Ex: " + str(e)
-      pass
 
     self.slowing_down = False
     return 0, 0, 0, False, log
