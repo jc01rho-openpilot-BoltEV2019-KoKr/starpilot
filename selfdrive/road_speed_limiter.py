@@ -35,8 +35,8 @@ class Port:
 class NaviServer:
   def __init__(self):
 
-    # self.sm = messaging.SubMaster(['gpsLocationExternal', 'carState'] , frequency=int(1./DT_CTRL))
-    self.sm = messaging.SubMaster(['gpsLocationExternal'] , frequency=int(1./DT_CTRL))
+    self.sm = messaging.SubMaster(['gpsLocationExternal', 'carState'] , frequency=int(1./DT_CTRL))
+    # self.sm = messaging.SubMaster(['gpsLocationExternal'] , frequency=int(1./DT_CTRL))
 
     self.json_road_limit = None
     self.json_traffic_signal = None
