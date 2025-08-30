@@ -214,8 +214,8 @@ class Controls:
     self.comm_issue_timestamps = []
     self.comm_issue_avg_freq_timestamps = []
     self.comm_issue_generic_timestamps = []
-    self.comm_issue_threshold = 50
-    self.comm_issue_window = 1.0 # 1 second
+    self.comm_issue_threshold = 75
+    self.comm_issue_window = 0.75 # 1 second
 
     # LocationdTemporaryError frequency tracking (50 times in 1 second)
     self.locationd_error_timestamps = []
