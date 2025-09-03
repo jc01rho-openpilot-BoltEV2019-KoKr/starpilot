@@ -237,12 +237,12 @@ class LongitudinalPlanner:
       cloudlog.info("FCW triggered")
 
     # Safety checks for rubber-banding mitigation
-    max_jerk = np.max(np.abs(self.mpc.j_solution))
-    max_accel_change = np.max(np.abs(np.diff(self.mpc.a_solution)))
-    if max_jerk > 5.0:  # m/s^3
-      cloudlog.warning(f"High jerk detected: {max_jerk:.2f} m/s^3")
-    if max_accel_change > 2.0:  # m/s^2
-      cloudlog.warning(f"High acceleration change: {max_accel_change:.2f} m/s^2")
+    # max_jerk = np.max(np.abs(self.mpc.j_solution))
+    # max_accel_change = np.max(np.abs(np.diff(self.mpc.a_solution)))
+    # if max_jerk > 5.0:  # m/s^3
+    #   cloudlog.warning(f"High jerk detected: {max_jerk:.2f} m/s^3")
+    # if max_accel_change > 2.0:  # m/s^2
+    #   cloudlog.warning(f"High acceleration change: {max_accel_change:.2f} m/s^2")
 
     # Interpolate 0.05 seconds and save as starting point for next iteration
     a_prev = self.a_desired
