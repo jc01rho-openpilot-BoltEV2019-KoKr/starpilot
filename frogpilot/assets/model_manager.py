@@ -13,7 +13,7 @@ from openpilot.frogpilot.assets.download_functions import GITLAB_URL, download_f
 from openpilot.frogpilot.common.frogpilot_utilities import delete_file
 from openpilot.frogpilot.common.frogpilot_variables import DEFAULT_CLASSIC_MODEL, DEFAULT_MODEL, DEFAULT_TINYGRAD_MODEL, MODELS_PATH, params, params_default, params_memory
 
-VERSION = "v19"
+VERSION = "v20"
 
 CANCEL_DOWNLOAD_PARAM = "CancelModelDownload"
 DOWNLOAD_PROGRESS_PARAM = "ModelDownloadProgress"
@@ -24,6 +24,7 @@ class ModelManager:
   def __init__(self):
     self.available_models = (params.get("AvailableModels", encoding="utf-8") or "").split(",")
     self.model_versions = (params.get("ModelVersions", encoding="utf-8") or "").split(",")
+    self.model_series = (params.get("AvailableModelSeries", encoding="utf-8") or "").split(",")
 
 
     self.downloading_model = False
@@ -296,10 +297,13 @@ class ModelManager:
   def update_model_params(self, model_info, repo_url):
       self.available_models = [model["id"] for model in model_info]
       self.model_versions = [model["version"] for model in model_info]
+      self.model_series = [model.get("series", "Dom Forgot To Label Me") for model in model_info]
 
       params.put("AvailableModels", ",".join(self.available_models))
       params.put("AvailableModelNames", ",".join([model["name"] for model in model_info]))
+      params.put("AvailableModelSeries", ",".join(self.model_series))
       params.put("ModelVersions", ",".join(self.model_versions))
+      params.put("AvailableModelSeries", ",".join(self.model_series))
       print("Models list updated successfully")
 
       # --- Generate per-model version JSON for offline UI ---
@@ -370,6 +374,7 @@ class ModelManager:
       available_models = [model["id"] for model in model_info]
       available_model_names = [re.sub(r"[🗺️👀📡]", "", model["name"]).strip() for model in model_info]
       model_versions = [model["version"] for model in model_info]
+      model_series = [model.get("series", "Dom Forgot To Label Me") for model in model_info]
 
       for model, model_name, model_version in zip(available_models, available_model_names, model_versions):
         if params_memory.get_bool(CANCEL_DOWNLOAD_PARAM):

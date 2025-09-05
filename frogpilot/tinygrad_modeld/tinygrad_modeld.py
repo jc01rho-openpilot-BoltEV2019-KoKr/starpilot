@@ -167,8 +167,9 @@ class ModelState:
     self.numpy_inputs = {}
 
     # Always-supported inputs (if model expects them)
-    if 'desire' in self.policy_input_shapes:
-      self.numpy_inputs['desire'] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.DESIRE_LEN), dtype=np.float32)
+    desire_key_init = next((k for k in self.policy_input_shapes if k.startswith('desire')), None)
+    if desire_key_init:
+      self.numpy_inputs[desire_key_init] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.DESIRE_LEN), dtype=np.float32)
     if 'traffic_convention' in self.policy_input_shapes:
       self.numpy_inputs['traffic_convention'] = np.zeros((1, ModelConstants.TRAFFIC_CONVENTION_LEN), dtype=np.float32)
     if 'features_buffer' in self.policy_input_shapes:
@@ -206,6 +207,10 @@ class ModelState:
     with open(POLICY_PKL_PATH, "rb") as f:
       self.policy_run = pickle.load(f)
 
+  @property
+  def desire_key(self) -> str:
+    return next(key for key in self.numpy_inputs if key.startswith('desire'))
+
   def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
     parsed_model_outputs = {k: model_outputs[np.newaxis, v] for k,v in output_slices.items()}
     return parsed_model_outputs
@@ -213,13 +218,13 @@ class ModelState:
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
                 inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
     # Model decides when action is completed, so desire input is just a pulse triggered on rising edge
-    inputs['desire'][0] = 0
-    new_desire = np.where(inputs['desire'] - self.prev_desire > .99, inputs['desire'], 0)
-    self.prev_desire[:] = inputs['desire']
+    inputs[self.desire_key][0] = 0
+    new_desire = np.where(inputs[self.desire_key] - self.prev_desire > .99, inputs[self.desire_key], 0)
+    self.prev_desire[:] = inputs[self.desire_key]
 
     self.full_desire[0,:-1] = self.full_desire[0,1:]
     self.full_desire[0,-1] = new_desire
-    self.numpy_inputs['desire'][:] = self.full_desire.reshape((1,ModelConstants.INPUT_HISTORY_BUFFER_LEN,ModelConstants.TEMPORAL_SKIP,-1)).max(axis=2)
+    self.numpy_inputs[self.desire_key][:] = self.full_desire.reshape((1,ModelConstants.INPUT_HISTORY_BUFFER_LEN,ModelConstants.TEMPORAL_SKIP,-1)).max(axis=2)
 
     self.numpy_inputs['traffic_convention'][:] = inputs['traffic_convention']
     if 'lateral_control_params' in self.numpy_inputs:
@@ -414,7 +419,7 @@ def main(demo=False):
     transforms = {name: model_transform_extra if 'big' in name else model_transform_main for name in model.vision_input_names}
 
     inputs:dict[str, np.ndarray] = {
-      'desire': vec_desire,
+      model.desire_key: vec_desire,
       'traffic_convention': traffic_convention,
     }
     # Include optional inputs only if the loaded model expects them

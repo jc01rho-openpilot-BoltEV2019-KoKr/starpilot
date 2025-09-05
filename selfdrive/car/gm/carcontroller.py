@@ -24,7 +24,7 @@ TransmissionType = car.CarParams.TransmissionType
 # Camera cancels up to 0.1s after brake is pressed, ECM allows 0.5s
 CAMERA_CANCEL_DELAY_FRAMES = 10
 # Enforce a minimum interval between steering messages to avoid a fault
-MIN_STEER_MSG_INTERVAL_MS = 1
+MIN_STEER_MSG_INTERVAL_MS = 15
 # Two‑sided spacing tuned for ~33 Hz steer; target a 10 ms wide window per interval
 # Paddle spoofing and scheduling constants
 PADDLE_STEER_GAP_MIN_NS = 5_000_000   # ≥5 ms each side (EPS guard)

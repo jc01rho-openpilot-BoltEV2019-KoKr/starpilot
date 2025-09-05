@@ -214,8 +214,9 @@ class LongitudinalPlanner:
     self.lead_one = sm['radarState'].leadOne
     self.lead_two = sm['radarState'].leadTwo
 
+    lead_dist = self.lead_one.dRel if self.lead_one.status else 50.0
     self.mpc.set_weights(sm['frogpilotPlan'].accelerationJerk, sm['frogpilotPlan'].dangerJerk, sm['frogpilotPlan'].speedJerk, prev_accel_constraint,
-                         personality=sm['controlsState'].personality)
+                         personality=sm['controlsState'].personality, v_ego=v_ego, lead_dist=lead_dist)
     self.mpc.set_accel_limits(accel_limits_turns[0], accel_limits_turns[1])
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
     # After deciding the MPC mode via get_mpc_mode(), ensure MPC uses that mode when not mlsim
@@ -234,6 +235,14 @@ class LongitudinalPlanner:
     self.fcw = self.mpc.crash_cnt > 2 and not sm['carState'].standstill
     if self.fcw:
       cloudlog.info("FCW triggered")
+
+    # Safety checks for rubber-banding mitigation
+    max_jerk = np.max(np.abs(self.mpc.j_solution))
+    max_accel_change = np.max(np.abs(np.diff(self.mpc.a_solution)))
+    if max_jerk > 5.0:  # m/s^3
+      cloudlog.warning(f"High jerk detected: {max_jerk:.2f} m/s^3")
+    if max_accel_change > 2.0:  # m/s^2
+      cloudlog.warning(f"High acceleration change: {max_accel_change:.2f} m/s^2")
 
     # Interpolate 0.05 seconds and save as starting point for next iteration
     a_prev = self.a_desired

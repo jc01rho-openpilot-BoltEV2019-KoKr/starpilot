@@ -273,6 +273,11 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
     int button = (GET_BYTE(to_send, 5) >> 4) & 0x7U;
 
     bool allowed_btn = (button == GM_BTN_CANCEL) && cruise_engaged_prev;
+    // For ACC cars with pedal interceptor, allow cancel even if cruise_engaged_prev is false
+    // (since we set it to false to prevent conflicts, but still need to cancel cruise)
+    if (gm_hw == GM_CAM && enable_gas_interceptor && button == GM_BTN_CANCEL) {
+      allowed_btn = true;
+    }
     // For standard CC, allow spamming of SET / RESUME
     if (gm_cc_long) {
       allowed_btn |= cruise_engaged_prev && (button == GM_BTN_SET || button == GM_BTN_RESUME || button == GM_BTN_UNPRESS);
@@ -315,9 +320,13 @@ static int gm_fwd_hook(int bus_num, int addr) {
     }
 
     if (bus_num == 2) {
-      // block lkas message and acc messages if gm_cam_long, forward all others
+      // block lkas message and acc messages
+      // Block 0x370 only for experimental long without pedal interceptor
       bool is_lkas_msg = (addr == 0x180);
-      bool is_acc_msg = (addr == 0x315) || (addr == 0x2CB) || (addr == 0x370);
+      bool is_acc_msg = (addr == 0x315) || (addr == 0x2CB);
+      if (gm_cam_long && !enable_gas_interceptor) {
+        is_acc_msg = is_acc_msg || (addr == 0x370);
+      }
       bool block_msg = is_lkas_msg || (is_acc_msg && gm_cam_long);
       if (!block_msg) {
         bus_fwd = 0;

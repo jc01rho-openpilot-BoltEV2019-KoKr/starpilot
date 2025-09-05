@@ -1,4 +1,5 @@
 #include "frogpilot/ui/qt/offroad/model_settings.h"
+#include "frogpilot/ui/qt/offroad/expandable_multi_option_dialog.h"
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -53,7 +54,20 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
         noModelsDownloaded = deletableModels.isEmpty();
 
         if (id == 0) {
-          QString modelToDelete = MultiOptionDialog::getSelection(tr("Select a driving model to delete"), deletableModels, "", this);
+          // Group deletable models by series
+          QMap<QString, QStringList> deletableSeriesToModels;
+          for (const QString &modelName : deletableModels) {
+            QString modelKey = modelFileToNameMapProcessed.key(modelName);
+            QString series = modelSeriesMap.value(modelKey, "Custom Series");
+            deletableSeriesToModels[series].append(modelName);
+          }
+
+          // Sort models within each series
+          for (QString &series : deletableSeriesToModels.keys()) {
+            deletableSeriesToModels[series].sort();
+          }
+
+          QString modelToDelete = ExpandableMultiOptionDialog::getSelection(tr("Select a driving model to delete"), deletableSeriesToModels, "", this);
           if (!modelToDelete.isEmpty() && ConfirmationDialog::confirm(tr("Are you sure you want to delete the \"%1\" model?").arg(modelToDelete), tr("Delete"), this)) {
             QString modelFile = modelFileToNameMapProcessed.key(modelToDelete);
             for (const QString &file : modelDir.entryList(QDir::Files)) {
@@ -133,7 +147,20 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
             downloadableModels.removeAll("Space Lab 👀📡");
             allModelsDownloaded = downloadableModels.isEmpty();
 
-            QString modelToDownload = MultiOptionDialog::getSelection(tr("Select a driving model to download"), downloadableModels, "", this);
+            // Group downloadable models by series
+            QMap<QString, QStringList> downloadableSeriesToModels;
+            for (const QString &modelName : downloadableModels) {
+              QString modelKey = modelFileToNameMap.key(modelName);
+              QString series = modelSeriesMap.value(modelKey, "Custom Series");
+              downloadableSeriesToModels[series].append(modelName);
+            }
+
+            // Sort models within each series
+            for (QString &series : downloadableSeriesToModels.keys()) {
+              downloadableSeriesToModels[series].sort();
+            }
+
+            QString modelToDownload = ExpandableMultiOptionDialog::getSelection(tr("Select a driving model to download"), downloadableSeriesToModels, "", this);
             if (!modelToDownload.isEmpty()) {
               QString modelKey = modelFileToNameMap.key(modelToDownload);
               params_memory.put("ModelToDownload", modelKey.toStdString());
@@ -198,7 +225,20 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
           if (blacklistableModels.size() <= 1) {
             ConfirmationDialog::alert(tr("There are no more models to blacklist! The only available model is \"%1\"!").arg(blacklistableModels.first()), this);
           } else {
-            QString modelToBlacklist = MultiOptionDialog::getSelection(tr("Select a model to add to the blacklist"), blacklistableModels, "", this);
+            // Group blacklistable models by series
+            QMap<QString, QStringList> blacklistableSeriesToModels;
+            for (const QString &modelName : blacklistableModels) {
+              QString modelKey = modelFileToNameMapProcessed.key(modelName);
+              QString series = modelSeriesMap.value(modelKey, "Custom Series");
+              blacklistableSeriesToModels[series].append(modelName);
+            }
+
+            // Sort models within each series
+            for (QString &series : blacklistableSeriesToModels.keys()) {
+              blacklistableSeriesToModels[series].sort();
+            }
+
+            QString modelToBlacklist = ExpandableMultiOptionDialog::getSelection(tr("Select a model to add to the blacklist"), blacklistableSeriesToModels, "", this);
             if (!modelToBlacklist.isEmpty()) {
               if (ConfirmationDialog::confirm(tr("Are you sure you want to add the \"%1\" model to the blacklist?").arg(modelToBlacklist), tr("Add"), this)) {
                 blacklistedModels.append(modelFileToNameMapProcessed.key(modelToBlacklist));
@@ -213,9 +253,21 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
             QString modelName = modelFileToNameMapProcessed.value(model);
             whitelistableModels.append(modelName);
           }
-          whitelistableModels.sort();
 
-          QString modelToWhitelist = MultiOptionDialog::getSelection(tr("Select a model to remove from the blacklist"), whitelistableModels, "", this);
+          // Group whitelistable models by series
+          QMap<QString, QStringList> whitelistableSeriesToModels;
+          for (const QString &modelName : whitelistableModels) {
+            QString modelKey = modelFileToNameMapProcessed.key(modelName);
+            QString series = modelSeriesMap.value(modelKey, "Custom Series");
+            whitelistableSeriesToModels[series].append(modelName);
+          }
+
+          // Sort models within each series
+          for (QString &series : whitelistableSeriesToModels.keys()) {
+            whitelistableSeriesToModels[series].sort();
+          }
+
+          QString modelToWhitelist = ExpandableMultiOptionDialog::getSelection(tr("Select a model to remove from the blacklist"), whitelistableSeriesToModels, "", this);
           if (!modelToWhitelist.isEmpty()) {
             if (ConfirmationDialog::confirm(tr("Are you sure you want to remove the \"%1\" model from the blacklist?").arg(modelToWhitelist), tr("Remove"), this)) {
               blacklistedModels.removeAll(modelFileToNameMapProcessed.key(modelToWhitelist));
@@ -281,7 +333,8 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
           // TinyGrad models: require all four policy/vision files to be present
           return has_policy_meta && has_policy_tg && has_vision_meta && has_vision_tg;
         };
-        QStringList selectableModels;
+        // Group models by series
+        QMap<QString, QStringList> seriesToModels;
         for (const QString &modelKey : modelFileToNameMap.keys()) {
           QString modelName = modelFileToNameMap.value(modelKey);
           if (modelName.contains("(Default)")) {
@@ -289,14 +342,31 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
           }
 
           if (isInstalled(modelKey)) {
-            selectableModels.append(modelName);
+            QString series = modelSeriesMap.value(modelKey, "Dom Forgot To Label Me");
+            seriesToModels[series].append(modelName);
           }
         }
-        selectableModels.append(modelFileToNameMap.value("space-lab"));
-        selectableModels.sort();
-        selectableModels.prepend(modelFileToNameMap.value(QString::fromStdString(params_default.get("Model"))));
 
-        QString modelToSelect = MultiOptionDialog::getSelection(tr("Select a model - 🗺️ = Navigation | 📡 = Radar | 👀 = VOACC"), selectableModels, currentModel, this);
+        // Add Space Lab to Custom Series
+        QString spaceLabName = modelFileToNameMap.value("space-lab");
+        if (isInstalled("space-lab")) {
+          seriesToModels["Custom Series"].append(spaceLabName);
+        }
+
+        // Sort models within each series
+        for (QString &series : seriesToModels.keys()) {
+          seriesToModels[series].sort();
+        }
+
+        // Add default model to the beginning of its series
+        QString defaultModelName = modelFileToNameMap.value(QString::fromStdString(params_default.get("Model")));
+        QString defaultSeries = modelSeriesMap.value(QString::fromStdString(params_default.get("Model")), "Custom Series");
+        if (seriesToModels.contains(defaultSeries) && seriesToModels[defaultSeries].contains(defaultModelName)) {
+          seriesToModels[defaultSeries].removeAll(defaultModelName);
+          seriesToModels[defaultSeries].prepend(defaultModelName);
+        }
+
+        QString modelToSelect = ExpandableMultiOptionDialog::getSelection(tr("Select a model - 🗺️ = Navigation | 📡 = Radar | 👀 = VOACC"), seriesToModels, currentModel, this);
         if (!modelToSelect.isEmpty()) {
           currentModel = modelToSelect;
 
@@ -388,6 +458,7 @@ void FrogPilotModelPanel::showEvent(QShowEvent *event) {
 
   QStringList availableModels = QString::fromStdString(params.get("AvailableModels")).split(",");
   availableModelNames = QString::fromStdString(params.get("AvailableModelNames")).split(",");
+  availableModelSeries = QString::fromStdString(params.get("AvailableModelSeries")).split(",");
 
   // Build a simple model->version map for quick lookups elsewhere
   {
@@ -406,13 +477,16 @@ void FrogPilotModelPanel::showEvent(QShowEvent *event) {
 
   modelFileToNameMap.clear();
   modelFileToNameMapProcessed.clear();
-  int size = qMin(availableModels.size(), availableModelNames.size());
+  modelSeriesMap.clear();
+  int size = qMin(qMin(availableModels.size(), availableModelNames.size()), availableModelSeries.size());
   for (int i = 0; i < size; ++i) {
     modelFileToNameMap.insert(availableModels[i], availableModelNames[i]);
     modelFileToNameMapProcessed.insert(availableModels[i], processModelName(availableModelNames[i]));
+    modelSeriesMap.insert(availableModels[i], availableModelSeries[i]);
   }
   modelFileToNameMap.insert("space-lab", "Space Lab 👀📡");
   modelFileToNameMapProcessed.insert("space-lab", "Space Lab");
+  modelSeriesMap.insert("space-lab", "Dom Forgot To Label Me");
 
   auto isInstalled = [this](const QString &key) {
     bool has_thneed = false;

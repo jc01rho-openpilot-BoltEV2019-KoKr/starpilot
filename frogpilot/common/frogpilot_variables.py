@@ -43,7 +43,8 @@ PLANNER_TIME = ModelConstants.T_IDXS[-1]  # Length of time the model projects ou
 THRESHOLD = 0.63                          # Requires the condition to be true for ~1 second
 
 def scale_threshold(v_ego):#0   40    60    80   100       0    40    60   80   100
-  return np.interp(v_ego, [0, 17.9, 26.8, 35.8, 44.7], [0.61, 0.63, 0.65, 0.8, 0.95])
+  # More aggressive with hysteresis and lead probability: faster activation at higher speeds
+  return np.interp(v_ego, [0, 17.9, 26.8, 35.8, 44.7], [0.58, 0.60, 0.62, 0.7, 0.8])
 
 NON_DRIVING_GEARS = [GearShifter.neutral, GearShifter.park, GearShifter.reverse, GearShifter.unknown]
 
@@ -95,7 +96,7 @@ BUTTON_FUNCTIONS = {
 }
 
 EXCLUDED_KEYS = {
-  "AvailableModels", "AvailableModelNames", "CarParamsPersistent",
+  "AvailableModels", "AvailableModelNames", "AvailableModelSeries", "CarParamsPersistent",
   "ExperimentalLongitudinalEnabled", "KonikMinutes", "MapBoxRequests", "ModelDrivesAndScores",
   "ModelVersions", "openpilotMinutes", "OverpassRequests", "SpeedLimits", "SpeedLimitsFiltered", "UpdaterAvailableBranches"
 }
@@ -159,6 +160,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("AutomaticallyDownloadModels", "1", 1, "0"),
   ("AutomaticUpdates", "1", 0, "1"),
   ("AvailableModelNames", "", 1, ""),
+  ("AvailableModelSeries", "", 1, ""),
   ("AvailableModels", "", 1, ""),
   ("BigMap", "0", 2, "0"),
   ("BlacklistedModels", "", 2, ""),
@@ -841,7 +843,9 @@ class FrogPilotVariables:
 
     toggle.available_models = params.get("AvailableModels", encoding="utf-8") or ""
     toggle.available_model_names = params.get("AvailableModelNames", encoding="utf-8") or ""
+    toggle.available_model_series = params.get("AvailableModelSeries", encoding="utf-8") or ""
     toggle.model_versions = params.get("ModelVersions", encoding="utf-8") or ""
+    toggle.available_model_series = params.get("AvailableModelSeries", encoding="utf-8") or ""
     downloaded_models = [model for model in toggle.available_models.split(",") if any(MODELS_PATH.glob(f"{model}*"))]
     toggle.model_randomizer = downloaded_models and (params.get_bool("ModelRandomizer") if tuning_level >= level["ModelRandomizer"] else default.get_bool("ModelRandomizer"))
     if toggle.available_models and toggle.available_model_names and downloaded_models and toggle.model_versions:

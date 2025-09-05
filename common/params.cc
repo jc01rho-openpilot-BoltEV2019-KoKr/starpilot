@@ -243,6 +243,7 @@ std::unordered_map<std::string, uint32_t> keys = {
     {"AutomaticallyDownloadModels", PERSISTENT},
     {"AutomaticUpdates", PERSISTENT},
     {"AvailableModelNames", PERSISTENT},
+    {"AvailableModelSeries", PERSISTENT},
     {"AvailableModels", PERSISTENT},
     {"BigMap", PERSISTENT},
     {"BlacklistedModels", PERSISTENT},
