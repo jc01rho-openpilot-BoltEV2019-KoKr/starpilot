@@ -59,6 +59,10 @@ sound_list: dict[Any, tuple[str, int | None, float]] = {
   FrogPilotAudibleAlert.startup: ("startup.wav", 1, MAX_VOLUME),
   FrogPilotAudibleAlert.thisIsFine: ("this_is_fine.wav", 1, MAX_VOLUME),
   FrogPilotAudibleAlert.uwu: ("uwu.wav", 1, MAX_VOLUME),
+
+   # FrogPilotAudibleAlert.speedDown: ("speeddown.wav", 3, MAX_VOLUME),
+   AudibleAlert.speedDown: ("speeddown.wav", 3, MAX_VOLUME),
+  
 }
 
 def check_controls_timeout_alert(sm):

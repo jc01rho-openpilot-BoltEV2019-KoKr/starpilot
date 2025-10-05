@@ -109,6 +109,9 @@ procs = [
   PythonProcess("webrtcd", "system.webrtc.webrtcd", notcar),
   PythonProcess("webjoystick", "tools.bodyteleop.web", notcar),
 
+  # NDA neokii
+  PythonProcess("road_speed_limiter", "selfdrive.road_speed_limiter", only_onroad),
+
   # FrogPilot processes
   NativeProcess("classic_modeld", "frogpilot/classic_modeld", ["./classic_modeld"], run_classic_modeld),
   PythonProcess("frogpilot_process", "frogpilot.frogpilot_process", always_run),

@@ -124,7 +124,7 @@ class CarController(CarControllerBase):
     # --- Immediate application of raw pedal gas, no blending ---
     pedal_gas = raw_pedal_gas
     # Safety cap: ramp from 22% at 0 m/s to 37.25% at 10 mph (4.47 m/s), then allow full throttle
-    pedal_gas_max = interp(car_velocity, [0.0, 4.47, 4.48], [0.22, 0.3725, 1.0])
+    pedal_gas_max = interp(car_velocity, [0.0, 4.47, 15], [0.22, 0.3675, 0.85])
     pedal_gas = clip(pedal_gas, 0.0, pedal_gas_max)
     return pedal_gas, press_regen_paddle
 
@@ -197,9 +197,9 @@ class CarController(CarControllerBase):
         delta_after_ns = now_nanos - self.last_steer_ts_ns
         delta_before_ns = (next_steer_ts_ns - now_nanos) if interval_ns > 0 else 1_000_000_000
         if (CS.out.vEgo > 2.68
-            and now_nanos >= (midpoint_ns - PADDLE_SLOT_EARLY_NS)
-            and delta_after_ns >= gap_ns
-            and delta_before_ns >= gap_ns):
+          and now_nanos >= (midpoint_ns - PADDLE_SLOT_EARLY_NS)
+          and delta_after_ns >= gap_ns
+          and delta_before_ns >= gap_ns):
           # Non-blocking 1 ms spacing for paddle frames
           if now_nanos - self.last_paddle_ts_ns >= PADDLE_NONBLOCK_GAP_NS:
             paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
@@ -222,9 +222,9 @@ class CarController(CarControllerBase):
         delta_after_ns = now_nanos - self.last_steer_ts_ns
         delta_before_ns = (next_steer_ts_ns - now_nanos) if interval_ns > 0 else 1_000_000_000
         if (CS.out.vEgo > 2.68
-            and now_nanos >= (slot2_ns - PADDLE_SLOT_EARLY_NS)
-            and delta_after_ns >= gap_ns
-            and delta_before_ns >= gap_ns):
+          and now_nanos >= (slot2_ns - PADDLE_SLOT_EARLY_NS)
+          and delta_after_ns >= gap_ns
+          and delta_before_ns >= gap_ns):
           # Non-blocking 1 ms spacing for paddle frames
           if now_nanos - self.last_paddle_ts_ns >= PADDLE_NONBLOCK_GAP_NS:
             paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
@@ -426,8 +426,8 @@ class CarController(CarControllerBase):
 
       # TODO: integrate this with the code block below?
       if (
-          (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
-          or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
+        (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
+        or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
       ) and CS.out.cruiseState.enabled:
         if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
           self.last_button_frame = self.frame
