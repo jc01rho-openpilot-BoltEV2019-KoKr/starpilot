@@ -218,22 +218,22 @@ class Controls:
     # Timer for NDA camera warning (1Hz frequency limiting)
     self.last_nda_camera_warn_time = 0
 
-    # Radar fault frequency tracking (50 times in 1 second)
+    # Radar fault frequency tracking
     self.radar_fault_timestamps = []
-    self.radar_fault_threshold = 50
-    self.radar_fault_window = 1.0  # 1 second
+    self.radar_fault_threshold = 85
+    self.radar_fault_window = 0.75
 
-    # Communication issues frequency tracking (75 times in 1 second)
+    # Communication issues frequency tracking
     self.comm_issue_timestamps = []
     self.comm_issue_avg_freq_timestamps = []
     self.comm_issue_generic_timestamps = []
     self.comm_issue_threshold = 85
-    self.comm_issue_window = 0.75 # 1 second
+    self.comm_issue_window = 0.75 # 0.75 second
 
-    # LocationdTemporaryError frequency tracking (50 times in 1 second)
+    # LocationdTemporaryError frequency tracking
     self.locationd_error_timestamps = []
-    self.locationd_error_threshold = 50
-    self.locationd_error_window = 1.0  # 1 second
+    self.locationd_error_threshold = 85
+    self.locationd_error_window = 0.75  # 0.75 second
 
   def reset(self):
     self.slowing_down = False
