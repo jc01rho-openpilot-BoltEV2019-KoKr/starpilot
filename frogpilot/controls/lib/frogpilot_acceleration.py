@@ -99,6 +99,8 @@ class FrogPilotAcceleration:
         self.max_accel = get_max_accel_sport(v_ego)
       elif frogpilot_toggles.acceleration_profile == 3:
         self.max_accel = get_max_allowed_accel(v_ego)
+      else:
+        self.max_accel = get_max_accel(v_ego)
 
     if frogpilot_toggles.human_acceleration:
       self.max_accel = min(get_max_accel_low_speeds(self.max_accel, self.frogpilot_planner.v_cruise), self.max_accel)
