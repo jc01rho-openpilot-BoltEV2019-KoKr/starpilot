@@ -26,7 +26,7 @@ class PIDController:
     self.neg_p_limit = neg_p_limit
 
     self.i_unwind_rate = 0.3 / rate
-    self.i_rate = 1.0 / rate
+    self.i_dt = 1.0 / rate
     self.speed = 0.0
 
     self.reset()
@@ -61,19 +61,19 @@ class PIDController:
   def update(self, error, error_rate=0.0, speed=0.0, override=False, feedforward=0., freeze_integrator=False):
     self.speed = speed
 
-    self.p = float(error) * self.k_p
+    self.p = self.k_p * float(error)
     if self.pos_p_limit is not None and self.p > self.pos_p_limit:
       self.p = self.pos_p_limit
     elif self.neg_p_limit is not None and self.p < self.neg_p_limit:
       self.p = self.neg_p_limit
-    self.f = feedforward * self.k_f
-    self.d = error_rate * self.k_d
+    self.d = self.k_d * error_rate
+    self.f = self.k_f * feedforward
 
     if override:
       self.i -= self.i_unwind_rate * float(np.sign(self.i))
     else:
       if not freeze_integrator:
-        self.i = self.i + error * self.k_i * self.i_rate
+        self.i = self.i + self.k_i * self.i_dt * error
 
         # Clip i to prevent exceeding control limits
         control_no_i = self.p + self.d + self.f
