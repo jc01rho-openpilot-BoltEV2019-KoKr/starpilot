@@ -10,16 +10,16 @@ const SteeringLimits GM_STEERING_LIMITS = {
 };
 
 const LongitudinalLimits GM_ASCM_LONG_LIMITS = {
-  .max_gas = 3072,
-  .min_gas = 1404,
-  .inactive_gas = 1404,
+  .max_gas = 7168,
+  .min_gas = 5500,
+  .inactive_gas = 5500,
   .max_brake = 400,
 };
 
 const LongitudinalLimits GM_CAM_LONG_LIMITS = {
-  .max_gas = 3400,
-  .min_gas = 1514,
-  .inactive_gas = 1554,
+  .max_gas = 7496,
+  .min_gas = 5610,
+  .inactive_gas = 5650,
   .max_brake = 400,
 };
 
@@ -143,7 +143,7 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
     }
 
     if ((addr == 0xC9) && ((gm_hw == GM_CAM) || (gm_hw == GM_SDGM))) {
-      brake_pressed = GET_BIT(to_push, 40U);
+      brake_pressed = GET_BIT(to_push, 40U) != 0U;
     }
 
     if (addr == 0xC9) {
@@ -229,10 +229,10 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
   // GAS/REGEN: safety check
   if (addr == 0x2CB) {
     bool apply = GET_BIT(to_send, 0U);
-    int gas_regen = ((GET_BYTE(to_send, 2) & 0x7FU) << 5) + ((GET_BYTE(to_send, 3) & 0xF8U) >> 3);
+    int gas_regen = ((GET_BYTE(to_send, 1) & 0x1U) << 13) + ((GET_BYTE(to_send, 2) & 0xFFU) << 5) + ((GET_BYTE(to_send, 3) & 0xF8U) >> 3);
 
     bool violation = false;
-    // Allow apply bit in pre-enabled and overriding states, except for inactive gas    // Allow apply bit in pre-enabled and overriding states
+    // Allow apply bit in pre-enabled and overriding states
     violation |= !controls_allowed && apply;
     violation |= longitudinal_gas_checks(gas_regen, *gm_long_limits);
 
@@ -313,9 +313,9 @@ static safety_config gm_init(uint16_t param) {
   gm_force_ascm = GET_FLAG(param, GM_PARAM_HW_ASCM_LONG);
 
   if (gm_hw == GM_ASCM || gm_force_ascm) {
-    gm_long_limits = &GM_ASCM_LONG_LIMITS;
+      gm_long_limits = &GM_ASCM_LONG_LIMITS;
   } else if ((gm_hw == GM_CAM) || (gm_hw == GM_SDGM)) {
-    gm_long_limits = &GM_CAM_LONG_LIMITS;
+      gm_long_limits = &GM_CAM_LONG_LIMITS;
   } else {
   }
 
