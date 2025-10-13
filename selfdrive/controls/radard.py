@@ -151,7 +151,7 @@ def laplacian_pdf(x: float, mu: float, b: float):
 
 
 def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, model_data: capnp._DynamicStructReader, tracks: dict[int, Track], frogpilot_toggles: SimpleNamespace):
-  if model_data.meta.laneChangeState == LaneChangeState.laneChangeStarting and frogpilot_toggles.human_lane_changes:
+  if model_data.meta.laneChangeState == LaneChangeState.laneChangeStarting and getattr(frogpilot_toggles, "human_lane_changes", False):
     direction = model_data.meta.laneChangeDirection
 
     if direction == LaneChangeDirection.left:
