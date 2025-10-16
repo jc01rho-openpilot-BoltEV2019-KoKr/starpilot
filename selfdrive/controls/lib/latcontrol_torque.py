@@ -85,7 +85,7 @@ class LatControlTorque(LatControl):
       low_speed_factor = (np.interp(CS.vEgo, LOW_SPEED_X, LOW_SPEED_Y_NN if frogpilot_toggles.nnff else LOW_SPEED_Y) / max(CS.vEgo, MIN_SPEED)) ** 2
       setpoint = lat_delay * desired_lateral_jerk + expected_lateral_accel
       error = setpoint - measurement
-      error_lsf = error + low_speed_factor * error
+      error_lsf = error + low_speed_factor / self.torque_params.kp * error
 
       if self.nnff_loaded and frogpilot_toggles.nnff or frogpilot_toggles.nnff_lite:
         pid_log, ff = self.nnff.compute_nnff(
