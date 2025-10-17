@@ -205,7 +205,7 @@ class CarInterface(CarInterfaceBase):
     elif candidate in (CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_BOLT_CC):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-      ret.lateralTuning.torque.kp = 1.0
+      ret.lateralTuning.torque.kp = 0.6
 
       if ret.enableGasInterceptor:
         # ACC Bolts use pedal for full longitudinal control, not just sng
