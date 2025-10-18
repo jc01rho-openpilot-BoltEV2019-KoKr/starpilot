@@ -165,6 +165,8 @@ class CarInterface(CarInterfaceBase):
     ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.2], [0.00]]
     ret.lateralTuning.pid.kf = 0.00004   # full torque for 20 deg at 80mph means 0.00007818594
     ret.steerActuatorDelay = 0.1  # Default delay, not measured yet
+    ret.longitudinalTuning.deadzoneBP = [0.]
+    ret.longitudinalTuning.deadzoneV  = [0.]
 
     ret.steerLimitTimer = 0.4
     ret.radarTimeStep = 0.0667  # GM radar runs at 15Hz instead of standard 20Hz
