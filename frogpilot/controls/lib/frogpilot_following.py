@@ -11,6 +11,7 @@ class FrogPilotFollowing:
   def __init__(self, FrogPilotPlanner):
     self.frogpilot_planner = FrogPilotPlanner
 
+    self.disable_throttle = False
     self.following_lead = False
     self.slower_lead = False
 
@@ -63,7 +64,12 @@ class FrogPilotFollowing:
     self.danger_jerk = self.base_danger_jerk
     self.speed_jerk = self.base_speed_jerk
 
-    self.following_lead = self.frogpilot_planner.tracking_lead and self.frogpilot_planner.lead_one.dRel < (self.t_follow + 1) * v_ego
+    self.following_lead = self.frogpilot_planner.tracking_lead and self.frogpilot_planner.lead_one.dRel < (self.t_follow * 2) * v_ego
+
+
+    self.disable_throttle = self.frogpilot_planner.tracking_lead and not self.following_lead
+    self.disable_throttle &= self.frogpilot_planner.lead_one.dRel + 6.0 < (self.t_follow * 2 * 2) * v_ego
+    self.disable_throttle &= self.frogpilot_planner.lead_one.vLead < v_ego * 0.75
 
     if sm["controlsState"].enabled and self.frogpilot_planner.tracking_lead:
       self.update_follow_values(self.frogpilot_planner.lead_one.dRel, v_ego, self.frogpilot_planner.lead_one.vLead, frogpilot_toggles)

@@ -95,8 +95,10 @@ class LongControl:
     pos_p_limit = 0.0 # if params("NoPositivePResponse") else None # put parameter-based control here
     self.pid = PIDController((CP.longitudinalTuning.kpBP, CP.longitudinalTuning.kpV),
                              (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
-                             k_f=CP.longitudinalTuning.kf, rate=1 / DT_CTRL,
-                             pos_p_limit=pos_p_limit)
+                             rate=1 / DT_CTRL, pos_p_limit=pos_p_limit)
+    # Preserve legacy behaviour when no feedforward gain is provided (default of 0.0)
+    kf = getattr(CP.longitudinalTuning, 'kfDEPRECATED', 0.0)
+    self.feedforward_gain = kf if kf != 0.0 else 1.0
     self.v_pid = 0.0
     self._mode_setup()
     self.last_output_accel = 0.0
@@ -159,7 +161,8 @@ class LongControl:
     else:  # LongCtrlState.pid
       error = a_target - CS.aEgo
       self.update_mpc_mode(self.experimental_mode)
-      raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=a_target)
+      feedforward = a_target * self.feedforward_gain
+      raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward)
 
 
       if self.transitioning and self.prev_mode == 'acc' and self.current_mode == 'blended':
@@ -236,8 +239,9 @@ class LongControl:
 
       error = self.v_pid - CS.vEgo
       error_deadzone = apply_deadzone(error, deadzone)
+      feedforward = a_target * self.feedforward_gain
       output_accel = self.pid.update(error_deadzone, speed=CS.vEgo,
-                                     feedforward=a_target,
+                                     feedforward=feedforward,
                                      freeze_integrator=freeze_integrator)
 
     self.last_output_accel = clip(output_accel, accel_limits[0], accel_limits[1])

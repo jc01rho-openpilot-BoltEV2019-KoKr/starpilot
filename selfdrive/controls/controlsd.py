@@ -32,9 +32,9 @@ from openpilot.selfdrive.controls.lib.vehicle_model import VehicleModel
 from openpilot.frogpilot.tinygrad_modeld.tinygrad_modeld import LAT_SMOOTH_SECONDS
 
 from openpilot.system.hardware import HARDWARE
-from selfdrive.road_speed_limiter import SpeedLimiter
 
 from openpilot.frogpilot.common.frogpilot_variables import get_frogpilot_toggles, params_memory
+from openpilot.frogpilot.controls.lib.neural_network_feedforward import LatControlNNFF
 
 SOFT_DISABLE_TIME = 3  # seconds
 LDW_MIN_SPEED = 31 * CV.MPH_TO_MS
@@ -106,7 +106,7 @@ class Controls:
       ignore += ['roadCameraState', 'wideRoadCameraState']
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'liveCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'liveLocationKalman',
-                                   'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters', 'liveDelay', 'naviData',
+                                   'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters', 'liveDelay',
                                    'testJoystick', 'frogpilotCarState', 'frogpilotPlan'] + self.camera_packets + self.sensor_packets,
                                   ignore_alive=ignore, ignore_avg_freq=ignore+['radarState', 'testJoystick'], ignore_valid=['testJoystick', ],
                                   frequency=int(1/DT_CTRL))
@@ -138,10 +138,10 @@ class Controls:
     self.LaC: LatControl
     if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
       self.LaC = LatControlAngle(self.CP, self.CI, DT_CTRL)
-    elif self.FPCP.lateralTuning.which() == 'pid':
+    elif self.CP.lateralTuning.which() == 'pid':
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
-    elif self.FPCP.lateralTuning.which() == 'torque':
-      self.LaC = LatControlTorque(self.CP, self.FPCP, self.CI, DT_CTRL)
+    elif self.CP.lateralTuning.which() == 'torque':
+      self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
 
     self.initialized = False
     self.state = State.disabled
@@ -165,15 +165,6 @@ class Controls:
     self.personality = self.read_personality_param()
     self.v_cruise_helper = VCruiseHelper(self.CP)
     self.recalibrating_seen = False
-
-    # NDA neokii
-    self.v_cruise_kph_limit = 0
-    self.slowing_down = False
-    self.slowing_down_sound_alert = False
-    self.second = 0.0
-    self.autoNaviSpeedCtrlStart = float(Params().get("AutoNaviSpeedCtrlStart"))
-    self.autoNaviSpeedCtrlEnd = float(Params().get("AutoNaviSpeedCtrlEnd"))
-
 
     self.can_log_mono_time = 0
 
@@ -215,6 +206,12 @@ class Controls:
 
     self.frogpilot_toggles = get_frogpilot_toggles()
 
+    if self.CP.lateralTuning.which() == "torque" and (self.frogpilot_toggles.nnff or self.frogpilot_toggles.nnff_lite):
+      self.LaC = LatControlNNFF(self.CP, self.CI, DT_CTRL)
+
+
+    self.frogpilot_toggles.is_metric = self.is_metric
+
     # Timer for NDA camera warning (1Hz frequency limiting)
     self.last_nda_camera_warn_time = 0
 
@@ -254,6 +251,7 @@ class Controls:
 
     # Return True if threshold is reached
     return len(timestamps_list) >= threshold
+
 
   def set_initial_state(self):
     if REPLAY:
@@ -726,14 +724,14 @@ class Controls:
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
     # Update Torque Params
-    if self.FPCP.lateralTuning.which() == 'torque':
+    if self.CP.lateralTuning.which() == 'torque':
       torque_params = self.sm['liveTorqueParameters']
       if self.sm.all_checks(['liveTorqueParameters']) and (torque_params.useParams or self.frogpilot_toggles.force_auto_tune):
         self.LaC.update_live_torque_params(torque_params.latAccelFactorFiltered, torque_params.latAccelOffsetFiltered,
                                            torque_params.frictionCoefficientFiltered)
 
-      if self.sm.updated['liveDelay'] and (self.frogpilot_toggles.nnff or self.frogpilot_toggles.nnff_lite):
-        self.LaC.nnff.update_live_delay(self.sm['liveDelay'].lateralDelay)
+      if self.sm.updated['liveDelay'] and hasattr(self.LaC, "update_live_delay"):
+        self.LaC.update_live_delay(self.sm['liveDelay'].lateralDelay)
 
     long_plan = self.sm['longitudinalPlan']
     model_v2 = self.sm['modelV2']
@@ -1003,7 +1001,7 @@ class Controls:
     controlsState.experimentalMode = self.experimental_mode
     controlsState.personality = self.personality
 
-    lat_tuning = self.FPCP.lateralTuning.which()
+    lat_tuning = self.CP.lateralTuning.which()
     if self.joystick_mode:
       controlsState.lateralControlState.debugState = lac_log
     elif self.CP.steerControlType == car.CarParams.SteerControlType.angle:
