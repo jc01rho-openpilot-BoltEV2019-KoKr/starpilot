@@ -302,6 +302,9 @@ class LongitudinalMpc:
     self.current_filter_time = LEAD_FILTER_TIME_LOW
     self.lead_a_filter = FirstOrderFilter(0.0, self.current_filter_time, self.dt)
     self.lead_v_filter = FirstOrderFilter(0.0, self.current_filter_time, self.dt)
+    # Slew-limited filter factor to avoid abrupt 0.50↔1.00 jumps
+    self.filter_time_factor = 1.0
+    self.slew_per_sec = 1.0
     # Instance variables to avoid global modifications
     self.current_x_ego_cost = X_EGO_OBSTACLE_COSTS[0]
     self.current_j_ego_cost = J_EGO_COSTS[0]
@@ -357,7 +360,9 @@ class LongitudinalMpc:
     for i in range(N):
       self.solver.cost_set(i, 'Zl', Zl)
 
-  def set_weights(self, acceleration_jerk=1.0, danger_jerk=1.0, speed_jerk=1.0, prev_accel_constraint=True, personality=log.LongitudinalPersonality.standard, v_ego=0.0, lead_dist=50.0):
+  def set_weights(self, acceleration_jerk=1.0, danger_jerk=1.0, speed_jerk=1.0, prev_accel_constraint=True,
+                  personality=log.LongitudinalPersonality.standard, v_ego=0.0, lead_dist=50.0,
+                  uncertainty=0.0, accel_reengage=False, panic_bypass=False):
     # Update parameters based on current speed with interpolation for smooth scaling
     speed_mph = v_ego * CV.MS_TO_MPH  # Convert m/s to mph
 
@@ -371,10 +376,10 @@ class LongitudinalMpc:
     self.current_dist_adapt = get_speed_based_param(speed_mph, dist_adapt_array)
 
     # Update filter time constants with interp and recreate filters if needed
-    if speed_mph < 35:
+    if speed_mph < 47:
         self.current_filter_time = 0.0
     else:
-        self.current_filter_time = interp(speed_mph, [35, 45], [0.0, LEAD_FILTER_TIME_HIGH])
+        self.current_filter_time = interp(speed_mph, [47, 65], [0.0, LEAD_FILTER_TIME_HIGH])
     if abs(self.current_filter_time - getattr(self, 'prev_filter_time', 0)) > 0.1:  # Only update if significant change
       # Recreate filters with new time constant while preserving current values
       current_a = self.lead_a_filter.x if hasattr(self.lead_a_filter, 'x') else 0.0
@@ -389,6 +394,37 @@ class LongitudinalMpc:
     danger_jerk *= dist_factor
     speed_jerk *= dist_factor
 
+    # Scene complexity adjustment based on model uncertainty
+    prev_filter_time_factor = getattr(self, 'prev_filter_time_factor', 1.0)
+    # Target factor from uncertainty
+    if uncertainty <= 0.45:
+      tgt_factor = 1.0
+    elif uncertainty >= 0.70:
+      tgt_factor = 0.0
+    else:
+      tgt_factor = float(np.interp(uncertainty, [0.45, 0.70], [1.0, 0.30]))
+
+    if accel_reengage:
+      tgt_factor = min(tgt_factor, 0.5)
+
+    # Hard bypass of smoothing when approaching fast or magnitude trips
+    if panic_bypass:
+      tgt_factor = 0.0
+
+    # Slew-limit changes to avoid step-wise filter jumps
+    max_step = self.slew_per_sec * self.dt
+    delta = np.clip(tgt_factor - self.filter_time_factor, -max_step, max_step)
+    self.filter_time_factor += float(delta)
+    filter_time_factor = float(self.filter_time_factor)
+
+    # When uncertainty is moderately elevated, allow accel but cap jerk by increasing jerk cost
+    if 0.45 <= uncertainty < 0.60:
+      scale = float(np.interp(uncertainty, [0.45, 0.60], [1.2, 1.5]))
+      speed_jerk *= scale
+
+    if abs(filter_time_factor - prev_filter_time_factor) > 1e-3:
+      cloudlog.error(f"LON_FILTER; filter_time_factor={filter_time_factor:.2f}; uncertainty={uncertainty:.3f}; v_ego={v_ego:.2f} mps; lead_dist={lead_dist:.2f} m; accel_reengage={accel_reengage}")
+
     if self.mode == 'acc':
       a_change_cost = acceleration_jerk if prev_accel_constraint else 0
       cost_weights = [self.current_x_ego_cost, X_EGO_COST, V_EGO_COST, A_EGO_COST, a_change_cost, speed_jerk]
@@ -400,6 +436,15 @@ class LongitudinalMpc:
     else:
       raise NotImplementedError(f'Planner mode {self.mode} not recognized in planner cost set')
     self.set_cost_weights(cost_weights, constraint_cost_weights)
+
+    # Adjust filter time constants for complex scenes
+    if abs(filter_time_factor - getattr(self, 'prev_filter_time_factor', 1.0)) > 0.05:
+      current_a = self.lead_a_filter.x if hasattr(self.lead_a_filter, 'x') else 0.0
+      current_v = self.lead_v_filter.x if hasattr(self.lead_v_filter, 'x') else 0.0
+      new_filter_time = self.current_filter_time * filter_time_factor
+      self.lead_a_filter = FirstOrderFilter(current_a, new_filter_time, self.dt)
+      self.lead_v_filter = FirstOrderFilter(current_v, new_filter_time, self.dt)
+      self.prev_filter_time_factor = filter_time_factor
 
   def set_cur_state(self, v, a):
     v_prev = self.x0[1]

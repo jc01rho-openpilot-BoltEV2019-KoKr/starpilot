@@ -187,11 +187,6 @@ class CarController(CarControllerBase):
       # Midpoint spoof: one per interval
       if not self.spoof_mid_sent and interval_ns > 0:
         midpoint_ns = self.prev_steer_ts_ns + interval_ns // 2
-        cloudlog.error("PADDLE MID: Δafter=%.1fms Δbefore=%.1fms credits=%.3f timer=%d",
-                       (now_nanos - self.last_steer_ts_ns) * 1e-6,
-                       (now_nanos - self.prev_steer_ts_ns) * 1e-6,
-                       self.spoof_accum,
-                       self.regen_paddle_timer)
         # Compute spacing to last and next steer (two-sided guard)
         next_steer_ts_ns = self.last_steer_ts_ns + interval_ns if interval_ns > 0 else 0
         delta_after_ns = now_nanos - self.last_steer_ts_ns
@@ -211,12 +206,6 @@ class CarController(CarControllerBase):
       # Overflow spoof: insert extra when accumulator allows
       if self.spoof_accum >= OVERFLOW_THRESH and not self.spoof_over_sent and interval_ns > 0:
         slot2_ns = self.prev_steer_ts_ns + (interval_ns * 2) // 3
-        cloudlog.error("PADDLE OFL: Δafter=%.1fms Δbefore=%.1fms credits=%.3f thresh=%.1f timer=%d",
-                       (now_nanos - self.last_steer_ts_ns) * 1e-6,
-                       (now_nanos - self.prev_steer_ts_ns) * 1e-6,
-                       self.spoof_accum,
-                       OVERFLOW_THRESH,
-                       self.regen_paddle_timer)
         # Two-sided spacing relative to steer
         next_steer_ts_ns = self.last_steer_ts_ns + interval_ns if interval_ns > 0 else 0
         delta_after_ns = now_nanos - self.last_steer_ts_ns
@@ -249,11 +238,6 @@ class CarController(CarControllerBase):
     if hasattr(self, "off_schedule_ns"):
       for i, t_ns in enumerate(self.off_schedule_ns):
         if not self.off_sent[i] and now_nanos >= (t_ns - PADDLE_SLOT_EARLY_NS):
-          cloudlog.error("PADDLE OFF %d: Δafter=%.1fms Δto_slot=%.1fms timer=%d",
-                         i,
-                         (now_nanos - self.last_steer_ts_ns) * 1e-6,
-                         (now_nanos - t_ns) * 1e-6,
-                         self.regen_paddle_timer)
           # Two-sided spacing to steer before sending
           interval_ns = self.last_steer_ts_ns - self.prev_steer_ts_ns
           gap_ns = (PADDLE_STEER_GAP_MIN_NS if interval_ns <= 0 else

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import math
 import numpy as np
+import time
 from openpilot.common.numpy_fast import clip, interp
 
 import cereal.messaging as messaging
@@ -22,6 +23,10 @@ A_CRUISE_MAX_BP = [0., 10.0, 25., 40.]
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.5
 MIN_ALLOW_THROTTLE_SPEED = 2.5
+
+# Uncertainty-based filter disable thresholds
+UNCERT_SLOPE_TRIG = 0.12  # per second
+UNCERT_MAG_TRIG = 0.50
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
@@ -106,6 +111,30 @@ class LongitudinalPlanner:
     self.a_desired_trajectory = np.zeros(CONTROL_N)
     self.j_desired_trajectory = np.zeros(CONTROL_N)
     self.solverExecutionTime = 0.0
+    # logging cadence & state
+    self.last_uncert_log_t = 0.0
+    self.prev_uncert_over = False
+
+    # ---- Rubberband mitigation state ----
+    # Two uncertainty tracks (slow/fast) for asymmetric gating
+    self.uncert_slow = FirstOrderFilter(0.0, 1.6, self.dt)  # ~lam=0.6
+    self.uncert_fast = FirstOrderFilter(0.0, 0.9, self.dt)  # faster cool-down for accel decisions
+    # Lead stability tracking
+    self.prev_lead_dist = None
+    self.last_big_brake_t = 0.0
+    self.stable_lead = False
+    # Temporary accel nudge window
+    self.accel_nudge_until = 0.0
+
+    # Hysteresis gate + dwell for accel re-engage and smoothed lead distance
+    self.accel_gate = False
+    self._t_arm = 0.0
+    self._t_disarm = 0.0
+    self.lead_dist_f = None
+
+    # Uncertainty slope tracking
+    self._uncert_last = 0.0
+    self._uncert_last_t = None
 
   @property
   def mlsim(self):
@@ -199,6 +228,7 @@ class LongitudinalPlanner:
     x, v, a, j, throttle_prob = self.parse_model(sm['modelV2'], self.v_model_error, v_ego, frogpilot_toggles.taco_tune)
     # Don't clip at low speeds since throttle_prob doesn't account for creep
     self.allow_throttle = throttle_prob > ALLOW_THROTTLE_THRESHOLD or v_ego <= MIN_ALLOW_THROTTLE_SPEED
+    self.allow_throttle &= not sm['frogpilotPlan'].disableThrottle
 
     if not self.allow_throttle:
       clipped_accel_coast = max(accel_coast, accel_limits_turns[0])
@@ -215,8 +245,158 @@ class LongitudinalPlanner:
     self.lead_two = sm['radarState'].leadTwo
 
     lead_dist = self.lead_one.dRel if self.lead_one.status else 50.0
-    self.mpc.set_weights(sm['frogpilotPlan'].accelerationJerk, sm['frogpilotPlan'].dangerJerk, sm['frogpilotPlan'].speedJerk, prev_accel_constraint,
-                         personality=sm['controlsState'].personality, v_ego=v_ego, lead_dist=lead_dist)
+
+    # Smooth lead distance (EMA) to avoid chatter in thresholds
+    alpha = max(0.02, min(0.15, 0.05 + 0.002 * v_ego))
+    if self.lead_dist_f is None:
+      self.lead_dist_f = float(lead_dist)
+    else:
+      self.lead_dist_f += alpha * (float(lead_dist) - self.lead_dist_f)
+
+    # Lead stability estimation and recent-brake timer
+    now_t = time.monotonic()
+    # relative speed (ego - lead) positive when closing
+    v_rel = (v_ego - self.lead_one.vLead) if self.lead_one.status else 0.0
+    if self.prev_lead_dist is None:
+      d_rel_dot = 0.0
+    else:
+      d_rel_dot = (lead_dist - self.prev_lead_dist) / max(self.dt, 1e-3)
+    self.prev_lead_dist = lead_dist
+
+    # Remember time of last non-trivial model brake risk
+    if 'raw_brake_max' in locals() and raw_brake_max is not None and raw_brake_max > 0.02:
+      self.last_big_brake_t = now_t
+
+    # Stable lead heuristic (short window, cheap to compute)
+    recently_braked = (now_t - self.last_big_brake_t) < 0.7
+    self.stable_lead = (
+      self.lead_one.status and
+      abs(v_rel) < 0.5 and
+      abs(d_rel_dot) < 0.5 and
+      not recently_braked
+    )
+
+    # Calculate scene uncertainty from model desire prediction entropy and disengage predictions
+    uncertainty = 0.0
+    if hasattr(sm['modelV2'], 'meta'):
+      # Desire prediction entropy (maneuver uncertainty), normalized to [0, 1]
+      desire_entropy = 0.0
+      if hasattr(sm['modelV2'].meta, 'desirePrediction'):
+        desire_probs = sm['modelV2'].meta.desirePrediction
+        if len(desire_probs) > 1:
+          probs = np.asarray(desire_probs, dtype=float)
+          total = float(np.sum(probs))
+          if total > 1e-6:
+            p = probs / total
+            entropy = -np.sum(p * np.log(p + 1e-10))
+            max_entropy = np.log(len(p))
+            desire_entropy = float(entropy / max(max_entropy, 1e-6))  # normalized entropy in [0,1]
+          else:
+            desire_entropy = 0.0  # guard against all-zero vector
+
+      # Disengage prediction risk (intervention likelihood)
+      disengage_risk = 0.0
+      raw_brake_max = -1.0
+      lam = -1.0
+      if hasattr(sm['modelV2'].meta, 'disengagePredictions'):
+        # Use brake press probabilities as primary risk indicator
+        brake_probs = sm['modelV2'].meta.disengagePredictions.brakePressProbs
+        if len(brake_probs) > 0:
+          # Exponentially decayed max over the full horizon
+          probs = np.asarray(brake_probs, dtype=float)
+          # Clip tiny brake blips so they don't inflate uncertainty
+          if float(np.max(probs)) < 0.015:
+            probs = probs * 0.5
+          raw_brake_max = float(np.max(probs))
+          # Time vector assuming model horizon step = DT_MDL
+          t = np.arange(len(probs), dtype=float) * DT_MDL
+          lam = 0.6  # decay rate per second (tunable: 0.5–0.9 typical)
+          weights = np.exp(-lam * t)
+          disengage_risk = float(np.max(probs * weights))
+
+      # Combined uncertainty metric (range roughly 0..2), with dual-track filtering
+      raw_uncertainty = desire_entropy + disengage_risk
+      # Update filters
+      self.uncert_slow.update(raw_uncertainty)
+      self.uncert_fast.update(raw_uncertainty)
+      # Use a more permissive track for accel decisions
+      uncertainty = self.uncert_slow.x
+    uncertainty_accel = min(self.uncert_slow.x, self.uncert_fast.x)
+
+    # --- Slope-based panic bypass ---
+    if self._uncert_last_t is None:
+      uncert_slope = 0.0
+    else:
+      dt_u = max(1e-3, now_t - self._uncert_last_t)
+      uncert_slope = (uncertainty - self._uncert_last) / dt_u
+    self._uncert_last = uncertainty
+    self._uncert_last_t = now_t
+
+    closing_fast = (self.lead_one.status and (v_ego - self.lead_one.vLead) > 0.5)
+    # Trigger if either slope is high or magnitude is high; require a valid lead and closing
+    panic_bypass = closing_fast and (uncert_slope > UNCERT_SLOPE_TRIG or uncertainty >= UNCERT_MAG_TRIG)
+
+    if panic_bypass:
+      try:
+        cloudlog.error(f"LON_SLOPE; slope={uncert_slope:.3f}/s; uncertainty={uncertainty:.3f}; v_ego={v_ego:.2f}; v_rel={(v_ego - self.lead_one.vLead) if self.lead_one.status else 0.0:.2f}; lead_dist={self.lead_dist_f if self.lead_dist_f is not None else -1:.2f}; trigger=True")
+      except Exception:
+        pass
+
+    # now_t defined earlier
+    over = uncertainty > 1.0
+    # Log on threshold edge or at ~1 Hz
+    if over != self.prev_uncert_over or (now_t - self.last_uncert_log_t) > 1.0:
+      try:
+        cloudlog.error(
+          f"LON_UNCERT; v_ego={v_ego:.2f} mps; desireEntropy={desire_entropy:.3f}; "
+          f"brakeRawMax={(raw_brake_max if 'raw_brake_max' in locals() else -1.0):.3f}; "
+          f"brakeDecayed={(disengage_risk if 'disengage_risk' in locals() else -1.0):.3f}; "
+          f"lam={(lam if 'lam' in locals() else -1.0):.2f}; uncertainty={uncertainty:.3f}; over={over}"
+        )
+      except Exception as e:
+        cloudlog.warning(f"LON_UNCERT log error: {e}")
+      self.prev_uncert_over = over
+      self.last_uncert_log_t = now_t
+
+    # Asymmetric accel release with hysteresis + dwell to prevent on/off pulsing
+    rise_dwell_s, fall_dwell_s = 0.6, 0.4
+    good = (
+      (self.a_desired > 0.0) and
+      self.stable_lead and
+      (uncertainty <= 0.425) and
+      (desire_entropy < 0.41)
+    )
+
+    # dwell timers for robust gating
+    if good and not self.accel_gate:
+      if now_t - self._t_arm >= rise_dwell_s:
+        self.accel_gate = True
+    else:
+      self._t_arm = now_t
+
+    if (not good) and self.accel_gate:
+      if now_t - self._t_disarm >= fall_dwell_s:
+        self.accel_gate = False
+    else:
+      self._t_disarm = now_t
+
+    if self.accel_gate:
+      # Ensure some positive headroom for MPC to exit coasting
+      accel_limits_turns[1] = max(accel_limits_turns[1], 0.2)
+      # Short self-canceling nudge to unstick (applied post-MPC)
+      if now_t > self.accel_nudge_until:
+        self.accel_nudge_until = now_t + 0.45
+
+    self.mpc.set_weights(sm['frogpilotPlan'].accelerationJerk,
+                         sm['frogpilotPlan'].dangerJerk,
+                         sm['frogpilotPlan'].speedJerk,
+                         prev_accel_constraint,
+                         personality=sm['controlsState'].personality,
+                         v_ego=v_ego,
+                         lead_dist=self.lead_dist_f if self.lead_dist_f is not None else lead_dist,
+                         uncertainty=uncertainty,
+                         accel_reengage=self.accel_gate,
+                         panic_bypass=panic_bypass)
     self.mpc.set_accel_limits(accel_limits_turns[0], accel_limits_turns[1])
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
     # After deciding the MPC mode via get_mpc_mode(), ensure MPC uses that mode when not mlsim
@@ -248,6 +428,27 @@ class LongitudinalPlanner:
     a_prev = self.a_desired
     self.a_desired = float(interp(self.dt, CONTROL_N_T_IDX, self.a_desired_trajectory))
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.a_desired + a_prev) / 2.0
+
+    # Anticipatory pre-brake to avoid "coming in hot" when closing on a lead
+    if self.lead_one.status:
+      rel_v = max(0.0, v_ego - self.lead_one.vLead)
+      # dynamic time headway adds a small buffer when uncertainty is elevated
+      base_th = 1.6
+      th = base_th + 0.6 * max(0.0, uncertainty - 0.42)
+      desired_gap = th * v_ego
+      if (self.lead_dist_f is not None and self.lead_dist_f < desired_gap and rel_v > 0.5):
+        k_rel, k_unc = 0.04, 0.20
+        pre_brake = k_rel * rel_v + k_unc * max(0.0, uncertainty - 0.42)
+        pre_brake = min(pre_brake, 0.06)
+        self.a_desired = float(self.a_desired - pre_brake)
+
+    # Apply tiny feed-forward nudge when released and safe
+    if now_t < self.accel_nudge_until and self.a_desired > -0.1:
+      self.a_desired = float(min(self.a_desired + 0.12, get_max_accel(v_ego)))
+
+    # Small deadzone around zero accel to kill micro-dithers
+    if -0.05 < self.a_desired < 0.05:
+      self.a_desired = 0.0
 
   def publish(self, classic_model, tinygrad_model, sm, pm, frogpilot_toggles):
     plan_send = messaging.new_message('longitudinalPlan')
