@@ -32,6 +32,7 @@ from openpilot.selfdrive.controls.lib.vehicle_model import VehicleModel
 from openpilot.frogpilot.tinygrad_modeld.tinygrad_modeld import LAT_SMOOTH_SECONDS
 
 from openpilot.system.hardware import HARDWARE
+from selfdrive.road_speed_limiter import SpeedLimiter
 
 from openpilot.frogpilot.common.frogpilot_variables import get_frogpilot_toggles, params_memory
 from openpilot.frogpilot.controls.lib.neural_network_feedforward import LatControlNNFF
@@ -106,7 +107,7 @@ class Controls:
       ignore += ['roadCameraState', 'wideRoadCameraState']
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'liveCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'liveLocationKalman',
-                                   'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters', 'liveDelay',
+                                   'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters', 'liveDelay', 'naviData',
                                    'testJoystick', 'frogpilotCarState', 'frogpilotPlan'] + self.camera_packets + self.sensor_packets,
                                   ignore_alive=ignore, ignore_avg_freq=ignore+['radarState', 'testJoystick'], ignore_valid=['testJoystick', ],
                                   frequency=int(1/DT_CTRL))
@@ -165,6 +166,15 @@ class Controls:
     self.personality = self.read_personality_param()
     self.v_cruise_helper = VCruiseHelper(self.CP)
     self.recalibrating_seen = False
+
+    # NDA neokii
+    self.v_cruise_kph_limit = 0
+    self.slowing_down = False
+    self.slowing_down_sound_alert = False
+    self.second = 0.0
+    self.autoNaviSpeedCtrlStart = float(Params().get("AutoNaviSpeedCtrlStart"))
+    self.autoNaviSpeedCtrlEnd = float(Params().get("AutoNaviSpeedCtrlEnd"))
+
 
     self.can_log_mono_time = 0
 
@@ -596,10 +606,10 @@ class Controls:
     # NDA neokii
     apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = SpeedLimiter.instance().get_max_speed(CS, self.v_cruise_helper.v_cruise_kph, self.autoNaviSpeedCtrlStart, self.autoNaviSpeedCtrlEnd)
 
-    # NDA Camera Warning - 1Hz frequency limited to prevent blocking
+    # NDA Camera Warning - frequency limited to 1 call per 3 seconds
     current_time = time.monotonic()
-    if current_time - self.last_nda_camera_warn_time >= 1.0:  # 1Hz = 1 second interval
-      if CS.vEgo * CV.MS_TO_KPH > (apply_limit_speed * 0.85 ) and left_dist > 2.0:
+    if current_time - self.last_nda_camera_warn_time >= 3.0:  # Limit to 1 call per 3 seconds
+      if CS.vEgo * CV.MS_TO_KPH > (apply_limit_speed * 0.65 ) and left_dist > 0.1:
         self.events.add(EventName.ndaCameraWarn)
       self.last_nda_camera_warn_time = current_time
 
