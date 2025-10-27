@@ -51,7 +51,7 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
   a_y = v_ego ** 2 * angle_steers * CV.DEG_TO_RAD / (CP.steerRatio * CP.wheelbase)
   a_x_allowed = math.sqrt(max(a_total_max ** 2 - a_y ** 2, 0.))
 
-  return [a_target[0], min(a_target[1], a_x_allowed)]
+  return [max(a_target[0], -a_x_allowed), min(a_target[1], a_x_allowed)]
 
 
 def get_accel_from_plan_classic(CP, speeds, accels, vEgoStopping):
