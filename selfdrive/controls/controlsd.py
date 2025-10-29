@@ -35,6 +35,7 @@ from openpilot.system.hardware import HARDWARE
 from selfdrive.road_speed_limiter import SpeedLimiter
 
 from openpilot.frogpilot.common.frogpilot_variables import get_frogpilot_toggles, params_memory
+from openpilot.frogpilot.controls.lib.neural_network_feedforward import LatControlNNFF
 
 SOFT_DISABLE_TIME = 3  # seconds
 LDW_MIN_SPEED = 31 * CV.MPH_TO_MS
@@ -138,10 +139,10 @@ class Controls:
     self.LaC: LatControl
     if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
       self.LaC = LatControlAngle(self.CP, self.CI, DT_CTRL)
-    elif self.FPCP.lateralTuning.which() == 'pid':
+    elif self.CP.lateralTuning.which() == 'pid':
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
-    elif self.FPCP.lateralTuning.which() == 'torque':
-      self.LaC = LatControlTorque(self.CP, self.FPCP, self.CI, DT_CTRL)
+    elif self.CP.lateralTuning.which() == 'torque':
+      self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
 
     self.initialized = False
     self.state = State.disabled
@@ -215,6 +216,12 @@ class Controls:
 
     self.frogpilot_toggles = get_frogpilot_toggles()
 
+    if self.CP.lateralTuning.which() == "torque" and (self.frogpilot_toggles.nnff or self.frogpilot_toggles.nnff_lite):
+      self.LaC = LatControlNNFF(self.CP, self.CI, DT_CTRL)
+
+
+    self.frogpilot_toggles.is_metric = self.is_metric
+
     # Timer for NDA camera warning (1Hz frequency limiting)
     self.last_nda_camera_warn_time = 0
 
@@ -254,6 +261,7 @@ class Controls:
 
     # Return True if threshold is reached
     return len(timestamps_list) >= threshold
+
 
   def set_initial_state(self):
     if REPLAY:
@@ -598,10 +606,10 @@ class Controls:
     # NDA neokii
     apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = SpeedLimiter.instance().get_max_speed(CS, self.v_cruise_helper.v_cruise_kph, self.autoNaviSpeedCtrlStart, self.autoNaviSpeedCtrlEnd)
 
-    # NDA Camera Warning - 1Hz frequency limited to prevent blocking
+    # NDA Camera Warning - frequency limited to 1 call per 3 seconds
     current_time = time.monotonic()
-    if current_time - self.last_nda_camera_warn_time >= 1.0:  # 1Hz = 1 second interval
-      if CS.vEgo * CV.MS_TO_KPH > (apply_limit_speed * 0.85 ) and left_dist > 2.0:
+    if current_time - self.last_nda_camera_warn_time >= 3.0:  # Limit to 1 call per 3 seconds
+      if CS.vEgo * CV.MS_TO_KPH > (apply_limit_speed * 0.65 ) and left_dist > 0.1:
         self.events.add(EventName.ndaCameraWarn)
       self.last_nda_camera_warn_time = current_time
 
@@ -726,14 +734,14 @@ class Controls:
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
     # Update Torque Params
-    if self.FPCP.lateralTuning.which() == 'torque':
+    if self.CP.lateralTuning.which() == 'torque':
       torque_params = self.sm['liveTorqueParameters']
       if self.sm.all_checks(['liveTorqueParameters']) and (torque_params.useParams or self.frogpilot_toggles.force_auto_tune):
         self.LaC.update_live_torque_params(torque_params.latAccelFactorFiltered, torque_params.latAccelOffsetFiltered,
                                            torque_params.frictionCoefficientFiltered)
 
-      if self.sm.updated['liveDelay'] and (self.frogpilot_toggles.nnff or self.frogpilot_toggles.nnff_lite):
-        self.LaC.nnff.update_live_delay(self.sm['liveDelay'].lateralDelay)
+      if self.sm.updated['liveDelay'] and hasattr(self.LaC, "update_live_delay"):
+        self.LaC.update_live_delay(self.sm['liveDelay'].lateralDelay)
 
     long_plan = self.sm['longitudinalPlan']
     model_v2 = self.sm['modelV2']
@@ -1003,7 +1011,7 @@ class Controls:
     controlsState.experimentalMode = self.experimental_mode
     controlsState.personality = self.personality
 
-    lat_tuning = self.FPCP.lateralTuning.which()
+    lat_tuning = self.CP.lateralTuning.which()
     if self.joystick_mode:
       controlsState.lateralControlState.debugState = lac_log
     elif self.CP.steerControlType == car.CarParams.SteerControlType.angle:

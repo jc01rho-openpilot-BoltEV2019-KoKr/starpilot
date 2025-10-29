@@ -32,7 +32,6 @@ class FrogPilotPlanner:
 
     self.tracking_lead_filter = FirstOrderFilter(0, 0.5, DT_MDL)
 
-    self.disable_throttle = False
     self.driving_in_curve = False
     self.lateral_check = False
     self.model_stopped = False
@@ -69,9 +68,6 @@ class FrogPilotPlanner:
       self.cem.curve_detected = False
       self.cem.stop_sign_and_light(v_ego, sm, PLANNER_TIME - 2)
 
-    self.disable_throttle = self.tracking_lead and not self.frogpilot_following.following_lead
-    self.disable_throttle &= self.lead_one.vLead + COMFORT_BRAKE < v_ego > CRUISING_SPEED
-    self.disable_throttle &= sm["controlsState"].enabled
 
 
     self.driving_in_curve = abs(self.lateral_acceleration) >= MINIMUM_LATERAL_ACCELERATION
@@ -149,7 +145,7 @@ class FrogPilotPlanner:
 
     frogpilotPlan.desiredFollowDistance = self.frogpilot_following.desired_follow_distance
 
-    frogpilotPlan.disableThrottle = self.disable_throttle
+    frogpilotPlan.disableThrottle = self.frogpilot_following.disable_throttle
 
     frogpilotPlan.experimentalMode = self.cem.experimental_mode or self.frogpilot_vcruise.slc.experimental_mode
 

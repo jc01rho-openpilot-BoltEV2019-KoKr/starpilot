@@ -296,11 +296,11 @@ def update_openpilot():
   if params.get("UpdaterState", encoding="utf-8") != "idle":
     return
 
-  while params.get_bool("IsOnroad") or params_memory.get_bool("UpdateSpeedLimits") or running_threads.get("lock_doors", threading.Thread()).is_alive():
-    time.sleep(60)
-
   if not update_available():
     return
+
+  while params.get_bool("IsOnroad") or params_memory.get_bool("UpdateSpeedLimits") or running_threads.get("lock_doors", threading.Thread()).is_alive():
+    time.sleep(60)
 
   while True:
     if not update_available():
