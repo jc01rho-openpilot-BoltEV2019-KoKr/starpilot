@@ -448,11 +448,36 @@ def nda_camera_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaste
     else:
       result["distance_text"] = f"{left_dist / 1000.0:.1f}km"
 
+  # Calculate speed ratio and determine alert rate
+  alert_rate = 1.75  # default rate
+  if limit_speed > 0:
+    # Calculate speed ratio = current speed / limit speed
+    current_speed_kph = CS.vEgo * CV.MS_TO_KPH
+    speed_ratio = current_speed_kph / limit_speed
+
+    # Use linear interpolation for alert_rate based on speed_ratio
+    if speed_ratio >= 1.0:  # At or over 100% of limit speed
+      # Linear interpolation between 1.0 (at exactly 100%) and 0.5 (at 150%+)
+      # Map speed_ratio 1.0 -> 1.0, speed_ratio 1.5 -> 0.5, clamp at 1.5+
+      over_ratio = min(speed_ratio, 1.5)
+      alert_rate = 1.0 - (over_ratio - 1.0) * 1.0  # 1.0 to 0.5
+    elif speed_ratio >= 0.5:  # Between 50% and 100%
+      # Linear interpolation between 3.0 (at 50%) and 1.0 (at 100%)
+      # Map speed_ratio 0.5 -> 3.0, speed_ratio 1.0 -> 1.0
+      alert_rate = 3.0 - (speed_ratio - 0.5) * 4.0  # 3.0 to 1.0
+    # Below 50%, keep default rate of 1.75
+
+  # Determine alert status based on speed ratio
+  if speed_ratio < 0.7:
+    alert_status = AlertStatus.userPrompt
+  else:
+    alert_status = AlertStatus.critical
+
   return Alert(
     result["speed_text"] + "km/h  📸  "+ result["distance_text"],
     "",
-    AlertStatus.critical, AlertSize.small,
-    Priority.HIGHEST, VisualAlert.none, AudibleAlert.none, 1.75)
+    alert_status, AlertSize.small,
+    Priority.HIGHEST, VisualAlert.none, AudibleAlert.none, alert_rate)
 
 #
 #
