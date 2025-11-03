@@ -606,10 +606,25 @@ class Controls:
     # NDA neokii
     apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = SpeedLimiter.instance().get_max_speed(CS, self.v_cruise_helper.v_cruise_kph, self.autoNaviSpeedCtrlStart, self.autoNaviSpeedCtrlEnd)
 
-    # NDA Camera Warning - frequency limited to 1 call per 3 seconds
+    # NDA Camera Warning - Use dynamic frequency based on speed ratio for smooth blinking
     current_time = time.monotonic()
-    if current_time - self.last_nda_camera_warn_time >= 3.0:  # Limit to 1 call per 3 seconds
-      if CS.vEgo * CV.MS_TO_KPH > (apply_limit_speed * 0.65 ) and left_dist > 0.1:
+
+    # Calculate alert_rate based on speed ratio for smooth blinking
+    alert_rate = 3.0  # default 1 second interval
+    if apply_limit_speed > 0:
+      current_speed_kph = CS.vEgo * CV.MS_TO_KPH
+      speed_ratio = current_speed_kph / apply_limit_speed
+
+      if speed_ratio >= 1.0:  # At or over 100% of limit speed
+        # Linear interpolation between 1.0 (at exactly 100%) and 0.5 (at 150%+)
+        over_ratio = min(speed_ratio, 1.5)
+        alert_rate = 1.0 - (over_ratio - 1.0) * 1.0  # 1.0 to 0.5
+      elif speed_ratio >= 0.5:  # Between 50% and 100%
+        # Linear interpolation between 3.0 (at 50%) and 1.0 (at 100%)
+        alert_rate = 3.0 - (speed_ratio - 0.5) * 4.0  # 3.0 to 1.0
+
+    if current_time - self.last_nda_camera_warn_time >= alert_rate:
+      if CS.vEgo * CV.MS_TO_KPH > (apply_limit_speed * 0.5 ) and left_dist > 2.0:
         self.events.add(EventName.ndaCameraWarn)
       self.last_nda_camera_warn_time = current_time
 
