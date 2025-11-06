@@ -229,6 +229,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("FrogsGoMoosTweak", "1", 2, "0"),
   ("FullMap", "0", 2, "0"),
   ("GasRegenCmd", "1", 2, "0"),
+  ("GMPedalLongitudinal", "1", 2, "1"),
   ("GithubSshKeys", "", 0, ""),
   ("GithubUsername", "", 0, ""),
   ("GoatScream", "0", 1, "0"),
