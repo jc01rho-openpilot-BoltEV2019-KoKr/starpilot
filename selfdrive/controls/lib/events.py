@@ -450,6 +450,7 @@ def nda_camera_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaste
 
   # Calculate speed ratio and determine alert rate
   alert_rate = 1.75  # default rate
+  speed_ratio = 0.0  # initialize speed ratio to avoid UnboundLocalError
   if limit_speed > 0:
     # Calculate speed ratio = current speed / limit speed
     current_speed_kph = CS.vEgo * CV.MS_TO_KPH
@@ -467,8 +468,8 @@ def nda_camera_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaste
       alert_rate = 3.0 - (speed_ratio - 0.5) * 4.0  # 3.0 to 1.0
     # Below 50%, keep default rate of 1.75
 
-  # Determine alert status based on speed ratio
-  if speed_ratio < 0.7:
+  # Determine alert status based on speed ratio, only if limit_speed > 0
+  if limit_speed > 0 and speed_ratio < 0.7:
     alert_status = AlertStatus.userPrompt
   else:
     alert_status = AlertStatus.critical
