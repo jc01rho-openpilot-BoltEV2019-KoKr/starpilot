@@ -606,26 +606,29 @@ class Controls:
     # NDA neokii
     apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = SpeedLimiter.instance().get_max_speed(CS, self.v_cruise_helper.v_cruise_kph, self.autoNaviSpeedCtrlStart, self.autoNaviSpeedCtrlEnd)
 
-    # NDA Camera Warning - Use dynamic frequency based on speed ratio for smooth blinking
+    # NDA Camera Warning - Use dynamic frequency based on speed ratio for natural blinking
     current_time = time.monotonic()
     current_speed_kph = CS.vEgo * CV.MS_TO_KPH
 
-    # Calculate alert_rate based on speed ratio for smooth blinking
-    alert_rate = 3.0  # default 3 second interval
+    # Calculate alert_interval based on speed ratio for natural blinking
+    # This interval matches events.py duration calculation (40% duty cycle)
+    alert_interval = 2.0  # default 2.0 second interval
     if apply_limit_speed > 0:
       speed_ratio = current_speed_kph / apply_limit_speed
 
       if speed_ratio >= 1.0:  # At or over 100% of limit speed
-        # Linear interpolation between 1.0 (at exactly 100%) and 0.5 (at 150%+)
+        # Linear interpolation between 1.2 (at exactly 100%) and 0.8 (at 150%+)
+        # Faster blinking when speeding more
         over_ratio = min(speed_ratio, 1.5)
-        alert_rate = 1.0 - (over_ratio - 1.0) * 1.0  # 1.0 to 0.5
+        alert_interval = 1.2 - (over_ratio - 1.0) * 0.8  # 1.2 to 0.8
       elif speed_ratio >= 0.5:  # Between 50% and 100%
-        # Linear interpolation between 3.0 (at 50%) and 1.0 (at 100%)
-        alert_rate = 3.0 - (speed_ratio - 0.5) * 4.0  # 3.0 to 1.0
+        # Linear interpolation between 2.5 (at 50%) and 1.2 (at 100%)
+        alert_interval = 2.5 - (speed_ratio - 0.5) * 2.6  # 2.5 to 1.2
+      # Below 50%, keep default interval of 2.0
 
     # Add event only when: 1) enough time has passed, 2) speed is above minimum threshold,
     # 3) speed is above 50% of limit, 4) camera is within reasonable distance
-    if current_time - self.last_nda_camera_warn_time >= alert_rate:
+    if current_time - self.last_nda_camera_warn_time >= alert_interval:
       # Prevent event queue buildup: only add event when conditions are actively met
       # Minimum speed threshold prevents events from queueing up when nearly stopped
       if (current_speed_kph > 5.0 and  # Minimum 5 km/h to prevent event buildup at low speeds
