@@ -608,11 +608,11 @@ class Controls:
 
     # NDA Camera Warning - Use dynamic frequency based on speed ratio for smooth blinking
     current_time = time.monotonic()
+    current_speed_kph = CS.vEgo * CV.MS_TO_KPH
 
     # Calculate alert_rate based on speed ratio for smooth blinking
-    alert_rate = 3.0  # default 1 second interval
+    alert_rate = 3.0  # default 3 second interval
     if apply_limit_speed > 0:
-      current_speed_kph = CS.vEgo * CV.MS_TO_KPH
       speed_ratio = current_speed_kph / apply_limit_speed
 
       if speed_ratio >= 1.0:  # At or over 100% of limit speed
@@ -623,10 +623,17 @@ class Controls:
         # Linear interpolation between 3.0 (at 50%) and 1.0 (at 100%)
         alert_rate = 3.0 - (speed_ratio - 0.5) * 4.0  # 3.0 to 1.0
 
+    # Add event only when: 1) enough time has passed, 2) speed is above minimum threshold,
+    # 3) speed is above 50% of limit, 4) camera is within reasonable distance
     if current_time - self.last_nda_camera_warn_time >= alert_rate:
-      if CS.vEgo * CV.MS_TO_KPH > (apply_limit_speed * 0.5 ) and left_dist > 2.0:
+      # Prevent event queue buildup: only add event when conditions are actively met
+      # Minimum speed threshold prevents events from queueing up when nearly stopped
+      if (current_speed_kph > 5.0 and  # Minimum 5 km/h to prevent event buildup at low speeds
+          current_speed_kph > (apply_limit_speed * 0.5) and
+          left_dist > 2.0 and
+          left_dist < 1000.0):  # Don't alert if camera is too far away
         self.events.add(EventName.ndaCameraWarn)
-      self.last_nda_camera_warn_time = current_time
+        self.last_nda_camera_warn_time = current_time  # Only update timer when event is actually added
 
 
     # self.traffic_signal_check_timer += DT_CTRL
