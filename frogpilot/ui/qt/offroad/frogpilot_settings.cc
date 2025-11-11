@@ -284,7 +284,7 @@ void FrogPilotSettingsWindow::updateVariables() {
     longitudinalActuatorDelay = CP.getLongitudinalActuatorDelay();
     startAccel = CP.getStartAccel();
     steerActuatorDelay = CP.getSteerActuatorDelay();
-    steerKp = CP.getLateralTuning().which() == cereal::CarParams::LateralTuning::PID ? CP.getLateralTuning().getPid().getKpV()[0] : 1.0;
+    steerKp = CP.getLateralTuning().which() == cereal::CarParams::LateralTuning::PID ? CP.getLateralTuning().getPid().getKpV()[0] : 0.6;
     steerRatio = CP.getSteerRatio();
     stopAccel = CP.getStopAccel();
     stoppingDecelRate = CP.getStoppingDecelRate();

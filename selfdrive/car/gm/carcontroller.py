@@ -76,6 +76,7 @@ class CarController(CarControllerBase):
     self.regen_paddle_pressed = False
     self.aego = 0.0
     self.regen_paddle_timer = 0
+    self.planner_regen_hold = False
 
 
 
@@ -87,6 +88,7 @@ class CarController(CarControllerBase):
 
   def calc_pedal_command(self, accel: float, long_active: bool, car_velocity) -> Tuple[float, bool]:
     if not long_active:
+      self.planner_regen_hold = False
       return 0., False
 
     # Regen paddle hysteresis (frame-based): hold 10 frames, with decrement dead-zone
@@ -102,7 +104,7 @@ class CarController(CarControllerBase):
 
     # Base paddle press hysteresis
     self.regen_paddle_pressed = self.regen_paddle_timer >= 10  # 10 frames
-    press_regen_paddle = self.regen_paddle_pressed
+    press_regen_paddle = self.regen_paddle_pressed or self.planner_regen_hold
 
 
     # Regen gain ratios from bin-averaged 60–0 deceleration sweep; Calculates stronger decel from paddle
@@ -135,6 +137,21 @@ class CarController(CarControllerBase):
     actuators = CC.actuators
     accel = brake_accel = actuators.accel
     press_regen_paddle = False
+
+    # Planner-driven regen hold: gate by car support and OP long active, use commanded accel thresholds
+    if (self.CP.enableGasInterceptor and self.CP.carFingerprint in CC_REGEN_PADDLE_CAR
+        and self.CP.openpilotLongitudinalControl and CC.longActive):
+      # Match original hysteresis intent: vehicle can usually stop without paddle up to ~1.0 m/s^2
+      # Use the same thresholds as the aEgo-based hysteresis, but on commanded accel for preemption
+      planner_press_threshold = -0.7
+      planner_release_threshold = -0.3
+      if accel <= planner_press_threshold:
+        self.planner_regen_hold = True
+      elif accel >= planner_release_threshold:
+        self.planner_regen_hold = False
+    else:
+      self.planner_regen_hold = False
+
     hud_control = CC.hudControl
     hud_alert = hud_control.visualAlert
     hud_v_cruise = hud_control.setSpeed
@@ -150,7 +167,7 @@ class CarController(CarControllerBase):
       self.CP.openpilotLongitudinalControl and
       CC.longActive and
       self.CP.enableGasInterceptor and
-      self.regen_paddle_timer >= 10  # raw hysteresis-only (10 frames)
+      (self.regen_paddle_timer >= 10 or self.planner_regen_hold)  # hysteresis or planner hint
     )
     regen_active = raw_regen_active
 
@@ -301,7 +318,7 @@ class CarController(CarControllerBase):
 
     # Update regen_active state and last_regen_paddle_pressed for next loop
     self.last_regen_active = regen_active
-    self.last_regen_paddle_pressed = self.regen_paddle_pressed
+    self.last_regen_paddle_pressed = self.regen_paddle_pressed or self.planner_regen_hold
 
     if paddle_sends:
       interval_ns = self.last_steer_ts_ns - self.prev_steer_ts_ns
