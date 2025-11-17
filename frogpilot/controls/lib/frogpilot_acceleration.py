@@ -54,7 +54,7 @@ A_CRUISE_MIN_SPORT = A_CRUISE_MIN * 2
                        # MPH = [0.0,  11,  22,  34,  45,  56,  89]
 A_CRUISE_MAX_BP_CUSTOM =       [0.0,  5., 10., 15., 20., 25., 40.]
 A_CRUISE_MAX_VALS_ECO =        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-A_CRUISE_MAX_VALS_SPORT =      [1.5, 1.5, 1.25, 1.5, 1.5, 1.5, 2.0]
+A_CRUISE_MAX_VALS_SPORT =      [1.25, 1.25, 1.25, 1.25, 1.5, 1.5, 2.0]
 
 def get_max_accel_eco(v_ego):
   return float(akima_interp(v_ego, A_CRUISE_MAX_BP_CUSTOM, A_CRUISE_MAX_VALS_ECO))
