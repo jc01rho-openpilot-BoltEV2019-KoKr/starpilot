@@ -179,6 +179,26 @@ class LongControl:
       else:
         output_accel = raw_output_accel
 
+    if self.long_control_state == LongCtrlState.pid:
+      # Smooth acceleration and deceleration with urgency-based rate limiting
+      base_rate = 1.0
+      
+      if output_accel < self.last_output_accel:  # Deceleration requested
+          decel_needed = self.last_output_accel - output_accel
+          # Use a safe default for ACCEL_MIN if not available, to prevent division by zero
+          max_decel = abs(CarControllerParams.ACCEL_MIN) if CarControllerParams.ACCEL_MIN != 0 else 4.0
+          urgency = min(1.0, decel_needed / max_decel)
+          
+          # Adjust rate based on urgency (1.0 m/s^3 for low urgency, up to 4.0 m/s^3 for high urgency)
+          max_rate = 1.0 + 3.0 * urgency
+      else:
+          max_rate = base_rate  # Acceleration is always smooth
+      
+      max_accel_change = max_rate * DT_CTRL
+      output_accel = clip(output_accel,
+                          self.last_output_accel - max_accel_change,
+                          self.last_output_accel + max_accel_change)
+
     self.last_output_accel = clip(output_accel, accel_limits[0], accel_limits[1])
     return self.last_output_accel
 
