@@ -29,7 +29,7 @@ UNCERT_SLOPE_TRIG = 0.12  # per second
 UNCERT_MAG_TRIG = 0.50
 
 # Lookup table for turns
-_A_TOTAL_MAX_V = [1.7, 3.2]
+_A_TOTAL_MAX_V = [2.0, 3.2]
 _A_TOTAL_MAX_BP = [20., 40.]
 
 
@@ -444,7 +444,7 @@ class LongitudinalPlanner:
 
     # Apply tiny feed-forward nudge when released and safe
     if now_t < self.accel_nudge_until and self.a_desired > -0.1:
-      self.a_desired = float(min(self.a_desired + 0.12, get_max_accel(v_ego)))
+      self.a_desired = float(min(self.a_desired + 0.15, get_max_accel(v_ego)))
 
     # Small deadzone around zero accel to kill micro-dithers
     if -0.05 < self.a_desired < 0.05:
