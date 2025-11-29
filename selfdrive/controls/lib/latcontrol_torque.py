@@ -79,8 +79,13 @@ class LatControlTorque(LatControl):
 
       # Lane centering correction for better center-lane keeping
       CENTERING_GAIN_BP = [0, 10, 20, 30]  # m/s breakpoints
-      CENTERING_GAIN_V = [0.15, 0.12, 0.08, 0.05]  # correction gains
+      CENTERING_GAIN_V = [0.20, 0.15, 0.11, 0.08]  # correction gains
       centering_gain = np.interp(CS.vEgo, CENTERING_GAIN_BP, CENTERING_GAIN_V)
+
+      # Boost centering gain on curves for better tracking
+      if abs(desired_curvature) > 0.0005:
+        centering_gain *= 1.2
+
       lane_centering_correction = centering_gain * error
 
       error_lsf = error + low_speed_factor / self.torque_params.kp * error + lane_centering_correction
