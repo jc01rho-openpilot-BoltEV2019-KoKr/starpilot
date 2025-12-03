@@ -291,7 +291,8 @@ static int gm_fwd_hook(int bus_num, int addr) {
       // block lkas message and acc messages if gm_cam_long, forward all others
       bool is_lkas_msg = (addr == 0x180);
       bool is_acc_msg = (addr == 0x315) || (addr == 0x2CB) || (addr == 0x370);
-      bool block_msg = is_lkas_msg || (is_acc_msg && gm_cam_long);
+      // [추가] addr == 0x184 (PSCMStatus)를 차단 목록에 반드시 넣어야 함!
+      bool block_msg = is_lkas_msg || (is_acc_msg && gm_cam_long) || (addr == 0x184);
       if (!block_msg) {
         bus_fwd = 0;
       }
