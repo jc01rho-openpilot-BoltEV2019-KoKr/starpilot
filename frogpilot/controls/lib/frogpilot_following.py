@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import numpy as np
 
+from openpilot.common.conversions import Conversions as CV
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import COMFORT_BRAKE, desired_follow_distance, get_jerk_factor, get_T_FOLLOW
 
 from openpilot.frogpilot.common.frogpilot_variables import CITY_SPEED_LIMIT
 
 TRAFFIC_MODE_BP = [0., CITY_SPEED_LIMIT]
+PERSONALITY_BP = [20. * CV.KPH_TO_MS, 90. * CV.KPH_TO_MS]
 
 class FrogPilotFollowing:
   def __init__(self, FrogPilotPlanner):
@@ -48,12 +50,16 @@ class FrogPilotFollowing:
           frogpilot_toggles.custom_personalities, sm["controlsState"].personality
         )
 
-      self.t_follow = get_T_FOLLOW(
+      t_follow_param = get_T_FOLLOW(
         frogpilot_toggles.aggressive_follow,
         frogpilot_toggles.standard_follow,
         frogpilot_toggles.relaxed_follow,
         frogpilot_toggles.custom_personalities, sm["controlsState"].personality
       )
+      if isinstance(t_follow_param, list):
+        self.t_follow = float(np.interp(v_ego, PERSONALITY_BP, t_follow_param))
+      else:
+        self.t_follow = float(t_follow_param)
     else:
       self.base_acceleration_jerk = 0
       self.base_danger_jerk = 0

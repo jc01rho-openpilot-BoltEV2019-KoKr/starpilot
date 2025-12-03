@@ -227,6 +227,7 @@ std::unordered_map<std::string, uint32_t> keys = {
     {"AdvancedLateralTune", PERSISTENT},
     {"AdvancedLongitudinalTune", PERSISTENT},
     {"AggressiveFollow", PERSISTENT},
+    {"AggressiveFollowHigh", PERSISTENT},
     {"AggressiveJerkAcceleration", PERSISTENT},
     {"AggressiveJerkDanger", PERSISTENT},
     {"AggressiveJerkDeceleration", PERSISTENT},
@@ -459,6 +460,7 @@ std::unordered_map<std::string, uint32_t> keys = {
     {"RandomThemes", PERSISTENT},
     {"RefuseVolume", PERSISTENT},
     {"RelaxedFollow", PERSISTENT},
+    {"RelaxedFollowHigh", PERSISTENT},
     {"RelaxedJerkAcceleration", PERSISTENT},
     {"RelaxedJerkDanger", PERSISTENT},
     {"RelaxedJerkDeceleration", PERSISTENT},
@@ -518,6 +520,7 @@ std::unordered_map<std::string, uint32_t> keys = {
     {"SpeedLimitsFiltered", PERSISTENT | DONT_LOG},
     {"SpeedLimitSources", PERSISTENT},
     {"StandardFollow", PERSISTENT},
+    {"StandardFollowHigh", PERSISTENT},
     {"StandardJerkAcceleration", PERSISTENT},
     {"StandardJerkDanger", PERSISTENT},
     {"StandardJerkDeceleration", PERSISTENT},
@@ -587,6 +590,7 @@ std::unordered_map<std::string, uint32_t> keys = {
     {"WheelIcon", PERSISTENT},
     {"WheelSpeed", PERSISTENT},
     {"StopDistance", PERSISTENT},
+    {"RecoveryPower", PERSISTENT},
     {"WheelToDownload", CLEAR_ON_MANAGER_START},
 };
 

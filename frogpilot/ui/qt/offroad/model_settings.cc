@@ -30,12 +30,14 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
     {"DeleteModel", tr("Delete Driving Models"), tr("Delete driving models from the device."), ""},
     {"DownloadModel", tr("Download Driving Models"), tr("Download driving models to the device."), ""},
     {"ModelRandomizer", tr("Model Randomizer"), tr("Driving models are chosen at random each drive and feedback prompts are used to find the model that best suits your needs."), ""},
+    {"RecoveryPower", tr("Recovery Power"), tr("Adjust the strength of planplus lane recovery corrections (0.5 to 2.0)."), ""},
     {"StopDistance", tr("Stop Distance"), tr("Adjust the model's stopping distance in meters (minimum 4 for safety). Most users prefer 6."), ""},
     {"ManageBlacklistedModels", tr("Manage Model Blacklist"), tr("Add or remove models from the <b>Model Randomizer</b>'s blacklist list."), ""},
     {"ManageScores", tr("Manage Model Ratings"), tr("Reset or view the saved ratings for the driving models."), ""},
     {"SelectModel", tr("Select Driving Model"), tr("Select the active driving model."), ""},
   };
 
+  FrogPilotParamValueButtonControl *recoveryPowerToggle = nullptr;
   FrogPilotParamValueButtonControl *stopDistanceToggle = nullptr;
 
   for (const auto &[param, title, desc, icon] : modelToggles) {
@@ -431,6 +433,10 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
       });
       modelToggle = selectModelButton;
 
+    } else if (param == "RecoveryPower") {
+      std::vector<QString> recoveryPowerButton{"Reset"};
+      modelToggle = new FrogPilotParamValueButtonControl(param, title, desc, icon, 0.5, 2.0, QString(), std::map<float, QString>(), 0.1, false, {}, recoveryPowerButton, false, false);
+      recoveryPowerToggle = static_cast<FrogPilotParamValueButtonControl*>(modelToggle);
     } else if (param == "StopDistance") {
       std::vector<QString> stopDistanceButton{"Reset"};
       modelToggle = new FrogPilotParamValueButtonControl(param, title, desc, icon, 4.0, 10.0, QString(), std::map<float, QString>(), 0.1, false, {}, stopDistanceButton, false, false);
@@ -462,6 +468,16 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
       }
     }
   });
+
+  if (recoveryPowerToggle) {
+    QObject::connect(recoveryPowerToggle, &FrogPilotParamValueButtonControl::buttonClicked, [this, recoveryPowerToggle]() {
+      if (ConfirmationDialog::confirm(tr("Are you sure you want to reset your <b>Recovery Power</b> to the default of 1.0?"), tr("Reset"), this)) {
+        params.putFloat("RecoveryPower", 1.0);
+        recoveryPowerToggle->refresh();
+        updateFrogPilotToggles();
+      }
+    });
+  }
 
   if (stopDistanceToggle) {
     QObject::connect(stopDistanceToggle, &FrogPilotParamValueButtonControl::buttonClicked, [this, stopDistanceToggle]() {
@@ -740,6 +756,8 @@ void FrogPilotModelPanel::updateToggles() {
       setVisible &= params.getBool("ModelRandomizer");
     } else if (key == "SelectModel") {
       setVisible &= !params.getBool("ModelRandomizer");
+    } else if (key == "RecoveryPower") {
+      setVisible &= (tuningLevel == 3); // Only visible in developer tuning level
     } else if (key == "StopDistance") {
       setVisible &= (tuningLevel == 3); // Only visible in developer tuning level
     }

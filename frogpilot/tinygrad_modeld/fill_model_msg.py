@@ -11,16 +11,15 @@ ConfidenceClass = log.ModelDataV2.ConfidenceClass
 
 # Return curvature for lateral action. If the model outputs desired_curvature and we're not in mlsim mode,
 # use it directly; otherwise derive from the plan using yaw and yaw-rate.
-def get_curvature_from_output(output: dict, v_ego: float, lat_action_t: float, mlsim: bool) -> float:
+def get_curvature_from_output(output: dict, plan: np.ndarray, v_ego: float, lat_action_t: float, mlsim: bool) -> float:
   if not mlsim:
     desired = output.get('desired_curvature')
     if desired is not None:
       return float(desired[0, 0])
 
-  plan_out = output['plan'][0]
   # Use yaw (index 2) and yaw_rate (index 2)
-  theta = plan_out[:, Plan.T_FROM_CURRENT_EULER][:, 2]
-  theta_dot = plan_out[:, Plan.ORIENTATION_RATE][:, 2]
+  theta = plan[:, Plan.T_FROM_CURRENT_EULER][:, 2]
+  theta_dot = plan[:, Plan.ORIENTATION_RATE][:, 2]
   return float(get_curvature_from_plan(theta, theta_dot, ModelConstants.T_IDXS, v_ego, lat_action_t))
 
 
