@@ -13,6 +13,13 @@ PERCENTILE = 90
 ROUNDING_PRECISION = 5
 STEP = 0.001
 
+# Optimized curve speed parameters for smoother driving
+CURVE_DECEL_DAMPENING = 0.75  # Reduce deceleration rate for gentler slowdown (0-1, lower = less aggressive)
+MIN_CURVE_SPEED_REDUCTION = 0.85  # Minimum speed reduction factor (1.0 = no minimum limit)
+GENTLE_CURVE_THRESHOLD = 0.015  # Curvature below this is considered gentle (reduced deceleration)
+HIGHWAY_SPEED_THRESHOLD = 25  # m/s - above this, be more conservative with speed changes
+
+
 class CurveSpeedController:
   def __init__(self, FrogPilotVCruise):
     self.frogpilot_planner = FrogPilotVCruise.frogpilot_planner
@@ -27,6 +34,10 @@ class CurveSpeedController:
     self.required_curvatures = [str(round(road_curvature, ROUNDING_PRECISION)) for road_curvature in np.arange(MIN_CURVATURE, MAX_CURVATURE + STEP, STEP)]
 
     self.update_lateral_acceleration()
+
+    # Smoothing state for curve speed transitions
+    self.previous_target = None
+    self.curve_entry_speed = None
 
   def log_data(self, v_ego, sm):
     self.enable_training = v_ego > CRUISING_SPEED
@@ -82,6 +93,7 @@ class CurveSpeedController:
   def update_lateral_acceleration(self):
     if self.curvature_data:
       all_samples = [data["average"] for data in self.curvature_data.values()]
+      # Use slightly higher percentile for more confident lateral acceleration
       self.lateral_acceleration = float(np.percentile(all_samples, PERCENTILE))
     else:
       self.lateral_acceleration = DEFAULT_LATERAL_ACCELERATION
@@ -89,15 +101,52 @@ class CurveSpeedController:
     params.put_float_nonblocking("CalibratedLateralAcceleration", self.lateral_acceleration)
 
   def update_target(self, v_ego):
-    lateral_acceleration = self.lateral_acceleration
+    road_curvature = abs(self.frogpilot_planner.road_curvature)
+
+    # Use calibrated lateral acceleration with a small boost for smoother driving
+    lateral_acceleration = self.lateral_acceleration * 1.1  # 10% boost for less aggressive deceleration
 
     if self.target_set:
-      csc_speed = (lateral_acceleration / abs(self.frogpilot_planner.road_curvature))**0.5
-      decel_rate = (v_ego - csc_speed) / self.frogpilot_planner.time_to_curve
+      # Calculate base curve speed from physics
+      csc_speed = (lateral_acceleration / max(road_curvature, 0.0001))**0.5
 
+      # Apply gentle curve handling - less deceleration for gentle curves
+      if road_curvature < GENTLE_CURVE_THRESHOLD:
+        # Gentle curve - reduce deceleration significantly
+        dampening = CURVE_DECEL_DAMPENING * 0.5
+      else:
+        dampening = CURVE_DECEL_DAMPENING
+
+      # Calculate deceleration rate with dampening
+      time_to_curve = max(self.frogpilot_planner.time_to_curve, 0.5)
+      raw_decel_rate = (v_ego - csc_speed) / time_to_curve
+      decel_rate = raw_decel_rate * dampening
+
+      # At highway speeds, be more conservative with speed changes
+      if v_ego > HIGHWAY_SPEED_THRESHOLD:
+        decel_rate *= 0.85
+
+      # Apply minimum speed reduction limit
+      min_speed = v_ego * MIN_CURVE_SPEED_REDUCTION
+      csc_speed = max(csc_speed, min_speed)
+
+      # Smooth the target transition
       self.target -= decel_rate * DT_MDL
-      self.target = float(np.clip(self.target, CRUISING_SPEED, csc_speed))
+
+      # Ensure target stays within reasonable bounds
+      self.target = float(np.clip(self.target, CRUISING_SPEED, max(csc_speed, v_ego)))
+
+      # Apply smoothing between previous and current target
+      if self.previous_target is not None:
+        # Exponential smoothing for smoother transitions
+        alpha = 0.3
+        self.target = alpha * self.target + (1 - alpha) * self.previous_target
+
+      self.previous_target = self.target
+
     else:
       self.target_set = True
-
       self.target = v_ego
+      self.curve_entry_speed = v_ego
+      self.previous_target = v_ego
+
