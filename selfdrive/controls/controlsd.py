@@ -764,6 +764,16 @@ class Controls:
       if self.sm.all_checks(['liveTorqueParameters']) and (torque_params.useParams or self.frogpilot_toggles.force_auto_tune):
         self.LaC.update_live_torque_params(torque_params.latAccelFactorFiltered, torque_params.latAccelOffsetFiltered,
                                            torque_params.frictionCoefficientFiltered)
+      elif self.frogpilot_toggles.use_custom_friction or self.frogpilot_toggles.use_custom_latAccelFactor:
+        lat_accel_factor = self.frogpilot_toggles.latAccelFactor if self.frogpilot_toggles.use_custom_latAccelFactor else self.CP.lateralTuning.torque.latAccelFactor
+        friction = self.frogpilot_toggles.friction if self.frogpilot_toggles.use_custom_friction else self.CP.lateralTuning.torque.friction
+        self.LaC.update_live_torque_params(lat_accel_factor, self.CP.lateralTuning.torque.latAccelOffset, friction)
+      else:
+        # Use manual parameter values from settings panel
+        lat_accel_factor = self.params.get_float("SteerLatAccel")
+        friction = self.params.get_float("SteerFriction")
+        steer_ratio = self.params.get_float("SteerRatio")
+        self.LaC.update_live_torque_params(lat_accel_factor, self.CP.lateralTuning.torque.latAccelOffset, friction)
 
       if self.sm.updated['liveDelay'] and hasattr(self.LaC, "update_live_delay"):
         self.LaC.update_live_delay(self.sm['liveDelay'].lateralDelay)

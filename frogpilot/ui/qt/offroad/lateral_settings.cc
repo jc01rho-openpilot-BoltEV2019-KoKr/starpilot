@@ -340,7 +340,6 @@ void FrogPilotLateralPanel::updateToggles() {
     }
   }
 
-  bool forcingAutoTune = !parent->hasAutoTune && params.getBool("ForceAutoTune");
   bool forcingAutoTuneOff = parent->hasAutoTune && params.getBool("ForceAutoTuneOff");
   bool forcingTorqueController = !parent->isAngleCar && params.getBool("ForceTorqueController");
   bool usingNNFF = parent->hasNNFFLog && params.getBool("LateralTune") && params.getBool("NNFF");
@@ -401,7 +400,7 @@ void FrogPilotLateralPanel::updateToggles() {
 
     else if (key == "SteerFriction") {
       setVisible &= parent->friction != 0;
-      setVisible &= parent->hasAutoTune ? forcingAutoTuneOff : !forcingAutoTune;
+      setVisible &= parent->hasAutoTune ? forcingAutoTuneOff : true;
       setVisible &= parent->isTorqueCar || forcingTorqueController;
       setVisible &= !usingNNFF;
     }
@@ -413,14 +412,14 @@ void FrogPilotLateralPanel::updateToggles() {
 
     else if (key == "SteerLatAccel") {
       setVisible &= parent->latAccelFactor != 0;
-      setVisible &= parent->hasAutoTune ? forcingAutoTuneOff : !forcingAutoTune;
+      setVisible &= parent->hasAutoTune ? forcingAutoTuneOff : true;
       setVisible &= parent->isTorqueCar || forcingTorqueController;
       setVisible &= !usingNNFF;
     }
 
     else if (key == "SteerRatio") {
       setVisible &= parent->steerRatio != 0;
-      setVisible &= parent->hasAutoTune ? forcingAutoTuneOff : !forcingAutoTune;
+      setVisible &= parent->hasAutoTune ? forcingAutoTuneOff : true;
     }
 
     toggle->setVisible(setVisible);

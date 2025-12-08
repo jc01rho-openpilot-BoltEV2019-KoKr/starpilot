@@ -280,7 +280,8 @@ void FrogPilotSettingsWindow::updateVariables() {
     isTorqueCar = CP.getLateralTuning().which() == cereal::CarParams::LateralTuning::TORQUE;
     isToyota = carMake == "toyota";
     isTSK = CP.getSecOcRequired();
-    isVolt = carFingerprint == "CHEVROLET_VOLT";
+    isVolt = carFingerprint.find("CHEVROLET_VOLT") == 0;
+    if (isVolt) hasSNG = false;
     longitudinalActuatorDelay = CP.getLongitudinalActuatorDelay();
     startAccel = CP.getStartAccel();
     steerActuatorDelay = CP.getSteerActuatorDelay();
