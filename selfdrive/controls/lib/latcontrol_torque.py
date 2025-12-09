@@ -3,7 +3,7 @@ import numpy as np
 from collections import deque
 
 from cereal import log
-from openpilot.selfdrive.car.interfaces import FRICTION_THRESHOLD
+from openpilot.selfdrive.car.interfaces import FRICTION_THRESHOLD, get_friction_threshold
 from openpilot.selfdrive.controls.lib.drive_helpers import MIN_SPEED, get_friction
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
