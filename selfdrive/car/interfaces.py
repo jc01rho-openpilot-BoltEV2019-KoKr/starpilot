@@ -39,6 +39,11 @@ ACCEL_MAX = 2.0
 ACCEL_MIN = -3.5
 FRICTION_THRESHOLD = 0.09
 
+def get_friction_threshold(v_ego):
+  # Interpolate friction threshold from 0.09 at 50 mph to 0.15 at 75 mph
+  from openpilot.common.numpy_fast import interp
+  return interp(v_ego, [50 * CV.MPH_TO_MS, 75 * CV.MPH_TO_MS], [0.09, 0.15])
+
 TORQUE_PARAMS_PATH = os.path.join(BASEDIR, 'selfdrive/car/torque_data/params.toml')
 TORQUE_OVERRIDE_PATH = os.path.join(BASEDIR, 'selfdrive/car/torque_data/override.toml')
 TORQUE_SUBSTITUTE_PATH = os.path.join(BASEDIR, 'selfdrive/car/torque_data/substitute.toml')
