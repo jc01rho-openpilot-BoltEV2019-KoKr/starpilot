@@ -34,7 +34,8 @@ MIN_BUCKET_POINTS = np.array([100, 300, 500, 500, 500, 500, 300, 100])
 MIN_ENGAGE_BUFFER = 2  # secs
 
 VERSION = 1  # bump this to invalidate old parameter caches
-ALLOWED_CARS = ['toyota', 'hyundai']
+FULL_AUTO_CARS = ['toyota', 'hyundai']
+FRICTION_ONLY_CARS = ['gm']
 
 
 def slope2rot(slope):
@@ -72,7 +73,10 @@ class TorqueEstimator(ParameterEstimator):
     self.offline_friction = 0.0
     self.offline_latAccelFactor = 0.0
     self.resets = 0.0
-    self.use_params = CP.carName in ALLOWED_CARS and CP.lateralTuning.which() == 'torque'
+    self.allow_lat_accel_learning = CP.carName in FULL_AUTO_CARS and CP.lateralTuning.which() == 'torque'
+    self.allow_friction_learning = (self.allow_lat_accel_learning or CP.carName in FRICTION_ONLY_CARS) \
+                                   and CP.lateralTuning.which() == 'torque'
+    self.use_params = self.allow_friction_learning
 
     if CP.lateralTuning.which() == 'torque':
       self.offline_friction = CP.lateralTuning.torque.friction
@@ -104,11 +108,11 @@ class TorqueEstimator(ParameterEstimator):
           cache_CP = msg
         if self.get_restore_key(cache_CP, cache_ltp.version) == self.get_restore_key(CP, VERSION):
           if cache_ltp.liveValid:
-            initial_params = {
-              'latAccelFactor': cache_ltp.latAccelFactorFiltered,
-              'latAccelOffset': cache_ltp.latAccelOffsetFiltered,
-              'frictionCoefficient': cache_ltp.frictionCoefficientFiltered
-            }
+            if self.allow_lat_accel_learning:
+              initial_params['latAccelFactor'] = cache_ltp.latAccelFactorFiltered
+              initial_params['latAccelOffset'] = cache_ltp.latAccelOffsetFiltered
+            if self.allow_friction_learning:
+              initial_params['frictionCoefficient'] = cache_ltp.frictionCoefficientFiltered
           initial_params['points'] = cache_ltp.points
           self.decay = cache_ltp.decay
           self.filtered_points.load_points(initial_params['points'])
@@ -155,6 +159,10 @@ class TorqueEstimator(ParameterEstimator):
   def update_params(self, params):
     self.decay = min(self.decay + DT_MDL, MAX_FILTER_DECAY)
     for param, value in params.items():
+      if param.startswith('latAccel') and not self.allow_lat_accel_learning:
+        continue
+      if param == 'frictionCoefficient' and not self.allow_friction_learning:
+        continue
       self.filtered_params[param].update(value)
       self.filtered_params[param].update_alpha(self.decay)
 
