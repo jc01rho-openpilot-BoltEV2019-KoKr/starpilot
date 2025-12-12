@@ -620,7 +620,7 @@ class FrogPilotVariables:
     toggle.use_custom_steerRatio = bool(round(toggle.steerRatio, 2) != round(steerRatio, 2)) and not toggle.force_auto_tune or toggle.force_auto_tune_off
 
     advanced_longitudinal_tuning = params.get_bool("AdvancedLongitudinalTune") if tuning_level >= level["AdvancedLongitudinalTune"] else default.get_bool("AdvancedLongitudinalTune")
-    ev_vehicle = toggle.car_make == "gm" and toggle.car_model != "CHEVROLET_VOLT" and CP.carFingerprint in GM_EV_CAR or toggle.car_make == "hyundai" and CP.carFingerprint in HYUNDAI_EV_CAR
+    ev_vehicle = toggle.car_make == "gm" and not (toggle.car_model.startswith("CHEVROLET_VOLT") and not toggle.car_model.endswith("_CC")) and CP.carFingerprint in GM_EV_CAR or toggle.car_make == "hyundai" and CP.carFingerprint in HYUNDAI_EV_CAR
     ev_vehicle |= CP.transmissionType == TransmissionType.direct
 
     if params.get("EVTuning") == b"":
