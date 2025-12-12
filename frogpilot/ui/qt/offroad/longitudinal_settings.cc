@@ -98,6 +98,11 @@ FrogPilotLongitudinalPanel::FrogPilotLongitudinalPanel(
               "fine-tune how openpilot drives."),
            "../../frogpilot/assets/toggle_icons/"
            "icon_advanced_longitudinal_tune.png"},
+          {"EVTuning", tr("EV Tuning"),
+           tr("<b>Use acceleration profiles tuned for EVs.</b> Defaults to the "
+              "vehicle's detected powertrain type but can be overridden if the "
+              "automatic choice doesn't match."),
+           ""},
           {"LongitudinalActuatorDelay",
            longitudinalActuatorDelay != 0
                ? QString(tr("Actuator Delay (Default: %1)"))
