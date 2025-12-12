@@ -548,6 +548,7 @@ std::unordered_map<std::string, uint32_t> keys = {
     {"StoppedTimer", PERSISTENT},
     {"TacoTune", PERSISTENT},
     {"TacoTuneHacks", PERSISTENT},
+    {"TrailerLoad", PERSISTENT},
     {"TestAlert", CLEAR_ON_MANAGER_START},
     {"TetheringEnabled", PERSISTENT},
     {"ThemeDownloadProgress", CLEAR_ON_MANAGER_START},

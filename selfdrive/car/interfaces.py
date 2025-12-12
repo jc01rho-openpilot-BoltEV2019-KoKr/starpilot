@@ -152,8 +152,11 @@ class CarInterfaceBase(ABC):
 
     ret = cls._get_params(ret, candidate, fingerprint, car_fw, experimental_long, docs, frogpilot_toggles)
 
+    trailer_load_kg = getattr(frogpilot_toggles, "trailer_load_kg", 0)
+
     # Vehicle mass is published curb weight plus assumed payload such as a human driver; notCars have no assumed payload
     if not ret.notCar:
+      ret.mass = ret.mass + trailer_load_kg
       ret.mass = ret.mass + STD_CARGO_KG
 
     # Set params dependent on values set by the car interface

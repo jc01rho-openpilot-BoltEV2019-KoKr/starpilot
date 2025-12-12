@@ -428,6 +428,11 @@ FrogPilotLongitudinalPanel::FrogPilotLongitudinalPanel(
           {"MaxDesiredAcceleration", tr("Maximum Acceleration"),
            tr("<b>Limit the strongest acceleration</b> openpilot can command."),
            ""},
+          {"TrailerLoad", tr("Trailer Load"),
+           tr("<b>Increase the vehicle mass to account for towing.</b> Adjust "
+              "in 500 lb steps up to 15,000 lbs to fine-tune gas and brake "
+              "behavior when pulling a trailer."),
+           ""},
           {"TacoTune", tr("\"Taco Bell Run\" Turn Speed Hack"),
            tr("<b>The turn-speed hack from comma's 2022 \"Taco Bell Run\".</b> "
               "Designed to slow down for left and right turns."),
@@ -871,6 +876,10 @@ FrogPilotLongitudinalPanel::FrogPilotLongitudinalPanel(
       longitudinalToggle = new FrogPilotParamValueControl(
           param, title, desc, icon, 0.1, 4.0, tr(" m/s²"),
           std::map<float, QString>(), 0.1);
+    } else if (param == "TrailerLoad") {
+      longitudinalToggle = new FrogPilotParamValueControl(
+          param, title, desc, icon, 0, 15000, tr(" lbs"),
+          std::map<float, QString>(), 500);
 
     } else if (param == "QOLLongitudinal") {
       FrogPilotManageControl *qolLongitudinalToggle =

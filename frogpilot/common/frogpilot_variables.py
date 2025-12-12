@@ -271,6 +271,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("LongitudinalActuatorDelay", "", 3, ""),
   ("LongitudinalActuatorDelayStock", "", 3, ""),
   ("LongitudinalTune", "1", 0, "0"),
+  ("TrailerLoad", "0", 2, "0"),
   ("LongPitch", "1", 2, "0"),
   ("LoudBlindspotAlert", "0", 0, "0"),
   ("LowVoltageShutdown", str(VBATT_PAUSE_CHARGING), 2, str(VBATT_PAUSE_CHARGING)),
@@ -835,6 +836,7 @@ class FrogPilotVariables:
     toggle.human_following = longitudinal_tuning and (params.get_bool("HumanFollowing") if tuning_level >= level["HumanFollowing"] else default.get_bool("HumanFollowing"))
     toggle.lead_detection_probability = np.clip(params.get_int("LeadDetectionThreshold") / 100, 0.25, 0.50) if longitudinal_tuning and tuning_level >= level["LeadDetectionThreshold"] else default.get_int("LeadDetectionThreshold") / 100
     toggle.max_desired_acceleration = np.clip(params.get_float("MaxDesiredAcceleration"), 0.1, 4.0) if longitudinal_tuning and tuning_level >= level["MaxDesiredAcceleration"] else default.get_float("MaxDesiredAcceleration")
+    toggle.trailer_load_kg = (np.clip(params.get_int("TrailerLoad"), 0, 15000) if longitudinal_tuning and tuning_level >= level["TrailerLoad"] else default.get_int("TrailerLoad")) * CV.LB_TO_KG
     toggle.taco_tune = longitudinal_tuning and (params.get_bool("TacoTune") if tuning_level >= level["TacoTune"] else default.get_bool("TacoTune"))
 
     toggle.available_models = params.get("AvailableModels", encoding="utf-8") or ""
