@@ -13,7 +13,8 @@ from openpilot.common.conversions import Conversions as CV
 from openpilot.common.params import Params
 from openpilot.selfdrive.car import gen_empty_fingerprint
 from openpilot.selfdrive.car.car_helpers import interfaces
-from openpilot.selfdrive.car.gm.values import GMFlags
+from openpilot.selfdrive.car.gm.values import EV_CAR as GM_EV_CAR, GMFlags
+from openpilot.selfdrive.car.hyundai.values import EV_CAR as HYUNDAI_EV_CAR
 from openpilot.selfdrive.car.interfaces import CarInterfaceBase
 from openpilot.selfdrive.car.mock.interface import CarInterface
 from openpilot.selfdrive.car.mock.values import CAR as MOCK
@@ -32,6 +33,7 @@ params_memory = Params("/dev/shm/params")
 
 GearShifter = car.CarState.GearShifter
 SafetyModel = car.CarParams.SafetyModel
+TransmissionType = car.CarParams.TransmissionType
 
 CITY_SPEED_LIMIT = 25                     # 55mph is typically the minimum speed for highways
 CRUISING_SPEED = 5                        # Roughly the speed cars go when not touching the gas while in drive
@@ -128,6 +130,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("AdvancedCustomUI", "0", 2, "0"),
   ("AdvancedLateralTune", "0", 2, "0"),
   ("AdvancedLongitudinalTune", "0", 3, "0"),
+  ("EVTuning", "", 3, "0"),
   ("AggressiveFollow", "1.25", 2, "1.25"),
   ("AggressiveFollowHigh", "1.25", 2, "1.25"),
   ("AggressiveJerkAcceleration", "50", 3, "50"),
@@ -271,6 +274,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("LongitudinalActuatorDelay", "", 3, ""),
   ("LongitudinalActuatorDelayStock", "", 3, ""),
   ("LongitudinalTune", "1", 0, "0"),
+  ("TrailerLoad", "0", 2, "0"),
   ("LongPitch", "1", 2, "0"),
   ("LoudBlindspotAlert", "0", 0, "0"),
   ("LowVoltageShutdown", str(VBATT_PAUSE_CHARGING), 2, str(VBATT_PAUSE_CHARGING)),
@@ -616,6 +620,13 @@ class FrogPilotVariables:
     toggle.use_custom_steerRatio = bool(round(toggle.steerRatio, 2) != round(steerRatio, 2)) and not toggle.force_auto_tune or toggle.force_auto_tune_off
 
     advanced_longitudinal_tuning = params.get_bool("AdvancedLongitudinalTune") if tuning_level >= level["AdvancedLongitudinalTune"] else default.get_bool("AdvancedLongitudinalTune")
+    ev_vehicle = toggle.car_make == "gm" and not (toggle.car_model.startswith("CHEVROLET_VOLT") and not toggle.car_model.endswith("_CC")) and CP.carFingerprint in GM_EV_CAR or toggle.car_make == "hyundai" and CP.carFingerprint in HYUNDAI_EV_CAR
+    ev_vehicle |= CP.transmissionType == TransmissionType.direct
+
+    if params.get("EVTuning") == b"":
+      params.put_bool("EVTuning", ev_vehicle)
+
+    toggle.ev_tuning = params.get_bool("EVTuning") if advanced_longitudinal_tuning and tuning_level >= level["EVTuning"] else ev_vehicle
     toggle.longitudinalActuatorDelay = np.clip(params.get_float("LongitudinalActuatorDelay"), 0, 1) if advanced_longitudinal_tuning and tuning_level >= level["LongitudinalActuatorDelay"] else longitudinalActuatorDelay
     toggle.startAccel = np.clip(params.get_float("StartAccel"), 0, 4) if advanced_longitudinal_tuning and tuning_level >= level["StartAccel"] else startAccel
     toggle.stopAccel = np.clip(params.get_float("StopAccel"), -4, 0) if advanced_longitudinal_tuning and tuning_level >= level["StopAccel"] else stopAccel
@@ -835,6 +846,7 @@ class FrogPilotVariables:
     toggle.human_following = longitudinal_tuning and (params.get_bool("HumanFollowing") if tuning_level >= level["HumanFollowing"] else default.get_bool("HumanFollowing"))
     toggle.lead_detection_probability = np.clip(params.get_int("LeadDetectionThreshold") / 100, 0.25, 0.50) if longitudinal_tuning and tuning_level >= level["LeadDetectionThreshold"] else default.get_int("LeadDetectionThreshold") / 100
     toggle.max_desired_acceleration = np.clip(params.get_float("MaxDesiredAcceleration"), 0.1, 4.0) if longitudinal_tuning and tuning_level >= level["MaxDesiredAcceleration"] else default.get_float("MaxDesiredAcceleration")
+    toggle.trailer_load_kg = (np.clip(params.get_int("TrailerLoad"), 0, 15000) if longitudinal_tuning and tuning_level >= level["TrailerLoad"] else default.get_int("TrailerLoad")) * CV.LB_TO_KG
     toggle.taco_tune = longitudinal_tuning and (params.get_bool("TacoTune") if tuning_level >= level["TacoTune"] else default.get_bool("TacoTune"))
 
     toggle.available_models = params.get("AvailableModels", encoding="utf-8") or ""

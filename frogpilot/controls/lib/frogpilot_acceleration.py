@@ -53,14 +53,18 @@ A_CRUISE_MIN_SPORT = A_CRUISE_MIN * 2
 
                        # MPH = [0.0,  11,  22,  34,  45,  56,  89]
 A_CRUISE_MAX_BP_CUSTOM =       [0.0,  5., 10., 15., 20., 25., 40.]
-A_CRUISE_MAX_VALS_ECO =        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-A_CRUISE_MAX_VALS_SPORT =      [1.25, 1.25, 1.25, 1.25, 1.5, 1.5, 2.0]
+A_CRUISE_MAX_VALS_ECO_EV =     [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+A_CRUISE_MAX_VALS_SPORT_EV =   [1.25, 1.25, 1.25, 1.25, 1.5, 1.5, 2.0]
+A_CRUISE_MAX_VALS_ECO_GAS =    [2.0, 1.5, 1.0, 0.8, 0.6, 0.4, 0.2]
+A_CRUISE_MAX_VALS_SPORT_GAS =  [3.0, 2.5, 2.0, 1.5, 1.0, 0.8, 0.6]
 
-def get_max_accel_eco(v_ego):
-  return float(akima_interp(v_ego, A_CRUISE_MAX_BP_CUSTOM, A_CRUISE_MAX_VALS_ECO))
+def get_max_accel_eco(v_ego, ev_tuning=True):
+  cruise_vals = A_CRUISE_MAX_VALS_ECO_EV if ev_tuning else A_CRUISE_MAX_VALS_ECO_GAS
+  return float(akima_interp(v_ego, A_CRUISE_MAX_BP_CUSTOM, cruise_vals))
 
-def get_max_accel_sport(v_ego):
-  return float(akima_interp(v_ego, A_CRUISE_MAX_BP_CUSTOM, A_CRUISE_MAX_VALS_SPORT))
+def get_max_accel_sport(v_ego, ev_tuning=True):
+  cruise_vals = A_CRUISE_MAX_VALS_SPORT_EV if ev_tuning else A_CRUISE_MAX_VALS_SPORT_GAS
+  return float(akima_interp(v_ego, A_CRUISE_MAX_BP_CUSTOM, cruise_vals))
 
 def get_max_accel_low_speeds(max_accel, v_cruise):
   return float(akima_interp(v_cruise, [0., CITY_SPEED_LIMIT / 2, CITY_SPEED_LIMIT], [max_accel / 4, max_accel / 2, max_accel]))
@@ -81,22 +85,23 @@ class FrogPilotAcceleration:
   def update(self, v_ego, sm, frogpilot_toggles):
     eco_gear = sm["frogpilotCarState"].ecoGear
     sport_gear = sm["frogpilotCarState"].sportGear
+    ev_tuning = frogpilot_toggles.ev_tuning
 
     if sm["frogpilotCarState"].trafficModeEnabled:
       self.max_accel = get_max_accel(v_ego)
     elif frogpilot_toggles.map_acceleration and (eco_gear or sport_gear):
       if eco_gear:
-        self.max_accel = get_max_accel_eco(v_ego)
+        self.max_accel = get_max_accel_eco(v_ego, ev_tuning)
       else:
         if frogpilot_toggles.acceleration_profile == 2:
-          self.max_accel = get_max_accel_sport(v_ego)
+          self.max_accel = get_max_accel_sport(v_ego, ev_tuning)
         else:
           self.max_accel = get_max_allowed_accel(v_ego)
     else:
       if frogpilot_toggles.acceleration_profile == 1:
-        self.max_accel = get_max_accel_eco(v_ego)
+        self.max_accel = get_max_accel_eco(v_ego, ev_tuning)
       elif frogpilot_toggles.acceleration_profile == 2:
-        self.max_accel = get_max_accel_sport(v_ego)
+        self.max_accel = get_max_accel_sport(v_ego, ev_tuning)
       elif frogpilot_toggles.acceleration_profile == 3:
         self.max_accel = get_max_allowed_accel(v_ego)
       else:

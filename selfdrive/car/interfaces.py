@@ -39,6 +39,11 @@ ACCEL_MAX = 2.0
 ACCEL_MIN = -3.5
 FRICTION_THRESHOLD = 0.09
 
+def get_friction_threshold(v_ego):
+  # Interpolate friction threshold from 0.09 at 50 mph to 0.15 at 75 mph
+  from openpilot.common.numpy_fast import interp
+  return interp(v_ego, [50 * CV.MPH_TO_MS, 75 * CV.MPH_TO_MS], [0.09, 0.15])
+
 TORQUE_PARAMS_PATH = os.path.join(BASEDIR, 'selfdrive/car/torque_data/params.toml')
 TORQUE_OVERRIDE_PATH = os.path.join(BASEDIR, 'selfdrive/car/torque_data/override.toml')
 TORQUE_SUBSTITUTE_PATH = os.path.join(BASEDIR, 'selfdrive/car/torque_data/substitute.toml')
@@ -147,8 +152,11 @@ class CarInterfaceBase(ABC):
 
     ret = cls._get_params(ret, candidate, fingerprint, car_fw, experimental_long, docs, frogpilot_toggles)
 
+    trailer_load_kg = getattr(frogpilot_toggles, "trailer_load_kg", 0)
+
     # Vehicle mass is published curb weight plus assumed payload such as a human driver; notCars have no assumed payload
     if not ret.notCar:
+      ret.mass = ret.mass + trailer_load_kg
       ret.mass = ret.mass + STD_CARGO_KG
 
     # Set params dependent on values set by the car interface
