@@ -184,6 +184,39 @@ def finalize_update(params) -> None:
   """Take the current OverlayFS merged view and finalize a copy outside of
   OverlayFS, ready to be swapped-in at BASEDIR. Copy using shutil.copytree"""
 
+  def get_directory_size(path: str) -> int:
+    size = 0
+    for root, _, files in os.walk(path):
+      for name in files:
+        file_path = os.path.join(root, name)
+        if not os.path.islink(file_path):
+          try:
+            size += os.lstat(file_path).st_size
+          except FileNotFoundError:
+            pass
+    return size
+
+  total_size = get_directory_size(OVERLAY_MERGED)
+  copied_size = 0
+
+  def copy_with_progress(src, dst, *, follow_symlinks=True):
+    nonlocal copied_size
+
+    if os.path.islink(src):
+      linkto = os.readlink(src)
+      os.symlink(linkto, dst)
+      return dst
+
+    result = shutil.copy2(src, dst, follow_symlinks=follow_symlinks)
+    try:
+      copied_size += os.lstat(src).st_size
+      if total_size > 0:
+        progress = min(int((copied_size / total_size) * 100), 100)
+        params.put("UpdaterState", f"finalizing update... {progress}%")
+    except FileNotFoundError:
+      pass
+    return result
+
   # Remove the update ready flag and any old updates
   cloudlog.info("creating finalized version of the overlay")
   set_consistent_flag(False)
@@ -191,7 +224,12 @@ def finalize_update(params) -> None:
   # Copy the merged overlay view and set the update ready flag
   if os.path.exists(FINALIZED):
     shutil.rmtree(FINALIZED)
-  shutil.copytree(OVERLAY_MERGED, FINALIZED, symlinks=True)
+  if total_size == 0:
+    shutil.copytree(OVERLAY_MERGED, FINALIZED, symlinks=True)
+  else:
+    params.put("UpdaterState", "finalizing update... 0%")
+    shutil.copytree(OVERLAY_MERGED, FINALIZED, symlinks=True, copy_function=copy_with_progress)
+  params.put("UpdaterState", "finalizing update... 100%")
 
   run(["git", "reset", "--hard"], FINALIZED)
   run(["git", "submodule", "foreach", "--recursive", "git", "reset", "--hard"], FINALIZED)
@@ -377,10 +415,34 @@ class Updater:
     else:
       cloudlog.info(f"up to date on {cur_branch} ({str(cur_commit)[:7]})")
 
+  def _git_fetch_with_progress(self, branch: str) -> str:
+    fetch_cmd = ["git", "fetch", "--progress", "origin", branch]
+    progress = 0
+    output_lines: list[str] = []
+
+    with subprocess.Popen(fetch_cmd, cwd=OVERLAY_MERGED, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1) as proc:
+      assert proc.stdout is not None
+      for line in proc.stdout:
+        output_lines.append(line)
+        matches = re.findall(r"(\d+)%", line)
+        if matches:
+          progress = max(progress, int(matches[-1]))
+          self.params.put("UpdaterState", f"downloading... {progress}%")
+
+      proc.wait()
+
+      if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, fetch_cmd, output=''.join(output_lines))
+
+    if progress < 100:
+      self.params.put("UpdaterState", "downloading... 100%")
+
+    return ''.join(output_lines)
+
   def fetch_update(self) -> None:
     cloudlog.info("attempting git fetch inside staging overlay")
 
-    self.params.put("UpdaterState", "downloading...")
+    self.params.put("UpdaterState", "downloading... 0%")
 
     # TODO: cleanly interrupt this and invalidate old update
     set_consistent_flag(False)
@@ -389,7 +451,7 @@ class Updater:
     setup_git_options(OVERLAY_MERGED)
 
     branch = self.target_branch
-    git_fetch_output = run(["git", "fetch", "origin", branch], OVERLAY_MERGED)
+    git_fetch_output = self._git_fetch_with_progress(branch)
     cloudlog.info("git fetch success: %s", git_fetch_output)
 
     cloudlog.info("git reset in progress")
