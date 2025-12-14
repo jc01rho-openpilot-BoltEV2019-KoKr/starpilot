@@ -36,6 +36,18 @@ LP_FILTER_CUTOFF_HZ = 1.2
 JERK_LOOKAHEAD_SECONDS = 0.19
 JERK_GAIN = 0.22
 LAT_ACCEL_REQUEST_BUFFER_SECONDS = 1.0
+
+# Adaptive lane centering correction based on curvature and speed
+CURVE_CORRECTION_BP = [0.0, 0.001, 0.005, 0.01]  # curvature breakpoints (1/m)
+CURVE_CORRECTION_V = [1.0, 1.05, 1.15, 1.25]      # correction factors
+SPEED_CURVE_CORRECTION_BP = [5, 15, 25, 35]       # speed breakpoints (m/s)
+SPEED_CURVE_CORRECTION_V = [0.8, 1.0, 1.1, 1.15]  # speed-based correction factors
+
+# Straight road lane centering correction
+STRAIGHT_ROAD_CURVATURE_THRESHOLD = 0.0005  # below this = straight road (1/m)
+STRAIGHT_ROAD_CORRECTION_GAIN = 1.12        # boost error correction on straight roads
+STRAIGHT_ROAD_INTEGRATOR_BOOST = 1.08       # slightly increase integrator response
+
 VERSION = 2
 
 class LatControlTorque(LatControl):
@@ -101,8 +113,23 @@ class LatControlTorque(LatControl):
       error = setpoint - measurement
       error_with_lsf = error * (1 + low_speed_factor / max(current_kp, 1e-3))
 
+      # Adaptive lane centering correction based on curvature and speed
+      current_curvature = abs(desired_curvature)
+      curve_correction = np.interp(current_curvature, CURVE_CORRECTION_BP, CURVE_CORRECTION_V)
+      speed_correction = np.interp(CS.vEgo, SPEED_CURVE_CORRECTION_BP, SPEED_CURVE_CORRECTION_V)
+      adaptive_correction = curve_correction * speed_correction
+
+      # Enhanced straight road lane centering correction
+      is_straight_road = current_curvature < STRAIGHT_ROAD_CURVATURE_THRESHOLD
+      if is_straight_road and CS.vEgo > 10:  # Only apply on straight roads at speed > 10 m/s (~36 km/h)
+        # Boost error correction on straight roads to prevent drift
+        straight_road_boost = STRAIGHT_ROAD_CORRECTION_GAIN
+        error_with_adaptive = error_with_lsf * straight_road_boost
+      else:
+        error_with_adaptive = error_with_lsf * adaptive_correction
+
       # do error correction in lateral acceleration space, convert at end to handle non-linear torque responses correctly
-      pid_log.error = float(error_with_lsf)
+      pid_log.error = float(error_with_adaptive)
       ff = gravity_adjusted_future_lateral_accel
       # latAccelOffset corrects roll compensation bias from device roll misalignment relative to car roll
       ff -= self.torque_params.latAccelOffset

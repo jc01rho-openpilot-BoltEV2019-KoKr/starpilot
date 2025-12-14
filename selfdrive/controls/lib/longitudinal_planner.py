@@ -28,9 +28,9 @@ MIN_ALLOW_THROTTLE_SPEED = 2.5
 UNCERT_SLOPE_TRIG = 0.12  # per second
 UNCERT_MAG_TRIG = 0.50
 
-# Lookup table for turns
-_A_TOTAL_MAX_V = [1.7, 3.2]
-_A_TOTAL_MAX_BP = [20., 40.]
+# Lookup table for turns - optimized to reduce unnecessary deceleration
+_A_TOTAL_MAX_V = [2.0, 3.5]    # increased from [1.7, 3.2] for smoother curve handling
+_A_TOTAL_MAX_BP = [15., 35.]   # adjusted from [20., 40.] for earlier response
 
 
 def get_max_accel(v_ego):
@@ -49,7 +49,10 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
   # The lookup table for turns should also be updated if we do this
   a_total_max = interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V)
   a_y = v_ego ** 2 * angle_steers * CV.DEG_TO_RAD / (CP.steerRatio * CP.wheelbase)
-  a_x_allowed = math.sqrt(max(a_total_max ** 2 - a_y ** 2, 0.))
+
+  # Add margin factor to allow smoother transition and reduce harsh deceleration
+  margin_factor = 1.15  # 15% margin for smoother curve handling
+  a_x_allowed = math.sqrt(max(a_total_max ** 2 - (a_y / margin_factor) ** 2, 0.))
 
   return [a_target[0], min(a_target[1], a_x_allowed)]
 
