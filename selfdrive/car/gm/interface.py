@@ -362,6 +362,12 @@ class CarInterface(CarInterfaceBase):
       c.longActive:
       events.add(FrogPilotEventName.pedalInterceptorNoBrake)
 
+    if self.CS.lkas_status == 3:
+      events.add(EventName.steerUnavailable)
+
+    if self.CS.lkas_status == 3:
+      events.add(EventName.steerUnavailable)
+
     ret.events = events.to_msg()
 
     return ret, fp_ret

@@ -115,7 +115,7 @@ class CarState(CarStateBase):
     # 0 inactive, 1 active, 2 temporarily limited, 3 failed
     self.lkas_status = pt_cp.vl["PSCMStatus"]["LKATorqueDeliveredStatus"]
     ret.steerFaultTemporary = self.lkas_status == 2
-    ret.steerFaultPermanent = self.lkas_status == 3
+    ret.steerFaultPermanent = False  # self.lkas_status == 3
 
     if self.CP.carFingerprint not in SDGM_CAR:
       # 1 - open, 0 - closed
