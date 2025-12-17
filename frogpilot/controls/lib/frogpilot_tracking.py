@@ -51,7 +51,7 @@ class FrogPilotTracking:
     self.sound = FrogPilotAudibleAlert.none
     self.state = State.disabled
 
-    self.model_name = clean_model_name(dict(zip(frogpilot_toggles.available_models.split(","), frogpilot_toggles.available_model_names.split(",")))[frogpilot_toggles.model])
+    self.model_name = clean_model_name(frogpilot_toggles.model_name)
 
   def update(self, now, time_validated, sm, frogpilot_toggles):
     v_cruise = min(sm["controlsState"].vCruiseCluster, V_CRUISE_MAX) * CV.KPH_TO_MS

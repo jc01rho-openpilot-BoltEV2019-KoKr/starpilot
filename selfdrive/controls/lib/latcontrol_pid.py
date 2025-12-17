@@ -1,8 +1,7 @@
 import math
 
 from cereal import log
-from openpilot.common.conversions import Conversions as CV
-from openpilot.selfdrive.controls.lib.latcontrol import LatControl
+from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.pid import PIDController
 
 
@@ -14,7 +13,7 @@ class LatControlPID(LatControl):
                              pos_limit=self.steer_max, neg_limit=-self.steer_max)
     self.ff_factor = CP.lateralTuning.pid.kf
     self.get_steer_feedforward = CI.get_steer_feedforward_function()
-    self.low_speed_reset_threshold = 7 * CV.MPH_TO_MS
+    self.low_speed_reset_threshold = max(CP.minSteerSpeed, MIN_LATERAL_CONTROL_SPEED)
 
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited, lat_delay, llk, model_data, frogpilot_toggles):
     pid_log = log.ControlsState.LateralPIDState.new_message()
