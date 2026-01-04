@@ -495,9 +495,8 @@ class LongitudinalMpc:
       a_lead_tau = LEAD_ACCEL_TAU
 
     # MPC will not converge if immediate crash is expected
-    # Clip lead distance to what is still possible to brake for using the current decel limit
-    decel_capable = max(-self.cruise_min_a, 0.1)
-    min_x_lead = ((v_ego + v_lead)/2) * (v_ego - v_lead) / (decel_capable * 2)
+    # Clip lead distance to what is still possible to brake for
+    min_x_lead = ((v_ego + v_lead)/2) * (v_ego - v_lead) / (-ACCEL_MIN * 2)
     x_lead = clip(x_lead, min_x_lead, 1e8)
     v_lead = clip(v_lead, 0.0, 1e8)
     a_lead = clip(a_lead, -10., 5.)
@@ -528,7 +527,7 @@ class LongitudinalMpc:
     lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1])
     lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1])
 
-    self.params[:,0] = self.cruise_min_a
+    self.params[:,0] = ACCEL_MIN
     # negative accel constraint causes problems because negative speed is not allowed
     self.params[:,1] = max(0.0, self.max_a)
 

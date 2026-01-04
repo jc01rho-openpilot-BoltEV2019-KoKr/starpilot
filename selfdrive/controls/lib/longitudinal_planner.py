@@ -18,18 +18,6 @@ from openpilot.common.swaglog import cloudlog
 
 LON_MPC_STEP = 0.2  # first step is 0.2s
 A_CRUISE_MIN = -1.0
-PEDAL_DECEL_BP = [
-  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-  16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
-  30, 31, 32, 33, 34,
-]
-PEDAL_DECEL_V = [
-  -1.379, -1.855, -2.167, -2.311, -2.411, -2.455, -2.493, -2.500, -2.500,
-  -2.530, -2.366, -2.151, -1.955, -1.839, -1.777, -1.741,
-  -1.705, -1.670, -1.652, -1.661, -1.679, -1.696, -1.696, -1.679,
-  -1.652, -1.634, -1.652, -1.670, -1.696, -1.696, -1.696, -1.598,
-  -1.518, -1.471, -1.4,
-]
 A_CRUISE_MAX_BP = [0.0, 5., 10., 15., 20., 25., 40.]
 A_CRUISE_MAX_VALS = [1.125, 1.125, 1.125, 1.125, 1.25, 1.25, 1.5]
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
@@ -67,12 +55,6 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
   a_x_allowed = math.sqrt(max(a_total_max ** 2 - (a_y / margin_factor) ** 2, 0.))
 
   return [a_target[0], min(a_target[1], a_x_allowed)]
-
-
-def get_min_accel(CP, v_ego):
-  if CP.enableGasInterceptor:
-    return float(interp(v_ego, PEDAL_DECEL_BP, PEDAL_DECEL_V))
-  return A_CRUISE_MIN
 
 
 def get_accel_from_plan_classic(CP, speeds, accels, vEgoStopping):
@@ -215,7 +197,6 @@ class LongitudinalPlanner:
       accel_coast = ACCEL_MAX
 
     v_ego = max(sm['carState'].vEgo, sm['carState'].vEgoCluster)
-    min_accel_limit = get_min_accel(self.CP, v_ego)
     v_cruise = sm['frogpilotPlan'].vCruise
     v_cruise_initialized = sm['controlsState'].vCruise != V_CRUISE_UNSET
 
@@ -232,7 +213,6 @@ class LongitudinalPlanner:
 
     if self.mpc.mode == 'acc':
       accel_limits = [sm['frogpilotPlan'].minAcceleration, sm['frogpilotPlan'].maxAcceleration]
-      accel_limits[0] = max(accel_limits[0], min_accel_limit)
       steer_angle_without_offset = sm['carState'].steeringAngleDeg - sm['liveParameters'].angleOffsetDeg
       accel_limits_turns = limit_accel_in_turns(v_ego, steer_angle_without_offset, accel_limits, self.CP)
     else:
