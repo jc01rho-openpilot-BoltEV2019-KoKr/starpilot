@@ -313,6 +313,8 @@ class LongitudinalMpc:
     # Initialize acceleration limits to prevent AttributeError
     self.cruise_min_a = ACCEL_MIN
     self.max_a = 1.2  # Default max acceleration
+    # Lead speed matching: smooth transition for cruise_obstacle factor
+    self.cruise_obstacle_factor = 1.0  # 1.0 = normal, higher = less cruise pull
     self.reset()
 
   def reset(self):
@@ -514,7 +516,7 @@ class LongitudinalMpc:
     self.cruise_min_a = min_a
     self.max_a = max_a
 
-  def update(self, lead_one, lead_two, v_cruise, x, v, a, j, t_follow, tracking_lead, personality=log.LongitudinalPersonality.standard):
+  def update(self, lead_one, lead_two, v_cruise, x, v, a, j, t_follow, tracking_lead, personality=log.LongitudinalPersonality.standard, stable_lead=False):
     v_ego = self.x0[1]
     self.status = lead_one.status and tracking_lead or lead_two.status
 
@@ -544,6 +546,20 @@ class LongitudinalMpc:
                                  v_lower,
                                  v_upper)
       cruise_obstacle = np.cumsum(T_DIFFS * v_cruise_clipped) + get_safe_obstacle_distance(v_cruise_clipped, t_follow)
+
+      # Lead Speed Matching: When stably following a lead (distance maintained),
+      # push cruise_obstacle further away to reduce the "pull" toward set speed.
+      # This prevents oscillation between lead following and cruise acceleration.
+      # Use smooth transition to avoid abrupt changes.
+      target_factor = 1.5 if (stable_lead and tracking_lead) else 1.0
+      # Slew rate: ~0.5 per second for smooth transition (takes ~1s to reach target)
+      max_change = 0.5 * self.dt
+      if self.cruise_obstacle_factor < target_factor:
+        self.cruise_obstacle_factor = min(self.cruise_obstacle_factor + max_change, target_factor)
+      else:
+        self.cruise_obstacle_factor = max(self.cruise_obstacle_factor - max_change, target_factor)
+      cruise_obstacle = cruise_obstacle * self.cruise_obstacle_factor
+
       x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle, cruise_obstacle])
       self.source = SOURCES[np.argmin(x_obstacles[0])]
 

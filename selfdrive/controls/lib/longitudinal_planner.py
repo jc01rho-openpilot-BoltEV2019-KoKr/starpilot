@@ -407,7 +407,8 @@ class LongitudinalPlanner:
     if not self.mlsim:
       self.mpc.mode = dec_mpc_mode
     self.mpc.update(self.lead_one, self.lead_two, v_cruise, x, v, a, j, sm['frogpilotPlan'].tFollow,
-                    sm['frogpilotPlan'].trackingLead, personality=sm['controlsState'].personality)
+                    sm['frogpilotPlan'].trackingLead, personality=sm['controlsState'].personality,
+                    stable_lead=self.stable_lead)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
