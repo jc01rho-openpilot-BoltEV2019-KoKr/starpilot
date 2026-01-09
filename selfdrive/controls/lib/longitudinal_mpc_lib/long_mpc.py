@@ -385,7 +385,8 @@ class LongitudinalMpc:
 
     # Global Safety Bypass: Close Distance OR Fast Closing Speed
     # Applied to ALL speeds (City, Highway, etc)
-    if lead_dist < 10.0 or lead_v_rel < -2.0:
+    # Threshold: Close (<10m) OR Closing Speed > 5 km/h (-1.4 m/s)
+    if lead_dist < 10.0 or lead_v_rel < -1.4:
         self.current_filter_time = 0.0
     if abs(self.current_filter_time - getattr(self, 'prev_filter_time', 0)) > 0.1:  # Only update if significant change
       # Recreate filters with new time constant while preserving current values
