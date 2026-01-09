@@ -548,6 +548,10 @@ class Controls:
     if self.event_names_to_clear:
       self.events.events = [event for event in self.events.events if event not in self.event_names_to_clear]
 
+    # Force max brightness on Critical AEB
+    if EventName.stockAeb in self.events.names:
+      HARDWARE.set_screen_brightness(100)
+
   def data_sample(self):
     """Receive data from sockets"""
 
