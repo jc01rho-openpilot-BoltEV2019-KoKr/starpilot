@@ -364,7 +364,7 @@ class LongitudinalMpc:
 
   def set_weights(self, acceleration_jerk=1.0, danger_jerk=1.0, speed_jerk=1.0, prev_accel_constraint=True,
                   personality=log.LongitudinalPersonality.standard, v_ego=0.0, lead_dist=50.0,
-                  uncertainty=0.0, accel_reengage=False, panic_bypass=False):
+                  uncertainty=0.0, accel_reengage=False, panic_bypass=False, lead_v_rel=0.0):
     # Update parameters based on current speed with interpolation for smooth scaling
     speed_mph = v_ego * CV.MS_TO_MPH  # Convert m/s to mph
 
@@ -379,9 +379,14 @@ class LongitudinalMpc:
 
     # Update filter time constants with interp and recreate filters if needed
     if speed_mph < 47:
-        self.current_filter_time = 0.0
+        self.current_filter_time = LEAD_FILTER_TIME_LOW
     else:
         self.current_filter_time = interp(speed_mph, [47, 65], [0.0, LEAD_FILTER_TIME_HIGH])
+
+    # Global Safety Bypass: Close Distance OR Fast Closing Speed
+    # Applied to ALL speeds (City, Highway, etc)
+    if lead_dist < 10.0 or lead_v_rel < -2.0:
+        self.current_filter_time = 0.0
     if abs(self.current_filter_time - getattr(self, 'prev_filter_time', 0)) > 0.1:  # Only update if significant change
       # Recreate filters with new time constant while preserving current values
       current_a = self.lead_a_filter.x if hasattr(self.lead_a_filter, 'x') else 0.0

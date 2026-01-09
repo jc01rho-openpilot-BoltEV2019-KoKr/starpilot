@@ -390,6 +390,9 @@ class LongitudinalPlanner:
       if now_t > self.accel_nudge_until:
         self.accel_nudge_until = now_t + 0.45
 
+    # Calculate lead relative velocity for safety check (if lead exists)
+    lead_v_rel = self.lead_one.vRel if self.lead_one.status else 0.0
+
     self.mpc.set_weights(sm['frogpilotPlan'].accelerationJerk,
                          sm['frogpilotPlan'].dangerJerk,
                          sm['frogpilotPlan'].speedJerk,
@@ -399,7 +402,8 @@ class LongitudinalPlanner:
                          lead_dist=self.lead_dist_f if self.lead_dist_f is not None else lead_dist,
                          uncertainty=uncertainty,
                          accel_reengage=self.accel_gate,
-                         panic_bypass=panic_bypass)
+                         panic_bypass=panic_bypass,
+                         lead_v_rel=lead_v_rel)
     self.mpc.set_accel_limits(accel_limits_turns[0], accel_limits_turns[1])
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
     # After deciding the MPC mode via get_mpc_mode(), ensure MPC uses that mode when not mlsim
