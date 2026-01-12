@@ -138,6 +138,18 @@ def manager_init() -> None:
     with open(nnff_migration_flag_file, "w") as f:
       f.write("migrated")
 
+  # One-time migration for lateral tuning/auto-tune preferences
+  lateral_tuning_migration_flag_file = "/data/media/0/frogpilot_lateral_tuning_migrated.flag"
+  if not os.path.exists(lateral_tuning_migration_flag_file):
+    if not params.get_bool("AdvancedLateralTune"):
+      params.put_bool("AdvancedLateralTune", True)
+    if params.get_bool("ForceAutoTune"):
+      params.put_bool("ForceAutoTune", False)
+    if not params.get_bool("ForceAutoTuneOff"):
+      params.put_bool("ForceAutoTuneOff", True)
+    with open(lateral_tuning_migration_flag_file, "w") as f:
+      f.write("migrated")
+
   # set dongle id
   reg_res = register(show_spinner=True)
   if reg_res:
