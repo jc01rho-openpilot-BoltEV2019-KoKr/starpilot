@@ -370,6 +370,13 @@ class LongitudinalMpc:
 
     # Use speed-based parameters for smooth scaling across all breakpoints
     self.current_x_ego_cost = get_speed_based_param(speed_mph, X_EGO_OBSTACLE_COSTS)
+    
+    # Early Braking: Scale cost based on closing speed
+    # -10.0 m/s (~36kph) -> 1.5x Cost (Coast early)
+    # -3.0 m/s (~11kph) -> 1.0x Cost (Normal)
+    close_factor = interp(lead_v_rel, [-10.0, -3.0], [1.5, 1.0])
+    self.current_x_ego_cost *= close_factor
+
     self.current_j_ego_cost = get_speed_based_param(speed_mph, J_EGO_COSTS)
     self.current_a_change_cost = get_speed_based_param(speed_mph, A_CHANGE_COSTS)
 
@@ -378,16 +385,15 @@ class LongitudinalMpc:
     self.current_dist_adapt = get_speed_based_param(speed_mph, dist_adapt_array)
 
     # Update filter time constants with interp and recreate filters if needed
-    if speed_mph < 47:
-        self.current_filter_time = LEAD_FILTER_TIME_LOW
+    # Dynamic TTC Smoothing logic (Hardcoded)
+    # TTC < 3.0s: Filter 0.0s (Instant Safety)
+    # TTC > 5.0s: Filter 1.2s (Max Smoothness)
+    if lead_v_rel < -0.1:
+      ttc = lead_dist / -lead_v_rel
     else:
-        self.current_filter_time = interp(speed_mph, [47, 65], [0.0, LEAD_FILTER_TIME_HIGH])
+      ttc = 100.0
 
-    # Global Safety Bypass: Close Distance OR Fast Closing Speed
-    # Applied to ALL speeds (City, Highway, etc)
-    # Threshold: Close (<10m) OR Closing Speed > 5 km/h (-1.4 m/s)
-    if lead_dist < 10.0 or lead_v_rel < -1.4:
-        self.current_filter_time = 0.0
+    self.current_filter_time = interp(ttc, [3.0, 5.0], [0.0, 1.2])
     if abs(self.current_filter_time - getattr(self, 'prev_filter_time', 0)) > 0.1:  # Only update if significant change
       # Recreate filters with new time constant while preserving current values
       current_a = self.lead_a_filter.x if hasattr(self.lead_a_filter, 'x') else 0.0
