@@ -413,20 +413,18 @@ class LongitudinalMpc:
     # #3: TTC upper clipping (100.0), #4: Speed+TTC combined filter
     # Base filter from speed (original logic preserved)
     if speed_mph < 47:
-      base_filter = 0.0
+      base_filter = LEAD_FILTER_TIME_LOW
     else:
-      base_filter = interp(speed_mph, [47, 65], [0.0, LEAD_FILTER_TIME_HIGH])
+      base_filter = interp(speed_mph, [47, 65], [LEAD_FILTER_TIME_LOW, LEAD_FILTER_TIME_HIGH])
 
     # TTC-based filter scaling (only when lead exists and closing)
     # #1: Division by zero protection with min lead_dist
     if has_lead and lead_v_rel < -0.1 and lead_dist > 0.5:
       ttc = min(max(lead_dist, 0.5) / -lead_v_rel, 100.0)  # #3: Clamp TTC to [0, 100]
-      # TTC < 2.0s: Filter 0.0 (Instant Safety)
-      # TTC > 4.0s: Filter 1.0 (Full base_filter applied)
-      ttc_factor = interp(ttc, [2.0, 4.0], [0.0, 1.0])
-      self.current_filter_time = base_filter * ttc_factor
+      # TTC < 2.5s: Filter 0.0 (Instant Safety)
+      # TTC > 5.0s: Filter 1.2s (Max Smoothness)
+      self.current_filter_time = interp(ttc, [2.5, 5.0], [0.0, LEAD_FILTER_TIME_HIGH])
     else:
-      # No lead or not closing: use speed-based filter only
       self.current_filter_time = base_filter
     if abs(self.current_filter_time - getattr(self, 'prev_filter_time', 0)) > 0.1:  # Only update if significant change
       # Recreate filters with new time constant while preserving current values
