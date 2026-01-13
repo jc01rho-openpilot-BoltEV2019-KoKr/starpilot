@@ -372,9 +372,9 @@ class LongitudinalMpc:
     self.current_x_ego_cost = get_speed_based_param(speed_mph, X_EGO_OBSTACLE_COSTS)
     
     # Early Braking: Scale cost based on closing speed
-    # -10.0 m/s (~36kph) -> 1.5x Cost (Coast early)
+    # -10.0 m/s (~36kph) -> 2.0x Cost (Coast early)
     # -3.0 m/s (~11kph) -> 1.0x Cost (Normal)
-    close_factor = interp(lead_v_rel, [-10.0, -3.0], [1.5, 1.0])
+    close_factor = interp(lead_v_rel, [-5.0, -2.0], [2.0, 1.0])
     self.current_x_ego_cost *= close_factor
 
     self.current_j_ego_cost = get_speed_based_param(speed_mph, J_EGO_COSTS)
@@ -393,7 +393,7 @@ class LongitudinalMpc:
     else:
       ttc = 100.0
 
-    self.current_filter_time = interp(ttc, [3.0, 5.0], [0.0, 1.2])
+    self.current_filter_time = interp(ttc, [2.0, 4.0], [0.0, 1.2])
     if abs(self.current_filter_time - getattr(self, 'prev_filter_time', 0)) > 0.1:  # Only update if significant change
       # Recreate filters with new time constant while preserving current values
       current_a = self.lead_a_filter.x if hasattr(self.lead_a_filter, 'x') else 0.0
