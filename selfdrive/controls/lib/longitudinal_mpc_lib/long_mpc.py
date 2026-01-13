@@ -421,9 +421,9 @@ class LongitudinalMpc:
     # #1: Division by zero protection with min lead_dist
     if has_lead and lead_v_rel < -0.1 and lead_dist > 0.5:
       ttc = min(max(lead_dist, 0.5) / -lead_v_rel, 100.0)  # #3: Clamp TTC to [0, 100]
-      # TTC < 2.0s: Filter 0.0 (Instant Safety)
+      # TTC < 1.5s: Filter 0.0 (Instant Safety)
       # TTC > 4.0s: Filter 1.0 (Full base_filter applied)
-      ttc_factor = interp(ttc, [2.0, 4.0], [0.0, 1.0])
+      ttc_factor = interp(ttc, [1.5, 4.0], [0.0, 1.2])
       self.current_filter_time = base_filter * ttc_factor
     else:
       # No lead or not closing: use speed-based filter only
