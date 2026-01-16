@@ -33,7 +33,7 @@ class DRIVER_MONITOR_SETTINGS:
     self._SG_THRESHOLD = 0.9
     self._BLINK_THRESHOLD = 0.865
 
-    self._EE_THRESH11 = 0.4
+    self._EE_THRESH11 = 0.6
     self._EE_THRESH12 = 15.0
     self._EE_MAX_OFFSET1 = 0.06
     self._EE_MIN_OFFSET1 = 0.025
@@ -44,9 +44,9 @@ class DRIVER_MONITOR_SETTINGS:
     self._POSE_YAW_THRESHOLD = 0.4020
     self._POSE_YAW_THRESHOLD_SLACK = 0.5042
     self._POSE_YAW_THRESHOLD_STRICT = self._POSE_YAW_THRESHOLD
-    self._PITCH_NATURAL_OFFSET = 0.029 # initial value before offset is learned
+    self._PITCH_NATURAL_OFFSET = 0.011 # initial value before offset is learned
     self._PITCH_NATURAL_THRESHOLD = 0.449
-    self._YAW_NATURAL_OFFSET = 0.097 # initial value before offset is learned
+    self._YAW_NATURAL_OFFSET = 0.075 # initial value before offset is learned
     self._PITCH_MAX_OFFSET = 0.124
     self._PITCH_MIN_OFFSET = -0.0881
     self._YAW_MAX_OFFSET = 0.289

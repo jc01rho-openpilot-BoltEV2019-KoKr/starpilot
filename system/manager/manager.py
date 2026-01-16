@@ -96,6 +96,40 @@ def manager_init() -> None:
   params.put_bool("IsTestedBranch", build_metadata.tested_channel)
   params.put_bool("IsReleaseBranch", build_metadata.release_channel)
 
+  # One-time migration to align FrogPilot defaults after install
+  frogpilot_migration_flag_file = "/data/media/0/frogpilot_migrated.flag"
+  if not os.path.exists(frogpilot_migration_flag_file):
+    params.put_bool("NNFF", False)
+    params.put_bool("NNFFLite", False)
+    params.put_bool("AdvancedLateralTune", True)
+    params.put_bool("ForceAutoTuneOff", True)
+    params.put_bool("ForceAutoTune", False)
+
+    params.put_bool("CECurves", False)
+    params.put_bool("CENavigation", False)
+    params.put_bool("ShowCEMStatus", True)
+    params.put_bool("CESlowerLead", True)
+    params.put_bool("CEStoppedLead", True)
+    params.put_int("CEModelStopTime", 8)
+
+    params.put_bool("ReverseCruise", True)
+    params.put_bool("HumanFollowing", False)
+    params.put_bool("HumanAcceleration", False)
+
+    params.put_int("TuningLevel", 3)
+    params.put_bool("TuningLevelConfirmed", True)
+
+    params.put_bool("DeveloperUI", True)
+    params.put_bool("DeveloperWidgets", True)
+    params.put_bool("DeveloperSidebar", False)
+    params.put_bool("LeadInfo", True)
+    params.put_bool("BorderMetrics", True)
+    params.put_bool("ShowSteering", True)
+    params.put_bool("BlindSpotMetrics", True)
+
+    with open(frogpilot_migration_flag_file, "w") as f:
+      f.write("migrated")
+
   # One-time migration for HumanAcceleration and HumanFollowing to off
   migration_flag_file = "/data/media/0/frogpilot_human_toggles_migrated.flag"
   if not os.path.exists(migration_flag_file):
