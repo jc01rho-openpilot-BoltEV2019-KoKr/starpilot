@@ -99,14 +99,14 @@ def get_city_center(latitude, longitude):
 
 def update_branch_commits(now):
   points = []
-  for branch in ["FrogPilot", "FrogPilot-Staging", "FrogPilot-Testing"]:
-    try:
-      response = requests.get(f"https://api.github.com/repos/FrogAi/FrogPilot/commits/{branch}")
-      response.raise_for_status()
-      sha = response.json()["sha"]
-      points.append(Point("branch_commits").field("commit", sha).tag("branch", branch).time(now))
-    except Exception as e:
-      print(f"Failed to fetch commit for {branch}: {e}")
+  branch = get_build_metadata().channel  # Current running branch
+  try:
+    response = requests.get(f"https://api.github.com/repos/firestar5683/StarPilot/commits/{branch}")
+    response.raise_for_status()
+    sha = response.json()["sha"]
+    points.append(Point("branch_commits").field("commit", sha).tag("branch", branch).time(now))
+  except Exception as e:
+    print(f"Failed to fetch commit for {branch}: {e}")
 
   return points
 

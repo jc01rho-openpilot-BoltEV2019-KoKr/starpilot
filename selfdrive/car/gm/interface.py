@@ -29,11 +29,11 @@ ACCELERATOR_POS_MSG = 0xbe
 NON_LINEAR_TORQUE_PARAMS = {
   CAR.CHEVROLET_BOLT_EUV: {
     "left": [1.8, 1.1, 0.27, 0.0],
-    "right": [1.8, 1.0, 0.225, 0.0],
+    "right": [1.85, 1.0, 0.225, 0.0],
   },
   CAR.CHEVROLET_BOLT_CC: {
     "left": [1.8, 1.1, 0.27, 0.0],
-    "right": [1.8, 1.0, 0.225, 0.0],
+    "right": [1.85, 1.0, 0.225, 0.0],
   },
   CAR.GMC_ACADIA: {
     "left": [4.78003305, 1.0, 0.3122, 0.05591772],
@@ -221,6 +221,12 @@ class CarInterface(CarInterfaceBase):
     elif candidate in (CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_BOLT_CC):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+
+      # Bolt-only lateral tuning overrides
+      ret.lateralTuning.torque.kp = 1.03
+      ret.lateralTuning.torque.ki = 1.07
+      ret.lateralTuning.torque.kd = 0.93
+      ret.lateralTuning.torque.kfDEPRECATED = 0.02
 
       if ret.enableGasInterceptor:
         # ACC Bolts use pedal for full longitudinal control, not just sng

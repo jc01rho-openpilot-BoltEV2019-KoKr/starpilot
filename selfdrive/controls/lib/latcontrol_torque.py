@@ -8,6 +8,7 @@ from openpilot.selfdrive.car.interfaces import FRICTION_THRESHOLD, get_friction_
 from openpilot.selfdrive.controls.lib.drive_helpers import MIN_SPEED, get_friction
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
+from openpilot.selfdrive.car.gm.values import CAR as GM_CAR
 from openpilot.selfdrive.controls.lib.pid import PIDController
 from openpilot.selfdrive.controls.lib.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
 
@@ -49,6 +50,13 @@ STRAIGHT_ROAD_CORRECTION_GAIN = 1.12        # boost error correction on straight
 STRAIGHT_ROAD_INTEGRATOR_BOOST = 1.08       # slightly increase integrator response
 
 VERSION = 2
+DEBUG_TORQUE_TUNE = False
+FF_SCALE_BLEND_LAT_ACCEL = 0.05
+DEADZONE_BOOST_LAT_ACCEL = 0.08
+UNWIND_D_DES_THRESHOLD = -1.0
+UNWIND_LAT_ACCEL_NEAR_ZERO = 0.3
+
+BOLT_CARS = (GM_CAR.CHEVROLET_BOLT_EUV, GM_CAR.CHEVROLET_BOLT_CC)
 
 class LatControlTorque(LatControl):
   def __init__(self, CP, CI, dt):
@@ -66,6 +74,21 @@ class LatControlTorque(LatControl):
     self.previous_measurement = 0.0
     self.measurement_rate_filter = FirstOrderFilter(0.0, 1 / (2 * np.pi * (MAX_LAT_JERK_UP - 0.5)), self.dt)
     self.low_speed_reset_threshold = max(CP.minSteerSpeed, MIN_LATERAL_CONTROL_SPEED)
+    self.debug_counter = 0
+    self.prev_desired_lateral_accel = 0.0
+
+    self.is_bolt = CP.carFingerprint in BOLT_CARS
+    self.torque_ff_scale_pos = 1.0
+    self.torque_ff_scale_neg = 1.0
+    self.torque_deadzone_boost_neg = 0.0
+    self.torque_ki_mult = 1.0
+    if self.is_bolt:
+      self.torque_ff_scale_pos = float(self.torque_params.kp)
+      self.torque_ff_scale_neg = float(self.torque_params.ki)
+      self.torque_ki_mult = float(self.torque_params.kd)
+      self.torque_deadzone_boost_neg = float(getattr(self.torque_params, "kfDEPRECATED", 0.0))
+      if self.torque_ki_mult > 0.0 and self.torque_ki_mult != 1.0:
+        self.pid._k_i = [self.pid._k_i[0], [k * self.torque_ki_mult for k in self.pid._k_i[1]]]
 
   def update_live_torque_params(self, latAccelFactor, latAccelOffset, friction):
     self.torque_params.latAccelFactor = latAccelFactor
@@ -87,6 +110,7 @@ class LatControlTorque(LatControl):
       self.previous_measurement = 0.0
       self.measurement_rate_filter.x = 0.0
       self.lat_accel_request_buffer = deque([0.] * self.lat_accel_request_buffer_len , maxlen=self.lat_accel_request_buffer_len)
+      self.prev_desired_lateral_accel = 0.0
     else:
       measured_curvature = -VM.calc_curvature(math.radians(CS.steeringAngleDeg - params.angleOffsetDeg), CS.vEgo, params.roll)
       roll_compensation = params.roll * ACCELERATION_DUE_TO_GRAVITY
@@ -102,6 +126,10 @@ class LatControlTorque(LatControl):
       desired_lateral_jerk = np.clip(self.jerk_filter.update(raw_lateral_jerk), -MAX_LAT_JERK_UP, MAX_LAT_JERK_UP)
       gravity_adjusted_future_lateral_accel = future_desired_lateral_accel - roll_compensation
       setpoint = expected_lateral_accel + desired_lateral_jerk * lat_delay
+      desired_lateral_accel_rate = (setpoint - self.prev_desired_lateral_accel) / self.dt
+      unwind_detected = (desired_lateral_accel_rate < UNWIND_D_DES_THRESHOLD and
+                         abs(setpoint) < UNWIND_LAT_ACCEL_NEAR_ZERO)
+      self.prev_desired_lateral_accel = setpoint
 
       measurement = measured_curvature * CS.vEgo ** 2
       measurement_rate = self.measurement_rate_filter.update((measurement - self.previous_measurement) / self.dt)
@@ -133,11 +161,23 @@ class LatControlTorque(LatControl):
       ff = gravity_adjusted_future_lateral_accel
       # latAccelOffset corrects roll compensation bias from device roll misalignment relative to car roll
       ff -= self.torque_params.latAccelOffset
+      ff_scale = 1.0
+      if self.is_bolt:
+        ff_scale = np.interp(ff, [-FF_SCALE_BLEND_LAT_ACCEL, 0.0, FF_SCALE_BLEND_LAT_ACCEL],
+                             [self.torque_ff_scale_neg, 1.0, self.torque_ff_scale_pos])
+        ff *= ff_scale
       ff += get_friction(error_with_lsf + JERK_GAIN * desired_lateral_jerk, lateral_accel_deadzone, get_friction_threshold(CS.vEgo), self.torque_params)
+      deadzone_boost_active = False
+      if self.is_bolt and self.torque_deadzone_boost_neg > 0.0 and gravity_adjusted_future_lateral_accel < 0.0:
+        if abs(gravity_adjusted_future_lateral_accel) < DEADZONE_BOOST_LAT_ACCEL:
+          boost_scale = np.interp(abs(gravity_adjusted_future_lateral_accel), [0.0, DEADZONE_BOOST_LAT_ACCEL], [1.0, 0.0])
+          ff -= self.torque_deadzone_boost_neg * boost_scale
+          deadzone_boost_active = True
 
       if CS.vEgo < self.low_speed_reset_threshold:
         self.pid.reset()
-      freeze_integrator = steer_limited_by_safety or CS.steeringPressed or CS.vEgo < self.low_speed_reset_threshold
+      freeze_integrator = (steer_limited_by_safety or CS.steeringPressed or
+                           CS.vEgo < self.low_speed_reset_threshold or unwind_detected)
       output_lataccel = self.pid.update(pid_log.error, error_rate=-measurement_rate, speed=CS.vEgo, feedforward=ff, freeze_integrator=freeze_integrator)
       output_torque = self.torque_from_lateral_accel(output_lataccel, self.torque_params)
 
@@ -151,6 +191,12 @@ class LatControlTorque(LatControl):
       pid_log.desiredLateralAccel = float(setpoint)
       pid_log.desiredLateralJerk = float(desired_lateral_jerk)
       pid_log.saturated = bool(self._check_saturation(self.steer_max - abs(output_torque) < 1e-3, CS, steer_limited_by_safety, curvature_limited))
+
+      if DEBUG_TORQUE_TUNE and self.is_bolt:
+        self.debug_counter += 1
+        if self.debug_counter % 50 == 0:
+          print(f"bolt_torque ff_scale={ff_scale:.3f} pos={self.torque_ff_scale_pos:.3f} "
+                f"neg={self.torque_ff_scale_neg:.3f} deadzone_boost_active={deadzone_boost_active}")
 
     # TODO left is positive in this convention
     return -output_torque, 0.0, pid_log
