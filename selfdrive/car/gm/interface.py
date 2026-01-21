@@ -29,11 +29,11 @@ ACCELERATOR_POS_MSG = 0xbe
 NON_LINEAR_TORQUE_PARAMS = {
   CAR.CHEVROLET_BOLT_EUV: {
     "left": [1.8, 1.1, 0.27, 0.0],
-    "right": [1.9, 1.0, 0.205, 0.0],
+    "right": [2.0, 1.0, 0.205, 0.0],
   },
   CAR.CHEVROLET_BOLT_CC: {
     "left": [1.8, 1.1, 0.27, 0.0],
-    "right": [1.9, 1.0, 0.205, 0.0],
+    "right": [2.0, 1.0, 0.205, 0.0],
   },
   CAR.GMC_ACADIA: {
     "left": [4.78003305, 1.0, 0.3122, 0.05591772],
