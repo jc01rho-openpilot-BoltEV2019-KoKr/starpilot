@@ -20,6 +20,30 @@ from openpilot.frogpilot.common.frogpilot_variables import get_frogpilot_toggles
 
 BASE_URL = "https://nominatim.openstreetmap.org"
 MINIMUM_POPULATION = 100_000
+SEARCH_RADIUS_DEGREES = 1.45
+
+def get_population_value(population_str):
+  if population_str is None:
+    return None
+  try:
+    return int(str(population_str).replace(",", "").split(";")[0].strip())
+  except Exception:
+    return None
+
+def search_nearby_major_cities(lat, lon, session, state_name, country_name):
+  viewbox = f"{lon - SEARCH_RADIUS_DEGREES},{lat + SEARCH_RADIUS_DEGREES},{lon + SEARCH_RADIUS_DEGREES},{lat - SEARCH_RADIUS_DEGREES}"
+  cities = (session.get(f"{BASE_URL}/search", params={
+    "addressdetails": 1, "bounded": 1, "extratags": 1, "format": "jsonv2", "limit": 20, "q": "city", "viewbox": viewbox
+  }, timeout=10).json() or [])
+
+  qualifying = [c for c in cities if (get_population_value((c.get("extratags") or {}).get("population")) or 0) >= MINIMUM_POPULATION]
+  if not qualifying:
+    return None
+
+  nearest = min(qualifying, key=lambda c: (float(c["lat"]) - lat) ** 2 + (float(c["lon"]) - lon) ** 2)
+  addr = nearest.get("address") or {}
+  return float(nearest["lat"]), float(nearest["lon"]), addr.get("city") or addr.get("town") or nearest.get("display_name", "").split(",")[0], state_name, country_name
+
 
 def get_city_center(latitude, longitude):
   try:
@@ -44,14 +68,7 @@ def get_city_center(latitude, longitude):
 
         if data:
           tags = data[0]
-          population = (tags.get("extratags") or {}).get("population")
-
-          population_value = None
-          if population is not None:
-            try:
-              population_value = int(str(population).replace(",", "").split(";")[0].strip())
-            except Exception:
-              population_value = None
+          population_value = get_population_value((tags.get("extratags") or {}).get("population"))
 
           if population_value is not None and population_value >= MINIMUM_POPULATION:
             latitude_value = float(tags["lat"])
@@ -61,6 +78,10 @@ def get_city_center(latitude, longitude):
             city_label = resolved_address.get("city") or resolved_address.get("town") or city_name
 
             return latitude_value, longitude_value, city_label, state_name, country_name
+
+      nearby_result = search_nearby_major_cities(latitude, longitude, session, state_name, country_name)
+      if nearby_result:
+        return nearby_result
 
       query = f"{state_name} state capital" if country_code == "us" else f"capital of {state_name}, {country_name}"
       response = session.get(f"{BASE_URL}/search", params={"addressdetails": 1, "extratags": 1, "format": "jsonv2", "limit": 5, "q": query}, timeout=10)
