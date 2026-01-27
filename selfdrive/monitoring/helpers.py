@@ -33,7 +33,7 @@ class DRIVER_MONITOR_SETTINGS:
     self._SG_THRESHOLD = 0.9
     self._BLINK_THRESHOLD = 0.865
 
-    self._EE_THRESH11 = 0.1
+    self._EE_THRESH11 = 0.6
     self._EE_THRESH12 = 15.0
     self._EE_MAX_OFFSET1 = 0.06
     self._EE_MIN_OFFSET1 = 0.025

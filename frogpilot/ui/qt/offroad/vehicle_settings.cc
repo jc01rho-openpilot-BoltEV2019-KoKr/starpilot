@@ -189,6 +189,7 @@ FrogPilotVehiclesPanel::FrogPilotVehiclesPanel(FrogPilotSettingsWindow *parent) 
     {"PedalSupport", tr("comma Pedal Support"), tr("<b>Does your vehicle support the \"comma pedal\"?</b>"), ""},
     {"OpenpilotLongitudinal", tr("openpilot Longitudinal Support"), tr("<b>Can openpilot control the vehicle's acceleration and braking?</b>"), ""},
     {"RadarSupport", tr("Radar Support"), tr("<b>Does openpilot use the vehicle's radar data</b> alongside the device's camera for tracking lead vehicles?"), ""},
+    {"SASCMSupport", tr("SASCM Support"), tr("<b>Does your vehicle support \"SASCMs\"?</b>"), ""},
     {"SDSUSupport", tr("SDSU Support"), tr("<b>Does your vehicle support \"SDSUs\"?</b>"), ""},
     {"SNGSupport", tr("Stop-and-Go Support"), tr("<b>Does your vehicle support stop-and-go driving?</b>"), ""}
   };
@@ -342,6 +343,7 @@ void FrogPilotVehiclesPanel::showEvent(QShowEvent *event) {
 
   QStringList detected;
   if (hasPedal) detected << "comma Pedal";
+  if (parent->hasSASCM) detected << "SASCM";
   if (parent->hasSDSU) detected << "SDSU";
   if (parent->hasZSS) detected << "ZSS";
   static_cast<LabelControl*>(toggles["HardwareDetected"])->setText(detected.isEmpty() ? tr("None") : detected.join(", "));
@@ -350,6 +352,7 @@ void FrogPilotVehiclesPanel::showEvent(QShowEvent *event) {
   static_cast<LabelControl*>(toggles["OpenpilotLongitudinal"])->setText(hasOpenpilotLongitudinal ? tr("Yes") : tr("No"));
   static_cast<LabelControl*>(toggles["PedalSupport"])->setText(parent->canUsePedal ? tr("Yes") : tr("No"));
   static_cast<LabelControl*>(toggles["RadarSupport"])->setText(parent->hasRadar ? tr("Yes") : tr("No"));
+  static_cast<LabelControl*>(toggles["SASCMSupport"])->setText(parent->canUseSASCM ? tr("Yes") : tr("No"));
   static_cast<LabelControl*>(toggles["SDSUSupport"])->setText(parent->canUseSDSU ? tr("Yes") : tr("No"));
   static_cast<LabelControl*>(toggles["SNGSupport"])->setText(hasSNG ? tr("Yes") : tr("No"));
 

@@ -13,6 +13,7 @@ public:
 
   bool canUsePedal = false;
   bool canUseSDSU = false;
+  bool canUseSASCM = false;
   bool forceOpenDescriptions = false;
   bool hasAutoTune = true;
   bool hasBSM = true;
@@ -24,6 +25,7 @@ public:
   bool hasPedal = false;
   bool hasRadar = true;
   bool hasSDSU = false;
+  bool hasSASCM = false;
   bool hasSNG = false;
   bool hasZSS = false;
   bool isAngleCar = false;

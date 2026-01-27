@@ -105,7 +105,7 @@ struct FrogPilotCarParams @0xf35cc4560bbf6ec2 {
   isHDA2 @3 :Bool;
   openpilotLongitudinalControlDisabled @4 :Bool;
   safetyConfigs @5 :List(SafetyConfig);
-
+  canUseSASCM @6 :Bool;
 
   struct SafetyConfig {
     safetyParam @0 :UInt16;

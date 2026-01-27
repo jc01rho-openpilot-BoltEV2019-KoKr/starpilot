@@ -187,6 +187,7 @@ class CarInterfaceBase(ABC):
 
       elif platform in GMCAR:
         fp_ret.canUsePedal = True
+        fp_ret.canUseSASCM = True
 
       elif platform in HondaCAR:
         if candidate == HondaCAR.HONDA_CLARITY:

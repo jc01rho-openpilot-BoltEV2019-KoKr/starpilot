@@ -269,6 +269,7 @@ void FrogPilotSettingsWindow::updateVariables() {
     hasPedal = CP.getEnableGasInterceptor();
     hasRadar = !CP.getRadarUnavailable();
     hasSDSU = frogpilot_toggles.value("has_sdsu").toBool();
+    hasSASCM = frogpilot_toggles.value("has_sascm").toBool();
     hasSNG = hasOpenpilotLongitudinal && CP.getAutoResumeSng();
     hasZSS = frogpilot_toggles.value("has_zss").toBool();
     isAngleCar = CP.getSteerControlType() == cereal::CarParams::SteerControlType::ANGLE;
@@ -392,6 +393,7 @@ void FrogPilotSettingsWindow::updateVariables() {
 
     canUsePedal = FPCP.getCanUsePedal();
     canUseSDSU = FPCP.getCanUseSDSU();
+    canUseSASCM = FPCP.getCanUseSASCM();
     openpilotLongitudinalControlDisabled = FPCP.getOpenpilotLongitudinalControlDisabled();
   }
 

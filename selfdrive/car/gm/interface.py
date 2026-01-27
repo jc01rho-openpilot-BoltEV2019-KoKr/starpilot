@@ -29,11 +29,11 @@ ACCELERATOR_POS_MSG = 0xbe
 NON_LINEAR_TORQUE_PARAMS = {
   CAR.CHEVROLET_BOLT_EUV: {
     "left": [1.8, 1.1, 0.27, 0.0],
-    "right": [1.85, 1.0, 0.225, 0.0],
+    "right": [2.0, 1.0, 0.205, 0.0],
   },
   CAR.CHEVROLET_BOLT_CC: {
     "left": [1.8, 1.1, 0.27, 0.0],
-    "right": [1.85, 1.0, 0.225, 0.0],
+    "right": [2.0, 1.0, 0.205, 0.0],
   },
   CAR.GMC_ACADIA: {
     "left": [4.78003305, 1.0, 0.3122, 0.05591772],
@@ -111,6 +111,11 @@ class CarInterface(CarInterfaceBase):
     ret.safetyConfigs = [get_safety_config(car.CarParams.SafetyModel.gm)]
     ret.autoResumeSng = False
     ret.enableBsm = 0x142 in fingerprint[CanBus.POWERTRAIN]
+
+    # Detect Beartech SASCM allows openpilot longitudinal control on SDGM and ASCM_INT vehicles
+    if 0x2FF in fingerprint[0]:
+      ret.flags |= GMFlags.SASCM.value
+
     if PEDAL_MSG in fingerprint[0]:
       ret.enableGasInterceptor = True
       ret.safetyConfigs[0].safetyParam |= Panda.FLAG_GM_GAS_INTERCEPTOR

@@ -569,6 +569,7 @@ class FrogPilotVariables:
     toggle.has_pedal = CP.enableGasInterceptor
     has_radar = not CP.radarUnavailable
     toggle.has_sdsu = toggle.car_make == "toyota" and bool(CP.flags & ToyotaFlags.SMART_DSU.value)
+    toggle.has_sascm = toggle.car_make == "gm" and bool(CP.flags & GMFlags.SASCM.value)
     has_sng = CP.autoResumeSng
     toggle.has_zss = toggle.car_make == "toyota" and bool(FPCP.fpFlags & ToyotaFrogPilotFlags.ZSS.value)
     is_angle_car = CP.steerControlType == car.CarParams.SteerControlType.angle
