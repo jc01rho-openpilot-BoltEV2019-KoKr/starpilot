@@ -483,8 +483,19 @@ class LongitudinalPlanner:
         a_target = output_a_target_mpc
         should_stop = output_should_stop_mpc
       else:
-        a_target = min(output_a_target_mpc, output_a_target_e2e)
-        should_stop = output_should_stop_e2e or output_should_stop_mpc
+        # For v12, always blend in experimental mode
+        if self.generation == 'v12':
+          a_target = min(output_a_target_mpc, output_a_target_e2e)
+          should_stop = output_should_stop_e2e or output_should_stop_mpc
+        else:
+          # Legacy behavior: only trust e2e if it's more conservative
+          if output_a_target_e2e < output_a_target_mpc:
+            a_target = output_a_target_e2e
+            should_stop = output_should_stop_e2e
+            self.mpc.source = SOURCES[3]
+          else:
+            a_target = output_a_target_mpc
+            should_stop = output_should_stop_mpc
     else:
       action_t = self.CP.longitudinalActuatorDelay + DT_MDL
       a_target, should_stop = get_accel_from_plan(longitudinalPlan.speeds, longitudinalPlan.accels,
