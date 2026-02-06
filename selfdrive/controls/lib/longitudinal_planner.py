@@ -181,8 +181,12 @@ class LongitudinalPlanner:
   def update(self, tinygrad_model, sm, frogpilot_toggles):
     self.generation = frogpilot_toggles.model_version
     if tinygrad_model:
-      self.mpc.mode = 'acc'
       self.mode = 'blended' if sm['controlsState'].experimentalMode else 'acc'
+      # For v12, let MPC track experimental mode as well.
+      if self.generation == 'v12':
+        self.mpc.mode = self.mode
+      else:
+        self.mpc.mode = 'acc'
     else:
       self.mpc.mode = 'blended' if sm['controlsState'].experimentalMode else 'acc'
     if not self.mlsim:
