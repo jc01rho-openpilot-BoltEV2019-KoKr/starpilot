@@ -5,7 +5,6 @@ import numpy as np
 from cereal import log
 from openpilot.common.numpy_fast import clip, interp
 from openpilot.common.realtime import DT_MDL
-from openpilot.common.swaglog import cloudlog
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.conversions import Conversions as CV
 # WARNING: imports outside of constants will not trigger a rebuild
@@ -422,9 +421,6 @@ class LongitudinalMpc:
       scale = float(np.interp(uncertainty, [0.45, 0.60], [1.2, 1.5]))
       speed_jerk *= scale
 
-    if abs(filter_time_factor - prev_filter_time_factor) > 1e-3:
-      cloudlog.error(f"LON_FILTER; filter_time_factor={filter_time_factor:.2f}; uncertainty={uncertainty:.3f}; v_ego={v_ego:.2f} mps; lead_dist={lead_dist:.2f} m; accel_reengage={accel_reengage}")
-
     if self.mode == 'acc':
       a_change_cost = acceleration_jerk if prev_accel_constraint else 0
       cost_weights = [self.current_x_ego_cost, X_EGO_COST, V_EGO_COST, A_EGO_COST, a_change_cost, speed_jerk]
@@ -627,11 +623,7 @@ class LongitudinalMpc:
 
     self.prev_a = np.interp(T_IDXS + self.dt, T_IDXS, self.a_solution)
 
-    t = time.monotonic()
     if self.solution_status != 0:
-      if t > self.last_cloudlog_t + 5.0:
-        self.last_cloudlog_t = t
-        cloudlog.warning(f"Long mpc reset, solution_status: {self.solution_status}")
       self.reset()
       # reset = 1
     # print(f"long_mpc timings: total internal {self.solve_time:.2e}, external: {(time.monotonic() - t0):.2e} qp {self.time_qp_solution:.2e}, \
