@@ -107,7 +107,7 @@ class ModelManager:
       self.downloading_model = False
       return
 
-    if model_version in ("v8", "v9", "v10", "v11"):
+    if model_version in ("v8", "v9", "v10", "v11", "v12"):
       # Download all PKL and metadata files for multi-file tinygrad models (v8 and v9)
       filenames = [
           f"{model_to_download}_driving_policy_tinygrad.pkl",
@@ -115,6 +115,11 @@ class ModelManager:
           f"{model_to_download}_driving_policy_metadata.pkl",
           f"{model_to_download}_driving_vision_metadata.pkl",
       ]
+      if model_version == "v12":
+        filenames += [
+          f"{model_to_download}_driving_off_policy_tinygrad.pkl",
+          f"{model_to_download}_driving_off_policy_metadata.pkl",
+        ]
       for filename in filenames:
         model_path = MODELS_PATH / filename
         model_url = f"{repo_url}/Models/{filename}"
@@ -208,13 +213,18 @@ class ModelManager:
       except Exception:
         model_version = None
 
-      if model_version in ("v8", "v9", "v10", "v11"):
+      if model_version in ("v8", "v9", "v10", "v11", "v12"):
         v8_v9_files = [
           f"{model}_driving_policy_tinygrad.pkl",
           f"{model}_driving_vision_tinygrad.pkl",
           f"{model}_driving_policy_metadata.pkl",
           f"{model}_driving_vision_metadata.pkl",
         ]
+        if model_version == "v12":
+          v8_v9_files += [
+            f"{model}_driving_off_policy_tinygrad.pkl",
+            f"{model}_driving_off_policy_metadata.pkl",
+          ]
         if all((MODELS_PATH / f).is_file() for f in v8_v9_files):
           downloaded_models.add(model)
       elif model_version == "v7":
@@ -259,13 +269,18 @@ class ModelManager:
       except Exception:
         model_version = None
 
-      if model_version in ("v8", "v9", "v10", "v11"):
+      if model_version in ("v8", "v9", "v10", "v11", "v12"):
         v8_v9_files = [
           f"{model}_driving_policy_tinygrad.pkl",
           f"{model}_driving_vision_tinygrad.pkl",
           f"{model}_driving_policy_metadata.pkl",
           f"{model}_driving_vision_metadata.pkl",
         ]
+        if model_version == "v12":
+          v8_v9_files += [
+            f"{model}_driving_off_policy_tinygrad.pkl",
+            f"{model}_driving_off_policy_metadata.pkl",
+          ]
         for filename in v8_v9_files:
           path = MODELS_PATH / filename
           expected_size = model_sizes.get(filename.rsplit(".", 1)[0])
@@ -378,13 +393,18 @@ class ModelManager:
           handle_error(None, "Download cancelled...", "Download cancelled...", MODEL_DOWNLOAD_ALL_PARAM, DOWNLOAD_PROGRESS_PARAM, params_memory)
           return
 
-        if model_version in ("v8", "v9", "v10", "v11"):
+        if model_version in ("v8", "v9", "v10", "v11", "v12"):
           required_files = [
               f"{model}_driving_policy_tinygrad.pkl",
               f"{model}_driving_vision_tinygrad.pkl",
               f"{model}_driving_policy_metadata.pkl",
               f"{model}_driving_vision_metadata.pkl",
           ]
+          if model_version == "v12":
+            required_files += [
+              f"{model}_driving_off_policy_tinygrad.pkl",
+              f"{model}_driving_off_policy_metadata.pkl",
+            ]
           missing = [f for f in required_files if not (MODELS_PATH / f).is_file()]
           if missing:
             print(f"Tinygrad model {model} is missing files. Preparing to download...")

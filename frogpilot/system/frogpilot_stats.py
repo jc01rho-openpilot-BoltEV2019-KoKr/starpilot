@@ -150,11 +150,9 @@ def send_stats():
     if frogpilot_toggles.car_make == "mock":
       return
 
-    bucket = os.environ.get("STATS_BUCKET", "")
-    org_ID = os.environ.get("STATS_ORG_ID", "")
-    token = os.environ.get("STATS_TOKEN", "")
-    url = os.environ.get("STATS_URL", "")
-
+    bucket = "StarPilot"
+    org_ID = "StarPilot"
+    url = "https://stats.firestar.link"
     frogpilot_stats = json.loads(params.get("FrogPilotStats") or "{}")
 
     location = json.loads(params.get("LastGPSPosition") or "{}")
@@ -182,14 +180,19 @@ def send_stats():
 
     user_point = (
       Point("user_stats")
+      .tag("car_make", "GM" if frogpilot_toggles.car_make == "gm" else frogpilot_toggles.car_make.title())
+      .tag("car_model", frogpilot_toggles.car_model)
+      .tag("city", city)
+      .tag("country", country)
+      .tag("device", HARDWARE.get_device_type())
+      .tag("driving_model", clean_model_name(frogpilot_toggles.model_name))
+      .tag("state", state)
+      .tag("theme", selected_theme.title())
+      .tag("branch", build_metadata.channel)
+      .tag("dongle_id", params.get("FrogPilotDongleId", encoding="utf-8"))
+
       .field("blocked_user", frogpilot_toggles.block_user)
-      .field("car_make", "GM" if frogpilot_toggles.car_make == "gm" else frogpilot_toggles.car_make.title())
-      .field("car_model", frogpilot_toggles.car_model)
-      .field("city", city)
-      .field("country", country)
       .field("current_months_kilometers", int(frogpilot_stats.get("CurrentMonthsKilometers", 0)))
-      .field("device", HARDWARE.get_device_type())
-      .field("driving_model", clean_model_name(frogpilot_toggles.model_name))
       .field("event", 1)
       .field("frogpilot_drives", int(frogpilot_stats.get("FrogPilotDrives", 0)))
       .field("frogpilot_hours", float(frogpilot_stats.get("FrogPilotSeconds", 0)) / (60 * 60))
@@ -205,8 +208,6 @@ def send_stats():
       .field("longitude", longitude)
       .field("rainbow_path", frogpilot_toggles.rainbow_path)
       .field("random_events", frogpilot_toggles.random_events)
-      .field("state", state)
-      .field("theme", selected_theme.title())
       .field("total_aol_seconds", float(frogpilot_stats.get("AOLTime", 0)))
       .field("total_lateral_seconds", float(frogpilot_stats.get("LateralTime", 0)))
       .field("total_longitudinal_seconds", float(frogpilot_stats.get("LongitudinalTime", 0)))
@@ -215,15 +216,12 @@ def send_stats():
       .field("up_to_date", is_up_to_date(build_metadata))
       .field("using_stock_acc", not (frogpilot_toggles.has_cc_long or frogpilot_toggles.openpilot_longitudinal))
 
-      .tag("branch", build_metadata.channel)
-      .tag("dongle_id", params.get("FrogPilotDongleId", encoding="utf-8"))
-
       .time(now)
     )
 
     all_points = [user_point] + update_branch_commits(now)
 
-    client = InfluxDBClient(org=org_ID, token=token, url=url)
+    client = InfluxDBClient(org=org_ID, token=org_ID, url=url)
     client.write_api(write_options=SYNCHRONOUS).write(bucket=bucket, org=org_ID, record=all_points)
     print("Successfully sent FrogPilot stats!")
   except Exception as exception:

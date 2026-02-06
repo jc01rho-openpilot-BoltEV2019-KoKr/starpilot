@@ -96,6 +96,8 @@ EXCLUDED_KEYS = {
 }
 
 TINYGRAD_FILES = [
+  ("driving_off_policy_metadata.pkl", "off-policy metadata"),
+  ("driving_off_policy_tinygrad.pkl", "off-policy model"),
   ("driving_policy_metadata.pkl", "policy metadata"),
   ("driving_policy_tinygrad.pkl", "policy model"),
   ("driving_vision_metadata.pkl", "vision metadata"),
@@ -888,7 +890,7 @@ class FrogPilotVariables:
         toggle.model_version = DEFAULT_MODEL_VERSION
     toggle.classic_longitudinal = toggle.model_version in {"v1", "v2", "v3", "v4"}
     toggle.classic_model = toggle.model_version in {"v1", "v2", "v3", "v4"}
-    toggle.tinygrad_model = toggle.model_version in {"v8", "v9", "v10", "v11"}
+    toggle.tinygrad_model = toggle.model_version in {"v8", "v9", "v10", "v11", "v12"}
     toggle.tomb_raider = toggle.model == "space-lab"
 
     toggle.model_ui = params.get_bool("ModelUI") if tuning_level >= level["ModelUI"] else default.get_bool("ModelUI")

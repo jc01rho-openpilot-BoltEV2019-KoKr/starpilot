@@ -24,6 +24,7 @@ from openpilot.selfdrive.car.car_helpers import get_demo_car_params
 from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
 from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan_tomb_raider, smooth_value
 from openpilot.frogpilot.tinygrad_modeld.parse_model_outputs import Parser
+from openpilot.frogpilot.tinygrad_modeld.parse_model_outputs_split import Parser as SplitParser
 from openpilot.frogpilot.tinygrad_modeld.fill_model_msg import fill_model_msg, fill_pose_msg, PublishState, get_curvature_from_output
 from openpilot.frogpilot.tinygrad_modeld.constants import ModelConstants, Plan
 from openpilot.frogpilot.tinygrad_modeld.models.commonmodel_pyx import DrivingModelFrame, CLContext
@@ -83,6 +84,34 @@ class ModelState:
   output: np.ndarray
   prev_desire: np.ndarray  # for tracking the rising edge of the pulse
 
+  def _build_policy_inputs(self, input_shapes: dict[str, tuple[int, ...]]) -> tuple[dict[str, np.ndarray], str | None]:
+    numpy_inputs: dict[str, np.ndarray] = {}
+
+    # Always-supported inputs (if model expects them)
+    desire_key_init = next((k for k in input_shapes if k.startswith('desire')), None)
+    if desire_key_init:
+      numpy_inputs[desire_key_init] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.DESIRE_LEN), dtype=np.float32)
+    if 'traffic_convention' in input_shapes:
+      numpy_inputs['traffic_convention'] = np.zeros((1, ModelConstants.TRAFFIC_CONVENTION_LEN), dtype=np.float32)
+    if 'features_buffer' in input_shapes:
+      numpy_inputs['features_buffer'] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN,  ModelConstants.FEATURE_LEN), dtype=np.float32)
+
+    # Optional inputs for non-v11 (and some v10/v9 variants)
+    # Lateral control params
+    if 'lateral_control_params' in input_shapes:
+      numpy_inputs['lateral_control_params'] = np.zeros((1, ModelConstants.LATERAL_CONTROL_PARAMS_LEN), dtype=np.float32)
+
+    # Previous desired curvature: handle both singular and plural key names across model versions
+    prev_desired_curv_key = None
+    if 'prev_desired_curv' in input_shapes:
+      prev_desired_curv_key = 'prev_desired_curv'
+      numpy_inputs['prev_desired_curv'] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32)
+    elif 'prev_desired_curvs' in input_shapes:
+      prev_desired_curv_key = 'prev_desired_curvs'
+      numpy_inputs['prev_desired_curvs'] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32)
+
+    return numpy_inputs, prev_desired_curv_key
+
   def __init__(self, context: CLContext):
     # Dynamically build paths based on current model ID
     params = Params()
@@ -101,13 +130,17 @@ class ModelState:
         models_dir = Path(__file__).parent / "models"
         VISION_PKL_PATH = models_dir / "driving_vision_tinygrad.pkl"
         POLICY_PKL_PATH = models_dir / "driving_policy_tinygrad.pkl"
+        OFF_POLICY_PKL_PATH = models_dir / "driving_off_policy_tinygrad.pkl"
         VISION_METADATA_PATH = models_dir / "driving_vision_metadata.pkl"
         POLICY_METADATA_PATH = models_dir / "driving_policy_metadata.pkl"
+        OFF_POLICY_METADATA_PATH = models_dir / "driving_off_policy_metadata.pkl"
     else:
         VISION_PKL_PATH = model_dir / f"{model_id}_driving_vision_tinygrad.pkl"
         POLICY_PKL_PATH = model_dir / f"{model_id}_driving_policy_tinygrad.pkl"
+        OFF_POLICY_PKL_PATH = model_dir / f"{model_id}_driving_off_policy_tinygrad.pkl"
         VISION_METADATA_PATH = model_dir / f"{model_id}_driving_vision_metadata.pkl"
         POLICY_METADATA_PATH = model_dir / f"{model_id}_driving_policy_metadata.pkl"
+        OFF_POLICY_METADATA_PATH = model_dir / f"{model_id}_driving_off_policy_metadata.pkl"
 
     # If ModelVersion is not set or not available, try to determine it from available model data
     if not model_version:
@@ -159,7 +192,7 @@ class ModelState:
     self.policy_generation = model_version or "v8"
     self.is_v11 = (self.policy_generation == "v11")
     self.is_v9 = (self.policy_generation == "v9")
-    self.mlsim = (self.policy_generation in ("v8", "v10", "v11"))
+    self.mlsim = (self.policy_generation in ("v8", "v10", "v11", "v12"))
 
     self.frames = {name: DrivingModelFrame(context, ModelConstants.TEMPORAL_SKIP) for name in self.vision_input_names}
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
@@ -170,33 +203,50 @@ class ModelState:
 
 
     # policy inputs (built dynamically to support all generations)
-    self.numpy_inputs = {}
+    self.numpy_inputs, self.prev_desired_curv_key = self._build_policy_inputs(self.policy_input_shapes)
 
-    # Always-supported inputs (if model expects them)
-    desire_key_init = next((k for k in self.policy_input_shapes if k.startswith('desire')), None)
-    if desire_key_init:
-      self.numpy_inputs[desire_key_init] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.DESIRE_LEN), dtype=np.float32)
-    if 'traffic_convention' in self.policy_input_shapes:
-      self.numpy_inputs['traffic_convention'] = np.zeros((1, ModelConstants.TRAFFIC_CONVENTION_LEN), dtype=np.float32)
-    if 'features_buffer' in self.policy_input_shapes:
-      self.numpy_inputs['features_buffer'] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN,  ModelConstants.FEATURE_LEN), dtype=np.float32)
+    # Off-policy model (optional)
+    self.off_policy_enabled = False
+    self.off_policy_input_shapes: dict[str, tuple[int, ...]] = {}
+    self.off_policy_output_slices: dict[str, slice] = {}
+    self.off_policy_numpy_inputs: dict[str, np.ndarray] = {}
+    self.off_policy_prev_desired_curv_key: str | None = None
+    self.off_policy_desire_key: str | None = None
+    self.off_policy_inputs: dict[str, Tensor] | None = None
+    self.off_policy_output: np.ndarray | None = None
 
-    # Optional inputs for non-v11 (and some v10/v9 variants)
-    # Lateral control params
-    if 'lateral_control_params' in self.policy_input_shapes:
-      self.numpy_inputs['lateral_control_params'] = np.zeros((1, ModelConstants.LATERAL_CONTROL_PARAMS_LEN), dtype=np.float32)
+    off_policy_metadata = None
+    if self.policy_generation == "v12" or OFF_POLICY_METADATA_PATH.is_file() or OFF_POLICY_PKL_PATH.is_file():
+      try:
+        with open(OFF_POLICY_METADATA_PATH, 'rb') as f:
+          off_policy_metadata = pickle.load(f)
+      except FileNotFoundError:
+        cloudlog.error(f"Missing metadata {OFF_POLICY_METADATA_PATH}, downloading...")
+        from openpilot.frogpilot.assets.model_manager import ModelManager
+        ModelManager().download_model(model_id)
+        try:
+          with open(OFF_POLICY_METADATA_PATH, 'rb') as f:
+            off_policy_metadata = pickle.load(f)
+        except FileNotFoundError:
+          cloudlog.warning(f"Off-policy metadata still missing: {OFF_POLICY_METADATA_PATH}")
 
-    # Previous desired curvature: handle both singular and plural key names across model versions
-    self.prev_desired_curv_key = None
-    if 'prev_desired_curv' in self.policy_input_shapes:
-      self.prev_desired_curv_key = 'prev_desired_curv'
-      self.numpy_inputs['prev_desired_curv'] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32)
-    elif 'prev_desired_curvs' in self.policy_input_shapes:
-      self.prev_desired_curv_key = 'prev_desired_curvs'
-      self.numpy_inputs['prev_desired_curvs'] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32)
+    if off_policy_metadata is not None:
+      self.off_policy_input_shapes = off_policy_metadata['input_shapes']
+      self.off_policy_output_slices = off_policy_metadata['output_slices']
+      off_policy_output_size = off_policy_metadata['output_shapes']['outputs'][1]
+      self.off_policy_numpy_inputs, self.off_policy_prev_desired_curv_key = self._build_policy_inputs(self.off_policy_input_shapes)
+      self.off_policy_desire_key = next((k for k in self.off_policy_numpy_inputs if k.startswith('desire')), None)
+      self.off_policy_inputs = {k: Tensor(v, device='NPY').realize() for k, v in self.off_policy_numpy_inputs.items()}
+      self.off_policy_output = np.zeros(off_policy_output_size, dtype=np.float32)
+      try:
+        with open(OFF_POLICY_PKL_PATH, "rb") as f:
+          self.off_policy_run = pickle.load(f)
+        self.off_policy_enabled = True
+      except FileNotFoundError:
+        cloudlog.warning(f"Missing off-policy model {OFF_POLICY_PKL_PATH}, skipping off-policy")
 
-    # Optional temporal buffer for previous desired curvature (allocate only if the policy expects it)
-    if getattr(self, 'prev_desired_curv_key', None) is not None:
+    # Optional temporal buffer for previous desired curvature (allocate only if any model expects it)
+    if self.prev_desired_curv_key is not None or self.off_policy_prev_desired_curv_key is not None:
       self.full_prev_desired_curv = np.zeros((1, ModelConstants.FULL_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32)
 
 
@@ -206,6 +256,7 @@ class ModelState:
     self.policy_inputs = {k: Tensor(v, device='NPY').realize() for k,v in self.numpy_inputs.items()}
     self.policy_output = np.zeros(policy_output_size, dtype=np.float32)
     self.parser = Parser()
+    self.split_parser = SplitParser()
 
     with open(VISION_PKL_PATH, "rb") as f:
       self.vision_run = pickle.load(f)
@@ -231,10 +282,18 @@ class ModelState:
     self.full_desire[0,:-1] = self.full_desire[0,1:]
     self.full_desire[0,-1] = new_desire
     self.numpy_inputs[self.desire_key][:] = self.full_desire.reshape((1,ModelConstants.INPUT_HISTORY_BUFFER_LEN,ModelConstants.TEMPORAL_SKIP,-1)).max(axis=2)
+    if self.off_policy_enabled and self.off_policy_desire_key is not None:
+      self.off_policy_numpy_inputs[self.off_policy_desire_key][:] = self.numpy_inputs[self.desire_key]
 
-    self.numpy_inputs['traffic_convention'][:] = inputs['traffic_convention']
+    if 'traffic_convention' in self.numpy_inputs:
+      self.numpy_inputs['traffic_convention'][:] = inputs['traffic_convention']
+    if self.off_policy_enabled and 'traffic_convention' in self.off_policy_numpy_inputs:
+      self.off_policy_numpy_inputs['traffic_convention'][:] = inputs['traffic_convention']
+
     if 'lateral_control_params' in self.numpy_inputs:
       self.numpy_inputs['lateral_control_params'][:] = inputs['lateral_control_params']
+    if self.off_policy_enabled and 'lateral_control_params' in self.off_policy_numpy_inputs:
+      self.off_policy_numpy_inputs['lateral_control_params'][:] = inputs['lateral_control_params']
 
     if prepare_only:
       return None
@@ -252,14 +311,23 @@ class ModelState:
         self.vision_inputs[key] = Tensor(frame_input, dtype=dtypes.uint8).realize()
 
     self.vision_output = self.vision_run(**self.vision_inputs).contiguous().realize().uop.base.buffer.numpy()
-    vision_outputs_dict = self.parser.parse_vision_outputs(self.slice_outputs(self.vision_output, self.vision_output_slices))
+    if self.policy_generation == "v12":
+      vision_outputs_dict = self.split_parser.parse_vision_outputs(self.slice_outputs(self.vision_output, self.vision_output_slices))
+    else:
+      vision_outputs_dict = self.parser.parse_vision_outputs(self.slice_outputs(self.vision_output, self.vision_output_slices))
 
     self.full_features_buffer[0,:-1] = self.full_features_buffer[0,1:]
     self.full_features_buffer[0,-1] = vision_outputs_dict['hidden_state'][0, :]
-    self.numpy_inputs['features_buffer'][:] = self.full_features_buffer[0, self.temporal_idxs]
+    if 'features_buffer' in self.numpy_inputs:
+      self.numpy_inputs['features_buffer'][:] = self.full_features_buffer[0, self.temporal_idxs]
+    if self.off_policy_enabled and 'features_buffer' in self.off_policy_numpy_inputs:
+      self.off_policy_numpy_inputs['features_buffer'][:] = self.full_features_buffer[0, self.temporal_idxs]
 
     self.policy_output = self.policy_run(**self.policy_inputs).contiguous().realize().uop.base.buffer.numpy()
-    policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(self.policy_output, self.policy_output_slices))
+    if self.policy_generation == "v12":
+      policy_outputs_dict = self.split_parser.parse_policy_outputs(self.slice_outputs(self.policy_output, self.policy_output_slices))
+    else:
+      policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(self.policy_output, self.policy_output_slices))
 
     # TODO model only uses last value now
     if hasattr(self, 'full_prev_desired_curv') and 'desired_curvature' in policy_outputs_dict:
@@ -273,9 +341,25 @@ class ModelState:
         else:
           self.numpy_inputs[self.prev_desired_curv_key][:] = self.full_prev_desired_curv[0, self.temporal_idxs]
 
+      if self.off_policy_enabled and self.off_policy_prev_desired_curv_key is not None:
+        if self.is_v9:
+          self.off_policy_numpy_inputs[self.off_policy_prev_desired_curv_key][:] = 0 * self.full_prev_desired_curv[0, self.temporal_idxs]
+        else:
+          self.off_policy_numpy_inputs[self.off_policy_prev_desired_curv_key][:] = self.full_prev_desired_curv[0, self.temporal_idxs]
+
     combined_outputs_dict = {**vision_outputs_dict, **policy_outputs_dict}
+    if self.off_policy_enabled:
+      self.off_policy_output = self.off_policy_run(**self.off_policy_inputs).contiguous().realize().uop.base.buffer.numpy()
+      if self.policy_generation == "v12":
+        off_policy_outputs_dict = self.split_parser.parse_off_policy_outputs(
+          self.slice_outputs(self.off_policy_output, self.off_policy_output_slices)
+        )
+        combined_outputs_dict.update(off_policy_outputs_dict)
     if SEND_RAW_PRED:
-      combined_outputs_dict['raw_pred'] = np.concatenate([self.vision_output.copy(), self.policy_output.copy()])
+      raw_pred = [self.vision_output.copy(), self.policy_output.copy()]
+      if self.off_policy_enabled and self.off_policy_output is not None:
+        raw_pred.append(self.off_policy_output.copy())
+      combined_outputs_dict['raw_pred'] = np.concatenate(raw_pred)
 
     return combined_outputs_dict
 

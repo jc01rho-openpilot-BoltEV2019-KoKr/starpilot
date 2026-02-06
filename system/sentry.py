@@ -1,5 +1,6 @@
-"""Install exception handler for process crash."""
+import glob
 import os
+import re
 import sentry_sdk
 import traceback
 from datetime import datetime
@@ -9,15 +10,16 @@ from sentry_sdk.integrations.threading import ThreadingIntegration
 from openpilot.common.params import Params
 from openpilot.system.hardware import HARDWARE, PC
 from openpilot.common.swaglog import cloudlog
+from openpilot.system.hardware.hw import Paths
 from openpilot.system.version import get_build_metadata, get_version
 
 from openpilot.frogpilot.common.frogpilot_variables import ERROR_LOGS_PATH, params
 
 class SentryProject(Enum):
   # python project
-  SELFDRIVE = os.environ.get("SENTRY_DSN", "")
+  SELFDRIVE = "https://7305139359a548fcb348ec09497dc389@bugsink.firestar.link/1"
   # native project
-  SELFDRIVE_NATIVE = os.environ.get("SENTRY_DSN", "")
+  SELFDRIVE_NATIVE = "https://7305139359a548fcb348ec09497dc389@bugsink.firestar.link/1"
 
 
 def report_tombstone(fn: str, message: str, contents: str) -> None:
@@ -26,6 +28,12 @@ def report_tombstone(fn: str, message: str, contents: str) -> None:
   with sentry_sdk.configure_scope() as scope:
     scope.set_extra("tombstone_fn", fn)
     scope.set_extra("tombstone", contents)
+
+    # Attach qlog for debugging context
+    qlogs = glob.glob(f"{Paths.log_root()}/*/qlog")
+    if qlogs:
+      scope.add_attachment(path=max(qlogs, key=os.path.getmtime), filename="qlog")
+
     sentry_sdk.capture_message(message=message)
     sentry_sdk.flush()
 
@@ -51,8 +59,14 @@ def capture_exception(*args, crash_log=True, **kwargs) -> None:
   cloudlog.error("crash", exc_info=kwargs.get('exc_info', 1))
 
   try:
-    sentry_sdk.capture_exception(*args, **kwargs)
-    sentry_sdk.flush()  # https://github.com/getsentry/sentry-python/issues/291
+    with sentry_sdk.push_scope() as scope:
+      # Attach qlog for debugging context
+      qlogs = glob.glob(f"{Paths.log_root()}/*/qlog")
+      if qlogs:
+        scope.add_attachment(path=max(qlogs, key=os.path.getmtime), filename="qlog")
+
+      sentry_sdk.capture_exception(*args, **kwargs)
+      sentry_sdk.flush()  # https://github.com/getsentry/sentry-python/issues/291
   except Exception:
     cloudlog.exception("sentry exception")
 
@@ -90,25 +104,15 @@ def save_exception(exc_text: str, crash_log) -> None:
 
 
 def init(project: SentryProject) -> bool:
-  build_metadata = get_build_metadata()
-  FrogPilot = "frogai" in build_metadata.openpilot.git_origin.lower()
-  if not FrogPilot or PC:
+  if PC:
     return False
 
+  build_metadata = get_build_metadata()
   short_branch = build_metadata.channel
 
-  if short_branch in ["COMMA", "HEAD"]:
-    return
-  elif short_branch == "FrogPilot-Development":
-    env = "Development"
-  elif build_metadata.release_channel:
-    env = "Release"
-  elif short_branch == "FrogPilot-Testing":
+  env = short_branch
+  if re.search("test", short_branch, re.IGNORECASE):
     env = "Testing"
-  elif build_metadata.tested_channel:
-    env = "Staging"
-  else:
-    env = short_branch
 
   dongle_id = params.get("DongleId", encoding="utf-8")
   installed = params.get("InstallDate", encoding="utf-8")

@@ -503,6 +503,8 @@ bool FrogPilotModelPanel::isModelInstalled(const QString &key) const {
   bool has_policy_tg = false;
   bool has_vision_meta = false;
   bool has_vision_tg = false;
+  bool has_off_policy_meta = false;
+  bool has_off_policy_tg = false;
   bool foundAny = false;
 
   for (const QString &file : modelDir.entryList(QDir::Files)) {
@@ -521,6 +523,10 @@ bool FrogPilotModelPanel::isModelInstalled(const QString &key) const {
         has_policy_meta = true;
       } else if (base.contains("_driving_policy_tinygrad")) {
         has_policy_tg = true;
+      } else if (base.contains("_driving_off_policy_metadata")) {
+        has_off_policy_meta = true;
+      } else if (base.contains("_driving_off_policy_tinygrad")) {
+        has_off_policy_tg = true;
       } else if (base.contains("_driving_vision_metadata")) {
         has_vision_meta = true;
       } else if (base.contains("_driving_vision_tinygrad")) {
@@ -534,6 +540,9 @@ bool FrogPilotModelPanel::isModelInstalled(const QString &key) const {
   }
 
   if (has_policy_meta && has_policy_tg && has_vision_meta && has_vision_tg) {
+    if (has_off_policy_meta || has_off_policy_tg) {
+      return has_off_policy_meta && has_off_policy_tg;
+    }
     return true;
   }
 
