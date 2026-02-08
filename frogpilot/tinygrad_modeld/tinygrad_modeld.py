@@ -24,7 +24,6 @@ from openpilot.selfdrive.car.car_helpers import get_demo_car_params
 from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
 from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan_tomb_raider, smooth_value
 from openpilot.frogpilot.tinygrad_modeld.parse_model_outputs import Parser
-from openpilot.frogpilot.tinygrad_modeld.parse_model_outputs_split import Parser as SplitParser
 from openpilot.frogpilot.tinygrad_modeld.fill_model_msg import fill_model_msg, fill_pose_msg, PublishState, get_curvature_from_output
 from openpilot.frogpilot.tinygrad_modeld.constants import ModelConstants, Plan
 from openpilot.frogpilot.tinygrad_modeld.models.commonmodel_pyx import DrivingModelFrame, CLContext
@@ -256,7 +255,7 @@ class ModelState:
     self.policy_inputs = {k: Tensor(v, device='NPY').realize() for k,v in self.numpy_inputs.items()}
     self.policy_output = np.zeros(policy_output_size, dtype=np.float32)
     self.parser = Parser()
-    self.split_parser = SplitParser()
+    self.off_policy_parser = Parser(ignore_missing=True)
 
     with open(VISION_PKL_PATH, "rb") as f:
       self.vision_run = pickle.load(f)
@@ -311,10 +310,7 @@ class ModelState:
         self.vision_inputs[key] = Tensor(frame_input, dtype=dtypes.uint8).realize()
 
     self.vision_output = self.vision_run(**self.vision_inputs).contiguous().realize().uop.base.buffer.numpy()
-    if self.policy_generation == "v12":
-      vision_outputs_dict = self.split_parser.parse_vision_outputs(self.slice_outputs(self.vision_output, self.vision_output_slices))
-    else:
-      vision_outputs_dict = self.parser.parse_vision_outputs(self.slice_outputs(self.vision_output, self.vision_output_slices))
+    vision_outputs_dict = self.parser.parse_vision_outputs(self.slice_outputs(self.vision_output, self.vision_output_slices))
 
     self.full_features_buffer[0,:-1] = self.full_features_buffer[0,1:]
     self.full_features_buffer[0,-1] = vision_outputs_dict['hidden_state'][0, :]
@@ -324,10 +320,7 @@ class ModelState:
       self.off_policy_numpy_inputs['features_buffer'][:] = self.full_features_buffer[0, self.temporal_idxs]
 
     self.policy_output = self.policy_run(**self.policy_inputs).contiguous().realize().uop.base.buffer.numpy()
-    if self.policy_generation == "v12":
-      policy_outputs_dict = self.split_parser.parse_policy_outputs(self.slice_outputs(self.policy_output, self.policy_output_slices))
-    else:
-      policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(self.policy_output, self.policy_output_slices))
+    policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(self.policy_output, self.policy_output_slices))
 
     # TODO model only uses last value now
     if hasattr(self, 'full_prev_desired_curv') and 'desired_curvature' in policy_outputs_dict:
@@ -350,11 +343,10 @@ class ModelState:
     combined_outputs_dict = {**vision_outputs_dict, **policy_outputs_dict}
     if self.off_policy_enabled:
       self.off_policy_output = self.off_policy_run(**self.off_policy_inputs).contiguous().realize().uop.base.buffer.numpy()
-      if self.policy_generation == "v12":
-        off_policy_outputs_dict = self.split_parser.parse_off_policy_outputs(
-          self.slice_outputs(self.off_policy_output, self.off_policy_output_slices)
-        )
-        combined_outputs_dict.update(off_policy_outputs_dict)
+      off_policy_outputs_dict = self.off_policy_parser.parse_policy_outputs(
+        self.slice_outputs(self.off_policy_output, self.off_policy_output_slices)
+      )
+      combined_outputs_dict.update(off_policy_outputs_dict)
     if SEND_RAW_PRED:
       raw_pred = [self.vision_output.copy(), self.policy_output.copy()]
       if self.off_policy_enabled and self.off_policy_output is not None:
