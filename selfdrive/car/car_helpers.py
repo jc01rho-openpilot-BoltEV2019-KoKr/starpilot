@@ -11,12 +11,14 @@ from openpilot.selfdrive.car.fingerprints import eliminate_incompatible_cars, al
 from openpilot.selfdrive.car.vin import get_vin, is_valid_vin, VIN_UNKNOWN
 from openpilot.selfdrive.car.fw_versions import get_fw_versions_ordered, get_present_ecus, match_fw_to_car, set_obd_multiplexing
 from openpilot.selfdrive.car.mock.values import CAR as MOCK
+from openpilot.selfdrive.car.gm.values import CAR as GM_CAR, CanBus as GMCanBus
 from openpilot.common.swaglog import cloudlog
 import cereal.messaging as messaging
 from openpilot.selfdrive.car import gen_empty_fingerprint
 from openpilot.system.version import get_build_metadata
 
 FRAME_FINGERPRINT = 100  # 1s
+SOURCE_BRANCH_FILE = "/data/media/0/starpilot_source_branch"
 
 EventName = car.CarEvent.EventName
 FrogPilotEventName = custom.FrogPilotCarEvent.EventName
@@ -188,6 +190,64 @@ def get_car_interface(CP, FPCP):
   CarInterface, CarController, CarState = interfaces[CP.carFingerprint]
   return CarInterface(CP, FPCP, CarController, CarState)
 
+def get_cached_car_fingerprint(params: Params) -> str | None:
+  for key in ("CarParamsPersistent", "CarParamsCache", "CarParams"):
+    cp_bytes = params.get(key)
+    if cp_bytes is None:
+      continue
+    try:
+      with car.CarParams.from_bytes(cp_bytes) as cached_cp:
+        if cached_cp.carFingerprint:
+          return cached_cp.carFingerprint
+    except Exception:
+      continue
+  return None
+
+def clear_stale_car_params(params: Params, candidate: str) -> None:
+  cached_fingerprint = get_cached_car_fingerprint(params)
+  if cached_fingerprint is None or cached_fingerprint == candidate:
+    return
+
+  stale_keys = (
+    "CarParams",
+    "CarParamsCache",
+    "CarParamsPersistent",
+    "FrogPilotCarParams",
+    "FrogPilotCarParamsPersistent",
+    "CarModelName",
+  )
+  for key in stale_keys:
+    params.remove(key)
+
+  cloudlog.warning("cleared stale car params after fingerprint change: %s -> %s", cached_fingerprint, candidate)
+
+def migrate_legacy_bolt_candidate(candidate: str) -> str:
+  source_branch = ""
+  try:
+    with open(SOURCE_BRANCH_FILE, encoding="utf-8") as f:
+      source_branch = f.read().strip()
+  except OSError:
+    pass
+
+  migration_branch = source_branch or get_build_metadata().channel
+  replacements = {}
+  if migration_branch in {"TorqueTune", "TorquePedal"}:
+    replacements = {
+      "CHEVROLET_BOLT_EUV": GM_CAR.CHEVROLET_BOLT_ACC_2022_2023,
+      "CHEVROLET_BOLT_CC": GM_CAR.CHEVROLET_BOLT_CC_2022_2023,
+    }
+  elif migration_branch in {"TotallyTune", "StarPilot-2017", "StarPilot 2017"}:
+    replacements = {
+      "CHEVROLET_BOLT_CC": GM_CAR.CHEVROLET_BOLT_CC_2017,
+    }
+  elif migration_branch in {"StarPilot"}:
+    replacements = {
+      "CHEVROLET_BOLT_CC": GM_CAR.CHEVROLET_BOLT_CC_2019_2021,
+    }
+
+  normalized_candidate = candidate[4:] if candidate.startswith("CAR.") else candidate
+  return replacements.get(normalized_candidate, normalized_candidate)
+
 
 def get_car(logcan, sendcan, experimental_long_allowed, params, num_pandas=1, frogpilot_toggles=None):
   candidate, fingerprints, vin, car_fw, source, exact_match = fingerprint(logcan, sendcan, num_pandas)
@@ -202,9 +262,73 @@ def get_car(logcan, sendcan, experimental_long_allowed, params, num_pandas=1, fr
     params.put_nonblocking("CarMake", candidate.split('_')[0].title())
     params.put_nonblocking("CarModel", candidate)
 
+  # Branch migration can leave legacy Bolt candidate names active in params/cache.
+  # Remap the selected candidate itself so fingerprint selection and params stay in sync.
+  migrated_candidate = migrate_legacy_bolt_candidate(candidate)
+  if candidate != migrated_candidate:
+    cloudlog.warning("legacy Bolt candidate migration: %s -> %s", candidate, migrated_candidate)
+    candidate = migrated_candidate
+    params.put_nonblocking("CarMake", candidate.split('_')[0].title())
+    params.put_nonblocking("CarModel", candidate)
+    params.remove("CarModelName")
+
+  # VIN-based Bolt year mapping (selfdrive-only, bolt variants only)
+  if not frogpilot_toggles.force_fingerprint and is_valid_vin(vin):
+    bolt_variants = {
+      "CHEVROLET_BOLT_EUV",
+      "CHEVROLET_BOLT_CC",
+      "CAR.CHEVROLET_BOLT_EUV",
+      "CAR.CHEVROLET_BOLT_CC",
+      GM_CAR.CHEVROLET_BOLT_ACC_2022_2023,
+      GM_CAR.CHEVROLET_BOLT_CC_2022_2023,
+      GM_CAR.CHEVROLET_BOLT_CC_2019_2021,
+      GM_CAR.CHEVROLET_BOLT_CC_2017,
+    }
+    if candidate in bolt_variants:
+      year_code = vin[9:10]
+      year_map = {
+        "H": GM_CAR.CHEVROLET_BOLT_CC_2017,       # 2017
+        "J": GM_CAR.CHEVROLET_BOLT_CC_2019_2021,  # 2018
+        "K": GM_CAR.CHEVROLET_BOLT_CC_2019_2021,  # 2019
+        "L": GM_CAR.CHEVROLET_BOLT_CC_2019_2021,  # 2020
+        "M": GM_CAR.CHEVROLET_BOLT_CC_2019_2021,  # 2021
+        "N": GM_CAR.CHEVROLET_BOLT_ACC_2022_2023, # 2022
+        "P": GM_CAR.CHEVROLET_BOLT_ACC_2022_2023, # 2023
+      }
+      if year_code in year_map:
+        vin_candidate = year_map[year_code]
+        if vin_candidate == GM_CAR.CHEVROLET_BOLT_ACC_2022_2023:
+          has_acc_msg = (
+            0x370 in fingerprints.get(GMCanBus.CAMERA, {}) or
+            0x370 in fingerprints.get(GMCanBus.POWERTRAIN, {})
+          )
+          vin_candidate = GM_CAR.CHEVROLET_BOLT_ACC_2022_2023 if has_acc_msg else GM_CAR.CHEVROLET_BOLT_CC_2022_2023
+        if candidate != vin_candidate:
+          prev_candidate = candidate
+          candidate = vin_candidate
+          params.put_nonblocking("CarMake", candidate.split('_')[0].title())
+          params.put_nonblocking("CarModel", candidate)
+          params.remove("CarModelName")
+          cloudlog.warning("VIN Bolt override: %s -> %s", prev_candidate, candidate)
+
+  # Always prefer live fingerprint naming for Bolt variants to avoid stale manual labels.
+  if candidate in {
+    GM_CAR.CHEVROLET_BOLT_ACC_2022_2023,
+    GM_CAR.CHEVROLET_BOLT_CC_2022_2023,
+    GM_CAR.CHEVROLET_BOLT_CC_2019_2021,
+    GM_CAR.CHEVROLET_BOLT_CC_2017,
+    "CHEVROLET_BOLT_EUV",
+    "CHEVROLET_BOLT_CC",
+    "CAR.CHEVROLET_BOLT_EUV",
+    "CAR.CHEVROLET_BOLT_CC",
+  }:
+    params.remove("CarModelName")
+
   if frogpilot_toggles.block_user:
     candidate = MOCK.MOCK
     sentry.capture_block()
+
+  clear_stale_car_params(params, candidate)
 
   CarInterface, _, _ = interfaces[candidate]
   CP = CarInterface.get_params(candidate, fingerprints, car_fw, experimental_long_allowed, frogpilot_toggles, docs=False)

@@ -29,13 +29,15 @@ def check_github_rate_limit():
     print(f"Error checking GitHub rate limit: {error}")
     return False
 
-def download_file(cancel_param, destination, progress_param, url, download_param, params_memory):
+def download_file(cancel_param, destination, progress_param, url, download_param, params_memory, allow_unknown_size=False, suppress_errors=False):
   try:
     destination.parent.mkdir(parents=True, exist_ok=True)
 
-    total_size = get_remote_file_size(url)
-    if total_size == 0:
+    total_size = get_remote_file_size(url, suppress_errors=suppress_errors or allow_unknown_size)
+    if total_size == 0 and not allow_unknown_size:
       if not url.endswith(".gif"):
+        if suppress_errors:
+          return
         handle_error(None, "Download invalid...", "Download invalid...", download_param, progress_param, params_memory)
       return
 
@@ -56,24 +58,30 @@ def download_file(cancel_param, destination, progress_param, url, download_param
             temp_file.write(chunk)
             downloaded_size += len(chunk)
 
-            progress = (downloaded_size / total_size) * 100
-            if progress != 100:
-              params_memory.put(progress_param, f"{progress:.0f}%")
-            else:
+            if total_size > 0:
+              progress = (downloaded_size / total_size) * 100
+              if progress != 100:
+                params_memory.put(progress_param, f"{progress:.0f}%")
+              else:
+                params_memory.put(progress_param, "Verifying authenticity...")
+            elif downloaded_size > 0:
               params_memory.put(progress_param, "Verifying authenticity...")
 
         temp_file_path.rename(destination)
 
   except Exception as error:
+    if suppress_errors:
+      return
     handle_request_error(error, destination, download_param, progress_param, params_memory)
 
-def get_remote_file_size(url):
+def get_remote_file_size(url, suppress_errors=False):
   try:
     response = requests.head(url, headers={"Accept-Encoding": "identity"}, timeout=10)
     response.raise_for_status()
     return int(response.headers.get("Content-Length", 0))
   except Exception as error:
-    handle_request_error(error, None, None, None, None)
+    if not suppress_errors:
+      handle_request_error(error, None, None, None, None)
     return 0
 
 def get_repository_url():
@@ -104,8 +112,17 @@ def handle_request_error(error, destination, download_param, progress_param, par
   error_message = error_map.get(type(error), "Unexpected error")
   handle_error(destination, f"Failed: {error_message}", error, download_param, progress_param, params_memory)
 
-def verify_download(file_path, url):
-  remote_file_size = get_remote_file_size(url)
+def verify_download(file_path, url, allow_unknown_size=False):
+  remote_file_size = get_remote_file_size(url, suppress_errors=allow_unknown_size)
+
+  if remote_file_size == 0 and allow_unknown_size:
+    if not file_path.is_file():
+      print(f"File not found: {file_path}")
+      return False
+    if file_path.stat().st_size == 0:
+      print(f"File is empty: {file_path}")
+      return False
+    return True
 
   if remote_file_size == 0:
     print(f"Error fetching remote size for {file_path}")

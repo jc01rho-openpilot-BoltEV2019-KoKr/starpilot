@@ -19,6 +19,8 @@ private:
   void updateToggles();
 
   bool cancellingDownload;
+  bool bootLogoDownloading = false;
+  bool bootLogosDownloaded = false;
   bool colorDownloading;
   bool colorsDownloaded;
   bool distanceIconDownloading;
@@ -40,10 +42,11 @@ private:
 
   std::map<QString, AbstractControl*> toggles;
 
-  QSet<QString> customThemeKeys = {"CustomColors", "CustomDistanceIcons", "CustomIcons", "CustomSignals", "CustomSounds", "DownloadStatusLabel", "WheelIcon"};
+  QSet<QString> customThemeKeys = {"BootLogo", "CustomColors", "CustomDistanceIcons", "CustomIcons", "CustomSignals", "CustomSounds", "DownloadStatusLabel", "WheelIcon"};
 
   QSet<QString> parentKeys;
 
+  FrogPilotButtonsControl *manageBootLogosButton;
   FrogPilotButtonsControl *manageCustomColorsButton;
   FrogPilotButtonsControl *manageCustomIconsButton;
   FrogPilotButtonsControl *manageCustomSignalsButton;
@@ -55,11 +58,13 @@ private:
 
   LabelControl *downloadStatusLabel;
 
+  QDir bootLogosDirectory{"/data/themes/bootlogos/"};
   QDir themePacksDirectory{"/data/themes/theme_packs/"};
   QDir wheelsDirectory{"/data/themes/steering_wheels/"};
 
   QJsonObject frogpilotToggleLevels;
 
+  QString bootLogoToDownload;
   QString colorSchemeToDownload;
   QString distanceIconPackToDownload;
   QString iconPackToDownload;

@@ -9,6 +9,17 @@ const SteeringLimits GM_STEERING_LIMITS = {
   .type = TorqueDriverLimited,
 };
 
+const SteeringLimits GM_BOLT_2017_STEERING_LIMITS = {
+  .max_steer = 450,
+  .max_rate_up = 15,
+  .max_rate_down = 34,
+  .driver_torque_allowance = 78,
+  .driver_torque_factor = 6,
+  .max_rt_delta = 345,
+  .max_rt_interval = 200000,
+  .type = TorqueDriverLimited,
+};
+
 const LongitudinalLimits GM_ASCM_LONG_LIMITS = {
   .max_gas = 8191,
   .min_gas = 5500,
@@ -23,6 +34,7 @@ const LongitudinalLimits GM_CAM_LONG_LIMITS = {
   .max_brake = 400,
 };
 
+const SteeringLimits *gm_steer_limits;
 const LongitudinalLimits *gm_long_limits;
 
 const int GM_STANDSTILL_THRSLD = 10;  // 0.311kph
@@ -40,7 +52,7 @@ const CanMsg GM_CAM_TX_MSGS[] = {{0x180, 0, 4}, {0x200, 0, 6}, {0x1E1, 0, 7}, {0
                                  {0x1E1, 2, 7}, {0x184, 2, 8}};  // camera bus
 
 const CanMsg GM_CAM_LONG_TX_MSGS[] = {{0x180, 0, 4}, {0x315, 0, 5}, {0x2CB, 0, 8}, {0x370, 0, 6}, {0x200, 0, 6}, {0xBD, 0, 7}, {0x1F5, 0, 8},   // pt bus
-                                      {0x1E1, 2, 7}, {0x184, 2, 8}};  // camera bus
+                                      {0x315, 2, 5}, {0x1E1, 2, 7}, {0x184, 2, 8}};  // camera bus
 
 const CanMsg GM_SDGM_TX_MSGS[] = {{0x180, 0, 4}, {0x1E1, 0, 7}, {0xBD, 0, 7}, {0x1F5, 0, 8}, // pt bus
                                   {0x184, 2, 8}};  // camera bus
@@ -62,13 +74,18 @@ RxCheck gm_rx_checks[] = {
 
 const uint16_t GM_PARAM_HW_CAM = 1;
 const uint16_t GM_PARAM_HW_CAM_LONG = 2;
-const uint16_t GM_PARAM_HW_SDGM = 4;
-const uint16_t GM_PARAM_CC_LONG = 8;
-const uint16_t GM_PARAM_HW_ASCM_LONG = 16;
-const uint16_t GM_PARAM_NO_CAMERA = 32;
-const uint16_t GM_PARAM_NO_ACC = 64;
-const uint16_t GM_PARAM_PEDAL_LONG = 128;  // TODO: this can be inferred
-const uint16_t GM_PARAM_PEDAL_INTERCEPTOR = 256;
+const uint16_t GM_PARAM_CC_LONG = 4;
+const uint16_t GM_PARAM_HW_ASCM_LONG = 8;
+const uint16_t GM_PARAM_NO_CAMERA = 16;
+const uint16_t GM_PARAM_NO_ACC = 32;
+const uint16_t GM_PARAM_PEDAL_LONG = 64;  // TODO: this can be inferred
+const uint16_t GM_PARAM_PEDAL_INTERCEPTOR = 128;
+const uint16_t GM_PARAM_ASCM_INT = 256;
+const uint16_t GM_PARAM_FORCE_BRAKE_C9 = 512;
+const uint16_t GM_PARAM_HW_SDGM = 1024;
+const uint16_t GM_PARAM_BOLT_2017 = 2048;
+const uint16_t GM_PARAM_BOLT_2022_PEDAL = 4096;
+const uint16_t GM_PARAM_REMOTE_START_BOOTS_COMMA = 8192;
 
 enum {
   GM_BTN_UNPRESS = 1,
@@ -90,30 +107,12 @@ bool gm_pedal_long = false;
 bool gm_cc_long = false;
 bool gm_skip_relay_check = false;
 bool gm_force_ascm = false;
-
-static void handle_gm_wheel_buttons(const CANPacket_t *to_push) {
-  int button = (GET_BYTE(to_push, 5) & 0x70U) >> 4;
-
-  // enter controls on falling edge of set or rising edge of resume (avoids fault)
-  bool set = (button != GM_BTN_SET) && (cruise_button_prev == GM_BTN_SET);
-  bool res = (button == GM_BTN_RESUME) && (cruise_button_prev != GM_BTN_RESUME);
-  if (set || res) {
-    controls_allowed = true;
-  }
-
-  // exit controls on cancel press
-  if (button == GM_BTN_CANCEL) {
-    controls_allowed = false;
-  }
-
-  cruise_button_prev = button;
-}
+bool gm_bolt_2022_pedal = false;
+bool gm_ascm_int = false;
+bool gm_force_brake_c9 = false;
+bool gm_remote_start_boots_comma = false;
 
 static void gm_rx_hook(const CANPacket_t *to_push) {
-  if ((GET_BUS(to_push) == 2U) && (GET_ADDR(to_push) == 0x1E1) && (gm_hw == GM_SDGM)) {
-    // SDGM buttons are on bus 2
-    handle_gm_wheel_buttons(to_push);
-  }
   if (GET_BUS(to_push) == 0U) {
     int addr = GET_ADDR(to_push);
 
@@ -131,18 +130,33 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
       vehicle_moving = (left_rear_speed > GM_STANDSTILL_THRSLD) || (right_rear_speed > GM_STANDSTILL_THRSLD);
     }
 
-    // ACC steering wheel buttons (GM_CAM and GM_SDGM are tied to the PCM)
-    if ((addr == 0x1E1) && (!gm_pcm_cruise || gm_cc_long) && (gm_hw != GM_SDGM)) {
-      handle_gm_wheel_buttons(to_push);
+    // ACC steering wheel buttons (GM_CAM is tied to the PCM)
+    if ((addr == 0x1E1) && (!gm_pcm_cruise || gm_cc_long)) {
+      int button = (GET_BYTE(to_push, 5) & 0x70U) >> 4;
+
+      // enter controls on falling edge of set or rising edge of resume (avoids fault)
+      bool set = (button != GM_BTN_SET) && (cruise_button_prev == GM_BTN_SET);
+      bool res = (button == GM_BTN_RESUME) && (cruise_button_prev != GM_BTN_RESUME);
+      if (set || res) {
+        controls_allowed = true;
+      }
+
+      // exit controls on cancel press
+      if (button == GM_BTN_CANCEL) {
+        controls_allowed = false;
+      }
+
+      cruise_button_prev = button;
     }
 
     // Reference for brake pressed signals:
     // https://github.com/commaai/openpilot/blob/master/selfdrive/car/gm/carstate.py
-    if ((addr == 0xBE) && (gm_hw == GM_ASCM)) {
+    // Prefer 0xC9 (ECMEngineStatus) when gm_force_brake_c9 is set, otherwise keep legacy behavior.
+    if ((addr == 0xC9) && gm_force_brake_c9) {
+      brake_pressed = GET_BIT(to_push, 40U) != 0U;
+    } else if ((addr == 0xBE) && ((gm_hw == GM_ASCM) || (gm_hw == GM_SDGM))) {
       brake_pressed = GET_BYTE(to_push, 1) >= 8U;
-    }
-
-    if ((addr == 0xC9) && ((gm_hw == GM_CAM) || (gm_hw == GM_SDGM))) {
+    } else if ((addr == 0xC9) && (gm_hw == GM_CAM)) {
       brake_pressed = GET_BIT(to_push, 40U) != 0U;
     }
 
@@ -160,6 +174,11 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
         bool cruise_engaged = (GET_BYTE(to_push, 1) >> 5) != 0U;
         pcm_cruise_check(cruise_engaged);
       }
+    }
+
+    // Cruise check for ACC models with pedal interceptor - block stock ACC
+    if ((addr == 0x1C4) && gm_has_acc && enable_gas_interceptor && gm_bolt_2022_pedal) {
+      cruise_engaged_prev = false;
     }
 
     // Cruise check for CC only cars
@@ -192,6 +211,19 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
     }
     generic_rx_checks(stock_ecu_detected);
   }
+
+  // Cruise check for ASCMActiveCruiseControlStatus on bus 2.
+  // Keep kaofui behavior for non-Bolt paths; Bolt pedal path keeps local tracking.
+  if ((GET_ADDR(to_push) == 0x370) && (GET_BUS(to_push) == 2U)) {
+    bool cruise_engaged = (GET_BYTE(to_push, 2) >> 7) != 0U;  // ACCCmdActive
+    if (gm_bolt_2022_pedal) {
+      cruise_engaged_prev = cruise_engaged;
+    } else if (gm_pcm_cruise && gm_has_acc) {
+      pcm_cruise_check(cruise_engaged);
+    } else {
+      cruise_engaged_prev = cruise_engaged;
+    }
+  }
 }
 
 static bool gm_tx_hook(const CANPacket_t *to_send) {
@@ -214,7 +246,7 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
 
     bool steer_req = GET_BIT(to_send, 3U);
 
-    if (steer_torque_cmd_checks(desired_torque, steer_req, GM_STEERING_LIMITS)) {
+    if (steer_torque_cmd_checks(desired_torque, steer_req, *gm_steer_limits)) {
       tx = false;
     }
   }
@@ -246,8 +278,11 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
     int button = (GET_BYTE(to_send, 5) >> 4) & 0x7U;
 
     bool allowed_btn = (button == GM_BTN_CANCEL) && cruise_engaged_prev;
-    // For standard CC, allow spamming of SET / RESUME
-    if (gm_cc_long) {
+    if (gm_hw == GM_CAM && enable_gas_interceptor && gm_bolt_2022_pedal && button == GM_BTN_CANCEL) {
+      allowed_btn = true;
+    }
+    // For CC_LONG or PCM cruise vehicles, allow SET/RESUME when cruise is engaged
+    if (gm_cc_long || gm_pcm_cruise) {
       allowed_btn |= cruise_engaged_prev && (button == GM_BTN_SET || button == GM_BTN_RESUME || button == GM_BTN_UNPRESS);
     }
 
@@ -288,11 +323,20 @@ static int gm_fwd_hook(int bus_num, int addr) {
     }
 
     if (bus_num == 2) {
-      // block lkas message and acc messages if gm_cam_long, forward all others
       bool is_lkas_msg = (addr == 0x180);
-      bool is_acc_msg = (addr == 0x315) || (addr == 0x2CB) || (addr == 0x370);
-      // [추가] addr == 0x184 (PSCMStatus)를 차단 목록에 반드시 넣어야 함!
-      bool block_msg = is_lkas_msg || (is_acc_msg && gm_cam_long) || (addr == 0x184);
+      bool block_msg = false;
+      if (gm_bolt_2022_pedal) {
+        // Block 0x370 only for experimental long without pedal interceptor
+        bool is_acc_msg = (addr == 0x315) || (addr == 0x2CB);
+        if (gm_cam_long && !enable_gas_interceptor) {
+          is_acc_msg = is_acc_msg || (addr == 0x370);
+        }
+        block_msg = is_lkas_msg || (is_acc_msg && gm_cam_long);
+      } else {
+        // block lkas message and acc messages if gm_cam_long, forward all others
+        bool is_acc_msg = (addr == 0x315) || (addr == 0x2CB) || (addr == 0x370);
+        block_msg = is_lkas_msg || (is_acc_msg && gm_cam_long);
+      }
       if (!block_msg) {
         bus_fwd = 0;
       }
@@ -303,17 +347,19 @@ static int gm_fwd_hook(int bus_num, int addr) {
 }
 
 static safety_config gm_init(uint16_t param) {
-  if GET_FLAG(param, GM_PARAM_HW_CAM) {
+  gm_ascm_int = GET_FLAG(param, GM_PARAM_ASCM_INT);
+  if (GET_FLAG(param, GM_PARAM_HW_CAM)) {
     gm_hw = GM_CAM;
-  } else if GET_FLAG(param, GM_PARAM_HW_SDGM) {
+  } else if (GET_FLAG(param, GM_PARAM_HW_SDGM)) {
     gm_hw = GM_SDGM;
   } else {
     gm_hw = GM_ASCM;
   }
 
   gm_force_ascm = GET_FLAG(param, GM_PARAM_HW_ASCM_LONG);
+  gm_steer_limits = GET_FLAG(param, GM_PARAM_BOLT_2017) ? &GM_BOLT_2017_STEERING_LIMITS : &GM_STEERING_LIMITS;
 
-  if (gm_hw == GM_ASCM || gm_force_ascm) {
+  if (gm_hw == GM_ASCM || gm_force_ascm || gm_ascm_int) {
       gm_long_limits = &GM_ASCM_LONG_LIMITS;
   } else if ((gm_hw == GM_CAM) || (gm_hw == GM_SDGM)) {
       gm_long_limits = &GM_CAM_LONG_LIMITS;
@@ -322,11 +368,14 @@ static safety_config gm_init(uint16_t param) {
 
   gm_pedal_long = GET_FLAG(param, GM_PARAM_PEDAL_LONG);
   gm_cc_long = GET_FLAG(param, GM_PARAM_CC_LONG);
+  enable_gas_interceptor = GET_FLAG(param, GM_PARAM_PEDAL_INTERCEPTOR);
   gm_cam_long = GET_FLAG(param, GM_PARAM_HW_CAM_LONG) && !gm_cc_long;
-  gm_pcm_cruise = ((gm_hw == GM_CAM) && (!gm_cam_long || gm_cc_long) && !gm_force_ascm && !gm_pedal_long) || (gm_hw == GM_SDGM);
+  gm_bolt_2022_pedal = GET_FLAG(param, GM_PARAM_BOLT_2022_PEDAL);
+  gm_pcm_cruise = (((gm_hw == GM_CAM) || (gm_hw == GM_SDGM)) && (!gm_cam_long || gm_cc_long) && !gm_force_ascm && !gm_pedal_long);
   gm_skip_relay_check = GET_FLAG(param, GM_PARAM_NO_CAMERA);
   gm_has_acc = !GET_FLAG(param, GM_PARAM_NO_ACC);
-  enable_gas_interceptor = GET_FLAG(param, GM_PARAM_PEDAL_INTERCEPTOR);
+  gm_force_brake_c9 = GET_FLAG(param, GM_PARAM_FORCE_BRAKE_C9);
+  gm_remote_start_boots_comma = GET_FLAG(param, GM_PARAM_REMOTE_START_BOOTS_COMMA);
 
   safety_config ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_ASCM_TX_MSGS);
   if (gm_hw == GM_CAM) {
@@ -337,8 +386,6 @@ static safety_config gm_init(uint16_t param) {
     } else {
       ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_TX_MSGS);
     }
-  } else if (gm_hw == GM_SDGM) {
-    ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_SDGM_TX_MSGS);
   }
   return ret;
 }

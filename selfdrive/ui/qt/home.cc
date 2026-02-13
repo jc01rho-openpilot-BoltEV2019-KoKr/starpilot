@@ -2,6 +2,7 @@
 
 #include <QHBoxLayout>
 #include <QMouseEvent>
+#include <QSet>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -172,6 +173,22 @@ OffroadHome::OffroadHome(QWidget* parent) : QFrame(parent) {
 
   main_layout->addLayout(header_layout);
 
+  branch_merge_banner = new QLabel(this);
+  branch_merge_banner->setAlignment(Qt::AlignCenter);
+  branch_merge_banner->setWordWrap(true);
+  branch_merge_banner->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+  branch_merge_banner->setVisible(false);
+  branch_merge_banner->setStyleSheet(R"(
+    background-color: #E22C2C;
+    color: white;
+    border-radius: 16px;
+    padding: 24px;
+    font-size: 44px;
+    font-weight: 700;
+  )");
+  branch_merge_banner->setText(tr("Branch Merge Notice: This branch is deprecated and has been merged into StarPilot. Please switch to the StarPilot branch."));
+  main_layout->addWidget(branch_merge_banner);
+
   // main content
   main_layout->addSpacing(25);
   center_layout = new QStackedLayout();
@@ -268,10 +285,21 @@ void OffroadHome::hideEvent(QHideEvent *event) {
 }
 
 void OffroadHome::refresh() {
+  static const QSet<QString> deprecated_branches = {
+    "TorqueTune",
+    "TorquePedal",
+    "Kaofui",
+    "Red-Kao",
+    "TotallyTune",
+    "StarPilot-2017",
+    "TRX",
+  };
+
   date->setText(QLocale(uiState()->language.mid(5)).toString(QDateTime::currentDateTime(), "dddd, MMMM d"));
   date->setVisible(util::system_time_valid());
 
   version->setText(getBrand() + " v" + getVersion().left(14).trimmed() + " - " + processModelName(frogpilotUIState()->frogpilot_toggles.value("model_name").toString()));
+  branch_merge_banner->setVisible(deprecated_branches.contains(QString::fromStdString(params.get("GitBranch"))));
 
   bool updateAvailable = update_widget->refresh();
   int alerts = alerts_widget->refresh();

@@ -2,6 +2,7 @@
 import json
 import math
 import numpy as np
+import os
 import requests
 import shutil
 import subprocess
@@ -22,7 +23,7 @@ from opendbc.can.parser import CANParser
 from openpilot.common.realtime import DT_DMON, DT_HW
 from openpilot.selfdrive.car.toyota.carcontroller import LOCK_CMD
 from openpilot.system.hardware import HARDWARE
-from panda import Panda
+from panda import Panda, FW_PATH
 
 from openpilot.frogpilot.common.frogpilot_variables import EARTH_RADIUS, KONIK_PATH, MAPD_PATH, MAPS_PATH, params, params_cache, params_memory
 
@@ -151,11 +152,21 @@ def extract_zip(zip_file, extract_path):
   print(f"Extraction completed: {zip_file} has been removed")
 
 def flash_panda():
+  remote_start = params.get_bool("RemoteStartBootsComma")
   for serial in Panda.list():
     try:
       panda = Panda(serial)
+      flash_fn = None
+      if remote_start:
+        app_fn = panda.get_mcu_type().config.app_fn
+        remote_fn = "panda_h7_remote.bin.signed" if app_fn == "panda_h7.bin.signed" else "panda_remote.bin.signed"
+        candidate = os.path.join(FW_PATH, remote_fn)
+        if os.path.isfile(candidate):
+          flash_fn = candidate
+        else:
+          print(f"Remote-start panda firmware missing: {candidate}. Falling back to default firmware.")
       panda.reset(enter_bootstub=True)
-      panda.flash()
+      panda.flash(fn=flash_fn)
       panda.close()
     except Exception as exception:
       print(f"Error flashing Panda {serial}: {exception}")

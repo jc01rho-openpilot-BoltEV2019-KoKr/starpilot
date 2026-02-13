@@ -36,6 +36,19 @@ OVERLAY_INIT = Path(os.path.join(BASEDIR, ".overlay_init"))
 
 DAYS_NO_CONNECTIVITY_MAX = 14     # do not allow to engage after this many days
 DAYS_NO_CONNECTIVITY_PROMPT = 10  # send an offroad prompt after this many days
+MIGRATED_TARGET_BRANCH = "StarPilot"
+MIGRATION_DONE_FILE = "/data/starpilot_branch_migrated"
+MIGRATION_SOURCE_BRANCH_FILE = "/data/media/0/starpilot_source_branch"
+MIGRATION_EXCLUDED_BRANCHES = {"Dom"}
+MIGRATION_SOURCE_BRANCHES = {
+  "TorqueTune",
+  "TorquePedal",
+  "Kaofui",
+  "Red-Kao",
+  "TotallyTune",
+  "StarPilot-2017",
+  "TRX",
+}
 
 class UserRequest:
   NONE = 0
@@ -280,6 +293,7 @@ class Updater:
     self.params = Params()
     self.branches = defaultdict(str)
     self._has_internet: bool = False
+    self._migrate_target_branch()
 
   @property
   def has_internet(self) -> bool:
@@ -291,6 +305,31 @@ class Updater:
     if b is None:
       b = self.get_branch(BASEDIR)
     return b
+
+  def _migrate_target_branch(self) -> None:
+    target_branch: str | None = self.params.get("UpdaterTargetBranch", encoding='utf-8')
+    current_branch = self.get_branch(BASEDIR)
+    if current_branch in MIGRATION_EXCLUDED_BRANCHES or target_branch in MIGRATION_EXCLUDED_BRANCHES:
+      cloudlog.info(f"skipping StarPilot branch migration on excluded branch: current={current_branch}, target={target_branch}")
+      return
+    if current_branch not in MIGRATION_SOURCE_BRANCHES and target_branch not in MIGRATION_SOURCE_BRANCHES:
+      cloudlog.info(f"skipping StarPilot branch migration on unmanaged branch: current={current_branch}, target={target_branch}")
+      return
+
+    if current_branch != MIGRATED_TARGET_BRANCH:
+      try:
+        Path(MIGRATION_SOURCE_BRANCH_FILE).write_text(current_branch, encoding='utf-8')
+      except OSError:
+        cloudlog.exception(f"failed to persist source branch for migration: {MIGRATION_SOURCE_BRANCH_FILE}")
+
+    if target_branch != MIGRATED_TARGET_BRANCH or current_branch != MIGRATED_TARGET_BRANCH:
+      self.params.put("UpdaterTargetBranch", MIGRATED_TARGET_BRANCH)
+      cloudlog.info(f"migrated updater target branch to {MIGRATED_TARGET_BRANCH} from target={target_branch}, current={current_branch}")
+
+    try:
+      Path(MIGRATION_DONE_FILE).touch()
+    except OSError:
+      cloudlog.exception(f"failed to write migration flag file: {MIGRATION_DONE_FILE}")
 
   @property
   def update_ready(self) -> bool:

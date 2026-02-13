@@ -13,15 +13,25 @@ from openpilot.system.hardware import HARDWARE
 from openpilot.common.swaglog import cloudlog
 
 
-def get_expected_signature(panda: Panda) -> bytes:
+def get_expected_firmware_path(panda: Panda, remote_start: bool) -> str:
+  app_fn = panda.get_mcu_type().config.app_fn
+  if remote_start:
+    remote_fn = "panda_h7_remote.bin.signed" if app_fn == "panda_h7.bin.signed" else "panda_remote.bin.signed"
+    remote_path = os.path.join(FW_PATH, remote_fn)
+    if os.path.isfile(remote_path):
+      return remote_path
+    cloudlog.warning(f"Remote-start panda firmware not found: {remote_path}, falling back to default")
+  return os.path.join(FW_PATH, app_fn)
+
+def get_expected_signature(panda: Panda, remote_start: bool) -> bytes:
   try:
-    fn = os.path.join(FW_PATH, panda.get_mcu_type().config.app_fn)
+    fn = get_expected_firmware_path(panda, remote_start)
     return Panda.get_signature_from_firmware(fn)
   except Exception:
     cloudlog.exception("Error computing expected signature")
     return b""
 
-def flash_panda(panda_serial: str) -> Panda:
+def flash_panda(panda_serial: str, remote_start: bool) -> Panda:
   try:
     panda = Panda(panda_serial)
   except PandaProtocolMismatch:
@@ -29,7 +39,8 @@ def flash_panda(panda_serial: str) -> Panda:
     HARDWARE.recover_internal_panda()
     raise
 
-  fw_signature = get_expected_signature(panda)
+  fw_path = get_expected_firmware_path(panda, remote_start)
+  fw_signature = get_expected_signature(panda, remote_start)
   internal_panda = panda.is_internal()
 
   panda_version = "bootstub" if panda.bootstub else panda.get_version()
@@ -38,7 +49,7 @@ def flash_panda(panda_serial: str) -> Panda:
 
   if panda.bootstub or panda_signature != fw_signature:
     cloudlog.info("Panda firmware out of date, update required")
-    panda.flash()
+    panda.flash(fn=fw_path)
     cloudlog.info("Done flashing")
 
   if panda.bootstub:
@@ -105,8 +116,9 @@ def main() -> NoReturn:
 
       # Flash pandas
       pandas: list[Panda] = []
+      remote_start = params.get_bool("RemoteStartBootsComma")
       for serial in panda_serials:
-        pandas.append(flash_panda(serial))
+        pandas.append(flash_panda(serial, remote_start))
 
       # Ensure internal panda is present if expected
       internal_pandas = [panda for panda in pandas if panda.is_internal()]

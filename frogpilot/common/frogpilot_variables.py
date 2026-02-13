@@ -133,6 +133,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("AdvancedLateralTune", "1", 2, "0"),
   ("AdvancedLongitudinalTune", "0", 3, "0"),
   ("EVTuning", "", 3, "0"),
+  ("TruckTuning", "0", 3, "0"),
   ("AggressiveFollow", "1.25", 2, "1.25"),
   ("AggressiveFollowHigh", "1.25", 2, "1.25"),
   ("AggressiveJerkAcceleration", "50", 3, "50"),
@@ -159,6 +160,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("BlacklistedModels", "", 2, ""),
   ("BlindSpotMetrics", "1", 3, "0"),
   ("BlindSpotPath", "1", 1, "0"),
+  ("BootLogo", "starpilot", 0, "stock"),
   ("BorderMetrics", "1", 3, "0"),
   ("CalibratedLateralAcceleration", str(DEFAULT_LATERAL_ACCELERATION), 2, str(DEFAULT_LATERAL_ACCELERATION)),
   ("CalibrationProgress", "0", 3, "0"),
@@ -237,6 +239,8 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("FullMap", "0", 2, "0"),
   ("GasRegenCmd", "1", 2, "0"),
   ("GMPedalLongitudinal", "1", 2, "1"),
+  ("RedPanda", "0", 3, "0"),
+  ("RemoteStartBootsComma", "0", 3, "0"),
   ("GithubSshKeys", "", 0, ""),
   ("GithubUsername", "", 0, ""),
   ("GoatScream", "0", 1, "0"),
@@ -409,6 +413,8 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("SteerDelayStock", "", 3, ""),
   ("SteerFriction", "", 3, ""),
   ("SteerFrictionStock", "", 3, ""),
+  ("SteerOffset", "", 3, ""),
+  ("SteerOffsetStock", "", 3, ""),
   ("SteerKP", "", 3, ""),
   ("SteerKPStock", "", 3, ""),
   ("SteerLatAccel", "", 3, ""),
@@ -615,6 +621,7 @@ class FrogPilotVariables:
     toggle.steerActuatorDelay = np.clip(params.get_float("SteerDelay"), 0.01, 1.0) if advanced_lateral_tuning and tuning_level >= level["SteerDelay"] else steerActuatorDelay
     toggle.use_custom_steerActuatorDelay = bool(round(toggle.steerActuatorDelay, 2) != round(steerActuatorDelay, 2))
     toggle.friction = np.clip(params.get_float("SteerFriction"), 0, 0.5) if advanced_lateral_tuning and tuning_level >= level["SteerFriction"] else friction
+    toggle.steer_offset = np.clip(params.get_float("SteerOffset"), -0.2, 0.2) if advanced_lateral_tuning and tuning_level >= level["SteerOffset"] and toggle.car_make == "gm" else 0.0
     toggle.use_custom_friction = bool(round(toggle.friction, 2) != round(friction, 2)) and is_torque_car and not toggle.force_auto_tune or toggle.force_auto_tune_off
     toggle.steerKp = [[0], [np.clip(params.get_float("SteerKP"), steerKp * 0.5, steerKp * 1.5) if advanced_lateral_tuning and is_torque_car and tuning_level >= level["SteerKP"] else steerKp]]
     toggle.latAccelFactor = np.clip(params.get_float("SteerLatAccel"), latAccelFactor * 0.5, latAccelFactor * 1.25) if advanced_lateral_tuning and tuning_level >= level["SteerLatAccel"] else latAccelFactor
@@ -623,13 +630,28 @@ class FrogPilotVariables:
     toggle.use_custom_steerRatio = bool(round(toggle.steerRatio, 2) != round(steerRatio, 2)) and not toggle.force_auto_tune or toggle.force_auto_tune_off
 
     advanced_longitudinal_tuning = params.get_bool("AdvancedLongitudinalTune") if tuning_level >= level["AdvancedLongitudinalTune"] else default.get_bool("AdvancedLongitudinalTune")
-    ev_vehicle = toggle.car_make == "gm" and not (toggle.car_model.startswith("CHEVROLET_VOLT") and not toggle.car_model.endswith("_CC")) and CP.carFingerprint in GM_EV_CAR or toggle.car_make == "hyundai" and CP.carFingerprint in HYUNDAI_EV_CAR
+    gm_ev_vehicle = toggle.car_make == "gm" and CP.carFingerprint in GM_EV_CAR
+    gm_ev_vehicle &= not (toggle.car_model.startswith("CHEVROLET_VOLT") and not toggle.car_model.endswith("_CC"))
+    gm_ev_vehicle &= toggle.car_model != "CHEVROLET_MALIBU_HYBRID_CC"
+    ev_vehicle = gm_ev_vehicle or (toggle.car_make == "hyundai" and CP.carFingerprint in HYUNDAI_EV_CAR)
     ev_vehicle |= CP.transmissionType == TransmissionType.direct
 
     if params.get("EVTuning") == b"":
       params.put_bool("EVTuning", ev_vehicle)
 
-    toggle.ev_tuning = params.get_bool("EVTuning") if advanced_longitudinal_tuning and tuning_level >= level["EVTuning"] else ev_vehicle
+    if params.get("TruckTuning") == b"":
+      params.put_bool("TruckTuning", False)
+
+    ev_tuning_param = params.get_bool("EVTuning")
+    truck_tuning_param = params.get_bool("TruckTuning")
+
+    # Enforce exclusivity between EV and Truck tuning.
+    if truck_tuning_param and ev_tuning_param:
+      ev_tuning_param = False
+      params.put_bool("EVTuning", False)
+
+    toggle.ev_tuning = ev_tuning_param if advanced_longitudinal_tuning and tuning_level >= level["EVTuning"] else ev_vehicle
+    toggle.truck_tuning = truck_tuning_param if advanced_longitudinal_tuning and tuning_level >= level["TruckTuning"] else False
     toggle.longitudinalActuatorDelay = np.clip(params.get_float("LongitudinalActuatorDelay"), 0, 1) if advanced_longitudinal_tuning and tuning_level >= level["LongitudinalActuatorDelay"] else longitudinalActuatorDelay
     toggle.startAccel = np.clip(params.get_float("StartAccel"), 0, 4) if advanced_longitudinal_tuning and tuning_level >= level["StartAccel"] else startAccel
     toggle.stopAccel = np.clip(params.get_float("StopAccel"), -4, 0) if advanced_longitudinal_tuning and tuning_level >= level["StopAccel"] else stopAccel
@@ -805,6 +827,9 @@ class FrogPilotVariables:
     toggle.vEgoStarting = 0.15 if toggle.experimental_gm_tune else toggle.vEgoStarting
     toggle.vEgoStopping = 0.15 if toggle.experimental_gm_tune else toggle.vEgoStopping
 
+    toggle.red_panda = toggle.car_make == "gm" and (params.get_bool("RedPanda") if tuning_level >= level["RedPanda"] else default.get_bool("RedPanda"))
+    toggle.remote_start_boots_comma = toggle.car_make == "gm" and (params.get_bool("RemoteStartBootsComma") if tuning_level >= level["RemoteStartBootsComma"] else default.get_bool("RemoteStartBootsComma"))
+
     toggle.force_fingerprint = (params.get_bool("ForceFingerprint") if tuning_level >= level["ForceFingerprint"] else default.get_bool("ForceFingerprint")) and toggle.car_model is not None
 
     toggle.frogsgomoo_tweak = toggle.openpilot_longitudinal and toggle.car_make == "toyota" and (params.get_bool("FrogsGoMoosTweak") if tuning_level >= level["FrogsGoMoosTweak"] else default.get_bool("FrogsGoMoosTweak"))
@@ -914,6 +939,7 @@ class FrogPilotVariables:
       toggle.old_long_api |= toggle.openpilot_longitudinal and toggle.car_make == "hyundai" and not (params.get_bool("NewLongAPI") if tuning_level >= level["NewLongAPI"] else default.get_bool("NewLongAPI"))
 
     personalize_openpilot = params.get_bool("PersonalizeOpenpilot") if tuning_level >= level["PersonalizeOpenpilot"] else default.get_bool("PersonalizeOpenpilot")
+    toggle.boot_logo = params.get("BootLogo", encoding="utf-8") or "starpilot"
     toggle.color_scheme = toggle.current_holiday_theme if toggle.current_holiday_theme != "stock" else params.get("CustomColors", encoding="utf-8") if personalize_openpilot else "stock"
     toggle.distance_icons = toggle.current_holiday_theme if toggle.current_holiday_theme != "stock" else params.get("CustomDistanceIcons", encoding="utf-8") if personalize_openpilot else "stock"
     toggle.icon_pack = toggle.current_holiday_theme if toggle.current_holiday_theme != "stock" else params.get("CustomIcons", encoding="utf-8") if personalize_openpilot else "stock"
@@ -1003,7 +1029,14 @@ class FrogPilotVariables:
     toggle.lock_doors = toyota_doors and (params.get_bool("LockDoors") if tuning_level >= level["LockDoors"] else default.get_bool("LockDoors"))
     toggle.unlock_doors = toyota_doors and (params.get_bool("UnlockDoors") if tuning_level >= level["UnlockDoors"] else default.get_bool("UnlockDoors"))
 
-    toggle.volt_sng = toggle.car_model == "CHEVROLET_VOLT" and (params.get_bool("VoltSNG") if tuning_level >= level["VoltSNG"] else default.get_bool("VoltSNG"))
+    volt_models = {
+      "CHEVROLET_VOLT",
+      "CHEVROLET_VOLT_2019",
+      "CHEVROLET_VOLT_ASCM",
+      "CHEVROLET_VOLT_CAMERA",
+    }
+
+    toggle.volt_sng = toggle.car_model in volt_models and (params.get_bool("VoltSNG") if tuning_level >= level["VoltSNG"] else default.get_bool("VoltSNG"))
 
     toggle.gm_pedal_longitudinal = params.get_bool("GMPedalLongitudinal") if tuning_level >= level["GMPedalLongitudinal"] else default.get_bool("GMPedalLongitudinal")
 

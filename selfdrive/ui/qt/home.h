@@ -41,6 +41,7 @@ private:
   OffroadAlert* alerts_widget;
   QPushButton* alert_notif;
   QPushButton* update_notif;
+  QLabel* branch_merge_banner;
 
   // FrogPilot variables
   ElidedLabel* date;

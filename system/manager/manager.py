@@ -96,6 +96,63 @@ def manager_init() -> None:
   params.put_bool("IsTestedBranch", build_metadata.tested_channel)
   params.put_bool("IsReleaseBranch", build_metadata.release_channel)
 
+  # Legacy Bolt fingerprint migration after branch consolidation
+  bolt_source_branch_file = "/data/media/0/starpilot_source_branch"
+  bolt_fingerprint_migration_flag_file = "/data/media/0/frogpilot_bolt_fingerprint_migrated.flag"
+  source_branch = ""
+  try:
+    if os.path.exists(bolt_source_branch_file):
+      with open(bolt_source_branch_file, encoding="utf-8") as f:
+        source_branch = f.read().strip()
+  except OSError:
+    cloudlog.exception("failed reading StarPilot source branch file")
+
+  migration_branch = source_branch or build_metadata.channel
+  replacements = {}
+  if migration_branch in {"TorqueTune", "TorquePedal"}:
+    replacements = {
+      "CHEVROLET_BOLT_EUV": "CHEVROLET_BOLT_ACC_2022_2023",
+      "CHEVROLET_BOLT_CC": "CHEVROLET_BOLT_CC_2022_2023",
+    }
+  elif migration_branch in {"TotallyTune", "StarPilot-2017", "StarPilot 2017"}:
+    replacements = {
+      "CHEVROLET_BOLT_CC": "CHEVROLET_BOLT_CC_2017",
+    }
+  elif migration_branch in {"StarPilot"}:
+    replacements = {
+      "CHEVROLET_BOLT_CC": "CHEVROLET_BOLT_CC_2019_2021",
+    }
+
+  migrated_values = []
+  if replacements:
+    for param_key in ("CarModel", "CarModelName"):
+      current_value = params.get(param_key, encoding='utf-8')
+      normalized_value = current_value[4:] if current_value is not None and current_value.startswith("CAR.") else current_value
+      if normalized_value in replacements:
+        new_value = replacements[normalized_value]
+        params.put(param_key, new_value)
+        params_cache.put(param_key, new_value)
+        migrated_values.append(f"{param_key}: {current_value} -> {new_value}")
+
+  if migrated_values:
+    cloudlog.info(f"migrated legacy bolt fingerprint values from branch '{migration_branch}' (source='{source_branch}'): {', '.join(migrated_values)}")
+
+  # Keep Bolt display label aligned with live fingerprint selection
+  bolt_models = {
+    "CHEVROLET_BOLT_EUV",
+    "CHEVROLET_BOLT_CC",
+    "CHEVROLET_BOLT_ACC_2022_2023",
+    "CHEVROLET_BOLT_CC_2022_2023",
+    "CHEVROLET_BOLT_CC_2019_2021",
+    "CHEVROLET_BOLT_CC_2017",
+  }
+  if (params.get("CarModel", encoding='utf-8') or "") in bolt_models:
+    params.remove("CarModelName")
+    params_cache.remove("CarModelName")
+
+  with open(bolt_fingerprint_migration_flag_file, "w") as f:
+    f.write(migration_branch or "unknown")
+
   # One-time migration to align FrogPilot defaults after install
   frogpilot_migration_flag_file = "/data/media/0/frogpilot_migrated.flag"
   if not os.path.exists(frogpilot_migration_flag_file):

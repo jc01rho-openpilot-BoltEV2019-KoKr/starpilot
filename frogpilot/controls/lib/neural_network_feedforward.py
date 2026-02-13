@@ -128,7 +128,7 @@ def get_nn_model_path(car, eps_firmware) -> str | None:
   def find_valid_model(*queries):
     for query in queries:
       path, score = best_model_path(query)
-      if path and candidate in path and score >= 0.9:
+      if path and score >= 0.9:
         return path
     return None
 

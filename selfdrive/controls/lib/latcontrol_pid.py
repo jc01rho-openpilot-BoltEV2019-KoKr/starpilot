@@ -8,6 +8,8 @@ from openpilot.selfdrive.controls.lib.pid import PIDController
 class LatControlPID(LatControl):
   def __init__(self, CP, CI, dt):
     super().__init__(CP, CI, dt)
+    self.steer_release_i_decay = 0.8
+    self.prev_steering_pressed = False
     self.pid = PIDController((CP.lateralTuning.pid.kpBP, CP.lateralTuning.pid.kpV),
                              (CP.lateralTuning.pid.kiBP, CP.lateralTuning.pid.kiV),
                              pos_limit=self.steer_max, neg_limit=-self.steer_max)
@@ -29,8 +31,12 @@ class LatControlPID(LatControl):
     if not active:
       output_torque = 0.0
       pid_log.active = False
+      self.pid.reset()
 
     else:
+      if self.prev_steering_pressed and not CS.steeringPressed:
+        self.pid.i *= self.steer_release_i_decay
+
       # offset does not contribute to resistive torque
       ff = self.ff_factor * self.get_steer_feedforward(angle_steers_des_no_offset, CS.vEgo)
       if CS.vEgo < self.low_speed_reset_threshold:
@@ -48,5 +54,7 @@ class LatControlPID(LatControl):
       pid_log.f = float(self.pid.f)
       pid_log.output = float(output_torque)
       pid_log.saturated = bool(self._check_saturation(self.steer_max - abs(output_torque) < 1e-3, CS, steer_limited_by_safety, curvature_limited))
+
+    self.prev_steering_pressed = CS.steeringPressed
 
     return output_torque, angle_steers_des, pid_log

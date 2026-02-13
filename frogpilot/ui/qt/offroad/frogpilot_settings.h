@@ -47,6 +47,7 @@ public:
   float longitudinalActuatorDelay;
   float startAccel;
   float steerActuatorDelay;
+  float steerOffset;
   float steerKp;
   float steerRatio;
   float stopAccel;

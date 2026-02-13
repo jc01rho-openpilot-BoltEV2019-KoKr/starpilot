@@ -1,5 +1,7 @@
 from typing import Tuple
 import time
+import math
+from openpilot.common.swaglog import cloudlog
 from cereal import car
 from openpilot.common.conversions import Conversions as CV
 from openpilot.common.filter_simple import FirstOrderFilter
@@ -9,7 +11,7 @@ from openpilot.common.params_pyx import Params
 from opendbc.can.packer import CANPacker
 from openpilot.selfdrive.car import apply_driver_steer_torque_limits, create_gas_interceptor_command
 from openpilot.selfdrive.car.gm import gmcan
-from openpilot.selfdrive.car.gm.values import DBC, AccState, CanBus, CarControllerParams, CruiseButtons, GMFlags, CC_ONLY_CAR, SDGM_CAR, EV_CAR, CC_REGEN_PADDLE_CAR
+from openpilot.selfdrive.car.gm.values import CAR, DBC, AccState, CanBus, CarControllerParams, CruiseButtons, GMFlags, CC_ONLY_CAR, SDGM_CAR, ASCM_INT, EV_CAR, CC_REGEN_PADDLE_CAR
 from openpilot.selfdrive.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.drive_helpers import apply_deadzone
 from openpilot.selfdrive.controls.lib.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
@@ -62,7 +64,22 @@ class CarController(CarControllerBase):
     self.lka_icon_status_last = (False, False)
 
     self.params = CarControllerParams(self.CP)
+    self.is_volt = self.CP.carFingerprint in (CAR.CHEVROLET_VOLT, CAR.CHEVROLET_VOLT_2019, CAR.CHEVROLET_VOLT_ASCM, CAR.CHEVROLET_VOLT_CAMERA, CAR.CHEVROLET_VOLT_CC)
+    self.pedal_scale = 1.0
     self.params_ = Params()
+
+    self.mass = CP.mass
+    self.tireRadius = 0.075 * CP.wheelbase + 0.1453
+    self.frontalArea = 1.05 * CP.wheelbase + 0.0679
+    self.coeffDrag = 0.30
+    self.airDensity = 1.225
+
+
+
+    self.malibu_cancel_phase = 0
+    self.malibu_cancel_last_ts = 0.0
+    self.malibu_cancel_frame = 0
+    self.malibu_button_phase = 0
 
     self.packer_pt = CANPacker(DBC[self.CP.carFingerprint]['pt'])
     self.packer_obj = CANPacker(DBC[self.CP.carFingerprint]['radar'])
@@ -70,7 +87,6 @@ class CarController(CarControllerBase):
 
     # FrogPilot variables
     self.accel_g = 0.0
-
     self.pitch = FirstOrderFilter(0., 0.09 * 4, DT_CTRL * 4)  # runs at 25 Hz
     self.accel_g = 0.0
     self.regen_paddle_pressed = False
@@ -137,6 +153,22 @@ class CarController(CarControllerBase):
     actuators = CC.actuators
     accel = brake_accel = actuators.accel
     press_regen_paddle = False
+    kaofui_cars = SDGM_CAR | ASCM_INT | {
+      CAR.CHEVROLET_VOLT,
+      CAR.CHEVROLET_VOLT_2019,
+      CAR.CHEVROLET_VOLT_ASCM,
+      CAR.CHEVROLET_VOLT_CAMERA,
+      CAR.CHEVROLET_VOLT_CC,
+      CAR.CHEVROLET_MALIBU_CC,
+      CAR.CHEVROLET_MALIBU_HYBRID_CC,
+    }
+    volt_like = {
+      CAR.CHEVROLET_VOLT,
+      CAR.CHEVROLET_VOLT_2019,
+      CAR.CHEVROLET_VOLT_ASCM,
+      CAR.CHEVROLET_VOLT_CAMERA,
+      CAR.CHEVROLET_VOLT_CC,
+    }
 
     # Planner-driven regen hold: gate by car support and OP long active, use commanded accel thresholds
     if (self.CP.enableGasInterceptor and self.CP.carFingerprint in CC_REGEN_PADDLE_CAR
@@ -161,6 +193,13 @@ class CarController(CarControllerBase):
     # Send CAN commands.
     can_sends = []
     paddle_sends = []
+
+    if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
+      phase_map = gmcan.malibu_phase_map_for_acc(CS.cruise_buttons)
+      if phase_map and CS.steering_button_checksum in phase_map:
+        phase = (phase_map[CS.steering_button_checksum] + 1) % 4
+        self.malibu_cancel_phase = phase
+        self.malibu_button_phase = phase
 
     raw_regen_active = (
       self.CP.carFingerprint in CC_REGEN_PADDLE_CAR and
@@ -209,12 +248,12 @@ class CarController(CarControllerBase):
         delta_after_ns = now_nanos - self.last_steer_ts_ns
         delta_before_ns = (next_steer_ts_ns - now_nanos) if interval_ns > 0 else 1_000_000_000
         if (CS.out.vEgo > 2.68
-          and now_nanos >= (midpoint_ns - PADDLE_SLOT_EARLY_NS)
-          and delta_after_ns >= gap_ns
-          and delta_before_ns >= gap_ns):
+            and now_nanos >= (midpoint_ns - PADDLE_SLOT_EARLY_NS)
+            and delta_after_ns >= gap_ns
+            and delta_before_ns >= gap_ns):
           # Non-blocking 1 ms spacing for paddle frames
           if now_nanos - self.last_paddle_ts_ns >= PADDLE_NONBLOCK_GAP_NS:
-            paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
+            paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True, self.CP))
             paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
             self.last_paddle_ts_ns = now_nanos
           self.last_spoof_ts_ns = now_nanos
@@ -228,12 +267,12 @@ class CarController(CarControllerBase):
         delta_after_ns = now_nanos - self.last_steer_ts_ns
         delta_before_ns = (next_steer_ts_ns - now_nanos) if interval_ns > 0 else 1_000_000_000
         if (CS.out.vEgo > 2.68
-          and now_nanos >= (slot2_ns - PADDLE_SLOT_EARLY_NS)
-          and delta_after_ns >= gap_ns
-          and delta_before_ns >= gap_ns):
+            and now_nanos >= (slot2_ns - PADDLE_SLOT_EARLY_NS)
+            and delta_after_ns >= gap_ns
+            and delta_before_ns >= gap_ns):
           # Non-blocking 1 ms spacing for paddle frames
           if now_nanos - self.last_paddle_ts_ns >= PADDLE_NONBLOCK_GAP_NS:
-            paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True))
+            paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True, self.CP))
             paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
             self.last_paddle_ts_ns = now_nanos
           self.last_spoof_ts_ns = now_nanos
@@ -267,7 +306,7 @@ class CarController(CarControllerBase):
           if (delta_after_ns >= gap_ns and delta_before_ns >= gap_ns):
             # Non-blocking 1 ms spacing for paddle frames
             if now_nanos - self.last_paddle_ts_ns >= PADDLE_NONBLOCK_GAP_NS:
-              paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, False))
+              paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, False, self.CP))
               paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, False))
               self.last_paddle_ts_ns = now_nanos
             self.off_sent[i] = True
@@ -334,14 +373,6 @@ class CarController(CarControllerBase):
       if self.frame % 4 == 0:
         stopping = actuators.longControlState == LongCtrlState.stopping
 
-        # Pitch compensated acceleration;
-        # TODO: include future pitch (sm['modelDataV2'].orientation.y) to account for long actuator delay
-        if frogpilot_toggles.long_pitch and len(CC.orientationNED) > 1:
-          self.pitch.update(CC.orientationNED[1])
-          self.accel_g = ACCELERATION_DUE_TO_GRAVITY * apply_deadzone(self.pitch.x, PITCH_DEADZONE) # driving uphill is positive pitch
-          accel += self.accel_g
-          brake_accel = actuators.accel + self.accel_g * interp(CS.out.vEgo, BRAKE_PITCH_FACTOR_BP, BRAKE_PITCH_FACTOR_V)
-
         at_full_stop = CC.longActive and CS.out.standstill
         near_stop = CC.longActive and (CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE)
         interceptor_gas_cmd = 0
@@ -353,9 +384,54 @@ class CarController(CarControllerBase):
           self.apply_gas = self.params.INACTIVE_REGEN
           self.apply_brake = int(min(-100 * frogpilot_toggles.stopAccel, self.params.MAX_BRAKE))
         else:
-          # Normal operation
-          self.apply_gas = int(round(interp(accel, self.params.GAS_LOOKUP_BP, self.params.GAS_LOOKUP_V)))
-          self.apply_brake = int(round(interp(brake_accel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+          if self.is_volt:
+            if len(CC.orientationNED) == 3 and CS.out.vEgo > self.CP.vEgoStopping:
+              volt_pitch_accel = math.sin(CC.orientationNED[1]) * ACCELERATION_DUE_TO_GRAVITY
+            else:
+              volt_pitch_accel = 0.0
+
+            aero_drag_accel = (0.5 * self.coeffDrag * self.frontalArea * self.airDensity * CS.out.vEgo ** 2) / self.mass
+            accel += aero_drag_accel + volt_pitch_accel
+            brake_accel = actuators.accel + aero_drag_accel + volt_pitch_accel * interp(CS.out.vEgo, BRAKE_PITCH_FACTOR_BP, BRAKE_PITCH_FACTOR_V)
+            accel = clip(accel, self.params.ACCEL_MIN, self.params.ACCEL_MAX)
+            brake_accel = clip(brake_accel, self.params.ACCEL_MIN, self.params.ACCEL_MAX)
+
+            if self.CP.carFingerprint in EV_CAR:
+              self.params.update_ev_gas_brake_threshold(CS.out.vEgo)
+              self.apply_gas = int(round(interp(accel, self.params.EV_GAS_LOOKUP_BP, self.params.GAS_LOOKUP_V)))
+              self.apply_brake = int(round(interp(brake_accel, self.params.EV_BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+            else:
+              self.apply_gas = int(round(interp(accel, self.params.GAS_LOOKUP_BP, self.params.GAS_LOOKUP_V)))
+              self.apply_brake = int(round(interp(brake_accel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+
+            # Clamp within message-valid ranges to avoid ASCM faults from overshoot or rounding
+            self.apply_gas = int(round(clip(self.apply_gas, self.params.MAX_ACC_REGEN, self.params.MAX_GAS)))
+            self.apply_brake = int(round(clip(self.apply_brake, 0, self.params.MAX_BRAKE)))
+
+            if self.apply_brake > 0:
+              # Volt should never present positive torque alongside friction braking
+              self.apply_gas = self.params.INACTIVE_REGEN
+          else:
+            if len(CC.orientationNED) == 3 and CS.out.vEgo > self.CP.vEgoStopping:
+              accel_due_to_pitch = math.sin(CC.orientationNED[1]) * ACCELERATION_DUE_TO_GRAVITY
+            else:
+              accel_due_to_pitch = 0.0
+
+            gas_max = self.params.MAX_GAS
+            accel_max = self.params.ACCEL_MAX
+            
+            accel = clip(actuators.accel + accel_due_to_pitch, self.params.ACCEL_MIN, accel_max)
+            torque = self.tireRadius * ((self.mass*accel) + (0.5*self.coeffDrag*self.frontalArea*self.airDensity*CS.out.vEgo**2))
+            
+            scaled_torque = torque + self.params.ZERO_GAS
+            apply_gas_torque = clip(scaled_torque, self.params.MAX_ACC_REGEN, gas_max)
+            BRAKE_SWITCH = int(round(interp(CS.out.vEgo, self.params.BRAKE_SWITCH_LOOKUP_BP, self.params.BRAKE_SWITCH_LOOKUP_V)))
+            brake_accel = min((scaled_torque - BRAKE_SWITCH)/(self.tireRadius*self.mass), 0)
+            self.apply_gas = int(round(apply_gas_torque))
+            self.apply_brake = int(round(interp(brake_accel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+            if self.apply_brake > 0:
+              self.apply_gas = self.params.INACTIVE_REGEN
+
           # Don't allow any gas above inactive regen while stopping
           # FIXME: brakes aren't applied immediately when enabling at a stop
           if stopping:
@@ -378,7 +454,13 @@ class CarController(CarControllerBase):
             can_sends.extend(gmcan.create_gm_cc_spam_command(self.packer_pt, self, CS, actuators, frogpilot_toggles))
           elif (CS.out.cruiseState.enabled and CC.enabled and self.frame % 52 == 0 and
                 CS.cruise_buttons == CruiseButtons.UNPRESS and CS.out.gasPressed and CS.out.cruiseState.speed < CS.out.vEgo < hud_v_cruise):
-            can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.DECEL_SET))
+            if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
+              can_sends.append(gmcan.create_buttons_malibu(
+                self.packer_pt, CanBus.POWERTRAIN, CruiseButtons.DECEL_SET,
+                self.malibu_button_phase, CS.steering_button_prefix))
+              self.malibu_button_phase = (self.malibu_button_phase + 1) % 4
+            else:
+              can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.DECEL_SET))
         if self.CP.enableGasInterceptor:
           can_sends.append(create_gas_interceptor_command(self.packer_pt, interceptor_gas_cmd, idx))
         if self.CP.carFingerprint not in CC_ONLY_CAR:
@@ -388,6 +470,8 @@ class CarController(CarControllerBase):
           if self.CP.networkLocation == NetworkLocation.fwdCamera and self.CP.carFingerprint not in CC_ONLY_CAR:
             at_full_stop = at_full_stop and stopping
             friction_brake_bus = CanBus.POWERTRAIN
+            if self.CP.carFingerprint in SDGM_CAR:
+              friction_brake_bus = CanBus.CAMERA
 
           if self.CP.autoResumeSng:
             resume = actuators.longControlState != LongCtrlState.starting or CC.cruiseControl.resume
@@ -414,26 +498,52 @@ class CarController(CarControllerBase):
       # Radar needs to know current speed and yaw rate (50hz),
       # and that ADAS is alive (5hz, previously 10hz)
       if not self.CP.radarUnavailable:
-        tt = self.frame * DT_CTRL
-        time_and_headlights_step = 20
-        if self.frame % time_and_headlights_step == 0:
-          idx = (self.frame // time_and_headlights_step) % 4
-          can_sends.append(gmcan.create_adas_time_status(CanBus.OBSTACLE, int((tt - self.start_time) * 60), idx))
-          can_sends.append(gmcan.create_adas_headlights_status(self.packer_obj, CanBus.OBSTACLE))
-          can_sends.append(gmcan.create_adas_steering_status(CanBus.OBSTACLE, idx))
-          can_sends.append(gmcan.create_adas_accelerometer_speed_status(CanBus.OBSTACLE, CS.out.vEgo, idx))
+        send_adas = True
+        if self.CP.carFingerprint in kaofui_cars:
+          send_adas = (self.CP.networkLocation != NetworkLocation.fwdCamera) and (self.CP.carFingerprint not in SDGM_CAR)
 
-      if self.CP.networkLocation == NetworkLocation.gateway and self.frame % (self.params.ADAS_KEEPALIVE_STEP * 2) == 0:
+        if send_adas:
+          tt = self.frame * DT_CTRL
+          if self.CP.carFingerprint in kaofui_cars:
+            time_and_headlights_step = 10
+            speed_and_accelerometer_step = 2
+            if self.frame % time_and_headlights_step == 0:
+              idx = (self.frame // time_and_headlights_step) % 4
+              can_sends.append(gmcan.create_adas_time_status(CanBus.OBSTACLE, int((tt - self.start_time) * 60), idx))
+              can_sends.append(gmcan.create_adas_headlights_status(self.packer_obj, CanBus.OBSTACLE))
+            if self.frame % speed_and_accelerometer_step == 0:
+              idx = (self.frame // speed_and_accelerometer_step) % 4
+              can_sends.append(gmcan.create_adas_steering_status(CanBus.OBSTACLE, idx))
+              can_sends.append(gmcan.create_adas_accelerometer_speed_status(CanBus.OBSTACLE, CS.out.vEgo, idx))
+          else:
+            time_and_headlights_step = 20
+            if self.frame % time_and_headlights_step == 0:
+              idx = (self.frame // time_and_headlights_step) % 4
+              can_sends.append(gmcan.create_adas_time_status(CanBus.OBSTACLE, int((tt - self.start_time) * 60), idx))
+              can_sends.append(gmcan.create_adas_headlights_status(self.packer_obj, CanBus.OBSTACLE))
+              can_sends.append(gmcan.create_adas_steering_status(CanBus.OBSTACLE, idx))
+              can_sends.append(gmcan.create_adas_accelerometer_speed_status(CanBus.OBSTACLE, CS.out.vEgo, idx))
+
+      if self.CP.networkLocation == NetworkLocation.gateway and (self.frame % (self.params.ADAS_KEEPALIVE_STEP if self.CP.carFingerprint in kaofui_cars else self.params.ADAS_KEEPALIVE_STEP * 2)) == 0:
         can_sends += gmcan.create_adas_keepalive(CanBus.POWERTRAIN)
 
       # TODO: integrate this with the code block below?
+      stock_cc_active = CS.out.cruiseState.enabled or CS.pcm_acc_status != AccState.OFF
       if (
-        (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
-        or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
-      ) and CS.out.cruiseState.enabled:
-        if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
-          self.last_button_frame = self.frame
-          can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.CANCEL))
+          (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
+          or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
+      ) and stock_cc_active:
+        if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
+          # Match 33 Hz cadence (every 3 frames) and align phase to the last seen checksum.
+          if self.malibu_cancel_frame % 3 == 0:
+            can_sends.append(gmcan.create_buttons_malibu_cancel(
+              CanBus.POWERTRAIN, self.malibu_cancel_phase, CS.steering_button_prefix))
+            self.malibu_cancel_phase = (self.malibu_cancel_phase + 1) % 4
+          self.malibu_cancel_frame += 1
+        else:
+          if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
+            self.last_button_frame = self.frame
+            can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.CANCEL))
 
     else:
       # While car is braking, cancel button causes ECM to enter a soft disable state with a fault status.
@@ -444,18 +554,22 @@ class CarController(CarControllerBase):
       if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
         if self.cancel_counter > CAMERA_CANCEL_DELAY_FRAMES:
           self.last_button_frame = self.frame
-          if self.CP.carFingerprint in SDGM_CAR:
+          if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
+            if self.malibu_cancel_frame % 3 == 0:
+              can_sends.append(gmcan.create_buttons_malibu_cancel(
+                CanBus.POWERTRAIN, self.malibu_cancel_phase, CS.steering_button_prefix))
+              self.malibu_cancel_phase = (self.malibu_cancel_phase + 1) % 4
+            self.malibu_cancel_frame += 1
+          elif self.CP.carFingerprint in SDGM_CAR and self.CP.carFingerprint not in (volt_like | {CAR.CHEVROLET_BLAZER, CAR.CHEVROLET_MALIBU_SDGM, CAR.CHEVROLET_TRAVERSE}):
             can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, CS.buttons_counter, CruiseButtons.CANCEL))
           else:
-            can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.CAMERA, CS.buttons_counter, CruiseButtons.CANCEL))
+            cancel_bus = CanBus.POWERTRAIN if (self.CP.enableGasInterceptor and self.CP.carFingerprint == CAR.CHEVROLET_BOLT_CC_2022_2023) else CanBus.CAMERA
+            can_sends.append(gmcan.create_buttons(self.packer_pt, cancel_bus, CS.buttons_counter, CruiseButtons.CANCEL))
 
     if self.CP.networkLocation == NetworkLocation.fwdCamera:
       # Silence "Take Steering" alert sent by camera, forward PSCMStatus with HandsOffSWlDetectionStatus=1
-      if self.frame % 20 == 0:
-        pscm_status = CS.pscm_status.copy()
-        if pscm_status["LKATorqueDeliveredStatus"] == 3:
-          pscm_status["LKATorqueDeliveredStatus"] = 1
-        can_sends.append(gmcan.create_pscm_status(self.packer_pt, CanBus.CAMERA, pscm_status))
+      if self.frame % 10 == 0:
+        can_sends.append(gmcan.create_pscm_status(self.packer_pt, CanBus.CAMERA, CS.pscm_status))
 
     new_actuators = actuators.as_builder()
     new_actuators.accel = accel

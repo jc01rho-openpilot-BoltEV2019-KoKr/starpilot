@@ -1,0 +1,5 @@
+# Todo List - tools/AGENTS.md Generation
+
+- [x] Create `tools/AGENTS.md` following the specified requirements <!-- id: 0 -->
+- [x] Verify the content against the codebase and requirements <!-- id: 1 -->
+- [x] Generate completion report <!-- id: 2 -->

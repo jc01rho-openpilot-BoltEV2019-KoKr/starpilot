@@ -56,11 +56,17 @@ DEADZONE_BOOST_LAT_ACCEL = 0.08
 UNWIND_D_DES_THRESHOLD = -1.0
 UNWIND_LAT_ACCEL_NEAR_ZERO = 0.3
 
-BOLT_CARS = (GM_CAR.CHEVROLET_BOLT_EUV, GM_CAR.CHEVROLET_BOLT_CC)
+BOLT_CARS = (
+  GM_CAR.CHEVROLET_BOLT_ACC_2022_2023,
+  GM_CAR.CHEVROLET_BOLT_CC_2022_2023,
+  GM_CAR.CHEVROLET_BOLT_CC_2019_2021,
+)
 
 class LatControlTorque(LatControl):
   def __init__(self, CP, CI, dt):
     super().__init__(CP, CI, dt)
+    self.steer_release_i_decay = 0.8
+    self.prev_steering_pressed = False
     self.torque_params = CP.lateralTuning.torque
     self.torque_from_lateral_accel = CI.torque_from_lateral_accel()
     self.lateral_accel_from_torque = CI.lateral_accel_from_torque()
@@ -112,6 +118,9 @@ class LatControlTorque(LatControl):
       self.lat_accel_request_buffer = deque([0.] * self.lat_accel_request_buffer_len , maxlen=self.lat_accel_request_buffer_len)
       self.prev_desired_lateral_accel = 0.0
     else:
+      if self.prev_steering_pressed and not CS.steeringPressed:
+        self.pid.i *= self.steer_release_i_decay
+
       measured_curvature = -VM.calc_curvature(math.radians(CS.steeringAngleDeg - params.angleOffsetDeg), CS.vEgo, params.roll)
       roll_compensation = params.roll * ACCELERATION_DUE_TO_GRAVITY
       curvature_deadzone = abs(VM.calc_curvature(math.radians(self.steering_angle_deadzone_deg), CS.vEgo, 0.0))
@@ -197,6 +206,8 @@ class LatControlTorque(LatControl):
         if self.debug_counter % 50 == 0:
           print(f"bolt_torque ff_scale={ff_scale:.3f} pos={self.torque_ff_scale_pos:.3f} "
                 f"neg={self.torque_ff_scale_neg:.3f} deadzone_boost_active={deadzone_boost_active}")
+
+    self.prev_steering_pressed = CS.steeringPressed
 
     # TODO left is positive in this convention
     return -output_torque, 0.0, pid_log

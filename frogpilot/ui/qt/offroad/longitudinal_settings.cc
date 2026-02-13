@@ -103,6 +103,10 @@ FrogPilotLongitudinalPanel::FrogPilotLongitudinalPanel(
               "vehicle's detected powertrain type but can be overridden if the "
               "automatic choice doesn't match."),
            ""},
+          {"TruckTuning", tr("Truck Tuning"),
+           tr("<b>Use aggressive acceleration profiles tuned for trucks.</b> "
+              "Intended for heavy vehicles that need stronger throttle."),
+           ""},
           {"LongitudinalActuatorDelay",
            longitudinalActuatorDelay != 0
                ? QString(tr("Actuator Delay (Default: %1)"))
@@ -1125,6 +1129,21 @@ FrogPilotLongitudinalPanel::FrogPilotLongitudinalPanel(
                      &FrogPilotLongitudinalPanel::updateToggles);
   }
 
+  QObject::connect(static_cast<ToggleControl *>(toggles["EVTuning"]),
+                   &ToggleControl::toggleFlipped, this, [this]() {
+                     if (params.getBool("EVTuning")) {
+                       params.putBool("TruckTuning", false);
+                     }
+                     updateToggles();
+                   });
+  QObject::connect(static_cast<ToggleControl *>(toggles["TruckTuning"]),
+                   &ToggleControl::toggleFlipped, this, [this]() {
+                     if (params.getBool("TruckTuning")) {
+                       params.putBool("EVTuning", false);
+                     }
+                     updateToggles();
+                   });
+
   FrogPilotParamValueControl *trafficFollowToggle =
       static_cast<FrogPilotParamValueControl *>(toggles["TrafficFollow"]);
   FrogPilotParamValueControl *trafficAccelerationToggle =
@@ -1634,6 +1653,12 @@ void FrogPilotLongitudinalPanel::updateToggles() {
              key == "VEgoStopping") {
       setVisible &= !isGM || !params.getBool("ExperimentalGMTune");
       setVisible &= !isToyota || !params.getBool("FrogsGoMoosTweak");
+    }
+
+    if (key == "EVTuning") {
+      toggle->setEnabled(!params.getBool("TruckTuning"));
+    } else if (key == "TruckTuning") {
+      toggle->setEnabled(!params.getBool("EVTuning"));
     }
 
     toggle->setVisible(setVisible);

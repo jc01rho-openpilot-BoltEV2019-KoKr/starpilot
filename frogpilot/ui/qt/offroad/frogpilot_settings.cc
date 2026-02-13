@@ -273,7 +273,10 @@ void FrogPilotSettingsWindow::updateVariables() {
     hasSNG = hasOpenpilotLongitudinal && CP.getAutoResumeSng();
     hasZSS = frogpilot_toggles.value("has_zss").toBool();
     isAngleCar = CP.getSteerControlType() == cereal::CarParams::SteerControlType::ANGLE;
-    isBolt = carFingerprint == "CHEVROLET_BOLT_CC" || carFingerprint == "CHEVROLET_BOLT_EUV";
+    isBolt = carFingerprint == "CHEVROLET_BOLT_ACC_2022_2023" ||
+             carFingerprint == "CHEVROLET_BOLT_CC_2022_2023" ||
+             carFingerprint == "CHEVROLET_BOLT_CC_2019_2021" ||
+             carFingerprint == "CHEVROLET_BOLT_CC_2017";
     isGM = carMake == "gm";
     isHKG = carMake == "hyundai";
     isHKGCanFd = isHKG && safetyModel == cereal::CarParams::SafetyModel::HYUNDAI_CANFD;
@@ -286,6 +289,7 @@ void FrogPilotSettingsWindow::updateVariables() {
     longitudinalActuatorDelay = CP.getLongitudinalActuatorDelay();
     startAccel = CP.getStartAccel();
     steerActuatorDelay = CP.getSteerActuatorDelay();
+    steerOffset = 0.0f;
     steerKp = CP.getLateralTuning().which() == cereal::CarParams::LateralTuning::PID ? CP.getLateralTuning().getPid().getKpV()[0] : 0.6;
     steerRatio = CP.getSteerRatio();
     stopAccel = CP.getStopAccel();
@@ -297,6 +301,7 @@ void FrogPilotSettingsWindow::updateVariables() {
 
     float currentDelayStock = params.getFloat("SteerDelayStock");
     float currentFrictionStock = params.getFloat("SteerFrictionStock");
+    float currentSteerOffsetStock = params.getFloat("SteerOffsetStock");
     float currentKPStock = params.getFloat("SteerKPStock");
     float currentLatAccelStock = params.getFloat("SteerLatAccelStock");
     float currentLongDelayStock = params.getFloat("LongitudinalActuatorDelayStock");
@@ -319,6 +324,13 @@ void FrogPilotSettingsWindow::updateVariables() {
         params.putFloat("SteerFriction", friction);
       }
       params.putFloat("SteerFrictionStock", friction);
+    }
+
+    if (currentSteerOffsetStock != steerOffset) {
+      if (params.getFloat("SteerOffset") == currentSteerOffsetStock) {
+        params.putFloat("SteerOffset", steerOffset);
+      }
+      params.putFloat("SteerOffsetStock", steerOffset);
     }
 
     if (currentKPStock != steerKp && steerKp != 0) {
