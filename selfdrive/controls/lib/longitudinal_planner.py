@@ -348,7 +348,8 @@ class LongitudinalPlanner:
       (self.a_desired > 0.0) and
       self.stable_lead and
       (uncertainty <= 0.425) and
-      (desire_entropy < 0.41)
+      (desire_entropy < 0.41) and
+      (v_ego > 5.0)
     )
 
     # dwell timers for robust gating
@@ -427,7 +428,8 @@ class LongitudinalPlanner:
         self.a_desired = float(self.a_desired - pre_brake)
 
     # Apply tiny feed-forward nudge when released and safe
-    if now_t < self.accel_nudge_until and self.a_desired > -0.1:
+    close_lead = self.lead_one.status and self.lead_one.dRel < 10.0
+    if now_t < self.accel_nudge_until and self.a_desired > -0.1 and not close_lead:
       self.a_desired = float(min(self.a_desired + 0.12, get_max_accel(v_ego)))
 
     # Small deadzone around zero accel to kill micro-dithers
