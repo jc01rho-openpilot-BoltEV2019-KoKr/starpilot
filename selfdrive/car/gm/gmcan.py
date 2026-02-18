@@ -118,7 +118,7 @@ def create_adas_keepalive(bus):
   return [make_can_msg(0x409, dat, bus), make_can_msg(0x40a, dat, bus)]
 
 
-def create_gas_regen_command(packer, bus, throttle, idx, enabled, at_full_stop):
+def create_gas_regen_command(packer, bus, throttle, idx, enabled, at_full_stop, include_always_one3=False):
   values = {
     "GasRegenCmdActive": enabled,
     "RollingCounter": idx,
@@ -127,8 +127,9 @@ def create_gas_regen_command(packer, bus, throttle, idx, enabled, at_full_stop):
     "GasRegenFullStopActive": at_full_stop,
     "GasRegenAlwaysOne": 1,
     "GasRegenAlwaysOne2": 1,
-    "GasRegenAlwaysOne3": 1,
   }
+  if include_always_one3:
+    values["GasRegenAlwaysOne3"] = 1
 
   dat = packer.make_can_msg("ASCMGasRegenCmd", bus, values)[2]
   values["GasRegenChecksum"] = (((0xff - dat[1]) & 0xff) << 16) | \
@@ -239,7 +240,7 @@ def create_lka_icon_command(bus, active, critical, steer):
   return make_can_msg(0x104c006c, dat, bus)
 
 def create_prndl2_command(packer, bus, press_regen_paddle, CP):
-  if CP.carFingerprint in (CAR.CHEVROLET_BOLT_ACC_2022_2023, CAR.CHEVROLET_BOLT_CC_2022_2023):
+  if CP.carFingerprint in (CAR.CHEVROLET_BOLT_ACC_2022_2023, CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL, CAR.CHEVROLET_BOLT_CC_2022_2023):
     prndl2_value = 5 if press_regen_paddle else 6
   else:
     prndl2_value = 7 if press_regen_paddle else 6

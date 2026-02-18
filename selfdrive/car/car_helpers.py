@@ -280,6 +280,7 @@ def get_car(logcan, sendcan, experimental_long_allowed, params, num_pandas=1, fr
       "CAR.CHEVROLET_BOLT_EUV",
       "CAR.CHEVROLET_BOLT_CC",
       GM_CAR.CHEVROLET_BOLT_ACC_2022_2023,
+      GM_CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
       GM_CAR.CHEVROLET_BOLT_CC_2022_2023,
       GM_CAR.CHEVROLET_BOLT_CC_2019_2021,
       GM_CAR.CHEVROLET_BOLT_CC_2017,
@@ -302,7 +303,11 @@ def get_car(logcan, sendcan, experimental_long_allowed, params, num_pandas=1, fr
             0x370 in fingerprints.get(GMCanBus.CAMERA, {}) or
             0x370 in fingerprints.get(GMCanBus.POWERTRAIN, {})
           )
-          vin_candidate = GM_CAR.CHEVROLET_BOLT_ACC_2022_2023 if has_acc_msg else GM_CAR.CHEVROLET_BOLT_CC_2022_2023
+          has_pedal_msg = 0x201 in fingerprints.get(GMCanBus.POWERTRAIN, {})
+          if has_acc_msg:
+            vin_candidate = GM_CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL if has_pedal_msg else GM_CAR.CHEVROLET_BOLT_ACC_2022_2023
+          else:
+            vin_candidate = GM_CAR.CHEVROLET_BOLT_CC_2022_2023
         if candidate != vin_candidate:
           prev_candidate = candidate
           candidate = vin_candidate
@@ -314,6 +319,7 @@ def get_car(logcan, sendcan, experimental_long_allowed, params, num_pandas=1, fr
   # Always prefer live fingerprint naming for Bolt variants to avoid stale manual labels.
   if candidate in {
     GM_CAR.CHEVROLET_BOLT_ACC_2022_2023,
+    GM_CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
     GM_CAR.CHEVROLET_BOLT_CC_2022_2023,
     GM_CAR.CHEVROLET_BOLT_CC_2019_2021,
     GM_CAR.CHEVROLET_BOLT_CC_2017,

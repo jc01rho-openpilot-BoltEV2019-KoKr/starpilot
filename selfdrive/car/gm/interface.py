@@ -44,6 +44,10 @@ NON_LINEAR_TORQUE_PARAMS = {
     "left": [2.6531724862969748, 1.1, 0.1919764879840985, 0.0],
     "right": [2.7031724862969748, 1.0, 0.1469764879840985, 0.0],
   },
+  CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL: {
+    "left": [2.6531724862969748, 1.1, 0.1919764879840985, 0.0],
+    "right": [2.7031724862969748, 1.0, 0.1469764879840985, 0.0],
+  },
   CAR.CHEVROLET_BOLT_CC_2022_2023: {
     "left": [2.6531724862969748, 1.1, 0.1919764879840985, 0.0],
     "right": [2.7031724862969748, 1.0, 0.1469764879840985, 0.0],
@@ -174,20 +178,20 @@ class CarInterface(CarInterfaceBase):
     else:
       ret.transmissionType = TransmissionType.automatic
 
-    kaofui_cars = SDGM_CAR | ASCM_INT | VOLT_LIKE_CARS | {CAR.CHEVROLET_MALIBU_CC, CAR.CHEVROLET_MALIBU_HYBRID_CC}
+    kaofui_cars = SDGM_CAR | ASCM_INT | VOLT_LIKE_CARS | {CAR.CHEVROLET_MALIBU_HYBRID_CC}
     ret.longitudinalTuning.kiBP = [5., 35.] if candidate in kaofui_cars else [5., 35., 60.]
 
-    is_bolt_2022_2023_pedal = candidate == CAR.CHEVROLET_BOLT_CC_2022_2023 and ret.enableGasInterceptor
+    is_bolt_2022_2023_pedal = candidate == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL and ret.enableGasInterceptor
 
     kaofui_camera_cars = {
       CAR.CHEVROLET_VOLT_CAMERA,
       CAR.CHEVROLET_VOLT_CC,
-      CAR.CHEVROLET_MALIBU_CC,
       CAR.CHEVROLET_MALIBU_HYBRID_CC,
     }
     bolt_cc_camera_cars = {
       CAR.CHEVROLET_BOLT_CC_2017,
       CAR.CHEVROLET_BOLT_CC_2019_2021,
+      CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
       CAR.CHEVROLET_BOLT_CC_2022_2023,
     }
     is_camera_acc = candidate in CAMERA_ACC_CAR and candidate not in kaofui_cars and \
@@ -246,8 +250,9 @@ class CarInterface(CarInterfaceBase):
       ret.minEnableSpeed = -1.  # engage speed is decided by pcm
       ret.minSteerSpeed = 7 * CV.MPH_TO_MS
       gm_safety_cfg.safetyParam |= Panda.FLAG_GM_HW_SDGM
-      # Use C9 brake bit only on SDGM variants that lack 0xBE (ECMAcceleratorPos)
-      if ACCELERATOR_POS_MSG not in fingerprint.get(CanBus.POWERTRAIN, {}):
+      # Use C9 brake bit on Blazer and SDGM variants that lack 0xBE (ECMAcceleratorPos),
+      # so panda brake_pressed source matches carstate on light taps.
+      if candidate == CAR.CHEVROLET_BLAZER or ACCELERATOR_POS_MSG not in fingerprint.get(CanBus.POWERTRAIN, {}):
         gm_safety_cfg.safetyParam |= Panda.FLAG_GM_FORCE_BRAKE_C9
         ret.flags |= GMFlags.FORCE_BRAKE_C9.value
 
@@ -268,9 +273,8 @@ class CarInterface(CarInterfaceBase):
       if is_bolt_2022_2023_pedal:
         ret.experimentalLongitudinalAvailable = False
         ret.pcmCruise = False
-    elif candidate in ASCM_INT:
-      # kaofui parity: ASCM_INT cars require SASCM for experimental long
-      ret.experimentalLongitudinalAvailable = candidate not in (CC_ONLY_CAR | ASCM_INT | SDGM_CAR) or has_sascm(fingerprint)
+    elif candidate in ASCM_INT and has_sascm(fingerprint):
+      ret.experimentalLongitudinalAvailable = True
       ret.networkLocation = NetworkLocation.fwdCamera
       ret.radarUnavailable = 0x460 not in fingerprint.get(CanBus.OBSTACLE, {})
       ret.pcmCruise = True
@@ -367,7 +371,7 @@ class CarInterface(CarInterfaceBase):
         ret.steerActuatorDelay = 0.2
         CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    elif candidate in (CAR.CHEVROLET_BOLT_ACC_2022_2023, CAR.CHEVROLET_BOLT_CC_2022_2023, CAR.CHEVROLET_BOLT_CC_2019_2021, CAR.CHEVROLET_BOLT_CC_2017):
+    elif candidate in (CAR.CHEVROLET_BOLT_ACC_2022_2023, CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL, CAR.CHEVROLET_BOLT_CC_2022_2023, CAR.CHEVROLET_BOLT_CC_2019_2021, CAR.CHEVROLET_BOLT_CC_2017):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 

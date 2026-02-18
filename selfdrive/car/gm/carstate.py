@@ -42,7 +42,6 @@ class CarState(CarStateBase):
     kaofui_state_cars = volt_like | SDGM_CAR | ASCM_INT | {
       CAR.CHEVROLET_BLAZER,
       CAR.CHEVROLET_MALIBU_SDGM,
-      CAR.CHEVROLET_MALIBU_CC,
       CAR.CHEVROLET_MALIBU_HYBRID_CC,
     }
     sdgm_non_volt = self.CP.carFingerprint in SDGM_CAR and \
@@ -111,6 +110,9 @@ class CarState(CarStateBase):
     if self.CP.carFingerprint == CAR.CHEVROLET_BLAZER:
       # Blazer can miss light taps on analog threshold; include digital brake switch.
       ret.brakePressed = (pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0) or (ret.brake >= 0.7)
+    elif self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_CC:
+      # Malibu CC: keep strict opgm behavior using BrakePedalPos >= 8.
+      ret.brakePressed = ret.brake >= 8
     elif (self.CP.flags & GMFlags.FORCE_BRAKE_C9.value) or (self.CP.networkLocation == NetworkLocation.fwdCamera):
       ret.brakePressed = pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0
     else:
@@ -127,7 +129,7 @@ class CarState(CarStateBase):
       self.single_pedal_mode = (ret.gearShifter == GearShifter.low or
                                 pt_cp.vl["EVDriveMode"]["SinglePedalModeActive"] == 1 or
                                 (ret.regenBraking and GearShifter.manumatic) or
-                                (self.CP.carFingerprint in (CAR.CHEVROLET_BOLT_ACC_2022_2023, CAR.CHEVROLET_BOLT_CC_2022_2023) and self.CP.enableGasInterceptor))
+                                (self.CP.carFingerprint in (CAR.CHEVROLET_BOLT_ACC_2022_2023, CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL, CAR.CHEVROLET_BOLT_CC_2022_2023) and self.CP.enableGasInterceptor))
 
     if self.CP.enableGasInterceptor:
       ret.gas = (pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS"] + pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"]) / 2.
@@ -194,11 +196,17 @@ class CarState(CarStateBase):
     if self.CP.carFingerprint in CC_ONLY_CAR:
       ret.accFaulted = False
       ret.cruiseState.speed = pt_cp.vl["ECMCruiseControl"]["CruiseSetSpeed"] * CV.KPH_TO_MS
-      # Try ECM first for cars that might have it (like most GMs), fall back to ASCM
-      try:
-        ret.cruiseState.enabled = pt_cp.vl["ECMCruiseControl"]["CruiseActive"] != 0
-      except:
-        ret.cruiseState.enabled = cam_cp.vl["ASCMActiveCruiseControlStatus"]["ACCCmdActive"] != 0
+      if self.CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
+        try:
+          ret.cruiseState.enabled = cam_cp.vl["ASCMActiveCruiseControlStatus"]["ACCCmdActive"] != 0
+        except:
+          ret.cruiseState.enabled = pt_cp.vl["ECMCruiseControl"]["CruiseActive"] != 0
+      else:
+        # Most CC paths use ECM first.
+        try:
+          ret.cruiseState.enabled = pt_cp.vl["ECMCruiseControl"]["CruiseActive"] != 0
+        except:
+          ret.cruiseState.enabled = cam_cp.vl["ASCMActiveCruiseControlStatus"]["ACCCmdActive"] != 0
 
     if self.CP.enableBsm:
       if not sdgm_non_volt:
@@ -229,7 +237,6 @@ class CarState(CarStateBase):
       kaofui_state_cars = volt_like | SDGM_CAR | ASCM_INT | {
         CAR.CHEVROLET_BLAZER,
         CAR.CHEVROLET_MALIBU_SDGM,
-        CAR.CHEVROLET_MALIBU_CC,
         CAR.CHEVROLET_MALIBU_HYBRID_CC,
       }
       sdgm_non_volt = CP.carFingerprint in SDGM_CAR and \
@@ -250,7 +257,7 @@ class CarState(CarStateBase):
         messages += [
           ("AEBCmd", 10),
         ]
-      if CP.carFingerprint not in CC_ONLY_CAR:
+      if CP.carFingerprint not in CC_ONLY_CAR or CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
         messages += [
           ("ASCMActiveCruiseControlStatus", 25),
         ]
@@ -274,7 +281,6 @@ class CarState(CarStateBase):
     kaofui_state_cars = volt_like | SDGM_CAR | ASCM_INT | {
       CAR.CHEVROLET_BLAZER,
       CAR.CHEVROLET_MALIBU_SDGM,
-      CAR.CHEVROLET_MALIBU_CC,
       CAR.CHEVROLET_MALIBU_HYBRID_CC,
     }
     prndl2_rate = 10 if CP.carFingerprint in kaofui_state_cars else 40

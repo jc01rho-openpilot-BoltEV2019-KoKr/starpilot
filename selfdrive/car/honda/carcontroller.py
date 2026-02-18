@@ -1,3 +1,4 @@
+import math
 from collections import namedtuple
 
 from cereal import car
@@ -5,10 +6,12 @@ from openpilot.common.numpy_fast import clip, interp
 from openpilot.common.realtime import DT_CTRL
 from opendbc.can.packer import CANPacker
 from openpilot.selfdrive.car import create_gas_interceptor_command
+from openpilot.selfdrive.controls.lib.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
 from openpilot.selfdrive.car.honda import hondacan
 from openpilot.selfdrive.car.honda.values import CruiseButtons, VISUAL_HUD, HONDA_BOSCH, HONDA_BOSCH_RADARLESS, HONDA_NIDEC_ALT_PCM_ACCEL, CarControllerParams
 from openpilot.selfdrive.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.drive_helpers import rate_limit
+from openpilot.selfdrive.controls.lib.pid import PIDController
 
 VisualAlert = car.CarControl.HUDControl.VisualAlert
 LongCtrlState = car.CarControl.Actuators.LongControlState
@@ -125,6 +128,10 @@ class CarController(CarControllerBase):
     self.gas = 0.0
     self.brake = 0.0
     self.last_steer = 0.0
+    self.pitch = 0.0
+    self.gasonly_pid = PIDController(k_p=([0,], [0,]),
+                                      k_i=([0., 5., 35.], [1.2, 0.8, 0.5]),
+                                      rate=1 / DT_CTRL / 2)
 
   def update(self, CC, CS, now_nanos, frogpilot_toggles):
     actuators = CC.actuators
@@ -132,6 +139,9 @@ class CarController(CarControllerBase):
     conversion = hondacan.get_cruise_speed_conversion(self.CP.carFingerprint, CS.is_metric)
     hud_v_cruise = hud_control.setSpeed / conversion if hud_control.speedVisible else 255
     pcm_cancel_cmd = CC.cruiseControl.cancel
+
+    if len(CC.orientationNED) == 3:
+      self.pitch = CC.orientationNED[1]
 
     if CC.longActive:
       accel = actuators.accel
@@ -173,8 +183,11 @@ class CarController(CarControllerBase):
                                                       CS.CP.openpilotLongitudinalControl))
 
     # wind brake from air resistance decel at high speed
-    wind_brake = interp(CS.out.vEgo, [0.0, 2.3, 35.0], [0.001, 0.002, 0.15])
+    wind_brake_ms2 = interp(CS.out.vEgo, [0.0, 13.4, 22.4, 31.3, 40.2], [0.000, 0.049, 0.136, 0.267, 0.441]) # in m/s2 units
+    hill_brake = math.sin(self.pitch) * ACCELERATION_DUE_TO_GRAVITY
+
     # all of this is only relevant for HONDA NIDEC
+    wind_brake = interp(CS.out.vEgo, [0.0, 2.3, 35.0], [0.001, 0.002, 0.15]) # not in m/s2 units
     max_accel = interp(CS.out.vEgo, self.params.NIDEC_MAX_ACCEL_BP, self.params.NIDEC_MAX_ACCEL_V)
     # TODO this 1.44 is just to maintain previous behavior
     pcm_speed_BP = [-wind_brake,
@@ -217,12 +230,25 @@ class CarController(CarControllerBase):
 
         if self.CP.carFingerprint in HONDA_BOSCH:
           self.accel = clip(accel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX)
-          self.gas = interp(accel, self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V)
+
+          if self.CP.carFingerprint in HONDA_BOSCH_RADARLESS:
+            gas_pedal_force = self.accel # radarless does not need a pid
+          elif (actuators.longControlState == LongCtrlState.pid) and not CS.out.gasPressed: # perform a gas-only pid
+            gas_error = self.accel - CS.out.aEgo
+            self.gasonly_pid.neg_limit = self.params.BOSCH_ACCEL_MIN
+            self.gasonly_pid.pos_limit = self.params.BOSCH_ACCEL_MAX
+            gas_pedal_force = self.gasonly_pid.update(gas_error, speed=CS.out.vEgo, feedforward=self.accel)
+            gas_pedal_force += wind_brake_ms2 + hill_brake
+          else:
+            gas_pedal_force = self.accel
+            self.gasonly_pid.reset()
+            gas_pedal_force += wind_brake_ms2 + hill_brake
+          self.gas = interp(gas_pedal_force, self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V)
 
           stopping = actuators.longControlState == LongCtrlState.stopping
           self.stopping_counter = self.stopping_counter + 1 if stopping else 0
           can_sends.extend(hondacan.create_acc_commands(self.packer, self.CAN, CC.enabled, CC.longActive, self.accel, self.gas,
-                                                        self.stopping_counter, self.CP.carFingerprint))
+                                                        self.stopping_counter, self.CP.carFingerprint, accel + wind_brake_ms2 + hill_brake))
         else:
           apply_brake = clip(self.brake_last - wind_brake, 0.0, 1.0)
           apply_brake = int(clip(apply_brake * self.params.NIDEC_BRAKE_MAX, 0, self.params.NIDEC_BRAKE_MAX - 1))
@@ -260,11 +286,11 @@ class CarController(CarControllerBase):
           self.gas = pcm_accel / self.params.NIDEC_GAS_MAX
 
     new_actuators = actuators.as_builder()
-    new_actuators.speed = self.speed
-    new_actuators.accel = self.accel
-    new_actuators.gas = self.gas
-    new_actuators.brake = self.brake
-    new_actuators.steer = self.last_steer
+    new_actuators.speed = float(self.speed)
+    new_actuators.accel = float(self.accel)
+    new_actuators.gas = float(self.gas)
+    new_actuators.brake = float(self.brake)
+    new_actuators.steer = float(self.last_steer)
     new_actuators.steerOutputCan = apply_steer
 
     self.frame += 1
