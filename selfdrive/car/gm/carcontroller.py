@@ -36,6 +36,9 @@ PADDLE_NONBLOCK_GAP_NS  = 1_000_000   # ≥1 ms since last paddle send
 PADDLE_SLOT_EARLY_NS    = 1_000_000   # allow firing up to 1 ms before slot
 OVERFLOW_THRESH         = 1.00        # fire one extra slot whenever credits ≥ 1.0
 PADDLE_TARGET_HZ        = 42.0        # desired paddle rate (Hz) when regen active; steer is ~33 Hz
+ECM_CRUISE_SLOT_NS      = 20_000_000   # phase-locked spoof slot after stock 0x3D1 edge
+ECM_CRUISE_WINDOW_NS    = 8_000_000    # tight send window around slot
+ECM_CRUISE_STALE_NS     = 300_000_000  # reset lock if no new stock edge arrives
 # Constants for pitch compensation
 BRAKE_PITCH_FACTOR_BP = [5., 10.]  # [m/s] smoothly revert to planned accel at low speeds
 BRAKE_PITCH_FACTOR_V = [0., 1.]  # [unitless in [0,1]]; don't touch
@@ -101,6 +104,8 @@ class CarController(CarControllerBase):
     self.spoof_mid_sent = False
     self.spoof_over_sent = False
     self.last_interval_ns = 0
+    self.last_ecm_cruise_stock_ts_ns = 0
+    self.ecm_cruise_cycle_sent = False
 
   def calc_pedal_command(self, accel: float, long_active: bool, car_velocity) -> Tuple[float, bool]:
     if not long_active:
@@ -369,6 +374,36 @@ class CarController(CarControllerBase):
         can_sends.extend(paddle_sends)
 
     if self.CP.openpilotLongitudinalControl:
+      spoof_ecm_cruise_cars = {
+        CAR.CHEVROLET_BOLT_CC_2017,
+        CAR.CHEVROLET_BOLT_CC_2019_2021,
+        CAR.CHEVROLET_BOLT_CC_2022_2023,
+        CAR.CHEVROLET_MALIBU_HYBRID_CC,
+      }
+      non_acc_pedal_long = (self.CP.flags & GMFlags.PEDAL_LONG.value) and self.CP.carFingerprint in spoof_ecm_cruise_cars and self.CP.enableGasInterceptor
+      if non_acc_pedal_long:
+        spoof_enabled = bool(CC.enabled)
+        spoof_set_speed_kph = hud_v_cruise * CV.MS_TO_KPH if spoof_enabled else 0.0
+        stock_ts_ns = getattr(CS, "ecm_cruise_control_ts_nanos", 0)
+        if stock_ts_ns > self.last_ecm_cruise_stock_ts_ns:
+          self.last_ecm_cruise_stock_ts_ns = stock_ts_ns
+          self.ecm_cruise_cycle_sent = False
+
+        if self.last_ecm_cruise_stock_ts_ns > 0 and (now_nanos - self.last_ecm_cruise_stock_ts_ns) > ECM_CRUISE_STALE_NS:
+          self.last_ecm_cruise_stock_ts_ns = 0
+          self.ecm_cruise_cycle_sent = False
+
+        if self.last_ecm_cruise_stock_ts_ns > 0:
+          age_ns = now_nanos - self.last_ecm_cruise_stock_ts_ns
+          if (not self.ecm_cruise_cycle_sent) and abs(age_ns - ECM_CRUISE_SLOT_NS) <= ECM_CRUISE_WINDOW_NS:
+            can_sends.append(gmcan.create_ecm_cruise_control_command(
+              self.packer_pt, CanBus.POWERTRAIN, spoof_enabled, spoof_set_speed_kph))
+            self.ecm_cruise_cycle_sent = True
+
+        if self.last_ecm_cruise_stock_ts_ns == 0 and self.frame % 10 == 0:
+          can_sends.append(gmcan.create_ecm_cruise_control_command(
+            self.packer_pt, CanBus.POWERTRAIN, spoof_enabled, spoof_set_speed_kph))
+
       # Gas/regen, brakes, and UI commands - all at 25Hz
       if self.frame % 4 == 0:
         stopping = actuators.longControlState == LongCtrlState.stopping
@@ -467,7 +502,7 @@ class CarController(CarControllerBase):
           friction_brake_bus = CanBus.CHASSIS
           # GM Camera exceptions
           # TODO: can we always check the longControlState?
-          if self.CP.networkLocation == NetworkLocation.fwdCamera and self.CP.carFingerprint not in CC_ONLY_CAR:
+          if self.CP.networkLocation == NetworkLocation.fwdCamera:
             at_full_stop = at_full_stop and stopping
             friction_brake_bus = CanBus.POWERTRAIN
             if self.CP.carFingerprint in SDGM_CAR:
@@ -488,10 +523,11 @@ class CarController(CarControllerBase):
           can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
                                                                idx, CC.enabled, near_stop, at_full_stop, self.CP))
 
-          # Send dashboard UI commands (ACC status)
+        is_bolt_acc_pedal = self.CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL
+        if self.CP.carFingerprint not in CC_ONLY_CAR or is_bolt_acc_pedal:
           send_fcw = hud_alert == VisualAlert.fcw
-          can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, CC.enabled,
-                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
+          can_sends.append(gmcan.create_acc_dashboard_command(
+            self.packer_pt, CanBus.POWERTRAIN, CC.enabled, hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
       else:
         # to keep accel steady for logs when not sending gas
         accel += self.accel_g
