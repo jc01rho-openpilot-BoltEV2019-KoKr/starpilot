@@ -273,8 +273,9 @@ class CarInterface(CarInterfaceBase):
       if is_bolt_2022_2023_pedal:
         ret.experimentalLongitudinalAvailable = False
         ret.pcmCruise = False
-    elif candidate in ASCM_INT and has_sascm(fingerprint):
-      ret.experimentalLongitudinalAvailable = True
+    elif candidate in ASCM_INT:
+      # kaofui parity: ASCM_INT cars require SASCM for experimental long
+      ret.experimentalLongitudinalAvailable = candidate not in (CC_ONLY_CAR | ASCM_INT | SDGM_CAR) or has_sascm(fingerprint)
       ret.networkLocation = NetworkLocation.fwdCamera
       ret.radarUnavailable = 0x460 not in fingerprint.get(CanBus.OBSTACLE, {})
       ret.pcmCruise = True
@@ -398,8 +399,6 @@ class CarInterface(CarInterfaceBase):
       # On the Bolt, the ECM and camera independently check that you are either above 5 kph or at a stop
       # with foot on brake to allow engagement, but this platform only has that check in the camera.
       # TODO: check if this is split by EV/ICE with more platforms in the future
-      if ret.openpilotLongitudinalControl:
-        ret.minEnableSpeed = -1.
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
     elif candidate in (CAR.CHEVROLET_EQUINOX, CAR.CHEVROLET_EQUINOX_CC):
@@ -528,7 +527,7 @@ class CarInterface(CarInterfaceBase):
       gm_safety_cfg.safetyParam |= Panda.FLAG_GM_NO_ACC
 
     # Exception for flashed cars, or cars whose camera was removed
-    if (ret.networkLocation == NetworkLocation.fwdCamera or candidate in CC_ONLY_CAR) and CAM_MSG not in fingerprint.get(CanBus.CAMERA, {}) and not candidate in (SDGM_CAR | ASCM_INT):
+    if (ret.networkLocation == NetworkLocation.fwdCamera or candidate in CC_ONLY_CAR) and CAM_MSG not in fingerprint.get(CanBus.CAMERA, {}) and candidate not in SDGM_CAR:
       ret.flags |= GMFlags.NO_CAMERA.value
       gm_safety_cfg.safetyParam |= Panda.FLAG_GM_NO_CAMERA
 
