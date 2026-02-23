@@ -250,9 +250,9 @@ class CarInterface(CarInterfaceBase):
       ret.minEnableSpeed = -1.  # engage speed is decided by pcm
       ret.minSteerSpeed = 7 * CV.MPH_TO_MS
       gm_safety_cfg.safetyParam |= Panda.FLAG_GM_HW_SDGM
-      # Use C9 brake bit on Blazer and SDGM variants that lack 0xBE (ECMAcceleratorPos),
-      # so panda brake_pressed source matches carstate on light taps.
-      if candidate == CAR.CHEVROLET_BLAZER or ACCELERATOR_POS_MSG not in fingerprint.get(CanBus.POWERTRAIN, {}):
+      # Use C9 brake bit on SDGM variants that lack 0xBE (ECMAcceleratorPos),
+      # so panda brake_pressed source matches carstate.
+      if ACCELERATOR_POS_MSG not in fingerprint.get(CanBus.POWERTRAIN, {}):
         gm_safety_cfg.safetyParam |= Panda.FLAG_GM_FORCE_BRAKE_C9
         ret.flags |= GMFlags.FORCE_BRAKE_C9.value
 
@@ -533,6 +533,16 @@ class CarInterface(CarInterfaceBase):
 
     if ACCELERATOR_POS_MSG not in fingerprint.get(CanBus.POWERTRAIN, {}):
       ret.flags |= GMFlags.NO_ACCELERATOR_POS_MSG.value
+
+    use_panda_3d1_sched = (
+      ret.openpilotLongitudinalControl and
+      ret.enableGasInterceptor and
+      bool(ret.flags & GMFlags.PEDAL_LONG.value) and
+      candidate in CC_ONLY_CAR and
+      candidate != CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL
+    )
+    if use_panda_3d1_sched:
+      gm_safety_cfg.safetyParam |= Panda.FLAG_GM_PANDA_3D1_SCHED
 
     return ret
 

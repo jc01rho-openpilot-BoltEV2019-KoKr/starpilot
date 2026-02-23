@@ -35,6 +35,7 @@ class CarState(CarStateBase):
     self.single_pedal_mode = False
     self.pedal_steady = 0.
     self.ecm_cruise_control_ts_nanos = 0
+    self.accelerator_pedal2_ts_nanos = 0
 
   def update(self, pt_cp, cam_cp, loopback_cp, frogpilot_toggles):
     ret = car.CarState.new_message()
@@ -98,7 +99,9 @@ class CarState(CarStateBase):
     else:
       ret.gearShifter = self.parse_gear_shifter(self.shifter_values.get(pt_cp.vl["ECMPRDNL2"]["PRNDL2"], None))
 
-    if self.CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value:
+    no_accel_pos = bool(self.CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value)
+
+    if no_accel_pos:
       if self.CP.carFingerprint in kaofui_state_cars:
         ret.brake = pt_cp.vl.get("EBCMBrakePedalPosition", {}).get("BrakePedalPosition", 0) / 0xd0
       else:
@@ -108,20 +111,17 @@ class CarState(CarStateBase):
         ret.brake = pt_cp.vl.get("ECMAcceleratorPos", {}).get("BrakePedalPos", 0)
       else:
         ret.brake = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"]
-    if self.CP.carFingerprint == CAR.CHEVROLET_BLAZER:
-      # Blazer can miss light taps on analog threshold; include digital brake switch.
-      ret.brakePressed = (pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0) or (ret.brake >= 0.7)
-    elif self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_CC:
-      # Malibu CC: keep strict opgm behavior using BrakePedalPos >= 8.
+
+    if self.CP.carFingerprint in {CAR.CHEVROLET_MALIBU_CC} or (self.CP.carFingerprint == CAR.CHEVROLET_BLAZER and not no_accel_pos):
       ret.brakePressed = ret.brake >= 8
-    elif (self.CP.flags & GMFlags.FORCE_BRAKE_C9.value) or (self.CP.networkLocation == NetworkLocation.fwdCamera):
+    elif (self.CP.flags & GMFlags.FORCE_BRAKE_C9.value) or ((self.CP.networkLocation == NetworkLocation.fwdCamera) and (self.CP.carFingerprint != CAR.CHEVROLET_BLAZER)):
       ret.brakePressed = pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0
     else:
       # Some Volt 2016-17 have loose brake pedal push rod retainers which causes the ECM to believe
       # that the brake is being intermittently pressed without user interaction.
       # To avoid a cruise fault we need to use a conservative brake position threshold
       # https://static.nhtsa.gov/odi/tsbs/2017/MC-10137629-9999.pdf
-      analog_thresh = 0.15 if (self.CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value) else 8
+      analog_thresh = 0.10 if no_accel_pos else 8
       ret.brakePressed = ret.brake >= analog_thresh
 
     # Regen braking is braking
@@ -196,6 +196,7 @@ class CarState(CarStateBase):
         ret.cruiseState.nonAdaptive = cam_cp.vl["ASCMActiveCruiseControlStatus"]["ACCCruiseState"] not in (2, 3)
     if self.CP.carFingerprint in CC_ONLY_CAR:
       self.ecm_cruise_control_ts_nanos = pt_cp.ts_nanos["ECMCruiseControl"]["CruiseActive"]
+      self.accelerator_pedal2_ts_nanos = pt_cp.ts_nanos["AcceleratorPedal2"]["CruiseState"]
       ret.accFaulted = False
       ret.cruiseState.speed = pt_cp.vl["ECMCruiseControl"]["CruiseSetSpeed"] * CV.KPH_TO_MS
       if self.CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
@@ -211,6 +212,7 @@ class CarState(CarStateBase):
           ret.cruiseState.enabled = cam_cp.vl["ASCMActiveCruiseControlStatus"]["ACCCmdActive"] != 0
     else:
       self.ecm_cruise_control_ts_nanos = 0
+      self.accelerator_pedal2_ts_nanos = 0
 
     if self.CP.enableBsm:
       if not sdgm_non_volt:

@@ -186,11 +186,21 @@ def create_acc_dashboard_command(packer, bus, enabled, target_speed_kph, hud_con
   return packer.make_can_msg("ASCMActiveCruiseControlStatus", bus, values)
 
 def create_ecm_cruise_control_command(packer, bus, enabled, target_speed_kph):
-  values = {
-    "CruiseActive": 1 if enabled else 0,
-    "CruiseSetSpeed": max(0., target_speed_kph),
-  }
-  return packer.make_can_msg("ECMCruiseControl", bus, values)
+  dat = bytearray(8)
+  dat[0] = 0x01
+  # Match observed stock shape on non-ACC CC paths: byte4 is usually 0x00
+  # (with occasional 0x80 from stock state transitions). Keep this spoofed
+  # path at 0x00 to avoid plausibility mismatch on non-speed bits.
+  dat[4] = 0x00
+
+  set_speed_raw = 0
+  if enabled:
+    set_speed_raw = int(round(max(0., target_speed_kph) / 0.0625))
+    set_speed_raw = max(0, min(set_speed_raw, 0x0FFF))
+
+  dat[2] = (set_speed_raw >> 8) & 0xFF
+  dat[3] = set_speed_raw & 0xFF
+  return make_can_msg(0x3D1, bytes(dat), bus)
 
 
 def create_adas_time_status(bus, tt, idx):

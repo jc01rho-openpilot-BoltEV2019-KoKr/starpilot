@@ -36,9 +36,6 @@ PADDLE_NONBLOCK_GAP_NS  = 1_000_000   # ≥1 ms since last paddle send
 PADDLE_SLOT_EARLY_NS    = 1_000_000   # allow firing up to 1 ms before slot
 OVERFLOW_THRESH         = 1.00        # fire one extra slot whenever credits ≥ 1.0
 PADDLE_TARGET_HZ        = 42.0        # desired paddle rate (Hz) when regen active; steer is ~33 Hz
-ECM_CRUISE_SLOT_NS      = 20_000_000   # phase-locked spoof slot after stock 0x3D1 edge
-ECM_CRUISE_WINDOW_NS    = 8_000_000    # tight send window around slot
-ECM_CRUISE_STALE_NS     = 300_000_000  # reset lock if no new stock edge arrives
 # Constants for pitch compensation
 BRAKE_PITCH_FACTOR_BP = [5., 10.]  # [m/s] smoothly revert to planned accel at low speeds
 BRAKE_PITCH_FACTOR_V = [0., 1.]  # [unitless in [0,1]]; don't touch
@@ -104,8 +101,6 @@ class CarController(CarControllerBase):
     self.spoof_mid_sent = False
     self.spoof_over_sent = False
     self.last_interval_ns = 0
-    self.last_ecm_cruise_stock_ts_ns = 0
-    self.ecm_cruise_cycle_sent = False
 
   def calc_pedal_command(self, accel: float, long_active: bool, car_velocity) -> Tuple[float, bool]:
     if not long_active:
@@ -147,7 +142,7 @@ class CarController(CarControllerBase):
     # --- Immediate application of raw pedal gas, no blending ---
     pedal_gas = raw_pedal_gas
     # Safety cap: ramp from 22% at 0 m/s to 37.25% at 10 mph (4.47 m/s), then allow full throttle
-    pedal_gas_max = interp(car_velocity, [0.0, 4.47, 15], [0.22, 0.3675, 0.85])
+    pedal_gas_max = interp(car_velocity, [0.0, 4.47, 4.48], [0.22, 0.3725, 1.0])
     pedal_gas = clip(pedal_gas, 0.0, pedal_gas_max)
     return pedal_gas, press_regen_paddle
 
@@ -373,36 +368,20 @@ class CarController(CarControllerBase):
       if now_nanos - self.last_steer_ts_ns >= flush_gap_ns:
         can_sends.extend(paddle_sends)
 
+    spoof_ecm_cruise_cars = {
+      CAR.CHEVROLET_BOLT_CC_2017,
+      CAR.CHEVROLET_BOLT_CC_2019_2021,
+      CAR.CHEVROLET_BOLT_CC_2022_2023,
+      CAR.CHEVROLET_MALIBU_HYBRID_CC,
+    }
+    non_acc_pedal_long = (self.CP.flags & GMFlags.PEDAL_LONG.value) and self.CP.carFingerprint in spoof_ecm_cruise_cars and self.CP.enableGasInterceptor
+    if non_acc_pedal_long and self.frame % 4 == 0:
+      spoof_enabled = True
+      spoof_set_speed_kph = hud_v_cruise * CV.MS_TO_KPH
+      can_sends.append(gmcan.create_ecm_cruise_control_command(
+        self.packer_pt, CanBus.POWERTRAIN, spoof_enabled, spoof_set_speed_kph))
+
     if self.CP.openpilotLongitudinalControl:
-      spoof_ecm_cruise_cars = {
-        CAR.CHEVROLET_BOLT_CC_2017,
-        CAR.CHEVROLET_BOLT_CC_2019_2021,
-        CAR.CHEVROLET_BOLT_CC_2022_2023,
-        CAR.CHEVROLET_MALIBU_HYBRID_CC,
-      }
-      non_acc_pedal_long = (self.CP.flags & GMFlags.PEDAL_LONG.value) and self.CP.carFingerprint in spoof_ecm_cruise_cars and self.CP.enableGasInterceptor
-      if non_acc_pedal_long:
-        spoof_enabled = bool(CC.enabled)
-        spoof_set_speed_kph = hud_v_cruise * CV.MS_TO_KPH if spoof_enabled else 0.0
-        stock_ts_ns = getattr(CS, "ecm_cruise_control_ts_nanos", 0)
-        if stock_ts_ns > self.last_ecm_cruise_stock_ts_ns:
-          self.last_ecm_cruise_stock_ts_ns = stock_ts_ns
-          self.ecm_cruise_cycle_sent = False
-
-        if self.last_ecm_cruise_stock_ts_ns > 0 and (now_nanos - self.last_ecm_cruise_stock_ts_ns) > ECM_CRUISE_STALE_NS:
-          self.last_ecm_cruise_stock_ts_ns = 0
-          self.ecm_cruise_cycle_sent = False
-
-        if self.last_ecm_cruise_stock_ts_ns > 0:
-          age_ns = now_nanos - self.last_ecm_cruise_stock_ts_ns
-          if (not self.ecm_cruise_cycle_sent) and abs(age_ns - ECM_CRUISE_SLOT_NS) <= ECM_CRUISE_WINDOW_NS:
-            can_sends.append(gmcan.create_ecm_cruise_control_command(
-              self.packer_pt, CanBus.POWERTRAIN, spoof_enabled, spoof_set_speed_kph))
-            self.ecm_cruise_cycle_sent = True
-
-        if self.last_ecm_cruise_stock_ts_ns == 0 and self.frame % 10 == 0:
-          can_sends.append(gmcan.create_ecm_cruise_control_command(
-            self.packer_pt, CanBus.POWERTRAIN, spoof_enabled, spoof_set_speed_kph))
 
       # Gas/regen, brakes, and UI commands - all at 25Hz
       if self.frame % 4 == 0:
@@ -454,10 +433,10 @@ class CarController(CarControllerBase):
 
             gas_max = self.params.MAX_GAS
             accel_max = self.params.ACCEL_MAX
-            
+
             accel = clip(actuators.accel + accel_due_to_pitch, self.params.ACCEL_MIN, accel_max)
             torque = self.tireRadius * ((self.mass*accel) + (0.5*self.coeffDrag*self.frontalArea*self.airDensity*CS.out.vEgo**2))
-            
+
             scaled_torque = torque + self.params.ZERO_GAS
             apply_gas_torque = clip(scaled_torque, self.params.MAX_ACC_REGEN, gas_max)
             BRAKE_SWITCH = int(round(interp(CS.out.vEgo, self.params.BRAKE_SWITCH_LOOKUP_BP, self.params.BRAKE_SWITCH_LOOKUP_V)))
@@ -537,7 +516,10 @@ class CarController(CarControllerBase):
       if not self.CP.radarUnavailable:
         send_adas = True
         if self.CP.carFingerprint in kaofui_cars:
-          send_adas = (self.CP.networkLocation != NetworkLocation.fwdCamera) and (self.CP.carFingerprint not in SDGM_CAR)
+          if self.CP.carFingerprint in ASCM_INT:
+            send_adas = True
+          else:
+            send_adas = (self.CP.networkLocation != NetworkLocation.fwdCamera) and (self.CP.carFingerprint not in SDGM_CAR)
 
         if send_adas:
           tt = self.frame * DT_CTRL
