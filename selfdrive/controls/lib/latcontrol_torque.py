@@ -82,9 +82,9 @@ class LatControlTorque(LatControl):
     self.is_bolt_2019_2021 = CP.carFingerprint in BOLT_2019_2021_CARS
     self.is_bolt_2017 = CP.carFingerprint in BOLT_2017_CARS
     # Keep Bolt-specific FF controls isolated by generation.
-    self.use_bolt_ff_scaling = self.is_bolt_2022_2023 or self.is_bolt_2019_2021
-    self.use_bolt_deadzone_boost = self.is_bolt_2022_2023 or self.is_bolt_2019_2021
-    self.use_bolt_ki_multiplier = self.is_bolt_2022_2023 or self.is_bolt_2019_2021
+    self.use_bolt_ff_scaling = self.is_bolt_2022_2023 or self.is_bolt_2019_2021 or self.is_bolt_2017
+    self.use_bolt_deadzone_boost = self.is_bolt_2022_2023 or self.is_bolt_2019_2021 or self.is_bolt_2017
+    self.use_bolt_ki_multiplier = self.is_bolt_2022_2023 or self.is_bolt_2019_2021 or self.is_bolt_2017
     self.torque_ff_scale_pos = 1.0
     self.torque_ff_scale_neg = 1.0
     self.torque_deadzone_boost_neg = 0.0
