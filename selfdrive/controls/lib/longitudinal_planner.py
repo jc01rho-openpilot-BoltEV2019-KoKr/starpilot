@@ -21,7 +21,7 @@ A_CRUISE_MIN = -1.0
 A_CRUISE_MAX_BP = [0.0, 5., 10., 15., 20., 25., 40.]
 A_CRUISE_MAX_VALS = [1.125, 1.125, 1.125, 1.125, 1.25, 1.25, 1.5]
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
-ALLOW_THROTTLE_THRESHOLD = 0.5
+ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
 
 # Uncertainty-based filter disable thresholds
@@ -120,13 +120,7 @@ class LongitudinalPlanner:
     self.prev_lead_dist = None
     self.last_big_brake_t = 0.0
     self.stable_lead = False
-    # Temporary accel nudge window
-    self.accel_nudge_until = 0.0
-
-    # Hysteresis gate + dwell for accel re-engage and smoothed lead distance
-    self.accel_gate = False
-    self._t_arm = 0.0
-    self._t_disarm = 0.0
+    # Smoothed lead distance
     self.lead_dist_f = None
 
     # Uncertainty slope tracking
@@ -339,39 +333,6 @@ class LongitudinalPlanner:
       except Exception:
         pass
 
-    # now_t defined earlier
-    over = uncertainty > 1.0
-
-    # Asymmetric accel release with hysteresis + dwell to prevent on/off pulsing
-    rise_dwell_s, fall_dwell_s = 0.6, 0.4
-    good = (
-      (self.a_desired > 0.0) and
-      self.stable_lead and
-      (uncertainty <= 0.425) and
-      (desire_entropy < 0.41) and
-      (v_ego > 5.0)
-    )
-
-    # dwell timers for robust gating
-    if good and not self.accel_gate:
-      if now_t - self._t_arm >= rise_dwell_s:
-        self.accel_gate = True
-    else:
-      self._t_arm = now_t
-
-    if (not good) and self.accel_gate:
-      if now_t - self._t_disarm >= fall_dwell_s:
-        self.accel_gate = False
-    else:
-      self._t_disarm = now_t
-
-    if self.accel_gate:
-      # Ensure some positive headroom for MPC to exit coasting
-      accel_limits_turns[1] = max(accel_limits_turns[1], 0.2)
-      # Short self-canceling nudge to unstick (applied post-MPC)
-      if now_t > self.accel_nudge_until:
-        self.accel_nudge_until = now_t + 0.45
-
     self.mpc.set_weights(sm['frogpilotPlan'].accelerationJerk,
                          sm['frogpilotPlan'].dangerJerk,
                          sm['frogpilotPlan'].speedJerk,
@@ -380,7 +341,6 @@ class LongitudinalPlanner:
                          v_ego=v_ego,
                          lead_dist=self.lead_dist_f if self.lead_dist_f is not None else lead_dist,
                          uncertainty=uncertainty,
-                         accel_reengage=self.accel_gate,
                          panic_bypass=panic_bypass)
     self.mpc.set_accel_limits(accel_limits_turns[0], accel_limits_turns[1])
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
@@ -426,11 +386,6 @@ class LongitudinalPlanner:
         pre_brake = k_rel * rel_v + k_unc * max(0.0, uncertainty - 0.42)
         pre_brake = min(pre_brake, 0.06)
         self.a_desired = float(self.a_desired - pre_brake)
-
-    # Apply tiny feed-forward nudge when released and safe
-    close_lead = self.lead_one.status and self.lead_one.dRel < 10.0
-    if now_t < self.accel_nudge_until and self.a_desired > -0.1 and not close_lead:
-      self.a_desired = float(min(self.a_desired + 0.12, get_max_accel(v_ego)))
 
     # Small deadzone around zero accel to kill micro-dithers
     if -0.05 < self.a_desired < 0.05:
