@@ -7,7 +7,7 @@ from panda import Panda
 from openpilot.common.conversions import Conversions as CV
 from openpilot.selfdrive.car import create_button_events, get_safety_config
 from openpilot.selfdrive.car.gm.radar_interface import RADAR_HEADER_MSG
-from openpilot.selfdrive.car.gm.values import CAR, CruiseButtons, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, CanBus, GMFlags, CC_ONLY_CAR, SDGM_CAR, ASCM_INT, set_red_panda_canbus
+from openpilot.selfdrive.car.gm.values import CAR, CruiseButtons, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, CanBus, GMFlags, CC_ONLY_CAR, SDGM_CAR, ASCM_INT, CC_REGEN_PADDLE_CAR, set_red_panda_canbus
 from openpilot.selfdrive.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, FRICTION_THRESHOLD, LateralAccelFromTorqueCallbackType, get_friction_threshold
 from openpilot.selfdrive.controls.lib.drive_helpers import get_friction
 
@@ -555,6 +555,15 @@ class CarInterface(CarInterfaceBase):
     )
     if use_panda_3d1_sched:
       gm_safety_cfg.safetyParam |= Panda.FLAG_GM_PANDA_3D1_SCHED
+
+    use_panda_paddle_sched = (
+      ret.openpilotLongitudinalControl and
+      ret.enableGasInterceptor and
+      bool(ret.flags & GMFlags.PEDAL_LONG.value) and
+      candidate in CC_REGEN_PADDLE_CAR
+    )
+    if use_panda_paddle_sched:
+      gm_safety_cfg.safetyParam |= Panda.FLAG_GM_PANDA_PADDLE_SCHED
 
     return ret
 

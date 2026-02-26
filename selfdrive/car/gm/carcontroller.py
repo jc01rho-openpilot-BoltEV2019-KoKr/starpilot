@@ -15,7 +15,6 @@ from openpilot.selfdrive.car.gm.values import CAR, DBC, AccState, CanBus, CarCon
 from openpilot.selfdrive.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.drive_helpers import apply_deadzone
 from openpilot.selfdrive.controls.lib.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
-from openpilot.common.swaglog import cloudlog
 
 VisualAlert = car.CarControl.HUDControl.VisualAlert
 NetworkLocation = car.CarParams.NetworkLocation
@@ -27,15 +26,6 @@ TransmissionType = car.CarParams.TransmissionType
 CAMERA_CANCEL_DELAY_FRAMES = 10
 # Enforce a minimum interval between steering messages to avoid a fault
 MIN_STEER_MSG_INTERVAL_MS = 15
-# Two‑sided spacing tuned for ~33 Hz steer; target a 10 ms wide window per interval
-# Paddle spoofing and scheduling constants
-PADDLE_STEER_GAP_MIN_NS = 5_000_000   # ≥5 ms each side (EPS guard)
-PADDLE_STEER_GAP_MAX_NS = 12_000_000  # cap for long intervals
-PADDLE_GAP_TARGET_NS    = 5_000_000   # aim per‑side gap even if interval//2 − early is larger
-PADDLE_NONBLOCK_GAP_NS  = 1_000_000   # ≥1 ms since last paddle send
-PADDLE_SLOT_EARLY_NS    = 1_000_000   # allow firing up to 1 ms before slot
-OVERFLOW_THRESH         = 1.00        # fire one extra slot whenever credits ≥ 1.0
-PADDLE_TARGET_HZ        = 42.0        # desired paddle rate (Hz) when regen active; steer is ~33 Hz
 # Constants for pitch compensation
 BRAKE_PITCH_FACTOR_BP = [5., 10.]  # [m/s] smoothly revert to planned accel at low speeds
 BRAKE_PITCH_FACTOR_V = [0., 1.]  # [unitless in [0,1]]; don't touch
@@ -52,10 +42,6 @@ class CarController(CarControllerBase):
     self.frame = 0
     self.last_steer_frame = 0
     self.last_steer_ts_ns = 0
-    self.last_regen_active = False
-    self.prev_steer_ts_ns = 0
-    self.last_spoof_ts_ns = 0
-    self.last_paddle_ts_ns = 0
     self.last_button_frame = 0
     self.cancel_counter = 0
     self.pedal_steady = 0.
@@ -93,14 +79,7 @@ class CarController(CarControllerBase):
     self.aego = 0.0
     self.regen_paddle_timer = 0
     self.planner_regen_hold = False
-
-
-
-    # Midpoint + overflow spoof accumulator and flags
-    self.spoof_accum = 0.0
-    self.spoof_mid_sent = False
-    self.spoof_over_sent = False
-    self.last_interval_ns = 0
+    self.paddle_handoff_frames = 0
 
   def calc_pedal_command(self, accel: float, long_active: bool, car_velocity) -> Tuple[float, bool]:
     if not long_active:
@@ -192,7 +171,6 @@ class CarController(CarControllerBase):
 
     # Send CAN commands.
     can_sends = []
-    paddle_sends = []
 
     if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
       phase_map = gmcan.malibu_phase_map_for_acc(CS.cruise_buttons)
@@ -208,113 +186,24 @@ class CarController(CarControllerBase):
       self.CP.enableGasInterceptor and
       (self.regen_paddle_timer >= 10 or self.planner_regen_hold)  # hysteresis or planner hint
     )
-    regen_active = raw_regen_active
+    use_panda_paddle_sched = (
+      self.CP.enableGasInterceptor and
+      self.CP.carFingerprint in CC_REGEN_PADDLE_CAR and
+      self.CP.openpilotLongitudinalControl and
+      bool(self.CP.flags & GMFlags.PEDAL_LONG.value)
+    )
+    if use_panda_paddle_sched:
+      if CC.enabled:
+        self.paddle_handoff_frames = 2
+      paddle_sched_feed_active = CC.enabled or (self.paddle_handoff_frames > 0)
+      if not CC.enabled and self.paddle_handoff_frames > 0:
+        self.paddle_handoff_frames -= 1
+    else:
+      self.paddle_handoff_frames = 0
+      paddle_sched_feed_active = False
 
-    # === Spoof scheduling: midpoint + overflow (~target Hz) ===
-    # Rising-edge reset on regen start
-    if raw_regen_active and not self.last_regen_active:
-      self.prev_steer_ts_ns = self.last_steer_ts_ns
-      self.last_spoof_ts_ns = 0
-      self.spoof_accum = 0.0
-      self.spoof_mid_sent = False
-      self.spoof_over_sent = False
-
-    if raw_regen_active:
-      # Interval between last two bus-0 steer sends
-      interval_ns = self.last_steer_ts_ns - self.prev_steer_ts_ns
-
-      # Adaptive two‑sided gap sized to the current steer interval, but capped to a target so the window stays wide enough
-      gap_ns = (PADDLE_STEER_GAP_MIN_NS if interval_ns <= 0 else
-                max(PADDLE_STEER_GAP_MIN_NS,
-                    min(PADDLE_STEER_GAP_MAX_NS,
-                        min((interval_ns // 2) - PADDLE_SLOT_EARLY_NS, PADDLE_GAP_TARGET_NS))))
-
-      # New steer interval? clear per-interval flags and add credits to reach target Hz
-      if interval_ns != self.last_interval_ns:
-        self.spoof_mid_sent = False
-        self.spoof_over_sent = False
-        self.last_interval_ns = interval_ns
-        # Add credits once per new steer interval to reach the desired paddle rate
-        if interval_ns > 0:
-          steer_hz = 1e9 / float(interval_ns)
-          extra_needed = max(0.0, (PADDLE_TARGET_HZ / steer_hz) - 1.0)  # e.g., 42/33 − 1 ≈ 0.2727
-          self.spoof_accum += extra_needed
-
-      # Midpoint spoof: one per interval
-      if not self.spoof_mid_sent and interval_ns > 0:
-        midpoint_ns = self.prev_steer_ts_ns + interval_ns // 2
-        # Compute spacing to last and next steer (two-sided guard)
-        next_steer_ts_ns = self.last_steer_ts_ns + interval_ns if interval_ns > 0 else 0
-        delta_after_ns = now_nanos - self.last_steer_ts_ns
-        delta_before_ns = (next_steer_ts_ns - now_nanos) if interval_ns > 0 else 1_000_000_000
-        if (CS.out.vEgo > 2.68
-            and now_nanos >= (midpoint_ns - PADDLE_SLOT_EARLY_NS)
-            and delta_after_ns >= gap_ns
-            and delta_before_ns >= gap_ns):
-          # Non-blocking 1 ms spacing for paddle frames
-          if now_nanos - self.last_paddle_ts_ns >= PADDLE_NONBLOCK_GAP_NS:
-            paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True, self.CP))
-            paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
-            self.last_paddle_ts_ns = now_nanos
-          self.last_spoof_ts_ns = now_nanos
-          self.spoof_mid_sent = True
-
-      # Overflow spoof: insert extra when accumulator allows
-      if self.spoof_accum >= OVERFLOW_THRESH and not self.spoof_over_sent and interval_ns > 0:
-        slot2_ns = self.prev_steer_ts_ns + (interval_ns * 2) // 3
-        # Two-sided spacing relative to steer
-        next_steer_ts_ns = self.last_steer_ts_ns + interval_ns if interval_ns > 0 else 0
-        delta_after_ns = now_nanos - self.last_steer_ts_ns
-        delta_before_ns = (next_steer_ts_ns - now_nanos) if interval_ns > 0 else 1_000_000_000
-        if (CS.out.vEgo > 2.68
-            and now_nanos >= (slot2_ns - PADDLE_SLOT_EARLY_NS)
-            and delta_after_ns >= gap_ns
-            and delta_before_ns >= gap_ns):
-          # Non-blocking 1 ms spacing for paddle frames
-          if now_nanos - self.last_paddle_ts_ns >= PADDLE_NONBLOCK_GAP_NS:
-            paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, True, self.CP))
-            paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, True))
-            self.last_paddle_ts_ns = now_nanos
-          self.last_spoof_ts_ns = now_nanos
-          self.spoof_over_sent = True
-          self.spoof_accum -= OVERFLOW_THRESH
-    # === End Spoof scheduling ===
-
-    # === Off-pulse scheduling on regen release ===
-    if not raw_regen_active and self.last_regen_active:
-      # schedule two off-slots at 1/3 and 2/3 of the last steer interval
-      if self.prev_steer_ts_ns and self.last_steer_ts_ns:
-        intv = self.last_steer_ts_ns - self.prev_steer_ts_ns
-        self.off_schedule_ns = [
-          self.prev_steer_ts_ns + intv // 3,
-          self.prev_steer_ts_ns + (2 * intv) // 3
-        ]
-        self.off_sent = [False, False]
-
-    if hasattr(self, "off_schedule_ns"):
-      for i, t_ns in enumerate(self.off_schedule_ns):
-        if not self.off_sent[i] and now_nanos >= (t_ns - PADDLE_SLOT_EARLY_NS):
-          # Two-sided spacing to steer before sending
-          interval_ns = self.last_steer_ts_ns - self.prev_steer_ts_ns
-          gap_ns = (PADDLE_STEER_GAP_MIN_NS if interval_ns <= 0 else
-                    max(PADDLE_STEER_GAP_MIN_NS,
-                        min(PADDLE_STEER_GAP_MAX_NS,
-                            min((interval_ns // 2) - PADDLE_SLOT_EARLY_NS, PADDLE_GAP_TARGET_NS))))
-          next_steer_ts_ns = self.last_steer_ts_ns + interval_ns if interval_ns > 0 else 0
-          delta_after_ns = now_nanos - self.last_steer_ts_ns
-          delta_before_ns = (next_steer_ts_ns - now_nanos) if interval_ns > 0 else 1_000_000_000
-          if (delta_after_ns >= gap_ns and delta_before_ns >= gap_ns):
-            # Non-blocking 1 ms spacing for paddle frames
-            if now_nanos - self.last_paddle_ts_ns >= PADDLE_NONBLOCK_GAP_NS:
-              paddle_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, False, self.CP))
-              paddle_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, False))
-              self.last_paddle_ts_ns = now_nanos
-            self.off_sent[i] = True
-      # clean up once both off pulses are sent
-      if hasattr(self, "off_sent") and all(self.off_sent):
-        del self.off_schedule_ns
-        del self.off_sent
-    # === End off-pulse scheduling ===
+    # Preserve existing on-send gate: only send "pressed" while above low-speed threshold.
+    paddle_spoof_pressed = raw_regen_active and (CS.out.vEgo > 2.68)
 
     # Steering (Active: 50Hz, inactive: 10Hz)
     steer_step = self.params.STEER_STEP if CC.latActive else self.params.INACTIVE_STEER_STEP
@@ -347,26 +236,11 @@ class CarController(CarControllerBase):
       if (self.CP.flags & GMFlags.CC_LONG.value) and CC.enabled and not CS.out.cruiseState.enabled: # Send 0 so Panda doesn't error
         apply_steer = 0
 
-      # shift previous steer timestamp
-      self.prev_steer_ts_ns = self.last_steer_ts_ns
       self.last_steer_ts_ns = now_nanos
       self.last_steer_frame = self.frame
       self.apply_steer_last = apply_steer
       idx = self.lka_steering_cmd_counter % 4
       can_sends.append(gmcan.create_steering_control(self.packer_pt, CanBus.POWERTRAIN, apply_steer, idx, CC.latActive))
-
-    # Update regen_active state and last_regen_paddle_pressed for next loop
-    self.last_regen_active = regen_active
-    self.last_regen_paddle_pressed = self.regen_paddle_pressed or self.planner_regen_hold
-
-    if paddle_sends:
-      interval_ns = self.last_steer_ts_ns - self.prev_steer_ts_ns
-      flush_gap_ns = (PADDLE_STEER_GAP_MIN_NS if interval_ns <= 0 else
-                      max(PADDLE_STEER_GAP_MIN_NS,
-                          min(PADDLE_STEER_GAP_MAX_NS,
-                              min((interval_ns // 2) - PADDLE_SLOT_EARLY_NS, PADDLE_GAP_TARGET_NS))))
-      if now_nanos - self.last_steer_ts_ns >= flush_gap_ns:
-        can_sends.extend(paddle_sends)
 
     spoof_ecm_cruise_cars = {
       CAR.CHEVROLET_BOLT_CC_2017,
@@ -461,6 +335,10 @@ class CarController(CarControllerBase):
           self.apply_gas = self.params.INACTIVE_REGEN
 
         idx = (self.frame // 4) % 4
+
+        if paddle_sched_feed_active:
+          can_sends.append(gmcan.create_prndl2_command(self.packer_pt, CanBus.POWERTRAIN, paddle_spoof_pressed, self.CP))
+          can_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, paddle_spoof_pressed))
 
         if self.CP.flags & GMFlags.CC_LONG.value:
           if CC.longActive and CS.out.cruiseState.enabled and CS.out.vEgo > self.CP.minEnableSpeed:
