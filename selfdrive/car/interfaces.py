@@ -42,7 +42,7 @@ FRICTION_THRESHOLD = 0.12
 def get_friction_threshold(v_ego):
   # Interpolate friction threshold
   from openpilot.common.numpy_fast import interp
-  return interp(v_ego, [1 * CV.MPH_TO_MS, 75 * CV.MPH_TO_MS], [0.12, 0.3])
+  return interp(v_ego, [1 * CV.MPH_TO_MS, 20 * CV.MPH_TO_MS, 75 * CV.MPH_TO_MS], [0.12, 0.158, 0.3])
 
 TORQUE_PARAMS_PATH = os.path.join(BASEDIR, 'selfdrive/car/torque_data/params.toml')
 TORQUE_OVERRIDE_PATH = os.path.join(BASEDIR, 'selfdrive/car/torque_data/override.toml')
