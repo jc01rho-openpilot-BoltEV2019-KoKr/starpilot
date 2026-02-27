@@ -103,6 +103,10 @@ class Parser:
                      out_shape=(ModelConstants.IDX_N, ModelConstants.PLAN_WIDTH))
       if 'planplus' in outs:
         self.parse_mdn('planplus', outs, in_N=plan_in_N, out_N=plan_out_N, out_shape=(ModelConstants.IDX_N, ModelConstants.PLAN_WIDTH))
+    elif 'planplus' in outs:
+      planplus_mhp = outs['planplus'].shape[1] != 2 * ModelConstants.IDX_N * ModelConstants.PLAN_WIDTH
+      planplus_in_N, planplus_out_N = (ModelConstants.PLAN_MHP_N, ModelConstants.PLAN_MHP_SELECTION) if planplus_mhp else (0, 0)
+      self.parse_mdn('planplus', outs, in_N=planplus_in_N, out_N=planplus_out_N, out_shape=(ModelConstants.IDX_N, ModelConstants.PLAN_WIDTH))
     if 'lane_lines' in outs:
       self.parse_mdn('lane_lines', outs, in_N=0, out_N=0,
                      out_shape=(ModelConstants.NUM_LANE_LINES, ModelConstants.IDX_N, ModelConstants.LANE_LINES_WIDTH))
