@@ -285,13 +285,12 @@ class CAR(Platforms):
   CHEVROLET_BOLT_CC_2022_2023 = GMPlatformConfig(
     [
       GMCarDocs("Chevrolet Bolt EV 2022-2023 - No-ACC"),
-      GMCarDocs("Chevrolet Bolt EV 2022-2023 - No-ACC"),
     ],
     CHEVROLET_BOLT_ACC_2022_2023.specs,
   )
   CHEVROLET_BOLT_CC_2017 = GMPlatformConfig(
     [GMCarDocs("Chevrolet Bolt EV 2017 - No-ACC")],
-    CHEVROLET_BOLT_ACC_2022_2023.specs,
+    GMCarSpecs(mass=1669, wheelbase=2.63779, steerRatio=16.8, centerToFrontRatio=0.4, tireStiffnessFactor=1.0),
   )
   CHEVROLET_EQUINOX_CC = GMPlatformConfig(
     [GMCarDocs("Chevrolet Equinox 2019-22 - No-ACC")],

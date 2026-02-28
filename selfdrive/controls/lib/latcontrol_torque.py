@@ -56,11 +56,18 @@ DEADZONE_BOOST_LAT_ACCEL = 0.08
 UNWIND_D_DES_THRESHOLD = -1.0
 UNWIND_LAT_ACCEL_NEAR_ZERO = 0.3
 
-BOLT_CARS = (
+BOLT_2022_2023_CARS = (
   GM_CAR.CHEVROLET_BOLT_ACC_2022_2023,
+  GM_CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
   GM_CAR.CHEVROLET_BOLT_CC_2022_2023,
+)
+BOLT_2019_2021_CARS = (
   GM_CAR.CHEVROLET_BOLT_CC_2019_2021,
 )
+BOLT_2017_CARS = (
+  GM_CAR.CHEVROLET_BOLT_CC_2017,
+)
+BOLT_CARS = BOLT_2022_2023_CARS + BOLT_2019_2021_CARS + BOLT_2017_CARS
 
 class LatControlTorque(LatControl):
   def __init__(self, CP, CI, dt):
@@ -84,6 +91,13 @@ class LatControlTorque(LatControl):
     self.prev_desired_lateral_accel = 0.0
 
     self.is_bolt = CP.carFingerprint in BOLT_CARS
+    self.is_bolt_2022_2023 = CP.carFingerprint in BOLT_2022_2023_CARS
+    self.is_bolt_2019_2021 = CP.carFingerprint in BOLT_2019_2021_CARS
+    self.is_bolt_2017 = CP.carFingerprint in BOLT_2017_CARS
+    # Keep Bolt-specific FF controls isolated by generation.
+    self.use_bolt_ff_scaling = self.is_bolt_2022_2023 or self.is_bolt_2019_2021 or self.is_bolt_2017
+    self.use_bolt_deadzone_boost = self.is_bolt_2022_2023 or self.is_bolt_2019_2021 or self.is_bolt_2017
+    self.use_bolt_ki_multiplier = self.is_bolt_2022_2023 or self.is_bolt_2019_2021 or self.is_bolt_2017
     self.torque_ff_scale_pos = 1.0
     self.torque_ff_scale_neg = 1.0
     self.torque_deadzone_boost_neg = 0.0
@@ -93,7 +107,7 @@ class LatControlTorque(LatControl):
       self.torque_ff_scale_neg = float(self.torque_params.ki)
       self.torque_ki_mult = float(self.torque_params.kd)
       self.torque_deadzone_boost_neg = float(getattr(self.torque_params, "kfDEPRECATED", 0.0))
-      if self.torque_ki_mult > 0.0 and self.torque_ki_mult != 1.0:
+      if self.use_bolt_ki_multiplier and self.torque_ki_mult > 0.0 and self.torque_ki_mult != 1.0:
         self.pid._k_i = [self.pid._k_i[0], [k * self.torque_ki_mult for k in self.pid._k_i[1]]]
 
   def update_live_torque_params(self, latAccelFactor, latAccelOffset, friction):
@@ -171,13 +185,13 @@ class LatControlTorque(LatControl):
       # latAccelOffset corrects roll compensation bias from device roll misalignment relative to car roll
       ff -= self.torque_params.latAccelOffset
       ff_scale = 1.0
-      if self.is_bolt:
+      if self.use_bolt_ff_scaling:
         ff_scale = np.interp(ff, [-FF_SCALE_BLEND_LAT_ACCEL, 0.0, FF_SCALE_BLEND_LAT_ACCEL],
                              [self.torque_ff_scale_neg, 1.0, self.torque_ff_scale_pos])
         ff *= ff_scale
       ff += get_friction(error_with_lsf + JERK_GAIN * desired_lateral_jerk, lateral_accel_deadzone, get_friction_threshold(CS.vEgo), self.torque_params)
       deadzone_boost_active = False
-      if self.is_bolt and self.torque_deadzone_boost_neg > 0.0 and gravity_adjusted_future_lateral_accel < 0.0:
+      if self.use_bolt_deadzone_boost and self.torque_deadzone_boost_neg > 0.0 and gravity_adjusted_future_lateral_accel < 0.0:
         if abs(gravity_adjusted_future_lateral_accel) < DEADZONE_BOOST_LAT_ACCEL:
           boost_scale = np.interp(abs(gravity_adjusted_future_lateral_accel), [0.0, DEADZONE_BOOST_LAT_ACCEL], [1.0, 0.0])
           ff -= self.torque_deadzone_boost_neg * boost_scale

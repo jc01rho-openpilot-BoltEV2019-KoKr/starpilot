@@ -7,7 +7,7 @@ from panda import Panda
 from openpilot.common.conversions import Conversions as CV
 from openpilot.selfdrive.car import create_button_events, get_safety_config
 from openpilot.selfdrive.car.gm.radar_interface import RADAR_HEADER_MSG
-from openpilot.selfdrive.car.gm.values import CAR, CruiseButtons, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, CanBus, GMFlags, CC_ONLY_CAR, SDGM_CAR, ASCM_INT, set_red_panda_canbus
+from openpilot.selfdrive.car.gm.values import CAR, CruiseButtons, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, CanBus, GMFlags, CC_ONLY_CAR, SDGM_CAR, ASCM_INT, CC_REGEN_PADDLE_CAR, set_red_panda_canbus
 from openpilot.selfdrive.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, FRICTION_THRESHOLD, LateralAccelFromTorqueCallbackType, get_friction_threshold
 from openpilot.selfdrive.controls.lib.drive_helpers import get_friction
 
@@ -57,8 +57,8 @@ NON_LINEAR_TORQUE_PARAMS = {
     "right": [2.0, 1.0, 0.205, 0.0],
   },
   CAR.CHEVROLET_BOLT_CC_2017: {
-    "left": [2.15, 1.0, 0.21, 0.0],
-    "right": [2.15, 1.0, 0.21, 0.0],
+    "left": [2.15, 1.0, 0.1785, 0.0],
+    "right": [2.15, 1.0, 0.1785, 0.0],
   },
   CAR.GMC_ACADIA: {
     "left": [4.78003305, 1.0, 0.3122, 0.05591772],
@@ -382,7 +382,19 @@ class CarInterface(CarInterfaceBase):
       ret.lateralTuning.torque.kd = 0.93
       ret.lateralTuning.torque.kfDEPRECATED = 0.02
 
+      if candidate in (CAR.CHEVROLET_BOLT_CC_2019_2021,
+                       CAR.CHEVROLET_BOLT_ACC_2022_2023,
+                       CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+                       CAR.CHEVROLET_BOLT_CC_2022_2023):
+        # Apply 2019-style negative FF and Ki-mult tweaks to 2019-2021 and 2022 variants.
+        ret.lateralTuning.torque.ki *= 1.07
+        ret.lateralTuning.torque.kd *= 0.93
+
       if candidate == CAR.CHEVROLET_BOLT_CC_2017:
+        ret.lateralTuning.torque.kp *= 0.9
+        ret.lateralTuning.torque.ki *= 0.9
+        ret.lateralTuning.torque.kd *= 0.85
+        ret.lateralTuning.torque.kfDEPRECATED = 0.0
         gm_safety_cfg.safetyParam |= Panda.FLAG_GM_BOLT_2017
 
       if ret.enableGasInterceptor:
@@ -543,6 +555,15 @@ class CarInterface(CarInterfaceBase):
     )
     if use_panda_3d1_sched:
       gm_safety_cfg.safetyParam |= Panda.FLAG_GM_PANDA_3D1_SCHED
+
+    use_panda_paddle_sched = (
+      ret.openpilotLongitudinalControl and
+      ret.enableGasInterceptor and
+      bool(ret.flags & GMFlags.PEDAL_LONG.value) and
+      candidate in CC_REGEN_PADDLE_CAR
+    )
+    if use_panda_paddle_sched:
+      gm_safety_cfg.safetyParam |= Panda.FLAG_GM_PANDA_PADDLE_SCHED
 
     return ret
 

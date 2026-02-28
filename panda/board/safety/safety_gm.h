@@ -87,10 +87,16 @@ const uint16_t GM_PARAM_BOLT_2017 = 2048;
 const uint16_t GM_PARAM_BOLT_2022_PEDAL = 4096;
 const uint16_t GM_PARAM_REMOTE_START_BOOTS_COMMA = 8192;
 const uint16_t GM_PARAM_PANDA_3D1_SCHED = 16384;
+const uint16_t GM_PARAM_PANDA_PADDLE_SCHED = 32768;
 
 const uint32_t GM_3D1_PERIOD_US = 100000U;
 const uint32_t GM_3D1_TX_OFFSET_US = 0U;
 const uint32_t GM_3D1_LOCK_TOLERANCE_US = 20000U;
+const uint32_t GM_PADDLE_PERIOD_US = 25000U;
+const uint32_t GM_PADDLE_TX_OFFSET_US = 0U;
+const uint32_t GM_PADDLE_LOCK_TOLERANCE_US = 5000U;
+const uint32_t GM_PADDLE_STALE_US = 100000U;
+const uint32_t GM_PADDLE_FEED_STALE_US = 100000U;
 
 void can_send(CANPacket_t *to_push, uint8_t bus_number, bool skip_tx_hook);
 void can_set_checksum(CANPacket_t *packet);
@@ -120,6 +126,7 @@ bool gm_ascm_int = false;
 bool gm_force_brake_c9 = false;
 bool gm_remote_start_boots_comma = false;
 bool gm_panda_3d1_sched = false;
+bool gm_panda_paddle_sched = false;
 
 bool gm_3d1_spoof_valid = false;
 bool gm_3d1_internal_tx = false;
@@ -128,6 +135,75 @@ uint32_t gm_3d1_next_tx_us = 0U;
 uint32_t gm_3d1_expected_stock_us = 0U;
 uint32_t gm_3d1_last_stock_us = 0U;
 bool gm_3d1_phase_locked = false;
+bool gm_paddle_internal_tx = false;
+
+typedef struct {
+  bool spoof_valid;
+  uint8_t spoof_data[8];
+  uint32_t next_tx_us;
+  uint32_t expected_stock_us;
+  uint32_t last_stock_us;
+  uint32_t last_feed_us;
+  bool phase_locked;
+} GmPeriodicSpoofState;
+
+GmPeriodicSpoofState gm_bd_state = {0};
+GmPeriodicSpoofState gm_prndl2_state = {0};
+
+static void gm_update_periodic_phase(GmPeriodicSpoofState *state, uint32_t now_us, uint32_t period_us, uint32_t lock_tolerance_us) {
+  state->last_stock_us = now_us;
+  if (!state->phase_locked) {
+    state->phase_locked = true;
+    state->expected_stock_us = now_us + period_us;
+  } else {
+    int32_t phase_err_us = (int32_t)(now_us - state->expected_stock_us);
+    if (phase_err_us < 0) {
+      phase_err_us = -phase_err_us;
+    }
+
+    if ((uint32_t)phase_err_us <= lock_tolerance_us) {
+      state->expected_stock_us += period_us;
+    } else {
+      state->expected_stock_us = now_us + period_us;
+    }
+  }
+}
+
+static bool gm_periodic_scheduler_ready(const GmPeriodicSpoofState *state, uint32_t now_us, uint32_t stale_us, uint32_t feed_stale_us) {
+  bool stock_stale = (state->last_stock_us == 0U) || (get_ts_elapsed(now_us, state->last_stock_us) > stale_us);
+  bool feed_stale = (state->last_feed_us == 0U) || (get_ts_elapsed(now_us, state->last_feed_us) > feed_stale_us);
+  return state->phase_locked && !stock_stale && !feed_stale;
+}
+
+static void gm_try_send_periodic_spoof(uint32_t now_us, uint32_t addr, uint8_t dlc, GmPeriodicSpoofState *state, uint32_t period_us) {
+  if (!(gm_panda_paddle_sched && state->spoof_valid && (state->next_tx_us != 0U))) {
+    return;
+  }
+
+  if (!gm_periodic_scheduler_ready(state, now_us, GM_PADDLE_STALE_US, GM_PADDLE_FEED_STALE_US)) {
+    return;
+  }
+
+  if ((int32_t)(now_us - state->next_tx_us) < 0) {
+    return;
+  }
+
+  CANPacket_t to_send = {0};
+  to_send.returned = 0U;
+  to_send.rejected = 0U;
+  to_send.extended = 0U;
+  to_send.addr = addr;
+  to_send.bus = 0U;
+  to_send.data_len_code = dlc;
+  (void)memcpy(to_send.data, state->spoof_data, 8U);
+  can_set_checksum(&to_send);
+
+  gm_paddle_internal_tx = true;
+  can_send(&to_send, 0U, false);
+  gm_paddle_internal_tx = false;
+
+  state->next_tx_us += period_us;
+}
 
 static void gm_try_send_3d1_spoof(uint32_t now_us) {
   if (!(gm_panda_3d1_sched && gm_3d1_spoof_valid && (gm_3d1_next_tx_us != 0U))) {
@@ -259,6 +335,20 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
 
     if (addr == 0xBD) {
       regen_braking = (GET_BYTE(to_push, 0) >> 4) != 0U;
+
+      if (gm_panda_paddle_sched) {
+        uint32_t now_us = microsecond_timer_get();
+        gm_update_periodic_phase(&gm_bd_state, now_us, GM_PADDLE_PERIOD_US, GM_PADDLE_LOCK_TOLERANCE_US);
+        gm_bd_state.next_tx_us = now_us + GM_PADDLE_TX_OFFSET_US;
+        gm_try_send_periodic_spoof(now_us, 0xBDU, 7U, &gm_bd_state, GM_PADDLE_PERIOD_US);
+      }
+    }
+
+    if ((addr == 0x1F5) && gm_panda_paddle_sched) {
+      uint32_t now_us = microsecond_timer_get();
+      gm_update_periodic_phase(&gm_prndl2_state, now_us, GM_PADDLE_PERIOD_US, GM_PADDLE_LOCK_TOLERANCE_US);
+      gm_prndl2_state.next_tx_us = now_us + GM_PADDLE_TX_OFFSET_US;
+      gm_try_send_periodic_spoof(now_us, 0x1F5U, 8U, &gm_prndl2_state, GM_PADDLE_PERIOD_US);
     }
 
     // Pedal Interceptor
@@ -385,6 +475,23 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
     if (!controls_allowed && regen_apply) {
       tx = false;
     }
+
+    if (gm_panda_paddle_sched && !gm_paddle_internal_tx) {
+      uint32_t now_us = microsecond_timer_get();
+      if (tx) {
+        (void)memcpy(gm_bd_state.spoof_data, to_send->data, 7U);
+        gm_bd_state.spoof_data[7] = 0U;
+        gm_bd_state.spoof_valid = true;
+        gm_bd_state.last_feed_us = now_us;
+        if (gm_bd_state.next_tx_us == 0U) {
+          gm_bd_state.next_tx_us = now_us + GM_PADDLE_TX_OFFSET_US;
+        }
+      }
+      bool scheduler_ready = gm_periodic_scheduler_ready(&gm_bd_state, now_us, GM_PADDLE_STALE_US, GM_PADDLE_FEED_STALE_US);
+      if (scheduler_ready) {
+        tx = false;
+      }
+    }
   }
 
   // PRNDL2 regen check (7 for Gen0, Gen1. 5 For Gen2)
@@ -393,6 +500,22 @@ static bool gm_tx_hook(const CANPacket_t *to_send) {
     bool prndl_apply = (prndl2 == 7) || (prndl2 == 5);
     if (!controls_allowed && prndl_apply) {
       tx = false;
+    }
+
+    if (gm_panda_paddle_sched && !gm_paddle_internal_tx) {
+      uint32_t now_us = microsecond_timer_get();
+      if (tx) {
+        (void)memcpy(gm_prndl2_state.spoof_data, to_send->data, 8U);
+        gm_prndl2_state.spoof_valid = true;
+        gm_prndl2_state.last_feed_us = now_us;
+        if (gm_prndl2_state.next_tx_us == 0U) {
+          gm_prndl2_state.next_tx_us = now_us + GM_PADDLE_TX_OFFSET_US;
+        }
+      }
+      bool scheduler_ready = gm_periodic_scheduler_ready(&gm_prndl2_state, now_us, GM_PADDLE_STALE_US, GM_PADDLE_FEED_STALE_US);
+      if (scheduler_ready) {
+        tx = false;
+      }
     }
   }
   return tx;
@@ -471,6 +594,7 @@ static safety_config gm_init(uint16_t param) {
   gm_force_brake_c9 = GET_FLAG(param, GM_PARAM_FORCE_BRAKE_C9);
   gm_remote_start_boots_comma = GET_FLAG(param, GM_PARAM_REMOTE_START_BOOTS_COMMA);
   gm_panda_3d1_sched = GET_FLAG(param, GM_PARAM_PANDA_3D1_SCHED) && gm_pedal_long && !gm_has_acc && !gm_bolt_2022_pedal;
+  gm_panda_paddle_sched = GET_FLAG(param, GM_PARAM_PANDA_PADDLE_SCHED) && gm_pedal_long && enable_gas_interceptor;
 
   gm_3d1_spoof_valid = false;
   gm_3d1_internal_tx = false;
@@ -478,6 +602,23 @@ static safety_config gm_init(uint16_t param) {
   gm_3d1_expected_stock_us = 0U;
   gm_3d1_last_stock_us = 0U;
   gm_3d1_phase_locked = false;
+  gm_paddle_internal_tx = false;
+
+  gm_bd_state.spoof_valid = false;
+  gm_bd_state.next_tx_us = 0U;
+  gm_bd_state.expected_stock_us = 0U;
+  gm_bd_state.last_stock_us = 0U;
+  gm_bd_state.last_feed_us = 0U;
+  gm_bd_state.phase_locked = false;
+  (void)memset(gm_bd_state.spoof_data, 0, sizeof(gm_bd_state.spoof_data));
+
+  gm_prndl2_state.spoof_valid = false;
+  gm_prndl2_state.next_tx_us = 0U;
+  gm_prndl2_state.expected_stock_us = 0U;
+  gm_prndl2_state.last_stock_us = 0U;
+  gm_prndl2_state.last_feed_us = 0U;
+  gm_prndl2_state.phase_locked = false;
+  (void)memset(gm_prndl2_state.spoof_data, 0, sizeof(gm_prndl2_state.spoof_data));
 
   safety_config ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_ASCM_TX_MSGS);
   if (gm_hw == GM_CAM) {
