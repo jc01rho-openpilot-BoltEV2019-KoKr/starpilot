@@ -342,7 +342,10 @@ def manager_thread() -> None:
 
     running = ' '.join("{}{}\u001b[0m".format("\u001b[32m" if p.proc.is_alive() else "\u001b[31m", p.name)
                        for p in managed_processes.values() if p.proc)
-    print(running)
+
+    if os.path.isfile("/tmp/print_processes"):
+      print(running)
+
     cloudlog.debug(running)
 
     # send managerState

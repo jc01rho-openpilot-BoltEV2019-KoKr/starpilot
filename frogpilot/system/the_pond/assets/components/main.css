@@ -20,47 +20,49 @@
   --breakpoint-lg: 1024px;
   --breakpoint-xl: 1280px;
 
-  /* Colors */
-  --accent-bg: #673ab7;
-  --accent-hover-bg: #512da8;
-  --card-bg: #234423;
+  /* Colors — Galaxy palette (cosmic purple · teal · rose · amber) */
+  --accent-bg: #8b6cc5;
+  --accent-hover-bg: #7558b0;
+  --card-bg: #121224;
   --color-black: #000000;
-  --color-confirm: #1a73e8;
-  --color-confirm-hover: #0758ad;
-  --color-gray-100: #f5f5f5;
-  --color-gray-200: #e0e0e0;
-  --color-gray-300: #c2c2c2;
-  --color-gray-400: #a4a4a4;
-  --color-gray-500: #8f8f8f;
-  --color-gray-600: #737373;
-  --color-gray-700: #595959;
-  --color-gray-800: #333333;
-  --color-gray-900: #1a1a1a;
+  --color-confirm: #8b6cc5;
+  --color-confirm-hover: #7558b0;
+  --color-gray-100: #f0f0f8;
+  --color-gray-200: #d8d8e4;
+  --color-gray-300: #b8b8cc;
+  --color-gray-400: #9898b0;
+  --color-gray-500: #7e7e98;
+  --color-gray-600: #636380;
+  --color-gray-700: #4a4a64;
+  --color-gray-800: #2e2e44;
+  --color-gray-900: #1a1a30;
   --color-white: #ffffff;
-  --danger-bg: #b71c1c;
-  --danger-fg: #ef1313;
-  --danger-hover-bg: #d32f2f;
-  --input-bg: #2f5432;
-  --main-bg: #0b1b0b;
-  --main-fg: #178643;
-  --secondary-bg: #264026;
-  --selected-camera-bg: #1f2f1f;
-  --sidebar-active-bg: #64c87826;
-  --sidebar-bg: #264026;
-  --sidebar-border-color: #1e2e1e;
+  --danger-bg: #e05577;
+  --danger-fg: #e05577;
+  --danger-hover-bg: #c04466;
+  --glow-primary: 0 0 0 2px var(--main-fg), 0 0 10px rgba(139, 108, 197, 0.35);
+  --input-bg: #161630;
+  --main-bg: #06060f;
+  --main-fg: #8b6cc5;
+  --secondary-bg: #0e0e1a;
+  --selected-camera-bg: #0b0b18;
+  --sidebar-active-bg: rgba(139, 108, 197, 0.15);
+  --sidebar-bg: #0a0a16;
+  --sidebar-border-color: #1e1e3e;
   --sidebar-fg: #ffffff;
-  --sidebar-title-fg: #193446;
-  --success-bg: #039226;
-  --success-fg: #00a100;
-  --success-hover-bg: #01be2d;
-  --text-color: #ffffff;
-  --text-muted: #a0a0a0;
+  --sidebar-title-fg: #8b6cc5;
+  --success-bg: #5ec8c8;
+  --success-fg: #5ec8c8;
+  --success-hover-bg: #4ab3b3;
+  --switch-inactive-bg: #1e1e3e;
+  --text-color: #e8e8f0;
+  --text-muted: #8080a8;
   --text-on-primary: var(--sidebar-fg);
   --text-on-surface: var(--text-color);
-  --thumb-color: #178643;
-  --track-color: #1a3a1a;
-  --warning-bg: #ff9800;
-  --warning-hover-bg: #f57c00;
+  --thumb-color: #8b6cc5;
+  --track-color: #14142e;
+  --warning-bg: #d4a060;
+  --warning-hover-bg: #b8884a;
 
   /* Effects */
   --disabled-opacity: 0.5;
@@ -71,7 +73,7 @@
   --hover-scale-lg: scale(1.1);
 
   /* Fonts */
-  --font-body: "Open Sans", sans-serif;
+  --font-body: "Inter", "Open Sans", sans-serif;
   --font-mono: "Courier New", Courier, monospace;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.85rem;
@@ -96,9 +98,9 @@
   --width-xxxxl: 1200px;
 
   /* Shadows */
-  --shadow-xs: 0 1px 2px rgba(0,0,0,0.05);
-  --shadow-sm: 0 2px 4px rgba(0,0,0,0.1);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.2);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.2);
 
   /* Spacing */
   --gap-xxs: 0.125rem;
@@ -172,12 +174,14 @@ input[type="checkbox"],
 input[type="radio"],
 .manage-keys-link,
 .route_card,
-.sidebar .menu_section > li > ul > li,
+.sidebar .menu_section>li>ul>li,
 .clickable {
   cursor: pointer;
 }
 
-body { padding-bottom: 0 !important; }
+body {
+  padding-bottom: 0 !important;
+}
 
 /* ――― Layout containers ――― */
 .content {
@@ -199,9 +203,17 @@ h3 {
 }
 
 /* ――― Helpers & states ――― */
-.hidden     { display: none; }
-html        { cursor: default; }
-.no_scroll  { overflow: hidden; }
+.hidden {
+  display: none;
+}
+
+html {
+  cursor: default;
+}
+
+.no_scroll {
+  overflow: hidden;
+}
 
 .not_implemented {
   cursor: not-allowed;
@@ -251,7 +263,9 @@ textarea {
   cursor: text;
 }
 
-label[for] { cursor: default; }
+label[for] {
+  cursor: default;
+}
 
 /* ――― Snackbar component ――― */
 .snackbar {
@@ -297,6 +311,7 @@ a {
     bottom: 0;
     opacity: 0;
   }
+
   to {
     bottom: var(--snackbar-offset, 30px);
     opacity: 1;
@@ -304,13 +319,20 @@ a {
 }
 
 @keyframes fadeout {
-  from { opacity: 1; }
-  to   { opacity: 0; }
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
 }
 
 /* ――― Breakpoint overrides ――― */
 @media only screen and (max-width: var(--breakpoint-md)) {
-  .content { margin-left: 0; }
+  .content {
+    margin-left: 0;
+  }
 }
 
 @media only screen and (max-width: 768px) and (orientation: portrait) {
@@ -320,6 +342,7 @@ a {
     padding-left: 1rem;
     padding-right: 1rem;
   }
+
   #snackbar_wrapper {
     left: 50%;
     transform: translateX(-50%);
@@ -333,6 +356,7 @@ a {
     bottom: 0;
     opacity: 0;
   }
+
   to {
     bottom: var(--snackbar-offset, 30px);
     opacity: 1;
@@ -340,17 +364,61 @@ a {
 }
 
 @-webkit-keyframes fadeout {
-  from { opacity: 1; }
-  to   { opacity: 0; }
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+/* ——— Tunnel notice banner ——— */
+.tunnel-notice {
+  align-items: center;
+  background: linear-gradient(135deg, var(--card-bg), var(--secondary-bg));
+  border: var(--border-width-thin) var(--border-style-base) var(--sidebar-border-color);
+  border-left: 3px solid var(--main-fg);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-md);
+  color: var(--text-color);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  margin: var(--margin-xl) auto;
+  max-width: var(--width-xl);
+  padding: var(--padding-xl) var(--padding-xxl);
+  text-align: center;
+}
+
+.tunnel-notice-icon {
+  font-size: 2.5rem;
+  opacity: 0.8;
+}
+
+.tunnel-notice-title {
+  color: var(--text-color);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  margin: 0;
+}
+
+.tunnel-notice-body {
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  margin: 0;
 }
 
 ::-webkit-scrollbar {
   height: 8px;
   width: 8px;
 }
+
 ::-webkit-scrollbar-track {
   background: var(--track-color);
 }
+
 ::-webkit-scrollbar-thumb {
   background-color: var(--thumb-color);
   border-radius: var(--border-radius-sm);

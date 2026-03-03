@@ -300,9 +300,135 @@ def setup(app):
 
     return jsonify(message=f"{', '.join(saved)} saved successfully!")
 
-  @app.route("/api/params", methods=["GET"])
+  @app.route("/api/params", methods=["GET", "PUT"])
   def get_param():
+    if request.method == "PUT":
+      data = request.get_json()
+      if not data or "key" not in data or "value" not in data:
+        return jsonify({"error": "Missing 'key' or 'value' in request body."}), 400
+
+      key = data["key"]
+      val = data["value"]
+
+      # Python json parses true/false as boolean
+      if isinstance(val, bool):
+        str_val = "1" if val else "0"
+      else:
+        str_val = str(val)
+
+      allowed_keys = {k for k, _, _, _ in frogpilot_default_params if k not in EXCLUDED_KEYS}
+      if key not in allowed_keys:
+        return jsonify({"error": f"Parameter '{key}' is not editable."}), 403
+
+      # 1. Prevent changing the model or reboot-required toggles while the car is actively driving
+      reboot_keys = {"Model", "AlwaysOnLateral", "ForceTorqueController", "NNFF", "NNFFLite"}
+      if key in reboot_keys and params.get_bool("IsOnroad"):
+        friendly_names = {
+          "Model": "Driving Model",
+          "AlwaysOnLateral": "Always On Lateral",
+          "ForceTorqueController": "Force Torque Controller",
+          "NNFF": "NNFF",
+          "NNFFLite": "NNFF-Lite"
+        }
+        name = friendly_names.get(key, key)
+        return jsonify({"error": f"Cannot change {name} while the car is driving. A reboot is required."}), 403
+
+      params.put(key, str_val)
+
+      if key == "Model":
+        # 2. Sync ModelVersion explicitly
+        try:
+          import json
+          with open("/data/models/.model_versions.json", "r") as f:
+            versions = json.load(f)
+            if str_val in versions:
+              params.put("ModelVersion", versions[str_val])
+        except Exception:
+          pass # Failsafe if json doesn't exist
+
+      update_frogpilot_toggles()
+
+      return jsonify({"message": f"Parameter '{key}' updated successfully."}), 200
+
     return params.get(request.args.get("key")) or "", 200
+
+  @app.route("/api/params/all", methods=["GET"])
+  def get_all_params():
+    allowed_keys = {k for k, _, _, _ in frogpilot_default_params if k not in EXCLUDED_KEYS}
+
+    # Establish intended types from defaults
+    types = {}
+    for k, default_val, _, _ in frogpilot_default_params:
+      if k in allowed_keys:
+        if default_val in ("0", "1", b"0", b"1") or isinstance(default_val, bool):
+          types[k] = bool
+        elif isinstance(default_val, float) or (isinstance(default_val, str) and "." in default_val and default_val.replace(".", "", 1).isdigit()):
+          types[k] = float
+        elif isinstance(default_val, int) or (isinstance(default_val, str) and default_val.isdigit()):
+          types[k] = int
+        else:
+          types[k] = str
+
+    # Override ambiguous "0"/"1" defaults using layout JSON's authoritative data_type
+    try:
+      layout_path = os.path.join(os.path.dirname(__file__), "assets", "components", "tools", "device_settings_layout.json")
+      with open(layout_path) as f:
+        layout_data = json.load(f)
+      for section in layout_data:
+        for p in section.get("params", []):
+          k = p.get("key")
+          dt = p.get("data_type")
+          if k in types and dt in ("int", "float") and types[k] == bool:
+            types[k] = float if dt == "float" else int
+    except Exception:
+      pass
+
+    result = {}
+    for key in allowed_keys:
+      t = types.get(key, str)
+      try:
+        if t == bool:
+          result[key] = params.get_bool(key)
+        else:
+          raw = params.get(key)
+          raw_str = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw or "")
+
+          if not raw_str:
+             result[key] = 0.0 if t == float else (0 if t == int else "")
+          elif t == float:
+             result[key] = float(raw_str)
+          elif t == int:
+             result[key] = int(float(raw_str))
+          else:
+             result[key] = raw_str
+      except Exception:
+        result[key] = None
+
+    return jsonify(result), 200
+
+  @app.route("/api/models/installed", methods=["GET"])
+  def get_installed_models():
+    """Returns only models with files present in /data/models/."""
+    import os
+
+    available = (params.get("AvailableModels", encoding="utf-8") or "").split(",")
+    names = (params.get("AvailableModelNames", encoding="utf-8") or "").split(",")
+    models_dir = "/data/models"
+
+    try:
+      on_disk = os.listdir(models_dir) if os.path.isdir(models_dir) else []
+    except Exception:
+      on_disk = []
+
+    installed = []
+    for i, key in enumerate(available):
+      if not key:
+        continue
+      if any(f.startswith(f"{key}.") or f.startswith(f"{key}_") for f in on_disk):
+        label = names[i] if i < len(names) else key
+        installed.append({"value": key, "label": label})
+
+    return jsonify(installed), 200
 
   @app.route("/api/params_memory", methods=["GET"])
   def get_param_memory():
@@ -1441,12 +1567,15 @@ def setup(app):
       run_cmd(["tmux", "resize-window", "-t", "comma:0", "-x", "240", "-y", "70"], "Resized tmux window", "Failed to resize tmux window")
 
     def generate():
+      last_output = ""
       while True:
         output = subprocess.check_output(["tmux", "capture-pane", "-t", "comma:0", "-p", "-S", "-1000"], text=True)
 
-        yield "data: " + "\n".join(reversed(output.splitlines())).replace("\n", "\ndata: ") + "\n\n"
+        if output != last_output:
+          yield "data: " + "\n".join(reversed(output.splitlines())).replace("\n", "\ndata: ") + "\n\n"
+          last_output = output
 
-        time.sleep(0.1)
+        time.sleep(0.5)
     return Response(generate(), mimetype="text/event-stream")
 
   @app.route("/api/tmux_log/rename/<old>/<new>", methods=["PUT"])

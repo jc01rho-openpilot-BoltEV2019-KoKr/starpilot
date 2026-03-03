@@ -52,13 +52,14 @@ export function TailscaleControl() {
   checkInstallStatus()
 
   return html`
-    <div class="tailscale-wrapper">
+    <div class="toggle-control-widget" style="margin-top: 1.5rem">
       <section class="tailscale-widget">
-        <div class="tailscale-title">
+        <div class="toggle-control-title">
           ${() => state.installed ? 'Uninstall Tailscale' : 'Install Tailscale'}
         </div>
         <p class="tailscale-text">
-          Tailscale creates a secure, private connection between your openpilot device and your phone or PC so you can access and control it from anywhere!
+          Tailscale creates a secure, private connection between your openpilot device and your phone or PC so you can access and control it from anywhere!<br><br>
+          <strong style="color: #ff9494;">Note: Not recommended. Using Galaxy Tunnel is the preferred remote connection method.</strong>
         </p>
         <div class="tailscale-button-wrapper">
           <button
@@ -67,11 +68,11 @@ export function TailscaleControl() {
             disabled="${() => state.status === 'installing' || state.status === 'uninstalling'}"
           >
             ${() => {
-              if (state.status === 'installing') return 'Installing...'
-              if (state.status === 'uninstalling') return 'Uninstalling...'
-              if (state.installed) return 'Uninstall'
-              return 'Install'
-            }}
+      if (state.status === 'installing') return 'Installing...'
+      if (state.status === 'uninstalling') return 'Uninstalling...'
+      if (state.installed) return 'Uninstall'
+      return 'Install'
+    }}
           </button>
           <a class="tailscale-link" href="https://tailscale.com/download" target="_blank">
             Download Tailscale on your other devices
@@ -79,12 +80,12 @@ export function TailscaleControl() {
         </div>
       </section>
       ${() => state.showUninstallModal ? Modal({
-          title: "Confirm Uninstall",
-          message: "Are you sure you want to uninstall Tailscale?",
-          onConfirm: handleAction,
-          onCancel: () => { state.showUninstallModal = false; },
-          confirmText: "Uninstall"
-      }) : ""}
+      title: "Confirm Uninstall",
+      message: "Are you sure you want to uninstall Tailscale?",
+      onConfirm: handleAction,
+      onCancel: () => { state.showUninstallModal = false; },
+      confirmText: "Uninstall"
+    }) : ""}
     </div>
   `
 }

@@ -52,7 +52,7 @@ STRAIGHT_ROAD_INTEGRATOR_BOOST = 1.08       # slightly increase integrator respo
 VERSION = 2
 DEBUG_TORQUE_TUNE = False
 FF_SCALE_BLEND_LAT_ACCEL = 0.05
-DEADZONE_BOOST_LAT_ACCEL = 0.08
+DEADZONE_BOOST_LAT_ACCEL = 0.15
 UNWIND_D_DES_THRESHOLD = -1.0
 UNWIND_LAT_ACCEL_NEAR_ZERO = 0.3
 
@@ -96,17 +96,15 @@ class LatControlTorque(LatControl):
     self.is_bolt_2017 = CP.carFingerprint in BOLT_2017_CARS
     # Keep Bolt-specific FF controls isolated by generation.
     self.use_bolt_ff_scaling = self.is_bolt_2022_2023 or self.is_bolt_2019_2021 or self.is_bolt_2017
-    self.use_bolt_deadzone_boost = self.is_bolt_2022_2023 or self.is_bolt_2019_2021 or self.is_bolt_2017
     self.use_bolt_ki_multiplier = self.is_bolt_2022_2023 or self.is_bolt_2019_2021 or self.is_bolt_2017
     self.torque_ff_scale_pos = 1.0
     self.torque_ff_scale_neg = 1.0
-    self.torque_deadzone_boost_neg = 0.0
+    self.torque_deadzone_boost = float(getattr(self.torque_params, "kfDEPRECATED", 0.0))
     self.torque_ki_mult = 1.0
     if self.is_bolt:
       self.torque_ff_scale_pos = float(self.torque_params.kp)
       self.torque_ff_scale_neg = float(self.torque_params.ki)
       self.torque_ki_mult = float(self.torque_params.kd)
-      self.torque_deadzone_boost_neg = float(getattr(self.torque_params, "kfDEPRECATED", 0.0))
       if self.use_bolt_ki_multiplier and self.torque_ki_mult > 0.0 and self.torque_ki_mult != 1.0:
         self.pid._k_i = [self.pid._k_i[0], [k * self.torque_ki_mult for k in self.pid._k_i[1]]]
 
@@ -191,11 +189,10 @@ class LatControlTorque(LatControl):
         ff *= ff_scale
       ff += get_friction(error_with_lsf + JERK_GAIN * desired_lateral_jerk, lateral_accel_deadzone, get_friction_threshold(CS.vEgo), self.torque_params)
       deadzone_boost_active = False
-      if self.use_bolt_deadzone_boost and self.torque_deadzone_boost_neg > 0.0 and gravity_adjusted_future_lateral_accel < 0.0:
-        if abs(gravity_adjusted_future_lateral_accel) < DEADZONE_BOOST_LAT_ACCEL:
-          boost_scale = np.interp(abs(gravity_adjusted_future_lateral_accel), [0.0, DEADZONE_BOOST_LAT_ACCEL], [1.0, 0.0])
-          ff -= self.torque_deadzone_boost_neg * boost_scale
-          deadzone_boost_active = True
+      if self.torque_deadzone_boost > 0.0 and abs(gravity_adjusted_future_lateral_accel) < DEADZONE_BOOST_LAT_ACCEL:
+        boost_scale = np.interp(abs(gravity_adjusted_future_lateral_accel), [0.0, DEADZONE_BOOST_LAT_ACCEL], [1.0, 0.0])
+        ff += np.sign(gravity_adjusted_future_lateral_accel) * self.torque_deadzone_boost * boost_scale
+        deadzone_boost_active = True
 
       if CS.vEgo < self.low_speed_reset_threshold:
         self.pid.reset()

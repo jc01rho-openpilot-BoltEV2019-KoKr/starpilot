@@ -1,6 +1,7 @@
 import { html, reactive } from "https://esm.sh/@arrow-js/core"
 import { createBrowserHistory, createRouter } from "https://esm.sh/@remix-run/router@1.3.1"
 import { hideSidebar } from "/assets/js/utils.js"
+import { DeviceSettings } from "/assets/components/tools/device_settings.js"
 import { DoorControl } from "/assets/components/tools/doors.js"
 import { ErrorLogs } from "/assets/components/tools/error_logs.js"
 import { Home } from "/assets/components/home/home.js"
@@ -11,7 +12,6 @@ import { SettingsView } from "/assets/components/settings.js"
 import { ScreenRecordings } from "/assets/components/recordings/screen_recordings.js"
 import { Sidebar } from "/assets/components/sidebar.js"
 import { SpeedLimits } from "/assets/components/tools/speed_limits.js"
-import { TailscaleControl } from "/assets/components/tailscale/tailscale.js"
 import { ThemeMaker } from "/assets/components/tools/theme_maker.js"
 import { TmuxLog } from "/assets/components/tools/tmux.js"
 import { ToggleControl } from "/assets/components/tools/toggles.js"
@@ -23,13 +23,14 @@ function createRoute(id, path, component) {
   return {
     id,
     path,
-    loader: () => {},
+    loader: () => { },
     element: component,
   }
 }
 
 function Root() {
   let routes = [
+    createRoute("device_settings", "/device_settings", DeviceSettings),
     createRoute("doors", "/lock_or_unlock_doors", DoorControl),
     createRoute("errorLogs", "/manage_error_logs", ErrorLogs),
     createRoute("navdestination", "/set_navigation_destination", NavDestination),
@@ -39,7 +40,6 @@ function Root() {
     createRoute("screen_recordings", "/screen_recordings", ScreenRecordings),
     createRoute("settings", "/settings/:section/:subsection?", SettingsView),
     createRoute("speed_limits", "/download_speed_limits", SpeedLimits),
-    createRoute("tailscale", "/manage_tailscale", TailscaleControl),
     createRoute("thememaker", "/theme_maker", ThemeMaker),
     createRoute("tmux", "/manage_tmux", TmuxLog),
     createRoute("toggles", "/manage_toggles", ToggleControl),
@@ -76,17 +76,17 @@ function Root() {
     ${() => Sidebar(routerState.activePathFull)}
     <div class="content">
       ${() => {
-        if (!routerState.initialized || routerState.navigation.state === "loading") {
-          return html`<div>Loading...</div>`
-        }
+      if (!routerState.initialized || routerState.navigation.state === "loading") {
+        return html`<div>Loading...</div>`
+      }
 
-        if (routerState.errors?.root?.status === 404) {
-          return html`<h1>Not Found</h1>`
-        }
+      if (routerState.errors?.root?.status === 404) {
+        return html`<h1>Not Found</h1>`
+      }
 
-        const match = routes.find(r => r.path === routerState.activePath)
-        return match.element({ params: routerState.params })
-      }}
+      const match = routes.find(r => r.path === routerState.activePath)
+      return match.element({ params: routerState.params })
+    }}
     </div>
   `
 }

@@ -1,7 +1,8 @@
 import { html, reactive } from "https://esm.sh/@arrow-js/core"
 import { Modal } from "/assets/components/modal.js"
+import { TailscaleControl } from "/assets/components/tailscale/tailscale.js"
 
-export function ToggleControl () {
+export function ToggleControl() {
   const state = reactive({
     showResetDefaultModal: false,
     showResetStockModal: false,
@@ -14,7 +15,7 @@ export function ToggleControl () {
   fileInput.addEventListener("change", restoreToggles)
   document.body.appendChild(fileInput)
 
-  async function backupToggles () {
+  async function backupToggles() {
     const response = await fetch("/api/toggles/backup", { method: "POST" })
     const blob = await response.blob()
 
@@ -26,7 +27,7 @@ export function ToggleControl () {
     URL.revokeObjectURL(downloadUrl)
   }
 
-  async function restoreToggles (event) {
+  async function restoreToggles(event) {
     const uploadedFile = event.target.files[0]
     if (uploadedFile) {
       const fileContents = await uploadedFile.text()
@@ -45,11 +46,11 @@ export function ToggleControl () {
     }
   }
 
-  function confirmResetDefault () {
+  function confirmResetDefault() {
     state.showResetDefaultModal = true;
   }
 
-  async function resetTogglesToDefault () {
+  async function resetTogglesToDefault() {
     state.showResetDefaultModal = false;
     showSnackbar("Resetting toggles to their default values...");
     await new Promise(resolve => setTimeout(resolve, 3000));
@@ -58,11 +59,11 @@ export function ToggleControl () {
     await fetch("/api/toggles/reset_default", { method: "POST" });
   }
 
-  function confirmResetStock () {
+  function confirmResetStock() {
     state.showResetStockModal = true;
   }
 
-  async function resetTogglesToStock () {
+  async function resetTogglesToStock() {
     state.showResetStockModal = false;
     showSnackbar("Resetting toggles to stock openpilot values...");
     await new Promise(resolve => setTimeout(resolve, 3000));
@@ -71,7 +72,7 @@ export function ToggleControl () {
     await fetch("/api/toggles/reset_stock", { method: "POST" });
   }
 
-  function triggerRestorePrompt () {
+  function triggerRestorePrompt() {
     fileInput.click()
   }
 
@@ -98,20 +99,22 @@ export function ToggleControl () {
           Reset Toggles to Stock
         </button>
       </section>
+
+      ${TailscaleControl()}
     </div>
     ${() => state.showResetDefaultModal ? Modal({
-        title: "Reset Toggles",
-        message: "Are you sure you want to reset all toggles to their default FrogPilot values?",
-        onConfirm: resetTogglesToDefault,
-        onCancel: () => { state.showResetDefaultModal = false; },
-        confirmText: "Reset to Default"
-      }) : ""}
+    title: "Reset Toggles",
+    message: "Are you sure you want to reset all toggles to their default FrogPilot values?",
+    onConfirm: resetTogglesToDefault,
+    onCancel: () => { state.showResetDefaultModal = false; },
+    confirmText: "Reset to Default"
+  }) : ""}
     ${() => state.showResetStockModal ? Modal({
-        title: "Reset Toggles",
-        message: "Are you sure you want to reset all toggles to stock openpilot values?",
-        onConfirm: resetTogglesToStock,
-        onCancel: () => { state.showResetStockModal = false; },
-        confirmText: "Reset to Stock"
-      }) : ""}
+    title: "Reset Toggles",
+    message: "Are you sure you want to reset all toggles to stock openpilot values?",
+    onConfirm: resetTogglesToStock,
+    onCancel: () => { state.showResetStockModal = false; },
+    confirmText: "Reset to Stock"
+  }) : ""}
   `
 }

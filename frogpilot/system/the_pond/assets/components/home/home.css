@@ -6,7 +6,7 @@
 }
 
 .disk .progress {
-  background: linear-gradient(to right, green 0%, yellow 80%, orange 90%, red 100%);
+  background: linear-gradient(to right, #5ec8c8 0%, #8b6cc5 60%, #e05577 85%, #c04466 100%);
   border-radius: var(--border-radius-md);
   height: var(--padding-base);
   overflow: hidden;

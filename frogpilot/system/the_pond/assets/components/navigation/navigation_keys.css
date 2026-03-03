@@ -47,7 +47,7 @@
   transition: opacity 0.5s ease;
 }
 
-.navkeys-group > .navkeys-row:last-of-type {
+.navkeys-group>.navkeys-row:last-of-type {
   margin-bottom: 0;
 }
 
@@ -79,7 +79,7 @@
 .navkeys-input:hover,
 .navkeys-input:focus {
   border-color: var(--thumb-color);
-  box-shadow: 0 0 0 2px var(--thumb-color), 0 0 8px var(--thumb-color);
+  box-shadow: var(--glow-primary);
   transform: var(--hover-scale-sm);
 }
 

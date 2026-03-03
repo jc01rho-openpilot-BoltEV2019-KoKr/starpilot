@@ -1,5 +1,5 @@
 import { html, reactive } from "https://esm.sh/@arrow-js/core"
-import { formatSecondsToHuman } from "/assets/js/utils.js"
+import { formatSecondsToHuman, isGalaxyTunnel } from "/assets/js/utils.js"
 import { Modal } from "/assets/components/modal.js";
 
 const logSelectorState = reactive({
@@ -122,34 +122,34 @@ function TmuxLogSelector({ action, closeFn }) {
         </div>
 
         ${() => {
-          if (logSelectorState.loading && !logSelectorState.logsLoadedOnce) {
-            return html`<div class="fileEntry"><p>Loading...</p></div>`;
-          }
-          if (logSelectorState.files.length === 0) {
-            return html`<div class="fileEntry"><p>No tmux logs found!</p></div>`;
-          }
-          return logSelectorState.files.map(file => html`
+      if (logSelectorState.loading && !logSelectorState.logsLoadedOnce) {
+        return html`<div class="fileEntry"><p>Loading...</p></div>`;
+      }
+      if (logSelectorState.files.length === 0) {
+        return html`<div class="fileEntry"><p>No tmux logs found!</p></div>`;
+      }
+      return logSelectorState.files.map(file => html`
             <div class="fileEntry" @click="${() => handleFileClick(file)}">
               <p><span class="label">Filename:</span> <span class="value">${file.filename}</span></p>
               <p><span class="label">Date:</span> <span class="value">${file.date}</span></p>
               <p><span class="label">Age:</span> <span class="value">${file.timeSince < 60 ? "just now" : `${formatSecondsToHuman(file.timeSince, "minutes")} ago`}</span></p>
             </div>
           `);
-        }}
+    }}
 
         <button @click="${closeFn}" class="cancel-button">Close</button>
 
         ${() => logSelectorState.logToDelete ? Modal({
-          title: "Confirm Delete",
-          message: `Are you sure you want to delete <strong>${logSelectorState.logToDelete.filename}</strong>?`,
-          onConfirm: confirmDeleteFile,
-          onCancel: () => { logSelectorState.logToDelete = null },
-          confirmText: "Yes, Delete"
-        }) : ""}
+      title: "Confirm Delete",
+      message: `Are you sure you want to delete <strong>${logSelectorState.logToDelete.filename}</strong>?`,
+      onConfirm: confirmDeleteFile,
+      onCancel: () => { logSelectorState.logToDelete = null },
+      confirmText: "Yes, Delete"
+    }) : ""}
 
         ${() => logSelectorState.logToRename ? Modal({
-          title: "Rename Log",
-          message: html`
+      title: "Rename Log",
+      message: html`
             <div>
               <p>Rename <strong>${logSelectorState.logToRename.filename}</strong> to:</p>
               <div style="margin-top: 10px;">
@@ -163,20 +163,30 @@ function TmuxLogSelector({ action, closeFn }) {
               </div>
             </div>
           `,
-          onConfirm: confirmRenameFile,
-          onCancel: () => {
-            logSelectorState.logToRename = null;
-            logSelectorState.newName = "";
-          },
-          confirmText: "Rename",
-          confirmClass: "btn-primary"
-        }) : ""}
+      onConfirm: confirmRenameFile,
+      onCancel: () => {
+        logSelectorState.logToRename = null;
+        logSelectorState.newName = "";
+      },
+      confirmText: "Rename",
+      confirmClass: "btn-primary"
+    }) : ""}
       </div>
     </div>
   `
 }
 
 export function TmuxLog() {
+  if (isGalaxyTunnel()) {
+    return html`
+      <div class="tunnel-notice">
+        <div class="tunnel-notice-icon">🛰️</div>
+        <h3 class="tunnel-notice-title">Tmux Log Unavailable via Galaxy</h3>
+        <p class="tunnel-notice-body">Live tmux streaming requires a direct connection.<br>Connect to your device's local network to use this feature.</p>
+      </div>
+    `;
+  }
+
   const state = reactive({
     paused: false,
     latest: '',
@@ -198,7 +208,7 @@ export function TmuxLog() {
     event_source.close();
   }
 
-  function togglePause () {
+  function togglePause() {
     state.paused = !state.paused;
     if (!state.paused) {
       state.log = state.latest;
@@ -263,20 +273,20 @@ export function TmuxLog() {
       </div>
 
       ${() => state.selectorAction
-        ? TmuxLogSelector({
-            action: state.selectorAction,
-            closeFn: () => (state.selectorAction = null)
-          })
-        : ""
-      }
+      ? TmuxLogSelector({
+        action: state.selectorAction,
+        closeFn: () => (state.selectorAction = null)
+      })
+      : ""
+    }
 
       ${() => logSelectorState.showDeleteAllModal ? Modal({
-        title: "Delete All Logs",
-        message: "Are you sure you want to delete all of your session logs?",
-        onConfirm: deleteAllSessions,
-        onCancel: () => { logSelectorState.showDeleteAllModal = false },
-        confirmText: "Delete All"
-      }) : ""}
+      title: "Delete All Logs",
+      message: "Are you sure you want to delete all of your session logs?",
+      onConfirm: deleteAllSessions,
+      onCancel: () => { logSelectorState.showDeleteAllModal = false },
+      confirmText: "Delete All"
+    }) : ""}
     </div>
   `;
 }

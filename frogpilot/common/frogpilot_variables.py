@@ -456,7 +456,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("WarningSoftVolume", "101", 2, "101"),
   ("WheelIcon", "frog", 0, "stock"),
   ("WheelSpeed", "0", 2, "0"),
-  ("StopDistance", "6", 3, "6"),
+  ("StopDistance", "6.0", 3, "6.0"),
   ("RecoveryPower", "1.0", 2, "1.0")
 ]
 

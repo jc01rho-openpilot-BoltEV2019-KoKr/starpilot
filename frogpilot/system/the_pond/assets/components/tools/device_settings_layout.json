@@ -1,0 +1,1002 @@
+[
+  {
+    "name": "Lateral (Steering)",
+    "icon": "bi-arrows-move",
+    "params": [
+      {
+        "key": "AdvancedLateralTune",
+        "label": "Advanced Lateral Tuning",
+        "description": "Advanced steering control changes to fine-tune how openpilot drives.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "SteerDelay",
+        "label": "Actuator Delay",
+        "description": "Actuator Delay",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.01,
+        "max": 1.0,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "AdvancedLateralTune"
+      },
+      {
+        "key": "SteerFriction",
+        "label": "Friction",
+        "description": "Friction",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 0.5,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "AdvancedLateralTune"
+      },
+      {
+        "key": "SteerOffset",
+        "label": "Steer Offset",
+        "description": "Steer Offset",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": -0.2,
+        "max": 0.2,
+        "step": 0.005,
+        "precision": 3,
+        "parent_key": "AdvancedLateralTune"
+      },
+      {
+        "key": "SteerKP",
+        "label": "Kp Factor",
+        "description": "Kp Factor",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "AdvancedLateralTune"
+      },
+      {
+        "key": "SteerLatAccel",
+        "label": "Lateral Acceleration",
+        "description": "Lateral Acceleration",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "AdvancedLateralTune"
+      },
+      {
+        "key": "SteerRatio",
+        "label": "Steer Ratio",
+        "description": "Steer Ratio",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "AdvancedLateralTune"
+      },
+      {
+        "key": "ForceAutoTune",
+        "label": "Force Auto-Tune On",
+        "description": "Force-enable openpilot's live auto-tuning for \"Friction\" and \"Lateral Acceleration\".",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLateralTune"
+      },
+      {
+        "key": "ForceAutoTuneOff",
+        "label": "Force Auto-Tune Off",
+        "description": "Force-disable openpilot's live auto-tuning for \"Friction\" and \"Lateral Acceleration\" and use the set value instead.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLateralTune"
+      },
+      {
+        "key": "ForceTorqueController",
+        "label": "Force Torque Controller",
+        "description": "Use torque-based steering control instead of angle-based control for smoother lane keeping, especially in curves.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLateralTune"
+      },
+      {
+        "key": "AlwaysOnLateral",
+        "label": "Always On Lateral",
+        "description": "openpilot's steering remains active even when the accelerator or brake pedals are pressed.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "AlwaysOnLateralMain",
+        "label": "Enable With Cruise Control",
+        "description": "Enable \"Always On Lateral\" whenever \"Cruise Control\" is on, even when openpilot is not engaged.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AlwaysOnLateral"
+      },
+      {
+        "key": "AlwaysOnLateralLKAS",
+        "label": "Enable With LKAS",
+        "description": "Enable \"Always On Lateral\" whenever \"LKAS\" is on, even when openpilot is not engaged.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AlwaysOnLateral"
+      },
+      {
+        "key": "PauseAOLOnBrake",
+        "label": "Pause on Brake Press Below",
+        "description": "Pause \"Always On Lateral\" below the set speed while the brake pedal is pressed.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 99.0,
+        "step": 1.0,
+        "parent_key": "AlwaysOnLateral"
+      },
+      {
+        "key": "LaneChanges",
+        "label": "Lane Changes",
+        "description": "Allow openpilot to change lanes.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "NudgelessLaneChange",
+        "label": "Automatic Lane Changes",
+        "description": "When the turn signal is on, openpilot will automatically change lanes. No steering-wheel nudge required!",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LaneChanges"
+      },
+      {
+        "key": "LaneChangeTime",
+        "label": "Lane Change Delay",
+        "description": "Delay between turn signal activation and the start of an automatic lane change.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 5.0,
+        "step": 0.1,
+        "parent_key": "LaneChanges"
+      },
+      {
+        "key": "LaneDetectionWidth",
+        "label": "Minimum Lane Width",
+        "description": "Prevent automatic lane changes into lanes narrower than the set width.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 15.0,
+        "step": 0.1,
+        "parent_key": "LaneChanges"
+      },
+      {
+        "key": "OneLaneChange",
+        "label": "One Lane Change Per Signal",
+        "description": "Limit automatic lane changes to one per turn-signal activation.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LaneChanges"
+      },
+      {
+        "key": "LateralTune",
+        "label": "Lateral Tuning",
+        "description": "Miscellaneous steering control changes to fine-tune how openpilot drives.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "TurnDesires",
+        "label": "Force Turn Desires Below Lane Change Speed",
+        "description": "While driving below the minimum lane change speed with an active turn signal, instruct openpilot to turn left/right.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune"
+      },
+      {
+        "key": "NNFF",
+        "label": "Neural Network Feedforward (NNFF)",
+        "description": "Twilsonco's \"Neural Network FeedForward\" model controller for smoother, model-based steering trained on your vehicle's data.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune"
+      },
+      {
+        "key": "NNFFLite",
+        "label": "Smooth Curve Handling",
+        "description": "Twilsonco's torque-based adjustments to smoothen out steering in curves.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune"
+      },
+      {
+        "key": "QOLLateral",
+        "label": "Quality of Life",
+        "description": "Steering control changes to fine-tune how openpilot drives.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "PauseLateralSpeed",
+        "label": "Pause Steering Below",
+        "description": "Pause steering below the set speed.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 99.0,
+        "step": 1.0,
+        "parent_key": "QOLLateral"
+      }
+    ]
+  },
+  {
+    "name": "Visual (Display & UI)",
+    "icon": "bi-eye",
+    "params": [
+      {
+        "key": "AdvancedCustomUI",
+        "label": "Advanced UI Controls",
+        "description": "Advanced visual changes to fine-tune how the driving screen looks.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "HideSpeed",
+        "label": "Hide Current Speed",
+        "description": "Hide the current speed from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "HideLeadMarker",
+        "label": "Hide Lead Marker",
+        "description": "Hide the lead-vehicle marker from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "HideMapIcon",
+        "label": "Hide Map Settings Button",
+        "description": "Hide the map settings button or map from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "HideMaxSpeed",
+        "label": "Hide Max Speed",
+        "description": "Hide the max speed from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "HideAlerts",
+        "label": "Hide Non-Critical Alerts",
+        "description": "Hide non-critical alerts from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "HideSpeedLimit",
+        "label": "Hide Speed Limits",
+        "description": "Hide posted speed limits from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "WheelSpeed",
+        "label": "Use Wheel Speed",
+        "description": "Use the vehicle's wheel speed instead of the cluster speed. This is purely a visual change and doesn't impact how openpilot drives!",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "DeveloperUI",
+        "label": "Developer UI",
+        "description": "Detailed information about openpilot's internal operations.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "AdjacentPathMetrics",
+        "label": "Adjacent Path Metrics",
+        "description": "Show the width of the adjacent lanes.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "DeveloperMetrics",
+        "label": "Developer Metrics",
+        "description": "Performance data, sensor readings, and system metrics for debugging and optimizing openpilot.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperUI",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "BorderMetrics",
+        "label": "Border Metrics",
+        "description": "Show statuses along the border of the driving screen.\n\nBlind Spot: The border turns red when a vehicle is in a blind spot\nSteering Torque: The border goes from green to red according to how much steering torque is being used\nTurn Signal: The border flashes yellow when a turn signal is on",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "LeadInfo",
+        "label": "Lead Info",
+        "description": "Show each tracked vehicle's distance and speed below its marker.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "FPSCounter",
+        "label": "FPS Display",
+        "description": "Show the frames per second (FPS) at the bottom of the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "NumericalTemp",
+        "label": "Numerical Temperature Gauge",
+        "description": "Show a numerical temperature in the sidebar instead of the status labels.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "UseSI",
+        "label": "Use International System of Units",
+        "description": "Display measurements using the \"International System of Units\" (SI) standard.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "DeveloperSidebar",
+        "label": "Developer Sidebar",
+        "description": "Display debugging info and metrics in a dedicated sidebar on the right side of the screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperUI",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "DeveloperSidebarMetric1",
+        "label": "Metric #1",
+        "description": "Select the metric shown in the first \"Developer Sidebar\" widget.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperSidebar"
+      },
+      {
+        "key": "DeveloperSidebarMetric2",
+        "label": "Metric #2",
+        "description": "Select the metric shown in the second \"Developer Sidebar\" widget.",
+        "data_type": "int",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperSidebar"
+      },
+      {
+        "key": "DeveloperSidebarMetric3",
+        "label": "Metric #3",
+        "description": "Select the metric shown in the third \"Developer Sidebar\" widget.",
+        "data_type": "int",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperSidebar"
+      },
+      {
+        "key": "DeveloperSidebarMetric4",
+        "label": "Metric #4",
+        "description": "Select the metric shown in the fourth \"Developer Sidebar\" widget.",
+        "data_type": "int",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperSidebar"
+      },
+      {
+        "key": "DeveloperSidebarMetric5",
+        "label": "Metric #5",
+        "description": "Select the metric shown in the fifth \"Developer Sidebar\" widget.",
+        "data_type": "int",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperSidebar"
+      },
+      {
+        "key": "DeveloperSidebarMetric6",
+        "label": "Metric #6",
+        "description": "Select the metric shown in the sixth \"Developer Sidebar\" widget.",
+        "data_type": "int",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperSidebar"
+      },
+      {
+        "key": "DeveloperSidebarMetric7",
+        "label": "Metric #7",
+        "description": "Select the metric shown in the seventh \"Developer Sidebar\" widget.",
+        "data_type": "int",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperSidebar"
+      },
+      {
+        "key": "DeveloperWidgets",
+        "label": "Developer Widgets",
+        "description": "Overlays for debugging visuals, internal states, and model predictions on the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperUI",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "AdjacentLeadsUI",
+        "label": "Adjacent Leads Tracking",
+        "description": "Display adjacent leads detected by the car's radar to the left and right of the current driving path.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperWidgets"
+      },
+      {
+        "key": "ShowStoppingPoint",
+        "label": "Model Stopping Point",
+        "description": "Show a stop-sign marker where the model intends to stop.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperWidgets"
+      },
+      {
+        "key": "RadarTracksUI",
+        "label": "Radar Tracks",
+        "description": "Display all radar points produced by the car's radar.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperWidgets"
+      },
+      {
+        "key": "CustomUI",
+        "label": "Driving Screen Widgets",
+        "description": "Custom FrogPilot widgets for the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "AccelerationPath",
+        "label": "Acceleration Path",
+        "description": "Color the driving path by planned acceleration and braking.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI"
+      },
+      {
+        "key": "AdjacentPath",
+        "label": "Adjacent Lanes",
+        "description": "Show the driving paths for the left and right lanes.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI"
+      },
+      {
+        "key": "BlindSpotPath",
+        "label": "Blind Spot Path",
+        "description": "Show a red path when a vehicle is in that lane's blind spot.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI"
+      },
+      {
+        "key": "Compass",
+        "label": "Compass",
+        "description": "Show the current driving direction with a simple on-screen compass.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI"
+      },
+      {
+        "key": "OnroadDistanceButton",
+        "label": "Driving Personality Button",
+        "description": "Control and view the current driving personality via a driving screen widget.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI"
+      },
+      {
+        "key": "PedalsOnUI",
+        "label": "Gas / Brake Pedal Indicators",
+        "description": "On-screen gas and brake indicators.\n\nDynamic: Opacity changes according to how much openpilot is accelerating or braking\nStatic: Full when active, dim when not",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI"
+      },
+      {
+        "key": "RotatingWheel",
+        "label": "Rotating Steering Wheel",
+        "description": "Rotate the driving screen wheel with the physical steering wheel.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI"
+      },
+      {
+        "key": "ModelUI",
+        "label": "Model UI",
+        "description": "Model visualizations for the driving path, lane lines, path edges, and road edges.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "DynamicPathWidth",
+        "label": "Dynamic Path Width",
+        "description": "Change the path width based on engagement.\n\nFully Engaged: 100%\nAlways On Lateral: 75%\nDisengaged: 50%",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ModelUI"
+      },
+      {
+        "key": "LaneLinesWidth",
+        "label": "Lane Lines Width",
+        "description": "Set the lane-line thickness.\n\nDefault matches the MUTCD lane-line width standard of 4 inches.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 24.0,
+        "parent_key": "ModelUI"
+      },
+      {
+        "key": "PathEdgeWidth",
+        "label": "Path Edges Width",
+        "description": "Set the driving-path edge width that represents different driving modes and statuses.\n\nDefault is 20% of the total path width.\n\nColor Guide:\n\n- Blue: Navigation\n- Light Blue: Always On Lateral\n- Green: Default\n- Orange: Experimental Mode\n- Red: Traffic Mode\n- Yellow: Conditional Experimental Mode overridden",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 100.0,
+        "parent_key": "ModelUI"
+      },
+      {
+        "key": "PathWidth",
+        "label": "Path Width",
+        "description": "Set the driving-path width.\n\nDefault (6.1 feet) matches the width of a 2019 Lexus ES 350.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 10.0,
+        "step": 0.1,
+        "parent_key": "ModelUI"
+      },
+      {
+        "key": "RoadEdgesWidth",
+        "label": "Road Edges Width",
+        "description": "Set the road-edge thickness.\n\nDefault matches half of the MUTCD lane-line width standard of 4 inches.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 24.0,
+        "parent_key": "ModelUI"
+      },
+      {
+        "key": "UnlimitedLength",
+        "label": "\\\"Unlimited\\\" Road UI",
+        "description": "Extend the length of the driving path, lane lines, and road edges for as far as the model can see.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ModelUI"
+      },
+      {
+        "key": "NavigationUI",
+        "label": "Navigation Widgets",
+        "description": "Map style, speed limits, and other navigation widgets.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "BigMap",
+        "label": "Larger Map Display",
+        "description": "Increase the map size for easier navigation readings.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "NavigationUI"
+      },
+      {
+        "key": "MapStyle",
+        "label": "Map Style",
+        "description": "Select the map style for \"Navigate on openpilot\" (NOO):\n\nStock openpilot: Default comma.ai style\nFrogPilot: Official FrogPilot map style\nMapbox Streets: Standard street-focused view\nMapbox Outdoors: Emphasizes outdoor and terrain features\nMapbox Light: Minimalist, bright theme\nMapbox Dark: Minimalist, dark theme\nMapbox Navigation Day: Optimized for daytime navigation\nMapbox Navigation Night: Optimized for nighttime navigation\nMapbox Satellite: Satellite imagery only\nMapbox Satellite Streets: Hybrid satellite imagery with street labels\nMapbox Traffic Night: Dark theme emphasizing traffic conditions\nMike's Personalized Style: Customized hybrid satellite view",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "NavigationUI"
+      },
+      {
+        "key": "RoadNameUI",
+        "label": "Road Name",
+        "description": "Display the road name at the bottom of the driving screen using data from \"OpenStreetMap (OSM)\".",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "NavigationUI"
+      },
+      {
+        "key": "ShowSpeedLimits",
+        "label": "Show Speed Limits",
+        "description": "Show speed limits in the top-left corner of the driving screen. Uses data from the car's dashboard (if supported) and \"OpenStreetMap (OSM)\".",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "NavigationUI"
+      },
+      {
+        "key": "SLCMapboxFiller",
+        "label": "Show Speed Limits from Mapbox",
+        "description": "Use Mapbox speed-limit data when no other source is available.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "NavigationUI"
+      },
+      {
+        "key": "UseVienna",
+        "label": "Use Vienna-Style Speed Signs",
+        "description": "Show Vienna-style (EU) speed-limit signs instead of MUTCD (US).",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "NavigationUI"
+      },
+      {
+        "key": "QOLVisuals",
+        "label": "Quality of Life",
+        "description": "Miscellaneous visual changes to fine-tune how the driving screen looks.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "CameraView",
+        "label": "Camera View",
+        "description": "Select the active camera view. This is purely a visual change and doesn't impact how openpilot drives!",
+        "data_type": "int",
+        "ui_type": "toggle",
+        "parent_key": "QOLVisuals"
+      },
+      {
+        "key": "DriverCamera",
+        "label": "Show Driver Camera When In Reverse",
+        "description": "Show the driver camera feed when the vehicle is in reverse.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLVisuals"
+      },
+      {
+        "key": "StoppedTimer",
+        "label": "Stopped Timer",
+        "description": "Show a timer when stopped in place of the current speed to indicate how long the vehicle has been stopped.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLVisuals"
+      }
+    ]
+  },
+  {
+    "name": "Sounds & Alerts",
+    "icon": "bi-volume-up",
+    "params": [
+      {
+        "key": "AlertVolumeControl",
+        "label": "Alert Volume Controller",
+        "description": "Set how loud each type of openpilot alert is to keep routine prompts from becoming distracting.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "DisengageVolume",
+        "label": "Disengage Volume",
+        "description": "Set the volume for alerts when openpilot disengages.\n\nExamples include: \"Cruise Fault: Restart the Car\", \"Parking Brake Engaged\", \"Pedal Pressed\".",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 101.0,
+        "step": 1.0,
+        "parent_key": "AlertVolumeControl"
+      },
+      {
+        "key": "EngageVolume",
+        "label": "Engage Volume",
+        "description": "Set the volume for the chime when openpilot engages, such as after pressing the \"RESUME\" or \"SET\" steering wheel buttons.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 101.0,
+        "step": 1.0,
+        "parent_key": "AlertVolumeControl"
+      },
+      {
+        "key": "PromptVolume",
+        "label": "Prompt Volume",
+        "description": "Set the volume for prompts that need attention.\n\nExamples include: \"Car Detected in Blindspot\", \"Steering Temporarily Unavailable\", \"Turn Exceeds Steering Limit\".",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 101.0,
+        "step": 1.0,
+        "parent_key": "AlertVolumeControl"
+      },
+      {
+        "key": "PromptDistractedVolume",
+        "label": "Prompt Distracted Volume",
+        "description": "Set the volume for prompts when openpilot detects driver distraction or unresponsiveness.\n\nExamples include: \"Pay Attention\", \"Touch Steering Wheel\".",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 101.0,
+        "step": 1.0,
+        "parent_key": "AlertVolumeControl"
+      },
+      {
+        "key": "RefuseVolume",
+        "label": "Refuse Volume",
+        "description": "Set the volume for alerts when openpilot refuses to engage.\n\nExamples include: \"Brake Hold Active\", \"Door Open\", \"Seatbelt Unlatched\".",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 101.0,
+        "step": 1.0,
+        "parent_key": "AlertVolumeControl"
+      },
+      {
+        "key": "WarningSoftVolume",
+        "label": "Warning Soft Volume",
+        "description": "Set the volume for softer warnings about potential risks.\n\nExamples include: \"BRAKE! Risk of Collision\", \"Steering Temporarily Unavailable\".",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 25.0,
+        "max": 101.0,
+        "step": 1.0,
+        "parent_key": "AlertVolumeControl"
+      },
+      {
+        "key": "WarningImmediateVolume",
+        "label": "Warning Immediate Volume",
+        "description": "Set the volume for the loudest warnings that require urgent attention.\n\nExamples include: \"DISENGAGE IMMEDIATELY \u2014 Driver Distracted\", \"DISENGAGE IMMEDIATELY \u2014 Driver Unresponsive\".",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 25.0,
+        "max": 101.0,
+        "step": 1.0,
+        "parent_key": "AlertVolumeControl"
+      },
+      {
+        "key": "CustomAlerts",
+        "label": "FrogPilot Alerts",
+        "description": "Optional FrogPilot alerts that highlight driving events in a more noticeable way.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "GoatScream",
+        "label": "Goat Scream",
+        "description": "Play the infamous \"Goat Scream\" when the steering controller reaches its limit. Based on the \"Turn Exceeds Steering Limit\" event.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomAlerts"
+      },
+      {
+        "key": "GreenLightAlert",
+        "label": "Green Light Alert",
+        "description": "Play an alert when the model predicts a red light has turned green.\n\nDisclaimer: openpilot does not explicitly detect traffic lights. This alert is based on end-to-end model predictions from camera input and may trigger even when the light has not changed.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomAlerts"
+      },
+      {
+        "key": "LeadDepartingAlert",
+        "label": "Lead Departing Alert",
+        "description": "Play an alert when the lead vehicle departs from a stop.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomAlerts"
+      },
+      {
+        "key": "LoudBlindspotAlert",
+        "label": "Loud \\\"Car Detected in Blindspot\\\" Alert",
+        "description": "Play a louder alert if a vehicle is in the blind spot when attempting to change lanes. Based on the \"Car Detected in Blindspot\" event.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomAlerts"
+      },
+      {
+        "key": "SpeedLimitChangedAlert",
+        "label": "Speed Limit Changed Alert",
+        "description": "Play an alert when the posted speed limit changes.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomAlerts"
+      }
+    ]
+  },
+  {
+    "name": "Device & Data",
+    "icon": "bi-hdd",
+    "params": [
+      {
+        "key": "DeviceManagement",
+        "label": "Device Settings",
+        "description": "Settings that control how the device runs, powers off, and manages driving data.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "DeviceShutdown",
+        "label": "Device Shutdown Timer",
+        "description": "Keep the device on for the set amount of time after a drive before it shuts down automatically.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 33.0,
+        "step": 1.0,
+        "parent_key": "DeviceManagement"
+      },
+      {
+        "key": "NoLogging",
+        "label": "Disable Logging",
+        "description": "WARNING: This will prevent your drives from being recorded and all data will be unobtainable!\n\nPrevent the device from saving driving data.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeviceManagement"
+      },
+      {
+        "key": "NoUploads",
+        "label": "Disable Uploads",
+        "description": "WARNING: This will prevent your drives from being uploaded to comma connect which will impact debugging and official support from comma!\n\nPrevent the device from uploading driving data.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeviceManagement"
+      },
+      {
+        "key": "HigherBitrate",
+        "label": "High-Quality Recording",
+        "description": "Save drive footage in higher video quality.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeviceManagement"
+      },
+      {
+        "key": "IncreaseThermalLimits",
+        "label": "Raise Temperature Limits",
+        "description": "WARNING: Running at higher temperatures may damage your device!\n\nAllow the device to run at higher temperatures before throttling or shutting down. Use only if you understand the risks!",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeviceManagement"
+      },
+      {
+        "key": "UseKonikServer",
+        "label": "Use Konik Server",
+        "description": "Upload driving data to \"connect.konik.ai\" instead of \"connect.comma.ai\".",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeviceManagement"
+      },
+      {
+        "key": "ScreenManagement",
+        "label": "Screen Settings",
+        "description": "Settings that control screen brightness, screen recording, and timeout duration.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "ScreenBrightness",
+        "label": "Screen Brightness (Offroad)",
+        "description": "The screen brightness while not driving.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "step": 1.0,
+        "parent_key": "ScreenManagement"
+      },
+      {
+        "key": "ScreenBrightnessOnroad",
+        "label": "Screen Brightness (Onroad)",
+        "description": "The screen brightness while driving.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "step": 1.0,
+        "parent_key": "ScreenManagement"
+      },
+      {
+        "key": "ScreenRecorder",
+        "label": "Screen Recorder",
+        "description": "Add a button to the driving screen to record the display.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ScreenManagement"
+      },
+      {
+        "key": "ScreenTimeout",
+        "label": "Screen Timeout (Offroad)",
+        "description": "How long the screen stays on after being tapped while not driving.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 5.0,
+        "max": 60.0,
+        "parent_key": "ScreenManagement"
+      },
+      {
+        "key": "ScreenTimeoutOnroad",
+        "label": "Screen Timeout (Onroad)",
+        "description": "How long the screen stays on after being tapped while driving.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 5.0,
+        "max": 60.0,
+        "parent_key": "ScreenManagement"
+      },
+      {
+        "key": "StandbyMode",
+        "label": "Standby Mode",
+        "description": "Turn the screen off while driving and automatically wake it up for alerts or engagement state changes.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ScreenManagement"
+      }
+    ]
+  },
+  {
+    "name": "Model & Customization",
+    "icon": "bi-cpu",
+    "params": [
+      {
+        "key": "AutomaticallyDownloadModels",
+        "label": "Automatically Download New Models",
+        "description": "Automatically download new driving models as they become available.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "ModelRandomizer",
+        "label": "Model Randomizer",
+        "description": "Driving models are chosen at random each drive and feedback prompts are used to find the model that best suits your needs.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "RecoveryPower",
+        "label": "Recovery Power",
+        "description": "Adjust the strength of planplus lane recovery corrections (0.5 to 2.0).",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 2.0,
+        "step": 0.1
+      },
+      {
+        "key": "StopDistance",
+        "label": "Stop Distance",
+        "description": "Adjust the model's stopping distance in meters (minimum 4 for safety). Most users prefer 6.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 4.0,
+        "max": 10.0,
+        "step": 0.1
+      },
+      {
+        "key": "Model",
+        "label": "Select Driving Model",
+        "description": "Select the active driving model.",
+        "data_type": "string",
+        "ui_type": "dropdown",
+        "options_endpoint": "/api/models/installed"
+      }
+    ]
+  }
+]

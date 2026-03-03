@@ -1,4 +1,5 @@
 import { html, reactive } from "https://esm.sh/@arrow-js/core"
+import { isGalaxyTunnel } from "/assets/js/utils.js"
 import { Modal } from "/assets/components/modal.js";
 
 const state = reactive({
@@ -142,8 +143,8 @@ async function renameFile(rec) {
 }
 
 function confirmDeleteFile(rec) {
-    state.recordingToDelete = rec;
-    state.showDeleteModal = true;
+  state.recordingToDelete = rec;
+  state.showDeleteModal = true;
 }
 
 async function deleteFile() {
@@ -152,11 +153,11 @@ async function deleteFile() {
 
   const res = await fetch(`/api/screen_recordings/delete/${encodeURIComponent(rec.filename)}`, { method: "DELETE" })
   if (res.ok) {
-      closeOverlay();
-      refresh();
-      showSnackbar("Recording deleted!");
+    closeOverlay();
+    refresh();
+    showSnackbar("Recording deleted!");
   } else {
-      showSnackbar("Delete failed...", "error");
+    showSnackbar("Delete failed...", "error");
   }
 
   state.showDeleteModal = false;
@@ -221,6 +222,16 @@ async function deleteAllRecordings() {
 }
 
 export function ScreenRecordings() {
+  if (isGalaxyTunnel()) {
+    return html`
+      <div class="tunnel-notice">
+        <div class="tunnel-notice-icon">🛰️</div>
+        <h3 class="tunnel-notice-title">Screen Recordings Unavailable via Galaxy</h3>
+        <p class="tunnel-notice-body">Loading screen recordings requires a direct connection.<br>Connect to your device's local network to use this feature.</p>
+      </div>
+    `;
+  }
+
   if (state.selectedRecording && !overlay) openOverlay(state.selectedRecording)
 
   return html`
@@ -229,77 +240,77 @@ export function ScreenRecordings() {
         <div class="screen-recordings-title">Screen Recordings</div>
 
         ${() => {
-          if (state.loading && state.recordings.length === 0) return html`<p class="screen-recordings-message">Loading...</p>`
-          if (state.error) return html`<p class="screen-recordings-message">${state.error}</p>`
-          if (state.progress > 0 && state.progress < state.total) {
-            return html`<p class="screen-recordings-message">Processing Recordings: ${state.progress} of ${state.total}</p>`
-          }
-          if (state.recordings.length === 0 && !state.loading) {
-            return html`<p class="screen-recordings-message">No screen recordings found...</p>`
-          }
-          return ""
-        }}
+      if (state.loading && state.recordings.length === 0) return html`<p class="screen-recordings-message">Loading...</p>`
+      if (state.error) return html`<p class="screen-recordings-message">${state.error}</p>`
+      if (state.progress > 0 && state.progress < state.total) {
+        return html`<p class="screen-recordings-message">Processing Recordings: ${state.progress} of ${state.total}</p>`
+      }
+      if (state.recordings.length === 0 && !state.loading) {
+        return html`<p class="screen-recordings-message">No screen recordings found...</p>`
+      }
+      return ""
+    }}
 
         <div class="screen-recordings-grid">
           ${() => state.recordings.map(rec => {
-            const displayName = rec.is_custom_name ? rec.filename.replace(/\.mp4$/i, "").replace(/_/g, " ") : formatScreenRecordingDate(rec.timestamp)
-            return html`
+      const displayName = rec.is_custom_name ? rec.filename.replace(/\.mp4$/i, "").replace(/_/g, " ") : formatScreenRecordingDate(rec.timestamp)
+      return html`
               <div
                 class="recording-card"
                 @mouseenter="${e => {
-                  if (state.selectedRecording) return;
+          if (state.selectedRecording) return;
 
-                  const card = e.currentTarget;
-                  const gif = card.querySelector(".recording-preview-gif");
-                  const png = card.querySelector(".recording-preview-png");
+          const card = e.currentTarget;
+          const gif = card.querySelector(".recording-preview-gif");
+          const png = card.querySelector(".recording-preview-png");
 
-                  if (card.dataset.gifLoaded) {
-                    png.style.display = "none";
-                    gif.style.display = "block";
-                    return;
-                  }
+          if (card.dataset.gifLoaded) {
+            png.style.display = "none";
+            gif.style.display = "block";
+            return;
+          }
 
-                  card.dataset.loadingGif = "true";
-                  const preloader = new Image();
-                  preloader.onload = () => {
-                    if (card.dataset.loadingGif === "true") {
-                        gif.src = preloader.src;
-                        png.style.display = "none";
-                        gif.style.display = "block";
-                        card.dataset.gifLoaded = true;
-                    }
-                    delete card.dataset.loadingGif;
-                  };
-                  preloader.onerror = () => {
-                    console.error("Failed to load preview GIF:", preloader.src);
-                    delete card.dataset.loadingGif;
-                  };
+          card.dataset.loadingGif = "true";
+          const preloader = new Image();
+          preloader.onload = () => {
+            if (card.dataset.loadingGif === "true") {
+              gif.src = preloader.src;
+              png.style.display = "none";
+              gif.style.display = "block";
+              card.dataset.gifLoaded = true;
+            }
+            delete card.dataset.loadingGif;
+          };
+          preloader.onerror = () => {
+            console.error("Failed to load preview GIF:", preloader.src);
+            delete card.dataset.loadingGif;
+          };
 
-                  preloader.src = gif.dataset.src;
-                }}"
+          preloader.src = gif.dataset.src;
+        }}"
                 @mouseleave="${e => {
-                  const card = e.currentTarget;
-                  card.querySelector(".recording-preview-png").style.display = "block";
-                  card.querySelector(".recording-preview-gif").style.display = "none";
-                  if (card.dataset.loadingGif === "true") {
-                      delete card.dataset.loadingGif;
-                  }
-                }}"
+          const card = e.currentTarget;
+          card.querySelector(".recording-preview-png").style.display = "block";
+          card.querySelector(".recording-preview-gif").style.display = "none";
+          if (card.dataset.loadingGif === "true") {
+            delete card.dataset.loadingGif;
+          }
+        }}"
                 @click="${() => { state.selectedRecording = rec }}"
               >
                 <div class="recording-preview-container">
-                  <img src="${rec.png}" class="recording-preview recording-preview-png" style="display:block;">
+                  <img src="${rec.png}" class="recording-preview recording-preview-png" style="display:block;" loading="lazy">
                   <img data-src="${rec.gif}" class="recording-preview recording-preview-gif" style="display:none;">
                 </div>
                 <p class="recording-filename">${displayName}</p>
               </div>
             `
-          })}
+    })}
         </div>
 
         ${() => {
-          if (state.recordings.length > 0) {
-            return html`
+      if (state.recordings.length > 0) {
+        return html`
               <button
                 class="delete-all-button"
                 @click="${() => (state.showDeleteAllModal = true)}"
@@ -307,24 +318,24 @@ export function ScreenRecordings() {
                 Delete All Recordings
               </button>
             `
-          }
-          return ""
-        }}
+      }
+      return ""
+    }}
       </div>
       ${() => state.showDeleteModal ? Modal({
-          title: "Confirm Delete",
-          message: `Are you sure you want to delete <strong>${state.recordingToDelete.filename}</strong>?`,
-          onConfirm: deleteFile,
-          onCancel: () => { state.showDeleteModal = false; state.recordingToDelete = null; },
-          confirmText: "Delete"
-      }) : ""}
+      title: "Confirm Delete",
+      message: `Are you sure you want to delete <strong>${state.recordingToDelete.filename}</strong>?`,
+      onConfirm: deleteFile,
+      onCancel: () => { state.showDeleteModal = false; state.recordingToDelete = null; },
+      confirmText: "Delete"
+    }) : ""}
       ${() => state.showDeleteAllModal ? Modal({
-        title: "Confirm Delete All",
-        message: "Are you sure you want to delete all screen recordings? This action cannot be undone...",
-        onConfirm: deleteAllRecordings,
-        onCancel: () => { state.showDeleteAllModal = false; },
-        confirmText: "Delete All"
-      }) : ""}
+      title: "Confirm Delete All",
+      message: "Are you sure you want to delete all screen recordings? This action cannot be undone...",
+      onConfirm: deleteAllRecordings,
+      onCancel: () => { state.showDeleteAllModal = false; },
+      confirmText: "Delete All"
+    }) : ""}
     </div>
   `
 }

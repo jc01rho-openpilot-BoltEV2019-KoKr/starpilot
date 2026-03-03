@@ -30,7 +30,7 @@
   position: relative;
 }
 
-.dropdown > select {
+.dropdown>select {
   appearance: none;
   background-color: var(--sidebar-bg);
   border: var(--border-width-thin) solid var(--sidebar-border-color);
@@ -74,19 +74,19 @@ input.searchfield:focus {
   outline: none;
 }
 
-input:checked + .slider {
+input:checked+.slider {
   background-color: var(--success-bg);
 }
 
-input:checked + .slider:before {
+input:checked+.slider:before {
   transform: translateX(26px);
 }
 
-input:checked + .slider.loading:before {
+input:checked+.slider.loading:before {
   animation: rotationChecked 1s linear infinite;
 }
 
-input:focus + .slider {
+input:focus+.slider {
   box-shadow: 0 0 var(--border-width-thin) var(--success-bg);
 }
 
@@ -133,11 +133,11 @@ input:focus + .slider {
   z-index: 1;
 }
 
-.options > input {
+.options>input {
   display: none;
 }
 
-.options > input:checked + label {
+.options>input:checked+label {
   background-color: var(--success-bg);
   color: var(--text-color);
   font-weight: bold;
@@ -220,14 +220,13 @@ input:focus + .slider {
   grid-column: span 2;
 }
 
-.setting.subsetting_link {
-}
+.setting.subsetting_link {}
 
 .setting.subtoggle {
   margin: 0 0 0 var(--padding-xl);
 }
 
-.setting.subtoggle + .setting {
+.setting.subtoggle+.setting {
   margin-top: var(--border-radius-xl);
 }
 
@@ -300,7 +299,7 @@ input.searchfield {
   animation: rotation 1s linear infinite;
   background-color: none !important;
   border: var(--border-width-thick) solid var(--sidebar-fg);
-  border-bottom-color: #46439b;
+  border-bottom-color: var(--main-fg);
   box-sizing: border-box;
 }
 
@@ -337,6 +336,7 @@ i.switch {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
@@ -346,6 +346,7 @@ i.switch {
   0% {
     transform: translateX(26px) rotate(0deg);
   }
+
   100% {
     transform: translateX(26px) rotate(360deg);
   }

@@ -102,18 +102,18 @@ export function Home() {
   return html`
     <div>
       ${() => {
-        if (state.isLoading) {
-          return html`<p>Loading...</p>`;
-        }
+      if (state.isLoading) {
+        return html`<p>Loading...</p>`;
+      }
 
-        if (state.error) {
-          return html`<p class="error">Failed to load data: ${state.error}</p>`;
-        }
+      if (state.error) {
+        return html`<p class="error">Failed to load data: ${state.error}</p>`;
+      }
 
-        if (state.data) {
-          const { driveStats, firehoseStats, softwareInfo } = state.data;
-          return html`
-            <h1>The Pond</h1>
+      if (state.data) {
+        const { driveStats, firehoseStats, softwareInfo } = state.data;
+        return html`
+            <h1>Galaxy</h1>
 
             <div class="drivingStats">
               ${DriveStat("All Time", driveStats?.all, state.unit)}
@@ -139,10 +139,10 @@ export function Home() {
               <div class="softwareGrid">${renderSoftwareInfo(softwareInfo)}</div>
             </div>
           `;
-        }
+      }
 
-        return html`<p>No data available.</p>`;
-      }}
+      return html`<p>No data available.</p>`;
+    }}
     </div>
   `;
 }

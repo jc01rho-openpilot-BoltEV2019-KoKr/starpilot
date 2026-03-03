@@ -14,10 +14,8 @@ const MenuItems = {
     { name: "Dashcam Routes", link: "/dashcam_routes", icon: "bi-camera-reels" },
     { name: "Screen Recordings", link: "/screen_recordings", icon: "bi-record-circle" },
   ],
-  tailscale: [
-    { name: "Tailscale", link: "/manage_tailscale", icon: "bi-wifi" },
-  ],
   tools: [
+    { name: "Device Settings", link: "/device_settings", icon: "bi-sliders" },
     { name: "Download Speed Limits", link: "/download_speed_limits", icon: "bi-download" },
     { name: "Error Logs", link: "/manage_error_logs", icon: "bi-exclamation-triangle" },
     { name: "Lock/Unlock Doors", link: "/lock_or_unlock_doors", icon: "bi-door-closed" },
@@ -88,10 +86,9 @@ export function Sidebar() {
     <div id="sidebar" class="sidebar">
       <div>
         <div class="title">
-          <img class="logo" src="/assets/images/main_logo.png" alt="FrogPilot logo" />
+          <img class="logo" src="/assets/images/main_logo.png" alt="Galaxy logo" />
           <div class="title_text sidebar_header">
-            <p>The Pond</p>
-            <a href="https://github.com/Aidenir">by&nbsp;Aidenir</a>
+            <p>Galaxy</p>
           </div>
         </div>
         <hr />
@@ -102,30 +99,30 @@ export function Sidebar() {
                 <span class="section-title">${upperFirst(section)}</span>
                 <ul id="${section}">
                   ${links.map(link => {
-                    if (link.name === "Lock/Unlock Doors" && !state.doorsVisible) {
-                      return "";
-                    }
+    if (link.name === "Lock/Unlock Doors" && !state.doorsVisible) {
+      return "";
+    }
 
-                    if (link.name === "Toyota Security Keys" && !state.tskVisible) {
-                      return "";
-                    }
+    if (link.name === "Toyota Security Keys" && !state.tskVisible) {
+      return "";
+    }
 
-                    const isActive = state.activeRoute === link.name;
-                    const classList = [isActive && "active"].filter(Boolean).join(" ");
+    const isActive = state.activeRoute === link.name;
+    const classList = [isActive && "active"].filter(Boolean).join(" ");
 
-                    const content = html`
+    const content = html`
                       <div class="menu-item-link">
                         <i class="bi ${link.icon}"></i>
                         <span>${upperFirst(link.name)}</span>
                       </div>
                     `;
 
-                    return html`
+    return html`
                       <li class="${classList}">
                         ${Link(link.link, content, () => navigate(link))}
                       </li>
                     `;
-                  })}
+  })}
                 </ul>
               </li>
             </ul>

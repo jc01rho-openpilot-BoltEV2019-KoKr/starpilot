@@ -12,7 +12,9 @@
 
 #include "selfdrive/ui/ui.h"
 #include "selfdrive/ui/qt/util.h"
+#include "selfdrive/ui/qt/util.h"
 #include "selfdrive/ui/qt/widgets/controls.h"
+#include "selfdrive/ui/qt/widgets/input.h"
 
 // ********** settings window + top-level panels **********
 class SettingsWindow : public QFrame {
@@ -55,6 +57,16 @@ private:
   Params params;
 };
 
+class GalaxyQRPopup : public DialogBase {
+  Q_OBJECT
+
+public:
+  explicit GalaxyQRPopup(const QString &url, QWidget *parent);
+
+protected:
+  void mousePressEvent(QMouseEvent *e) override { reject(); }
+};
+
 class DevicePanel : public ListWidget {
   Q_OBJECT
 public:
@@ -73,6 +85,8 @@ private slots:
 private:
   Params params;
   ButtonControl *pair_device;
+  ButtonControl *pair_galaxy;
+  ButtonControl *galaxy_qr;
 };
 
 class TogglesPanel : public ListWidget {

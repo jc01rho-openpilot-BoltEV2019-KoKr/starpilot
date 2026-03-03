@@ -1,4 +1,5 @@
 import { html, reactive } from "https://esm.sh/@arrow-js/core"
+import { isGalaxyTunnel } from "/assets/js/utils.js"
 import { getOrdinalSuffix } from "/assets/components/navigation/navigation_utilities.js"
 import { Modal } from "/assets/components/modal.js";
 
@@ -124,27 +125,27 @@ async function deleteRoute(route) {
 }
 
 async function resetRouteName(route, dlg) {
-    const res = await fetch(`/api/routes/reset_name`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: route.name })
-    });
-    if (res.ok) {
-      const { timestamp } = await res.json();
-      closeDialog(dlg);
-      const routeInList = state.routes.find(r => r.name === route.name);
-      if (routeInList) {
-        routeInList.timestamp = formatRouteDate(timestamp);
-      }
-      route.timestamp = formatRouteDate(timestamp);
-      const overlayTitleSpan = overlay.querySelector(".media-player-title span");
-      if (overlayTitleSpan) {
-        overlayTitleSpan.textContent = formatRouteDate(timestamp);
-      }
-      showSnackbar("Route name reset!");
-    } else {
-      showSnackbar("Resetting name failed...", "error");
+  const res = await fetch(`/api/routes/reset_name`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: route.name })
+  });
+  if (res.ok) {
+    const { timestamp } = await res.json();
+    closeDialog(dlg);
+    const routeInList = state.routes.find(r => r.name === route.name);
+    if (routeInList) {
+      routeInList.timestamp = formatRouteDate(timestamp);
     }
+    route.timestamp = formatRouteDate(timestamp);
+    const overlayTitleSpan = overlay.querySelector(".media-player-title span");
+    if (overlayTitleSpan) {
+      overlayTitleSpan.textContent = formatRouteDate(timestamp);
+    }
+    showSnackbar("Route name reset!");
+  } else {
+    showSnackbar("Resetting name failed...", "error");
+  }
 }
 
 async function renameRoute(route) {
@@ -317,6 +318,16 @@ async function deleteAllRoutes() {
 }
 
 export function RouteRecordings() {
+  if (isGalaxyTunnel()) {
+    return html`
+      <div class="tunnel-notice">
+        <div class="tunnel-notice-icon">🛰️</div>
+        <h3 class="tunnel-notice-title">Dashcam Routes Unavailable via Galaxy</h3>
+        <p class="tunnel-notice-body">Loading dashcam routes requires a direct connection.<br>Connect to your device's local network to use this feature.</p>
+      </div>
+    `;
+  }
+
   if (state.selectedRoute && !overlay) openOverlay(state.selectedRoute);
 
   return html`
@@ -332,75 +343,75 @@ export function RouteRecordings() {
         </button>
 
         ${() => {
-          const routesToShow = state.routes.filter(r => !state.showPreservedOnly || r.is_preserved);
+      const routesToShow = state.routes.filter(r => !state.showPreservedOnly || r.is_preserved);
 
-          if (routesToShow.length === 0) {
-            if (state.loading && state.total > 0) {
-              return html`<p class="screen-recordings-message">Processing Routes: ${state.progress} of ${state.total}</p>`;
-            }
-            if (state.loading && !state.isDeletingAll) {
-              return html`<p class="screen-recordings-message">Loading...</p>`;
-            }
-            if (state.isDeletingAll) {
-              return html`<p class="screen-recordings-message">Deleting routes...</p>`;
-            }
-            if (state.showPreservedOnly) {
-              return html`<p class="screen-recordings-message">No preserved routes...</p>`;
-            }
-            if (state.error) {
-              return html`<p class="screen-recordings-message">${state.error}</p>`;
-            }
-            return html`<p class="screen-recordings-message">No routes found...</p>`;
-          }
+      if (routesToShow.length === 0) {
+        if (state.loading && state.total > 0) {
+          return html`<p class="screen-recordings-message">Processing Routes: ${state.progress} of ${state.total}</p>`;
+        }
+        if (state.loading && !state.isDeletingAll) {
+          return html`<p class="screen-recordings-message">Loading...</p>`;
+        }
+        if (state.isDeletingAll) {
+          return html`<p class="screen-recordings-message">Deleting routes...</p>`;
+        }
+        if (state.showPreservedOnly) {
+          return html`<p class="screen-recordings-message">No preserved routes...</p>`;
+        }
+        if (state.error) {
+          return html`<p class="screen-recordings-message">${state.error}</p>`;
+        }
+        return html`<p class="screen-recordings-message">No routes found...</p>`;
+      }
 
-          return html`
+      return html`
             <div class="screen-recordings-grid">
               ${routesToShow.map(
-                route => html`
+        route => html`
                   <div
                     class="recording-card"
                     @mouseenter="${e => {
-                      if (state.selectedRoute) return;
+            if (state.selectedRoute) return;
 
-                      const card = e.currentTarget;
-                      const gif = card.querySelector(".recording-preview-gif");
-                      const png = card.querySelector(".recording-preview-png");
+            const card = e.currentTarget;
+            const gif = card.querySelector(".recording-preview-gif");
+            const png = card.querySelector(".recording-preview-png");
 
-                      if (card.dataset.gifLoaded) {
-                        png.style.display = "none";
-                        gif.style.display = "block";
-                        return;
-                      }
+            if (card.dataset.gifLoaded) {
+              png.style.display = "none";
+              gif.style.display = "block";
+              return;
+            }
 
-                      card.dataset.loadingGif = "true";
-                      const preloader = new Image();
-                      preloader.onload = () => {
-                        if (card.dataset.loadingGif === "true") {
-                          gif.src = preloader.src;
-                          png.style.display = "none";
-                          gif.style.display = "block";
-                          card.dataset.gifLoaded = true;
-                        }
-                        delete card.dataset.loadingGif;
-                      };
-                      preloader.onerror = () => {
-                        console.error("Failed to load preview GIF:", preloader.src);
-                        delete card.dataset.loadingGif;
-                      };
+            card.dataset.loadingGif = "true";
+            const preloader = new Image();
+            preloader.onload = () => {
+              if (card.dataset.loadingGif === "true") {
+                gif.src = preloader.src;
+                png.style.display = "none";
+                gif.style.display = "block";
+                card.dataset.gifLoaded = true;
+              }
+              delete card.dataset.loadingGif;
+            };
+            preloader.onerror = () => {
+              console.error("Failed to load preview GIF:", preloader.src);
+              delete card.dataset.loadingGif;
+            };
 
-                      preloader.src = gif.dataset.src;
-                    }}"
+            preloader.src = gif.dataset.src;
+          }}"
                     @mouseleave="${e => {
-                      const card = e.currentTarget;
-                      card.querySelector(".recording-preview-png").style.display = "block";
-                      card.querySelector(".recording-preview-gif").style.display = "none";
-                      if (card.dataset.loadingGif === "true") {
-                        delete card.dataset.loadingGif;
-                      }
-                    }}"
+            const card = e.currentTarget;
+            card.querySelector(".recording-preview-png").style.display = "block";
+            card.querySelector(".recording-preview-gif").style.display = "none";
+            if (card.dataset.loadingGif === "true") {
+              delete card.dataset.loadingGif;
+            }
+          }}"
                     @click="${() => {
-                      state.selectedRoute = route;
-                    }}"
+            state.selectedRoute = route;
+          }}"
                   >
                     <div class="preserved-icon" @click="${e => togglePreserved(route, e)}">
                       ${() => html`<i class="bi ${route.is_preserved ? "bi-heart-fill" : "bi-heart"}"></i>`}
@@ -410,6 +421,7 @@ export function RouteRecordings() {
                         src="${route.png}"
                         class="recording-preview recording-preview-png"
                         style="display:block;"
+                        loading="lazy"
                       >
                       <img
                         data-src="${route.gif}"
@@ -420,13 +432,13 @@ export function RouteRecordings() {
                     <p class="recording-filename">${route.timestamp}</p>
                   </div>
                 `
-              )}
+      )}
             </div>
           `;
-        }}
+    }}
         ${() => {
-          if (state.routes.length > 0) {
-            return html`
+      if (state.routes.length > 0) {
+        return html`
               <button
                 class="delete-all-button"
                 @click="${() => (state.showDeleteAllModal = true)}"
@@ -435,17 +447,17 @@ export function RouteRecordings() {
                 ${() => (state.isDeletingAll ? "Deleting..." : "Delete All Routes")}
               </button>
             `;
-          }
-          return "";
-        }}
+      }
+      return "";
+    }}
       </div>
       ${() => state.showDeleteAllModal ? Modal({
-          title: "Confirm Delete All",
-          message: "Are you sure you want to delete all routes? This action cannot be undone...",
-          onConfirm: deleteAllRoutes,
-          onCancel: () => { state.showDeleteAllModal = false; },
-          confirmText: "Delete All"
-      }) : ""}
+      title: "Confirm Delete All",
+      message: "Are you sure you want to delete all routes? This action cannot be undone...",
+      onConfirm: deleteAllRoutes,
+      onCancel: () => { state.showDeleteAllModal = false; },
+      confirmText: "Delete All"
+    }) : ""}
     </div>
   `;
 }

@@ -65,3 +65,11 @@ export function hideSidebar() {
   document.getElementById("sidebarUnderlay")?.classList.add("hidden")
   html.classList.remove("no_scroll")
 }
+
+/**
+ * Returns true when the page is being accessed through the Galaxy tunnel
+ * (the public-facing domain is galaxy.firestar.link)
+ */
+export function isGalaxyTunnel() {
+  return window.location.hostname === 'galaxy.firestar.link';
+}
