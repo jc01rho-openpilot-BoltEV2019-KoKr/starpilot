@@ -97,7 +97,8 @@ const state = reactive({
   showDeleteConfirmModal: false,
   themeToDelete: null,
   themes: [],
-  activeTab: "colors"
+  activeTab: "colors",
+  fetched: false,
 });
 
 let draggedIndex = -1;
@@ -405,17 +406,19 @@ const fetchDownloadables = async () => {
 };
 
 
-(async () => {
-  try {
-    const response = await fetch("/api/params?key=DiscordUsername");
-    state.discordUsername = await response.text();
-    await loadDefaultTheme();
-    await fetchDownloadables();
-
-  } catch {}
-})();
-
 export function ThemeMaker() {
+  if (!state.fetched) {
+    state.fetched = true;
+    (async () => {
+      try {
+        const response = await fetch("/api/params?key=DiscordUsername");
+        state.discordUsername = await response.text();
+        await loadDefaultTheme();
+        await fetchDownloadables();
+      } catch {}
+    })();
+  }
+
   const normalize = (str) => (str || "")
     .toString()
     .trim()

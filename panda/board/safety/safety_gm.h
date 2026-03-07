@@ -72,6 +72,17 @@ RxCheck gm_rx_checks[] = {
   {.msg = {{0xC9, 0, 8, .frequency = 10U}, { 0 }, { 0 }}},
 };
 
+// Volt ASCM / ASCM_INT stock-camera path should pin 0x1E1/0xF1 to bus 0 to avoid
+// latching bus 2 when mirrored startup traffic is present.
+RxCheck gm_ascm_int_stock_cam_rx_checks[] = {
+  {.msg = {{0x184, 0, 8, .frequency = 10U}, { 0 }, { 0 }}},
+  {.msg = {{0x34A, 0, 5, .frequency = 10U}, { 0 }, { 0 }}},
+  {.msg = {{0x1E1, 0, 7, .frequency = 10U}, { 0 }, { 0 }}},
+  {.msg = {{0xF1, 0, 6, .frequency = 10U}, { 0 }, { 0 }}},
+  {.msg = {{0x1C4, 0, 8, .frequency = 10U}, { 0 }, { 0 }}},
+  {.msg = {{0xC9, 0, 8, .frequency = 10U}, { 0 }, { 0 }}},
+};
+
 const uint16_t GM_PARAM_HW_CAM = 1;
 const uint16_t GM_PARAM_HW_CAM_LONG = 2;
 const uint16_t GM_PARAM_CC_LONG = 4;
@@ -595,6 +606,7 @@ static safety_config gm_init(uint16_t param) {
   gm_remote_start_boots_comma = GET_FLAG(param, GM_PARAM_REMOTE_START_BOOTS_COMMA);
   gm_panda_3d1_sched = GET_FLAG(param, GM_PARAM_PANDA_3D1_SCHED) && gm_pedal_long && !gm_has_acc && !gm_bolt_2022_pedal;
   gm_panda_paddle_sched = GET_FLAG(param, GM_PARAM_PANDA_PADDLE_SCHED) && gm_pedal_long && enable_gas_interceptor;
+  bool gm_ascm_int_stock_cam = gm_ascm_int && (gm_hw == GM_CAM) && gm_pcm_cruise && !gm_cam_long && !gm_pedal_long && !gm_cc_long;
 
   gm_3d1_spoof_valid = false;
   gm_3d1_internal_tx = false;
@@ -629,6 +641,9 @@ static safety_config gm_init(uint16_t param) {
     } else {
       ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_TX_MSGS);
     }
+  }
+  if (gm_ascm_int_stock_cam) {
+    SET_RX_CHECKS(gm_ascm_int_stock_cam_rx_checks, ret);
   }
   return ret;
 }

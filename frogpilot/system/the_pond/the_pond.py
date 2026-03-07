@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
-from flask import Flask, Response, jsonify, render_template, request, send_file, send_from_directory
+from flask import Flask, Response, jsonify, make_response, render_template, request, send_file, send_from_directory
 from io import BytesIO
 from pathlib import Path
 from werkzeug.utils import secure_filename
@@ -14,11 +14,14 @@ import os
 import re
 import requests
 import secrets
+import selectors
 import shutil
 import signal
 import subprocess
+import threading
 import time
 import traceback
+from urllib.parse import quote
 
 from cereal import car, messaging
 from opendbc.can.parser import CANParser
@@ -34,6 +37,14 @@ from openpilot.frogpilot.assets.theme_manager import HOLIDAY_THEME_PATH, THEME_C
 from openpilot.frogpilot.common.frogpilot_utilities import delete_file, get_lock_status, run_cmd, extract_tar
 from openpilot.frogpilot.common.frogpilot_variables import ACTIVE_THEME_PATH, ERROR_LOGS_PATH, EXCLUDED_KEYS, RESOURCES_REPO, SCREEN_RECORDINGS_PATH, THEME_SAVE_PATH,\
                                                            frogpilot_default_params, params, params_memory, update_frogpilot_toggles
+from openpilot.frogpilot.common.testing_grounds import (
+  DEFAULT_TESTING_GROUND_VARIANT as SHARED_DEFAULT_TESTING_GROUND_VARIANT,
+  TESTING_GROUND_VARIANT_LABELS as SHARED_TESTING_GROUND_VARIANT_LABELS,
+  TESTING_GROUND_VARIANTS as SHARED_TESTING_GROUND_VARIANTS,
+  TESTING_GROUNDS_SCHEMA_VERSION as SHARED_TESTING_GROUNDS_SCHEMA_VERSION,
+  TESTING_GROUNDS_SLOT_DEFINITIONS as SHARED_TESTING_GROUNDS_SLOT_DEFINITIONS,
+  TESTING_GROUNDS_STATE_PATH as SHARED_TESTING_GROUNDS_STATE_PATH,
+)
 from openpilot.frogpilot.system.the_pond import utilities
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -57,21 +68,1305 @@ KEYS = {
 
 TMUX_LOGS_PATH = Path("/data/tmux_logs")
 
+MODEL_DOWNLOAD_PARAM = "ModelToDownload"
+MODEL_DOWNLOAD_ALL_PARAM = "DownloadAllModels"
+MODEL_DOWNLOAD_PROGRESS_PARAM = "ModelDownloadProgress"
+MODEL_CANCEL_DOWNLOAD_PARAM = "CancelModelDownload"
+MODEL_SORT_MODE_PARAM = "ModelSortMode"
+MODEL_USER_FAVORITES_PARAM = "UserFavorites"
+
+FINGERPRINT_MAKE_LABELS = [
+  "Acura",
+  "Audi",
+  "Buick",
+  "Cadillac",
+  "Chevrolet",
+  "Chrysler",
+  "CUPRA",
+  "Dodge",
+  "Ford",
+  "Genesis",
+  "GMC",
+  "Holden",
+  "Honda",
+  "Hyundai",
+  "Jeep",
+  "Kia",
+  "Lexus",
+  "Lincoln",
+  "MAN",
+  "Mazda",
+  "Nissan",
+  "Ram",
+  "SEAT",
+  "\u0160koda",
+  "Subaru",
+  "Tesla",
+  "Toyota",
+  "Volkswagen",
+]
+
+FINGERPRINT_MAKE_TO_VALUES_DIR = {
+  "acura": "honda",
+  "audi": "volkswagen",
+  "buick": "gm",
+  "cadillac": "gm",
+  "chevrolet": "gm",
+  "chrysler": "chrysler",
+  "cupra": "volkswagen",
+  "dodge": "chrysler",
+  "ford": "ford",
+  "genesis": "hyundai",
+  "gmc": "gm",
+  "holden": "gm",
+  "honda": "honda",
+  "hyundai": "hyundai",
+  "jeep": "chrysler",
+  "kia": "hyundai",
+  "lexus": "toyota",
+  "lincoln": "ford",
+  "man": "volkswagen",
+  "mazda": "mazda",
+  "nissan": "nissan",
+  "ram": "chrysler",
+  "seat": "volkswagen",
+  "\u0161koda": "volkswagen",
+  "subaru": "subaru",
+  "tesla": "tesla",
+  "toyota": "toyota",
+  "volkswagen": "volkswagen",
+}
+
+_FINGERPRINT_CARDOCS_RE = re.compile(r'CarDocs\(\s*"([^"]+)"')
+_FINGERPRINT_PLATFORM_RE = re.compile(r'(\w+)\s*=\s*\w+\s*\(\s*\[([\s\S]*?)\]\s*,')
+_FINGERPRINT_PLATFORM_NAME_RE = re.compile(r'^[A-Z0-9_]+$')
+_FINGERPRINT_VALID_NAME_RE = re.compile(r'^[A-Za-z0-9 \u0160.()\-]+$')
+
+_openpilot_root_cache = None
+_fingerprint_catalog_cache = None
+
+_fast_update_lock = threading.Lock()
+_FAST_UPDATE_TOTAL_STEPS = 5
+_FAST_UPDATE_PROGRESS_UPDATE_INTERVAL_S = 5.0
+_FAST_UPDATE_REBOOT_NOTICE_SECONDS = 6.0
+_FAST_UPDATE_FETCH_TIMEOUT_S = 60
+_FAST_BRANCH_SWITCH_FETCH_TIMEOUT_S = 60
+_GIT_PROGRESS_PERCENT_RE = re.compile(r'([A-Za-z][A-Za-z /_-]+):\s*([0-9]{1,3})%')
+_GIT_SUBMODULE_SECTION_RE = re.compile(r'^\s*\[submodule\s+"[^"]+"\]\s*$', re.MULTILINE)
+_TESTING_GROUNDS_SCHEMA_VERSION = SHARED_TESTING_GROUNDS_SCHEMA_VERSION
+_TESTING_GROUNDS_SLOT_COUNT = len(SHARED_TESTING_GROUNDS_SLOT_DEFINITIONS)
+_TESTING_GROUNDS_DEFAULT_VARIANT = SHARED_DEFAULT_TESTING_GROUND_VARIANT
+_TESTING_GROUNDS_VARIANTS = set(SHARED_TESTING_GROUND_VARIANTS) or {_TESTING_GROUNDS_DEFAULT_VARIANT}
+_TESTING_GROUNDS_LOCK = threading.Lock()
+_TESTING_GROUNDS_STATE_PATH = SHARED_TESTING_GROUNDS_STATE_PATH
+# Slot labels live in frogpilot/common/testing_grounds.py.
+_TESTING_GROUNDS_SLOT_DEFINITIONS = [dict(slot) for slot in SHARED_TESTING_GROUNDS_SLOT_DEFINITIONS]
+_TESTING_GROUNDS_VARIANT_LABELS_BY_SLOT = {
+  str(slot_id or "").strip(): dict(labels or {})
+  for slot_id, labels in SHARED_TESTING_GROUND_VARIANT_LABELS.items()
+}
+_fast_update_state = {
+  "running": False,
+  "stage": "idle",
+  "message": "",
+  "lastError": "",
+  "lastBranch": "",
+  "lastMode": "",
+  "startedAt": 0.0,
+  "finishedAt": 0.0,
+  "progressStep": 0,
+  "progressTotalSteps": _FAST_UPDATE_TOTAL_STEPS,
+  "progressStepPercent": 0.0,
+  "progressPercent": 0.0,
+  "progressLabel": "Idle",
+  "progressDetail": "",
+}
+
+_PLOTS_POLL_INTERVAL_S = 0.5
+_PLOTS_CLIENT_IDLE_TIMEOUT_S = 15.0
+_PLOTS_SAMPLE_STALE_AFTER_S = 1.5
+
+_plots_lock = threading.Lock()
+_plots_worker_thread = None
+_plots_last_client_request_ts = 0.0
+_plots_state = {
+  "timestamp": 0.0,
+  "desiredLateralAccel": 0.0,
+  "actualLateralAccel": 0.0,
+  "desiredLongitudinalAccel": 0.0,
+  "actualLongitudinalAccel": 0.0,
+  "lateralP": 0.0,
+  "lateralI": 0.0,
+  "lateralD": 0.0,
+  "lateralF": 0.0,
+  "longitudinalUpAccelCmd": 0.0,
+  "longitudinalUiAccelCmd": 0.0,
+  "longitudinalUfAccelCmd": 0.0,
+  "speed": 0.0,
+  "lateralSource": "curvature",
+  "longitudinalSource": "controlsState + liveLocationKalman",
+  "lateralTermsSource": "unknown",
+  "longitudinalTermsSource": "controlsState",
+  "sampleIndex": 0,
+  "lastError": "",
+}
+
+def _normalize_fingerprint_make_key(make_value):
+  return str(make_value or "").strip().lower()
+
+def _safe_float(value, default=0.0):
+  try:
+    return float(value)
+  except Exception:
+    return float(default)
+
+def _extract_lateral_accel_values(controls_state, speed_mps):
+  v_ego = max(0.0, _safe_float(speed_mps))
+  speed_sq = v_ego * v_ego
+
+  try:
+    lateral_state = controls_state.lateralControlState
+    if lateral_state.which() == "torqueState":
+      torque_state = lateral_state.torqueState
+      desired = _safe_float(getattr(torque_state, "desiredLateralAccel", 0.0))
+      actual = _safe_float(getattr(torque_state, "actualLateralAccel", 0.0))
+      if abs(desired) > 1e-3 or abs(actual) > 1e-3:
+        return desired, actual, "torqueState"
+  except Exception:
+    pass
+
+  desired_curvature = _safe_float(getattr(controls_state, "desiredCurvature", 0.0))
+  actual_curvature = _safe_float(getattr(controls_state, "curvature", 0.0))
+  return desired_curvature * speed_sq, actual_curvature * speed_sq, "curvature"
+
+def _extract_longitudinal_accel_values(controls_state, live_location_kalman):
+  desired = _safe_float(getattr(controls_state, "upAccelCmd", 0.0)) + \
+            _safe_float(getattr(controls_state, "uiAccelCmd", 0.0)) + \
+            _safe_float(getattr(controls_state, "ufAccelCmd", 0.0))
+
+  actual = 0.0
+  source = "controlsState + liveLocationKalman"
+  try:
+    accel_calibrated = getattr(live_location_kalman, "accelerationCalibrated", None)
+    if accel_calibrated and getattr(accel_calibrated, "valid", False):
+      accel_values = list(getattr(accel_calibrated, "value", []))
+      if len(accel_values) > 0:
+        actual = _safe_float(accel_values[0], 0.0)
+  except Exception:
+    source = "controlsState"
+
+  return desired, actual, source
+
+def _extract_lateral_controller_terms(controls_state):
+  terms = {
+    "lateralP": 0.0,
+    "lateralI": 0.0,
+    "lateralD": 0.0,
+    "lateralF": 0.0,
+  }
+  source = "unknown"
+
+  try:
+    lateral_state = controls_state.lateralControlState
+    which = lateral_state.which()
+    if which == "torqueState":
+      torque_state = lateral_state.torqueState
+      terms["lateralP"] = _safe_float(getattr(torque_state, "p", 0.0))
+      terms["lateralI"] = _safe_float(getattr(torque_state, "i", 0.0))
+      terms["lateralD"] = _safe_float(getattr(torque_state, "d", 0.0))
+      terms["lateralF"] = _safe_float(getattr(torque_state, "f", 0.0))
+      source = "torqueState"
+    elif which == "pidState":
+      pid_state = lateral_state.pidState
+      terms["lateralP"] = _safe_float(getattr(pid_state, "p", 0.0))
+      terms["lateralI"] = _safe_float(getattr(pid_state, "i", 0.0))
+      terms["lateralF"] = _safe_float(getattr(pid_state, "f", 0.0))
+      source = "pidState"
+    elif which:
+      source = which
+  except Exception:
+    pass
+
+  return terms, source
+
+def _extract_longitudinal_controller_terms(controls_state):
+  terms = {
+    "longitudinalUpAccelCmd": _safe_float(getattr(controls_state, "upAccelCmd", 0.0)),
+    "longitudinalUiAccelCmd": _safe_float(getattr(controls_state, "uiAccelCmd", 0.0)),
+    "longitudinalUfAccelCmd": _safe_float(getattr(controls_state, "ufAccelCmd", 0.0)),
+  }
+  return terms, "controlsState"
+
+def _plots_worker():
+  global _plots_worker_thread
+
+  try:
+    sm = messaging.SubMaster(["controlsState", "liveLocationKalman"], poll="controlsState")
+  except Exception as exception:
+    with _plots_lock:
+      _plots_state["lastError"] = str(exception)
+      _plots_worker_thread = None
+    return
+
+  while True:
+    with _plots_lock:
+      idle_for = time.monotonic() - _plots_last_client_request_ts
+
+    if idle_for >= _PLOTS_CLIENT_IDLE_TIMEOUT_S:
+      break
+
+    try:
+      sm.update(0)
+
+      controls_state = sm["controlsState"]
+      live_location_kalman = sm["liveLocationKalman"]
+      speed = _safe_float(getattr(controls_state, "vPid", 0.0))
+
+      desired_lateral, actual_lateral, lateral_source = _extract_lateral_accel_values(controls_state, speed)
+      desired_longitudinal, actual_longitudinal, longitudinal_source = _extract_longitudinal_accel_values(controls_state, live_location_kalman)
+      lateral_terms, lateral_terms_source = _extract_lateral_controller_terms(controls_state)
+      longitudinal_terms, longitudinal_terms_source = _extract_longitudinal_controller_terms(controls_state)
+
+      with _plots_lock:
+        _plots_state.update({
+          "timestamp": time.time(),
+          "desiredLateralAccel": round(desired_lateral, 4),
+          "actualLateralAccel": round(actual_lateral, 4),
+          "desiredLongitudinalAccel": round(desired_longitudinal, 4),
+          "actualLongitudinalAccel": round(actual_longitudinal, 4),
+          "lateralP": round(lateral_terms["lateralP"], 4),
+          "lateralI": round(lateral_terms["lateralI"], 4),
+          "lateralD": round(lateral_terms["lateralD"], 4),
+          "lateralF": round(lateral_terms["lateralF"], 4),
+          "longitudinalUpAccelCmd": round(longitudinal_terms["longitudinalUpAccelCmd"], 4),
+          "longitudinalUiAccelCmd": round(longitudinal_terms["longitudinalUiAccelCmd"], 4),
+          "longitudinalUfAccelCmd": round(longitudinal_terms["longitudinalUfAccelCmd"], 4),
+          "speed": round(speed, 4),
+          "lateralSource": lateral_source,
+          "longitudinalSource": longitudinal_source,
+          "lateralTermsSource": lateral_terms_source,
+          "longitudinalTermsSource": longitudinal_terms_source,
+          "sampleIndex": int(_plots_state.get("sampleIndex", 0)) + 1,
+          "lastError": "",
+        })
+    except Exception as exception:
+      with _plots_lock:
+        _plots_state["lastError"] = str(exception)
+
+    time.sleep(_PLOTS_POLL_INTERVAL_S)
+
+  with _plots_lock:
+    _plots_worker_thread = None
+
+def _ensure_plots_worker():
+  global _plots_worker_thread, _plots_last_client_request_ts
+
+  with _plots_lock:
+    _plots_last_client_request_ts = time.monotonic()
+    if _plots_worker_thread and _plots_worker_thread.is_alive():
+      return
+    _plots_worker_thread = threading.Thread(target=_plots_worker, daemon=True)
+    _plots_worker_thread.start()
+
+def _set_fast_update_state(**kwargs):
+  with _fast_update_lock:
+    _fast_update_state.update(kwargs)
+
+def _get_fast_update_state():
+  with _fast_update_lock:
+    return dict(_fast_update_state)
+
+def _set_fast_update_progress(step, label, step_percent=0.0, detail=""):
+  safe_step = max(1, min(_FAST_UPDATE_TOTAL_STEPS, int(step)))
+  safe_step_percent = float(max(0.0, min(100.0, step_percent)))
+  overall_percent = (((safe_step - 1) + (safe_step_percent / 100.0)) / _FAST_UPDATE_TOTAL_STEPS) * 100.0
+
+  _set_fast_update_state(
+    progressStep=safe_step,
+    progressTotalSteps=_FAST_UPDATE_TOTAL_STEPS,
+    progressStepPercent=round(safe_step_percent, 1),
+    progressPercent=round(overall_percent, 1),
+    progressLabel=label,
+    progressDetail=detail,
+  )
+
+def _parse_git_progress_line(raw_line):
+  text = str(raw_line or "").replace("\x1b", "").strip()
+  while text.startswith("remote:"):
+    text = text[len("remote:"):].strip()
+
+  if not text:
+    return None, "", ""
+
+  match = _GIT_PROGRESS_PERCENT_RE.search(text)
+  if not match:
+    return None, text, ""
+
+  try:
+    percent = float(match.group(2))
+  except Exception:
+    percent = None
+
+  phase = str(match.group(1) or "").strip().lower()
+  return percent, text, phase
+
+def _normalize_git_phase_percent(phase, percent):
+  safe_percent = max(0.0, min(100.0, float(percent)))
+  phase_text = str(phase or "").strip().lower()
+
+  # Git progress lines are per-phase and can hit 100% multiple times before the
+  # command actually exits. Map known phases to a monotonic 0..99% envelope.
+  if "counting objects" in phase_text:
+    return min(20.0, safe_percent * 0.20)
+  if "compressing objects" in phase_text:
+    return min(45.0, 20.0 + (safe_percent * 0.25))
+  if "receiving objects" in phase_text:
+    return min(85.0, 45.0 + (safe_percent * 0.40))
+  if "resolving deltas" in phase_text:
+    return min(99.0, 85.0 + (safe_percent * 0.14))
+
+  # Unknown phase: keep below 100 until the process exits.
+  return min(99.0, safe_percent)
+
+def _git_command_env():
+  env = os.environ.copy()
+  env["GIT_TERMINAL_PROMPT"] = "0"
+  env["GIT_ASKPASS"] = "/bin/false"
+  env["SSH_ASKPASS"] = "/bin/false"
+  env["GCM_INTERACTIVE"] = "Never"
+  if not env.get("GIT_SSH_COMMAND"):
+    env["GIT_SSH_COMMAND"] = "ssh -oBatchMode=yes"
+  return env
+
+def _build_shallow_fetch_args(branch):
+  return [
+    "-c", "gc.auto=0",
+    "-c", "maintenance.auto=false",
+    "fetch",
+    "--progress",
+    "--depth=1",
+    "--no-recurse-submodules",
+    "origin",
+    branch,
+  ]
+
+def _run_git_with_progress(repo_path, args, timeout, step, label):
+  cmd = ["git", *args]
+
+  process = subprocess.Popen(
+    cmd,
+    cwd=repo_path,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    env=_git_command_env(),
+  )
+
+  if process.stdout is None:
+    raise RuntimeError("Failed to open git output stream")
+
+  fd = process.stdout.fileno()
+  os.set_blocking(fd, False)
+
+  selector = selectors.DefaultSelector()
+  selector.register(fd, selectors.EVENT_READ)
+
+  started_at = time.monotonic()
+  last_activity_at = started_at
+  last_emit_at = 0.0
+  last_percent = None
+  last_detail = ""
+  output_tail = []
+  buffer = ""
+
+  def consume_text(text):
+    nonlocal buffer
+    for char in text:
+      if char in ("\r", "\n"):
+        if buffer:
+          handle_line(buffer)
+          buffer = ""
+      else:
+        buffer += char
+
+  def append_tail(text):
+    if not text:
+      return
+    output_tail.append(text)
+    if len(output_tail) > 180:
+      del output_tail[:-180]
+
+  def handle_line(text):
+    nonlocal last_activity_at, last_emit_at, last_percent, last_detail
+
+    percent, detail, phase = _parse_git_progress_line(text)
+    append_tail(detail or text)
+
+    now = time.monotonic()
+    last_activity_at = now
+    should_emit = False
+
+    if percent is not None:
+      safe_percent = _normalize_git_phase_percent(phase, percent)
+      if safe_percent in (0.0, 99.0):
+        should_emit = True
+      elif now - last_emit_at >= _FAST_UPDATE_PROGRESS_UPDATE_INTERVAL_S:
+        should_emit = last_percent is None or abs(safe_percent - last_percent) >= 1.0
+
+      if should_emit:
+        _set_fast_update_progress(step, label, safe_percent, detail or label)
+        last_emit_at = now
+        last_percent = safe_percent
+        last_detail = detail or label
+      else:
+        if last_percent is None:
+          last_percent = safe_percent
+    else:
+      if detail and now - last_emit_at >= _FAST_UPDATE_PROGRESS_UPDATE_INTERVAL_S and detail != last_detail:
+        fallback_percent = last_percent if last_percent is not None else 0.0
+        _set_fast_update_progress(step, label, fallback_percent, detail)
+        last_emit_at = now
+        last_detail = detail
+
+  try:
+    while True:
+      now = time.monotonic()
+      if timeout and (now - last_activity_at) > timeout:
+        try:
+          process.kill()
+        except Exception:
+          pass
+        tail = output_tail[-1] if output_tail else ""
+        suffix = f" (last output: {tail})" if tail else ""
+        raise TimeoutError(f"git {' '.join(args)} stalled for {int(timeout)}s without output{suffix}")
+
+      events = selector.select(timeout=0.5)
+      if not events:
+        if process.poll() is not None:
+          try:
+            trailing = os.read(fd, 4096)
+          except BlockingIOError:
+            trailing = b""
+          if trailing:
+            last_activity_at = time.monotonic()
+            consume_text(trailing.decode("utf-8", errors="replace"))
+            continue
+          break
+
+        # Heartbeat: if git is quiet (no progress lines), still surface activity.
+        now = time.monotonic()
+        if now - last_emit_at >= _FAST_UPDATE_PROGRESS_UPDATE_INTERVAL_S:
+          if timeout:
+            inferred_percent = min(95.0, max(0.0, ((now - started_at) / timeout) * 95.0))
+          else:
+            inferred_percent = min(95.0, (last_percent or 0.0) + 1.0)
+          if last_percent is None or inferred_percent > last_percent:
+            last_percent = inferred_percent
+          heartbeat_detail = last_detail or f"{label}..."
+          _set_fast_update_progress(step, label, last_percent or 0.0, heartbeat_detail)
+          last_emit_at = now
+        continue
+
+      reached_eof = False
+      for _, _ in events:
+        try:
+          chunk = os.read(fd, 4096)
+        except BlockingIOError:
+          chunk = b""
+
+        if not chunk:
+          # Selector can keep reporting readability on EOF; exit once process ended.
+          if process.poll() is not None:
+            reached_eof = True
+            break
+          continue
+
+        last_activity_at = time.monotonic()
+        consume_text(chunk.decode("utf-8", errors="replace"))
+
+      if reached_eof:
+        break
+
+    if buffer:
+      handle_line(buffer)
+
+    return_code = process.wait(timeout=2)
+  finally:
+    try:
+      selector.unregister(fd)
+    except Exception:
+      pass
+    selector.close()
+    try:
+      process.stdout.close()
+    except Exception:
+      pass
+
+  if return_code == 0:
+    _set_fast_update_progress(step, label, 100.0, last_detail or "Done")
+
+  return return_code, "\n".join(output_tail[-40:])
+
+def _run_git(repo_path, args, timeout=30):
+  return subprocess.run(
+    ["git", *args],
+    cwd=repo_path,
+    capture_output=True,
+    text=True,
+    timeout=timeout,
+    check=False,
+    env=_git_command_env(),
+  )
+
+def _git_stdout(repo_path, args, timeout=15):
+  result = _run_git(repo_path, args, timeout=timeout)
+  if result.returncode != 0:
+    stderr = (result.stderr or "").strip() or (result.stdout or "").strip() or "git command failed"
+    raise RuntimeError(stderr)
+  return (result.stdout or "").strip()
+
+def _is_valid_git_branch_name(repo_path, branch_name):
+  branch = str(branch_name or "").strip()
+  if not branch or branch.startswith("-") or "\x00" in branch:
+    return False
+
+  result = _run_git(repo_path, ["check-ref-format", "--branch", branch], timeout=10)
+  return result.returncode == 0
+
+def _list_origin_branches(repo_path, include_remote=True):
+  branches = set()
+  remote_error = ""
+
+  if include_remote:
+    try:
+      remote_heads = _git_stdout(repo_path, ["ls-remote", "--heads", "origin"], timeout=25)
+      for line in remote_heads.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+          continue
+
+        ref = parts[1].strip()
+        if not ref.startswith("refs/heads/"):
+          continue
+
+        branch = ref[len("refs/heads/"):].strip()
+        if branch:
+          branches.add(branch)
+    except Exception as exception:
+      remote_error = str(exception)
+
+  if not branches:
+    try:
+      local_refs = _git_stdout(
+        repo_path,
+        ["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"],
+        timeout=15,
+      )
+      for line in local_refs.splitlines():
+        ref = line.strip()
+        if not ref or ref in ("origin/HEAD",):
+          continue
+        if ref.startswith("origin/"):
+          ref = ref[len("origin/"):]
+        if ref.endswith("/HEAD"):
+          continue
+        if ref:
+          branches.add(ref)
+    except Exception as exception:
+      if not remote_error:
+        remote_error = str(exception)
+
+  return sorted(branches, key=lambda branch: branch.lower()), remote_error
+
+def _repo_has_submodule_entries(repo_path):
+  gitmodules_path = Path(repo_path) / ".gitmodules"
+  if not gitmodules_path.is_file():
+    return False
+
+  try:
+    content = gitmodules_path.read_text(encoding="utf-8", errors="replace")
+  except Exception:
+    # If we cannot inspect .gitmodules, stay conservative and try syncing.
+    return True
+
+  return bool(_GIT_SUBMODULE_SECTION_RE.search(content))
+
+def _run_submodule_update_if_needed(repo_path, step=4):
+  if not _repo_has_submodule_entries(repo_path):
+    _set_fast_update_progress(step, "Updating submodules", 100.0, "No submodules configured.")
+    return
+
+  _set_fast_update_progress(step, "Updating submodules", 0.0, "Syncing submodules...")
+  submodule_rc, submodule_output = _run_git_with_progress(
+    repo_path,
+    ["submodule", "update", "--init", "--recursive", "--depth=1", "--progress"],
+    timeout=240,
+    step=step,
+    label="Updating submodules",
+  )
+  if submodule_rc != 0:
+    raise RuntimeError(submodule_output.strip() or "git submodule update failed")
+
+def _finish_update_and_reboot(message):
+  _set_fast_update_progress(5, "Rebooting device", 100.0, "Update complete. Please wait for device to reboot.")
+  _set_fast_update_state(
+    running=False,
+    stage="rebooting",
+    message=message,
+    finishedAt=time.time(),
+  )
+  # Keep the service online briefly so the UI can fetch and render the reboot notice.
+  time.sleep(_FAST_UPDATE_REBOOT_NOTICE_SECONDS)
+  HARDWARE.reboot()
+
+def _set_fast_update_error_state(message, exception):
+  error_text = str(exception).strip() or "Unknown error"
+  _set_fast_update_state(
+    running=False,
+    stage="error",
+    message=message,
+    lastError=error_text,
+    finishedAt=time.time(),
+    progressStep=0,
+    progressTotalSteps=_FAST_UPDATE_TOTAL_STEPS,
+    progressStepPercent=0.0,
+    progressPercent=0.0,
+    progressLabel="Failed",
+    progressDetail="Update failed. See Last Error below.",
+  )
+
+def _collect_fast_update_info(include_remote=True):
+  repo_path = str(_get_openpilot_root())
+
+  branch = ""
+  local_commit = ""
+  remote_commit = ""
+  update_available = False
+  remote_error = ""
+  origin_remote = ""
+  commits_url = ""
+
+  try:
+    branch = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    local_commit = _git_stdout(repo_path, ["rev-parse", "HEAD"])
+    try:
+      origin_remote = _git_stdout(repo_path, ["config", "--get", "remote.origin.url"])
+    except Exception:
+      origin_remote = ""
+  except Exception as exception:
+    return {
+      "repoPath": repo_path,
+      "branch": branch,
+      "localCommit": local_commit,
+      "remoteCommit": remote_commit,
+      "updateAvailable": False,
+      "remoteError": str(exception),
+      "originRemote": origin_remote,
+      "commitsUrl": commits_url,
+    }
+
+  if origin_remote:
+    remote = origin_remote.strip()
+    if remote.startswith("git@github.com:"):
+      remote = "https://github.com/" + remote.split(":", 1)[1]
+    elif remote.startswith("ssh://git@github.com/"):
+      remote = "https://github.com/" + remote.split("ssh://git@github.com/", 1)[1]
+    elif remote.startswith("http://github.com/"):
+      remote = "https://github.com/" + remote.split("http://github.com/", 1)[1]
+
+    if remote.startswith("https://github.com/"):
+      remote = remote.rstrip("/")
+      if remote.endswith(".git"):
+        remote = remote[:-4]
+      if branch:
+        commits_url = f"{remote}/commits/{quote(branch, safe='')}/"
+
+  if branch and include_remote:
+    try:
+      remote_raw = _git_stdout(repo_path, ["ls-remote", "--heads", "origin", branch], timeout=20)
+      if remote_raw:
+        remote_commit = remote_raw.split()[0]
+        update_available = bool(local_commit and remote_commit and local_commit != remote_commit)
+    except Exception as exception:
+      remote_error = str(exception)
+
+  return {
+    "repoPath": repo_path,
+    "branch": branch,
+    "localCommit": local_commit,
+    "remoteCommit": remote_commit,
+    "updateAvailable": update_available,
+    "remoteError": remote_error,
+    "originRemote": origin_remote,
+    "commitsUrl": commits_url,
+  }
+
+def _fast_update_worker():
+  started_at = time.time()
+  repo_path = str(_get_openpilot_root())
+
+  try:
+    _set_fast_update_progress(1, "Preparing update", 10.0, "Resolving active branch...")
+    branch = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    _set_fast_update_progress(1, "Preparing update", 100.0, f"Branch: {branch}")
+    _set_fast_update_state(
+      running=True,
+      stage="updating",
+      message=f"Applying shallow update on '{branch}'...",
+      lastError="",
+      lastBranch=branch,
+      lastMode="fetch-reset",
+      startedAt=started_at,
+      finishedAt=0.0,
+    )
+
+    _set_fast_update_progress(2, "Fetching branch snapshot", 0.0, "Fetching latest shallow commit...")
+    fetch_rc, fetch_output = _run_git_with_progress(
+      repo_path,
+      _build_shallow_fetch_args(branch),
+      timeout=_FAST_UPDATE_FETCH_TIMEOUT_S,
+      step=2,
+      label="Fetching branch snapshot",
+    )
+    if fetch_rc != 0:
+      raise RuntimeError(fetch_output.strip() or "git fetch failed")
+
+    _set_fast_update_progress(3, "Applying fetched commit", 20.0, "Resetting repository to fetched head...")
+    reset = _run_git(repo_path, ["reset", "--hard", "FETCH_HEAD"], timeout=120)
+    if reset.returncode != 0:
+      raise RuntimeError((reset.stderr or reset.stdout or "git reset failed").strip())
+    _set_fast_update_progress(3, "Applying fetched commit", 100.0, "Repository reset complete.")
+
+    _run_submodule_update_if_needed(repo_path, step=4)
+    _finish_update_and_reboot(
+      "Update successful. Device is rebooting now. Please wait for reconnection."
+    )
+  except Exception as exception:
+    _set_fast_update_error_state("Fast update failed.", exception)
+
+def _branch_switch_worker(target_branch):
+  started_at = time.time()
+  repo_path = str(_get_openpilot_root())
+
+  try:
+    _set_fast_update_progress(1, "Preparing branch switch", 10.0, f"Target: {target_branch}")
+    current_branch = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    _set_fast_update_progress(1, "Preparing branch switch", 100.0, f"{current_branch} -> {target_branch}")
+    _set_fast_update_state(
+      running=True,
+      stage="switching",
+      message=f"Switching to '{target_branch}' with shallow fetch...",
+      lastError="",
+      lastBranch=target_branch,
+      lastMode="branch-switch",
+      startedAt=started_at,
+      finishedAt=0.0,
+    )
+
+    _set_fast_update_progress(2, "Fetching branch snapshot", 0.0, f"Fetching '{target_branch}' from origin...")
+    fetch_rc, fetch_output = _run_git_with_progress(
+      repo_path,
+      _build_shallow_fetch_args(target_branch),
+      timeout=_FAST_BRANCH_SWITCH_FETCH_TIMEOUT_S,
+      step=2,
+      label="Fetching branch snapshot",
+    )
+    if fetch_rc != 0:
+      raise RuntimeError(fetch_output.strip() or f"git fetch failed for '{target_branch}'")
+
+    _set_fast_update_progress(3, "Switching branch", 20.0, f"Checking out '{target_branch}'...")
+    checkout = _run_git(repo_path, ["checkout", "--force", "-B", target_branch, "FETCH_HEAD"], timeout=120)
+    if checkout.returncode != 0:
+      raise RuntimeError((checkout.stderr or checkout.stdout or "git checkout failed").strip())
+
+    reset = _run_git(repo_path, ["reset", "--hard", "FETCH_HEAD"], timeout=120)
+    if reset.returncode != 0:
+      raise RuntimeError((reset.stderr or reset.stdout or "git reset failed").strip())
+
+    _run_git(repo_path, ["branch", "--set-upstream-to", f"origin/{target_branch}", target_branch], timeout=30)
+    _set_fast_update_progress(3, "Switching branch", 100.0, f"Now on '{target_branch}'.")
+
+    _run_submodule_update_if_needed(repo_path, step=4)
+    _finish_update_and_reboot(
+      f"Switched to '{target_branch}'. Device is rebooting now. Please wait for reconnection."
+    )
+  except Exception as exception:
+    _set_fast_update_error_state("Fast branch switch failed.", exception)
+
+def _get_openpilot_root():
+  global _openpilot_root_cache
+  if _openpilot_root_cache is not None:
+    return _openpilot_root_cache
+
+  for parent in Path(__file__).resolve().parents:
+    if (parent / "selfdrive" / "car").is_dir():
+      _openpilot_root_cache = parent
+      return _openpilot_root_cache
+
+  # Fallback to repo root shape used in this tree.
+  _openpilot_root_cache = Path(__file__).resolve().parents[3]
+  return _openpilot_root_cache
+
+def _extract_fingerprint_models_for_make(make_key):
+  source_make = FINGERPRINT_MAKE_TO_VALUES_DIR.get(make_key, make_key)
+  values_path = _get_openpilot_root() / "selfdrive" / "car" / source_make / "values.py"
+  if not values_path.is_file():
+    return []
+
+  try:
+    content = values_path.read_text(encoding="utf-8", errors="replace")
+  except Exception:
+    return []
+
+  content = re.sub(r'#[^\n]*', "", content)
+  content = re.sub(r'footnotes=\[[^\]]*\],\s*', "", content)
+
+  models = []
+  seen = set()
+
+  for platform_match in _FINGERPRINT_PLATFORM_RE.finditer(content):
+    platform_name = platform_match.group(1)
+    if not _FINGERPRINT_PLATFORM_NAME_RE.match(platform_name):
+      continue
+
+    platform_section = platform_match.group(2)
+    for name_match in _FINGERPRINT_CARDOCS_RE.finditer(platform_section):
+      car_name = name_match.group(1).strip()
+      if " " not in car_name:
+        continue
+      if not _FINGERPRINT_VALID_NAME_RE.match(car_name):
+        continue
+
+      if car_name.split(" ", 1)[0].lower() != make_key:
+        continue
+
+      dedupe_key = (car_name, platform_name)
+      if dedupe_key in seen:
+        continue
+      seen.add(dedupe_key)
+      models.append({"value": platform_name, "label": car_name})
+
+  models.sort(key=lambda entry: entry["label"].lower())
+  return models
+
+def _get_fingerprint_catalog():
+  global _fingerprint_catalog_cache
+  if _fingerprint_catalog_cache is not None:
+    return _fingerprint_catalog_cache
+
+  make_options = [{"value": label, "label": label} for label in FINGERPRINT_MAKE_LABELS]
+  make_keys = [_normalize_fingerprint_make_key(label) for label in FINGERPRINT_MAKE_LABELS]
+  make_label_by_key = {key: label for key, label in zip(make_keys, FINGERPRINT_MAKE_LABELS)}
+
+  models_by_make = {}
+  all_models = []
+  seen_all = set()
+  model_to_label = {}
+  model_to_make = {}
+  label_to_model = {}
+
+  for make_key in make_keys:
+    make_label = make_label_by_key.get(make_key, make_key.title())
+    entries = _extract_fingerprint_models_for_make(make_key)
+
+    models_by_make[make_key] = entries
+    for entry in entries:
+      model_value = entry["value"]
+      model_label = entry["label"]
+
+      model_to_label.setdefault(model_value, model_label)
+      model_to_make.setdefault(model_value, make_label)
+      label_to_model.setdefault(model_label, model_value)
+
+      dedupe_key = (model_label, model_value)
+      if dedupe_key in seen_all:
+        continue
+      seen_all.add(dedupe_key)
+
+      all_models.append({
+        "value": model_value,
+        "label": model_label,
+        "make": make_label,
+      })
+
+  all_models.sort(key=lambda entry: entry["label"].lower())
+
+  _fingerprint_catalog_cache = {
+    "makes": make_options,
+    "models_by_make": models_by_make,
+    "all_models": all_models,
+    "make_label_by_key": make_label_by_key,
+    "model_to_label": model_to_label,
+    "model_to_make": model_to_make,
+    "label_to_model": label_to_model,
+  }
+  return _fingerprint_catalog_cache
+
+def read_legacy_param_file(key, default_value=""):
+  try:
+    value_path = Path(params.get_param_path(key))
+    if value_path.is_file():
+      return value_path.read_text(encoding="utf-8").strip() or default_value
+  except Exception:
+    pass
+  return default_value
+
+def write_legacy_param_file(key, value):
+  value_path = Path(params.get_param_path(key))
+  value_path.parent.mkdir(parents=True, exist_ok=True)
+  tmp_path = value_path.with_name(f".tmp_{value_path.name}")
+  tmp_path.write_text(str(value), encoding="utf-8")
+  os.replace(tmp_path, value_path)
+
+_layout_type_overrides = None
+
+def _get_layout_type_overrides():
+  global _layout_type_overrides
+  if _layout_type_overrides is None:
+    try:
+      layout_path = os.path.join(os.path.dirname(__file__), "assets", "components", "tools", "device_settings_layout.json")
+      with open(layout_path) as f:
+        layout_data = json.load(f)
+      _layout_type_overrides = {
+        p["key"]: p["data_type"]
+        for section in layout_data
+        for p in section.get("params", [])
+        if "key" in p and "data_type" in p
+      }
+    except Exception:
+      _layout_type_overrides = {}
+  return _layout_type_overrides
+
+_cached_allowed_keys = None
+_cached_param_types = None
+
+def _get_param_type_info():
+  global _cached_allowed_keys, _cached_param_types
+  if _cached_allowed_keys is None:
+    _cached_allowed_keys = {k for k, _, _, _ in frogpilot_default_params if k not in EXCLUDED_KEYS}
+
+    types = {}
+    for k, default_val, _, _ in frogpilot_default_params:
+      if k in _cached_allowed_keys:
+        if default_val in ("0", "1", b"0", b"1") or isinstance(default_val, bool):
+          types[k] = bool
+        elif isinstance(default_val, float) or (isinstance(default_val, str) and "." in default_val and default_val.replace(".", "", 1).isdigit()):
+          types[k] = float
+        elif isinstance(default_val, int) or (isinstance(default_val, str) and default_val.isdigit()):
+          types[k] = int
+        else:
+          types[k] = str
+
+    for k, dt in _get_layout_type_overrides().items():
+      if k in types and dt in ("int", "float") and types[k] == bool:
+        types[k] = float if dt == "float" else int
+
+    _cached_param_types = types
+  return _cached_allowed_keys, _cached_param_types
+
+def _extract_testing_ground_variant_labels(slot_data, include_default=True):
+  labels = {}
+  if not isinstance(slot_data, dict):
+    slot_data = {}
+
+  raw_variant_labels = slot_data.get("variantLabels")
+  if isinstance(raw_variant_labels, dict):
+    for raw_variant, raw_label in raw_variant_labels.items():
+      variant = str(raw_variant or "").strip().upper()
+      label = str(raw_label or "").strip()
+      if len(variant) == 1 and variant.isalpha() and label:
+        labels[variant] = label
+
+  for key, value in slot_data.items():
+    if not isinstance(key, str) or not key.endswith("Label"):
+      continue
+    variant = key[:-5].strip().upper()
+    if len(variant) != 1 or not variant.isalpha():
+      continue
+    label = str(value or "").strip()
+    if label:
+      labels[variant] = label
+
+  if include_default and _TESTING_GROUNDS_DEFAULT_VARIANT not in labels:
+    labels[_TESTING_GROUNDS_DEFAULT_VARIANT] = _TESTING_GROUNDS_DEFAULT_VARIANT
+
+  return dict(sorted(labels.items()))
+
+def _get_testing_ground_variant_labels(slot_id, slot=None):
+  normalized_slot_id = str(slot_id or "").strip()
+  labels = {}
+
+  shared_labels = _TESTING_GROUNDS_VARIANT_LABELS_BY_SLOT.get(normalized_slot_id, {})
+  if shared_labels:
+    labels.update({
+      str(variant or "").strip().upper(): str(label or "").strip()
+      for variant, label in shared_labels.items()
+      if len(str(variant or "").strip().upper()) == 1 and str(variant or "").strip().upper().isalpha() and str(label or "").strip()
+    })
+  else:
+    labels.update(_extract_testing_ground_variant_labels(slot if isinstance(slot, dict) else {}, include_default=False))
+
+  if _TESTING_GROUNDS_DEFAULT_VARIANT not in labels:
+    labels[_TESTING_GROUNDS_DEFAULT_VARIANT] = _TESTING_GROUNDS_DEFAULT_VARIANT
+
+  return dict(sorted(labels.items()))
+
+def _normalize_testing_ground_variant(slot_id, variant, slot=None):
+  allowed_variants = set(_get_testing_ground_variant_labels(slot_id, slot).keys()) or set(_TESTING_GROUNDS_VARIANTS)
+  normalized_variant = str(variant or "").strip().upper()
+  return normalized_variant if normalized_variant in allowed_variants else _TESTING_GROUNDS_DEFAULT_VARIANT
+
+def _build_testing_ground_fallback_slots():
+  definitions_by_id = {}
+
+  for definition in _TESTING_GROUNDS_SLOT_DEFINITIONS:
+    if not isinstance(definition, dict):
+      continue
+
+    slot_id = str(definition.get("id") or "").strip()
+    if not slot_id:
+      continue
+
+    variant_labels = _get_testing_ground_variant_labels(slot_id, definition)
+    definitions_by_id[slot_id] = {
+      "id": slot_id,
+      "name": str(definition.get("name") or "Unused").strip() or "Unused",
+      "description": str(definition.get("description") or "").strip(),
+      "variantLabels": variant_labels,
+      "aLabel": variant_labels.get("A", "A"),
+      "bLabel": variant_labels.get("B", "B"),
+    }
+
+  slots = []
+  for slot_number in range(1, _TESTING_GROUNDS_SLOT_COUNT + 1):
+    slot_id = str(slot_number)
+    default_variant_labels = {
+      _TESTING_GROUNDS_DEFAULT_VARIANT: _TESTING_GROUNDS_DEFAULT_VARIANT,
+      "B": "B",
+    }
+    fallback_slot = definitions_by_id.get(slot_id, {
+      "id": slot_id,
+      "name": "Unused",
+      "description": "",
+      "variantLabels": default_variant_labels,
+      "aLabel": "A",
+      "bLabel": "B",
+    })
+    slot = dict(fallback_slot)
+    slot_variant_labels = _get_testing_ground_variant_labels(slot_id, slot)
+    slot["variantLabels"] = slot_variant_labels
+    slot["aLabel"] = slot_variant_labels.get("A", slot.get("aLabel", "A"))
+    slot["bLabel"] = slot_variant_labels.get("B", slot.get("bLabel", "B"))
+    slots.append(slot)
+
+  return slots
+
+def _default_testing_grounds_state():
+  return {
+    "schemaVersion": _TESTING_GROUNDS_SCHEMA_VERSION,
+    "activeSlot": "1",
+    "activeVariant": _TESTING_GROUNDS_DEFAULT_VARIANT,
+    "slots": _build_testing_ground_fallback_slots(),
+  }
+
+def _normalize_testing_ground_slot(raw_slot, fallback_slot):
+  slot = dict(fallback_slot)
+  if not isinstance(raw_slot, dict):
+    return slot
+
+  # Slot metadata (name/description) should always come from shared definitions.
+  # Persisted state only owns active selection and per-slot variant labels.
+  slot["name"] = str(slot.get("name") or "Unused").strip() or "Unused"
+  slot["description"] = str(slot.get("description") or "").strip()
+
+  variant_labels = _get_testing_ground_variant_labels(slot.get("id"), raw_slot)
+  if not variant_labels:
+    variant_labels = _get_testing_ground_variant_labels(slot.get("id"), slot)
+  slot["variantLabels"] = variant_labels
+  slot["aLabel"] = variant_labels.get("A", slot.get("aLabel", "A"))
+  slot["bLabel"] = variant_labels.get("B", slot.get("bLabel", "B"))
+
+  return slot
+
+def _load_testing_grounds_state_unlocked():
+  state = _default_testing_grounds_state()
+  fallback_slots = state["slots"]
+  fallback_slot_ids = {slot["id"] for slot in fallback_slots}
+  needs_write = False
+
+  raw_state = {}
+  try:
+    raw_state = json.loads(_TESTING_GROUNDS_STATE_PATH.read_text(encoding="utf-8"))
+    if not isinstance(raw_state, dict):
+      raw_state = {}
+      needs_write = True
+  except FileNotFoundError:
+    needs_write = True
+  except Exception:
+    needs_write = True
+
+  if raw_state.get("schemaVersion") != _TESTING_GROUNDS_SCHEMA_VERSION:
+    needs_write = True
+
+  raw_slots = raw_state.get("slots")
+  if isinstance(raw_slots, list):
+    raw_by_id = {}
+    for index, raw_slot in enumerate(raw_slots, start=1):
+      if not isinstance(raw_slot, dict):
+        needs_write = True
+        continue
+
+      slot_id = str(raw_slot.get("id") or "").strip() or str(index)
+      if slot_id not in fallback_slot_ids:
+        needs_write = True
+        continue
+
+      raw_by_id[slot_id] = raw_slot
+
+    normalized_slots = []
+    for fallback_slot in fallback_slots:
+      slot_id = fallback_slot["id"]
+      normalized_slots.append(_normalize_testing_ground_slot(raw_by_id.get(slot_id), fallback_slot))
+      if slot_id not in raw_by_id:
+        needs_write = True
+
+    state["slots"] = normalized_slots
+  else:
+    needs_write = True
+
+  active_slot = str(raw_state.get("activeSlot") or "").strip()
+  if active_slot not in fallback_slot_ids:
+    active_slot = state["activeSlot"]
+    needs_write = True
+  state["activeSlot"] = active_slot
+
+  active_slot_data = _find_testing_ground_slot(state, active_slot)
+  raw_active_variant = str(raw_state.get("activeVariant") or "").strip().upper()
+  active_variant = _normalize_testing_ground_variant(active_slot, raw_active_variant, active_slot_data)
+  if raw_active_variant != active_variant:
+    needs_write = True
+  state["activeVariant"] = active_variant
+
+  return state, needs_write
+
+def _write_testing_grounds_state_unlocked(state):
+  _TESTING_GROUNDS_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+  tmp_path = _TESTING_GROUNDS_STATE_PATH.with_name(f".tmp_{_TESTING_GROUNDS_STATE_PATH.name}")
+  tmp_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+  os.replace(tmp_path, _TESTING_GROUNDS_STATE_PATH)
+
+def _get_testing_grounds_state():
+  with _TESTING_GROUNDS_LOCK:
+    state, needs_write = _load_testing_grounds_state_unlocked()
+    if needs_write:
+      try:
+        _write_testing_grounds_state_unlocked(state)
+      except Exception:
+        pass
+    return state
+
+def _is_unused_testing_ground_slot(slot):
+  name = str(slot.get("name") or "").strip().lower()
+  return name == "unused" or name.startswith("unused ")
+
+def _find_testing_ground_slot(state, slot_id):
+  for slot in state.get("slots", []):
+    if str(slot.get("id") or "").strip() == slot_id:
+      return slot
+  return {}
+
+def _serialize_testing_grounds_state(state):
+  slots = state.get("slots", [])
+  active_slot_id = str(state.get("activeSlot") or "").strip()
+  active_slot = _find_testing_ground_slot(state, active_slot_id)
+  active_variant = _normalize_testing_ground_variant(active_slot_id, state.get("activeVariant"), active_slot)
+  active_variant_labels = _get_testing_ground_variant_labels(active_slot_id, active_slot)
+
+  return {
+    "schemaVersion": state.get("schemaVersion", _TESTING_GROUNDS_SCHEMA_VERSION),
+    "activeSlot": active_slot_id,
+    "activeVariant": active_variant,
+    "activeVariantLabel": active_variant_labels.get(active_variant, active_variant),
+    "activeSlotName": active_slot.get("name", active_slot_id),
+    "slots": slots,
+    "slotSummaryLines": [f"{slot.get('id', '?')}. {slot.get('name', 'Unused')}" for slot in slots],
+    "selectableSlots": [slot for slot in slots if not _is_unused_testing_ground_slot(slot)],
+  }
+
+def _set_testing_ground_selection(slot_id, variant):
+  normalized_slot_id = str(slot_id or "").strip()
+  requested_variant = str(variant or "").strip().upper()
+
+  with _TESTING_GROUNDS_LOCK:
+    state, _ = _load_testing_grounds_state_unlocked()
+    slot_ids = {slot["id"] for slot in state["slots"]}
+    if normalized_slot_id not in slot_ids:
+      raise ValueError(f"Unknown testing ground slot '{normalized_slot_id}'.")
+
+    slot = _find_testing_ground_slot(state, normalized_slot_id)
+    allowed_variant_labels = _get_testing_ground_variant_labels(normalized_slot_id, slot)
+    if requested_variant not in allowed_variant_labels:
+      allowed_variants = ", ".join(sorted(allowed_variant_labels.keys()))
+      raise ValueError(f"Variant must be one of: {allowed_variants}.")
+
+    normalized_variant = _normalize_testing_ground_variant(normalized_slot_id, requested_variant, slot)
+    state["activeSlot"] = normalized_slot_id
+    state["activeVariant"] = normalized_variant
+    _write_testing_grounds_state_unlocked(state)
+    return state
+
 def setup(app):
+  model_status_debug = {
+    "last_signature": None,
+    "last_log_time": 0.0,
+    "last_empty_catalog_log_time": 0.0,
+  }
+
   @app.errorhandler(404)
   def not_found(_):
-    return render_template("index.html")
+    response = make_response(render_template("index.html"))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
   @app.route("/", methods=["GET"])
   def index():
-    return render_template("index.html")
+    response = make_response(render_template("index.html"))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
-  @app.route("/api/doors_available", methods=["GET"])
-  def doors_available():
-    with car.CarParams.from_bytes(params.get("CarParamsPersistent")) as cp_reader:
-      CP = cp_reader.as_builder()
+  @app.route("/manifest.json", methods=["GET"])
+  @app.route("/assets/manifest.json", methods=["GET"])
+  def manifest():
+    manifest_path = Path(app.static_folder) / "manifest.json"
+    if manifest_path.is_file():
+      return send_file(str(manifest_path), mimetype="application/manifest+json")
 
-    return jsonify({"result": HARDWARE.get_device_type() != "tici" and CP.carName == "toyota"})
+    # Fallback so the browser doesn't keep logging noisy 404s.
+    return jsonify({
+      "name": "Galaxy",
+      "short_name": "Galaxy",
+      "display": "standalone",
+      "start_url": "/",
+      "background_color": "#000000",
+      "theme_color": "#8b6cc5",
+      "icons": [],
+    }), 200
+
+  @app.route("/api/car_features_check", methods=["GET"])
+  def car_features_check():
+    tool = request.args.get("tool")
+    try:
+      with car.CarParams.from_bytes(params.get("CarParamsPersistent")) as cp:
+        if tool == "doors":
+          return jsonify({"result": HARDWARE.get_device_type() != "tici" and cp.carName == "toyota"})
+        elif tool == "tsk":
+          return jsonify({"result": cp.secOcRequired})
+    except Exception:
+      pass
+    return jsonify({"result": False})
 
   @app.route("/api/doors/lock", methods=["POST"])
   def lock_doors():
@@ -300,6 +1595,23 @@ def setup(app):
 
     return jsonify(message=f"{', '.join(saved)} saved successfully!")
 
+  @app.route("/api/fingerprints/makes", methods=["GET"])
+  def get_fingerprint_makes():
+    return jsonify(_get_fingerprint_catalog()["makes"]), 200
+
+  @app.route("/api/fingerprints/models", methods=["GET"])
+  def get_fingerprint_models():
+    catalog = _get_fingerprint_catalog()
+    make_key = _normalize_fingerprint_make_key(
+      request.args.get("make") or params.get("CarMake", encoding="utf-8") or ""
+    )
+
+    models = catalog["models_by_make"].get(make_key) if make_key else catalog["all_models"]
+    if not models:
+      models = catalog["all_models"]
+
+    return jsonify(models), 200
+
   @app.route("/api/params", methods=["GET", "PUT"])
   def get_param():
     if request.method == "PUT":
@@ -316,7 +1628,7 @@ def setup(app):
       else:
         str_val = str(val)
 
-      allowed_keys = {k for k, _, _, _ in frogpilot_default_params if k not in EXCLUDED_KEYS}
+      allowed_keys, _ = _get_param_type_info()
       if key not in allowed_keys:
         return jsonify({"error": f"Parameter '{key}' is not editable."}), 403
 
@@ -333,12 +1645,54 @@ def setup(app):
         name = friendly_names.get(key, key)
         return jsonify({"error": f"Cannot change {name} while the car is driving. A reboot is required."}), 403
 
+      if key == "AutomaticUpdates" and params.get_bool("IsOnroad"):
+        return jsonify({"error": "Cannot change Automatic Updates while driving."}), 403
+
+      if key == "CarMake":
+        catalog = _get_fingerprint_catalog()
+        normalized_make = _normalize_fingerprint_make_key(str_val)
+        stored_make = catalog["make_label_by_key"].get(normalized_make, str_val.strip())
+        params.put("CarMake", stored_make)
+        update_frogpilot_toggles()
+        return jsonify({
+          "message": "Car make updated successfully.",
+          "updated": {"CarMake": stored_make},
+        }), 200
+
+      if key == "CarModel":
+        selected_model = str_val.strip()
+        if not selected_model:
+          return jsonify({"error": "Car model cannot be empty."}), 400
+
+        catalog = _get_fingerprint_catalog()
+        model_label = catalog["model_to_label"].get(selected_model)
+        make_label = catalog["model_to_make"].get(selected_model)
+
+        params.put("CarModel", selected_model)
+        updated = {"CarModel": selected_model}
+
+        if model_label:
+          params.put("CarModelName", model_label)
+          updated["CarModelName"] = model_label
+        else:
+          params.remove("CarModelName")
+          updated["CarModelName"] = ""
+
+        if make_label:
+          params.put("CarMake", make_label)
+          updated["CarMake"] = make_label
+
+        update_frogpilot_toggles()
+        return jsonify({
+          "message": f"Fingerprint set to '{model_label or selected_model}'.",
+          "updated": updated,
+        }), 200
+
       params.put(key, str_val)
 
       if key == "Model":
         # 2. Sync ModelVersion explicitly
         try:
-          import json
           with open("/data/models/.model_versions.json", "r") as f:
             versions = json.load(f)
             if str_val in versions:
@@ -354,34 +1708,7 @@ def setup(app):
 
   @app.route("/api/params/all", methods=["GET"])
   def get_all_params():
-    allowed_keys = {k for k, _, _, _ in frogpilot_default_params if k not in EXCLUDED_KEYS}
-
-    # Establish intended types from defaults
-    types = {}
-    for k, default_val, _, _ in frogpilot_default_params:
-      if k in allowed_keys:
-        if default_val in ("0", "1", b"0", b"1") or isinstance(default_val, bool):
-          types[k] = bool
-        elif isinstance(default_val, float) or (isinstance(default_val, str) and "." in default_val and default_val.replace(".", "", 1).isdigit()):
-          types[k] = float
-        elif isinstance(default_val, int) or (isinstance(default_val, str) and default_val.isdigit()):
-          types[k] = int
-        else:
-          types[k] = str
-
-    # Override ambiguous "0"/"1" defaults using layout JSON's authoritative data_type
-    try:
-      layout_path = os.path.join(os.path.dirname(__file__), "assets", "components", "tools", "device_settings_layout.json")
-      with open(layout_path) as f:
-        layout_data = json.load(f)
-      for section in layout_data:
-        for p in section.get("params", []):
-          k = p.get("key")
-          dt = p.get("data_type")
-          if k in types and dt in ("int", "float") and types[k] == bool:
-            types[k] = float if dt == "float" else int
-    except Exception:
-      pass
+    allowed_keys, types = _get_param_type_info()
 
     result = {}
     for key in allowed_keys:
@@ -406,33 +1733,365 @@ def setup(app):
 
     return jsonify(result), 200
 
+  @app.route("/api/params/defaults", methods=["GET"])
+  def get_default_params():
+    allowed_keys, types = _get_param_type_info()
+    defaults_lookup = {
+      key: default_val
+      for key, default_val, _, _ in frogpilot_default_params
+      if key in allowed_keys
+    }
+
+    result = {}
+    for key in allowed_keys:
+      t = types.get(key, str)
+      default_val = defaults_lookup.get(key)
+
+      try:
+        if t == bool:
+          if isinstance(default_val, bytes):
+            default_str = default_val.decode("utf-8", errors="replace")
+          else:
+            default_str = str(default_val or "")
+          result[key] = default_str in ("1", "true", "True")
+        elif t == float:
+          result[key] = float(default_val)
+        elif t == int:
+          result[key] = int(float(default_val))
+        else:
+          if isinstance(default_val, bytes):
+            result[key] = default_val.decode("utf-8", errors="replace")
+          else:
+            result[key] = str(default_val or "")
+      except Exception:
+        result[key] = None
+
+    return jsonify(result), 200
+
   @app.route("/api/models/installed", methods=["GET"])
   def get_installed_models():
-    """Returns only models with files present in /data/models/."""
-    import os
+    catalog = get_model_catalog()
+    installed = [{"value": model["value"], "label": model["label"]} for model in catalog if model["installed"]]
 
-    available = (params.get("AvailableModels", encoding="utf-8") or "").split(",")
-    names = (params.get("AvailableModelNames", encoding="utf-8") or "").split(",")
-    models_dir = "/data/models"
-
-    try:
-      on_disk = os.listdir(models_dir) if os.path.isdir(models_dir) else []
-    except Exception:
-      on_disk = []
-
-    installed = []
-    for i, key in enumerate(available):
-      if not key:
-        continue
-      if any(f.startswith(f"{key}.") or f.startswith(f"{key}_") for f in on_disk):
-        label = names[i] if i < len(names) else key
-        installed.append({"value": key, "label": label})
+    # Keep current model selectable even if local files are currently inconsistent.
+    current_model = params.get("Model", encoding="utf-8") or ""
+    if current_model and all(model["value"] != current_model for model in installed):
+      for model in catalog:
+        if model["value"] == current_model:
+          installed.append({"value": model["value"], "label": model["label"]})
+          break
 
     return jsonify(installed), 200
+
+  @app.route("/api/models/catalog", methods=["GET"])
+  def get_models_catalog():
+    models = get_model_catalog()
+    return jsonify({
+      "models": models,
+      "currentModel": params.get("Model", encoding="utf-8") or "",
+      "summary": {
+        "installed": sum(1 for model in models if model["installed"]),
+        "missing": sum(1 for model in models if not model["installed"]),
+        "total": len(models),
+      },
+    }), 200
+
+  @app.route("/api/models/preferences", methods=["GET", "PUT"])
+  def get_or_set_models_preferences():
+    if request.method == "GET":
+      return jsonify({
+        "sortMode": read_legacy_param_file(MODEL_SORT_MODE_PARAM, "alphabetical"),
+        "userFavorites": [entry for entry in (params.get(MODEL_USER_FAVORITES_PARAM, encoding="utf-8") or "").split(",") if entry],
+      }), 200
+
+    data = request.get_json() or {}
+    changed = []
+
+    if "sortMode" in data:
+      sort_mode = str(data.get("sortMode") or "alphabetical").strip() or "alphabetical"
+      write_legacy_param_file(MODEL_SORT_MODE_PARAM, sort_mode)
+      changed.append("sort mode")
+
+    if "userFavorites" in data:
+      incoming = data.get("userFavorites")
+      if isinstance(incoming, list):
+        favorites = ",".join(entry.strip() for entry in incoming if str(entry).strip())
+      else:
+        favorites = ",".join(entry.strip() for entry in str(incoming or "").split(",") if entry.strip())
+      params.put(MODEL_USER_FAVORITES_PARAM, favorites)
+      changed.append("favorites")
+
+    if not changed:
+      return jsonify({"error": "No preferences provided."}), 400
+
+    return jsonify({"message": f"Updated model {' and '.join(changed)}."}), 200
+
+  @app.route("/api/models/status", methods=["GET"])
+  def get_models_status():
+    models = get_model_catalog()
+    model_to_download = params_memory.get(MODEL_DOWNLOAD_PARAM, encoding="utf-8") or ""
+    download_all = params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM)
+    progress = params_memory.get(MODEL_DOWNLOAD_PROGRESS_PARAM, encoding="utf-8") or ""
+    cancelling = params_memory.get_bool(MODEL_CANCEL_DOWNLOAD_PARAM)
+
+    downloading = bool(model_to_download) or download_all
+    current_model = params.get("Model", encoding="utf-8") or ""
+    sort_mode = read_legacy_param_file(MODEL_SORT_MODE_PARAM, "alphabetical")
+    terminal = progress in ("Downloaded!", "All models downloaded!") or bool(re.search(r"cancelled|exists|failed|offline|invalid|error", progress, re.IGNORECASE))
+    summary = {
+      "installed": sum(1 for model in models if model["installed"]),
+      "missing": sum(1 for model in models if not model["installed"]),
+      "total": len(models),
+    }
+
+    now = time.monotonic()
+    signature = (
+      summary["total"],
+      summary["installed"],
+      summary["missing"],
+      model_to_download,
+      download_all,
+      downloading,
+      cancelling,
+      progress,
+      current_model,
+      sort_mode,
+      terminal,
+      bool(params.get_bool("IsOnroad")),
+    )
+    if model_status_debug["last_signature"] != signature or now - model_status_debug["last_log_time"] >= 15:
+      print(
+        f"[ModelStatus] addr={request.remote_addr or 'unknown'} total={summary['total']} "
+        f"installed={summary['installed']} missing={summary['missing']} downloading={downloading} "
+        f"download_all={download_all} model='{model_to_download or '-'}' current='{current_model or '-'}' "
+        f"progress='{progress or 'Idle'}' cancelling={cancelling} onroad={params.get_bool('IsOnroad')} terminal={terminal}"
+      )
+      model_status_debug["last_signature"] = signature
+      model_status_debug["last_log_time"] = now
+
+    if summary["total"] == 0 and now - model_status_debug["last_empty_catalog_log_time"] >= 15:
+      available_models = params.get("AvailableModels", encoding="utf-8") or ""
+      available_names = params.get("AvailableModelNames", encoding="utf-8") or ""
+      available_models_count = len([item for item in available_models.split(",") if item.strip()])
+      available_names_count = len([item for item in available_names.split(",") if item.strip()])
+      print(
+        f"[ModelStatus] WARNING empty catalog available_models={available_models_count} "
+        f"available_names={available_names_count} raw_available_models='{available_models[:120]}'"
+      )
+      model_status_debug["last_empty_catalog_log_time"] = now
+
+    return jsonify({
+      "modelToDownload": model_to_download,
+      "downloadAll": download_all,
+      "downloading": downloading,
+      "cancelling": cancelling,
+      "progress": progress,
+      "isOnroad": params.get_bool("IsOnroad"),
+      "terminal": terminal,
+      "models": models,
+      "currentModel": current_model,
+      "summary": summary,
+      "sortMode": sort_mode,
+    }), 200
+
+  @app.route("/api/models/refresh_manifest", methods=["POST"])
+  def refresh_models_manifest():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot refresh model manifest while driving."}), 403
+
+    if params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM) or (params_memory.get(MODEL_DOWNLOAD_PARAM, encoding="utf-8") or ""):
+      return jsonify({"error": "Cannot refresh model manifest while a download is in progress."}), 409
+
+    try:
+      from openpilot.frogpilot.assets.model_manager import ModelManager
+
+      manager = ModelManager()
+      manager.update_models(False)
+    except Exception as exception:
+      return jsonify({"error": f"Failed to refresh model manifest: {exception}"}), 500
+
+    return jsonify({"message": "Model manifest refreshed."}), 200
+
+  @app.route("/api/models/download", methods=["POST"])
+  def start_model_download():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot download models while driving."}), 403
+
+    if params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM) or (params_memory.get(MODEL_DOWNLOAD_PARAM, encoding="utf-8") or ""):
+      return jsonify({"error": "A model download is already in progress."}), 409
+
+    data = request.get_json() or {}
+    model_key = (data.get("model") or "").strip()
+    if not model_key:
+      return jsonify({"error": "Missing model key."}), 400
+
+    catalog = {model["value"]: model for model in get_model_catalog()}
+    model = catalog.get(model_key)
+    if model is None:
+      return jsonify({"error": f"Unknown model '{model_key}'."}), 404
+
+    if model["installed"]:
+      return jsonify({"message": f"\"{model['label']}\" is already installed."}), 200
+
+    params_memory.remove(MODEL_CANCEL_DOWNLOAD_PARAM)
+    params_memory.remove(MODEL_DOWNLOAD_ALL_PARAM)
+    params_memory.put(MODEL_DOWNLOAD_PARAM, model_key)
+    params_memory.put(MODEL_DOWNLOAD_PROGRESS_PARAM, "Downloading...")
+
+    return jsonify({"message": f"Started downloading \"{model['label']}\"."}), 200
+
+  @app.route("/api/models/download_all", methods=["POST"])
+  def start_models_download_all():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot download models while driving."}), 403
+
+    if params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM) or (params_memory.get(MODEL_DOWNLOAD_PARAM, encoding="utf-8") or ""):
+      return jsonify({"error": "A model download is already in progress."}), 409
+
+    missing_models = [model for model in get_model_catalog() if not model["installed"]]
+    if not missing_models:
+      return jsonify({"message": "All models are already installed."}), 200
+
+    params_memory.remove(MODEL_CANCEL_DOWNLOAD_PARAM)
+    params_memory.remove(MODEL_DOWNLOAD_PARAM)
+    params_memory.put_bool(MODEL_DOWNLOAD_ALL_PARAM, True)
+    params_memory.put(MODEL_DOWNLOAD_PROGRESS_PARAM, "Downloading...")
+
+    return jsonify({"message": f"Started downloading {len(missing_models)} model(s)."}), 200
+
+  @app.route("/api/models/cancel", methods=["POST"])
+  def cancel_model_download():
+    model_to_download = params_memory.get(MODEL_DOWNLOAD_PARAM, encoding="utf-8") or ""
+    download_all = params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM)
+    if not model_to_download and not download_all:
+      return jsonify({"message": "No active model download to cancel."}), 200
+
+    params_memory.put_bool(MODEL_CANCEL_DOWNLOAD_PARAM, True)
+    return jsonify({"message": "Cancellation requested."}), 200
+
+  @app.route("/api/models/delete", methods=["POST"])
+  def delete_model_files():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot delete model files while driving."}), 403
+
+    if params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM) or (params_memory.get(MODEL_DOWNLOAD_PARAM, encoding="utf-8") or ""):
+      return jsonify({"error": "Cannot delete model files while a download is in progress."}), 409
+
+    data = request.get_json() or {}
+    model_key = (data.get("model") or "").strip()
+    if not model_key:
+      return jsonify({"error": "Missing model key."}), 400
+
+    current_model = params.get("Model", encoding="utf-8") or ""
+    if model_key == current_model:
+      return jsonify({"error": "Cannot delete the currently active model."}), 409
+
+    catalog = {model["value"]: model for model in get_model_catalog()}
+    model = catalog.get(model_key)
+    if model is None:
+      return jsonify({"error": f"Unknown model '{model_key}'."}), 404
+
+    models_dir = Path("/data/models")
+    if not models_dir.is_dir():
+      return jsonify({"message": "No model directory exists yet."}), 200
+
+    deleted = []
+    for item in models_dir.iterdir():
+      name = item.name
+      is_match = (
+        name == f"{model_key}.thneed" or
+        name == f"{model_key}.pkl" or
+        name.startswith(f"{model_key}_")
+      )
+
+      if not is_match:
+        continue
+
+      try:
+        if item.is_dir():
+          shutil.rmtree(item)
+        else:
+          item.unlink(missing_ok=True)
+        deleted.append(name)
+      except Exception as exception:
+        return jsonify({"error": f"Failed deleting '{name}': {exception}"}), 500
+
+    if not deleted:
+      return jsonify({"message": f"No files found for \"{model['label']}\"."}), 200
+
+    return jsonify({"message": f"Deleted {len(deleted)} file(s) for \"{model['label']}\"."}), 200
 
   @app.route("/api/params_memory", methods=["GET"])
   def get_param_memory():
     return params_memory.get(request.args.get("key")) or "", 200
+
+  def is_model_installed(model_key, model_version, on_disk_files):
+    if f"{model_key}.thneed" in on_disk_files:
+      return True
+
+    if model_version in ("v8", "v9", "v10", "v11", "v12"):
+      required_files = {
+        f"{model_key}_driving_policy_tinygrad.pkl",
+        f"{model_key}_driving_vision_tinygrad.pkl",
+        f"{model_key}_driving_policy_metadata.pkl",
+        f"{model_key}_driving_vision_metadata.pkl",
+      }
+      if model_version == "v12":
+        required_files |= {
+          f"{model_key}_driving_off_policy_tinygrad.pkl",
+          f"{model_key}_driving_off_policy_metadata.pkl",
+        }
+      return required_files.issubset(on_disk_files)
+
+    if model_version == "v7":
+      return f"{model_key}.pkl" in on_disk_files
+
+    # Fallback for unknown versions
+    return any(file.startswith(f"{model_key}.") or file.startswith(f"{model_key}_") for file in on_disk_files)
+
+  def get_model_catalog():
+    available = [model.strip() for model in (params.get("AvailableModels", encoding="utf-8") or "").split(",")]
+    names = [name.strip() for name in (params.get("AvailableModelNames", encoding="utf-8") or "").split(",")]
+    series = [entry.strip() for entry in (params.get("AvailableModelSeries", encoding="utf-8") or "").split(",")]
+    versions = [entry.strip() for entry in (params.get("ModelVersions", encoding="utf-8") or "").split(",")]
+    released_dates = [entry.strip() for entry in (params.get("ModelReleasedDates", encoding="utf-8") or "").split(",")]
+
+    community_favorites = {entry.strip() for entry in (params.get("CommunityFavorites", encoding="utf-8") or "").split(",") if entry.strip()}
+    user_favorites = {entry.strip() for entry in (params.get(MODEL_USER_FAVORITES_PARAM, encoding="utf-8") or "").split(",") if entry.strip()}
+
+    models_dir = "/data/models"
+    try:
+      on_disk_files = set(os.listdir(models_dir)) if os.path.isdir(models_dir) else set()
+    except Exception:
+      on_disk_files = set()
+
+    models = []
+    for i, key in enumerate(available):
+      if not key:
+        continue
+
+      label = names[i] if i < len(names) and names[i] else key
+      model_version = versions[i] if i < len(versions) else ""
+      model_series = series[i] if i < len(series) and series[i] else "Custom Series"
+      released = released_dates[i] if i < len(released_dates) else ""
+
+      installed = is_model_installed(key, model_version, on_disk_files)
+      partial = not installed and any(file.startswith(f"{key}.") or file.startswith(f"{key}_") for file in on_disk_files)
+
+      models.append({
+        "value": key,
+        "label": label,
+        "series": model_series,
+        "version": model_version,
+        "released": released,
+        "installed": installed,
+        "partial": partial,
+        "communityFavorite": key in community_favorites,
+        "userFavorite": key in user_favorites,
+      })
+
+    models.sort(key=lambda model: (model["series"].lower(), model["label"].lower()))
+    return models
 
   @app.route("/api/routes", methods=["GET"])
   def list_routes():
@@ -447,33 +2106,9 @@ def setup(app):
           try:
             result = future.result()
             yield f"data: {json.dumps({'routes': [result]})}\n\n"
-
-            path, name = futures[future]
-            segments = utilities.get_segments_in_route(name, path)
-            if segments:
-              for camera, cam_file in {
-                "forward": "fcamera.hevc",
-                "wide": "ecamera.hevc",
-                "driver": "dcamera.hevc"
-              }.items():
-                input_files = [
-                  os.path.join(path, seg, cam_file)
-                  for seg in segments
-                  if os.path.exists(os.path.join(path, seg, cam_file))
-                ]
-                if input_files:
-                  executor.submit(
-                    utilities.ffmpeg_concat_segments_to_mp4,
-                    input_files,
-                    f"{name}-{camera}"
-                  )
-
           except Exception as exception:
             print(f"Error processing route: {exception}")
           yield f"data: {json.dumps({'progress': processed, 'total': total})}\n\n"
-
-        for path, name in routes:
-          utilities.process_route_gif(path, name)
 
     return Response(generate(), mimetype="text/event-stream")
 
@@ -714,9 +2349,6 @@ def setup(app):
 
           yield f"data: {json.dumps({'progress': processed, 'total': total})}\n\n"
 
-        for recording in recordings:
-          utilities.process_screen_recording_gif(recording)
-
     return Response(generate(), mimetype="text/event-stream")
 
   @app.route("/screen_recordings/<path:filename>", methods=["GET"])
@@ -780,17 +2412,9 @@ def setup(app):
     else:
       env = short_branch
 
-    try:
-      response = requests.get(f"https://api.comma.ai/v1/devices/{params.get('DongleId', encoding='utf8')}/firehose_stats", timeout=10)
-      response.raise_for_status()
-      firehose_stats = response.json().get("firehose", 0)
-    except (requests.RequestException, ValueError) as e:
-      firehose_stats = 0
-
     return {
       "diskUsage": utilities.get_disk_usage(),
       "driveStats": utilities.get_drive_stats(),
-      "firehoseStats": {"segments": firehose_stats},
       "softwareInfo": {
         "branchName": build_metadata.channel,
         "buildEnvironment": env,
@@ -800,6 +2424,199 @@ def setup(app):
         "versionDate": utilities.format_git_date(build_metadata.openpilot.git_commit_date),
       },
     }
+
+  @app.route("/api/plots/live", methods=["GET"])
+  def get_live_plots():
+    _ensure_plots_worker()
+    with _plots_lock:
+      payload = dict(_plots_state)
+
+    timestamp = _safe_float(payload.get("timestamp", 0.0), 0.0)
+    age_seconds = max(0.0, time.time() - timestamp) if timestamp else 999.0
+
+    return jsonify({
+      **payload,
+      "isOnroad": params.get_bool("IsOnroad"),
+      "sampleAgeSeconds": round(age_seconds, 3),
+      "stale": age_seconds > _PLOTS_SAMPLE_STALE_AFTER_S,
+    }), 200
+
+  @app.route("/api/testing_grounds", methods=["GET"])
+  def get_testing_grounds():
+    state = _get_testing_grounds_state()
+    return jsonify({
+      **_serialize_testing_grounds_state(state),
+      "isOnroad": params.get_bool("IsOnroad"),
+    }), 200
+
+  @app.route("/api/testing_grounds/select", methods=["POST"])
+  def select_testing_ground():
+    request_data = request.get_json() or {}
+    slot_id = str(request_data.get("slotId") or "").strip()
+    variant = str(request_data.get("variant") or "").strip().upper()
+
+    if not slot_id:
+      return jsonify({"error": "Missing 'slotId' in request body."}), 400
+
+    try:
+      state = _set_testing_ground_selection(slot_id, variant)
+    except ValueError as exception:
+      return jsonify({"error": str(exception)}), 400
+    except Exception as exception:
+      return jsonify({"error": str(exception)}), 500
+
+    slot = _find_testing_ground_slot(state, slot_id)
+    slot_name = slot.get("name", f"Testing Ground {slot_id}")
+    selected_variant = str(state.get("activeVariant") or _TESTING_GROUNDS_DEFAULT_VARIANT)
+    return jsonify({
+      "message": f"{slot_name} set to variant {selected_variant}.",
+      **_serialize_testing_grounds_state(state),
+      "isOnroad": params.get_bool("IsOnroad"),
+    }), 200
+
+  @app.route("/api/update/fast/status", methods=["GET"])
+  def get_fast_update_status():
+    state_data = _get_fast_update_state()
+    git_data = _collect_fast_update_info(include_remote=not state_data.get("running", False))
+    return jsonify({
+      **state_data,
+      **git_data,
+      "isOnroad": params.get_bool("IsOnroad"),
+      "automaticUpdates": params.get_bool("AutomaticUpdates"),
+      "warning": "Fast update skips backup creation and finalization safeguards.",
+    }), 200
+
+  @app.route("/api/update/branches", methods=["GET"])
+  def get_update_branches():
+    state_data = _get_fast_update_state()
+    repo_path = str(_get_openpilot_root())
+
+    try:
+      current_branch = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    except Exception as exception:
+      return jsonify({"error": str(exception)}), 500
+
+    branches, remote_error = _list_origin_branches(repo_path, include_remote=not state_data.get("running", False))
+    if current_branch and current_branch not in branches:
+      branches = sorted([*branches, current_branch], key=lambda branch: branch.lower())
+
+    return jsonify({
+      "currentBranch": current_branch,
+      "branches": branches,
+      "remoteError": remote_error,
+      "isOnroad": params.get_bool("IsOnroad"),
+      "running": state_data.get("running", False),
+    }), 200
+
+  @app.route("/api/update/fast", methods=["POST"])
+  def run_fast_update():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot run a fast update while driving."}), 409
+
+    with _fast_update_lock:
+      if _fast_update_state.get("running"):
+        return jsonify({"error": "Fast update already in progress."}), 409
+      _fast_update_state.update({
+        "running": True,
+        "stage": "starting",
+        "message": "Starting fast update...",
+        "lastError": "",
+        "startedAt": time.time(),
+        "finishedAt": 0.0,
+        "progressStep": 1,
+        "progressTotalSteps": _FAST_UPDATE_TOTAL_STEPS,
+        "progressStepPercent": 0.0,
+        "progressPercent": 0.0,
+        "progressLabel": "Preparing update",
+        "progressDetail": "Initializing update process...",
+      })
+
+    threading.Thread(target=_fast_update_worker, daemon=True).start()
+
+    return jsonify({
+      "message": "Fast update started. Device will reboot when complete.",
+      "warning": "Fast update skips backup creation and finalization safeguards.",
+    }), 202
+
+  @app.route("/api/update/branch", methods=["POST"])
+  def run_branch_switch():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot switch branches while driving."}), 409
+
+    request_data = request.get_json() or {}
+    target_branch = str(request_data.get("branch") or "").strip()
+    if not target_branch:
+      return jsonify({"error": "Missing 'branch' in request body."}), 400
+
+    repo_path = str(_get_openpilot_root())
+    if not _is_valid_git_branch_name(repo_path, target_branch):
+      return jsonify({"error": "Invalid branch name."}), 400
+
+    with _fast_update_lock:
+      if _fast_update_state.get("running"):
+        return jsonify({"error": "Another update action is already in progress."}), 409
+      _fast_update_state.update({
+        "running": True,
+        "stage": "starting",
+        "message": f"Starting branch switch to '{target_branch}'...",
+        "lastError": "",
+        "lastBranch": target_branch,
+        "lastMode": "branch-switch",
+        "startedAt": time.time(),
+        "finishedAt": 0.0,
+        "progressStep": 1,
+        "progressTotalSteps": _FAST_UPDATE_TOTAL_STEPS,
+        "progressStepPercent": 0.0,
+        "progressPercent": 0.0,
+        "progressLabel": "Preparing branch switch",
+        "progressDetail": "Initializing branch switch...",
+      })
+
+    threading.Thread(target=_branch_switch_worker, args=(target_branch,), daemon=True).start()
+
+    return jsonify({
+      "message": f"Branch switch started for '{target_branch}'. Device will reboot when complete.",
+      "warning": "Fast update skips backup creation and finalization safeguards.",
+    }), 202
+
+  # ── Galaxy pairing (mirrors settings.cc L262-282) ──────────────────
+  GALAXY_DIR = Path("/data/galaxy")
+  GALAXY_AUTH_FILE = GALAXY_DIR / "glxyauth"
+
+  @app.route("/api/galaxy/status", methods=["GET"])
+  def galaxy_status():
+    try:
+      paired = GALAXY_AUTH_FILE.is_file() and len(GALAXY_AUTH_FILE.read_text().strip()) == 64
+    except Exception:
+      paired = False
+    dongle_id = params.get("DongleId", encoding="utf8") or ""
+    return jsonify({
+      "paired": paired,
+      "url": f"https://galaxy.firestar.link/{dongle_id}" if dongle_id else "",
+    })
+
+  @app.route("/api/galaxy/pair", methods=["POST"])
+  def galaxy_pair():
+    data = request.get_json() or {}
+    password = (data.get("password") or "").strip()
+    if len(password) < 6:
+      return jsonify({"error": "Password must be at least 6 characters."}), 400
+
+    pw_hash = hashlib.sha256(password.encode()).hexdigest()
+    GALAXY_DIR.mkdir(parents=True, exist_ok=True)
+    GALAXY_AUTH_FILE.write_text(pw_hash)
+
+    dongle_id = params.get("DongleId", encoding="utf8") or ""
+    return jsonify({
+      "message": "Pairing successful!",
+      "url": f"https://galaxy.firestar.link/{dongle_id}" if dongle_id else "",
+    })
+
+  @app.route("/api/galaxy/unpair", methods=["POST"])
+  def galaxy_unpair():
+    if GALAXY_AUTH_FILE.is_file():
+      GALAXY_AUTH_FILE.unlink()
+    return jsonify({"message": "Galaxy unpaired successfully."})
 
   @app.route("/api/tailscale/installed", methods=["GET"])
   def tailscale_installed():
@@ -1594,12 +3411,6 @@ def setup(app):
 
     return jsonify({"message": f"Renamed {old} to {new_safe}!"}), 200
 
-  @app.route("/api/tsk_available", methods=["GET"])
-  def tsk_available():
-    with car.CarParams.from_bytes(params.get("CarParamsPersistent")) as cp_reader:
-      CP = cp_reader.as_builder()
-
-    return jsonify({"result": CP.secOcRequired})
 
   @app.route("/api/tsk_keys", methods=["DELETE"])
   def delete_secoc_key():

@@ -164,6 +164,17 @@
         "parent_key": "LaneChanges"
       },
       {
+        "key": "MinimumLaneChangeSpeed",
+        "label": "Minimum Lane Change Speed",
+        "description": "Lowest speed at which openpilot will change lanes.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 99.0,
+        "step": 1.0,
+        "parent_key": "LaneChanges"
+      },
+      {
         "key": "LaneDetectionWidth",
         "label": "Minimum Lane Width",
         "description": "Prevent automatic lane changes into lanes narrower than the set width.",
@@ -232,6 +243,863 @@
         "max": 99.0,
         "step": 1.0,
         "parent_key": "QOLLateral"
+      }
+    ]
+  },
+  {
+    "name": "Longitudinal (Speed & Following)",
+    "icon": "bi-speedometer2",
+    "params": [
+      {
+        "key": "AdvancedLongitudinalTune",
+        "label": "Advanced Longitudinal Tuning",
+        "description": "Advanced acceleration and braking control changes to",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "EVTuning",
+        "label": "EV Tuning",
+        "description": "Use acceleration profiles tuned for EVs. Defaults to the",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune"
+      },
+      {
+        "key": "TruckTuning",
+        "label": "Truck Tuning",
+        "description": "Use aggressive acceleration profiles tuned for trucks.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune"
+      },
+      {
+        "key": "LongitudinalActuatorDelay",
+        "label": "Actuator Delay",
+        "description": "Actuator Delay",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "AdvancedLongitudinalTune"
+      },
+      {
+        "key": "StartAccel",
+        "label": "Start Acceleration",
+        "description": "Start Acceleration",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 4.0,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "AdvancedLongitudinalTune"
+      },
+      {
+        "key": "VEgoStarting",
+        "label": "Start Speed",
+        "description": "Start Speed",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.01,
+        "max": 1.0,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "AdvancedLongitudinalTune"
+      },
+      {
+        "key": "StopAccel",
+        "label": "Stop Acceleration",
+        "description": "Stop Acceleration",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": -4.0,
+        "max": 0.0,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "AdvancedLongitudinalTune"
+      },
+      {
+        "key": "StoppingDecelRate",
+        "label": "Stopping Rate",
+        "description": "Stopping Rate",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.001,
+        "max": 1.0,
+        "step": 0.001,
+        "precision": 2,
+        "parent_key": "AdvancedLongitudinalTune"
+      },
+      {
+        "key": "VEgoStopping",
+        "label": "Stop Speed",
+        "description": "Stop Speed",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.01,
+        "max": 1.0,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "AdvancedLongitudinalTune"
+      },
+      {
+        "key": "ConditionalExperimental",
+        "label": "Conditional Experimental Mode",
+        "description": "Automatically switch to \"Experimental Mode\" when set",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "CESpeed",
+        "label": "Below",
+        "description": "Switch to \"Experimental Mode\" when driving below this",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 99.0,
+        "step": 1.0,
+        "parent_key": "ConditionalExperimental"
+      },
+      {
+        "key": "CESpeedLead",
+        "label": "Below (With Lead)",
+        "description": "Switch to \"Experimental Mode\" when driving below this speed with a lead.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 99.0,
+        "step": 1.0,
+        "parent_key": "ConditionalExperimental"
+      },
+      {
+        "key": "CECurves",
+        "label": "Curve Detected Ahead",
+        "description": "Switch to \"Experimental Mode\" when a curve is detected",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ConditionalExperimental"
+      },
+      {
+        "key": "CELead",
+        "label": "Lead Detected Ahead",
+        "description": "Switch to \"Experimental Mode\" when a slower or stopped",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ConditionalExperimental",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "CESlowerLead",
+        "label": "Slower Lead",
+        "description": "Switch to \"Experimental Mode\" when a slower lead vehicle is detected ahead.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CELead"
+      },
+      {
+        "key": "CEStoppedLead",
+        "label": "Stopped Lead",
+        "description": "Switch to \"Experimental Mode\" when a stopped lead vehicle is detected ahead.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CELead"
+      },
+      {
+        "key": "CENavigation",
+        "label": "Navigation-Based",
+        "description": "Switch to \"Experimental Mode\" when approaching",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ConditionalExperimental"
+      },
+      {
+        "key": "CEModelStopTime",
+        "label": "Predicted Stop In",
+        "description": "Switch to \"Experimental Mode\" when openpilot predicts a",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 9.0,
+        "parent_key": "ConditionalExperimental"
+      },
+      {
+        "key": "CESignalSpeed",
+        "label": "Turn Signal Below",
+        "description": "Switch to \"Experimental Mode\" when using a turn signal",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 99.0,
+        "step": 1.0,
+        "parent_key": "ConditionalExperimental"
+      },
+      {
+        "key": "ShowCEMStatus",
+        "label": "Status Widget",
+        "description": "Show which condition triggered \"Experimental Mode\" on",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ConditionalExperimental"
+      },
+      {
+        "key": "CurveSpeedController",
+        "label": "Curve Speed Controller",
+        "description": "Automatically slow down for upcoming curves using data",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "ShowCSCStatus",
+        "label": "Status Widget",
+        "description": "Show the \"Curve Speed Controller\" target speed on the",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CurveSpeedController"
+      },
+      {
+        "key": "CustomPersonalities",
+        "label": "Driving Personalities",
+        "description": "Customize the \"Driving Personalities\" to better match",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "TrafficPersonalityProfile",
+        "label": "Traffic Mode",
+        "description": "Customize the \"Traffic Mode\" personality profile.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomPersonalities",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "TrafficFollow",
+        "label": "Following Distance",
+        "description": "The minimum following distance to the lead vehicle in",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "TrafficPersonalityProfile"
+      },
+      {
+        "key": "TrafficJerkAcceleration",
+        "label": "Acceleration Smoothness",
+        "description": "How smoothly openpilot accelerates in \"Traffic Mode\".",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "TrafficPersonalityProfile"
+      },
+      {
+        "key": "TrafficJerkDeceleration",
+        "label": "Braking Smoothness",
+        "description": "How smoothly openpilot brakes in \"Traffic Mode\".",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "TrafficPersonalityProfile"
+      },
+      {
+        "key": "TrafficJerkDanger",
+        "label": "Safety Gap Bias",
+        "description": "How much extra space openpilot keeps from the vehicle ahead",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "TrafficPersonalityProfile"
+      },
+      {
+        "key": "TrafficJerkSpeedDecrease",
+        "label": "Slowdown Response",
+        "description": "How smoothly openpilot slows down in \"Traffic Mode\".",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "TrafficPersonalityProfile"
+      },
+      {
+        "key": "TrafficJerkSpeed",
+        "label": "Speed-Up Response",
+        "description": "How smoothly openpilot speeds up in \"Traffic Mode\".",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "TrafficPersonalityProfile"
+      },
+      {
+        "key": "AggressivePersonalityProfile",
+        "label": "Aggressive",
+        "description": "Customize the \"Aggressive\" personality profile.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomPersonalities",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "AggressiveFollow",
+        "label": "Following Distance",
+        "description": "How many seconds openpilot follows behind lead vehicles when",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "AggressivePersonalityProfile"
+      },
+      {
+        "key": "AggressiveFollowHigh",
+        "label": "High Speed Following Distance",
+        "description": "How many seconds openpilot follows behind lead vehicles when",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "AggressivePersonalityProfile"
+      },
+      {
+        "key": "AggressiveJerkAcceleration",
+        "label": "Acceleration Smoothness",
+        "description": "How smoothly openpilot accelerates with the \"Aggressive\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "AggressivePersonalityProfile"
+      },
+      {
+        "key": "AggressiveJerkDeceleration",
+        "label": "Braking Smoothness",
+        "description": "How smoothly openpilot brakes with the \"Aggressive\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "AggressivePersonalityProfile"
+      },
+      {
+        "key": "AggressiveJerkDanger",
+        "label": "Safety Gap Bias",
+        "description": "How much extra space openpilot keeps from the vehicle ahead",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "AggressivePersonalityProfile"
+      },
+      {
+        "key": "AggressiveJerkSpeedDecrease",
+        "label": "Slowdown Response",
+        "description": "How smoothly openpilot slows down with the \"Aggressive\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "AggressivePersonalityProfile"
+      },
+      {
+        "key": "AggressiveJerkSpeed",
+        "label": "Speed-Up Response",
+        "description": "How smoothly openpilot speeds up with the \"Aggressive\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "AggressivePersonalityProfile"
+      },
+      {
+        "key": "StandardPersonalityProfile",
+        "label": "Standard",
+        "description": "Customize the \"Standard\" personality profile. Designed",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomPersonalities",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "StandardFollow",
+        "label": "Following Distance",
+        "description": "How many seconds openpilot follows behind lead vehicles when",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "StandardPersonalityProfile"
+      },
+      {
+        "key": "StandardFollowHigh",
+        "label": "High Speed Following Distance",
+        "description": "How many seconds openpilot follows behind lead vehicles when",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "StandardPersonalityProfile"
+      },
+      {
+        "key": "StandardJerkAcceleration",
+        "label": "Acceleration Smoothness",
+        "description": "How smoothly openpilot accelerates with the \"Standard\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "StandardPersonalityProfile"
+      },
+      {
+        "key": "StandardJerkDeceleration",
+        "label": "Braking Smoothness",
+        "description": "How smoothly openpilot brakes with the \"Standard\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "StandardPersonalityProfile"
+      },
+      {
+        "key": "StandardJerkDanger",
+        "label": "Safety Gap Bias",
+        "description": "How much extra space openpilot keeps from the vehicle ahead",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "StandardPersonalityProfile"
+      },
+      {
+        "key": "StandardJerkSpeedDecrease",
+        "label": "Slowdown Response",
+        "description": "How smoothly openpilot slows down with the \"Standard\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "StandardPersonalityProfile"
+      },
+      {
+        "key": "StandardJerkSpeed",
+        "label": "Speed-Up Response",
+        "description": "How smoothly openpilot speeds up with the \"Standard\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "StandardPersonalityProfile"
+      },
+      {
+        "key": "RelaxedPersonalityProfile",
+        "label": "Relaxed",
+        "description": "Customize the \"Relaxed\" personality profile. Designed",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomPersonalities",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "RelaxedFollow",
+        "label": "Following Distance",
+        "description": "How many seconds openpilot follows behind lead vehicles when",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "RelaxedPersonalityProfile"
+      },
+      {
+        "key": "RelaxedFollowHigh",
+        "label": "High Speed Following Distance",
+        "description": "How many seconds openpilot follows behind lead vehicles when",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "RelaxedPersonalityProfile"
+      },
+      {
+        "key": "RelaxedJerkAcceleration",
+        "label": "Acceleration Smoothness",
+        "description": "How smoothly openpilot accelerates with the \"Relaxed\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "RelaxedPersonalityProfile"
+      },
+      {
+        "key": "RelaxedJerkDeceleration",
+        "label": "Braking Smoothness",
+        "description": "How smoothly openpilot brakes with the \"Relaxed\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "RelaxedPersonalityProfile"
+      },
+      {
+        "key": "RelaxedJerkDanger",
+        "label": "Safety Gap Bias",
+        "description": "How much extra space openpilot keeps from the vehicle ahead",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "RelaxedPersonalityProfile"
+      },
+      {
+        "key": "RelaxedJerkSpeedDecrease",
+        "label": "Slowdown Response",
+        "description": "How smoothly openpilot slows down with the \"Relaxed\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "RelaxedPersonalityProfile"
+      },
+      {
+        "key": "RelaxedJerkSpeed",
+        "label": "Speed-Up Response",
+        "description": "How smoothly openpilot speeds up with the \"Relaxed\"",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.01,
+        "parent_key": "RelaxedPersonalityProfile"
+      },
+      {
+        "key": "LongitudinalTune",
+        "label": "Longitudinal Tuning",
+        "description": "Acceleration and braking control changes to fine-tune",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "DecelerationProfile",
+        "label": "Deceleration Profile",
+        "description": "How firmly openpilot slows down. \"Eco\" favors",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LongitudinalTune"
+      },
+      {
+        "key": "HumanAcceleration",
+        "label": "Human-Like Acceleration",
+        "description": "Acceleration that mimics human behavior by easing the",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LongitudinalTune"
+      },
+      {
+        "key": "HumanFollowing",
+        "label": "Human-Like Following",
+        "description": "Following behavior that mimics human drivers by closing",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LongitudinalTune"
+      },
+      {
+        "key": "LeadDetectionThreshold",
+        "label": "Lead Detection Sensitivity",
+        "description": "How sensitive openpilot is to detecting vehicles. Higher",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 25.0,
+        "max": 50.0,
+        "parent_key": "LongitudinalTune"
+      },
+      {
+        "key": "MaxDesiredAcceleration",
+        "label": "Maximum Acceleration",
+        "description": "Limit the strongest acceleration openpilot can command.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.1,
+        "max": 4.0,
+        "step": 0.1,
+        "parent_key": "LongitudinalTune"
+      },
+      {
+        "key": "TrailerLoad",
+        "label": "Trailer Load",
+        "description": "Increase the vehicle mass to account for towing. Adjust",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 15000.0,
+        "step": 500.0,
+        "parent_key": "LongitudinalTune"
+      },
+      {
+        "key": "TacoTune",
+        "label": "\\\"Taco Bell Run\\\" Turn Speed Hack",
+        "description": "The turn-speed hack from comma's 2022 \"Taco Bell Run\".",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LongitudinalTune"
+      },
+      {
+        "key": "QOLLongitudinal",
+        "label": "Quality of Life",
+        "description": "Miscellaneous acceleration and braking control changes",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "CustomCruise",
+        "label": "Cruise Interval",
+        "description": "How much the set speed increases or decreases for each +",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 1.0,
+        "max": 99.0,
+        "parent_key": "QOLLongitudinal"
+      },
+      {
+        "key": "CustomCruiseLong",
+        "label": "Cruise Interval (Hold)",
+        "description": "How much the set speed increases or decreases while holding",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 1.0,
+        "max": 99.0,
+        "parent_key": "QOLLongitudinal"
+      },
+      {
+        "key": "ForceStops",
+        "label": "Force Stop at \\\"Detected\\\" Stop Lights/Signs",
+        "description": "Force openpilot to stop whenever the driving model",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLLongitudinal"
+      },
+      {
+        "key": "IncreasedStoppedDistance",
+        "label": "Increase Stopped Distance by:",
+        "description": "Add extra space when stopped behind vehicles. Increase",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 10.0,
+        "parent_key": "QOLLongitudinal"
+      },
+      {
+        "key": "MapGears",
+        "label": "Map Accel/Decel to Gears",
+        "description": "Map the Acceleration or Deceleration profiles to the",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLLongitudinal"
+      },
+      {
+        "key": "SetSpeedOffset",
+        "label": "Offset Set Speed by:",
+        "description": "Increase the set speed by the chosen offset. For",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 99.0,
+        "parent_key": "QOLLongitudinal"
+      },
+      {
+        "key": "ReverseCruise",
+        "label": "Reverse Cruise Increase",
+        "description": "Reverse the cruise control button behavior so a short",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLLongitudinal"
+      },
+      {
+        "key": "SpeedLimitController",
+        "label": "Speed Limit Controller",
+        "description": "Limit openpilot's maximum driving speed to the current speed",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "SLCOverride",
+        "label": "Override Speed",
+        "description": "The speed used by \"Speed Limit Controller\" after you",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "SLCConfirmation",
+        "label": "Confirm New Speed Limits",
+        "description": "Ask before changing to a new speed limit. To accept, tap",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "ForceMPHDashboard",
+        "label": "Force MPH from Dashboard",
+        "description": "Always read dashboard speed limit signs in mph. Turn",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "SLCLookaheadHigher",
+        "label": "Higher Limit Lookahead Time",
+        "description": "How far ahead openpilot anticipates upcoming higher speed",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 30.0,
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "SLCLookaheadLower",
+        "label": "Lower Limit Lookahead Time",
+        "description": "How far ahead openpilot anticipates upcoming lower speed",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 30.0,
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "SetSpeedLimit",
+        "label": "Match Speed Limit on Engage",
+        "description": "When openpilot is first enabled, automatically set the max",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "SLCMapboxFiller",
+        "label": "Use Mapbox as Fallback",
+        "description": "Use Mapbox speed-limit data when no other source is",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "Offset1",
+        "label": "Speed Offset (0\u201324 mph)",
+        "description": "How much to offset posted speed-limits between 0 and 24",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": -99.0,
+        "max": 99.0,
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "Offset2",
+        "label": "Speed Offset (25\u201334 mph)",
+        "description": "How much to offset posted speed-limits between 25 and 34",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": -99.0,
+        "max": 99.0,
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "Offset3",
+        "label": "Speed Offset (35\u201344 mph)",
+        "description": "How much to offset posted speed-limits between 35 and 44",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": -99.0,
+        "max": 99.0,
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "Offset4",
+        "label": "Speed Offset (45\u201354 mph)",
+        "description": "How much to offset posted speed-limits between 45 and 54",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": -99.0,
+        "max": 99.0,
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "Offset5",
+        "label": "Speed Offset (55\u201364 mph)",
+        "description": "How much to offset posted speed-limits between 55 and 64",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": -99.0,
+        "max": 99.0,
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "Offset6",
+        "label": "Speed Offset (65\u201374 mph)",
+        "description": "How much to offset posted speed-limits between 65 and 74",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": -99.0,
+        "max": 99.0,
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "Offset7",
+        "label": "Speed Offset (75\u201399 mph)",
+        "description": "How much to offset posted speed-limits between 75 and 99",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": -99.0,
+        "max": 99.0,
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "ShowSLCOffset",
+        "label": "Show Speed Limit Offset",
+        "description": "Show the current offset from the posted limit on the",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "SpeedLimitSources",
+        "label": "Show Speed Limit Sources",
+        "description": "Display the speed-limit sources and their current values",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "SpeedLimitController"
       }
     ]
   },
@@ -381,8 +1249,78 @@
         "key": "DeveloperSidebarMetric1",
         "label": "Metric #1",
         "description": "Select the metric shown in the first \"Developer Sidebar\" widget.",
-        "data_type": "bool",
-        "ui_type": "toggle",
+        "data_type": "int",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "None"
+          },
+          {
+            "value": 1,
+            "label": "Acceleration: Current"
+          },
+          {
+            "value": 2,
+            "label": "Acceleration: Max"
+          },
+          {
+            "value": 3,
+            "label": "Auto Tune: Actuator Delay"
+          },
+          {
+            "value": 4,
+            "label": "Auto Tune: Friction"
+          },
+          {
+            "value": 5,
+            "label": "Auto Tune: Lateral Acceleration"
+          },
+          {
+            "value": 6,
+            "label": "Auto Tune: Steer Ratio"
+          },
+          {
+            "value": 7,
+            "label": "Auto Tune: Stiffness Factor"
+          },
+          {
+            "value": 8,
+            "label": "Engagement %: Lateral"
+          },
+          {
+            "value": 9,
+            "label": "Engagement %: Longitudinal"
+          },
+          {
+            "value": 10,
+            "label": "Lateral Control: Steering Angle"
+          },
+          {
+            "value": 11,
+            "label": "Lateral Control: Torque % Used"
+          },
+          {
+            "value": 12,
+            "label": "Longitudinal Control: Actuator Acceleration Output"
+          },
+          {
+            "value": 13,
+            "label": "Longitudinal MPC Jerk: Acceleration"
+          },
+          {
+            "value": 14,
+            "label": "Longitudinal MPC Jerk: Danger Zone"
+          },
+          {
+            "value": 15,
+            "label": "Longitudinal MPC Jerk: Speed Control"
+          },
+          {
+            "value": 16,
+            "label": "Driving Model: Current"
+          }
+        ],
         "parent_key": "DeveloperSidebar"
       },
       {
@@ -390,7 +1328,77 @@
         "label": "Metric #2",
         "description": "Select the metric shown in the second \"Developer Sidebar\" widget.",
         "data_type": "int",
-        "ui_type": "toggle",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "None"
+          },
+          {
+            "value": 1,
+            "label": "Acceleration: Current"
+          },
+          {
+            "value": 2,
+            "label": "Acceleration: Max"
+          },
+          {
+            "value": 3,
+            "label": "Auto Tune: Actuator Delay"
+          },
+          {
+            "value": 4,
+            "label": "Auto Tune: Friction"
+          },
+          {
+            "value": 5,
+            "label": "Auto Tune: Lateral Acceleration"
+          },
+          {
+            "value": 6,
+            "label": "Auto Tune: Steer Ratio"
+          },
+          {
+            "value": 7,
+            "label": "Auto Tune: Stiffness Factor"
+          },
+          {
+            "value": 8,
+            "label": "Engagement %: Lateral"
+          },
+          {
+            "value": 9,
+            "label": "Engagement %: Longitudinal"
+          },
+          {
+            "value": 10,
+            "label": "Lateral Control: Steering Angle"
+          },
+          {
+            "value": 11,
+            "label": "Lateral Control: Torque % Used"
+          },
+          {
+            "value": 12,
+            "label": "Longitudinal Control: Actuator Acceleration Output"
+          },
+          {
+            "value": 13,
+            "label": "Longitudinal MPC Jerk: Acceleration"
+          },
+          {
+            "value": 14,
+            "label": "Longitudinal MPC Jerk: Danger Zone"
+          },
+          {
+            "value": 15,
+            "label": "Longitudinal MPC Jerk: Speed Control"
+          },
+          {
+            "value": 16,
+            "label": "Driving Model: Current"
+          }
+        ],
         "parent_key": "DeveloperSidebar"
       },
       {
@@ -398,7 +1406,77 @@
         "label": "Metric #3",
         "description": "Select the metric shown in the third \"Developer Sidebar\" widget.",
         "data_type": "int",
-        "ui_type": "toggle",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "None"
+          },
+          {
+            "value": 1,
+            "label": "Acceleration: Current"
+          },
+          {
+            "value": 2,
+            "label": "Acceleration: Max"
+          },
+          {
+            "value": 3,
+            "label": "Auto Tune: Actuator Delay"
+          },
+          {
+            "value": 4,
+            "label": "Auto Tune: Friction"
+          },
+          {
+            "value": 5,
+            "label": "Auto Tune: Lateral Acceleration"
+          },
+          {
+            "value": 6,
+            "label": "Auto Tune: Steer Ratio"
+          },
+          {
+            "value": 7,
+            "label": "Auto Tune: Stiffness Factor"
+          },
+          {
+            "value": 8,
+            "label": "Engagement %: Lateral"
+          },
+          {
+            "value": 9,
+            "label": "Engagement %: Longitudinal"
+          },
+          {
+            "value": 10,
+            "label": "Lateral Control: Steering Angle"
+          },
+          {
+            "value": 11,
+            "label": "Lateral Control: Torque % Used"
+          },
+          {
+            "value": 12,
+            "label": "Longitudinal Control: Actuator Acceleration Output"
+          },
+          {
+            "value": 13,
+            "label": "Longitudinal MPC Jerk: Acceleration"
+          },
+          {
+            "value": 14,
+            "label": "Longitudinal MPC Jerk: Danger Zone"
+          },
+          {
+            "value": 15,
+            "label": "Longitudinal MPC Jerk: Speed Control"
+          },
+          {
+            "value": 16,
+            "label": "Driving Model: Current"
+          }
+        ],
         "parent_key": "DeveloperSidebar"
       },
       {
@@ -406,7 +1484,77 @@
         "label": "Metric #4",
         "description": "Select the metric shown in the fourth \"Developer Sidebar\" widget.",
         "data_type": "int",
-        "ui_type": "toggle",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "None"
+          },
+          {
+            "value": 1,
+            "label": "Acceleration: Current"
+          },
+          {
+            "value": 2,
+            "label": "Acceleration: Max"
+          },
+          {
+            "value": 3,
+            "label": "Auto Tune: Actuator Delay"
+          },
+          {
+            "value": 4,
+            "label": "Auto Tune: Friction"
+          },
+          {
+            "value": 5,
+            "label": "Auto Tune: Lateral Acceleration"
+          },
+          {
+            "value": 6,
+            "label": "Auto Tune: Steer Ratio"
+          },
+          {
+            "value": 7,
+            "label": "Auto Tune: Stiffness Factor"
+          },
+          {
+            "value": 8,
+            "label": "Engagement %: Lateral"
+          },
+          {
+            "value": 9,
+            "label": "Engagement %: Longitudinal"
+          },
+          {
+            "value": 10,
+            "label": "Lateral Control: Steering Angle"
+          },
+          {
+            "value": 11,
+            "label": "Lateral Control: Torque % Used"
+          },
+          {
+            "value": 12,
+            "label": "Longitudinal Control: Actuator Acceleration Output"
+          },
+          {
+            "value": 13,
+            "label": "Longitudinal MPC Jerk: Acceleration"
+          },
+          {
+            "value": 14,
+            "label": "Longitudinal MPC Jerk: Danger Zone"
+          },
+          {
+            "value": 15,
+            "label": "Longitudinal MPC Jerk: Speed Control"
+          },
+          {
+            "value": 16,
+            "label": "Driving Model: Current"
+          }
+        ],
         "parent_key": "DeveloperSidebar"
       },
       {
@@ -414,7 +1562,77 @@
         "label": "Metric #5",
         "description": "Select the metric shown in the fifth \"Developer Sidebar\" widget.",
         "data_type": "int",
-        "ui_type": "toggle",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "None"
+          },
+          {
+            "value": 1,
+            "label": "Acceleration: Current"
+          },
+          {
+            "value": 2,
+            "label": "Acceleration: Max"
+          },
+          {
+            "value": 3,
+            "label": "Auto Tune: Actuator Delay"
+          },
+          {
+            "value": 4,
+            "label": "Auto Tune: Friction"
+          },
+          {
+            "value": 5,
+            "label": "Auto Tune: Lateral Acceleration"
+          },
+          {
+            "value": 6,
+            "label": "Auto Tune: Steer Ratio"
+          },
+          {
+            "value": 7,
+            "label": "Auto Tune: Stiffness Factor"
+          },
+          {
+            "value": 8,
+            "label": "Engagement %: Lateral"
+          },
+          {
+            "value": 9,
+            "label": "Engagement %: Longitudinal"
+          },
+          {
+            "value": 10,
+            "label": "Lateral Control: Steering Angle"
+          },
+          {
+            "value": 11,
+            "label": "Lateral Control: Torque % Used"
+          },
+          {
+            "value": 12,
+            "label": "Longitudinal Control: Actuator Acceleration Output"
+          },
+          {
+            "value": 13,
+            "label": "Longitudinal MPC Jerk: Acceleration"
+          },
+          {
+            "value": 14,
+            "label": "Longitudinal MPC Jerk: Danger Zone"
+          },
+          {
+            "value": 15,
+            "label": "Longitudinal MPC Jerk: Speed Control"
+          },
+          {
+            "value": 16,
+            "label": "Driving Model: Current"
+          }
+        ],
         "parent_key": "DeveloperSidebar"
       },
       {
@@ -422,7 +1640,77 @@
         "label": "Metric #6",
         "description": "Select the metric shown in the sixth \"Developer Sidebar\" widget.",
         "data_type": "int",
-        "ui_type": "toggle",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "None"
+          },
+          {
+            "value": 1,
+            "label": "Acceleration: Current"
+          },
+          {
+            "value": 2,
+            "label": "Acceleration: Max"
+          },
+          {
+            "value": 3,
+            "label": "Auto Tune: Actuator Delay"
+          },
+          {
+            "value": 4,
+            "label": "Auto Tune: Friction"
+          },
+          {
+            "value": 5,
+            "label": "Auto Tune: Lateral Acceleration"
+          },
+          {
+            "value": 6,
+            "label": "Auto Tune: Steer Ratio"
+          },
+          {
+            "value": 7,
+            "label": "Auto Tune: Stiffness Factor"
+          },
+          {
+            "value": 8,
+            "label": "Engagement %: Lateral"
+          },
+          {
+            "value": 9,
+            "label": "Engagement %: Longitudinal"
+          },
+          {
+            "value": 10,
+            "label": "Lateral Control: Steering Angle"
+          },
+          {
+            "value": 11,
+            "label": "Lateral Control: Torque % Used"
+          },
+          {
+            "value": 12,
+            "label": "Longitudinal Control: Actuator Acceleration Output"
+          },
+          {
+            "value": 13,
+            "label": "Longitudinal MPC Jerk: Acceleration"
+          },
+          {
+            "value": 14,
+            "label": "Longitudinal MPC Jerk: Danger Zone"
+          },
+          {
+            "value": 15,
+            "label": "Longitudinal MPC Jerk: Speed Control"
+          },
+          {
+            "value": 16,
+            "label": "Driving Model: Current"
+          }
+        ],
         "parent_key": "DeveloperSidebar"
       },
       {
@@ -430,7 +1718,77 @@
         "label": "Metric #7",
         "description": "Select the metric shown in the seventh \"Developer Sidebar\" widget.",
         "data_type": "int",
-        "ui_type": "toggle",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "None"
+          },
+          {
+            "value": 1,
+            "label": "Acceleration: Current"
+          },
+          {
+            "value": 2,
+            "label": "Acceleration: Max"
+          },
+          {
+            "value": 3,
+            "label": "Auto Tune: Actuator Delay"
+          },
+          {
+            "value": 4,
+            "label": "Auto Tune: Friction"
+          },
+          {
+            "value": 5,
+            "label": "Auto Tune: Lateral Acceleration"
+          },
+          {
+            "value": 6,
+            "label": "Auto Tune: Steer Ratio"
+          },
+          {
+            "value": 7,
+            "label": "Auto Tune: Stiffness Factor"
+          },
+          {
+            "value": 8,
+            "label": "Engagement %: Lateral"
+          },
+          {
+            "value": 9,
+            "label": "Engagement %: Longitudinal"
+          },
+          {
+            "value": 10,
+            "label": "Lateral Control: Steering Angle"
+          },
+          {
+            "value": 11,
+            "label": "Lateral Control: Torque % Used"
+          },
+          {
+            "value": 12,
+            "label": "Longitudinal Control: Actuator Acceleration Output"
+          },
+          {
+            "value": 13,
+            "label": "Longitudinal MPC Jerk: Acceleration"
+          },
+          {
+            "value": 14,
+            "label": "Longitudinal MPC Jerk: Danger Zone"
+          },
+          {
+            "value": 15,
+            "label": "Longitudinal MPC Jerk: Speed Control"
+          },
+          {
+            "value": 16,
+            "label": "Driving Model: Current"
+          }
+        ],
         "parent_key": "DeveloperSidebar"
       },
       {
@@ -660,14 +2018,6 @@
         "is_parent_toggle": true
       },
       {
-        "key": "CameraView",
-        "label": "Camera View",
-        "description": "Select the active camera view. This is purely a visual change and doesn't impact how openpilot drives!",
-        "data_type": "int",
-        "ui_type": "toggle",
-        "parent_key": "QOLVisuals"
-      },
-      {
         "key": "DriverCamera",
         "label": "Show Driver Camera When In Reverse",
         "description": "Show the driver camera feed when the vehicle is in reverse.",
@@ -825,6 +2175,94 @@
     ]
   },
   {
+    "name": "Vehicle",
+    "icon": "bi-car-front",
+    "params": [
+      {
+        "key": "CarMake",
+        "label": "Car Make",
+        "description": "Select your car make.",
+        "data_type": "str",
+        "ui_type": "dropdown",
+        "options_endpoint": "/api/fingerprints/makes"
+      },
+      {
+        "key": "CarModel",
+        "label": "Car Model (Fingerprint)",
+        "description": "Choose the fingerprint platform to use when automatic detection is disabled.",
+        "data_type": "str",
+        "ui_type": "dropdown",
+        "options_endpoint": "/api/fingerprints/models?make={CarMake}"
+      },
+      {
+        "key": "ForceFingerprint",
+        "label": "Disable Automatic Fingerprint Detection",
+        "description": "Force the selected fingerprint and prevent it from changing automatically.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "GMPedalLongitudinal",
+        "label": "Use Pedal for Longitudinal Control",
+        "description": "Use the pedal interceptor for longitudinal control instead of camera ACC/Redneck when available.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "LongPitch",
+        "label": "Smooth Pedal Response on Hills",
+        "description": "Smoothen acceleration and braking when driving downhill/uphill.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "RedPanda",
+        "label": "Red Panda",
+        "description": "Enable Red Panda behavior for GM (alternate safety config and bus numbering). Requires a reboot to take effect.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "RemoteStartBootsComma",
+        "label": "Remote Start Boots Comma",
+        "description": "Use GM C9 SystemPowerMode for ignition detection. Toggle requires a panda firmware update and a reboot to take effect.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "VoltSNG",
+        "label": "Stop-and-Go Hack",
+        "description": "Force stop-and-go on the 2017 Chevy Volt.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "TacoTuneHacks",
+        "label": "\\\"Taco Bell Run\\\" Torque Hack",
+        "description": "The steering torque hack from comma's 2022 \"Taco Bell Run\". Designed to increase steering torque at low speeds for left and right turns.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "ClusterOffset",
+        "label": "Dashboard Speed Offset",
+        "description": "The speed offset openpilot uses to match the speed on the dashboard display.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 1.0,
+        "max": 1.05,
+        "step": 0.001
+      },
+      {
+        "key": "SNGHack",
+        "label": "Stop-and-Go Hack",
+        "description": "Force stop-and-go on Lexus/Toyota vehicles without stock stop-and-go functionality.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      }
+    ]
+  },
+  {
     "name": "Device & Data",
     "icon": "bi-hdd",
     "params": [
@@ -869,6 +2307,17 @@
         "description": "Save drive footage in higher video quality.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "parent_key": "DeviceManagement"
+      },
+      {
+        "key": "LowVoltageShutdown",
+        "label": "Low-Voltage Cutoff",
+        "description": "While parked, if the battery voltage falls below the set level, the device shuts down to prevent excessive battery drain.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 11.8,
+        "max": 12.5,
+        "step": 0.1,
         "parent_key": "DeviceManagement"
       },
       {

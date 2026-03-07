@@ -8,7 +8,6 @@ import secrets
 import shutil
 import subprocess
 import time
-import uuid
 
 from datetime import datetime
 from pathlib import Path
@@ -563,19 +562,10 @@ def process_route(footage_path, route_name):
 
   return {
     "name": route_name,
-    "gif": f"/thumbnails/{route_name}--0/preview.gif",
     "png": f"/thumbnails/{route_name}--0/preview.png",
     "timestamp": route_timestamp_str,
     "is_preserved": has_preserve_attr(segment_path)
   }
-
-def process_route_gif(footage_path, route_name):
-  segment_path = f"{footage_path}{route_name}--0"
-  qcamera_path = f"{segment_path}/qcamera.ts"
-  gif_output_path = os.path.join(segment_path, "preview.gif")
-
-  if not os.path.exists(gif_output_path):
-    video_to_gif(qcamera_path, gif_output_path)
 
 def process_screen_recording(mp4):
   stem = mp4.with_suffix("")
@@ -592,44 +582,29 @@ def process_screen_recording(mp4):
 
   return {
     "filename": mp4.name,
-    "gif": f"/screen_recordings/{stem.with_suffix('.gif').name}",
     "png": f"/screen_recordings/{png_path.name}",
     "timestamp": datetime.fromtimestamp(mp4.stat().st_mtime).isoformat(),
     "is_custom_name": is_custom_name
   }
 
-def process_screen_recording_gif(mp4):
-  stem = mp4.with_suffix("")
-  gif_path = stem.with_suffix(".gif")
-  if not gif_path.exists():
-    video_to_gif(mp4, gif_path)
-
-def run_ffmpeg(args):
-  process = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error"] + args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-  stdout, stderr = process.communicate()
-  return stdout
-
 def segment_to_segment_name(data_dir, segment):
   full_path = os.path.join(data_dir, f"FakeDongleID1337|{segment}")
   return SegmentName(full_path)
 
-def video_to_gif(input_path, output_path):
-  output_path = Path(output_path)
-  sped_up_path = output_path.with_suffix(f".{uuid.uuid4()}.spedup.mp4")
-
-  run_ffmpeg(["-i", str(input_path), "-an", "-vf", "setpts=PTS/35", str(sped_up_path)])
-  run_ffmpeg(["-i", str(sped_up_path), "-loop", "0", str(output_path)])
-
-  if os.path.exists(sped_up_path):
-    os.remove(sped_up_path)
-
 def video_to_png(input_path, output_path):
-  run_ffmpeg([
-    "-ss", str(get_video_duration(input_path) / 2),
-    "-i", str(input_path),
-    "-frames:v", "1",
-    str(output_path)
-  ])
+  try:
+    subprocess.run([
+      "ffmpeg", "-hide_banner", "-loglevel", "error",
+      "-ss", "1",
+      "-i", str(input_path),
+      "-frames:v", "1",
+      "-y",
+      str(output_path)
+    ], capture_output=True, check=True, text=True)
+  except subprocess.CalledProcessError as e:
+    print(f"Failed to generate PNG for {input_path}")
+    if e.stderr:
+      print(e.stderr)
 
 def xor_encrypt_decrypt(data, key):
   return "".join(chr(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(data))

@@ -10,6 +10,7 @@ from openpilot.selfdrive.car.gm.radar_interface import RADAR_HEADER_MSG
 from openpilot.selfdrive.car.gm.values import CAR, CruiseButtons, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, CanBus, GMFlags, CC_ONLY_CAR, SDGM_CAR, ASCM_INT, CC_REGEN_PADDLE_CAR, set_red_panda_canbus
 from openpilot.selfdrive.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, FRICTION_THRESHOLD, LateralAccelFromTorqueCallbackType, get_friction_threshold
 from openpilot.selfdrive.controls.lib.drive_helpers import get_friction
+from openpilot.frogpilot.common.testing_grounds import testing_ground
 
 ButtonType = car.CarState.ButtonEvent.Type
 FrogPilotButtonType = custom.FrogPilotCarState.ButtonEvent.Type
@@ -70,11 +71,33 @@ NON_LINEAR_TORQUE_PARAMS = {
   },
 }
 
+NON_LINEAR_D_SWEEP_VARIANT_OFFSETS = {
+  "B": -0.030,
+  "C": -0.040,
+  "D": -0.050,
+  "E": -0.060,
+  "F": -0.070,
+  "G": -0.080,
+  "H": -0.090,
+  "I": -0.100,
+  "J": 0.030,
+  "K": 0.040,
+  "L": 0.050,
+  "M": 0.060,
+  "N": 0.070,
+  "O": 0.080,
+  "P": 0.090,
+  "Q": 0.100,
+}
+
 
 class CarInterface(CarInterfaceBase):
   def __init__(self, CP, FPCP, CarController, CarState):
     super().__init__(CP, FPCP, CarController, CarState)
     self.steer_offset = 0.0
+    self._siglin_cache_key = None
+    self._siglin_cache_torque_values = None
+    self._siglin_cache_lataccel_values = None
 
   @staticmethod
   def get_pid_accel_limits(CP, current_speed, cruise_speed):
@@ -94,6 +117,12 @@ class CarInterface(CarInterfaceBase):
       return CarInterfaceBase.get_steer_feedforward_default
 
   def get_lataccel_torque_siglin(self) -> float:
+    active_slot, active_variant = testing_ground.selection()
+    d_offset = NON_LINEAR_D_SWEEP_VARIANT_OFFSETS.get(active_variant, 0.0) if active_slot == testing_ground.id_2 else 0.0
+    cache_key = (self.CP.carFingerprint, active_slot, active_variant, d_offset)
+
+    if self._siglin_cache_key == cache_key and self._siglin_cache_torque_values is not None and self._siglin_cache_lataccel_values is not None:
+      return self._siglin_cache_torque_values, self._siglin_cache_lataccel_values
 
     def torque_from_lateral_accel_siglin_func(lateral_acceleration: float) -> float:
       # The "lat_accel vs torque" relationship is assumed to be the sum of "sigmoid + linear" curves
@@ -104,6 +133,7 @@ class CarInterface(CarInterfaceBase):
       # Left is positive
       side_key = "left" if lateral_acceleration >= 0 else "right"
       a, b, c, d = non_linear_torque_params[side_key]
+      d += d_offset
       sig_input = a * lateral_acceleration
       sig = np.sign(sig_input) * (1 / (1 + exp(-fabs(sig_input))) - 0.5)
       steer_torque = (sig * b) + (lateral_acceleration * c) + d
@@ -112,13 +142,15 @@ class CarInterface(CarInterfaceBase):
     lataccel_values = np.arange(-5.0, 5.0, 0.01)
     torque_values = [torque_from_lateral_accel_siglin_func(x) for x in lataccel_values]
     assert min(torque_values) < -1 and max(torque_values) > 1, "The torque values should cover the range [-1, 1]"
-    return torque_values, lataccel_values
+    self._siglin_cache_key = cache_key
+    self._siglin_cache_torque_values = torque_values
+    self._siglin_cache_lataccel_values = lataccel_values
+    return self._siglin_cache_torque_values, self._siglin_cache_lataccel_values
 
   def torque_from_lateral_accel(self) -> TorqueFromLateralAccelCallbackType:
     if self.CP.carFingerprint in NON_LINEAR_TORQUE_PARAMS:
-      torque_values, lataccel_values = self.get_lataccel_torque_siglin()
-
       def torque_from_lateral_accel_siglin(lateral_acceleration: float, torque_params: car.CarParams.LateralTorqueTuning):
+        torque_values, lataccel_values = self.get_lataccel_torque_siglin()
         return float(np.interp(lateral_acceleration, lataccel_values, torque_values) + self.steer_offset)
       return torque_from_lateral_accel_siglin
     else:
@@ -128,9 +160,8 @@ class CarInterface(CarInterfaceBase):
 
   def lateral_accel_from_torque(self) -> LateralAccelFromTorqueCallbackType:
     if self.CP.carFingerprint in NON_LINEAR_TORQUE_PARAMS:
-      torque_values, lataccel_values = self.get_lataccel_torque_siglin()
-
       def lateral_accel_from_torque_siglin(torque: float, torque_params: car.CarParams.LateralTorqueTuning):
+        torque_values, lataccel_values = self.get_lataccel_torque_siglin()
         return np.interp(torque - self.steer_offset, torque_values, lataccel_values)
       return lateral_accel_from_torque_siglin
     else:

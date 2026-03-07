@@ -15,7 +15,6 @@
 
 .diskUsage,
 .drivingStats,
-.firehoseStats,
 .softwareInfo {
   background-color: var(--secondary-bg);
   border-radius: var(--border-radius-md);
@@ -31,7 +30,6 @@
 }
 
 .diskUsage p,
-.firehoseStats p,
 .softwareGrid p {
   font-size: var(--font-size-sm);
   margin: 0;
@@ -65,7 +63,6 @@
 
 .diskUsage:hover,
 .drivingStats:hover,
-.firehoseStats:hover,
 .softwareInfo:hover {
   box-shadow: var(--shadow-md);
   transform: var(--hover-scale-sm);

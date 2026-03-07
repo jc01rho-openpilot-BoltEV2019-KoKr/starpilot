@@ -23,6 +23,48 @@ DROPDOWN_MAPPING = {
     }
 }
 
+# Keys explicitly hidden from The Pond's generic settings UI.
+HIDDEN_KEYS = {
+    "ExperimentalGMTune",
+    "FrogsGoMoosTweak",
+    "LockDoorsTimer",
+    "NewLongAPI",
+    "ToyotaDoors",
+}
+
+# Keys that are boolean toggles despite ambiguous defaults in frogpilot_variables.py.
+FORCE_BOOL_KEYS = {"EVTuning"}
+
+DEVELOPER_SIDEBAR_METRIC_KEYS = {
+    "DeveloperSidebarMetric1",
+    "DeveloperSidebarMetric2",
+    "DeveloperSidebarMetric3",
+    "DeveloperSidebarMetric4",
+    "DeveloperSidebarMetric5",
+    "DeveloperSidebarMetric6",
+    "DeveloperSidebarMetric7",
+}
+
+DEVELOPER_SIDEBAR_METRIC_OPTIONS = [
+    {"value": 0, "label": "None"},
+    {"value": 1, "label": "Acceleration: Current"},
+    {"value": 2, "label": "Acceleration: Max"},
+    {"value": 3, "label": "Auto Tune: Actuator Delay"},
+    {"value": 4, "label": "Auto Tune: Friction"},
+    {"value": 5, "label": "Auto Tune: Lateral Acceleration"},
+    {"value": 6, "label": "Auto Tune: Steer Ratio"},
+    {"value": 7, "label": "Auto Tune: Stiffness Factor"},
+    {"value": 8, "label": "Engagement %: Lateral"},
+    {"value": 9, "label": "Engagement %: Longitudinal"},
+    {"value": 10, "label": "Lateral Control: Steering Angle"},
+    {"value": 11, "label": "Lateral Control: Torque % Used"},
+    {"value": 12, "label": "Longitudinal Control: Actuator Acceleration Output"},
+    {"value": 13, "label": "Longitudinal MPC Jerk: Acceleration"},
+    {"value": 14, "label": "Longitudinal MPC Jerk: Danger Zone"},
+    {"value": 15, "label": "Longitudinal MPC Jerk: Speed Control"},
+    {"value": 16, "label": "Driving Model: Current"},
+]
+
 PARENT_KEYS_MAPPING = {
     "device_settings.cc": {
         "deviceManagementKeys": "DeviceManagement",
@@ -39,12 +81,15 @@ PARENT_KEYS_MAPPING = {
         "advancedLongitudinalTuneKeys": "AdvancedLongitudinalTune",
         "aggressivePersonalityKeys": "AggressivePersonalityProfile",
         "conditionalExperimentalKeys": "ConditionalExperimental",
-        "curveSpeedKeys": "CurveSpeedControl",
-        "customDrivingPersonalityKeys": "CustomDrivingPersonality",
+        "curveSpeedKeys": "CurveSpeedController",
+        "customDrivingPersonalityKeys": "CustomPersonalities",
         "longitudinalTuneKeys": "LongitudinalTune",
         "qolKeys": "QOLLongitudinal",
         "relaxedPersonalityKeys": "RelaxedPersonalityProfile",
         "speedLimitControllerKeys": "SpeedLimitController",
+        "speedLimitControllerOffsetsKeys": "SpeedLimitController",
+        "speedLimitControllerQOLKeys": "SpeedLimitController",
+        "speedLimitControllerVisualKeys": "SpeedLimitController",
         "standardPersonalityKeys": "StandardPersonalityProfile",
         "trafficPersonalityKeys": "TrafficPersonalityProfile"
     },
@@ -107,6 +152,9 @@ def get_variables_data():
                                         defaults[key] = "string"
                                 else:
                                     defaults[key] = "unknown"
+                            elif isinstance(val_node, ast.Call) and isinstance(val_node.func, ast.Name) and val_node.func.id == "str":
+                                # str(<numeric expression>) is used for several numeric defaults.
+                                defaults[key] = "float"
                             else:
                                 defaults[key] = "unknown"
         except:
@@ -120,15 +168,44 @@ def get_variables_data():
                         excluded = ast.literal_eval(node.value)
                     except:
                         pass
-                elif getattr(target, 'id', '') == 'frogpilot_default_params':
+                elif getattr(target, 'id', '') in ('frogpilot_default_params', 'misc_tuning_levels'):
                     parse_params_list(node.value)
         elif isinstance(node, ast.AnnAssign):
-            if getattr(node.target, 'id', '') == 'frogpilot_default_params':
+            if getattr(node.target, 'id', '') in ('frogpilot_default_params', 'misc_tuning_levels'):
                 parse_params_list(node.value)
 
     return excluded, defaults
 
 EXCLUDED_KEYS, DEFAULT_TYPES = get_variables_data()
+
+def get_editable_keys():
+    filepath = os.path.join(REPO_ROOT, "frogpilot/common/frogpilot_variables.py")
+    editable = set()
+    if not os.path.exists(filepath):
+        return editable
+
+    with open(filepath, 'r', encoding='utf-8') as f:
+        tree = ast.parse(f.read())
+
+    for node in tree.body:
+        value_node = None
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if getattr(target, 'id', '') == 'frogpilot_default_params':
+                    value_node = node.value
+                    break
+        elif isinstance(node, ast.AnnAssign):
+            if getattr(node.target, 'id', '') == 'frogpilot_default_params':
+                value_node = node.value
+
+        if isinstance(value_node, ast.List):
+            for elt in value_node.elts:
+                if isinstance(elt, ast.Tuple) and elt.elts and isinstance(elt.elts[0], ast.Constant):
+                    editable.add(elt.elts[0].value)
+
+    return editable
+
+EDITABLE_KEYS = get_editable_keys()
 
 def get_param_type(key):
     return DEFAULT_TYPES.get(key, "unknown")
@@ -164,7 +241,11 @@ def parse_cpp_file(filename):
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    vector_match = re.search(r'const std::vector<std::tuple<QString,\s*QString,\s*QString,\s*QString>> \w+\s*\{', content)
+    vector_match = re.search(
+        r'(?:const\s+)?std::vector<\s*std::tuple<QString,\s*QString,\s*QString,\s*QString>\s*>\s*\w+\s*\{',
+        content,
+        re.DOTALL,
+    )
     if not vector_match: return []
 
     start_idx = vector_match.end() - 1
@@ -172,6 +253,7 @@ def parse_cpp_file(filename):
 
     local_parent_map = PARENT_KEYS_MAPPING.get(filename, {})
     child_to_parent = {}
+    child_to_qsets = {}
 
     header_filename = filename.replace(".cc", ".h")
     header_filepath = os.path.join(REPO_ROOT, "frogpilot/ui/qt/offroad", header_filename)
@@ -188,6 +270,7 @@ def parse_cpp_file(filename):
             children = [c.strip().strip('"') for c in children_str.split(',') if c.strip()]
             for child in children:
                 child_to_parent[child] = parent_key
+                child_to_qsets.setdefault(child, []).append(qset_name)
 
     items = []
 
@@ -210,7 +293,7 @@ def parse_cpp_file(filename):
         rest = row_match.group(2)
         idx += len(block)
 
-        if key in EXCLUDED_KEYS or key.startswith("IgnoreMe"):
+        if key in HIDDEN_KEYS or key in EXCLUDED_KEYS or key.startswith("IgnoreMe"):
             continue
 
         strings = re.findall(r'tr\("((?:[^"\\]|\\.)+)"\)|"((?:[^"\\]|\\.)+)"', rest)
@@ -221,14 +304,23 @@ def parse_cpp_file(filename):
         title = valid_strings[0]
         desc = valid_strings[1] if len(valid_strings) > 1 else ""
         options_endpoint = None
+        dropdown_options = None
 
-        if key in DROPDOWN_MAPPING:
+        if key in DEVELOPER_SIDEBAR_METRIC_KEYS:
+            if key not in EDITABLE_KEYS:
+                continue
+            widget_type = "dropdown"
+            data_type = "int"
+            dropdown_options = DEVELOPER_SIDEBAR_METRIC_OPTIONS
+        elif key in DROPDOWN_MAPPING:
             m = DROPDOWN_MAPPING[key]
             key = m["key"]
             widget_type = "dropdown"
             options_endpoint = m["options_endpoint"]
             data_type = "string"
         else:
+            if key not in EDITABLE_KEYS:
+                continue
             data_type = get_param_type(key)
             if data_type == "unknown": continue
             widget_type = "toggle"
@@ -249,17 +341,10 @@ def parse_cpp_file(filename):
 
         if widget_type == "toggle":
             snippet_match = None
-            qset_name = ""
-            if key in child_to_parent:
-                parent_k = child_to_parent[key]
-                for q, pk in local_parent_map.items():
-                    if pk == parent_k:
-                        qset_name = q
-                        break
 
             # Let's match the original's regex for finding the Toggle = assignment line
             search_patterns = [r'param\s*==\s*"' + key + r'"']
-            if qset_name:
+            for qset_name in child_to_qsets.get(key, []):
                 search_patterns.append(r'(?:' + qset_name + r'\.contains\(param\))')
 
             for pattern in search_patterns:
@@ -275,7 +360,7 @@ def parse_cpp_file(filename):
                     if data_type in ("string", "bool", "unknown"):
                         data_type = "float"
 
-                    if qset_name == "alertVolumeControlKeys":
+                    if "alertVolumeControlKeys" in child_to_qsets.get(key, []):
                         if key in ["WarningImmediateVolume", "WarningSoftVolume"]:
                             min_val, max_val, step = "25", "101", "1"
                         else:
@@ -295,6 +380,16 @@ def parse_cpp_file(filename):
                             if step_match:
                                 step = step_match.group(1)
 
+        # CESpeed is rendered in Qt with a dual numeric control (CESpeed + CESpeedLead),
+        # so the generic assignment matcher cannot infer it reliably.
+        if key == "CESpeed":
+            widget_type = "numeric"
+            data_type = "int"
+            min_val, max_val, step = "0", "99", "1"
+
+        if key in FORCE_BOOL_KEYS:
+            data_type = "bool"
+
         precision = None
         precision_match = re.search(r"QString::number\([^,]+,\s*'f'\s*,\s*(\d+)\)", rest)
         if precision_match:
@@ -302,6 +397,10 @@ def parse_cpp_file(filename):
 
         if data_type == "float" and step and float(step).is_integer():
              data_type = "int"
+
+        # Generic pond UI can't faithfully represent non-boolean button/multi-option controls.
+        if widget_type == "toggle" and data_type != "bool":
+            continue
 
         s = {
             "key": key,
@@ -317,10 +416,49 @@ def parse_cpp_file(filename):
             if precision is not None: s["precision"] = precision
         elif widget_type == "dropdown":
             if options_endpoint: s["options_endpoint"] = options_endpoint
+            if dropdown_options: s["options"] = dropdown_options
         if key in child_to_parent: s["parent_key"] = child_to_parent[key]
         if key in ALL_PARENT_KEYS: s["is_parent_toggle"] = True
 
+        if key == "CELead":
+            s["is_parent_toggle"] = True
+
         items.append(s)
+
+        # Mirror CELead's split sub-toggles from FrogPilotButtonToggleControl.
+        if key == "CELead":
+            items.extend([
+                {
+                    "key": "CESlowerLead",
+                    "label": "Slower Lead",
+                    "description": "Switch to \"Experimental Mode\" when a slower lead vehicle is detected ahead.",
+                    "data_type": "bool",
+                    "ui_type": "toggle",
+                    "parent_key": "CELead",
+                },
+                {
+                    "key": "CEStoppedLead",
+                    "label": "Stopped Lead",
+                    "description": "Switch to \"Experimental Mode\" when a stopped lead vehicle is detected ahead.",
+                    "data_type": "bool",
+                    "ui_type": "toggle",
+                    "parent_key": "CELead",
+                },
+            ])
+
+        # Mirror CESpeed's dual slider (with-lead variant) from Qt.
+        if key == "CESpeed":
+            items.append({
+                "key": "CESpeedLead",
+                "label": "Below (With Lead)",
+                "description": "Switch to \"Experimental Mode\" when driving below this speed with a lead.",
+                "data_type": "int",
+                "ui_type": "numeric",
+                "min": 0.0,
+                "max": 99.0,
+                "step": 1.0,
+                "parent_key": "ConditionalExperimental",
+            })
 
     return items
 

@@ -166,12 +166,13 @@ const api = {
 }
 
 let hasLoaded = false
-if (!hasLoaded) {
-  hasLoaded = true
-  api.load()
-}
 
 export function TSKManager() {
+  if (!hasLoaded) {
+    hasLoaded = true
+    api.load()
+  }
+
   return html`
     <div class="tskkeys-wrapper tskkeys-offset-top">
       <div class="tskkeys-container">

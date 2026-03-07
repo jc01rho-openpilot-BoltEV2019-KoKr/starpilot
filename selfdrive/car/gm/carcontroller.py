@@ -15,6 +15,7 @@ from openpilot.selfdrive.car.gm.values import CAR, DBC, AccState, CanBus, CarCon
 from openpilot.selfdrive.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.drive_helpers import apply_deadzone
 from openpilot.selfdrive.controls.lib.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
+from openpilot.frogpilot.common.testing_grounds import testing_ground
 
 VisualAlert = car.CarControl.HUDControl.VisualAlert
 NetworkLocation = car.CarParams.NetworkLocation
@@ -306,6 +307,8 @@ class CarController(CarControllerBase):
 
             gas_max = self.params.MAX_GAS
             accel_max = self.params.ACCEL_MAX
+            if testing_ground.use_1:
+              accel_max = min(accel_max, interp(CS.out.vEgo, [0.0, 4.0, 12.0], [1.25, 1.6, self.params.ACCEL_MAX]))
 
             accel = clip(actuators.accel + accel_due_to_pitch, self.params.ACCEL_MIN, accel_max)
             torque = self.tireRadius * ((self.mass*accel) + (0.5*self.coeffDrag*self.frontalArea*self.airDensity*CS.out.vEgo**2))
@@ -313,6 +316,9 @@ class CarController(CarControllerBase):
             scaled_torque = torque + self.params.ZERO_GAS
             apply_gas_torque = clip(scaled_torque, self.params.MAX_ACC_REGEN, gas_max)
             BRAKE_SWITCH = int(round(interp(CS.out.vEgo, self.params.BRAKE_SWITCH_LOOKUP_BP, self.params.BRAKE_SWITCH_LOOKUP_V)))
+            if testing_ground.use_1:
+              brake_switch_bias = int(round(interp(CS.out.vEgo, [0.0, 6.0, 15.0, 30.0], [60.0, 120.0, 180.0, 220.0])))
+              BRAKE_SWITCH = min(self.params.ZERO_GAS, BRAKE_SWITCH + brake_switch_bias)
             brake_accel = min((scaled_torque - BRAKE_SWITCH)/(self.tireRadius*self.mass), 0)
             self.apply_gas = int(round(apply_gas_torque))
             self.apply_brake = int(round(interp(brake_accel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))

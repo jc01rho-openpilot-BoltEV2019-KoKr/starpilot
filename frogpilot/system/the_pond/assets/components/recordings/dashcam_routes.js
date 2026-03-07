@@ -370,45 +370,6 @@ export function RouteRecordings() {
         route => html`
                   <div
                     class="recording-card"
-                    @mouseenter="${e => {
-            if (state.selectedRoute) return;
-
-            const card = e.currentTarget;
-            const gif = card.querySelector(".recording-preview-gif");
-            const png = card.querySelector(".recording-preview-png");
-
-            if (card.dataset.gifLoaded) {
-              png.style.display = "none";
-              gif.style.display = "block";
-              return;
-            }
-
-            card.dataset.loadingGif = "true";
-            const preloader = new Image();
-            preloader.onload = () => {
-              if (card.dataset.loadingGif === "true") {
-                gif.src = preloader.src;
-                png.style.display = "none";
-                gif.style.display = "block";
-                card.dataset.gifLoaded = true;
-              }
-              delete card.dataset.loadingGif;
-            };
-            preloader.onerror = () => {
-              console.error("Failed to load preview GIF:", preloader.src);
-              delete card.dataset.loadingGif;
-            };
-
-            preloader.src = gif.dataset.src;
-          }}"
-                    @mouseleave="${e => {
-            const card = e.currentTarget;
-            card.querySelector(".recording-preview-png").style.display = "block";
-            card.querySelector(".recording-preview-gif").style.display = "none";
-            if (card.dataset.loadingGif === "true") {
-              delete card.dataset.loadingGif;
-            }
-          }}"
                     @click="${() => {
             state.selectedRoute = route;
           }}"
@@ -422,11 +383,6 @@ export function RouteRecordings() {
                         class="recording-preview recording-preview-png"
                         style="display:block;"
                         loading="lazy"
-                      >
-                      <img
-                        data-src="${route.gif}"
-                        class="recording-preview recording-preview-gif"
-                        style="display:none;"
                       >
                     </div>
                     <p class="recording-filename">${route.timestamp}</p>

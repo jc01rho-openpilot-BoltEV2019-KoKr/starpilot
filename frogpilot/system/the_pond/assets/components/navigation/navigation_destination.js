@@ -101,6 +101,25 @@ async function setSpecial(favorite, type, state, loadFavoritesAlphabetically) {
   }
 }
 
+let mapboxLoadPromise = null;
+
+function loadMapboxGL() {
+  if (mapboxLoadPromise) return mapboxLoadPromise;
+  mapboxLoadPromise = new Promise((resolve, reject) => {
+    const link = document.createElement("link");
+    link.href = "https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css";
+    link.rel = "stylesheet";
+    document.head.appendChild(link);
+
+    const script = document.createElement("script");
+    script.src = "https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Failed to load Mapbox GL"));
+    document.head.appendChild(script);
+  });
+  return mapboxLoadPromise;
+}
+
 export function NavDestination() {
   let map;
   let destinationMarker;
@@ -262,13 +281,18 @@ export function NavDestination() {
     };
     try {
       state.destination = JSON.parse(data.destination);
-    } catch {}
+    } catch { }
     try {
       const prev = JSON.parse(data.previousDestinations);
       state.previousDestinations = prev.map(d => ({ name: d.place_name }));
       state.suggestions = JSON.stringify(state.previousDestinations);
-    } catch {}
-    setupMap();
+    } catch { }
+    try {
+      await setupMap();
+    } catch {
+      showSnackbar("Failed to load map resources…");
+      return;
+    }
     loadFavoritesAlphabetically();
   }
 
@@ -524,12 +548,18 @@ export function NavDestination() {
     }
   }
 
-  const setupMap = async () => {
+  const setupMap = async (retries = 0) => {
     if (!state.mapboxPublic || state.initialized) return;
+
+    if (typeof mapboxgl === "undefined") {
+      await loadMapboxGL();
+    }
+
     const container = document.getElementById("map");
     if (!container) {
-      requestAnimationFrame(setupMap);
-      return;
+      if (retries >= 50) return;
+      await new Promise(r => requestAnimationFrame(r));
+      return setupMap(retries + 1);
     }
     state.initialized = true;
     mapboxgl.accessToken = state.mapboxPublic;
@@ -585,9 +615,9 @@ export function NavDestination() {
   return html`
     <div class="navigation-container">
       ${() => {
-        if (state.missingKeys === null) return "";
-        return state.missingKeys
-          ? html`
+      if (state.missingKeys === null) return "";
+      return state.missingKeys
+        ? html`
               <section class="keys-required-wrapper">
                 <div class="keys-required-widget">
                   <div class="keys-required-title">Mapbox Keys Required</div>
@@ -596,7 +626,7 @@ export function NavDestination() {
                 </div>
               </section>
             `
-          : html`
+        : html`
               <div class="map-wrapper">
                 <div class="search-wrapper">
                   <div class="search-controls">
@@ -611,47 +641,47 @@ export function NavDestination() {
                   </div>
                   <div id="infobox">
                     ${() => {
-                      if (state.loadingRoute) {
-                        return html`<div class="navigation-summary-widget loading-status"><span class="spinner"></span> Calculating route...</div>`;
-                      } else if (state.selectedRoute) {
-                        return NavigationDestination({
-                          ...state.selectedRoute,
-                          isFavorited: isRouteFavorited(state.selectedRoute, state.favoriteRoutes),
-                          isConfirmed: () => areRoutesEqual(state.selectedRoute, state.confirmedRoute),
-                          map,
-                          isMetric: state.isMetric,
-                          cancelNavigationFn: () => {
-                            state.selectedRoute = null;
-                            state.confirmedRoute = null;
-                            state.suggestions = state.previousDestinations;
-                            if (destinationMarker) destinationMarker.remove();
-                          },
-                          onConfirm: () => {
-                            state.confirmedRoute = JSON.parse(JSON.stringify(state.selectedRoute));
-                            state.confirmedRouteRefresh = Math.random();
-                          },
-                          loadFavorites: loadFavoritesAlphabetically,
-                          removeFavorite: confirmRemoveFavorite,
-                          searchFieldState,
-                          favoriteRoutes: state.favoriteRoutes
-                        }, state.confirmedRouteRefresh);
-                      } else if (JSON.parse(state.suggestions).length > 0) {
-                        return SearchSuggestions({
-                          suggestions: JSON.parse(state.suggestions),
-                          selectSuggestion,
-                          removeFavorite: confirmRemoveFavorite,
-                          renameFavorite: confirmRenameFavorite,
-                          setHome: setHome,
-                          setWork: setWork
-                        });
-                      }
-                    }}
+            if (state.loadingRoute) {
+              return html`<div class="navigation-summary-widget loading-status"><span class="spinner"></span> Calculating route...</div>`;
+            } else if (state.selectedRoute) {
+              return NavigationDestination({
+                ...state.selectedRoute,
+                isFavorited: isRouteFavorited(state.selectedRoute, state.favoriteRoutes),
+                isConfirmed: () => areRoutesEqual(state.selectedRoute, state.confirmedRoute),
+                map,
+                isMetric: state.isMetric,
+                cancelNavigationFn: () => {
+                  state.selectedRoute = null;
+                  state.confirmedRoute = null;
+                  state.suggestions = state.previousDestinations;
+                  if (destinationMarker) destinationMarker.remove();
+                },
+                onConfirm: () => {
+                  state.confirmedRoute = JSON.parse(JSON.stringify(state.selectedRoute));
+                  state.confirmedRouteRefresh = Math.random();
+                },
+                loadFavorites: loadFavoritesAlphabetically,
+                removeFavorite: confirmRemoveFavorite,
+                searchFieldState,
+                favoriteRoutes: state.favoriteRoutes
+              }, state.confirmedRouteRefresh);
+            } else if (JSON.parse(state.suggestions).length > 0) {
+              return SearchSuggestions({
+                suggestions: JSON.parse(state.suggestions),
+                selectSuggestion,
+                removeFavorite: confirmRemoveFavorite,
+                renameFavorite: confirmRenameFavorite,
+                setHome: setHome,
+                setWork: setWork
+              });
+            }
+          }}
                   </div>
                 </div>
                 <div id="map"></div>
               </div>
             `;
-      }}
+    }}
     </div>
     ${() => (state.showRemoveFavoriteModal ? Modal({
       title: "Remove Favorite",
@@ -815,9 +845,9 @@ function NavigationDestination({
       </div>
       <div class="buttonCluster">
         ${() =>
-          isConfirmed()
-            ? html`<button class="cancel" @click="${cancelNavigation}"><i class="bi bi-x-lg"></i> Cancel Navigation</button>`
-            : html`<button class="directions" @click="${confirmDestination}"><i class="bi bi-sign-turn-right"></i> Start Navigation</button>`}
+      isConfirmed()
+        ? html`<button class="cancel" @click="${cancelNavigation}"><i class="bi bi-x-lg"></i> Cancel Navigation</button>`
+        : html`<button class="directions" @click="${confirmDestination}"><i class="bi bi-sign-turn-right"></i> Start Navigation</button>`}
         <button class="favorite" @click="${toggleFavorite}">${isFavorited ? "💔 Unfavorite" : "❤️ Favorite"}</button>
       </div>
     </div>
