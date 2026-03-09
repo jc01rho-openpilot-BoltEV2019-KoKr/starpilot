@@ -41,12 +41,18 @@ def only_onroad(started: bool, params, CP: car.CarParams, classic_model, tinygra
 def only_offroad(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
   return not started
 
+def long_maneuver(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
+  return started and params.get_bool("LongitudinalManeuverMode")
+
+def not_long_maneuver(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
+  return started and not params.get_bool("LongitudinalManeuverMode")
+
 # FrogPilot functions
 def allow_logging(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
   return not frogpilot_toggles.no_logging and logging(started, params, CP, classic_model, tinygrad_model, frogpilot_toggles)
 
 def allow_uploads(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
-  return not frogpilot_toggles.no_uploads or frogpilot_toggles.no_onroad_uploads
+  return params.get_bool("AlwaysAllowUploads") or not frogpilot_toggles.no_uploads or frogpilot_toggles.no_onroad_uploads
 
 def run_classic_modeld(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
   return started and classic_model
@@ -96,7 +102,8 @@ procs = [
   PythonProcess("lagd", "selfdrive.locationd.lagd", only_onroad),
   NativeProcess("ubloxd", "system/ubloxd", ["./ubloxd"], ublox, enabled=TICI),
   PythonProcess("pigeond", "system.ubloxd.pigeond", ublox, enabled=TICI),
-  PythonProcess("plannerd", "selfdrive.controls.plannerd", only_onroad),
+  PythonProcess("plannerd", "selfdrive.controls.plannerd", not_long_maneuver),
+  PythonProcess("maneuversd", "tools.longitudinal_maneuvers.maneuversd", long_maneuver),
   PythonProcess("radard", "selfdrive.controls.radard", only_onroad),
   PythonProcess("hardwared", "system.hardware.hardwared", always_run),
   PythonProcess("tombstoned", "system.tombstoned", always_run, enabled=not PC),
@@ -117,9 +124,10 @@ procs = [
   PythonProcess("frogpilot_process", "frogpilot.frogpilot_process", always_run),
   PythonProcess("mapd", "frogpilot.navigation.mapd", always_run),
   PythonProcess("speed_limit_filler", "frogpilot.system.speed_limit_filler", run_speed_limit_filler),
-  # Lower priority so onroad processes win CPU time if The Pond is busy.
-  PythonProcess("the_pond", "frogpilot.system.the_pond.the_pond", always_run, nice=15),
-  PythonProcess("galaxy", "frogpilot.system.galaxy.galaxy", always_run),
+  # Keep remote UI/tunnel services at the lowest scheduling priority so
+  # driving-critical processes always win CPU under startup or onroad load.
+  PythonProcess("the_pond", "frogpilot.system.the_pond.the_pond", always_run, nice=19),
+  PythonProcess("galaxy", "frogpilot.system.galaxy.galaxy", always_run, nice=19),
   PythonProcess("tinygrad_modeld", "frogpilot.tinygrad_modeld.tinygrad_modeld", run_tinygrad_modeld),
 ]
 

@@ -1,5 +1,4 @@
 import { html, reactive } from "https://esm.sh/@arrow-js/core"
-import { Navigate } from "/assets/components/router.js"
 
 const endpointOptionsCache = {}
 const endpointOptionsInflight = {}
@@ -501,6 +500,29 @@ function matchesFilter(p) {
   return p.label.toLowerCase().includes(q) || p.key.toLowerCase().includes(q)
 }
 
+function clearSearchFilter() {
+  if (!state.filter) return
+  state.filter = ""
+  scheduleSyncInputs()
+}
+
+function handleSectionTabClick(sectionSlug, event) {
+  if (!sectionSlug || sectionSlug === state.activeSectionSlug) return
+
+  // Preserve horizontal tab strip position on mobile when switching sections.
+  const tabsEl = event?.currentTarget?.closest(".ds-tabs")
+  const preservedScrollLeft = tabsEl ? tabsEl.scrollLeft : null
+
+  state.activeSectionSlug = sectionSlug
+
+  if (preservedScrollLeft !== null) {
+    requestAnimationFrame(() => {
+      const nextTabsEl = document.getElementById("ds-tabs")
+      if (nextTabsEl) nextTabsEl.scrollLeft = preservedScrollLeft
+    })
+  }
+}
+
 function renderSettingRow(p) {
   if (p.parent_key && !state.filter) {
     if (!state.values[p.parent_key]) return ""
@@ -617,16 +639,29 @@ export function DeviceSettings({ params }) {
 
   return html`
     <div class="ds-wrapper">
-      <h2>Device Settings</h2>
+      <h2>Toggles</h2>
 
-      <input
-        class="ds-search"
-        type="text"
-        placeholder="Search settings..."
-        @input="${(e) => {
-      state.filter = e.target.value
-      scheduleSyncInputs()
-    }}" />
+      <div class="ds-search-row">
+        <input
+          class="ds-search"
+          type="text"
+          placeholder="Search settings..."
+          value="${() => state.filter}"
+          @keydown="${(e) => {
+            if (e.key === "Escape") clearSearchFilter()
+          }}"
+          @input="${(e) => {
+            state.filter = e.target.value
+            scheduleSyncInputs()
+          }}" />
+        ${() => state.filter ? html`
+          <button
+            class="ds-search-clear"
+            @click="${() => clearSearchFilter()}">
+            Clear
+          </button>
+        ` : ""}
+      </div>
 
       ${() => {
       if (state.loadingLayout || state.loadingValues) {
@@ -678,14 +713,12 @@ export function DeviceSettings({ params }) {
       const visibleParams = activeSection.params.filter(p => matchesFilter(p))
 
       return html`
-          <div class="ds-tabs">
+          <div class="ds-tabs" id="ds-tabs">
             ${sections.map(section => html`
               <button
                 class="ds-tab ${section.slug === state.activeSectionSlug ? "active" : ""}"
-                @click="${() => {
-          if (section.slug !== state.activeSectionSlug) {
-            Navigate("/device_settings/" + section.slug)
-          }
+                @click="${(e) => {
+          handleSectionTabClick(section.slug, e)
         }}">
                 <i class="bi ${section.icon}"></i>
                 <span>${section.name}</span>

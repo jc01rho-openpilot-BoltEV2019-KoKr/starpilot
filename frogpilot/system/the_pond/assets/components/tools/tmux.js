@@ -12,6 +12,16 @@ const logSelectorState = reactive({
   newName: ""
 });
 
+let liveEventSource = null;
+let livePollTimer = null;
+let tmuxLifecycleVersion = 0;
+const REMOTE_POLL_INTERVAL_MS = 2000;
+const TRANSPORT_LIFECYCLE_INTERVAL_MS = 500;
+
+function isTmuxRouteActive() {
+  return window.location.pathname === "/manage_tmux";
+}
+
 async function loadTmuxLogs() {
   if (logSelectorState.loading || logSelectorState.logsLoadedOnce) return;
 
@@ -177,35 +187,145 @@ function TmuxLogSelector({ action, closeFn }) {
 }
 
 export function TmuxLog() {
-  if (isGalaxyTunnel()) {
-    return html`
-      <div class="tunnel-notice">
-        <div class="tunnel-notice-icon">🛰️</div>
-        <h3 class="tunnel-notice-title">Tmux Log Unavailable via Galaxy</h3>
-        <p class="tunnel-notice-body">Live tmux streaming requires a direct connection.<br>Connect to your device's local network to use this feature.</p>
-      </div>
-    `;
-  }
-
   const state = reactive({
     paused: false,
     latest: '',
     log: '',
     selectorAction: null,
+    transport: "connecting",
   });
+  const lifecycleVersion = ++tmuxLifecycleVersion;
+  let lifecycleTimer = null;
 
-  const event_source = new EventSource("/api/tmux_log/live");
-
-  event_source.onmessage = e => {
-    state.latest = e.data;
+  function applyIncomingLog(data) {
+    state.latest = data || "";
     if (!state.paused) {
       state.log = state.latest;
     }
   }
 
-  event_source.onerror = err => {
-    console.error("Error receiving tmux log:", err);
-    event_source.close();
+  function stopLiveTransport() {
+    if (liveEventSource) {
+      liveEventSource.close();
+      liveEventSource = null;
+    }
+    if (livePollTimer) {
+      clearInterval(livePollTimer);
+      livePollTimer = null;
+    }
+  }
+
+  async function fetchSnapshot() {
+    try {
+      const response = await fetch("/api/tmux_log/snapshot");
+      if (!response.ok) throw new Error(await response.text());
+      const payload = await response.json();
+      applyIncomingLog(payload?.data || "");
+    } catch (err) {
+      console.error("Error fetching tmux log snapshot:", err);
+    }
+  }
+
+  function startPolling() {
+    if (livePollTimer) return;
+    if (liveEventSource) {
+      liveEventSource.close();
+      liveEventSource = null;
+    }
+    state.transport = "polling";
+    fetchSnapshot();
+    livePollTimer = setInterval(() => {
+      if (!isTmuxRouteActive()) {
+        stopLiveTransport();
+        return;
+      }
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      fetchSnapshot();
+    }, REMOTE_POLL_INTERVAL_MS);
+  }
+
+  function startEventStream() {
+    if (liveEventSource) return;
+    if (livePollTimer) {
+      clearInterval(livePollTimer);
+      livePollTimer = null;
+    }
+    state.transport = "streaming";
+    liveEventSource = new EventSource("/api/tmux_log/live");
+    let receivedAnyMessage = false;
+
+    liveEventSource.onmessage = e => {
+      if (!isTmuxRouteActive() || document.visibilityState !== "visible") return;
+      receivedAnyMessage = true;
+      applyIncomingLog(e.data);
+    };
+
+    liveEventSource.onerror = err => {
+      console.error("Error receiving tmux log stream:", err);
+      if (!isTmuxRouteActive()) {
+        stopLiveTransport();
+        return;
+      }
+      startPolling();
+    };
+
+    // If SSE connects but no payload arrives quickly (common through tunnels), fallback.
+    setTimeout(() => {
+      if (!receivedAnyMessage && state.transport === "streaming" && isTmuxRouteActive()) {
+        startPolling();
+      }
+    }, 3000);
+  }
+
+  function updateTransportForLifecycle() {
+    if (lifecycleVersion !== tmuxLifecycleVersion) {
+      stopLiveTransport();
+      if (lifecycleTimer) {
+        clearInterval(lifecycleTimer);
+        lifecycleTimer = null;
+      }
+      return;
+    }
+
+    if (!isTmuxRouteActive()) {
+      stopLiveTransport();
+      state.transport = "inactive";
+      if (lifecycleTimer) {
+        clearInterval(lifecycleTimer);
+        lifecycleTimer = null;
+      }
+      return;
+    }
+
+    if (document.visibilityState !== "visible") {
+      stopLiveTransport();
+      state.transport = "paused";
+      return;
+    }
+
+    if (isGalaxyTunnel()) {
+      startPolling();
+      return;
+    }
+
+    if (!liveEventSource && !livePollTimer) {
+      startEventStream();
+    }
+  }
+
+  updateTransportForLifecycle();
+  lifecycleTimer = setInterval(updateTransportForLifecycle, TRANSPORT_LIFECYCLE_INTERVAL_MS);
+
+  function getStatusLabel() {
+    if (state.transport === "polling") {
+      return "Tmux Live Log (Remote Mode)";
+    }
+    if (state.transport === "streaming") {
+      return "Tmux Live Log";
+    }
+    return "Tmux Live Log";
   }
 
   function togglePause() {
@@ -258,7 +378,7 @@ export function TmuxLog() {
     <div class="tmux-block">
       <div class="tmux-wrapper">
         <div class="tmuxContainer">
-          <div class="tmuxHeader">Tmux Live Log</div>
+          <div class="tmuxHeader">${() => getStatusLabel()}</div>
           <pre class="tmuxLog">${() => state.log}</pre>
         </div>
       </div>

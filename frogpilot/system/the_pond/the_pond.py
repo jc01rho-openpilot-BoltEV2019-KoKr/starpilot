@@ -183,6 +183,8 @@ _fast_update_state = {
 }
 
 _PLOTS_POLL_INTERVAL_S = 0.5
+_PLOTS_BOOT_STABILIZATION_WINDOW_S = 45.0
+_PLOTS_BOOT_POLL_INTERVAL_S = 1.0
 _PLOTS_CLIENT_IDLE_TIMEOUT_S = 15.0
 _PLOTS_SAMPLE_STALE_AFTER_S = 1.5
 
@@ -219,6 +221,18 @@ def _safe_float(value, default=0.0):
     return float(value)
   except Exception:
     return float(default)
+
+def _get_system_uptime_seconds():
+  try:
+    with open("/proc/uptime", "r", encoding="utf-8") as uptime_file:
+      return _safe_float((uptime_file.read().split() or ["0"])[0], 0.0)
+  except Exception:
+    return 0.0
+
+def _is_plots_boot_stabilizing():
+  if not params.get_bool("IsOnroad"):
+    return False
+  return _get_system_uptime_seconds() < _PLOTS_BOOT_STABILIZATION_WINDOW_S
 
 def _extract_lateral_accel_values(controls_state, speed_mps):
   v_ego = max(0.0, _safe_float(speed_mps))
@@ -353,7 +367,10 @@ def _plots_worker():
       with _plots_lock:
         _plots_state["lastError"] = str(exception)
 
-    time.sleep(_PLOTS_POLL_INTERVAL_S)
+    sleep_interval = _PLOTS_POLL_INTERVAL_S
+    if _is_plots_boot_stabilizing():
+      sleep_interval = max(_PLOTS_POLL_INTERVAL_S, _PLOTS_BOOT_POLL_INTERVAL_S)
+    time.sleep(sleep_interval)
 
   with _plots_lock:
     _plots_worker_thread = None
@@ -1313,6 +1330,116 @@ def _set_testing_ground_selection(slot_id, variant):
     state["activeVariant"] = normalized_variant
     _write_testing_grounds_state_unlocked(state)
     return state
+
+def _default_longitudinal_maneuver_status():
+  return {
+    "state": "idle",
+    "phase": "",
+    "paddleMode": "auto",
+    "maneuver": "",
+    "runIndex": 0,
+    "runTotal": 0,
+    "stepIndex": 0,
+    "stepTotal": 0,
+    "phaseStepIndex": 0,
+    "phaseStepTotal": 0,
+    "uiShow": False,
+    "uiSize": "small",
+    "uiText1": "Long Maneuvers",
+    "uiText2": "",
+    "updatedAtSec": 0.0,
+    "history": [],
+  }
+
+def _load_longitudinal_maneuver_status():
+  status = _default_longitudinal_maneuver_status()
+  raw = params.get("LongitudinalManeuverStatus", encoding="utf-8") or ""
+  if raw:
+    try:
+      payload = json.loads(raw)
+      if isinstance(payload, dict):
+        status.update(payload)
+    except Exception:
+      pass
+
+  history = status.get("history")
+  if not isinstance(history, list):
+    history = []
+  status["history"] = [str(line) for line in history if str(line).strip()][-120:]
+
+  try:
+    status["updatedAtSec"] = float(status.get("updatedAtSec") or 0.0)
+  except Exception:
+    status["updatedAtSec"] = 0.0
+
+  return status
+
+def _save_longitudinal_maneuver_status(status):
+  status_copy = dict(status)
+  history = status_copy.get("history")
+  if not isinstance(history, list):
+    history = []
+  status_copy["history"] = [str(line) for line in history if str(line).strip()][-120:]
+  status_copy["updatedAtSec"] = float(status_copy.get("updatedAtSec") or time.time())
+  params.put("LongitudinalManeuverStatus", json.dumps(status_copy, separators=(",", ":")))
+  return status_copy
+
+def _append_longitudinal_maneuver_history(status, line):
+  if not line:
+    return status
+  history = list(status.get("history", []))
+  history.append(str(line))
+  status["history"] = history[-120:]
+  return status
+
+def _serialize_longitudinal_maneuver_status(status):
+  updated_at = _safe_float(status.get("updatedAtSec"), 0.0)
+  age_seconds = max(0.0, time.time() - updated_at) if updated_at > 0 else None
+  mode_enabled = params.get_bool("LongitudinalManeuverMode")
+  paddle_mode = params.get("LongitudinalManeuverPaddleMode", encoding="utf-8") or str(status.get("paddleMode") or "auto")
+  return {
+    **status,
+    "modeEnabled": mode_enabled,
+    "paddleMode": paddle_mode,
+    "isOnroad": params.get_bool("IsOnroad"),
+    "isEngaged": params.get_bool("IsEngaged"),
+    "updatedAgeSec": age_seconds,
+  }
+
+def _set_longitudinal_maneuver_mode(enabled):
+  status = _load_longitudinal_maneuver_status()
+  if enabled:
+    params.put_bool("LongitudinalManeuverMode", True)
+    params.put("LongitudinalManeuverPaddleMode", "auto")
+    status.update({
+      "state": "armed",
+      "phase": "",
+      "maneuver": "",
+      "runIndex": 0,
+      "runTotal": 0,
+      "stepIndex": 0,
+      "phaseStepIndex": 0,
+      "uiShow": True,
+      "uiSize": "small",
+      "uiText1": "Long Maneuvers Armed",
+      "uiText2": "Engage with SET to start the test suite.",
+      "updatedAtSec": time.time(),
+    })
+    _append_longitudinal_maneuver_history(status, "Armed from The Pond. Engage with SET to start.")
+  else:
+    params.put_bool("LongitudinalManeuverMode", False)
+    params.put("LongitudinalManeuverPaddleMode", "auto")
+    status.update({
+      "state": "stopped",
+      "uiShow": True,
+      "uiSize": "small",
+      "uiText1": "Long Maneuvers Stopped",
+      "uiText2": "Test mode disabled.",
+      "updatedAtSec": time.time(),
+    })
+    _append_longitudinal_maneuver_history(status, "Stopped from The Pond.")
+
+  return _save_longitudinal_maneuver_status(status)
 
 def setup(app):
   model_status_debug = {
@@ -2437,6 +2564,7 @@ def setup(app):
     return jsonify({
       **payload,
       "isOnroad": params.get_bool("IsOnroad"),
+      "bootStabilizing": _is_plots_boot_stabilizing(),
       "sampleAgeSeconds": round(age_seconds, 3),
       "stale": age_seconds > _PLOTS_SAMPLE_STALE_AFTER_S,
     }), 200
@@ -2472,6 +2600,27 @@ def setup(app):
       "message": f"{slot_name} set to variant {selected_variant}.",
       **_serialize_testing_grounds_state(state),
       "isOnroad": params.get_bool("IsOnroad"),
+    }), 200
+
+  @app.route("/api/longitudinal_maneuvers/status", methods=["GET"])
+  def get_longitudinal_maneuvers_status():
+    status = _load_longitudinal_maneuver_status()
+    return jsonify(_serialize_longitudinal_maneuver_status(status)), 200
+
+  @app.route("/api/longitudinal_maneuvers/start", methods=["POST"])
+  def start_longitudinal_maneuvers():
+    status = _set_longitudinal_maneuver_mode(True)
+    return jsonify({
+      "message": "Longitudinal maneuver mode armed. Engage with SET to start.",
+      **_serialize_longitudinal_maneuver_status(status),
+    }), 200
+
+  @app.route("/api/longitudinal_maneuvers/stop", methods=["POST"])
+  def stop_longitudinal_maneuvers():
+    status = _set_longitudinal_maneuver_mode(False)
+    return jsonify({
+      "message": "Longitudinal maneuver mode disabled.",
+      **_serialize_longitudinal_maneuver_status(status),
     }), 200
 
   @app.route("/api/update/fast/status", methods=["GET"])
@@ -3385,15 +3534,40 @@ def setup(app):
 
     def generate():
       last_output = ""
+      last_keepalive = 0.0
       while True:
         output = subprocess.check_output(["tmux", "capture-pane", "-t", "comma:0", "-p", "-S", "-1000"], text=True)
 
         if output != last_output:
           yield "data: " + "\n".join(reversed(output.splitlines())).replace("\n", "\ndata: ") + "\n\n"
           last_output = output
+          last_keepalive = time.monotonic()
+        elif (time.monotonic() - last_keepalive) >= 5.0:
+          # Keep SSE alive through proxies/tunnels even when output is unchanged.
+          yield ": keepalive\n\n"
+          last_keepalive = time.monotonic()
 
         time.sleep(0.5)
-    return Response(generate(), mimetype="text/event-stream")
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
+
+  @app.route("/api/tmux_log/snapshot", methods=["GET"])
+  def snapshot_tmux_log():
+    try:
+      output = subprocess.check_output(["tmux", "capture-pane", "-t", "comma:0", "-p", "-S", "-1000"], text=True)
+    except subprocess.CalledProcessError:
+      run_cmd(["tmux", "new-session", "-d", "-s", "comma", "-x", "240", "-y", "70", "bash"], "Started tmux session", "Failed to start tmux session")
+      output = subprocess.check_output(["tmux", "capture-pane", "-t", "comma:0", "-p", "-S", "-1000"], text=True)
+    except Exception as e:
+      return jsonify({"error": str(e)}), 500
+
+    try:
+      live_text = "\n".join(reversed(output.splitlines()))
+      return jsonify({"data": live_text}), 200
+    except Exception as e:
+      return jsonify({"error": str(e)}), 500
 
   @app.route("/api/tmux_log/rename/<old>/<new>", methods=["PUT"])
   def rename_tmux_log_path_params(old, new):

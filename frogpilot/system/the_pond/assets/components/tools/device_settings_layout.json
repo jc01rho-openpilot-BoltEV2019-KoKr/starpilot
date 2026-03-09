@@ -812,11 +812,51 @@
         "is_parent_toggle": true
       },
       {
+        "key": "AccelerationProfile",
+        "label": "Acceleration Profile",
+        "description": "How quickly openpilot speeds up: Eco, Normal, Sport, or Sport+.",
+        "data_type": "int",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "Normal"
+          },
+          {
+            "value": 1,
+            "label": "Eco"
+          },
+          {
+            "value": 2,
+            "label": "Sport"
+          },
+          {
+            "value": 3,
+            "label": "Sport+"
+          }
+        ],
+        "parent_key": "LongitudinalTune"
+      },
+      {
         "key": "DecelerationProfile",
         "label": "Deceleration Profile",
-        "description": "How firmly openpilot slows down. \"Eco\" favors",
-        "data_type": "bool",
-        "ui_type": "toggle",
+        "description": "How firmly openpilot slows down: Eco, Normal, or Sport.",
+        "data_type": "int",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "Normal"
+          },
+          {
+            "value": 1,
+            "label": "Eco"
+          },
+          {
+            "value": 2,
+            "label": "Sport"
+          }
+        ],
         "parent_key": "LongitudinalTune"
       },
       {
@@ -2297,6 +2337,14 @@
         "key": "NoUploads",
         "label": "Disable Uploads",
         "description": "WARNING: This will prevent your drives from being uploaded to comma connect which will impact debugging and official support from comma!\n\nPrevent the device from uploading driving data.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeviceManagement"
+      },
+      {
+        "key": "AlwaysAllowUploads",
+        "label": "Always Allow Uploads",
+        "description": "Force driving data uploads regardless of network type, metered status, and upload restrictions. This overrides normal upload blocking checks.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "DeviceManagement"

@@ -76,16 +76,6 @@
   margin: 0 0 var(--margin-xs);
 }
 
-.testingGroundPlotsLink {
-  margin-top: var(--margin-xs);
-}
-
-.testingGroundInlineLink {
-  color: var(--main-fg);
-  font-size: var(--font-size-sm);
-  text-decoration: underline;
-}
-
 .testingGroundMuted {
   color: var(--text-muted);
 }

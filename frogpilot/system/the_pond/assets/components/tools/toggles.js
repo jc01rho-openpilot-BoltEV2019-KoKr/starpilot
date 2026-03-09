@@ -88,9 +88,9 @@ export function ToggleControl() {
       </section>
 
       <section class="toggle-control-widget" style="margin-left: 1.5rem">
-        <div class="toggle-control-title">Reset Toggles to Default FrogPilot/Stock openpilot</div>
+        <div class="toggle-control-title">Reset Toggles to Default StarPilot</div>
         <p class="toggle-control-text">
-          Reset all toggles to default FrogPilot/stock openpilot settings.
+          Reset all toggles to default StarPilot settings.
         </p>
         <button class="toggle-control-button" @click="${confirmResetDefault}">
           Reset Toggles to Default

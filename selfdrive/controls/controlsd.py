@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import os
 import math
 import time
@@ -208,6 +209,12 @@ class Controls:
     self.frogpilot_events_prev = []
 
     self.event_names_to_clear = set()
+
+    self.long_maneuver_popup_show = False
+    self.long_maneuver_popup_text1 = ""
+    self.long_maneuver_popup_text2 = ""
+    self.long_maneuver_popup_size = "small"
+    self.long_maneuver_popup_status = "normal"
 
     self.has_menu = self.CP.carName == "gm" and not (self.CP.flags & GMFlags.NO_CAMERA.value)
 
@@ -1111,6 +1118,8 @@ class Controls:
       frogpilotControlsState.alertBlinkingRate = current_frogpilot_alert.alert_rate
       frogpilotControlsState.alertType = current_frogpilot_alert.alert_type
       frogpilotControlsState.alertSound = current_frogpilot_alert.audible_alert
+    else:
+      self.apply_long_maneuver_popup(frogpilotControlsState)
 
     self.pm.send('frogpilotControlsState', frogpilot_dat)
 
@@ -1142,12 +1151,73 @@ class Controls:
     except (ValueError, TypeError):
       return log.LongitudinalPersonality.standard
 
+  def update_long_maneuver_popup_state(self):
+    raw_status = self.params.get("LongitudinalManeuverStatus", encoding="utf-8") or ""
+    status = {}
+    if raw_status:
+      try:
+        parsed = json.loads(raw_status)
+        if isinstance(parsed, dict):
+          status = parsed
+      except Exception:
+        status = {}
+
+    ui_text_1 = str(status.get("uiText1") or "").strip()
+    ui_text_2 = str(status.get("uiText2") or "").strip()
+    ui_size = str(status.get("uiSize") or "small").strip().lower()
+    ui_status = str(status.get("uiStatus") or "normal").strip().lower()
+    mode_enabled = self.params.get_bool("LongitudinalManeuverMode")
+    state = str(status.get("state") or "").strip().lower()
+
+    updated_at = 0.0
+    try:
+      updated_at = float(status.get("updatedAtSec") or 0.0)
+    except Exception:
+      updated_at = 0.0
+    status_age = max(0.0, time.time() - updated_at) if updated_at > 0.0 else 9999.0
+
+    is_recent_finished = state == "finished" and status_age <= 20.0
+    ui_show = bool(status.get("uiShow", False))
+    show_popup = bool((mode_enabled and ui_show and (ui_text_1 or ui_text_2)) or (is_recent_finished and (ui_text_1 or ui_text_2)))
+
+    self.long_maneuver_popup_show = show_popup
+    self.long_maneuver_popup_text1 = ui_text_1 or "Long Maneuvers"
+    self.long_maneuver_popup_text2 = ui_text_2
+    self.long_maneuver_popup_size = ui_size if ui_size in ("small", "mid", "full") else "small"
+    self.long_maneuver_popup_status = ui_status if ui_status in ("normal", "userprompt", "critical", "frogpilot") else "normal"
+
+  def apply_long_maneuver_popup(self, frogpilotControlsState):
+    if not self.long_maneuver_popup_show:
+      return False
+
+    size_map = {
+      "small": custom.FrogPilotControlsState.AlertSize.small,
+      "mid": custom.FrogPilotControlsState.AlertSize.mid,
+      "full": custom.FrogPilotControlsState.AlertSize.full,
+    }
+    status_map = {
+      "normal": custom.FrogPilotControlsState.AlertStatus.normal,
+      "userprompt": custom.FrogPilotControlsState.AlertStatus.userPrompt,
+      "critical": custom.FrogPilotControlsState.AlertStatus.critical,
+      "frogpilot": custom.FrogPilotControlsState.AlertStatus.frogpilot,
+    }
+
+    frogpilotControlsState.alertText1 = self.long_maneuver_popup_text1
+    frogpilotControlsState.alertText2 = self.long_maneuver_popup_text2
+    frogpilotControlsState.alertSize = size_map.get(self.long_maneuver_popup_size, custom.FrogPilotControlsState.AlertSize.small)
+    frogpilotControlsState.alertStatus = status_map.get(self.long_maneuver_popup_status, custom.FrogPilotControlsState.AlertStatus.normal)
+    frogpilotControlsState.alertBlinkingRate = 0.
+    frogpilotControlsState.alertType = "longitudinalManeuverStatus"
+    frogpilotControlsState.alertSound = car.CarControl.HUDControl.AudibleAlert.none
+    return True
+
   def params_thread(self, evt):
     while not evt.is_set():
       self.is_metric = self.params.get_bool("IsMetric")
       if not (self.frogpilot_toggles.conditional_experimental_mode or self.frogpilot_toggles.slc_fallback_experimental_mode):
         self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
       self.personality = self.read_personality_param()
+      self.update_long_maneuver_popup_state()
       if self.CP.notCar:
         self.joystick_mode = self.params.get_bool("JoystickDebugMode")
       time.sleep(0.1)

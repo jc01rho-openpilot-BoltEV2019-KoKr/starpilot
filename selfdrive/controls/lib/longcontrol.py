@@ -5,7 +5,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, apply_dead
 from openpilot.selfdrive.controls.lib.pid import PIDController
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.common.filter_simple import FirstOrderFilter
-from openpilot.selfdrive.car.gm.values import CarControllerParams
+from openpilot.selfdrive.car.gm.values import CarControllerParams, GMFlags
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
@@ -102,8 +102,9 @@ class LongControl:
     self.v_pid = 0.0
     self._mode_setup()
     self.last_output_accel = 0.0
-
-
+    self.last_a_target = 0.0
+    self.integrator_hold_frames = 0
+    self.is_gm_pedal_long = bool(CP.carName == "gm" and CP.enableGasInterceptor and (CP.flags & GMFlags.PEDAL_LONG.value))
 
   def update_mpc_mode(self, experimental_mode):
     new_mode = 'blended' if experimental_mode else 'acc'
@@ -134,6 +135,31 @@ class LongControl:
 
   def reset(self):
     self.pid.reset()
+    self.last_a_target = 0.0
+    self.integrator_hold_frames = 0
+
+  def _get_pedal_long_freeze(self, a_target, error, v_ego, accel_limits):
+    if not self.is_gm_pedal_long:
+      self.last_a_target = a_target
+      self.integrator_hold_frames = 0
+      return False
+
+    handoff_threshold = interp(v_ego, [0.0, 4.0, 12.0, 25.0], [0.35, 0.45, 0.55, 0.70])
+    if abs(a_target - self.last_a_target) > handoff_threshold:
+      hold_frames = int(round(interp(v_ego, [0.0, 4.0, 12.0, 25.0], [25.0, 20.0, 14.0, 10.0])))
+      self.integrator_hold_frames = max(self.integrator_hold_frames, hold_frames)
+    self.last_a_target = a_target
+
+    if self.integrator_hold_frames > 0:
+      self.integrator_hold_frames -= 1
+
+    sat_buffer = 0.03
+    at_neg_sat = self.last_output_accel <= (accel_limits[0] + sat_buffer)
+    at_pos_sat = self.last_output_accel >= (accel_limits[1] - sat_buffer)
+    sat_pushing_lower = at_neg_sat and error < -0.05
+    sat_pushing_upper = at_pos_sat and error > 0.05
+
+    return self.integrator_hold_frames > 0 or sat_pushing_lower or sat_pushing_upper
 
   def update(self, active, CS, a_target, should_stop, accel_limits, frogpilot_toggles):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
@@ -162,7 +188,9 @@ class LongControl:
       error = a_target - CS.aEgo
       self.update_mpc_mode(self.experimental_mode)
       feedforward = a_target * self.feedforward_gain
-      raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward)
+      freeze_integrator = self._get_pedal_long_freeze(a_target, error, CS.vEgo, accel_limits)
+      raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward,
+                                         freeze_integrator=freeze_integrator)
 
 
       if self.transitioning and self.prev_mode == 'acc' and self.current_mode == 'blended':
@@ -206,6 +234,8 @@ class LongControl:
     """Reset PID controller and change setpoint"""
     self.pid.reset()
     self.v_pid = v_pid
+    self.last_a_target = 0.0
+    self.integrator_hold_frames = 0
 
   def update_old_long(self, active, CS, long_plan, accel_limits, t_since_plan, frogpilot_toggles):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
@@ -255,10 +285,9 @@ class LongControl:
       # TODO too complex, needs to be simplified and tested on toyotas
       prevent_overshoot = not self.CP.stoppingControl and CS.vEgo < 1.5 and v_target_1sec < 0.7 and v_target_1sec < self.v_pid
       deadzone = interp(CS.vEgo, self.CP.longitudinalTuning.deadzoneBP, self.CP.longitudinalTuning.deadzoneV)
-      freeze_integrator = prevent_overshoot
-
       error = self.v_pid - CS.vEgo
       error_deadzone = apply_deadzone(error, deadzone)
+      freeze_integrator = prevent_overshoot or self._get_pedal_long_freeze(a_target, error_deadzone, CS.vEgo, accel_limits)
       feedforward = a_target * self.feedforward_gain
       output_accel = self.pid.update(error_deadzone, speed=CS.vEgo,
                                      feedforward=feedforward,

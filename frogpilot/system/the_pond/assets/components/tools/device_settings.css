@@ -43,6 +43,13 @@
 }
 
 /* ――― Search / Filter ――― */
+.ds-search-row {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: var(--margin-lg);
+}
+
 .ds-search {
   background-color: var(--input-bg);
   border: var(--border-style-input);
@@ -51,15 +58,35 @@
   color: var(--text-color);
   font-family: var(--font-body);
   font-size: var(--font-size-base);
-  margin-bottom: var(--margin-lg);
+  margin-bottom: 0;
   outline: none;
   padding: var(--padding-sm) var(--padding-base);
   transition: box-shadow var(--transition-fast);
   width: 100%;
+  flex: 1;
 }
 
 .ds-search:focus {
   box-shadow: 0 0 0 2px var(--main-fg);
+}
+
+.ds-search-clear {
+  background: var(--input-bg);
+  border: var(--border-style-main);
+  border-radius: var(--border-radius-base);
+  color: var(--text-color);
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: var(--font-size-sm);
+  min-width: 4.75rem;
+  padding: 0.6rem 0.8rem;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.ds-search-clear:hover {
+  background: var(--main-fg);
+  border-color: var(--main-fg);
+  color: var(--color-black);
 }
 
 /* ――― Section Cards ――― */
@@ -395,6 +422,15 @@
 @media only screen and (max-width: 768px) and (orientation: portrait) {
   .ds-wrapper {
     padding: var(--padding-sm) var(--padding-base) var(--padding-xl);
+  }
+
+  .ds-search-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ds-search-clear {
+    width: 100%;
   }
 
   .ds-tabs {

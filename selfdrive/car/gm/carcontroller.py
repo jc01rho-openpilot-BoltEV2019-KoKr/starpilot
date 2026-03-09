@@ -79,50 +79,154 @@ class CarController(CarControllerBase):
     self.regen_paddle_pressed = False
     self.aego = 0.0
     self.regen_paddle_timer = 0
+    self.regen_press_counter = 0
+    self.regen_release_counter = 0
+    self.regen_min_on_frames = 0
+    self.regen_min_off_frames = 0
     self.planner_regen_hold = False
     self.paddle_handoff_frames = 0
+    self.pedal_active_last = False
+    self.regen_mode_blend = 0.0
+    self.maneuver_paddle_mode = "auto"
 
   def calc_pedal_command(self, accel: float, long_active: bool, car_velocity) -> Tuple[float, bool]:
     if not long_active:
       self.planner_regen_hold = False
+      self.regen_paddle_pressed = False
+      self.regen_paddle_timer = 0
+      self.regen_press_counter = 0
+      self.regen_release_counter = 0
+      self.regen_min_on_frames = 0
+      self.regen_min_off_frames = 0
+      self.regen_mode_blend = 0.0
+      self.pedal_active_last = False
+      self.pedal_steady = 0.0
       return 0., False
 
-    # Regen paddle hysteresis (frame-based): hold 10 frames, with decrement dead-zone
-    if not hasattr(self, 'regen_paddle_timer'):
-      self.regen_paddle_timer = 0  # frames
+    # Regen paddle state machine: speed-aware thresholds + min on/off duration for robust paddle transitions.
+    press_cmd_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.90, -0.82, -0.72, -0.65])
+    release_cmd_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.10, -0.17, -0.24, -0.30])
+    press_aego_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.95, -0.86, -0.76, -0.70])
+    release_aego_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.16, -0.23, -0.30, -0.36])
 
-    # Regen paddle hysteresis (frame‑based): count frames when decelerating hard, decrement only when truly released
-    if self.aego < -0.7:
-      self.regen_paddle_timer += 1
-    elif self.aego > -0.3:
-      self.regen_paddle_timer = max(self.regen_paddle_timer - 1, 0)
-    # else: hold timer between -0.7 and -0.3
+    press_confirm_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [8.0, 6.0, 5.0, 4.0])))
+    release_confirm_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [18.0, 15.0, 12.0, 10.0])))
+    min_on_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [34.0, 27.0, 20.0, 16.0])))
+    min_off_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [16.0, 14.0, 12.0, 10.0])))
 
-    # Base paddle press hysteresis
-    self.regen_paddle_pressed = self.regen_paddle_timer >= 10  # 10 frames
-    press_regen_paddle = self.regen_paddle_pressed or self.planner_regen_hold
+    want_press = self.planner_regen_hold or accel <= press_cmd_threshold or self.aego <= press_aego_threshold
+    want_release = (not self.planner_regen_hold) and accel >= release_cmd_threshold and self.aego >= release_aego_threshold
 
+    if want_press:
+      self.regen_press_counter += 1
+    else:
+      self.regen_press_counter = max(self.regen_press_counter - 1, 0)
+
+    if want_release:
+      self.regen_release_counter += 1
+    else:
+      self.regen_release_counter = max(self.regen_release_counter - 1, 0)
+
+    # Strong planner request can skip most of debounce delay.
+    if self.planner_regen_hold and accel <= (press_cmd_threshold - 0.30):
+      self.regen_press_counter = max(self.regen_press_counter, press_confirm_frames)
+
+    if self.regen_min_on_frames > 0:
+      self.regen_min_on_frames -= 1
+    if self.regen_min_off_frames > 0:
+      self.regen_min_off_frames -= 1
+
+    switched_state = False
+    if self.regen_paddle_pressed:
+      if self.regen_min_on_frames == 0 and self.regen_release_counter >= release_confirm_frames:
+        self.regen_paddle_pressed = False
+        self.regen_min_off_frames = min_off_frames
+        self.regen_release_counter = 0
+        switched_state = True
+    else:
+      if self.regen_min_off_frames == 0 and self.regen_press_counter >= press_confirm_frames:
+        self.regen_paddle_pressed = True
+        self.regen_min_on_frames = min_on_frames
+        self.regen_press_counter = 0
+        switched_state = True
+
+    self.regen_paddle_timer = self.regen_press_counter
+    press_regen_paddle = self.regen_paddle_pressed
+
+    if self.maneuver_paddle_mode == "off":
+      self.regen_paddle_pressed = False
+      self.regen_press_counter = 0
+      self.regen_release_counter = 0
+      self.regen_min_on_frames = 0
+      self.regen_mode_blend = 0.0
+      press_regen_paddle = False
+    elif self.maneuver_paddle_mode == "force":
+      forced_press = accel < -0.02
+      self.regen_paddle_pressed = forced_press
+      press_regen_paddle = forced_press
 
     # Regen gain ratios from bin-averaged 60–0 deceleration sweep; Calculates stronger decel from paddle
     speed_mps = [0.559, 1.678, 2.797, 3.916, 5.035, 6.154, 7.273, 8.392, 9.511, 10.63,
                  11.749, 12.868, 13.987, 15.106, 16.225, 17.344, 18.463, 19.582, 20.701, 21.820,
                  22.939, 24.058, 25.177, 26.296]
-    regen_gain_ratio = [1.01, 1.01, 1.02, 1.05, 1.08, 1.345979, 1.369975,
-                         1.376302, 1.388052, 1.370367, 1.388498, 1.386030, 1.405950, 1.387555,
-                         1.390392, 1.394946, 1.414915, 1.428535, 1.439611, 1.440106, 1.441438,
-                         1.439395, 1.446909, 1.445738]
+    regen_gain_ratio = [1.01, 1.01, 1.02, 1.05, 1.08, 1.31, 1.33,
+                        1.34, 1.35, 1.36, 1.37, 1.38, 1.39, 1.39,
+                        1.40, 1.40, 1.41, 1.42, 1.43, 1.43, 1.44,
+                        1.44, 1.45, 1.45]
 
     gain = interp(car_velocity, speed_mps, regen_gain_ratio)
-    pedaloffset = interp(car_velocity, [0., 3, 6, 30], [0.10, 0.175, 0.240, 0.240])
+    accel_gain = interp(car_velocity, [0.0, 3.0, 8.0, 20.0], [0.47, 0.52, 0.57, 0.61])
+    pedaloffset = interp(car_velocity, [0.0, 1.0, 3.0, 6.0, 15.0, 30.0], [0.085, 0.11, 0.17, 0.23, 0.235, 0.23])
 
-    # Compute raw pedal gas
-    raw_pedal_gas = clip((pedaloffset + (accel / gain) * 0.6), 0.0, 1.0) if press_regen_paddle else clip((pedaloffset + accel * 0.6), 0.0, 1.0)
+    # Blend between non-paddle and paddle lookup behavior to avoid a hard mode switch.
+    regen_blend_target = 1.0 if press_regen_paddle else 0.0
+    regen_blend_up_step = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [0.04, 0.06, 0.09, 0.12])
+    regen_blend_down_step = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [0.05, 0.08, 0.11, 0.14])
+    if switched_state:
+      regen_blend_up_step *= 0.35
+      regen_blend_down_step *= 0.35
+    if regen_blend_target > self.regen_mode_blend:
+      self.regen_mode_blend = min(self.regen_mode_blend + regen_blend_up_step, regen_blend_target)
+    else:
+      self.regen_mode_blend = max(self.regen_mode_blend - regen_blend_down_step, regen_blend_target)
 
-    # --- Immediate application of raw pedal gas, no blending ---
-    pedal_gas = raw_pedal_gas
-    # Safety cap: ramp from 22% at 0 m/s to 37.25% at 10 mph (4.47 m/s), then allow full throttle
-    pedal_gas_max = interp(car_velocity, [0.0, 4.47, 4.48], [0.22, 0.3725, 1.0])
-    pedal_gas = clip(pedal_gas, 0.0, pedal_gas_max)
+    if switched_state and press_regen_paddle:
+      # Snap quickly toward paddle-compensated mapping to avoid transient over-decel at paddle handoff.
+      press_blend_snap = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [0.70, 0.78, 0.86, 0.92])
+      self.regen_mode_blend = max(self.regen_mode_blend, press_blend_snap)
+
+    accel_term_scale = (1.0 - self.regen_mode_blend) + (self.regen_mode_blend / max(gain, 1e-3))
+    # De-sensitize small commands asymmetrically: keep decel smoother while preserving accel pickup.
+    if accel >= 0.0:
+      small_cmd_scale = interp(abs(accel), [0.0, 0.35, 0.8, 1.5, 2.5], [0.58, 0.68, 0.82, 0.93, 1.0])
+    else:
+      small_cmd_scale = interp(abs(accel), [0.0, 0.35, 0.8, 1.5, 2.5], [0.44, 0.54, 0.70, 0.89, 1.0])
+    accel_cmd = accel * small_cmd_scale
+    if (not press_regen_paddle) and accel < -2.0:
+      accel_cmd *= interp(abs(accel), [2.0, 2.5, 3.0], [1.0, 1.03, 1.06])
+    raw_pedal_gas = clip(pedaloffset + accel_cmd * accel_gain * accel_term_scale, 0.0, 1.0)
+
+    # Safety cap with continuous low-speed transition (removes the near-step around ~4.5 m/s).
+    pedal_gas_max = interp(car_velocity, [0.0, 1.0, 2.5, 4.5, 6.0, 8.0, 12.0], [0.20, 0.235, 0.29, 0.365, 0.52, 0.78, 1.0])
+    target_pedal_gas = clip(raw_pedal_gas, 0.0, pedal_gas_max)
+
+    # Blend and rate-limit command changes for smoother transients while preserving clip bounds.
+    if not self.pedal_active_last:
+      pedal_gas = target_pedal_gas
+      self.pedal_active_last = True
+    else:
+      urgency = clip(abs(accel) / 2.0, 0.0, 1.0)
+      rate_up = interp(car_velocity, [0.0, 3.0, 8.0, 20.0], [0.007, 0.012, 0.022, 0.036]) + 0.011 * urgency
+      if accel > 1.2:
+        # Recover high-command launch response without changing low-command smoothness.
+        rate_up += interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [0.006, 0.005, 0.003, 0.002])
+      rate_down = interp(car_velocity, [0.0, 3.0, 8.0, 20.0], [0.008, 0.014, 0.026, 0.045]) + 0.015 * urgency
+      if switched_state:
+        rate_up *= 0.75
+        rate_down *= 0.75
+      pedal_gas = clip(target_pedal_gas, self.pedal_steady - rate_down, self.pedal_steady + rate_up)
+
+    self.pedal_steady = pedal_gas
     return pedal_gas, press_regen_paddle
 
 
@@ -132,6 +236,12 @@ class CarController(CarControllerBase):
     actuators = CC.actuators
     accel = brake_accel = actuators.accel
     press_regen_paddle = False
+
+    # Longitudinal maneuvers can force paddle behavior for A/B testing.
+    if self.frame % 25 == 0:
+      mode = self.params_.get("LongitudinalManeuverPaddleMode", encoding="utf-8")
+      mode = (mode or "auto").strip().lower()
+      self.maneuver_paddle_mode = mode if mode in ("auto", "off", "force") else "auto"
     kaofui_cars = SDGM_CAR | ASCM_INT | {
       CAR.CHEVROLET_VOLT,
       CAR.CHEVROLET_VOLT_2019,
@@ -152,14 +262,18 @@ class CarController(CarControllerBase):
     # Planner-driven regen hold: gate by car support and OP long active, use commanded accel thresholds
     if (self.CP.enableGasInterceptor and self.CP.carFingerprint in CC_REGEN_PADDLE_CAR
         and self.CP.openpilotLongitudinalControl and CC.longActive):
-      # Match original hysteresis intent: vehicle can usually stop without paddle up to ~1.0 m/s^2
-      # Use the same thresholds as the aEgo-based hysteresis, but on commanded accel for preemption
-      planner_press_threshold = -0.7
-      planner_release_threshold = -0.3
-      if accel <= planner_press_threshold:
-        self.planner_regen_hold = True
-      elif accel >= planner_release_threshold:
+      if self.maneuver_paddle_mode == "off":
         self.planner_regen_hold = False
+      elif self.maneuver_paddle_mode == "force":
+        self.planner_regen_hold = accel < -0.02
+      else:
+        # Pre-arm paddle on strong commanded decel with speed-aware hysteresis.
+        planner_press_threshold = interp(CS.out.vEgo, [0.0, 4.0, 12.0, 25.0], [-0.95, -0.82, -0.70, -0.62])
+        planner_release_threshold = interp(CS.out.vEgo, [0.0, 4.0, 12.0, 25.0], [-0.14, -0.22, -0.30, -0.36])
+        if accel <= planner_press_threshold:
+          self.planner_regen_hold = True
+        elif accel >= planner_release_threshold:
+          self.planner_regen_hold = False
     else:
       self.planner_regen_hold = False
 
@@ -184,7 +298,7 @@ class CarController(CarControllerBase):
       self.CP.openpilotLongitudinalControl and
       CC.longActive and
       self.CP.enableGasInterceptor and
-      (self.regen_paddle_timer >= 10 or self.planner_regen_hold)  # hysteresis or planner hint
+      self.regen_paddle_pressed
     )
     use_panda_paddle_sched = (
       self.CP.enableGasInterceptor and
