@@ -53,7 +53,7 @@ BOLT_GEN1_CANCEL_PERSONALITY_CARS = {
   CAR.CHEVROLET_BOLT_CC_2017,
   CAR.CHEVROLET_BOLT_CC_2019_2021,
 }
-CANCEL_REMAP_DISTANCE_CARS = BOLT_GEN1_CANCEL_PERSONALITY_CARS | {CAR.CHEVROLET_MALIBU_HYBRID_CC}
+CANCEL_REMAP_DISTANCE_CARS = BOLT_GEN1_CANCEL_PERSONALITY_CARS
 
 NON_LINEAR_TORQUE_PARAMS = {
   CAR.CHEVROLET_BOLT_ACC_2022_2023: {
@@ -615,7 +615,12 @@ class CarInterface(CarInterfaceBase):
       bool(ret.flags & GMFlags.PEDAL_LONG.value) and
       candidate in CANCEL_REMAP_DISTANCE_CARS
     )
-    if remap_cancel_to_distance:
+    malibu_cancel_passthrough = (
+      candidate == CAR.CHEVROLET_MALIBU_HYBRID_CC and
+      ret.openpilotLongitudinalControl and
+      bool(ret.flags & GMFlags.PEDAL_LONG.value)
+    )
+    if remap_cancel_to_distance or malibu_cancel_passthrough:
       ret.alternativeExperience |= ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE
 
     return ret
@@ -649,11 +654,12 @@ class CarInterface(CarInterfaceBase):
     cruise_events = create_button_events(self.CS.cruise_buttons, self.CS.prev_cruise_buttons, cruise_button_map,
                                          unpressed_btn=CruiseButtons.UNPRESS)
     cancel_gap_events = []
-    if bolt_cancel_personality:
-      # Gen1 Bolt pedal-long: treat CANCEL as a distance-style button for personality cycling.
-      cancel_gap_events = create_button_events(self.CS.cruise_buttons, self.CS.prev_cruise_buttons,
-                                               {CruiseButtons.CANCEL: ButtonType.gapAdjustCruise},
-                                               unpressed_btn=CruiseButtons.UNPRESS)
+    if bolt_cancel_personality and self.CS.cruise_buttons != self.CS.prev_cruise_buttons:
+      # Gen1 Bolt pedal-long: treat CANCEL edges as a distance-style button for personality cycling.
+      if self.CS.prev_cruise_buttons == CruiseButtons.CANCEL:
+        cancel_gap_events.append(car.CarState.ButtonEvent(pressed=False, type=ButtonType.gapAdjustCruise))
+      if self.CS.cruise_buttons == CruiseButtons.CANCEL:
+        cancel_gap_events.append(car.CarState.ButtonEvent(pressed=True, type=ButtonType.gapAdjustCruise))
 
     # Malibu pedal-long cancel can alias wheel-button bits on 0x1E1; ignore those side effects.
     suppress_malibu_side_buttons = malibu_cancel_passthrough and (
@@ -664,7 +670,8 @@ class CarInterface(CarInterfaceBase):
       self.CS.distance_button, self.CS.prev_distance_button, {1: ButtonType.gapAdjustCruise}
     )
     lkas_events = [] if suppress_malibu_side_buttons else create_button_events(
-      self.CS.lkas_enabled, self.CS.lkas_previously_enabled, {1: FrogPilotButtonType.lkas}
+      self.CS.lkas_enabled,
+      self.CS.lkas_previously_enabled, {1: FrogPilotButtonType.lkas}
     )
 
     if self.CS.cruise_buttons != CruiseButtons.UNPRESS or self.CS.prev_cruise_buttons != CruiseButtons.INIT:
