@@ -3210,10 +3210,11 @@ def setup(app):
       paired = GALAXY_AUTH_FILE.is_file() and len(GALAXY_AUTH_FILE.read_text().strip()) == 64
     except Exception:
       paired = False
-    dongle_id = params.get("DongleId", encoding="utf8") or ""
+    slug_file = GALAXY_DIR / "glxyslug"
+    slug = slug_file.read_text().strip() if slug_file.is_file() else ""
     return jsonify({
       "paired": paired,
-      "url": f"https://galaxy.firestar.link/{dongle_id}" if dongle_id else "",
+      "url": f"https://galaxy.firestar.link/{slug}" if slug else "",
     })
 
   @app.route("/api/galaxy/pair", methods=["POST"])
@@ -3226,17 +3227,26 @@ def setup(app):
     pw_hash = hashlib.sha256(password.encode()).hexdigest()
     GALAXY_DIR.mkdir(parents=True, exist_ok=True)
     GALAXY_AUTH_FILE.write_text(pw_hash)
+    
+    # Generate 256-bit secure session token
+    (GALAXY_DIR / "glxysession").write_text(secrets.token_hex(32))
+    
+    # Generate 16-character alphanumeric routing slug
+    charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    slug = ''.join(secrets.choice(charset) for _ in range(16))
+    (GALAXY_DIR / "glxyslug").write_text(slug)
 
-    dongle_id = params.get("DongleId", encoding="utf8") or ""
     return jsonify({
       "message": "Pairing successful!",
-      "url": f"https://galaxy.firestar.link/{dongle_id}" if dongle_id else "",
+      "url": f"https://galaxy.firestar.link/{slug}",
     })
 
   @app.route("/api/galaxy/unpair", methods=["POST"])
   def galaxy_unpair():
-    if GALAXY_AUTH_FILE.is_file():
-      GALAXY_AUTH_FILE.unlink()
+    for f in ["glxyauth", "glxysession", "glxyslug"]:
+      file_path = GALAXY_DIR / f
+      if file_path.is_file():
+        file_path.unlink()
     return jsonify({"message": "Galaxy unpaired successfully."})
 
   @app.route("/api/tailscale/installed", methods=["GET"])

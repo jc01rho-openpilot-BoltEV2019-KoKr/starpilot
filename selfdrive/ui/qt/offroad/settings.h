@@ -86,7 +86,7 @@ private:
   Params params;
   ButtonControl *pair_device;
   ButtonControl *pair_galaxy;
-  ButtonControl *galaxy_qr;
+  QPushButton *galaxy_qr_btn;
 };
 
 class TogglesPanel : public ListWidget {
