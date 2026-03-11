@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import time
+import types
 import numpy as np
 
 from cereal import log
@@ -62,6 +63,7 @@ class Plant:
     radar = messaging.new_message('radarState')
     control = messaging.new_message('controlsState')
     car_state = messaging.new_message('carState')
+    lp = messaging.new_message('liveParameters')
     car_control = messaging.new_message('carControl')
     model = messaging.new_message('modelV2')
     a_lead = (v_lead - self.v_lead_prev)/self.ts
@@ -113,22 +115,43 @@ class Plant:
     model.modelV2.meta.disengagePredictions.gasPressProbs = [float(prob_throttle) for _ in range(6)]
 
     control.controlsState.longControlState = LongCtrlState.pid if self.enabled else LongCtrlState.off
+    control.controlsState.enabled = bool(self.enabled)
     control.controlsState.vCruise = float(v_cruise * 3.6)
     control.controlsState.experimentalMode = self.e2e
     control.controlsState.personality = self.personality
     control.controlsState.forceDecel = self.force_decel
     car_state.carState.vEgo = float(self.speed)
     car_state.carState.standstill = self.speed < 0.01
-    car_state.carState.vCruise = float(v_cruise * 3.6)
+    # Backward/forward compatible cruise field for host-side maneuver tests
+    if hasattr(car_state.carState, "vCruise"):
+      car_state.carState.vCruise = float(v_cruise * 3.6)
+    elif hasattr(car_state.carState, "cruiseState") and hasattr(car_state.carState.cruiseState, "speed"):
+      car_state.carState.cruiseState.speed = float(v_cruise)
     car_control.carControl.orientationNED = [0., float(pitch), 0.]
 
     # ******** get controlsState messages for plotting ***
+    frogpilot_plan = types.SimpleNamespace(
+      vCruise=float(v_cruise),
+      minAcceleration=-3.5,
+      maxAcceleration=2.0,
+      disableThrottle=False,
+      accelerationJerk=5.0,
+      dangerJerk=5.0,
+      speedJerk=5.0,
+      tFollow=1.45,
+      trackingLead=True,
+      forcingStopLength=2.0,
+    )
+    lp.liveParameters.angleOffsetDeg = 0.0
+
     sm = {'radarState': radar.radarState,
           'carState': car_state.carState,
           'carControl': car_control.carControl,
           'controlsState': control.controlsState,
+          'liveParameters': lp.liveParameters,
+          'frogpilotPlan': frogpilot_plan,
           'modelV2': model.modelV2}
-    self.planner.update(sm)
+    self.planner.update(False, sm, types.SimpleNamespace(model_version='v11', taco_tune=False))
     self.speed = self.planner.v_desired_filter.x
     self.acceleration = self.planner.a_desired
     self.speeds = self.planner.v_desired_trajectory.tolist()

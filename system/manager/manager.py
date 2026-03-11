@@ -257,13 +257,13 @@ def manager_init() -> None:
     with open(lateral_tuning_migration_flag_file, "w") as f:
       f.write("migrated")
 
-  # One-time migration: default IncreasedStoppedDistance to 4 ft for pedal cars
-  pedal_stop_distance_migration_flag_file = "/data/frogpilot_pedal_stop_distance_migrated.flag"
+  # One-time migration: reset IncreasedStoppedDistance back to 0 ft for pedal cars
+  pedal_stop_distance_migration_flag_file = "/data/frogpilot_pedal_stop_distance_zeroed.flag"
   if not os.path.exists(pedal_stop_distance_migration_flag_file):
     if has_pedal:
-      if params.get_int("IncreasedStoppedDistance") != 4:
-        params.put_int("IncreasedStoppedDistance", 4)
-        params_cache.put_int("IncreasedStoppedDistance", 4)
+      if params.get_int("IncreasedStoppedDistance") != 0:
+        params.put_int("IncreasedStoppedDistance", 0)
+        params_cache.put_int("IncreasedStoppedDistance", 0)
       with open(pedal_stop_distance_migration_flag_file, "w") as f:
         f.write("migrated")
 
