@@ -73,9 +73,23 @@ class FrogPilotFollowing:
     self.following_lead = self.frogpilot_planner.tracking_lead and self.frogpilot_planner.lead_one.dRel < (self.t_follow * 2) * v_ego
 
 
-    self.disable_throttle = self.frogpilot_planner.tracking_lead and not self.following_lead
-    self.disable_throttle &= self.frogpilot_planner.lead_one.dRel + 6.0 < (self.t_follow * 2 * 2) * v_ego
-    self.disable_throttle &= self.frogpilot_planner.lead_one.vLead < v_ego * 0.75
+    self.disable_throttle = False
+    if self.frogpilot_planner.tracking_lead and self.frogpilot_planner.lead_one.status:
+      lead_distance = self.frogpilot_planner.lead_one.dRel
+      v_lead = self.frogpilot_planner.lead_one.vLead
+      closing_speed = max(0.0, v_ego - v_lead)
+      desired_gap = float(desired_follow_distance(v_ego, v_lead, self.t_follow))
+      ttc = lead_distance / max(closing_speed, 1e-3) if closing_speed > 0.1 else 1e6
+
+      # Keep a mild coasting behavior only for far/low-risk slower leads.
+      coast_window_open = lead_distance > desired_gap + max(4.0, 0.2 * v_ego)
+      coast_window_far = lead_distance < desired_gap + max(25.0, 1.2 * v_ego)
+      gentle_closing = closing_speed < max(2.0, 0.12 * v_ego)
+
+      self.disable_throttle = (not self.following_lead and v_ego > 5.0 and coast_window_open and
+                               coast_window_far and gentle_closing)
+      # Never coast when we are entering a potentially late-braking scenario.
+      self.disable_throttle &= ttc > 6.0 and lead_distance > desired_gap + 6.0
 
     if sm["controlsState"].enabled and self.frogpilot_planner.tracking_lead:
       self.update_follow_values(self.frogpilot_planner.lead_one.dRel, v_ego, self.frogpilot_planner.lead_one.vLead, frogpilot_toggles)

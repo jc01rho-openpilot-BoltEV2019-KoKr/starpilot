@@ -460,10 +460,11 @@ class LongitudinalMpc:
 
   def update(self, lead_one, lead_two, v_cruise, x, v, a, j, t_follow, tracking_lead, personality=log.LongitudinalPersonality.standard):
     v_ego = self.x0[1]
-    self.status = lead_one.status and tracking_lead or lead_two.status
+    self.status = lead_one.status or lead_two.status
 
-    lead_xv_0 = self.process_lead(lead_one, tracking_lead)
-    lead_xv_1 = self.process_lead(lead_two, v_ego)
+    # Always process valid leads for safety; trackingLead can still be used by higher-level logic/UI.
+    lead_xv_0 = self.process_lead(lead_one, lead_one.status)
+    lead_xv_1 = self.process_lead(lead_two, lead_two.status)
 
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance
