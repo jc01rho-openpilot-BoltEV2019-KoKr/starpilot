@@ -66,7 +66,9 @@ class CarController(CarControllerBase):
     self.malibu_cancel_phase = 0
     self.malibu_cancel_last_ts = 0.0
     self.malibu_cancel_frame = 0
+    self.malibu_cancel_frame_offset = 0
     self.malibu_button_phase = 0
+    self.malibu_last_button_ts_nanos = 0
 
     self.packer_pt = CANPacker(DBC[self.CP.carFingerprint]['pt'])
     self.packer_obj = CANPacker(DBC[self.CP.carFingerprint]['radar'])
@@ -103,67 +105,83 @@ class CarController(CarControllerBase):
       self.pedal_steady = 0.0
       return 0., False
 
-    # Regen paddle state machine: speed-aware thresholds + min on/off duration for robust paddle transitions.
-    press_cmd_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.90, -0.82, -0.72, -0.65])
-    release_cmd_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.10, -0.17, -0.24, -0.30])
-    press_aego_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.95, -0.86, -0.76, -0.70])
-    release_aego_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.16, -0.23, -0.30, -0.36])
-
-    press_confirm_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [8.0, 6.0, 5.0, 4.0])))
-    release_confirm_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [18.0, 15.0, 12.0, 10.0])))
-    min_on_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [34.0, 27.0, 20.0, 16.0])))
-    min_off_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [16.0, 14.0, 12.0, 10.0])))
-
-    want_press = self.planner_regen_hold or accel <= press_cmd_threshold or self.aego <= press_aego_threshold
-    want_release = (not self.planner_regen_hold) and accel >= release_cmd_threshold and self.aego >= release_aego_threshold
-
-    if want_press:
-      self.regen_press_counter += 1
-    else:
-      self.regen_press_counter = max(self.regen_press_counter - 1, 0)
-
-    if want_release:
-      self.regen_release_counter += 1
-    else:
-      self.regen_release_counter = max(self.regen_release_counter - 1, 0)
-
-    # Strong planner request can skip most of debounce delay.
-    if self.planner_regen_hold and accel <= (press_cmd_threshold - 0.30):
-      self.regen_press_counter = max(self.regen_press_counter, press_confirm_frames)
-
-    if self.regen_min_on_frames > 0:
-      self.regen_min_on_frames -= 1
-    if self.regen_min_off_frames > 0:
-      self.regen_min_off_frames -= 1
-
+    supports_regen_paddle = self.CP.carFingerprint in CC_REGEN_PADDLE_CAR
     switched_state = False
-    if self.regen_paddle_pressed:
-      if self.regen_min_on_frames == 0 and self.regen_release_counter >= release_confirm_frames:
+    press_regen_paddle = False
+    if supports_regen_paddle:
+      # Regen paddle state machine: speed-aware thresholds + min on/off duration for robust paddle transitions.
+      press_cmd_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.90, -0.82, -0.72, -0.65])
+      release_cmd_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.10, -0.17, -0.24, -0.30])
+      press_aego_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.95, -0.86, -0.76, -0.70])
+      release_aego_threshold = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [-0.16, -0.23, -0.30, -0.36])
+
+      press_confirm_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [8.0, 6.0, 5.0, 4.0])))
+      release_confirm_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [18.0, 15.0, 12.0, 10.0])))
+      min_on_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [34.0, 27.0, 20.0, 16.0])))
+      min_off_frames = int(round(interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [16.0, 14.0, 12.0, 10.0])))
+      # Extra hysteresis in the 8-20 mph band to reduce paddle edge pulsing.
+      confirm_boost = int(round(interp(car_velocity, [0.0, 6.0, 8.0, 20.0, 25.0], [0.0, 0.0, 3.0, 3.0, 0.0])))
+      press_confirm_frames += confirm_boost
+      release_confirm_frames += confirm_boost
+
+      want_press = self.planner_regen_hold or accel <= press_cmd_threshold or self.aego <= press_aego_threshold
+      want_release = (not self.planner_regen_hold) and accel >= release_cmd_threshold and self.aego >= release_aego_threshold
+
+      if want_press:
+        self.regen_press_counter += 1
+      else:
+        self.regen_press_counter = max(self.regen_press_counter - 1, 0)
+
+      if want_release:
+        self.regen_release_counter += 1
+      else:
+        self.regen_release_counter = max(self.regen_release_counter - 1, 0)
+
+      # Strong planner request can skip most of debounce delay.
+      if self.planner_regen_hold and accel <= (press_cmd_threshold - 0.30):
+        self.regen_press_counter = max(self.regen_press_counter, press_confirm_frames)
+
+      if self.regen_min_on_frames > 0:
+        self.regen_min_on_frames -= 1
+      if self.regen_min_off_frames > 0:
+        self.regen_min_off_frames -= 1
+
+      if self.regen_paddle_pressed:
+        if self.regen_min_on_frames == 0 and self.regen_release_counter >= release_confirm_frames:
+          self.regen_paddle_pressed = False
+          self.regen_min_off_frames = min_off_frames
+          self.regen_release_counter = 0
+          switched_state = True
+      else:
+        if self.regen_min_off_frames == 0 and self.regen_press_counter >= press_confirm_frames:
+          self.regen_paddle_pressed = True
+          self.regen_min_on_frames = min_on_frames
+          self.regen_press_counter = 0
+          switched_state = True
+
+      self.regen_paddle_timer = self.regen_press_counter
+      press_regen_paddle = self.regen_paddle_pressed
+
+      if self.maneuver_paddle_mode == "off":
         self.regen_paddle_pressed = False
-        self.regen_min_off_frames = min_off_frames
-        self.regen_release_counter = 0
-        switched_state = True
-    else:
-      if self.regen_min_off_frames == 0 and self.regen_press_counter >= press_confirm_frames:
-        self.regen_paddle_pressed = True
-        self.regen_min_on_frames = min_on_frames
         self.regen_press_counter = 0
-        switched_state = True
-
-    self.regen_paddle_timer = self.regen_press_counter
-    press_regen_paddle = self.regen_paddle_pressed
-
-    if self.maneuver_paddle_mode == "off":
+        self.regen_release_counter = 0
+        self.regen_min_on_frames = 0
+        self.regen_mode_blend = 0.0
+        press_regen_paddle = False
+      elif self.maneuver_paddle_mode == "force":
+        forced_press = accel < -0.02
+        self.regen_paddle_pressed = forced_press
+        press_regen_paddle = forced_press
+    else:
+      self.planner_regen_hold = False
       self.regen_paddle_pressed = False
+      self.regen_paddle_timer = 0
       self.regen_press_counter = 0
       self.regen_release_counter = 0
       self.regen_min_on_frames = 0
+      self.regen_min_off_frames = 0
       self.regen_mode_blend = 0.0
-      press_regen_paddle = False
-    elif self.maneuver_paddle_mode == "force":
-      forced_press = accel < -0.02
-      self.regen_paddle_pressed = forced_press
-      press_regen_paddle = forced_press
 
     # Regen gain ratios from bin-averaged 60–0 deceleration sweep; Calculates stronger decel from paddle
     speed_mps = [0.559, 1.678, 2.797, 3.916, 5.035, 6.154, 7.273, 8.392, 9.511, 10.63,
@@ -175,6 +193,8 @@ class CarController(CarControllerBase):
                         1.44, 1.45, 1.45]
 
     gain = interp(car_velocity, speed_mps, regen_gain_ratio)
+    # Terminal-stop authority boost for paddle+pedal mode: lower gain at low speed => stronger net decel.
+    gain *= interp(car_velocity, [0.0, 2.0, 4.0, 5.5, 8.0, 12.0], [0.92, 0.92, 0.93, 0.94, 0.96, 1.0])
     accel_gain = interp(car_velocity, [0.0, 3.0, 8.0, 20.0], [0.47, 0.52, 0.57, 0.61])
     pedaloffset = interp(car_velocity, [0.0, 1.0, 3.0, 6.0, 15.0, 30.0], [0.085, 0.11, 0.17, 0.23, 0.235, 0.23])
 
@@ -229,6 +249,19 @@ class CarController(CarControllerBase):
     self.pedal_steady = pedal_gas
     return pedal_gas, press_regen_paddle
 
+  def _update_malibu_button_slot(self, cs):
+    button_ts = cs.steering_button_ts_nanos
+    if button_ts != 0 and button_ts != self.malibu_last_button_ts_nanos:
+      self.malibu_last_button_ts_nanos = button_ts
+      return True
+    return False
+
+  def _sync_malibu_phase_from_oem(self, cs):
+    phase_map = gmcan.malibu_phase_map_for_acc(cs.cruise_buttons)
+    if phase_map and cs.steering_button_checksum in phase_map:
+      phase = phase_map[cs.steering_button_checksum]
+      self.malibu_cancel_phase = phase
+      self.malibu_button_phase = phase
 
   def update(self, CC, CS, now_nanos, frogpilot_toggles):
     self.CS = CS
@@ -286,12 +319,11 @@ class CarController(CarControllerBase):
     # Send CAN commands.
     can_sends = []
 
+    malibu_oem_button_slot = False
     if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
-      phase_map = gmcan.malibu_phase_map_for_acc(CS.cruise_buttons)
-      if phase_map and CS.steering_button_checksum in phase_map:
-        phase = (phase_map[CS.steering_button_checksum] + 1) % 4
-        self.malibu_cancel_phase = phase
-        self.malibu_button_phase = phase
+      malibu_oem_button_slot = self._update_malibu_button_slot(CS)
+      if malibu_oem_button_slot:
+        self._sync_malibu_phase_from_oem(CS)
 
     raw_regen_active = (
       self.CP.carFingerprint in CC_REGEN_PADDLE_CAR and
@@ -368,6 +400,8 @@ class CarController(CarControllerBase):
       spoof_set_speed_kph = hud_v_cruise * CV.MS_TO_KPH
       can_sends.append(gmcan.create_ecm_cruise_control_command(
         self.packer_pt, CanBus.POWERTRAIN, spoof_enabled, spoof_set_speed_kph))
+
+    malibu_cancel_requested = False
 
     if self.CP.openpilotLongitudinalControl:
 
@@ -548,17 +582,16 @@ class CarController(CarControllerBase):
       if self.CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
         # Match TorquePedal behavior for ACC+pedal path: gate cancel on camera ACC active state.
         stock_cc_active = CS.out.cruiseState.enabled
+      pedal_cancel = self.CP.flags & GMFlags.PEDAL_LONG.value
+      if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
+        pedal_cancel = pedal_cancel and CC.longActive
+
       if (
-          (self.CP.flags & GMFlags.PEDAL_LONG.value)  # Always cancel stock CC when using pedal interceptor
+          pedal_cancel
           or (self.CP.flags & GMFlags.CC_LONG.value and not CC.enabled)  # Cancel stock CC if OP is not active
       ) and stock_cc_active:
         if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
-          # Match 33 Hz cadence (every 3 frames) and align phase to the last seen checksum.
-          if self.malibu_cancel_frame % 3 == 0:
-            can_sends.append(gmcan.create_buttons_malibu_cancel(
-              CanBus.POWERTRAIN, self.malibu_cancel_phase, CS.steering_button_prefix))
-            self.malibu_cancel_phase = (self.malibu_cancel_phase + 1) % 4
-          self.malibu_cancel_frame += 1
+          malibu_cancel_requested = True
         else:
           if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
             self.last_button_frame = self.frame
@@ -571,19 +604,23 @@ class CarController(CarControllerBase):
       self.cancel_counter = self.cancel_counter + 1 if CC.cruiseControl.cancel else 0
 
       # Stock longitudinal, integrated at camera
-      if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
+      if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
+        if self.cancel_counter > CAMERA_CANCEL_DELAY_FRAMES:
+          malibu_cancel_requested = True
+      elif (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
         if self.cancel_counter > CAMERA_CANCEL_DELAY_FRAMES:
           self.last_button_frame = self.frame
-          if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
-            if self.malibu_cancel_frame % 3 == 0:
-              can_sends.append(gmcan.create_buttons_malibu_cancel(
-                CanBus.POWERTRAIN, self.malibu_cancel_phase, CS.steering_button_prefix))
-              self.malibu_cancel_phase = (self.malibu_cancel_phase + 1) % 4
-            self.malibu_cancel_frame += 1
-          elif self.CP.carFingerprint in SDGM_CAR and self.CP.carFingerprint not in (volt_like | {CAR.CHEVROLET_BLAZER, CAR.CHEVROLET_MALIBU_SDGM, CAR.CHEVROLET_TRAVERSE}):
+          if self.CP.carFingerprint in SDGM_CAR and self.CP.carFingerprint not in (volt_like | {CAR.CHEVROLET_BLAZER, CAR.CHEVROLET_MALIBU_SDGM, CAR.CHEVROLET_TRAVERSE}):
             can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, CS.buttons_counter, CruiseButtons.CANCEL))
           else:
             can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.CAMERA, CS.buttons_counter, CruiseButtons.CANCEL))
+
+    if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
+      # Malibu has no reliable rolling counter in 0x1E1; lock cancel send to each observed OEM 0x1E1 slot.
+      if malibu_cancel_requested and malibu_oem_button_slot:
+        can_sends.append(gmcan.create_buttons_malibu_cancel(
+          CanBus.POWERTRAIN, (self.malibu_cancel_phase + 1) % 4, CS.steering_button_prefix))
+        self.malibu_cancel_phase = (self.malibu_cancel_phase + 1) % 4
 
     if self.CP.networkLocation == NetworkLocation.fwdCamera:
       # Silence "Take Steering" alert sent by camera, forward PSCMStatus with HandsOffSWlDetectionStatus=1

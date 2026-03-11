@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import hmac
+import json
 import platform
 import shutil
 import signal
@@ -20,25 +22,47 @@ AUTH_PORT = 8083
 process = None
 auth_server = None
 
+VALID_PATHS = {"/glxylogin": "glxyauth", "/glxyverify": "glxysession"}
+
 
 class AuthHandler(BaseHTTPRequestHandler):
-  """Serves only GET /glxyauth — returns the PIN hash file contents."""
-  def do_GET(self):
-    if self.path == "/glxyauth":
-      auth_file = GALAXY_DIR / "glxyauth"
-      if auth_file.exists():
-        data = auth_file.read_bytes()
+  """Validates login hashes and verifies session tokens."""
+  dongle_id = ""
+
+  def do_POST(self):
+    target = VALID_PATHS.get(self.path)
+    if not target:
+      self.send_response(404)
+      self.end_headers()
+      return
+
+    file_path = GALAXY_DIR / target
+    if not file_path.exists():
+      self.send_response(404)
+      self.end_headers()
+      return
+
+    try:
+      length = int(self.headers.get("Content-Length", 0))
+      body = self.rfile.read(length).decode("utf-8").strip()
+      if hmac.compare_digest(body, file_path.read_text().strip()):
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        if self.path == "/glxylogin":
+          self.send_header("Content-Type", "application/json")
+          self.end_headers()
+          token = (GALAXY_DIR / "glxysession").read_text().strip()
+          self.wfile.write(json.dumps({"dongle_id": self.dongle_id, "token": token}).encode())
+        else:
+          self.end_headers()
         return
-    self.send_response(404)
+    except Exception:
+      pass
+
+    self.send_response(403)
     self.end_headers()
 
   def log_message(self, format, *args):
-    pass  # suppress request logs
+    pass
 
 
 def start_auth_server():
@@ -111,7 +135,6 @@ def main():
   signal.signal(signal.SIGTERM, cleanup_frpc)
   signal.signal(signal.SIGINT, cleanup_frpc)
 
-  # Wait for DongleId to be set (usually set on boot/pairing)
   dongle_id = params.get("DongleId", encoding='utf8')
   while not dongle_id:
     print("Galaxy: Waiting for DongleId...")
@@ -119,16 +142,22 @@ def main():
     dongle_id = params.get("DongleId", encoding='utf8')
 
   print(f"Galaxy: DongleId: {dongle_id}")
+  AuthHandler.dongle_id = dongle_id
   print("Galaxy: Starting manager loop...")
+
+  last_slug = None
 
   while True:
     glxyauth_file = GALAXY_DIR / "glxyauth"
     galaxy_password_hash = glxyauth_file.read_text().strip() if glxyauth_file.exists() else None
-    is_paired = galaxy_password_hash and len(galaxy_password_hash) == 64
+    slug_file = GALAXY_DIR / "glxyslug"
+    slug = slug_file.read_text().strip() if slug_file.exists() else None
+    is_paired = galaxy_password_hash and len(galaxy_password_hash) == 64 and slug
 
     if is_paired:
-      if process is None or process.poll() is not None:
-        if process is not None:
+      if process is None or process.poll() is not None or slug != last_slug:
+        cleanup_frpc()
+        if process is not None and slug == last_slug:
           print(f"Galaxy: frpc exited with code {process.returncode}. Restarting...")
 
         print("Galaxy: Password set. Preparing frpc tunnel...")
@@ -137,7 +166,6 @@ def main():
           time.sleep(10)
           continue
 
-        # Start the tiny auth HTTP server (serves /glxyauth on localhost)
         start_auth_server()
 
         frpc_toml = GALAXY_DIR / "frpc.toml"
@@ -150,37 +178,38 @@ tls.enable = true
 poolCount = 2
 
 [[proxies]]
-name = "{dongle_id}_pond"
+name = "{slug}_pond"
 type = "http"
 localIP = "127.0.0.1"
 localPort = 8082
-customDomains = ["{dongle_id}.devices.local"]
+customDomains = ["{slug}.devices.local"]
 transport.useCompression = true
 
 [[proxies]]
-name = "{dongle_id}_auth"
+name = "{slug}_auth"
 type = "http"
 localIP = "127.0.0.1"
 localPort = {AUTH_PORT}
-customDomains = ["auth-{dongle_id}.devices.local"]
+customDomains = ["auth-{slug}.devices.local"]
 """
         frpc_toml.write_text(config)
 
-        print("Galaxy: Starting frpc tunnel...")
+        print(f"Galaxy: Starting frpc tunnel (slug: {slug[:4]}...)...")
         log_file = open(FRPC_LOG, 'a')
         process = subprocess.Popen(
           [str(GALAXY_DIR / "frpc"), "-c", str(frpc_toml)],
           stdout=log_file,
           stderr=log_file
         )
+        last_slug = slug
     else:
       if process is not None and process.poll() is None:
         print("Galaxy: Password cleared. Stopping frpc tunnel...")
         cleanup_frpc()
+        last_slug = None
 
     time.sleep(3)
 
 
 if __name__ == "__main__":
   main()
-

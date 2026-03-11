@@ -12,12 +12,45 @@ const state = reactive({
 let initialized = false
 let pollHandle = null
 let lastTimestamp = 0
+let visibilityListenerAttached = false
 
 const MAX_POINTS = 240
-const POLL_INTERVAL_MS = 500
+const POLL_INTERVAL_MS = 750
 const SVG_WIDTH = 1000
 const SVG_HEIGHT = 260
 const ADVANCED_TERMS_KEY = "plotsShowAdvancedTerms"
+const QUALITY_WINDOW_SECONDS = 30
+const QUALITY_MIN_SAMPLES = 12
+
+const LATERAL_QUALITY_CONFIG = {
+  desiredKey: "desiredLateralAccel",
+  actualKey: "actualLateralAccel",
+  minSpeedMps: 2.0,
+  minDemand: 0.08,
+  requireControlsActive: true,
+  allowLowDemandFallback: true,
+  fallbackMinSpeedMps: 5.0,
+  fallbackMinPeakDemand: 0.12,
+  great: 0.15,
+  good: 0.30,
+  fair: 0.50,
+}
+
+const LONGITUDINAL_QUALITY_CONFIG = {
+  desiredKey: "desiredLongitudinalAccel",
+  actualKey: "actualLongitudinalAccel",
+  minSpeedMps: 0.0,
+  minDemand: 0.08,
+  requireControlsActive: true,
+  requireLongitudinalControlActive: true,
+  allowLowDemandFallback: false,
+  applyPersistenceRules: true,
+  warnError: 0.35,
+  severeError: 0.70,
+  great: 0.20,
+  good: 0.35,
+  fair: 0.55,
+}
 
 function isPlotsRouteActive() {
   return window.location.pathname === "/plots"
@@ -48,6 +81,9 @@ function formatSourceLabel(kind, source) {
   }
 
   if (normalizedKind === "longitudinal") {
+    if (normalizedSource.includes("atarget")) return "Planner target acceleration + measured acceleration"
+    if (normalizedSource.includes("pid sum")) return "PID term sum + measured acceleration"
+    if (normalizedSource.includes("caroutput")) return "Final accel command + measured acceleration"
     if (normalizedSource.includes("livelocationkalman")) return "Control output + calibrated acceleration"
     if (normalizedSource === "controlsstate") return "Planner target output"
   }
@@ -64,6 +100,134 @@ function formatSourceLabel(kind, source) {
   return "Live control signal"
 }
 
+function percentile(sortedValues, percentileValue) {
+  const values = Array.isArray(sortedValues) ? sortedValues : []
+  if (!values.length) return 0
+  const p = Math.max(0, Math.min(1, Number(percentileValue)))
+  const index = (values.length - 1) * p
+  const lower = Math.floor(index)
+  const upper = Math.ceil(index)
+  if (lower === upper) return values[lower]
+  const weight = index - lower
+  return values[lower] * (1 - weight) + values[upper] * weight
+}
+
+function formatQualityLabel(label) {
+  const text = String(label || "").trim()
+  return text || "N/A"
+}
+
+function computeMatchQuality(samples, config) {
+  const safeSamples = Array.isArray(samples) ? samples : []
+  if (safeSamples.length < 2) {
+    return { label: "N/A", value: null, detail: "Waiting for data" }
+  }
+
+  const latestTs = toNumber(safeSamples[safeSamples.length - 1]?.timestamp, 0)
+  const cutoffTs = latestTs > 0 ? latestTs - QUALITY_WINDOW_SECONDS : 0
+  const recentSamples = safeSamples.filter((sample) => toNumber(sample?.timestamp, 0) >= cutoffTs)
+
+  const demandEligibleSamples = recentSamples.filter((sample) => {
+    if (config.requireControlsActive && !sample?.controlsActive) return false
+    if (config.requireLongitudinalControlActive && !sample?.longitudinalControlActive) return false
+    const speed = Math.abs(toNumber(sample?.speed, 0))
+    const desired = Math.abs(toNumber(sample?.[config.desiredKey], 0))
+
+    const speedOk = config.minSpeedMps <= 0 ? true : speed >= config.minSpeedMps
+    const demandOk = config.minDemand <= 0 ? true : desired >= config.minDemand
+    return speedOk && demandOk
+  })
+
+  let eligibleSamples = demandEligibleSamples
+  let usedLowDemandFallback = false
+  const allowLowDemandFallback = config.allowLowDemandFallback !== false
+  if (allowLowDemandFallback && eligibleSamples.length < QUALITY_MIN_SAMPLES && recentSamples.length >= QUALITY_MIN_SAMPLES) {
+    const totalSpeed = recentSamples.reduce((sum, sample) => sum + Math.abs(toNumber(sample?.speed, 0)), 0)
+    const avgSpeed = recentSamples.length > 0 ? (totalSpeed / recentSamples.length) : 0
+    const peakDemand = recentSamples.reduce((peak, sample) => {
+      const desired = Math.abs(toNumber(sample?.[config.desiredKey], 0))
+      return Math.max(peak, desired)
+    }, 0)
+
+    const fallbackMinSpeed = Math.max(0, toNumber(config.fallbackMinSpeedMps, 0))
+    const fallbackMinPeakDemand = Math.max(0, toNumber(config.fallbackMinPeakDemand, 0))
+    if (avgSpeed >= fallbackMinSpeed && peakDemand >= fallbackMinPeakDemand) {
+      eligibleSamples = recentSamples
+      usedLowDemandFallback = true
+    }
+  }
+
+  if (eligibleSamples.length < QUALITY_MIN_SAMPLES) {
+    if (allowLowDemandFallback) {
+      return {
+        label: "N/A",
+        value: null,
+        detail: `Need ${QUALITY_MIN_SAMPLES} engaged samples (${eligibleSamples.length} eligible / ${recentSamples.length} total)`,
+      }
+    }
+
+    return {
+      label: "N/A",
+      value: null,
+      detail: `Need ${QUALITY_MIN_SAMPLES} demand samples (${eligibleSamples.length} demand / ${recentSamples.length} total)`,
+    }
+  }
+
+  const errors = eligibleSamples
+    .map((sample) => Math.abs(toNumber(sample?.[config.desiredKey], 0) - toNumber(sample?.[config.actualKey], 0)))
+    .sort((a, b) => a - b)
+
+  if (!errors.length) {
+    return { label: "N/A", value: null, detail: "No eligible samples" }
+  }
+
+  const p50 = percentile(errors, 0.50)
+  const p90 = percentile(errors, 0.90)
+  const robustError = (0.7 * p50) + (0.3 * p90)
+
+  const sampleSummary = `${eligibleSamples.length} samples / ${QUALITY_WINDOW_SECONDS}s${usedLowDemandFallback ? ", low-demand fallback" : ""}`
+
+  if (config.applyPersistenceRules) {
+    const warnThreshold = Math.max(config.warnError || 0.35, config.good || 0.35)
+    const severeThreshold = Math.max(config.severeError || 0.70, config.fair || 0.55)
+    const warnFrac = errors.filter((value) => value > warnThreshold).length / errors.length
+    const severeFrac = errors.filter((value) => value > severeThreshold).length / errors.length
+
+    let label = "Poor"
+    if (robustError <= config.great && warnFrac <= 0.10 && severeFrac <= 0.03) label = "Great"
+    else if (robustError <= config.good && warnFrac <= 0.22 && severeFrac <= 0.08) label = "Good"
+    else if (robustError <= config.fair && warnFrac <= 0.40 && severeFrac <= 0.18) label = "Fair"
+
+    const warnPct = Math.round(warnFrac * 100)
+    const severePct = Math.round(severeFrac * 100)
+    return {
+      label,
+      value: robustError,
+      detail: `${sampleSummary}, ${warnPct}% > ${formatValue(warnThreshold)} and ${severePct}% > ${formatValue(severeThreshold)}`,
+    }
+  }
+
+  let label = "Poor"
+  if (robustError <= config.great) label = "Great"
+  else if (robustError <= config.good) label = "Good"
+  else if (robustError <= config.fair) label = "Fair"
+
+  return {
+    label,
+    value: robustError,
+    detail: sampleSummary,
+  }
+}
+
+function qualityToneClass(label) {
+  const normalized = String(label || "").toLowerCase()
+  if (normalized === "great") return "qualityTone-great"
+  if (normalized === "good") return "qualityTone-good"
+  if (normalized === "fair") return "qualityTone-fair"
+  if (normalized === "poor") return "qualityTone-poor"
+  return "qualityTone-na"
+}
+
 function stopPolling() {
   if (!pollHandle) return
   clearTimeout(pollHandle)
@@ -77,6 +241,9 @@ function pushSample(payload) {
   lastTimestamp = timestamp
   state.samples.push({
     timestamp,
+    speed: toNumber(payload.speed),
+    controlsActive: !!payload.controlsActive,
+    longitudinalControlActive: !!payload.longitudinalControlActive,
     desiredLateralAccel: toNumber(payload.desiredLateralAccel),
     actualLateralAccel: toNumber(payload.actualLateralAccel),
     desiredLongitudinalAccel: toNumber(payload.desiredLongitudinalAccel),
@@ -118,6 +285,11 @@ function ensurePolling() {
   const poll = async () => {
     if (!isPlotsRouteActive()) {
       pollHandle = null
+      return
+    }
+
+    if (document.visibilityState !== "visible") {
+      pollHandle = setTimeout(poll, POLL_INTERVAL_MS)
       return
     }
 
@@ -367,6 +539,24 @@ async function initialize() {
   } finally {
     ensurePolling()
   }
+
+  if (!visibilityListenerAttached) {
+    visibilityListenerAttached = true
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") {
+        stopPolling()
+        return
+      }
+
+      if (isPlotsRouteActive() && !state.paused) {
+        fetchLiveData().catch((error) => {
+          state.error = error?.message || String(error)
+          state.loading = false
+        })
+        ensurePolling()
+      }
+    })
+  }
 }
 
 export function LivePlots() {
@@ -384,7 +574,10 @@ export function LivePlots() {
 
       <section class="plotCard plotStatusCard">
         <p class="plotDescription">
-          Live comparison view for tuning diagnostics. If desired tracks actual closely, tuning is likely good. Large divergence often points to model mismatch or limits.
+          Live comparison view for tuning diagnostics. These scores are a quick health check, not a final verdict. Short spikes from bumps, lane changes, traffic transitions, and manual inputs can temporarily lower a score.
+        </p>
+        <p class="qualityUserGuidance">
+          Work in progress: use this as trend guidance over time. If you see a brief "Poor," keep driving and look for repeated behavior across multiple situations before changing tune values.
         </p>
 
         <div class="plotStatusGrid">
@@ -393,6 +586,34 @@ export function LivePlots() {
           <p><strong>Vehicle Speed:</strong> ${formatValue(state.live?.speed)} m/s</p>
           <p><strong>Samples:</strong> ${state.samples.length}</p>
         </div>
+
+        ${() => {
+          const lateralQuality = computeMatchQuality(state.samples, LATERAL_QUALITY_CONFIG)
+          const longQuality = computeMatchQuality(state.samples, LONGITUDINAL_QUALITY_CONFIG)
+
+          return html`
+            <div class="qualitySummaryGrid">
+              <div class="qualitySummaryRow">
+                <p class="qualitySentence">
+                  Your lateral tuning is
+                  <span class="qualityTone ${qualityToneClass(lateralQuality.label)}">${formatQualityLabel(lateralQuality.label)}</span>
+                </p>
+                <p class="qualityDetail">
+                  ${lateralQuality.value === null ? lateralQuality.detail : `${formatValue(lateralQuality.value)} m/s² error (${lateralQuality.detail})`}
+                </p>
+              </div>
+              <div class="qualitySummaryRow">
+                <p class="qualitySentence">
+                  Your longitudinal tuning is
+                  <span class="qualityTone ${qualityToneClass(longQuality.label)}">${formatQualityLabel(longQuality.label)}</span>
+                </p>
+                <p class="qualityDetail">
+                  ${longQuality.value === null ? longQuality.detail : `${formatValue(longQuality.value)} m/s² error (${longQuality.detail})`}
+                </p>
+              </div>
+            </div>
+          `
+        }}
 
         <div class="plotActions">
           <button class="plotButton" @click="${togglePaused}">
@@ -405,6 +626,9 @@ export function LivePlots() {
 
         ${state.error ? html`<p class="plotError"><strong>Error:</strong> ${state.error}</p>` : ""}
         ${state.live?.lastError ? html`<p class="plotError"><strong>Source Error:</strong> ${state.live.lastError}</p>` : ""}
+        <p class="qualityMethodNote">
+          Match rating uses a 30-second rolling window. Lateral prefers true steering-demand moments, and longitudinal also checks how much of the window stays above error limits so brief spikes are less likely to mark "Poor."
+        </p>
       </section>
 
       <div class="plotCharts">

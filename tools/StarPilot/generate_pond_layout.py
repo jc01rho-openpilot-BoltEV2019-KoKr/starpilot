@@ -25,7 +25,6 @@ DROPDOWN_MAPPING = {
 
 # Keys explicitly hidden from The Pond's generic settings UI.
 HIDDEN_KEYS = {
-    "ExperimentalGMTune",
     "FrogsGoMoosTweak",
     "LockDoorsTimer",
     "NewLongAPI",

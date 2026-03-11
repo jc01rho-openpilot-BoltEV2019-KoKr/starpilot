@@ -170,8 +170,8 @@ FrogPilotVehiclesPanel::FrogPilotVehiclesPanel(FrogPilotSettingsWindow *parent) 
 
   std::vector<std::tuple<QString, QString, QString, QString>> vehicleToggles {
     {"GMToggles", tr("General Motors Settings"), tr("<b>FrogPilot features for General Motors vehicles.</b>"), ""},
-    {"ExperimentalGMTune", tr("FrogsGoMoo's Experimental Tune"), tr("<b>Experimental GM tune by FrogsGoMoo</b> that attempts to smoothen stopping and takeoff control. Use at your own risk!"), ""},
     {"GMPedalLongitudinal", tr("Use Pedal for Longitudinal Control"), tr("<b>Use the pedal interceptor for longitudinal control</b> instead of camera ACC/Redneck when available."), ""},
+    {"RemapCancelToDistance", tr("Remap cancel to distance"), tr("<b>Treat CANCEL as distance-button input</b> on supported pedal-long GM platforms. Toggle requires a reboot to take effect."), ""},
     {"LongPitch", tr("Smooth Pedal Response on Hills"), tr("<b>Smoothen acceleration and braking</b> when driving downhill/uphill."), ""},
     {"RedPanda", tr("Red Panda"), tr("<b>Enable Red Panda behavior</b> for GM (alternate safety config and bus numbering). Requires a reboot to take effect."), ""},
     {"RemoteStartBootsComma", tr("Remote Start Boots Comma"), tr("<b>Use GM C9 SystemPowerMode</b> for ignition detection. Toggle requires a panda firmware update and a reboot to take effect."), ""},
@@ -288,7 +288,7 @@ FrogPilotVehiclesPanel::FrogPilotVehiclesPanel(FrogPilotSettingsWindow *parent) 
 
   static_cast<FrogPilotParamValueControl*>(toggles["LockDoorsTimer"])->setWarning("<b>Warning:</b> openpilot can't detect if keys are still inside the car, so ensure you have a spare key to prevent accidental lockouts!");
 
-  QSet<QString> rebootKeys = {"NewLongAPI", "TacoTuneHacks"};
+  QSet<QString> rebootKeys = {"NewLongAPI", "RemapCancelToDistance", "TacoTuneHacks"};
   for (const QString &key : rebootKeys) {
     QObject::connect(static_cast<ToggleControl*>(toggles[key]), &ToggleControl::toggleFlipped, [key, this](bool state) {
       if (started) {
@@ -431,7 +431,7 @@ void FrogPilotVehiclesPanel::updateToggles() {
       setVisible &= isHKGCanFd;
     }
 
-    else if (key == "GMPedalLongitudinal") {
+    else if (key == "GMPedalLongitudinal" || key == "RemapCancelToDistance") {
       setVisible &= hasPedal;
     }
 

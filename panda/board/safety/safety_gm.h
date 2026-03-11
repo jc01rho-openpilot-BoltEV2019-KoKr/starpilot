@@ -263,6 +263,13 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
     // ACC steering wheel buttons (GM_CAM is tied to the PCM)
     if ((addr == 0x1E1) && (!gm_pcm_cruise || gm_cc_long)) {
       int button = (GET_BYTE(to_push, 5) & 0x70U) >> 4;
+      bool remap_cancel_to_distance = (alternative_experience & ALT_EXP_GM_REMAP_CANCEL_TO_DISTANCE) != 0;
+      // Malibu Hybrid pedal-long observed format uses byte3 bit0 set (typically 0x01/0x41) on ASCMSteeringButton.
+      // Don't treat that physical CANCEL frame as OP disengage.
+      bool malibu_cancel_passthrough = remap_cancel_to_distance && gm_bolt_2022_pedal && gm_pedal_long && ((GET_BYTE(to_push, 3) & 0x1U) != 0U);
+      // Gen1 Bolt pedal-long behavior: let wheel CANCEL act as an in-drive aux button (personality cycling),
+      // so safety should not force a controls drop on this RX cancel edge.
+      bool bolt_cancel_passthrough = remap_cancel_to_distance && gm_pedal_long && !gm_has_acc && !gm_bolt_2022_pedal;
 
       // enter controls on falling edge of set or rising edge of resume (avoids fault)
       bool set = (button != GM_BTN_SET) && (cruise_button_prev == GM_BTN_SET);
@@ -272,7 +279,7 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
       }
 
       // exit controls on cancel press
-      if (button == GM_BTN_CANCEL) {
+      if ((button == GM_BTN_CANCEL) && !(malibu_cancel_passthrough || bolt_cancel_passthrough)) {
         controls_allowed = false;
       }
 

@@ -239,6 +239,13 @@ function numericBounds(param) {
     return { min: 0, max: 101, step: 1 }
   }
 
+  // Personality jerk params are stored as percentage-style integers (25..200).
+  // Layout metadata currently uses normalized 0.5..3.0 ranges, which breaks
+  // the +/- stepper and clamps values like 50 down to 3.
+  if (/^(Traffic|Aggressive|Standard|Relaxed)Jerk(Acceleration|Deceleration|Danger|SpeedDecrease|Speed)$/.test(String(param.key || ""))) {
+    return { min: 25, max: 200, step: 1 }
+  }
+
   if (param.key === "SteerKP") {
     const base = toFinite(state.values.SteerKPStock) || toFinite(state.values.SteerKP) || 0.6
     return { min: +(base * 0.5).toFixed(2), max: +(base * 1.5).toFixed(2), step: 0.01 }

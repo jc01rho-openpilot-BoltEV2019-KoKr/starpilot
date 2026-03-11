@@ -348,7 +348,8 @@ class CarInterfaceBase(ABC):
 
     # FrogPilot variables
     fp_ret.alwaysOnLateralAllowed = self.always_on_lateral_allowed
-    fp_ret.distancePressed = bool(self.CS.distance_button)
+    # Preserve any car-interface override (e.g. remapped buttons) and include native distance state.
+    fp_ret.distancePressed = bool(fp_ret.distancePressed or self.CS.distance_button)
     fp_ret.ecoGear |= ret.gearShifter == GearShifter.eco
     fp_ret.sportGear |= ret.gearShifter == GearShifter.sport
 

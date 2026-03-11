@@ -9,6 +9,7 @@ from typing import SupportsFloat
 import cereal.messaging as messaging
 
 from cereal import car, custom, log
+from panda import ALTERNATIVE_EXPERIENCE
 from msgq.visionipc import VisionIpcClient, VisionStreamType
 
 
@@ -20,7 +21,7 @@ from openpilot.common.realtime import config_realtime_process, Priority, Ratekee
 from openpilot.common.swaglog import cloudlog
 
 from openpilot.selfdrive.car.car_helpers import get_car_interface, get_startup_event
-from openpilot.selfdrive.car.gm.values import CC_ONLY_CAR, GMFlags
+from openpilot.selfdrive.car.gm.values import CAR, CC_ONLY_CAR, GMFlags
 from openpilot.selfdrive.controls.lib.alertmanager import AlertManager, set_offroad_alert
 from openpilot.selfdrive.controls.lib.drive_helpers import VCruiseHelper, clip_curvature
 from openpilot.selfdrive.controls.lib.events import Events, ET
@@ -65,6 +66,10 @@ CSID_MAP = {"1": EventName.roadCameraError, "2": EventName.wideRoadCameraError, 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
 ACTIVE_STATES = (State.enabled, State.softDisabling, State.overriding)
 ENABLED_STATES = (State.preEnabled, *ACTIVE_STATES)
+BOLT_GEN1_CANCEL_PERSONALITY_CARS = {
+  CAR.CHEVROLET_BOLT_CC_2017,
+  CAR.CHEVROLET_BOLT_CC_2019_2021,
+}
 
 
 class Controls:
@@ -915,8 +920,17 @@ class Controls:
     # decrement personality on distance button press
     if self.CP.openpilotLongitudinalControl:
       distance_pressed = params_memory.get_bool("OnroadDistanceButtonPressed")
+      bolt_cancel_personality = (
+        self.CP.carName == "gm" and
+        bool(self.CP.alternativeExperience & ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE) and
+        bool(self.CP.flags & GMFlags.PEDAL_LONG.value) and
+        self.CP.carFingerprint in BOLT_GEN1_CANCEL_PERSONALITY_CARS
+      )
 
       if self.frogpilot_toggles.personality_profile_via_distance:
+        distance_pressed |= any(not be.pressed and be.type == ButtonType.gapAdjustCruise for be in CS.buttonEvents)
+        distance_pressed &= not (self.sm['frogpilotCarState'].distanceLongPressed or self.sm['frogpilotCarState'].distanceVeryLongPressed)
+      elif bolt_cancel_personality:
         distance_pressed |= any(not be.pressed and be.type == ButtonType.gapAdjustCruise for be in CS.buttonEvents)
         distance_pressed &= not (self.sm['frogpilotCarState'].distanceLongPressed or self.sm['frogpilotCarState'].distanceVeryLongPressed)
       if self.frogpilot_toggles.personality_profile_via_distance_long:
@@ -1060,6 +1074,8 @@ class Controls:
     #controlsState.vCruise = float(self.v_cruise_helper.v_cruise_kph)
     controlsState.vCruise = float(self.v_cruise_kph_limit)
     controlsState.vCruiseCluster = float(self.v_cruise_helper.v_cruise_cluster_kph)
+    # Publish planner intent explicitly so tools can compare "model wants" vs measured accel.
+    controlsState.aTarget = float(self.sm['longitudinalPlan'].aTarget)
     controlsState.upAccelCmd = float(self.LoC.pid.p)
     controlsState.uiAccelCmd = float(self.LoC.pid.i)
     controlsState.ufAccelCmd = float(self.LoC.pid.f)

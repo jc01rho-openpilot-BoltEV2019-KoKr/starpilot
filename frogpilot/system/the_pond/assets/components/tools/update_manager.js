@@ -24,6 +24,10 @@ let rebootNoticeShown = false
 const POLL_INTERVAL_MS = 1000
 const ADVANCED_OPTIONS_KEY = "softwareShowAdvancedOptions"
 
+function isUpdateRouteActive() {
+  return window.location.pathname === "/manage_updates"
+}
+
 function shortHash(value) {
   const text = String(value || "").trim()
   return text ? text.slice(0, 10) : "Unknown"
@@ -167,6 +171,16 @@ function ensurePolling() {
   if (pollHandle) return
 
   const poll = async () => {
+    if (!isUpdateRouteActive()) {
+      pollHandle = null
+      return
+    }
+
+    if (document.visibilityState !== "visible") {
+      pollHandle = setTimeout(poll, POLL_INTERVAL_MS)
+      return
+    }
+
     await fetchStatus(false)
     if (shouldContinuePolling()) {
       pollHandle = setTimeout(poll, POLL_INTERVAL_MS)

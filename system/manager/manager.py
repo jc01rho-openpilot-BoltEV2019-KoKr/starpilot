@@ -5,7 +5,7 @@ import signal
 import sys
 import traceback
 
-from cereal import log
+from cereal import car, log
 import cereal.messaging as messaging
 import openpilot.system.sentry as sentry
 from openpilot.common.params import Params, ParamKeyType
@@ -57,10 +57,24 @@ def manager_init() -> None:
   if params.get_bool("RecordFrontLock"):
     params.put_bool("RecordFront", True)
 
+  # Detect pedal capability for pedal-specific defaults/migrations.
+  has_pedal = False
+  cp_persistent_bytes = params.get("CarParamsPersistent")
+  if cp_persistent_bytes is not None:
+    try:
+      with car.CarParams.from_bytes(cp_persistent_bytes) as cp_reader:
+        has_pedal = cp_reader.enableGasInterceptor
+    except Exception:
+      cloudlog.exception("failed parsing CarParamsPersistent for pedal defaults")
+
   # set unset params
   reset_toggles = params.get_bool("DoToggleReset")
   reset_toggles_stock = params.get_bool("DoToggleResetStock")
   for k, v, stock in [(k, v, v) for k, v in default_params] + [(k, v, stock) for k, v, _, stock in frogpilot_default_params]:
+    if has_pedal and k == "IncreasedStoppedDistance":
+      v = "4"
+      stock = "4"
+
     if (reset_toggles or reset_toggles_stock) and k in EXCLUDED_KEYS:
       continue
 
@@ -242,6 +256,16 @@ def manager_init() -> None:
       params.put_bool("ForceAutoTuneOff", True)
     with open(lateral_tuning_migration_flag_file, "w") as f:
       f.write("migrated")
+
+  # One-time migration: default IncreasedStoppedDistance to 4 ft for pedal cars
+  pedal_stop_distance_migration_flag_file = "/data/frogpilot_pedal_stop_distance_migrated.flag"
+  if not os.path.exists(pedal_stop_distance_migration_flag_file):
+    if has_pedal:
+      if params.get_int("IncreasedStoppedDistance") != 4:
+        params.put_int("IncreasedStoppedDistance", 4)
+        params_cache.put_int("IncreasedStoppedDistance", 4)
+      with open(pedal_stop_distance_migration_flag_file, "w") as f:
+        f.write("migrated")
 
   # set dongle id
   reg_res = register(show_spinner=True)

@@ -28,6 +28,7 @@ class CarState(CarStateBase):
     self.buttons_counter = 0
     self.steering_button_checksum = 0
     self.steering_button_prefix = 0x01
+    self.steering_button_ts_nanos = 0
 
     self.prev_distance_button = 0
     self.distance_button = 0
@@ -56,6 +57,7 @@ class CarState(CarStateBase):
       self.distance_button = pt_cp.vl["ASCMSteeringButton"]["DistanceButton"]
       self.buttons_counter = pt_cp.vl["ASCMSteeringButton"]["RollingCounter"]
       self.steering_button_checksum = pt_cp.vl["ASCMSteeringButton"]["SteeringButtonChecksum"]
+      self.steering_button_ts_nanos = pt_cp.ts_nanos["ASCMSteeringButton"]["ACCButtons"]
       acc_always_one = pt_cp.vl["ASCMSteeringButton"]["ACCAlwaysOne"]
       acc_hidden_bit = pt_cp.vl["ASCMSteeringButton"].get("ACCHiddenBit", 0)
       self.steering_button_prefix = (int(acc_always_one) & 1) | ((int(acc_hidden_bit) & 1) << 6)
@@ -63,6 +65,7 @@ class CarState(CarStateBase):
       self.cruise_buttons = cam_cp.vl["ASCMSteeringButton"]["ACCButtons"]
       self.distance_button = cam_cp.vl["ASCMSteeringButton"]["DistanceButton"]
       self.buttons_counter = cam_cp.vl["ASCMSteeringButton"]["RollingCounter"]
+      self.steering_button_ts_nanos = cam_cp.ts_nanos["ASCMSteeringButton"]["ACCButtons"]
     self.pscm_status = copy.copy(pt_cp.vl["PSCMStatus"])
     # This is to avoid a fault where you engage while still moving backwards after shifting to D.
     # An Equinox has been seen with an unsupported status (3), so only check if either wheel is in reverse (2)

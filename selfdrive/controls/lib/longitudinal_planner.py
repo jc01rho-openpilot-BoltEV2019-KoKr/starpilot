@@ -232,8 +232,11 @@ class LongitudinalPlanner:
 
     lead_dist = self.lead_one.dRel if self.lead_one.status else 50.0
 
-    # Smooth lead distance (EMA) to avoid chatter in thresholds
-    alpha = max(0.02, min(0.15, 0.05 + 0.002 * v_ego))
+    # Keep only light smoothing on lead distance so ACC reacts quickly like stock.
+    closing_speed = max(0.0, v_ego - self.lead_one.vLead) if self.lead_one.status else 0.0
+    alpha = max(0.25, min(0.65, 0.35 + 0.015 * v_ego))
+    if closing_speed > 1.0:
+      alpha = max(alpha, 0.65)
     if self.lead_dist_f is None:
       self.lead_dist_f = float(lead_dist)
     else:

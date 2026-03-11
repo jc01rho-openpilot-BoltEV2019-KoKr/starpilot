@@ -7,10 +7,10 @@ from openpilot.selfdrive.car import make_can_msg
 from openpilot.selfdrive.car.gm.values import CAR, CruiseButtons, CanBus
 
 MALIBU_BUTTON_TABLE = {
-  0: [0x2FBC, 0x25DE, 0x15EE, 0x1FCC],
+  0: [0x10FF, 0x15EE, 0x1ADD, 0x1FCC],
   1: [0x55AE, 0x5F8C, 0x6F7C, 0x659E],
   4: [0x2ACD, 0x20EF, 0x1ADD, 0x10FF],
-  5: [0x50BF, 0x5A9D, 0x60AF, 0x6A8D],
+  5: [0x60AF, 0x659E, 0x6A8D, 0x6F7C],
 }
 
 MALIBU_BUTTON_MAP = {
@@ -78,10 +78,10 @@ def create_buttons_malibu_cancel(bus, phase, prefix=0x41):
   data = bytearray(7)
   data[3] = prefix & 0xFF
   data[4] = 0x00
-  cancel_bytes = (0x60, 0xAF, 0x65, 0x9E, 0x6A, 0x8D, 0x6F, 0x7C)
-  idx = ((phase + 2) % 4) * 2
-  data[5] = cancel_bytes[idx]
-  data[6] = cancel_bytes[idx + 1]
+  cancel_seq = MALIBU_BUTTON_TABLE[5]
+  val = cancel_seq[phase % len(cancel_seq)]
+  data[5] = (val >> 8) & 0xFF
+  data[6] = val & 0xFF
   return make_can_msg(0x1e1, bytes(data), bus)
 
 

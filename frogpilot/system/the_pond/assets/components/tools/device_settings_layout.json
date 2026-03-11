@@ -2181,6 +2181,14 @@
         "parent_key": "CustomAlerts"
       },
       {
+        "key": "GoatScreamCriticalAlerts",
+        "label": "Goat Scream Critical Alerts",
+        "description": "Play the infamous \"Goat Scream\" for full-screen critical alerts that require immediate takeover.\n\nExamples include: \"TAKE CONTROL IMMEDIATELY\" and \"Stock AEB: Risk of Collision\".",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomAlerts"
+      },
+      {
         "key": "GreenLightAlert",
         "label": "Green Light Alert",
         "description": "Play an alert when the model predicts a red light has turned green.\n\nDisclaimer: openpilot does not explicitly detect traffic lights. This alert is based on end-to-end model predictions from camera input and may trigger even when the light has not changed.",

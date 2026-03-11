@@ -24,13 +24,17 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
    - `LONG_MANEUVER_PHASE|name=pedal_only|paddleMode=off`
    - `LONG_MANEUVER_PHASE|name=pedal_plus_paddle|paddleMode=force`
 
-5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. The tests will run for about 4 minutes. If you need to pause the tests, press "Cancel" on your steering wheel. You can resume the tests by pressing "Resume" on your steering wheel. 
+5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. Typical runtime is about 4 minutes for the base suite and can be ~8-10 minutes for GM pedal-long A/B runs. If you need to pause the tests, press "Cancel" on your steering wheel. You can resume the tests by pressing "Resume" on your steering wheel. 
 
    **Note:** For GM cars, it is recommended to hold down the resume button for all low-speed tests (starting, stopping and creep) to avoid the car entering standstill.
    **Note:** For GM pedal-long cars (pedal interceptor + regen paddle), the maneuver suite automatically runs A/B phases:
    - `pedal-only` (`LongitudinalManeuverPaddleMode=off`)
    - `pedal+paddle` (`LongitudinalManeuverPaddleMode=force`)
-   It also uses additional `-2.0` and `-2.5 m/s^2` brake steps as required checks. The `-4.0 m/s^2` step is logged as informational since pedal/regen authority is physically limited without friction brakes.
+   It also includes:
+   - Additional `-2.0` and `-2.5 m/s^2` brake steps as required checks (`-4.0` is informational due to pedal/regen limits).
+   - Low-speed stop-envelope sweeps (8/12/16/20 mph starts) to quantify terminal stop authority.
+   - Terminal stop probes (ramped/late strong regen request) to measure end-of-stop behavior.
+   - Paddle blend probes to measure on/off transition smoothness and jerk around paddle edges.
 
    ![cog-clip-00 01 11 250-00 01 22 250](https://github.com/user-attachments/assets/c312c1cc-76e8-46e1-a05e-bb9dfb58994f)
 
@@ -52,5 +56,25 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 
     Report written to /home/batman/openpilot/tools/longitudinal_maneuvers/longitudinal_reports/LEXUS_ES_TSS2_57048cfce01d9625_0000010e--5b26bc3be7.html
     ```
+
+   For GM pedal-long routes, the report now adds concrete tuning tables:
+   - **Low-Speed Stop Envelope**:
+     - achieved/target decel ratio
+     - terminal ratio in 0.2–2.0 m/s
+     - linger time in 0.2–1.5 m/s
+     - rollout distance after `shouldStop`
+     - numeric recommendations for:
+       - low-speed `regen_gain_ratio` percent increase
+       - low-speed `accel_min` delta
+       - stop-margin increase (`IncreasedStoppingDistance` / planner stop margin)
+     - per-run **tuning hint** for what to adjust next
+   - **Paddle Blend Transition Probe**:
+     - regen edge count
+     - max jerk near edges
+     - max command/output step at edges
+     - numeric recommendations for:
+       - blend-step reduction %
+       - press/release confirm-frame increase
+     - per-run **tuning hint** for blend/debounce/rate-limit changes
 
 You can reach out on [Discord](https://discord.comma.ai) if you have any questions about these instructions or the tool itself.

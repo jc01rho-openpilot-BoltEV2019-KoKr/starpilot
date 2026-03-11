@@ -182,10 +182,10 @@ _fast_update_state = {
   "progressDetail": "",
 }
 
-_PLOTS_POLL_INTERVAL_S = 0.5
+_PLOTS_POLL_INTERVAL_S = 0.75
 _PLOTS_BOOT_STABILIZATION_WINDOW_S = 45.0
 _PLOTS_BOOT_POLL_INTERVAL_S = 1.0
-_PLOTS_CLIENT_IDLE_TIMEOUT_S = 15.0
+_PLOTS_CLIENT_IDLE_TIMEOUT_S = 6.0
 _PLOTS_SAMPLE_STALE_AFTER_S = 1.5
 
 _plots_lock = threading.Lock()
@@ -197,6 +197,8 @@ _plots_state = {
   "actualLateralAccel": 0.0,
   "desiredLongitudinalAccel": 0.0,
   "actualLongitudinalAccel": 0.0,
+  "controlsActive": False,
+  "longitudinalControlActive": False,
   "lateralP": 0.0,
   "lateralI": 0.0,
   "lateralD": 0.0,
@@ -211,6 +213,121 @@ _plots_state = {
   "longitudinalTermsSource": "controlsState",
   "sampleIndex": 0,
   "lastError": "",
+}
+
+_TROUBLESHOOT_PERSONALITY_KEYS = [
+  "CustomPersonalities",
+  "TrafficPersonalityProfile",
+  "TrafficFollow",
+  "TrafficJerkAcceleration",
+  "TrafficJerkDeceleration",
+  "TrafficJerkDanger",
+  "TrafficJerkSpeedDecrease",
+  "TrafficJerkSpeed",
+  "AggressivePersonalityProfile",
+  "AggressiveFollow",
+  "AggressiveFollowHigh",
+  "AggressiveJerkAcceleration",
+  "AggressiveJerkDeceleration",
+  "AggressiveJerkDanger",
+  "AggressiveJerkSpeedDecrease",
+  "AggressiveJerkSpeed",
+  "StandardPersonalityProfile",
+  "StandardFollow",
+  "StandardFollowHigh",
+  "StandardJerkAcceleration",
+  "StandardJerkDeceleration",
+  "StandardJerkDanger",
+  "StandardJerkSpeedDecrease",
+  "StandardJerkSpeed",
+  "RelaxedPersonalityProfile",
+  "RelaxedFollow",
+  "RelaxedFollowHigh",
+  "RelaxedJerkAcceleration",
+  "RelaxedJerkDeceleration",
+  "RelaxedJerkDanger",
+  "RelaxedJerkSpeedDecrease",
+  "RelaxedJerkSpeed",
+]
+
+_TROUBLESHOOT_CEM_KEYS = [
+  "ConditionalExperimental",
+  "CESpeed",
+  "CESpeedLead",
+  "CECurves",
+  "CELead",
+  "CESlowerLead",
+  "CEStoppedLead",
+  "CENavigation",
+  "CEModelStopTime",
+  "CESignalSpeed",
+  "ShowCEMStatus",
+]
+
+_TROUBLESHOOT_ADVANCED_LATERAL_KEYS = [
+  "AdvancedLateralTune",
+  "SteerDelay",
+  "SteerFriction",
+  "SteerOffset",
+  "SteerKP",
+  "SteerLatAccel",
+  "SteerRatio",
+  "ForceAutoTune",
+  "ForceAutoTuneOff",
+  "ForceTorqueController",
+]
+
+_TROUBLESHOOT_ADVANCED_LONGITUDINAL_KEYS = [
+  "AdvancedLongitudinalTune",
+  "EVTuning",
+  "TruckTuning",
+  "LongitudinalActuatorDelay",
+  "StartAccel",
+  "VEgoStarting",
+  "StopAccel",
+  "StoppingDecelRate",
+  "VEgoStopping",
+]
+
+_TROUBLESHOOT_SECTION_DEFINITIONS = [
+  {
+    "id": "personality_settings",
+    "title": "Personality Profile Settings",
+    "keys": _TROUBLESHOOT_PERSONALITY_KEYS,
+  },
+  {
+    "id": "model_stop_distance",
+    "title": "Model Stop Distance",
+    "keys": ["StopDistance"],
+  },
+  {
+    "id": "cem_settings",
+    "title": "CEM Settings",
+    "keys": _TROUBLESHOOT_CEM_KEYS,
+  },
+  {
+    "id": "advanced_lateral_tuning",
+    "title": "Advanced Lateral Tuning",
+    "keys": _TROUBLESHOOT_ADVANCED_LATERAL_KEYS,
+  },
+  {
+    "id": "advanced_longitudinal_tuning",
+    "title": "Advanced Longitudinal Tuning",
+    "keys": _TROUBLESHOOT_ADVANCED_LONGITUDINAL_KEYS,
+  },
+]
+
+_TROUBLESHOOT_SECTION_BY_ID = {
+  section["id"]: section
+  for section in _TROUBLESHOOT_SECTION_DEFINITIONS
+}
+
+_TROUBLESHOOT_NON_RESETTABLE_SECTION_KEYS = {
+  "CustomPersonalities",
+  "TrafficPersonalityProfile",
+  "AggressivePersonalityProfile",
+  "StandardPersonalityProfile",
+  "RelaxedPersonalityProfile",
 }
 
 def _normalize_fingerprint_make_key(make_value):
@@ -254,12 +371,10 @@ def _extract_lateral_accel_values(controls_state, speed_mps):
   return desired_curvature * speed_sq, actual_curvature * speed_sq, "curvature"
 
 def _extract_longitudinal_accel_values(controls_state, live_location_kalman):
-  desired = _safe_float(getattr(controls_state, "upAccelCmd", 0.0)) + \
-            _safe_float(getattr(controls_state, "uiAccelCmd", 0.0)) + \
-            _safe_float(getattr(controls_state, "ufAccelCmd", 0.0))
+  desired = _safe_float(getattr(controls_state, "aTarget", 0.0))
+  source = "controlsState.aTarget + liveLocationKalman"
 
   actual = 0.0
-  source = "controlsState + liveLocationKalman"
   try:
     accel_calibrated = getattr(live_location_kalman, "accelerationCalibrated", None)
     if accel_calibrated and getattr(accel_calibrated, "valid", False):
@@ -267,7 +382,17 @@ def _extract_longitudinal_accel_values(controls_state, live_location_kalman):
       if len(accel_values) > 0:
         actual = _safe_float(accel_values[0], 0.0)
   except Exception:
-    source = "controlsState"
+    source = "controlsState.aTarget"
+
+  # Fallback only if aTarget is unavailable/legacy-zero while PID terms are present.
+  if abs(desired) < 1e-6:
+    up = _safe_float(getattr(controls_state, "upAccelCmd", 0.0))
+    ui = _safe_float(getattr(controls_state, "uiAccelCmd", 0.0))
+    uf = _safe_float(getattr(controls_state, "ufAccelCmd", 0.0))
+    pid_sum = up + ui + uf
+    if abs(pid_sum) > 1e-6:
+      desired = pid_sum
+      source = "controlsState PID sum + liveLocationKalman"
 
   return desired, actual, source
 
@@ -335,6 +460,9 @@ def _plots_worker():
       controls_state = sm["controlsState"]
       live_location_kalman = sm["liveLocationKalman"]
       speed = _safe_float(getattr(controls_state, "vPid", 0.0))
+      controls_active = bool(getattr(controls_state, "active", False))
+      long_control_state = int(_safe_float(getattr(controls_state, "longControlState", 0)))
+      longitudinal_control_active = controls_active and long_control_state != 0
 
       desired_lateral, actual_lateral, lateral_source = _extract_lateral_accel_values(controls_state, speed)
       desired_longitudinal, actual_longitudinal, longitudinal_source = _extract_longitudinal_accel_values(controls_state, live_location_kalman)
@@ -348,6 +476,8 @@ def _plots_worker():
           "actualLateralAccel": round(actual_lateral, 4),
           "desiredLongitudinalAccel": round(desired_longitudinal, 4),
           "actualLongitudinalAccel": round(actual_longitudinal, 4),
+          "controlsActive": controls_active,
+          "longitudinalControlActive": longitudinal_control_active,
           "lateralP": round(lateral_terms["lateralP"], 4),
           "lateralI": round(lateral_terms["lateralI"], 4),
           "lateralD": round(lateral_terms["lateralD"], 4),
@@ -1035,26 +1165,39 @@ def write_legacy_param_file(key, value):
   os.replace(tmp_path, value_path)
 
 _layout_type_overrides = None
+_layout_param_metadata = None
 
-def _get_layout_type_overrides():
-  global _layout_type_overrides
-  if _layout_type_overrides is None:
+def _get_layout_param_metadata():
+  global _layout_param_metadata
+  if _layout_param_metadata is None:
     try:
       layout_path = os.path.join(os.path.dirname(__file__), "assets", "components", "tools", "device_settings_layout.json")
       with open(layout_path) as f:
         layout_data = json.load(f)
-      _layout_type_overrides = {
-        p["key"]: p["data_type"]
+      _layout_param_metadata = {
+        p["key"]: p
         for section in layout_data
         for p in section.get("params", [])
-        if "key" in p and "data_type" in p
+        if "key" in p
       }
     except Exception:
-      _layout_type_overrides = {}
+      _layout_param_metadata = {}
+  return _layout_param_metadata
+
+def _get_layout_type_overrides():
+  global _layout_type_overrides
+  if _layout_type_overrides is None:
+    layout_param_metadata = _get_layout_param_metadata()
+    _layout_type_overrides = {
+      key: param_data.get("data_type")
+      for key, param_data in layout_param_metadata.items()
+      if param_data.get("data_type")
+    }
   return _layout_type_overrides
 
 _cached_allowed_keys = None
 _cached_param_types = None
+_cached_default_values = None
 
 def _get_param_type_info():
   global _cached_allowed_keys, _cached_param_types
@@ -1079,6 +1222,307 @@ def _get_param_type_info():
 
     _cached_param_types = types
   return _cached_allowed_keys, _cached_param_types
+
+def _get_default_param_values():
+  global _cached_default_values
+  if _cached_default_values is None:
+    _cached_default_values = {
+      key: default_val
+      for key, default_val, _, _ in frogpilot_default_params
+      if key not in EXCLUDED_KEYS
+    }
+  return _cached_default_values
+
+def _coerce_param_value(raw_value, value_type):
+  safe_type = value_type or str
+
+  if safe_type == bool:
+    if isinstance(raw_value, bool):
+      return raw_value
+    if isinstance(raw_value, bytes):
+      raw_value = raw_value.decode("utf-8", errors="replace")
+    return str(raw_value or "").strip() in ("1", "true", "True")
+
+  if safe_type == float:
+    if raw_value in (None, "", b""):
+      return 0.0
+    try:
+      if isinstance(raw_value, bytes):
+        raw_value = raw_value.decode("utf-8", errors="replace")
+      return float(str(raw_value).strip())
+    except Exception:
+      return 0.0
+
+  if safe_type == int:
+    if raw_value in (None, "", b""):
+      return 0
+    try:
+      if isinstance(raw_value, bytes):
+        raw_value = raw_value.decode("utf-8", errors="replace")
+      return int(float(str(raw_value).strip()))
+    except Exception:
+      return 0
+
+  if isinstance(raw_value, bytes):
+    return raw_value.decode("utf-8", errors="replace")
+  return str(raw_value or "")
+
+def _safe_params_get(key, encoding=None, default=None):
+  try:
+    if encoding is not None:
+      return params.get(key, encoding=encoding)
+    return params.get(key)
+  except Exception:
+    return default
+
+def _safe_params_get_bool(key, default=False):
+  try:
+    return params.get_bool(key)
+  except Exception:
+    return bool(default)
+
+def _is_blank_param_raw(raw_value):
+  if raw_value is None:
+    return True
+  if isinstance(raw_value, bytes):
+    return len(raw_value.strip()) == 0
+  if isinstance(raw_value, str):
+    return len(raw_value.strip()) == 0
+  return False
+
+def _get_current_param_value(key, value_type):
+  safe_type = value_type or str
+  if safe_type == bool:
+    return params.get_bool(key)
+  return _coerce_param_value(params.get(key), safe_type)
+
+def _serialize_param_write_value(raw_value):
+  if isinstance(raw_value, bool):
+    return "1" if raw_value else "0"
+  if isinstance(raw_value, bytes):
+    return raw_value.decode("utf-8", errors="replace")
+  return str(raw_value or "")
+
+def _format_longitudinal_personality(value):
+  mapping = {
+    "0": "Aggressive",
+    "1": "Standard",
+    "2": "Relaxed",
+  }
+  text = str(value or "").strip()
+  if text in mapping:
+    return mapping[text]
+  return f"Unknown ({text})" if text else "Unknown"
+
+def _resolve_troubleshoot_current_value(key, value_type, default_values):
+  safe_type = value_type or str
+
+  if safe_type == bool:
+    return _safe_params_get_bool(key)
+
+  raw_value = _safe_params_get(key)
+  if not _is_blank_param_raw(raw_value):
+    return _coerce_param_value(raw_value, safe_type)
+
+  stock_key = f"{key}Stock"
+  if stock_key in default_values:
+    stock_raw_value = _safe_params_get(stock_key)
+    if not _is_blank_param_raw(stock_raw_value):
+      return _coerce_param_value(stock_raw_value, safe_type)
+
+  default_raw_value = default_values.get(key)
+  if not _is_blank_param_raw(default_raw_value):
+    return _coerce_param_value(default_raw_value, safe_type)
+
+  return _coerce_param_value(raw_value, safe_type)
+
+def _resolve_troubleshoot_default_value(key, value_type, default_values):
+  safe_type = value_type or str
+  default_raw_value = default_values.get(key)
+  if not _is_blank_param_raw(default_raw_value):
+    return _coerce_param_value(default_raw_value, safe_type)
+
+  stock_key = f"{key}Stock"
+  if stock_key in default_values:
+    stock_current_raw = _safe_params_get(stock_key)
+    if not _is_blank_param_raw(stock_current_raw):
+      return _coerce_param_value(stock_current_raw, safe_type)
+
+    stock_default_raw = default_values.get(stock_key)
+    if not _is_blank_param_raw(stock_default_raw):
+      return _coerce_param_value(stock_default_raw, safe_type)
+
+  return _coerce_param_value(default_raw_value, safe_type)
+
+def _get_safety_snapshot_text():
+  cp_bytes = params.get("CarParamsPersistent")
+  if not cp_bytes:
+    return "Unavailable"
+
+  try:
+    with car.CarParams.from_bytes(cp_bytes) as cp:
+      safety_configs = list(getattr(cp, "safetyConfigs", []))
+      if not safety_configs:
+        return "Unavailable"
+
+      entries = []
+      for config in safety_configs:
+        model = str(getattr(config, "safetyModel", "unknown"))
+        safety_param = int(getattr(config, "safetyParam", 0))
+        entries.append(f"{model} ({safety_param} / 0x{safety_param:X})")
+
+      return ", ".join(entries) if entries else "Unavailable"
+  except Exception:
+    return "Unavailable"
+
+def _get_fingerprint_snapshot_text():
+  cp_bytes = params.get("CarParamsPersistent")
+  cp_fingerprint = ""
+  try:
+    if cp_bytes:
+      with car.CarParams.from_bytes(cp_bytes) as cp:
+        cp_fingerprint = str(getattr(cp, "carFingerprint", "") or "").strip()
+  except Exception:
+    cp_fingerprint = ""
+
+  model_name = str(params.get("CarModelName", encoding="utf-8") or "").strip()
+  model_value = str(params.get("CarModel", encoding="utf-8") or "").strip()
+
+  if model_name and model_value:
+    return f"{model_name} ({model_value})"
+  if model_name:
+    return model_name
+  if model_value:
+    return model_value
+  if cp_fingerprint:
+    return cp_fingerprint
+  return "Unknown"
+
+def _build_troubleshoot_section_payload(section_definition, value_types, default_values, layout_metadata):
+  section_keys = [str(key).strip() for key in section_definition.get("keys", []) if str(key).strip()]
+  items = []
+
+  for key in section_keys:
+    param_metadata = layout_metadata.get(key, {}) if isinstance(layout_metadata.get(key, {}), dict) else {}
+    value_type = value_types.get(key, str)
+    data_type = str(param_metadata.get("data_type") or "").strip().lower()
+    if data_type == "float":
+      value_type = float
+    elif data_type == "int":
+      value_type = int
+    elif data_type == "bool":
+      value_type = bool
+
+    label = str(param_metadata.get("label") or key)
+    try:
+      current_value = _resolve_troubleshoot_current_value(key, value_type, default_values)
+      default_value = _resolve_troubleshoot_default_value(key, value_type, default_values)
+    except Exception:
+      current_value = "Unavailable"
+      default_value = "n/a"
+
+    items.append({
+      "key": key,
+      "label": label,
+      "value": current_value,
+      "defaultValue": default_value,
+    })
+
+  return {
+    "id": section_definition["id"],
+    "title": section_definition["title"],
+    "resettable": True,
+    "items": items,
+  }
+
+def _build_troubleshoot_payload():
+  _, value_types = _get_param_type_info()
+  default_values = _get_default_param_values()
+  layout_metadata = _get_layout_param_metadata()
+
+  longitudinal_personality_raw = _safe_params_get("LongitudinalPersonality", encoding="utf-8", default="") or ""
+  snapshot_items = [
+    {
+      "id": "safety_param",
+      "label": "Safety Param",
+      "value": _get_safety_snapshot_text(),
+      "resettable": False,
+    },
+    {
+      "id": "fingerprint",
+      "label": "Fingerprint",
+      "value": _get_fingerprint_snapshot_text(),
+      "resettable": False,
+    },
+    {
+      "id": "driving_model",
+      "label": "Current Driving Model",
+      "value": str(_safe_params_get("Model", encoding="utf-8", default="") or "Unknown"),
+      "resettable": False,
+    },
+    {
+      "id": "selected_personality_profile",
+      "label": "Selected Personality Profile",
+      "value": _format_longitudinal_personality(longitudinal_personality_raw),
+      "resettable": False,
+    },
+  ]
+
+  sections = [
+    _build_troubleshoot_section_payload(section_definition, value_types, default_values, layout_metadata)
+    for section_definition in _TROUBLESHOOT_SECTION_DEFINITIONS
+  ]
+
+  return {
+    "snapshot": snapshot_items,
+    "sections": sections,
+    "isOnroad": params.get_bool("IsOnroad"),
+  }
+
+def _reset_troubleshoot_section(section_id):
+  section_definition = _TROUBLESHOOT_SECTION_BY_ID.get(str(section_id or "").strip())
+  if section_definition is None:
+    raise ValueError("Unknown troubleshoot section.")
+
+  allowed_keys, _ = _get_param_type_info()
+  default_values = _get_default_param_values()
+  is_onroad = params.get_bool("IsOnroad")
+  blocked_onroad_keys = {"Model", "AlwaysOnLateral", "ForceTorqueController", "NNFF", "NNFFLite"}
+
+  updated_keys = []
+  skipped_keys = []
+
+  for key in section_definition.get("keys", []):
+    if key in _TROUBLESHOOT_NON_RESETTABLE_SECTION_KEYS:
+      skipped_keys.append({"key": key, "reason": "preserved by design"})
+      continue
+
+    if key not in allowed_keys:
+      skipped_keys.append({"key": key, "reason": "not editable"})
+      continue
+
+    if is_onroad and key in blocked_onroad_keys:
+      skipped_keys.append({"key": key, "reason": "blocked while onroad"})
+      continue
+
+    if key not in default_values:
+      skipped_keys.append({"key": key, "reason": "default unavailable"})
+      continue
+
+    params.put(key, _serialize_param_write_value(default_values[key]))
+    updated_keys.append(key)
+
+  if updated_keys:
+    update_frogpilot_toggles()
+
+  return {
+    "sectionId": section_definition["id"],
+    "sectionTitle": section_definition["title"],
+    "updatedKeys": updated_keys,
+    "skippedKeys": skipped_keys,
+    "updatedCount": len(updated_keys),
+    "skippedCount": len(skipped_keys),
+  }
 
 def _extract_testing_ground_variant_labels(slot_data, include_default=True):
   labels = {}
@@ -1894,6 +2338,34 @@ def setup(app):
         result[key] = None
 
     return jsonify(result), 200
+
+  @app.route("/api/troubleshoot", methods=["GET"])
+  def get_troubleshoot_data():
+    try:
+      return jsonify(_build_troubleshoot_payload()), 200
+    except Exception as exception:
+      return jsonify({"error": str(exception)}), 500
+
+  @app.route("/api/troubleshoot/reset", methods=["POST"])
+  def reset_troubleshoot_section():
+    request_data = request.get_json() or {}
+    section_id = str(request_data.get("sectionId") or "").strip()
+    if not section_id:
+      return jsonify({"error": "Missing 'sectionId' in request body."}), 400
+
+    try:
+      result = _reset_troubleshoot_section(section_id)
+      message = f"{result['sectionTitle']} reset to defaults."
+      if result["skippedCount"] > 0:
+        message += f" Updated {result['updatedCount']} setting(s), skipped {result['skippedCount']}."
+      return jsonify({
+        "message": message,
+        **result,
+      }), 200
+    except ValueError as exception:
+      return jsonify({"error": str(exception)}), 400
+    except Exception as exception:
+      return jsonify({"error": str(exception)}), 500
 
   @app.route("/api/models/installed", methods=["GET"])
   def get_installed_models():
@@ -2738,10 +3210,11 @@ def setup(app):
       paired = GALAXY_AUTH_FILE.is_file() and len(GALAXY_AUTH_FILE.read_text().strip()) == 64
     except Exception:
       paired = False
-    dongle_id = params.get("DongleId", encoding="utf8") or ""
+    slug_file = GALAXY_DIR / "glxyslug"
+    slug = slug_file.read_text().strip() if slug_file.is_file() else ""
     return jsonify({
       "paired": paired,
-      "url": f"https://galaxy.firestar.link/{dongle_id}" if dongle_id else "",
+      "url": f"https://galaxy.firestar.link/{slug}" if slug else "",
     })
 
   @app.route("/api/galaxy/pair", methods=["POST"])
@@ -2754,17 +3227,26 @@ def setup(app):
     pw_hash = hashlib.sha256(password.encode()).hexdigest()
     GALAXY_DIR.mkdir(parents=True, exist_ok=True)
     GALAXY_AUTH_FILE.write_text(pw_hash)
+    
+    # Generate 256-bit secure session token
+    (GALAXY_DIR / "glxysession").write_text(secrets.token_hex(32))
+    
+    # Generate 16-character alphanumeric routing slug
+    charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    slug = ''.join(secrets.choice(charset) for _ in range(16))
+    (GALAXY_DIR / "glxyslug").write_text(slug)
 
-    dongle_id = params.get("DongleId", encoding="utf8") or ""
     return jsonify({
       "message": "Pairing successful!",
-      "url": f"https://galaxy.firestar.link/{dongle_id}" if dongle_id else "",
+      "url": f"https://galaxy.firestar.link/{slug}",
     })
 
   @app.route("/api/galaxy/unpair", methods=["POST"])
   def galaxy_unpair():
-    if GALAXY_AUTH_FILE.is_file():
-      GALAXY_AUTH_FILE.unlink()
+    for f in ["glxyauth", "glxysession", "glxyslug"]:
+      file_path = GALAXY_DIR / f
+      if file_path.is_file():
+        file_path.unlink()
     return jsonify({"message": "Galaxy unpaired successfully."})
 
   @app.route("/api/tailscale/installed", methods=["GET"])

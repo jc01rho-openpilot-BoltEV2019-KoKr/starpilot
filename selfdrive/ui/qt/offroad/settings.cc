@@ -6,6 +6,7 @@
 
 #include <QDebug>
 #include <QCryptographicHash>
+#include <QRandomGenerator>
 #include <QrCode.hpp>
 
 #include "common/watchdog.h"
@@ -259,6 +260,16 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
   });
   addItem(pair_device);
 
+  // Shared helper to show QR popup
+  auto showGalaxyQR = [=]() {
+    std::string slug = util::read_file("/data/galaxy/glxyslug");
+    if (slug.empty()) return;
+    QString url = "https://galaxy.firestar.link/" + QString::fromStdString(slug);
+    GalaxyQRPopup *popup = new GalaxyQRPopup(url, this);
+    popup->exec();
+    popup->deleteLater();
+  };
+
   pair_galaxy = new ButtonControl(tr("Galaxy"), tr("Pair"), tr("Pair your device with Galaxy for remote access to The Pond."));
   connect(pair_galaxy, &ButtonControl::clicked, [=]() {
     std::string current_password = util::read_file("/data/galaxy/glxyauth");
@@ -268,31 +279,49 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
         std::string hash = QCryptographicHash::hash(new_password.toUtf8(), QCryptographicHash::Sha256).toHex().toStdString();
         util::create_directories("/data/galaxy", 0775);
         util::write_file("/data/galaxy/glxyauth", hash.data(), hash.size(), O_WRONLY | O_CREAT | O_TRUNC);
+
+        // Generate 256-bit session token (64 hex chars)
+        QByteArray session_bytes(32, 0);
+        QRandomGenerator::securelySeeded().fillRange(reinterpret_cast<quint32*>(session_bytes.data()), 8);
+        std::string session_token = session_bytes.toHex().toStdString();
+        util::write_file("/data/galaxy/glxysession", session_token.data(), session_token.size(), O_WRONLY | O_CREAT | O_TRUNC);
+
+        // Generate 16-char URL-safe slug (alphanumeric only)
+        const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        std::string slug(16, '\0');
+        auto *rng = QRandomGenerator::global();
+        for (int i = 0; i < 16; i++) slug[i] = charset[rng->bounded(62)];
+        util::write_file("/data/galaxy/glxyslug", slug.data(), slug.size(), O_WRONLY | O_CREAT | O_TRUNC);
+
         pair_galaxy->setText(tr("Unpair"));
-        ConfirmationDialog::alert(tr("Pairing successful! Visit galaxy.firestar.link/") + getDongleId().value_or("") + tr(" to connect."), this);
-        galaxy_qr->setVisible(true);
+        galaxy_qr_btn->setVisible(true);
+        showGalaxyQR();
       }
     } else {
       if (ConfirmationDialog::confirm(tr("Are you sure you want to unpair from Galaxy?"), tr("Unpair"), this)) {
         std::remove("/data/galaxy/glxyauth");
+        std::remove("/data/galaxy/glxysession");
+        std::remove("/data/galaxy/glxyslug");
         pair_galaxy->setText(tr("Pair"));
-        galaxy_qr->setVisible(false);
+        galaxy_qr_btn->setVisible(false);
       }
     }
   });
+
+  // QR button — sits inline next to the Pair/Unpair button
+  galaxy_qr_btn = new QPushButton(tr("QR"));
+  galaxy_qr_btn->setFixedSize(250, 100);
+  galaxy_qr_btn->setStyleSheet(R"(
+    QPushButton { background-color: #393939; color: #E4E4E4; border-radius: 50px; font-size: 35px; font-weight: 500; }
+    QPushButton:pressed { background-color: #4a4a4a; }
+  )");
+  galaxy_qr_btn->setVisible(false);
+  connect(galaxy_qr_btn, &QPushButton::clicked, showGalaxyQR);
+  if (QHBoxLayout *hlayout = pair_galaxy->findChild<QHBoxLayout *>()) {
+    hlayout->insertWidget(3, galaxy_qr_btn);
+  }
+
   addItem(pair_galaxy);
-
-  galaxy_qr = new ButtonControl(tr("Galaxy QR"), tr("SHOW"), tr("Show a QR code to quickly open Galaxy on your phone."));
-  connect(galaxy_qr, &ButtonControl::clicked, [=]() {
-    auto dongleId = getDongleId();
-    if (!dongleId) return;
-
-    QString url = "https://galaxy.firestar.link/" + *dongleId;
-    GalaxyQRPopup *popup = new GalaxyQRPopup(url, this);
-    popup->exec();
-    popup->deleteLater();
-  });
-  addItem(galaxy_qr);
 
   // offroad-only buttons
 
@@ -437,7 +466,7 @@ void DevicePanel::showEvent(QShowEvent *event) {
   std::string galaxy_pin = util::read_file("/data/galaxy/glxyauth");
   bool galaxy_paired = !galaxy_pin.empty();
   pair_galaxy->setText(galaxy_paired ? tr("Unpair") : tr("Pair"));
-  galaxy_qr->setVisible(galaxy_paired);
+  galaxy_qr_btn->setVisible(galaxy_paired);
 
   ListWidget::showEvent(event);
 }

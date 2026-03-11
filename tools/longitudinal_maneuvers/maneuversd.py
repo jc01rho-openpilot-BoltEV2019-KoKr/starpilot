@@ -156,6 +156,85 @@ PEDAL_LONG_BRAKE_STEPS = [
   ),
 ]
 
+PEDAL_LONG_LOW_SPEED_STOP_SWEEP = [
+  Maneuver(
+    "low-speed stop envelope: -0.8m/s^2 from 8mph",
+    [Action([-0.8], [7.0])],
+    repeat=0,
+    initial_speed=8. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "low-speed stop envelope: -1.2m/s^2 from 12mph",
+    [Action([-1.2], [7.0])],
+    repeat=0,
+    initial_speed=12. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "low-speed stop envelope: -1.6m/s^2 from 16mph",
+    [Action([-1.6], [7.0])],
+    repeat=0,
+    initial_speed=16. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "low-speed stop envelope: -2.0m/s^2 from 20mph",
+    [Action([-2.0], [7.0])],
+    repeat=0,
+    initial_speed=20. * CV.MPH_TO_MS,
+  ),
+]
+
+PEDAL_LONG_PADDLE_BLEND_PROBES = [
+  Maneuver(
+    "paddle blend probe: accel/decel toggle around zero from 12mph",
+    [
+      Action([-0.20], [1.5]),
+      Action([0.20], [1.5]),
+      Action([-0.20], [1.5]),
+      Action([0.20], [1.5]),
+      Action([-0.35], [2.5]),
+    ],
+    repeat=0,
+    initial_speed=12. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "paddle blend probe: regen threshold sweep from 18mph",
+    [
+      Action([-0.45], [2.0]),
+      Action([-0.75], [2.0]),
+      Action([-0.45], [2.0]),
+      Action([-0.90], [2.0]),
+      Action([-0.10], [1.5]),
+    ],
+    repeat=0,
+    initial_speed=18. * CV.MPH_TO_MS,
+  ),
+]
+
+PEDAL_LONG_TERMINAL_STOP_PROBES = [
+  Maneuver(
+    "terminal stop probe: ramped decel catch from 14mph",
+    [
+      Action([-0.45], [2.0]),
+      Action([-1.20], [2.0]),
+      Action([-2.20], [2.5]),
+      Action([-0.35], [2.0]),
+    ],
+    repeat=0,
+    initial_speed=14. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "terminal stop probe: late strong regen request from 18mph",
+    [
+      Action([-0.55], [2.0]),
+      Action([-1.45], [2.0]),
+      Action([-2.40], [2.2]),
+      Action([-0.45], [2.0]),
+    ],
+    repeat=0,
+    initial_speed=18. * CV.MPH_TO_MS,
+  ),
+]
+
 
 def clone_maneuver(m: Maneuver, label_suffix: str = "") -> Maneuver:
   actions = [Action(list(a.accel_bp), list(a.time_bp)) for a in m.actions]
@@ -170,6 +249,14 @@ def build_maneuvers(CP, label_suffix: str = "") -> list[Maneuver]:
 
   # Keep brake step maneuvers grouped with other step responses.
   insert_idx = next((i for i, m in enumerate(maneuvers) if m.description.startswith("gas step response")), len(maneuvers))
+  if is_gm_pedal_long:
+    for probe in reversed(PEDAL_LONG_PADDLE_BLEND_PROBES):
+      maneuvers.insert(insert_idx, clone_maneuver(probe, label_suffix))
+    for terminal_probe in reversed(PEDAL_LONG_TERMINAL_STOP_PROBES):
+      maneuvers.insert(insert_idx, clone_maneuver(terminal_probe, label_suffix))
+    for stop_sweep in reversed(PEDAL_LONG_LOW_SPEED_STOP_SWEEP):
+      maneuvers.insert(insert_idx, clone_maneuver(stop_sweep, label_suffix))
+
   for step in reversed(brake_steps):
     maneuvers.insert(insert_idx, clone_maneuver(step, label_suffix))
 

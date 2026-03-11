@@ -2,7 +2,7 @@
 from cereal import car, custom
 from math import fabs, exp
 import numpy as np
-from panda import Panda
+from panda import ALTERNATIVE_EXPERIENCE, Panda
 
 from openpilot.common.conversions import Conversions as CV
 from openpilot.common.numpy_fast import interp
@@ -45,7 +45,15 @@ BOLT_PEDAL_LONG_CARS = {
   CAR.CHEVROLET_BOLT_CC_2019_2021,
   CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
   CAR.CHEVROLET_BOLT_CC_2022_2023,
+  CAR.CHEVROLET_MALIBU_HYBRID_CC,
 }
+
+# Cancel-to-personality mapping target: gen1 Bolt pedal-long paths only.
+BOLT_GEN1_CANCEL_PERSONALITY_CARS = {
+  CAR.CHEVROLET_BOLT_CC_2017,
+  CAR.CHEVROLET_BOLT_CC_2019_2021,
+}
+CANCEL_REMAP_DISTANCE_CARS = BOLT_GEN1_CANCEL_PERSONALITY_CARS
 
 NON_LINEAR_TORQUE_PARAMS = {
   CAR.CHEVROLET_BOLT_ACC_2022_2023: {
@@ -89,7 +97,7 @@ class CarInterface(CarInterfaceBase):
     if CP.enableGasInterceptor and bool(CP.flags & GMFlags.PEDAL_LONG.value):
       if CP.carFingerprint in BOLT_PEDAL_LONG_CARS:
         accel_min = interp(current_speed, [0.0, 1.5, 4.0, 8.0, 15.0, 30.0],
-                           [-0.85, -1.2, -1.90, -2.50, -2.82, -2.95])
+                           [-0.93, -1.28, -1.98, -2.58, -2.86, -2.95])
         accel_max = interp(current_speed, [0.0, 1.5, 4.0, 8.0, 15.0],
                            [0.54, 0.74, 1.03, 1.46, CarControllerParams.ACCEL_MAX])
       else:
@@ -502,7 +510,7 @@ class CarInterface(CarInterfaceBase):
         ret.flags |= GMFlags.PEDAL_LONG.value
         gm_safety_cfg.safetyParam |= Panda.FLAG_GM_PEDAL_LONG
         # Note: Low speed, stop and go not tested. Should be fairly smooth on highway
-        if candidate in (CAR.CHEVROLET_MALIBU_CC, CAR.CHEVROLET_MALIBU_HYBRID_CC):
+        if candidate == CAR.CHEVROLET_MALIBU_CC:
           ret.longitudinalTuning.kpBP = [0.0, 5.0, 35.0]
           ret.longitudinalTuning.kpV = [0.06, 0.05, 0.04]
           ret.longitudinalTuning.kiBP = [0.0, 5., 35.]
@@ -533,11 +541,15 @@ class CarInterface(CarInterfaceBase):
     if ret.enableGasInterceptor and candidate == CAR.CHEVROLET_MALIBU_HYBRID_CC:
       ret.flags |= GMFlags.PEDAL_LONG.value
       gm_safety_cfg.safetyParam |= Panda.FLAG_GM_PEDAL_LONG
-      ret.longitudinalTuning.kpBP = [0.0, 5.0, 35.0]
-      ret.longitudinalTuning.kpV = [0.06, 0.05, 0.04]
-      ret.longitudinalTuning.kiBP = [0.0, 5., 35.]
-      ret.longitudinalTuning.kiV = [0.0, 0.30, 0.45]
-      ret.longitudinalTuning.kfDEPRECATED = 0.15
+      # Keep Malibu Hybrid pedal on the same longitudinal tune as Bolt pedal cars.
+      ret.longitudinalTuning.kpBP = [0.0, 5.0, 15.0, 35.0]
+      ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
+      # Reuse Bolt pedal cancel-allow safety path so 0x1E1 cancel isn't blocked
+      # when stock cruise state differs from pedal-long control state.
+      gm_safety_cfg.safetyParam |= Panda.FLAG_GM_BOLT_2022_PEDAL
+      ret.longitudinalTuning.kiBP = [0.0, 3.0, 6.0, 35.0]
+      ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
+      ret.longitudinalTuning.kfDEPRECATED = 0.20
       ret.stoppingDecelRate = 0.8
       ret.minEnableSpeed = -1
       ret.pcmCruise = False
@@ -597,22 +609,82 @@ class CarInterface(CarInterfaceBase):
     if use_panda_paddle_sched:
       gm_safety_cfg.safetyParam |= Panda.FLAG_GM_PANDA_PADDLE_SCHED
 
+    remap_cancel_to_distance = (
+      getattr(frogpilot_toggles, "remap_cancel_to_distance", False) and
+      ret.openpilotLongitudinalControl and
+      bool(ret.flags & GMFlags.PEDAL_LONG.value) and
+      candidate in CANCEL_REMAP_DISTANCE_CARS
+    )
+    malibu_cancel_passthrough = (
+      candidate == CAR.CHEVROLET_MALIBU_HYBRID_CC and
+      ret.openpilotLongitudinalControl and
+      bool(ret.flags & GMFlags.PEDAL_LONG.value)
+    )
+    if remap_cancel_to_distance or malibu_cancel_passthrough:
+      ret.alternativeExperience |= ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE
+
     return ret
 
   # returns a car.CarState
   def _update(self, c, frogpilot_toggles):
     ret, fp_ret = self.CS.update(self.cp, self.cp_cam, self.cp_loopback, frogpilot_toggles)
 
+    remap_cancel_to_distance = bool(self.CP.alternativeExperience & ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE)
+    malibu_cancel_passthrough = (
+      remap_cancel_to_distance and
+      self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC and
+      self.CP.openpilotLongitudinalControl
+    )
+    bolt_cancel_personality = (
+      remap_cancel_to_distance and
+      self.CP.carFingerprint in BOLT_GEN1_CANCEL_PERSONALITY_CARS and
+      self.CP.openpilotLongitudinalControl and
+      bool(self.CP.flags & GMFlags.PEDAL_LONG.value)
+    )
+
     # Don't add event if transitioning from INIT, unless it's to an actual button
+    cruise_button_map = BUTTONS_DICT
+    if malibu_cancel_passthrough:
+      # Keep pedal-long cancel presses from creating a buttonCancel disengage event.
+      cruise_button_map = {k: v for k, v in BUTTONS_DICT.items() if k != CruiseButtons.CANCEL}
+    elif bolt_cancel_personality:
+      # Keep pedal-long cancel presses from creating a buttonCancel disengage event.
+      cruise_button_map = {k: v for k, v in BUTTONS_DICT.items() if k != CruiseButtons.CANCEL}
+
+    cruise_events = create_button_events(self.CS.cruise_buttons, self.CS.prev_cruise_buttons, cruise_button_map,
+                                         unpressed_btn=CruiseButtons.UNPRESS)
+    cancel_gap_events = []
+    if bolt_cancel_personality and self.CS.cruise_buttons != self.CS.prev_cruise_buttons:
+      # Gen1 Bolt pedal-long: treat CANCEL edges as a distance-style button for personality cycling.
+      if self.CS.prev_cruise_buttons == CruiseButtons.CANCEL:
+        cancel_gap_events.append(car.CarState.ButtonEvent(pressed=False, type=ButtonType.gapAdjustCruise))
+      if self.CS.cruise_buttons == CruiseButtons.CANCEL:
+        cancel_gap_events.append(car.CarState.ButtonEvent(pressed=True, type=ButtonType.gapAdjustCruise))
+
+    # Malibu pedal-long cancel can alias wheel-button bits on 0x1E1; ignore those side effects.
+    suppress_malibu_side_buttons = malibu_cancel_passthrough and (
+      self.CS.cruise_buttons in (CruiseButtons.CANCEL, CruiseButtons.MAIN) or
+      self.CS.prev_cruise_buttons in (CruiseButtons.CANCEL, CruiseButtons.MAIN)
+    )
+    distance_events = [] if suppress_malibu_side_buttons else create_button_events(
+      self.CS.distance_button, self.CS.prev_distance_button, {1: ButtonType.gapAdjustCruise}
+    )
+    lkas_events = [] if suppress_malibu_side_buttons else create_button_events(
+      self.CS.lkas_enabled,
+      self.CS.lkas_previously_enabled, {1: FrogPilotButtonType.lkas}
+    )
+
     if self.CS.cruise_buttons != CruiseButtons.UNPRESS or self.CS.prev_cruise_buttons != CruiseButtons.INIT:
       ret.buttonEvents = [
-        *create_button_events(self.CS.cruise_buttons, self.CS.prev_cruise_buttons, BUTTONS_DICT,
-                              unpressed_btn=CruiseButtons.UNPRESS),
-        *create_button_events(self.CS.distance_button, self.CS.prev_distance_button,
-                              {1: ButtonType.gapAdjustCruise}),
-        *create_button_events(self.CS.lkas_enabled, self.CS.lkas_previously_enabled,
-                              {1: FrogPilotButtonType.lkas}),
+        *cruise_events,
+        *cancel_gap_events,
+        *distance_events,
+        *lkas_events,
       ]
+
+    if bolt_cancel_personality and self.CS.cruise_buttons == CruiseButtons.CANCEL:
+      # Feed long-press logic (traffic mode, etc.) as if distance button is being held.
+      fp_ret.distancePressed = True
 
     # The ECM allows enabling on falling edge of set, but only rising edge of resume
     events = self.create_common_events(ret, extra_gears=[GearShifter.sport, GearShifter.low,

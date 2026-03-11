@@ -1651,7 +1651,6 @@ void FrogPilotLongitudinalPanel::updateToggles() {
 
     else if (key == "StoppingDecelRate" || key == "VEgoStarting" ||
              key == "VEgoStopping") {
-      setVisible &= !isGM || !params.getBool("ExperimentalGMTune");
       setVisible &= !isToyota || !params.getBool("FrogsGoMoosTweak");
     }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import unittest
-from panda import Panda
+from panda import ALTERNATIVE_EXPERIENCE, Panda
 from panda.tests.libpanda import libpanda_py
 import panda.tests.safety.common as common
 from panda.tests.safety.common import CANPackerPanda
@@ -343,6 +343,13 @@ class TestGmInterceptorSafety(common.GasInterceptorSafetyTest, TestGmCameraSafet
       self.assertEqual(enable, self.safety.get_controls_allowed())
       self._rx(_acc_pcm_msg(False))
       self.assertEqual(enable, self.safety.get_controls_allowed())
+
+  def test_cancel_button_passthrough(self):
+    # Gen1 Bolt-style pedal-long path: wheel cancel shouldn't force controls off.
+    self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE)
+    self.safety.set_controls_allowed(1)
+    self._rx(self._button_msg(Buttons.CANCEL))
+    self.assertTrue(self.safety.get_controls_allowed())
 
   def test_buttons(self):
     self._rx(self._interceptor_user_gas(0))

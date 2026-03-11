@@ -11,6 +11,10 @@ let initialized = false
 let pollHandle = null
 const POLL_INTERVAL_MS = 1000
 
+function isLongitudinalManeuversRouteActive() {
+  return window.location.pathname === "/longitudinal_maneuvers"
+}
+
 function safeNumber(value, fallback = 0) {
   const n = Number(value)
   return Number.isFinite(n) ? n : fallback
@@ -54,6 +58,16 @@ function ensurePolling() {
   if (pollHandle) return
 
   const poll = async () => {
+    if (!isLongitudinalManeuversRouteActive()) {
+      pollHandle = null
+      return
+    }
+
+    if (document.visibilityState !== "visible") {
+      pollHandle = setTimeout(poll, POLL_INTERVAL_MS)
+      return
+    }
+
     await fetchStatus()
     pollHandle = setTimeout(poll, POLL_INTERVAL_MS)
   }
@@ -167,4 +181,3 @@ export function LongitudinalManeuvers() {
     </div>
   `
 }
-

@@ -33,6 +33,7 @@ MAX_LAT_ACCEL_DIFF = 0.6
 MIN_CONFIDENCE = 0.7
 CORR_BORDER_OFFSET = 5
 LAG_CANDIDATE_CORR_THRESHOLD = 0.9
+DEFAULT_STEER_DELAY_OFFSET = 0.19
 
 
 def masked_normalized_cross_correlation(expected_sig: np.ndarray, actual_sig: np.ndarray, mask: np.ndarray, n: int):
@@ -165,7 +166,8 @@ class LateralLagEstimator:
     self.window_sec = window_sec
     self.okay_window_sec = okay_window_sec
     self.min_recovery_buffer_sec = min_recovery_buffer_sec
-    self.initial_lag = CP.steerActuatorDelay + 0.2
+    self.lagd_disabled = CP.carName == "gm"
+    self.initial_lag = CP.steerActuatorDelay + DEFAULT_STEER_DELAY_OFFSET
     self.block_size = block_size
     self.block_count = block_count
     self.min_valid_block_count = min_valid_block_count
@@ -209,7 +211,9 @@ class LateralLagEstimator:
     liveDelay = msg.liveDelay
 
     valid_mean_lag, valid_std, current_mean_lag, current_std = self.block_avg.get()
-    if self.block_avg.valid_blocks >= self.min_valid_block_count and not np.isnan(valid_mean_lag) and not np.isnan(valid_std):
+    if self.lagd_disabled:
+      liveDelay.status = log.LiveDelayData.Status.unestimated
+    elif self.block_avg.valid_blocks >= self.min_valid_block_count and not np.isnan(valid_mean_lag) and not np.isnan(valid_std):
       if valid_std > MAX_LAG_STD:
         liveDelay.status = log.LiveDelayData.Status.invalid
       else:
@@ -219,21 +223,26 @@ class LateralLagEstimator:
 
     if frogpilot_toggles.use_custom_steerActuatorDelay:
       liveDelay.lateralDelay = frogpilot_toggles.steerActuatorDelay
+    elif self.lagd_disabled:
+      liveDelay.lateralDelay = self.initial_lag
     elif liveDelay.status == log.LiveDelayData.Status.estimated:
       liveDelay.lateralDelay = valid_mean_lag
     else:
       liveDelay.lateralDelay = self.initial_lag
 
-    if not np.isnan(current_mean_lag) and not np.isnan(current_std):
+    if self.lagd_disabled:
+      liveDelay.lateralDelayEstimate = self.initial_lag
+      liveDelay.lateralDelayEstimateStd = 0.0
+    elif not np.isnan(current_mean_lag) and not np.isnan(current_std):
       liveDelay.lateralDelayEstimate = current_mean_lag
       liveDelay.lateralDelayEstimateStd = current_std
     else:
       liveDelay.lateralDelayEstimate = self.initial_lag
       liveDelay.lateralDelayEstimateStd = 0.0
 
-    liveDelay.validBlocks = self.block_avg.valid_blocks
+    liveDelay.validBlocks = 0 if self.lagd_disabled else self.block_avg.valid_blocks
     if debug:
-      liveDelay.points = self.block_avg.values.flatten().tolist()
+      liveDelay.points = [] if self.lagd_disabled else self.block_avg.values.flatten().tolist()
 
     return msg
 
@@ -291,7 +300,7 @@ class LateralLagEstimator:
     self.points.update(self.t, la_desired, la_actual_pose, okay)
 
   def update_estimate(self):
-    if not self.points_enough():
+    if self.lagd_disabled or not self.points_enough():
       return
 
     times, desired, actual, okay = self.points.get()
@@ -372,7 +381,7 @@ def main():
     CP = msg
 
   lag_learner = LateralLagEstimator(CP, 1. / SERVICE_LIST['livePose'].frequency)
-  if (initial_lag_params := retrieve_initial_lag(params_reader, CP)) is not None:
+  if not lag_learner.lagd_disabled and (initial_lag_params := retrieve_initial_lag(params_reader, CP)) is not None:
     lag, valid_blocks = initial_lag_params
     lag_learner.reset(lag, valid_blocks)
 

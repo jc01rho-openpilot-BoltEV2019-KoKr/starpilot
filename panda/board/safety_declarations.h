@@ -275,3 +275,6 @@ const uint32_t RELAY_TRNS_TIMEOUT = 1U;
 
 // Always on Lateral
 #define ALT_EXP_ALWAYS_ON_LATERAL 32
+
+// GM pedal-long option: interpret wheel CANCEL as an auxiliary distance-style button.
+#define ALT_EXP_GM_REMAP_CANCEL_TO_DISTANCE 64

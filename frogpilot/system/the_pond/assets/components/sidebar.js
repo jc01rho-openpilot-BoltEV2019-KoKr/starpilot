@@ -23,6 +23,7 @@ const MenuItems = {
     { name: "Model Manager", link: "/manage_models", icon: "bi-cpu" },
     { name: "Plots", link: "/plots", icon: "bi-graph-up-arrow" },
     { name: "Testing Ground", link: "/testing_ground", icon: "bi-bezier2" },
+    { name: "Troubleshoot", link: "/troubleshoot", icon: "bi-tools" },
     { name: "Theme Maker", link: "/theme_maker", icon: "bi-palette-fill" },
     { name: "Tmux Log", link: "/manage_tmux", icon: "bi-terminal" },
     { name: "Backup and Restore", link: "/manage_toggles", icon: "bi-arrow-repeat" },

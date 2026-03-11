@@ -6,7 +6,7 @@ import wave
 from pathlib import Path
 from typing import Any
 
-from cereal import car, custom, messaging
+from cereal import car, custom, log, messaging
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import Ratekeeper
@@ -173,6 +173,11 @@ class Soundd:
     elif sm.updated['controlsState']:
       new_alert = sm['controlsState'].alertSound.raw
       new_frogpilot_alert = sm['frogpilotControlsState'].alertSound.raw
+
+      critical_full_alert = sm['controlsState'].alertStatus == log.ControlsState.AlertStatus.critical
+      critical_full_alert &= sm['controlsState'].alertSize == log.ControlsState.AlertSize.full
+      if self.frogpilot_toggles.goat_scream_critical_alerts and critical_full_alert:
+        new_alert = FrogPilotAudibleAlert.goat
 
       if new_alert == AudibleAlert.none and new_frogpilot_alert != FrogPilotAudibleAlert.none:
         new_alert = new_frogpilot_alert

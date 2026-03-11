@@ -56,8 +56,9 @@ class Car:
 
     # set alternative experiences from parameters
     self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
-    self.CP.alternativeExperience = 0
-    if not self.disengage_on_accelerator:
+    if self.disengage_on_accelerator:
+      self.CP.alternativeExperience &= ~ALTERNATIVE_EXPERIENCE.DISABLE_DISENGAGE_ON_GAS
+    else:
       self.CP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.DISABLE_DISENGAGE_ON_GAS
 
     openpilot_enabled_toggle = self.params.get_bool("OpenpilotEnabledToggle")

@@ -173,7 +173,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("CECurves", "0", 1, "0"),
   ("CECurvesLead", "0", 1, "0"),
   ("CELead", "0", 1, "0"),
-  ("CEModelStopTime", str(PLANNER_TIME - 2), 2, "0"),
+  ("CEModelStopTime", "7", 2, "0"),
   ("CENavigation", "0", 2, "0"),
   ("CENavigationIntersections", "1", 2, "0"),
   ("CENavigationLead", "1", 2, "0"),
@@ -222,7 +222,6 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("DynamicPathWidth", "0", 2, "0"),
   ("DynamicPedalsOnUI", "1", 2, "0"),
   ("EngageVolume", "101", 2, "101"),
-  ("ExperimentalGMTune", "0", 2, "0"),
   ("ExperimentalLongitudinalEnabled", "0", 0, "0"),
   ("ExperimentalModeConfirmed", "0", 0, "0"),
   ("Fahrenheit", "0", 3, "0"),
@@ -240,11 +239,13 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("FullMap", "0", 2, "0"),
   ("GasRegenCmd", "1", 2, "0"),
   ("GMPedalLongitudinal", "1", 2, "1"),
+  ("RemapCancelToDistance", "0", 2, "0"),
   ("RedPanda", "0", 3, "0"),
   ("RemoteStartBootsComma", "0", 3, "0"),
   ("GithubSshKeys", "", 0, ""),
   ("GithubUsername", "", 0, ""),
   ("GoatScream", "0", 1, "0"),
+  ("GoatScreamCriticalAlerts", "0", 1, "0"),
   ("GreenLightAlert", "0", 0, "0"),
   ("GsmApn", "", 0, ""),
   ("GsmRoaming", "1", 0, "0"),
@@ -576,6 +577,7 @@ class FrogPilotVariables:
     toggle.has_cc_long = toggle.car_make == "gm" and bool(CP.flags & GMFlags.CC_LONG.value)
     has_nnff = nnff_supported(toggle.car_model)
     toggle.has_pedal = CP.enableGasInterceptor
+    params_default.put("IncreasedStoppedDistance", "4" if toggle.has_pedal else "0")
     has_radar = not CP.radarUnavailable
     toggle.has_sdsu = toggle.car_make == "toyota" and bool(CP.flags & ToyotaFlags.SMART_DSU.value)
     toggle.has_sascm = toggle.car_make == "gm" and bool(CP.flags & GMFlags.SASCM.value)
@@ -707,6 +709,7 @@ class FrogPilotVariables:
 
     toggle.custom_alerts = params.get_bool("CustomAlerts") if tuning_level >= level["CustomAlerts"] else default.get_bool("CustomAlerts")
     toggle.goat_scream_alert = toggle.custom_alerts and (params.get_bool("GoatScream") if tuning_level >= level["GoatScream"] else default.get_bool("GoatScream"))
+    toggle.goat_scream_critical_alerts = toggle.custom_alerts and (params.get_bool("GoatScreamCriticalAlerts") if tuning_level >= level["GoatScreamCriticalAlerts"] else default.get_bool("GoatScreamCriticalAlerts"))
     toggle.green_light_alert = toggle.custom_alerts and (params.get_bool("GreenLightAlert") if tuning_level >= level["GreenLightAlert"] else default.get_bool("GreenLightAlert"))
     toggle.lead_departing_alert = toggle.custom_alerts and (params.get_bool("LeadDepartingAlert") if tuning_level >= level["LeadDepartingAlert"] else default.get_bool("LeadDepartingAlert"))
     toggle.loud_blindspot_alert = has_bsm and toggle.custom_alerts and (params.get_bool("LoudBlindspotAlert") if tuning_level >= level["LoudBlindspotAlert"] else default.get_bool("LoudBlindspotAlert"))
@@ -824,13 +827,11 @@ class FrogPilotVariables:
     toggle.personality_profile_via_distance_very_long = toggle.openpilot_longitudinal and distance_button_control_very_long == BUTTON_FUNCTIONS["PERSONALITY_PROFILE"]
     toggle.traffic_mode_via_distance_very_long = toggle.openpilot_longitudinal and distance_button_control_very_long == BUTTON_FUNCTIONS["TRAFFIC_MODE"]
 
-    toggle.experimental_gm_tune = toggle.openpilot_longitudinal and toggle.car_make == "gm" and (params.get_bool("ExperimentalGMTune") if tuning_level >= level["ExperimentalGMTune"] else default.get_bool("ExperimentalGMTune"))
-    toggle.stoppingDecelRate = 0.3 if toggle.experimental_gm_tune else toggle.stoppingDecelRate
-    toggle.vEgoStarting = 0.15 if toggle.experimental_gm_tune else toggle.vEgoStarting
-    toggle.vEgoStopping = 0.15 if toggle.experimental_gm_tune else toggle.vEgoStopping
-
     toggle.red_panda = toggle.car_make == "gm" and (params.get_bool("RedPanda") if tuning_level >= level["RedPanda"] else default.get_bool("RedPanda"))
     toggle.remote_start_boots_comma = toggle.car_make == "gm" and (params.get_bool("RemoteStartBootsComma") if tuning_level >= level["RemoteStartBootsComma"] else default.get_bool("RemoteStartBootsComma"))
+    toggle.remap_cancel_to_distance = toggle.car_make == "gm" and toggle.openpilot_longitudinal and (
+      params.get_bool("RemapCancelToDistance") if tuning_level >= level["RemapCancelToDistance"] else default.get_bool("RemapCancelToDistance")
+    )
 
     toggle.force_fingerprint = (params.get_bool("ForceFingerprint") if tuning_level >= level["ForceFingerprint"] else default.get_bool("ForceFingerprint")) and toggle.car_model is not None
 

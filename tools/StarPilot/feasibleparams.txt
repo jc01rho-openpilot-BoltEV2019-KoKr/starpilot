@@ -99,7 +99,6 @@ DynamicPathWidth
 DynamicPedalsOnUI
 EVTuning
 EngageVolume
-ExperimentalGMTune
 ExperimentalLongitudinalEnabled
 ExperimentalMode
 ExperimentalModeConfirmed
