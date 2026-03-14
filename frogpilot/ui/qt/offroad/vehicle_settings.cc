@@ -405,7 +405,9 @@ void FrogPilotVehiclesPanel::updateToggles() {
 
     bool setVisible = tuningLevel >= frogpilotToggleLevels[key].toDouble();
 
-    if (gmKeys.contains(key)) {
+    if (key == "ClusterOffset") {
+      setVisible &= isGM || isToyota;
+    } else if (gmKeys.contains(key)) {
       setVisible &= isGM;
     } else if (hkgKeys.contains(key)) {
       setVisible &= isHKG;

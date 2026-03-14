@@ -50,6 +50,17 @@ class VCruiseHelper:
     self.button_timers = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0}
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
 
+  def _get_short_press_delta(self, is_metric, frogpilot_toggles):
+    base_delta = 1. if is_metric else IMPERIAL_INCREMENT
+    return base_delta * frogpilot_toggles.cruise_increase
+
+  def _normalize_initialized_v_cruise(self, v_cruise_kph, is_metric, frogpilot_toggles):
+    if frogpilot_toggles.cruise_increase % 5 != 0:
+      return v_cruise_kph
+
+    v_cruise_delta = self._get_short_press_delta(is_metric, frogpilot_toggles)
+    return round(round(v_cruise_kph / v_cruise_delta) * v_cruise_delta, 1)
+
   @property
   def v_cruise_initialized(self):
     return self.v_cruise_kph != V_CRUISE_UNSET
@@ -154,7 +165,7 @@ class VCruiseHelper:
       self.v_cruise_kph = self.v_cruise_kph_last
     else:
       if desired_speed_limit != 0 and frogpilot_toggles.set_speed_limit:
-        self.v_cruise_kph = int(round(desired_speed_limit * CV.MS_TO_KPH))
+        self.v_cruise_kph = self._normalize_initialized_v_cruise(desired_speed_limit * CV.MS_TO_KPH, frogpilot_toggles.is_metric, frogpilot_toggles)
       else:
         self.v_cruise_kph = int(round(clip(CS.vEgo * CV.MS_TO_KPH, engage_floor_kph, V_CRUISE_MAX)))
 

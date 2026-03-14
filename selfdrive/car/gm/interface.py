@@ -666,10 +666,14 @@ class CarInterface(CarInterfaceBase):
       self.CS.cruise_buttons in (CruiseButtons.CANCEL, CruiseButtons.MAIN) or
       self.CS.prev_cruise_buttons in (CruiseButtons.CANCEL, CruiseButtons.MAIN)
     )
+    suppress_bolt_cancel_lkas = bolt_cancel_personality and (
+      self.CS.cruise_buttons == CruiseButtons.CANCEL or
+      self.CS.prev_cruise_buttons == CruiseButtons.CANCEL
+    )
     distance_events = [] if suppress_malibu_side_buttons else create_button_events(
       self.CS.distance_button, self.CS.prev_distance_button, {1: ButtonType.gapAdjustCruise}
     )
-    lkas_events = [] if suppress_malibu_side_buttons else create_button_events(
+    lkas_events = [] if (suppress_malibu_side_buttons or suppress_bolt_cancel_lkas) else create_button_events(
       self.CS.lkas_enabled,
       self.CS.lkas_previously_enabled, {1: FrogPilotButtonType.lkas}
     )

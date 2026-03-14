@@ -25,6 +25,9 @@ ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
 
 # Uncertainty-based filter disable thresholds
+UNCERT_SLOPE_TRIG = 0.12  # per second
+UNCERT_MAG_TRIG = 0.50
+
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
 _A_TOTAL_MAX_BP = [20., 40.]
@@ -116,13 +119,13 @@ class LongitudinalPlanner:
     # Lead stability tracking
     self.prev_lead_dist = None
     self.last_big_brake_t = 0.0
-    self.last_lead_brake_cmd_t = 0.0
     self.stable_lead = False
     # Smoothed lead distance
     self.lead_dist_f = None
-    self.last_safety_log_t = 0.0
 
     # Uncertainty slope tracking
+    self._uncert_last = 0.0
+    self._uncert_last_t = None
 
   @property
   def mlsim(self):
@@ -200,26 +203,6 @@ class LongitudinalPlanner:
       accel_limits = [sm['frogpilotPlan'].minAcceleration, sm['frogpilotPlan'].maxAcceleration]
       steer_angle_without_offset = sm['carState'].steeringAngleDeg - sm['liveParameters'].angleOffsetDeg
       accel_limits_turns = limit_accel_in_turns(v_ego, steer_angle_without_offset, accel_limits, self.CP)
-
-      # Safety override: keep profile comfort limits, but increase available braking
-      # when lead-closing risk rises so chill profiles cannot under-brake.
-      lead_one = sm['radarState'].leadOne
-      if lead_one.status:
-        lead_dist = float(lead_one.dRel)
-        rel_v = max(0.0, v_ego - float(lead_one.vLead))
-        ttc = lead_dist / max(rel_v, 0.1) if rel_v > 0.1 else 1e6
-        desired_gap = sm['frogpilotPlan'].tFollow * v_ego + 6.0
-
-        floor_ttc = interp(ttc, [1.6, 2.8, 4.0, 6.0, 10.0],
-                           [ACCEL_MIN, -2.6, -1.8, -1.2, accel_limits_turns[0]])
-        floor_rel_v = interp(rel_v, [0.0, 1.0, 2.5, 5.0, 8.0],
-                             [accel_limits_turns[0], -1.1, -1.7, -2.5, ACCEL_MIN])
-        gap_shortfall = max(0.0, desired_gap - lead_dist)
-        floor_gap = interp(gap_shortfall, [0.0, 2.0, 5.0, 9.0],
-                           [accel_limits_turns[0], -1.2, -2.0, -2.8])
-
-        safety_floor = min(accel_limits_turns[0], floor_ttc, floor_rel_v, floor_gap)
-        accel_limits_turns[0] = max(ACCEL_MIN, safety_floor)
     else:
       accel_limits = [ACCEL_MIN, ACCEL_MAX]
       accel_limits_turns = [ACCEL_MIN, ACCEL_MAX]
@@ -228,7 +211,6 @@ class LongitudinalPlanner:
       self.v_desired_filter.x = v_ego
       # Clip aEgo to cruise limits to prevent large accelerations when becoming active
       self.a_desired = clip(sm['carState'].aEgo, accel_limits[0], accel_limits[1])
-      self.last_lead_brake_cmd_t = 0.0
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
@@ -255,14 +237,8 @@ class LongitudinalPlanner:
 
     lead_dist = self.lead_one.dRel if self.lead_one.status else 50.0
 
-    # Keep only light smoothing on lead distance so ACC reacts quickly like stock.
-    closing_speed = max(0.0, v_ego - self.lead_one.vLead) if self.lead_one.status else 0.0
-    opening_speed = max(0.0, self.lead_one.vLead - v_ego) if self.lead_one.status else 0.0
-    alpha = interp(v_ego, [0.0, 8.0, 15.0, 25.0, 35.0], [0.22, 0.28, 0.34, 0.42, 0.48])
-    if closing_speed > 0.8:
-      alpha = max(alpha, interp(closing_speed, [0.8, 2.0, 4.0], [0.48, 0.58, 0.66]))
-    elif opening_speed > 1.0:
-      alpha = min(alpha, interp(opening_speed, [1.0, 2.5, 4.0], [alpha, 0.22, 0.18]))
+    # Smooth lead distance (EMA) to avoid chatter in thresholds
+    alpha = max(0.02, min(0.15, 0.05 + 0.002 * v_ego))
     if self.lead_dist_f is None:
       self.lead_dist_f = float(lead_dist)
     else:
@@ -338,34 +314,34 @@ class LongitudinalPlanner:
       uncertainty = self.uncert_slow.x
     uncertainty_accel = min(self.uncert_slow.x, self.uncert_fast.x)
 
-    accel_jerk_w = sm['frogpilotPlan'].accelerationJerk
-    danger_jerk_w = sm['frogpilotPlan'].dangerJerk
-    speed_jerk_w = sm['frogpilotPlan'].speedJerk
+    # --- Slope-based panic bypass ---
+    if self._uncert_last_t is None:
+      uncert_slope = 0.0
+    else:
+      dt_u = max(1e-3, now_t - self._uncert_last_t)
+      uncert_slope = (uncertainty - self._uncert_last) / dt_u
+    self._uncert_last = uncertainty
+    self._uncert_last_t = now_t
 
-    # In stable, low-risk car-following, increase smoothing to reduce rubberbanding.
-    if self.lead_one.status and self.stable_lead:
-      lead_dist_used = self.lead_dist_f if self.lead_dist_f is not None else self.lead_one.dRel
-      desired_gap = sm['frogpilotPlan'].tFollow * v_ego + 6.0
-      gap_err = abs(lead_dist_used - desired_gap)
-      rel_v_abs = abs(v_ego - self.lead_one.vLead)
-      closing_v = max(0.0, v_ego - self.lead_one.vLead)
-      ttc = lead_dist_used / max(closing_v, 0.1) if closing_v > 0.1 else 1e6
+    closing_fast = (self.lead_one.status and (v_ego - self.lead_one.vLead) > 0.5)
+    # Trigger if either slope is high or magnitude is high; require a valid lead and closing
+    panic_bypass = closing_fast and (uncert_slope > UNCERT_SLOPE_TRIG or uncertainty >= UNCERT_MAG_TRIG)
 
-      gap_ok = gap_err < interp(v_ego, [0.0, 10.0, 20.0, 35.0], [1.0, 2.0, 3.5, 5.0])
-      rel_v_ok = rel_v_abs < interp(v_ego, [0.0, 10.0, 20.0, 35.0], [0.30, 0.60, 0.90, 1.20])
-      low_risk = (ttc > 3.0) and gap_ok and rel_v_ok
-      if low_risk:
-        accel_jerk_w *= interp(v_ego, [0.0, 10.0, 20.0, 35.0], [1.00, 1.08, 1.18, 1.26])
-        speed_jerk_w *= interp(v_ego, [0.0, 10.0, 20.0, 35.0], [1.00, 1.04, 1.10, 1.16])
+    if panic_bypass:
+      try:
+        cloudlog.error(f"LON_SLOPE; slope={uncert_slope:.3f}/s; uncertainty={uncertainty:.3f}; v_ego={v_ego:.2f}; v_rel={(v_ego - self.lead_one.vLead) if self.lead_one.status else 0.0:.2f}; lead_dist={self.lead_dist_f if self.lead_dist_f is not None else -1:.2f}; trigger=True")
+      except Exception:
+        pass
 
-    self.mpc.set_weights(accel_jerk_w,
-                         danger_jerk_w,
-                         speed_jerk_w,
+    self.mpc.set_weights(sm['frogpilotPlan'].accelerationJerk,
+                         sm['frogpilotPlan'].dangerJerk,
+                         sm['frogpilotPlan'].speedJerk,
                          prev_accel_constraint,
                          personality=sm['controlsState'].personality,
                          v_ego=v_ego,
                          lead_dist=self.lead_dist_f if self.lead_dist_f is not None else lead_dist,
-                         uncertainty=uncertainty)
+                         uncertainty=uncertainty,
+                         panic_bypass=panic_bypass)
     self.mpc.set_accel_limits(accel_limits_turns[0], accel_limits_turns[1])
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
     # After deciding the MPC mode via get_mpc_mode(), ensure MPC uses that mode when not mlsim
@@ -388,14 +364,10 @@ class LongitudinalPlanner:
     # Safety checks for rubber-banding mitigation
     max_jerk = np.max(np.abs(self.mpc.j_solution))
     max_accel_change = np.max(np.abs(np.diff(self.mpc.a_solution)))
-    now_t = time.monotonic()
-    if now_t - self.last_safety_log_t > 2.0:
-      if max_jerk > 5.0:  # m/s^3
-        cloudlog.warning(f"High jerk detected: {max_jerk:.2f} m/s^3")
-        self.last_safety_log_t = now_t
-      if max_accel_change > 2.0:  # m/s^2
-        cloudlog.warning(f"High acceleration change: {max_accel_change:.2f} m/s^2")
-        self.last_safety_log_t = now_t
+    if max_jerk > 5.0:  # m/s^3
+      cloudlog.warning(f"High jerk detected: {max_jerk:.2f} m/s^3")
+    if max_accel_change > 2.0:  # m/s^2
+      cloudlog.warning(f"High acceleration change: {max_accel_change:.2f} m/s^2")
 
     # Interpolate 0.05 seconds and save as starting point for next iteration
     a_prev = self.a_desired
@@ -405,35 +377,15 @@ class LongitudinalPlanner:
     # Anticipatory pre-brake to avoid "coming in hot" when closing on a lead
     if self.lead_one.status:
       rel_v = max(0.0, v_ego - self.lead_one.vLead)
-      lead_dist_f = self.lead_dist_f if self.lead_dist_f is not None else self.lead_one.dRel
-      ttc = lead_dist_f / max(rel_v, 0.1) if rel_v > 0.1 else 1e6
-      desired_gap = sm['frogpilotPlan'].tFollow * v_ego + 6.0
-      gap_shortfall = max(0.0, desired_gap - lead_dist_f)
-
-      pre_brake_dist_trigger = desired_gap + interp(v_ego, [0.0, 10.0, 20.0, 30.0], [5.0, 5.8, 6.8, 8.0])
-      if rel_v > 0.5 and lead_dist_f < pre_brake_dist_trigger:
-        pre_brake = 0.0
-        pre_brake += interp(rel_v, [0.5, 2.0, 5.0, 8.0], [0.0, 0.02, 0.06, 0.11])
-        pre_brake += interp(ttc, [1.4, 2.2, 3.5, 5.0, 7.5], [0.16, 0.09, 0.04, 0.01, 0.0])
-        pre_brake += interp(gap_shortfall, [0.0, 2.0, 6.0, 10.0], [0.0, 0.015, 0.04, 0.07])
-        pre_brake += 0.10 * max(0.0, uncertainty - 0.35)
-        # Mild low-speed soften to avoid excess early braking while retaining high-speed safety.
-        pre_brake *= interp(v_ego, [0.0, 8.0, 15.0, 25.0], [0.50, 0.68, 0.88, 1.00])
-        pre_brake = min(pre_brake, interp(v_ego, [0.0, 5.0, 15.0, 30.0], [0.05, 0.08, 0.13, 0.16]))
+      # dynamic time headway adds a small buffer when uncertainty is elevated
+      base_th = 1.6
+      th = base_th + 0.6 * max(0.0, uncertainty - 0.42)
+      desired_gap = th * v_ego
+      if (self.lead_dist_f is not None and self.lead_dist_f < desired_gap and rel_v > 0.5):
+        k_rel, k_unc = 0.04, 0.20
+        pre_brake = k_rel * rel_v + k_unc * max(0.0, uncertainty - 0.42)
+        pre_brake = min(pre_brake, 0.06)
         self.a_desired = float(self.a_desired - pre_brake)
-
-      # Shape accel release after low-speed lead-brake events to reduce stop-and-go brake->surge snapback.
-      if v_ego < 8.0 and rel_v > 0.2 and lead_dist_f < desired_gap + 2.5 and self.a_desired < -0.35:
-        self.last_lead_brake_cmd_t = now_t
-
-      t_since_brake = now_t - self.last_lead_brake_cmd_t
-      release_window = interp(v_ego, [0.0, 3.0, 6.0, 8.0], [0.6, 0.7, 0.8, 0.9])
-      low_risk_release = ttc > 2.0 and rel_v < interp(v_ego, [0.0, 3.0, 6.0, 8.0], [0.3, 0.45, 0.6, 0.75])
-      near_lead = lead_dist_f < desired_gap + 2.0
-      if 0.0 < t_since_brake < release_window and v_ego < 8.0 and near_lead and low_risk_release and self.a_desired > -0.05:
-        release_cap_t = interp(t_since_brake, [0.0, 0.15, 0.35, 0.60, release_window], [0.05, 0.14, 0.24, 0.34, 0.48])
-        release_cap_v = interp(v_ego, [0.0, 3.0, 6.0, 8.0], [0.15, 0.24, 0.34, 0.42])
-        self.a_desired = float(min(self.a_desired, min(release_cap_t, release_cap_v)))
 
     # Small deadzone around zero accel to kill micro-dithers
     if -0.05 < self.a_desired < 0.05:

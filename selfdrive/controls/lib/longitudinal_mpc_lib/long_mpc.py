@@ -297,10 +297,13 @@ class LongitudinalMpc:
     self.dt = dt
     self.solver = AcadosOcpSolverCython(MODEL_NAME, ACADOS_SOLVER_TYPE, N)
     self.source = SOURCES[2]
-    # Keep a fixed lead filter time; disable speed/uncertainty follow-smoothing modulation.
+    # Initialize smoothing filters with default time constants
     self.current_filter_time = LEAD_FILTER_TIME_LOW
     self.lead_a_filter = FirstOrderFilter(0.0, self.current_filter_time, self.dt)
     self.lead_v_filter = FirstOrderFilter(0.0, self.current_filter_time, self.dt)
+    # Slew-limited filter factor to avoid abrupt 0.50↔1.00 jumps
+    self.filter_time_factor = 1.0
+    self.slew_per_sec = 1.0
     # Instance variables to avoid global modifications
     self.current_x_ego_cost = X_EGO_OBSTACLE_COSTS[0]
     self.current_j_ego_cost = J_EGO_COSTS[0]
@@ -359,7 +362,6 @@ class LongitudinalMpc:
   def set_weights(self, acceleration_jerk=1.0, danger_jerk=1.0, speed_jerk=1.0, prev_accel_constraint=True,
                   personality=log.LongitudinalPersonality.standard, v_ego=0.0, lead_dist=50.0,
                   uncertainty=0.0, accel_reengage=False, panic_bypass=False):
-    _ = uncertainty, accel_reengage, panic_bypass  # compatibility args (follow-smoothing path removed)
     # Update parameters based on current speed with interpolation for smooth scaling
     speed_mph = v_ego * CV.MS_TO_MPH  # Convert m/s to mph
 
@@ -372,11 +374,52 @@ class LongitudinalMpc:
     dist_adapt_array = [0.0, DIST_ADAPTS[1], DIST_ADAPTS[2], DIST_ADAPTS[3]]
     self.current_dist_adapt = get_speed_based_param(speed_mph, dist_adapt_array)
 
+    # Update filter time constants with interp and recreate filters if needed
+    if speed_mph < 47:
+        self.current_filter_time = 0.0
+    else:
+        self.current_filter_time = interp(speed_mph, [47, 65], [0.0, LEAD_FILTER_TIME_HIGH])
+    if abs(self.current_filter_time - getattr(self, 'prev_filter_time', 0)) > 0.1:  # Only update if significant change
+      # Recreate filters with new time constant while preserving current values
+      current_a = self.lead_a_filter.x if hasattr(self.lead_a_filter, 'x') else 0.0
+      current_v = self.lead_v_filter.x if hasattr(self.lead_v_filter, 'x') else 0.0
+      self.lead_a_filter = FirstOrderFilter(current_a, self.current_filter_time, self.dt)
+      self.lead_v_filter = FirstOrderFilter(current_v, self.current_filter_time, self.dt)
+      self.prev_filter_time = self.current_filter_time
+
     # Adaptive jerk factors for distance with interp scaling
     dist_factor = 1.0 + self.current_dist_adapt * (20.0 / max(lead_dist, 5.0))
     acceleration_jerk *= dist_factor
     danger_jerk *= dist_factor
     speed_jerk *= dist_factor
+
+    # Scene complexity adjustment based on model uncertainty
+    prev_filter_time_factor = getattr(self, 'prev_filter_time_factor', 1.0)
+    # Target factor from uncertainty
+    if uncertainty <= 0.45:
+      tgt_factor = 1.0
+    elif uncertainty >= 0.70:
+      tgt_factor = 0.0
+    else:
+      tgt_factor = float(np.interp(uncertainty, [0.45, 0.70], [1.0, 0.30]))
+
+    if accel_reengage:
+      tgt_factor = min(tgt_factor, 0.5)
+
+    # Hard bypass of smoothing when approaching fast or magnitude trips
+    if panic_bypass:
+      tgt_factor = 0.0
+
+    # Slew-limit changes to avoid step-wise filter jumps
+    max_step = self.slew_per_sec * self.dt
+    delta = np.clip(tgt_factor - self.filter_time_factor, -max_step, max_step)
+    self.filter_time_factor += float(delta)
+    filter_time_factor = float(self.filter_time_factor)
+
+    # When uncertainty is moderately elevated, allow accel but cap jerk by increasing jerk cost
+    if 0.45 <= uncertainty < 0.60:
+      scale = float(np.interp(uncertainty, [0.45, 0.60], [1.2, 1.5]))
+      speed_jerk *= scale
 
     if self.mode == 'acc':
       a_change_cost = acceleration_jerk if prev_accel_constraint else 0
@@ -389,6 +432,15 @@ class LongitudinalMpc:
     else:
       raise NotImplementedError(f'Planner mode {self.mode} not recognized in planner cost set')
     self.set_cost_weights(cost_weights, constraint_cost_weights)
+
+    # Adjust filter time constants for complex scenes
+    if abs(filter_time_factor - getattr(self, 'prev_filter_time_factor', 1.0)) > 0.05:
+      current_a = self.lead_a_filter.x if hasattr(self.lead_a_filter, 'x') else 0.0
+      current_v = self.lead_v_filter.x if hasattr(self.lead_v_filter, 'x') else 0.0
+      new_filter_time = self.current_filter_time * filter_time_factor
+      self.lead_a_filter = FirstOrderFilter(current_a, new_filter_time, self.dt)
+      self.lead_v_filter = FirstOrderFilter(current_v, new_filter_time, self.dt)
+      self.prev_filter_time_factor = filter_time_factor
 
   def set_cur_state(self, v, a):
     v_prev = self.x0[1]
@@ -460,11 +512,10 @@ class LongitudinalMpc:
 
   def update(self, lead_one, lead_two, v_cruise, x, v, a, j, t_follow, tracking_lead, personality=log.LongitudinalPersonality.standard):
     v_ego = self.x0[1]
-    self.status = lead_one.status or lead_two.status
+    self.status = lead_one.status and tracking_lead or lead_two.status
 
-    # Always process valid leads for safety; trackingLead can still be used by higher-level logic/UI.
-    lead_xv_0 = self.process_lead(lead_one, lead_one.status)
-    lead_xv_1 = self.process_lead(lead_two, lead_two.status)
+    lead_xv_0 = self.process_lead(lead_one, tracking_lead)
+    lead_xv_1 = self.process_lead(lead_two, v_ego)
 
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance

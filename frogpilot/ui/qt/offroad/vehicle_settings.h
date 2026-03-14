@@ -39,7 +39,7 @@ private:
   QSet<QString> gmKeys = {"GMPedalLongitudinal", "LongPitch", "RedPanda", "RemapCancelToDistance", "RemoteStartBootsComma", "VoltSNG"};
   QSet<QString> hkgKeys = {"NewLongAPI", "TacoTuneHacks"};
   QSet<QString> longitudinalKeys = {"FrogsGoMoosTweak", "LongPitch", "NewLongAPI", "RemapCancelToDistance", "SNGHack", "VoltSNG"};
-  QSet<QString> toyotaKeys = {"ClusterOffset", "FrogsGoMoosTweak", "LockDoorsTimer", "SNGHack", "ToyotaDoors"};
+  QSet<QString> toyotaKeys = {"FrogsGoMoosTweak", "LockDoorsTimer", "SNGHack", "ToyotaDoors"};
   QSet<QString> vehicleInfoKeys = {"BlindSpotSupport", "HardwareDetected", "OpenpilotLongitudinal", "PedalSupport", "RadarSupport", "SASCMSupport", "SDSUSupport", "SNGSupport"};
 
   QSet<QString> parentKeys;

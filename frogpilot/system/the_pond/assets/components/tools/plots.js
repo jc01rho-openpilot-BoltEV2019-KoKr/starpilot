@@ -25,12 +25,11 @@ const QUALITY_MIN_SAMPLES = 12
 const LATERAL_QUALITY_CONFIG = {
   desiredKey: "desiredLateralAccel",
   actualKey: "actualLateralAccel",
-  minSpeedMps: 2.0,
-  minDemand: 0.08,
-  requireControlsActive: true,
+  minSpeedMps: 0.5,
+  minDemand: 0.015,
   allowLowDemandFallback: true,
-  fallbackMinSpeedMps: 5.0,
-  fallbackMinPeakDemand: 0.12,
+  fallbackMinSpeedMps: 1.0,
+  fallbackMinPeakDemand: 0.03,
   great: 0.15,
   good: 0.30,
   fair: 0.50,
@@ -41,15 +40,13 @@ const LONGITUDINAL_QUALITY_CONFIG = {
   actualKey: "actualLongitudinalAccel",
   minSpeedMps: 0.0,
   minDemand: 0.08,
-  requireControlsActive: true,
-  requireLongitudinalControlActive: true,
   allowLowDemandFallback: false,
   applyPersistenceRules: true,
-  warnError: 0.35,
-  severeError: 0.70,
-  great: 0.20,
-  good: 0.35,
-  fair: 0.55,
+  warnError: 0.50,
+  severeError: 0.90,
+  great: 0.32,
+  good: 0.52,
+  fair: 0.78,
 }
 
 function isPlotsRouteActive() {
@@ -128,8 +125,6 @@ function computeMatchQuality(samples, config) {
   const recentSamples = safeSamples.filter((sample) => toNumber(sample?.timestamp, 0) >= cutoffTs)
 
   const demandEligibleSamples = recentSamples.filter((sample) => {
-    if (config.requireControlsActive && !sample?.controlsActive) return false
-    if (config.requireLongitudinalControlActive && !sample?.longitudinalControlActive) return false
     const speed = Math.abs(toNumber(sample?.speed, 0))
     const desired = Math.abs(toNumber(sample?.[config.desiredKey], 0))
 
@@ -162,7 +157,7 @@ function computeMatchQuality(samples, config) {
       return {
         label: "N/A",
         value: null,
-        detail: `Need ${QUALITY_MIN_SAMPLES} engaged samples (${eligibleSamples.length} eligible / ${recentSamples.length} total)`,
+        detail: `Need ${QUALITY_MIN_SAMPLES} samples (${eligibleSamples.length} eligible / ${recentSamples.length} total)`,
       }
     }
 
@@ -194,9 +189,9 @@ function computeMatchQuality(samples, config) {
     const severeFrac = errors.filter((value) => value > severeThreshold).length / errors.length
 
     let label = "Poor"
-    if (robustError <= config.great && warnFrac <= 0.10 && severeFrac <= 0.03) label = "Great"
-    else if (robustError <= config.good && warnFrac <= 0.22 && severeFrac <= 0.08) label = "Good"
-    else if (robustError <= config.fair && warnFrac <= 0.40 && severeFrac <= 0.18) label = "Fair"
+    if (robustError <= config.great && warnFrac <= 0.18 && severeFrac <= 0.05) label = "Great"
+    else if (robustError <= config.good && warnFrac <= 0.34 && severeFrac <= 0.12) label = "Good"
+    else if (robustError <= config.fair && warnFrac <= 0.55 && severeFrac <= 0.24) label = "Fair"
 
     const warnPct = Math.round(warnFrac * 100)
     const severePct = Math.round(severeFrac * 100)

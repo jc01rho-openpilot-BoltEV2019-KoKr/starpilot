@@ -88,7 +88,6 @@ class CarController(CarControllerBase):
     self.planner_regen_hold = False
     self.paddle_handoff_frames = 0
     self.pedal_active_last = False
-    self.regen_mode_blend = 0.0
     self.maneuver_paddle_mode = "auto"
 
   def calc_pedal_command(self, accel: float, long_active: bool, car_velocity) -> Tuple[float, bool]:
@@ -100,7 +99,6 @@ class CarController(CarControllerBase):
       self.regen_release_counter = 0
       self.regen_min_on_frames = 0
       self.regen_min_off_frames = 0
-      self.regen_mode_blend = 0.0
       self.pedal_active_last = False
       self.pedal_steady = 0.0
       return 0., False
@@ -167,7 +165,6 @@ class CarController(CarControllerBase):
         self.regen_press_counter = 0
         self.regen_release_counter = 0
         self.regen_min_on_frames = 0
-        self.regen_mode_blend = 0.0
         press_regen_paddle = False
       elif self.maneuver_paddle_mode == "force":
         forced_press = accel < -0.02
@@ -181,7 +178,6 @@ class CarController(CarControllerBase):
       self.regen_release_counter = 0
       self.regen_min_on_frames = 0
       self.regen_min_off_frames = 0
-      self.regen_mode_blend = 0.0
 
     # Regen gain ratios from bin-averaged 60–0 deceleration sweep; Calculates stronger decel from paddle
     speed_mps = [0.559, 1.678, 2.797, 3.916, 5.035, 6.154, 7.273, 8.392, 9.511, 10.63,
@@ -198,24 +194,7 @@ class CarController(CarControllerBase):
     accel_gain = interp(car_velocity, [0.0, 3.0, 8.0, 20.0], [0.47, 0.52, 0.57, 0.61])
     pedaloffset = interp(car_velocity, [0.0, 1.0, 3.0, 6.0, 15.0, 30.0], [0.085, 0.11, 0.17, 0.23, 0.235, 0.23])
 
-    # Blend between non-paddle and paddle lookup behavior to avoid a hard mode switch.
-    regen_blend_target = 1.0 if press_regen_paddle else 0.0
-    regen_blend_up_step = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [0.04, 0.06, 0.09, 0.12])
-    regen_blend_down_step = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [0.05, 0.08, 0.11, 0.14])
-    if switched_state:
-      regen_blend_up_step *= 0.35
-      regen_blend_down_step *= 0.35
-    if regen_blend_target > self.regen_mode_blend:
-      self.regen_mode_blend = min(self.regen_mode_blend + regen_blend_up_step, regen_blend_target)
-    else:
-      self.regen_mode_blend = max(self.regen_mode_blend - regen_blend_down_step, regen_blend_target)
-
-    if switched_state and press_regen_paddle:
-      # Snap quickly toward paddle-compensated mapping to avoid transient over-decel at paddle handoff.
-      press_blend_snap = interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [0.70, 0.78, 0.86, 0.92])
-      self.regen_mode_blend = max(self.regen_mode_blend, press_blend_snap)
-
-    accel_term_scale = (1.0 - self.regen_mode_blend) + (self.regen_mode_blend / max(gain, 1e-3))
+    accel_term_scale = (1.0 / max(gain, 1e-3)) if press_regen_paddle else 1.0
     # De-sensitize small commands asymmetrically: keep decel smoother while preserving accel pickup.
     if accel >= 0.0:
       small_cmd_scale = interp(abs(accel), [0.0, 0.35, 0.8, 1.5, 2.5], [0.58, 0.68, 0.82, 0.93, 1.0])
@@ -231,7 +210,7 @@ class CarController(CarControllerBase):
     target_pedal_gas = clip(raw_pedal_gas, 0.0, pedal_gas_max)
 
     # Blend and rate-limit command changes for smoother transients while preserving clip bounds.
-    if not self.pedal_active_last:
+    if not self.pedal_active_last or switched_state:
       pedal_gas = target_pedal_gas
       self.pedal_active_last = True
     else:
@@ -241,9 +220,6 @@ class CarController(CarControllerBase):
         # Recover high-command launch response without changing low-command smoothness.
         rate_up += interp(car_velocity, [0.0, 4.0, 12.0, 25.0], [0.006, 0.005, 0.003, 0.002])
       rate_down = interp(car_velocity, [0.0, 3.0, 8.0, 20.0], [0.008, 0.014, 0.026, 0.045]) + 0.015 * urgency
-      if switched_state:
-        rate_up *= 0.75
-        rate_down *= 0.75
       pedal_gas = clip(target_pedal_gas, self.pedal_steady - rate_down, self.pedal_steady + rate_up)
 
     self.pedal_steady = pedal_gas

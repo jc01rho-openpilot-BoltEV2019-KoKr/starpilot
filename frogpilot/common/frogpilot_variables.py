@@ -685,7 +685,7 @@ class FrogPilotVariables:
 
     toggle.car_model = params.get("CarModel", encoding="utf-8") or toggle.car_model
 
-    toggle.cluster_offset = params.get_float("ClusterOffset") if toggle.car_make == "toyota" and tuning_level >= level["ClusterOffset"] else default.get_float("ClusterOffset")
+    toggle.cluster_offset = params.get_float("ClusterOffset") if toggle.car_make in {"gm", "toyota"} and tuning_level >= level["ClusterOffset"] else default.get_float("ClusterOffset")
 
     toggle.conditional_experimental_mode = toggle.openpilot_longitudinal and (params.get_bool("ConditionalExperimental") if tuning_level >= level["ConditionalExperimental"] else default.get_bool("ConditionalExperimental"))
     toggle.conditional_curves = toggle.conditional_experimental_mode and (params.get_bool("CECurves") if tuning_level >= level["CECurves"] else default.get_bool("CECurves"))
