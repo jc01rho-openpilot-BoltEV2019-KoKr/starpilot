@@ -110,6 +110,29 @@ def manager_init() -> None:
   params.put_bool("IsTestedBranch", build_metadata.tested_channel)
   params.put_bool("IsReleaseBranch", build_metadata.release_channel)
 
+  # Keep navd compatible when bouncing between newer/older branches.
+  # Always clear persisted GPS position at startup on this branch.
+  params.remove("LastGPSPosition")
+  params_cache.remove("LastGPSPosition")
+
+  # Compatibility for users switching back from StarPilot-Development.
+  # Rename 2018_2021 -> 2019_2021 and clear cached CarParams payloads.
+  remap_from = "CHEVROLET_BOLT_CC_2018_2021"
+  remap_to = "CHEVROLET_BOLT_CC_2019_2021"
+  car_model = params.get("CarModel", encoding='utf-8')
+  car_model_name = params.get("CarModelName", encoding='utf-8')
+  car_model_norm = car_model[4:] if car_model is not None and car_model.startswith("CAR.") else car_model
+  car_model_name_norm = car_model_name[4:] if car_model_name is not None and car_model_name.startswith("CAR.") else car_model_name
+  if car_model_norm == remap_from or car_model_name_norm == remap_from:
+    params.put("CarModel", remap_to)
+    params_cache.put("CarModel", remap_to)
+    params.put("CarModelName", remap_to)
+    params_cache.put("CarModelName", remap_to)
+    for key in ("CarParams", "CarParamsPersistent", "CarParamsPrevRoute"):
+      params.remove(key)
+      params_cache.remove(key)
+    cloudlog.info(f"remapped legacy bolt fingerprint {remap_from} -> {remap_to} and cleared CarParams")
+
   # Legacy Bolt fingerprint migration after branch consolidation
   bolt_source_branch_file = "/data/media/0/starpilot_source_branch"
   bolt_fingerprint_migration_flag_file = "/data/media/0/frogpilot_bolt_fingerprint_migrated.flag"

@@ -337,9 +337,8 @@ export function RouteRecordings() {
         <button
           class="show-preserved-button"
           @click="${() => (state.showPreservedOnly = !state.showPreservedOnly)}"
-          ?disabled="${state.loading && state.routes.length === 0}"
-        >
-          ${() => (state.showPreservedOnly ? "Show All" : "Show Only Preserved Routes")}
+          disabled="${() => (state.loading && state.routes.length === 0) || false}"
+        >          ${() => (state.showPreservedOnly ? "Show All" : "Show Only Preserved Routes")}
         </button>
 
         ${() => {
@@ -398,9 +397,8 @@ export function RouteRecordings() {
               <button
                 class="delete-all-button"
                 @click="${() => (state.showDeleteAllModal = true)}"
-                ?disabled="${state.isDeletingAll}"
-              >
-                ${() => (state.isDeletingAll ? "Deleting..." : "Delete All Routes")}
+                disabled="${() => state.isDeletingAll || false}"
+              >                ${() => (state.isDeletingAll ? "Deleting..." : "Delete All Routes")}
               </button>
             `;
       }

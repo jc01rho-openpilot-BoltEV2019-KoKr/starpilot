@@ -579,21 +579,20 @@ function renderSettingRow(p) {
               <div class="ds-stepper">
                 <button
                   class="ds-stepper-btn"
-                  ?disabled="${!canDecrease}"
+                  disabled="${() => !canDecrease || false}"
                   @click="${() => stepNumericParam(p, -1)}">-</button>
                 <div class="ds-stepper-meta">
                   <span>${formatSliderValue(bounds.min, String(bounds.step), p.precision, p.key)} to ${formatSliderValue(bounds.max, String(bounds.step), p.precision, p.key)}</span>
                   <span class="ds-default-value">Default: ${defaultLabel}</span>
                   <button
                     class="ds-reset-btn"
-                    ?disabled="${!canReset}"
+                    disabled="${() => !canReset || false}"
                     @click="${() => resetNumericParam(p)}">Reset to Default</button>
                 </div>
                 <button
                   class="ds-stepper-btn"
-                  ?disabled="${!canIncrease}"
-                  @click="${() => stepNumericParam(p, 1)}">+</button>
-              </div>
+                  disabled="${() => !canIncrease || false}"
+                  @click="${() => stepNumericParam(p, 1)}">+</button>              </div>
             `
       })()}
         </div>
