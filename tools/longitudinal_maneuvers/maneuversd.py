@@ -379,6 +379,8 @@ def main():
   active_paddle_mode = active_phase.paddle_mode
   step_index = 0
   phase_step_index = 0
+  resume_blocked_active = False
+  last_resume_blocked_msg_t = 0.0
 
   t_idx = ModelConstants.T_IDXS[:CONTROL_N]
   try:
@@ -441,6 +443,54 @@ def main():
 
       if maneuver is not None:
         accel = maneuver.get_accel(v_ego, sm['carControl'].longActive, sm['carState'].standstill, sm['carState'].cruiseState.standstill)
+
+        resume_blocked = (not CP.autoResumeSng) and (not maneuver.active) and bool(sm['carState'].cruiseState.standstill)
+        if resume_blocked:
+          now_t = time.monotonic()
+          if (not resume_blocked_active) or (now_t - last_resume_blocked_msg_t > 2.0):
+            write_status(
+              params,
+              status,
+              state="waiting_resume",
+              phase=active_phase_name,
+              paddleMode=active_paddle_mode,
+              maneuver=maneuver.description,
+              runIndex=0,
+              runTotal=maneuver.repeat + 1,
+              stepIndex=step_index,
+              stepTotal=total_step_count,
+              phaseStepIndex=phase_step_index,
+              phaseStepTotal=active_phase_step_total,
+              uiShow=True,
+              uiSize="mid",
+              uiText1="Long Maneuvers",
+              uiText2=f"Step {step_index + 1}/{total_step_count}: press/hold RESUME to continue",
+              history_line=(f"Waiting at standstill on '{maneuver.description}'. "
+                            f"Press/hold RESUME to continue.")
+            )
+            last_resume_blocked_msg_t = now_t
+          resume_blocked_active = True
+        elif resume_blocked_active:
+          write_status(
+            params,
+            status,
+            state="phase",
+            phase=active_phase_name,
+            paddleMode=active_paddle_mode,
+            maneuver=maneuver.description,
+            runIndex=0,
+            runTotal=maneuver.repeat + 1,
+            stepIndex=step_index,
+            stepTotal=total_step_count,
+            phaseStepIndex=phase_step_index,
+            phaseStepTotal=active_phase_step_total,
+            uiShow=True,
+            uiSize="small",
+            uiText1="Long Maneuvers",
+            uiText2=f"Resume detected: preparing {maneuver.description}",
+            history_line=f"Resume detected; continuing '{maneuver.description}'.",
+          )
+          resume_blocked_active = False
 
         if maneuver.active and not run_active:
           maneuver_run_count[maneuver.description] += 1
@@ -509,7 +559,10 @@ def main():
 
       # Build a full horizon trajectory so both old and new long APIs can consume the test plan.
       speed_traj = [max(v_ego + accel * t, 0.0) for t in t_idx]
-      speed_traj[0] = max(speed_traj[0], 0.2)  # keeps stock-ACC resume spamming path alive when needed
+      # controlsd resume logic gates on speeds[-1] > 0.1, not speeds[0].
+      # Keep both ends >0.1 so camera-long standstill can resume during maneuver setup.
+      speed_traj[0] = max(speed_traj[0], 0.2)
+      speed_traj[-1] = max(speed_traj[-1], 0.2)
       longitudinalPlan.speeds = speed_traj
       longitudinalPlan.accels = [accel] * CONTROL_N
       longitudinalPlan.jerks = [0.0] * CONTROL_N

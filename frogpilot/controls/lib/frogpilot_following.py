@@ -8,6 +8,7 @@ from openpilot.frogpilot.common.frogpilot_variables import CITY_SPEED_LIMIT
 
 TRAFFIC_MODE_BP = [0., CITY_SPEED_LIMIT]
 PERSONALITY_BP = [45. * CV.MPH_TO_MS, 70. * CV.MPH_TO_MS]
+HIGHWAY_DISABLE_THROTTLE_MIN_SPEED = 45. * CV.MPH_TO_MS
 
 class FrogPilotFollowing:
   def __init__(self, FrogPilotPlanner):
@@ -86,7 +87,8 @@ class FrogPilotFollowing:
       coast_window_far = lead_distance < desired_gap + max(25.0, 1.2 * v_ego)
       gentle_closing = closing_speed < max(2.0, 0.12 * v_ego)
 
-      self.disable_throttle = (not self.following_lead and v_ego > 5.0 and coast_window_open and
+      # Highway-only coast suppression: keep low-speed lead departures responsive.
+      self.disable_throttle = (not self.following_lead and v_ego > HIGHWAY_DISABLE_THROTTLE_MIN_SPEED and coast_window_open and
                                coast_window_far and gentle_closing)
       # Never coast when we are entering a potentially late-braking scenario.
       self.disable_throttle &= ttc > 6.0 and lead_distance > desired_gap + 6.0
