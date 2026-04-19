@@ -131,6 +131,7 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     excessiveActuation @96;
     audioFeedback @97;
     lateralManeuver @98;
+    ndaCameraWarn @99;
 
     soundsUnavailableDEPRECATED @47;
   }
@@ -2482,6 +2483,23 @@ struct DebugAlert {
   alertText2 @1 :Text;
 }
 
+struct NaviData {
+  active @0 :Int16;
+  roadLimitSpeed @1 :Int16;
+  isHighway @2 :Bool;
+  camType @3 :Int16;
+  camLimitSpeedLeftDist @4 :Int16;
+  camLimitSpeed @5 :Int16;
+  sectionLimitSpeed @6 :Int16;
+  sectionLeftDist @7 :Int16;
+  sectionAvgSpeed @8 :Int16;
+  sectionLeftTime @9 :Int16;
+  sectionAdjustSpeed @10 :Bool;
+  camSpeedFactor @11 :Float32;
+  currentRoadName @12 :Text;
+  isNda2 @13 :Bool;
+}
+
 struct UserBookmark @0xfe346a9de48d9b50 {
 }
 
@@ -2609,6 +2627,7 @@ struct Event {
     bookmarkButton @148 :UserBookmark;
     audioFeedback @149 :AudioFeedback;
     lateralManeuverPlan @150 :LateralManeuverPlan;
+    naviData @151 :NaviData;
 
     # *********** debug ***********
     testJoystick @52 :Joystick;

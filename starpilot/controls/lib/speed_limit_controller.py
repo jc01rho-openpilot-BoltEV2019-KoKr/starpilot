@@ -2,6 +2,7 @@
 # PFEIFER - SLC - Modified by FrogAi
 import calendar
 import json
+import time
 import numpy as np
 import requests
 
@@ -34,6 +35,9 @@ OFFSET_MAP_METRIC = [
   (33.1, 38.9, "speed_limit_offset7"),  # 120–140
 ]
 
+CAMERA_SPEED_FACTOR = 1.00
+
+
 class SpeedLimitController:
   def __init__(self, StarPilotVCruise):
     self.starpilot_planner = StarPilotVCruise.starpilot_planner
@@ -55,6 +59,8 @@ class SpeedLimitController:
 
     self.previous_source = "None"
     self.source = "None"
+
+
 
     mapbox_requests_raw = self.starpilot_planner.params.get("MapBoxRequests", encoding="utf-8")
     try:
@@ -384,6 +390,7 @@ class SpeedLimitController:
       if next_speed_limit_distance < max_lookahead:
         self.map_speed_limit = self.next_speed_limit
 
+
   def update_override(self, v_cruise, v_cruise_diff, v_ego, v_ego_diff, sm):
     self.override_slc = self.overridden_speed > self.target + self.offset > 0
     self.override_slc |= sm["carState"].gasPressed and v_ego > self.target + self.offset > 0
@@ -400,3 +407,5 @@ class SpeedLimitController:
       self.source = "None"
     else:
       self.overridden_speed = 0
+
+
