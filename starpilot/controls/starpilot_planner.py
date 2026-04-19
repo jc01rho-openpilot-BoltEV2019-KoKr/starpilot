@@ -3,7 +3,6 @@ import json
 import math
 
 import cereal.messaging as messaging
-
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.gps import get_gps_location_service
@@ -11,7 +10,6 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import A_CHANGE_COST, DANGER_ZONE_COST, J_EGO_COST, STOP_DISTANCE
-
 from openpilot.starpilot.common.starpilot_utilities import calculate_lane_width, calculate_road_curvature
 from openpilot.starpilot.common.starpilot_variables import CRUISING_SPEED, MINIMUM_LATERAL_ACCELERATION, PLANNER_TIME, THRESHOLD
 from openpilot.starpilot.controls.lib.conditional_experimental_mode import ConditionalExperimentalMode
@@ -199,9 +197,13 @@ class StarPilotPlanner:
 
     starpilotPlan.roadCurvature = self.road_curvature
 
-    starpilotPlan.slcMapSpeedLimit = self.starpilot_vcruise.slc.map_speed_limit
+    navi_pending_speed_ms = 0.0
+    if self.starpilot_vcruise.last_nda_limit_speed > 0 and self.starpilot_vcruise.last_nda_left_dist > 0:
+      navi_pending_speed_ms = self.starpilot_vcruise.last_nda_limit_speed * CV.KPH_TO_MS
+
+    starpilotPlan.slcMapSpeedLimit = self.starpilot_vcruise.current_road_limit_ms
     starpilotPlan.slcMapboxSpeedLimit = self.starpilot_vcruise.slc.mapbox_limit
-    starpilotPlan.slcNextSpeedLimit = self.starpilot_vcruise.slc.next_speed_limit
+    starpilotPlan.slcNextSpeedLimit = navi_pending_speed_ms if navi_pending_speed_ms > 0 else self.starpilot_vcruise.slc.next_speed_limit
     starpilotPlan.slcOverriddenSpeed = self.starpilot_vcruise.slc.overridden_speed
     starpilotPlan.slcSpeedLimit = self.starpilot_vcruise.slc_target
     starpilotPlan.slcSpeedLimitOffset = self.starpilot_vcruise.slc_offset

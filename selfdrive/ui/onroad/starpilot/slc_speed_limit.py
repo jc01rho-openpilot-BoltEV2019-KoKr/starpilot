@@ -1,8 +1,9 @@
 import pyray as rl
+
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui import UI_BORDER_SIZE
 from openpilot.selfdrive.ui.ui_state import ui_state
-from openpilot.system.ui.lib.application import gui_app, FontWeight
+from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 
@@ -57,7 +58,7 @@ def _get_slc_state():
     return None
 
   plan = sm["starpilotPlan"]
-  speed_limit_changed = plan.speedLimitChanged
+  speed_limit_changed = bool(plan.speedLimitChanged or plan.slcNextSpeedLimit > 0)
 
   show_slc = ui_state.params.get_bool("ShowSpeedLimits") or ui_state.params.get_bool("SpeedLimitController")
   hide_sl = ui_state.params.get_bool("HideSpeedLimit")
@@ -73,7 +74,8 @@ def _get_slc_state():
   vision_sl = ui_state.params_memory.get_float("VisionSpeedLimit") if ui_state.params.get_bool("VisionSpeedLimitDetection") else 0.0
 
   slc_overridden_speed = plan.slcOverriddenSpeed
-  speed_limit = plan.slcSpeedLimit
+  speed_limit = plan.slcSpeedLimit if plan.slcSpeedLimit > 0 else plan.slcMapSpeedLimit
+  speed_limit_source = plan.slcSpeedLimitSource if plan.slcSpeedLimitSource != "None" else ("Map Data" if plan.slcMapSpeedLimit > 0 else "None")
 
   # Offset calculation (matches Qt lines 199-204)
   if slc_overridden_speed == 0 and not show_offset:
@@ -87,8 +89,8 @@ def _get_slc_state():
     'speed_limit': speed_limit,
     'speed_limit_str': "\u2013" if speed_limit <= 1 else str(int(round(speed_limit))),
     'slc_overridden_speed': slc_overridden_speed,
-    'speed_limit_source': plan.slcSpeedLimitSource,
-    'unconfirmed_speed_limit': max(0.0, plan.unconfirmedSlcSpeedLimit * speed_conversion),
+    'speed_limit_source': speed_limit_source,
+    'unconfirmed_speed_limit': max(0.0, (plan.unconfirmedSlcSpeedLimit if plan.unconfirmedSlcSpeedLimit > 0 else plan.slcNextSpeedLimit) * speed_conversion),
     'speed_limit_changed': speed_limit_changed,
     'hide': hide,
     'show_offset': show_offset,

@@ -2,21 +2,21 @@
 import bisect
 import math
 import os
-from enum import IntEnum
 from collections.abc import Callable
+from enum import IntEnum
 from types import SimpleNamespace
 
-from cereal import log, car, custom
 import cereal.messaging as messaging
+from cereal import car, custom, log
 from openpilot.common.constants import CV
 from openpilot.common.git import get_short_branch
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.desire_helper import LaneChangeDirection
 from openpilot.selfdrive.locationd.calibrationd import MIN_SPEED_FILTER
-from openpilot.system.micd import SAMPLE_RATE, SAMPLE_BUFFER
 from openpilot.selfdrive.ui.feedback.feedbackd import FEEDBACK_MAX_DURATION
 from openpilot.system.hardware import HARDWARE
+from openpilot.system.micd import SAMPLE_BUFFER, SAMPLE_RATE
 
 AlertSize = log.SelfdriveState.AlertSize
 AlertStatus = log.SelfdriveState.AlertStatus
@@ -271,6 +271,84 @@ def speed_limit_changed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging
     "",
     StarPilotAlertStatus.starpilot, AlertSize.small,
     Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.0)
+
+
+def get_nda_camera_warning_context(sm: messaging.SubMaster) -> tuple[float, float]:
+  navi = sm['naviData']
+  plan = sm['starpilotPlan']
+  mapd = sm['mapdOut']
+
+  navi_active = int(getattr(navi, 'active', 0) or 0) > 0
+
+  if navi_active:
+    cam_limit = float(getattr(navi, 'camLimitSpeed', 0) or 0.0)
+    cam_distance = float(getattr(navi, 'camLimitSpeedLeftDist', 0) or 0.0)
+    cam_type = int(getattr(navi, 'camType', 0) or 0)
+
+    section_limit = float(getattr(navi, 'sectionLimitSpeed', 0) or 0.0)
+    section_distance = float(getattr(navi, 'sectionLeftDist', 0) or 0.0)
+
+    is_highway = bool(getattr(navi, 'isHighway', False) or False)
+    min_limit = 40 if is_highway else 20
+    max_limit = 120
+    if cam_type == 22:
+      min_limit = 10
+
+    valid_cam = cam_limit > 0 and cam_distance > 2.0 and min_limit <= cam_limit <= max_limit
+    valid_section = section_limit > 0 and section_distance > 10.0 and min_limit <= section_limit <= max_limit
+
+    if valid_cam:
+      return cam_limit, cam_distance
+
+    if valid_section:
+      return section_limit, section_distance
+
+  limit_speed = float(plan.unconfirmedSlcSpeedLimit)
+  distance_m = float(mapd.nextSpeedLimitDistance or 0.0)
+
+  if limit_speed <= 0:
+    next_limit = float(mapd.nextSpeedLimit or 0.0)
+    current_limit = max(float(plan.slcSpeedLimit or 0.0), float(mapd.speedLimit or 0.0))
+    if next_limit > 0 and (current_limit <= 0 or next_limit < current_limit):
+      limit_speed = next_limit
+
+  return limit_speed, distance_m
+
+
+def get_nda_camera_warning_policy(current_speed: float, limit_speed: float) -> tuple[float, float, float, int]:
+  speed_ratio = 0.0
+  if limit_speed > 0:
+    speed_ratio = max(current_speed, 0.0) / limit_speed
+
+  clamped_ratio = min(max(speed_ratio, 0.0), 2.0)
+  if clamped_ratio >= 1.0:
+    interval = 1.2 - (min(clamped_ratio, 1.5) - 1.0) * 0.8
+  elif clamped_ratio >= 0.5:
+    interval = 2.5 - ((clamped_ratio - 0.5) / 0.5) * 1.3
+  else:
+    interval = 2.0
+
+  interval = max(0.8, min(interval, 2.5))
+  duration = interval * 0.4
+  alert_status = AlertStatus.userPrompt if limit_speed > 0 and speed_ratio < 0.7 else AlertStatus.critical
+  return speed_ratio, interval, duration, alert_status
+
+
+def nda_camera_warning_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, starpilot_toggles: SimpleNamespace) -> Alert:
+  limit_speed_kph, distance_m = get_nda_camera_warning_context(sm)
+  current_speed_kph = max(float(CS.vEgo), 0.0) * CV.MS_TO_KPH
+  speed_ratio, _, duration, alert_status = get_nda_camera_warning_policy(current_speed_kph, limit_speed_kph)
+
+  distance_text = f"{max(int(round(distance_m)), 0)} m"
+
+  limit_text = f"{max(int(round(limit_speed_kph)), 0)} kph" if limit_speed_kph > 0 else "Camera"
+  alert_text = f"{limit_text} 📸 {distance_text}"
+
+  return Alert(
+    alert_text,
+    "",
+    alert_status, AlertSize.small,
+    Priority.HIGH, VisualAlert.none, AudibleAlert.none, duration)
 
 
 def calibration_incomplete_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, starpilot_toggles: SimpleNamespace) -> Alert:
@@ -1112,6 +1190,10 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.WARNING: personality_changed_alert,
   },
 
+  EventName.ndaCameraWarn: {
+    ET.WARNING: nda_camera_warning_alert,
+  },
+
   EventName.userBookmark: {
     ET.PERMANENT: NormalPermanentAlert("Bookmark Saved", duration=1.5),
   },
@@ -1423,8 +1505,9 @@ if HARDWARE.get_device_type() == 'mici':
 
 if __name__ == '__main__':
   # print all alerts by type and priority
-  from cereal.services import SERVICE_LIST
   from collections import defaultdict
+
+  from cereal.services import SERVICE_LIST
 
   event_names = {v: k for k, v in EventName.schema.enumerants.items()}
   alerts_by_type: dict[str, dict[Priority, list[str]]] = defaultdict(lambda: defaultdict(list))

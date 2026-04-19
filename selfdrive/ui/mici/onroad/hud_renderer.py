@@ -1,15 +1,17 @@
-import pyray as rl
 from dataclasses import dataclass
+
+import pyray as rl
+
+from cereal import log
 from openpilot.common.constants import CV
-from openpilot.selfdrive.ui.mici.onroad.torque_bar import TorqueBar
+from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.ui.mici.onroad.speed_limit_utils import resolve_display_speed_limit_ms
-from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
-from openpilot.system.ui.lib.application import gui_app, FontWeight
+from openpilot.selfdrive.ui.mici.onroad.torque_bar import TorqueBar
+from openpilot.selfdrive.ui.ui_state import UIStatus, ui_state
+from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
-from openpilot.common.filter_simple import FirstOrderFilter
-from cereal import log
 
 EventName = log.OnroadEvent.EventName
 
@@ -219,7 +221,8 @@ class HudRenderer(Widget):
         self._speed_limit_overridden = bool(starpilot_plan.slcOverriddenSpeed > 0 and starpilot_plan.slcSpeedLimit > 0)
         if self._speed_limit > 0 and not self._speed_limit_overridden and not self._show_speed_limit_offset:
           self._speed_limit += self._speed_limit_offset
-        self._pending_speed_limit = max(0.0, starpilot_plan.unconfirmedSlcSpeedLimit * speed_conversion)
+        pending_speed_limit = starpilot_plan.unconfirmedSlcSpeedLimit if starpilot_plan.unconfirmedSlcSpeedLimit > 0 else starpilot_plan.slcNextSpeedLimit
+        self._pending_speed_limit = max(0.0, pending_speed_limit * speed_conversion)
       else:
         self._speed_limit = 0.0
         self._speed_limit_offset = 0.0

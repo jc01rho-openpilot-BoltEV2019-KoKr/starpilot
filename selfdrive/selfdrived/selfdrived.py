@@ -1,34 +1,29 @@
 #!/usr/bin/env python3
 import os
-import time
 import threading
+import time
 
 import cereal.messaging as messaging
-
 from cereal import car, custom, log
 from msgq.visionipc import VisionIpcClient, VisionStreamType
-
-
 from opendbc.car.gm.values import GMFlags
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
-
-from openpilot.common.params import Params
-from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper, DT_CTRL
-from openpilot.common.swaglog import cloudlog
+from openpilot.common.constants import CV
 from openpilot.common.gps import get_gps_location_service
-
+from openpilot.common.params import Params
+from openpilot.common.realtime import DT_CTRL, Priority, Ratekeeper, config_realtime_process
+from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.car.car_specific import CarSpecificEvents
-from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
-from openpilot.selfdrive.selfdrived.events import Events, ET
+from openpilot.selfdrive.locationd.helpers import Pose, PoseCalibrator
+from openpilot.selfdrive.road_speed_limiter import SpeedLimiter
+from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
+from openpilot.selfdrive.selfdrived.events import ET, Events, get_nda_camera_warning_policy
 from openpilot.selfdrive.selfdrived.helpers import ExcessiveActuationCheck
 from openpilot.selfdrive.selfdrived.state import StateMachine
-from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
-
-from openpilot.system.version import get_build_metadata
-from openpilot.system.hardware import HARDWARE
-
 from openpilot.starpilot.common.starpilot_utilities import contains_event_type
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
+from openpilot.system.hardware import HARDWARE
+from openpilot.system.version import get_build_metadata
 
 REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
@@ -56,7 +51,7 @@ class SelfdriveD:
     self.params_memory = Params(memory=True)
 
     # Ensure the current branch is cached, otherwise the first cycle lags
-    build_metadata = get_build_metadata()
+    get_build_metadata()
 
     if CP is None:
       cloudlog.info("selfdrived is waiting for CarParams")
@@ -92,7 +87,7 @@ class SelfdriveD:
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'liveCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'livePose', 'liveDelay',
                                    'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters',
-                                   'controlsState', 'carControl', 'driverAssistance', 'alertDebug', 'userBookmark', 'audioFeedback',
+                                   'controlsState', 'carControl', 'driverAssistance', 'alertDebug', 'userBookmark', 'audioFeedback', 'naviData', 'mapdOut',
                                    'lateralManeuverPlan'] + \
                                    self.camera_packets + self.sensor_packets + self.gps_packets,
                                   ignore_alive=ignore, ignore_avg_freq=ignore,
@@ -162,7 +157,22 @@ class SelfdriveD:
 
     self.display_timer = 0
     self.last_below_steer_speed_alert_time = -float("inf")
+    self.last_nda_camera_warn_time = -float("inf")
     self.last_steer_saturated_alert_time = -float("inf")
+
+    self.comm_issue_avg_freq_timestamps: list[float] = []
+    self.comm_issue_generic_timestamps: list[float] = []
+    self.comm_issue_timestamps: list[float] = []
+    self.comm_issue_threshold = 85
+    self.comm_issue_window = 0.75
+
+    self.locationd_error_timestamps: list[float] = []
+    self.locationd_error_threshold = 85
+    self.locationd_error_window = 0.75
+
+    self.radar_fault_timestamps: list[float] = []
+    self.radar_fault_threshold = 85
+    self.radar_fault_window = 0.75
 
     self.starpilot_events_prev = []
 
@@ -170,6 +180,36 @@ class SelfdriveD:
     self.has_menu = self.CP.brand == "gm" and not (self.CP.flags & GMFlags.NO_CAMERA.value) and not remap_cancel_to_distance
 
     self.FPCP = messaging.log_from_bytes(self.params.get("StarPilotCarParams", block=True), custom.StarPilotCarParams)
+
+  def should_add_frequency_limited_event(self, timestamps_list: list[float], threshold: int, window: float) -> bool:
+    current_time = time.monotonic()
+    timestamps_list.append(current_time)
+
+    cutoff_time = current_time - window
+    timestamps_list[:] = [timestamp for timestamp in timestamps_list if timestamp > cutoff_time]
+    return len(timestamps_list) >= threshold
+
+  def update_nda_camera_warning(self, CS: car.CarState) -> None:
+    navi_recent = self.sm.recv_frame['naviData'] > 0 and (self.sm.frame - self.sm.recv_frame['naviData']) * DT_CTRL < 2.0
+    if not navi_recent:
+      return
+
+    v_cruise_kph = float(CS.vCruise)
+    apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = SpeedLimiter.instance().get_max_speed(CS, v_cruise_kph)
+
+    current_speed_kph = max(float(CS.vEgo), 0.0) * CV.MS_TO_KPH
+    if apply_limit_speed <= 0 or left_dist <= 2.0 or left_dist >= 1000.0:
+      return
+
+    if current_speed_kph <= 5.0:
+      return
+
+    _, alert_interval, _, _ = get_nda_camera_warning_policy(current_speed_kph, apply_limit_speed)
+    if current_speed_kph > (apply_limit_speed * 0.85):
+      current_time = time.monotonic()
+      if (current_time - self.last_nda_camera_warn_time) >= alert_interval:
+        self.events.add(EventName.ndaCameraWarn)
+        self.last_nda_camera_warn_time = current_time
 
   def update_events(self, CS):
     """Compute onroadEvents from carState"""
@@ -371,9 +411,11 @@ class SelfdriveD:
     if self.sm['radarState'].radarErrors.canError:
       self.events.add(EventName.canError)
     elif self.sm['radarState'].radarErrors.radarUnavailableTemporary:
-      self.events.add(EventName.radarTempUnavailable)
+      if self.should_add_frequency_limited_event(self.radar_fault_timestamps, self.radar_fault_threshold, self.radar_fault_window):
+        self.events.add(EventName.radarTempUnavailable)
     elif any(self.sm['radarState'].radarErrors.to_dict().values()):
-      self.events.add(EventName.radarFault)
+      if self.should_add_frequency_limited_event(self.radar_fault_timestamps, self.radar_fault_threshold, self.radar_fault_window):
+        self.events.add(EventName.radarFault)
     if not self.sm.valid['pandaStates']:
       self.events.add(EventName.usbError)
     if CS.canTimeout:
@@ -388,11 +430,14 @@ class SelfdriveD:
     no_system_errors = (not has_disable_events) or (len(self.events) == num_events)
     if not self.sm.all_checks() and no_system_errors:
       if not self.sm.all_alive():
-        self.events.add(EventName.commIssue)
+        if self.should_add_frequency_limited_event(self.comm_issue_timestamps, self.comm_issue_threshold, self.comm_issue_window):
+          self.events.add(EventName.commIssue)
       elif not self.sm.all_freq_ok():
-        self.events.add(EventName.commIssueAvgFreq)
+        if self.should_add_frequency_limited_event(self.comm_issue_avg_freq_timestamps, self.comm_issue_threshold, self.comm_issue_window):
+          self.events.add(EventName.commIssueAvgFreq)
       else:
-        self.events.add(EventName.commIssue)
+        if self.should_add_frequency_limited_event(self.comm_issue_generic_timestamps, self.comm_issue_threshold, self.comm_issue_window):
+          self.events.add(EventName.commIssue)
 
       logs = {
         'invalid': [s for s, valid in self.sm.valid.items() if not valid],
@@ -409,7 +454,8 @@ class SelfdriveD:
       if not self.sm['livePose'].posenetOK:
         self.events.add(EventName.posenetInvalid)
       if not self.sm['livePose'].inputsOK:
-        self.events.add(EventName.locationdTemporaryError)
+        if self.should_add_frequency_limited_event(self.locationd_error_timestamps, self.locationd_error_threshold, self.locationd_error_window):
+          self.events.add(EventName.locationdTemporaryError)
       if not self.sm['liveParameters'].valid and cal_status == log.LiveCalibrationData.Status.calibrated and not TESTING_CLOSET and (not SIMULATION or REPLAY):
         self.events.add(EventName.paramsdTemporaryError)
 
@@ -456,6 +502,8 @@ class SelfdriveD:
     planner_fcw = self.sm['longitudinalPlan'].fcw and self.enabled
     if (planner_fcw or model_fcw) and not self.CP.notCar:
       self.events.add(EventName.fcw)
+
+    self.update_nda_camera_warning(CS)
 
     # GPS checks
     gps_ok = self.sm.recv_frame[self.gps_location_service] > 0 and (self.sm.frame - self.sm.recv_frame[self.gps_location_service]) * DT_CTRL < 2.0

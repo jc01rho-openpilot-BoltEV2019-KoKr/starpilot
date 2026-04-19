@@ -49,6 +49,7 @@ sound_list: dict[int, tuple[str, int | None, float]] = {
 
   AudibleAlert.warningSoft: ("warning_soft.wav", None, MAX_VOLUME),
   AudibleAlert.warningImmediate: ("warning_immediate.wav", None, MAX_VOLUME),
+  AudibleAlert.speedDown: ("speeddown.wav", 3, MAX_VOLUME),
 
   StarPilotAudibleAlert.angry: ("angry.wav", 1, MAX_VOLUME),
   StarPilotAudibleAlert.continued: ("continued.wav", 1, MAX_VOLUME),
