@@ -37,6 +37,8 @@ MAX_CTRL_SPEED = (V_CRUISE_MAX + 4) * CV.KPH_TO_MS
 ACCEL_MAX = 2.0
 ACCEL_MIN = -3.5
 
+SPEED_CORRECTION = 1.04  # +4% for 215-55-17
+
 TORQUE_PARAMS_PATH = os.path.join(BASEDIR, 'torque_data/params.toml')
 TORQUE_OVERRIDE_PATH = os.path.join(BASEDIR, 'torque_data/override.toml')
 TORQUE_SUBSTITUTE_PATH = os.path.join(BASEDIR, 'torque_data/substitute.toml')
@@ -404,7 +406,7 @@ class CarStateBase(ABC):
     pass
 
   def parse_wheel_speeds(self, cs, fl, fr, rl, rr, unit=CV.KPH_TO_MS):
-    cs.vEgoRaw = sum((fl, fr, rl, rr)) / 4 * unit * self.CP.wheelSpeedFactor
+    cs.vEgoRaw = sum((fl, fr, rl, rr)) / 4 * unit * self.CP.wheelSpeedFactor * SPEED_CORRECTION
     cs.vEgo, cs.aEgo = self.update_speed_kf(cs.vEgoRaw)
 
   def update_speed_kf(self, v_ego_raw):
