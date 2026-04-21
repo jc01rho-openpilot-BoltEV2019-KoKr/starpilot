@@ -344,6 +344,12 @@ class SpeedLimiter:
     if cam_type == 22:
       min_limit = 10
 
+    if cam_limit_speed_left_dist > 0 and cam_limit_speed <= 0:
+      self.slowing_down = False
+      self.started_dist = 0
+      self.last_limit_speed_left_dist = 0
+      return 0, 0, cam_limit_speed_left_dist, False, ''
+
     if cam_limit_speed_left_dist > 0 and cam_limit_speed > 0:
       v_ego = max(float(CS.vEgo), 0.0)
       diff_speed = v_ego * CV.MS_TO_KPH - (cam_limit_speed * CAMERA_SPEED_FACTOR)
@@ -371,6 +377,12 @@ class SpeedLimiter:
 
       self.slowing_down = False
       return 0, cam_limit_speed, cam_limit_speed_left_dist, False, ''
+
+    if section_left_dist > 0 and section_limit_speed <= 0:
+      self.slowing_down = False
+      self.started_dist = 0
+      self.last_limit_speed_left_dist = 0
+      return 0, 0, section_left_dist, False, ''
 
     if section_left_dist > 0 and section_limit_speed > 0:
       if min_limit <= section_limit_speed <= max_limit:
