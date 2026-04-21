@@ -85,7 +85,7 @@ class StarPilotFollowing:
       self.t_follow = min(self.t_follow + self.starpilot_planner.starpilot_weather.increase_following_distance, MAX_T_FOLLOW)
 
     self.disable_throttle = False
-    if self.starpilot_planner.tracking_lead and self.starpilot_planner.lead_one.status:
+    if getattr(starpilot_toggles, "coast_up_to_leads", True) and self.starpilot_planner.tracking_lead and self.starpilot_planner.lead_one.status:
       lead_distance = self.starpilot_planner.lead_one.dRel
       v_lead = self.starpilot_planner.lead_one.vLead
       closing_speed = max(0.0, v_ego - v_lead)

@@ -33,6 +33,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_kia_ev6_ff_scale,
   get_kia_ev6_friction_scale,
   get_kia_ev6_friction_threshold,
+  get_volt_standard_center_taper_scale,
   get_volt_standard_ff_scale,
   get_volt_standard_friction_scale,
   get_volt_standard_friction_threshold,
@@ -147,8 +148,8 @@ class TestLatControl:
   def test_volt_standard_ff_scale_curve(self):
     assert get_volt_standard_ff_scale(0.0, 0.0, 20.0) == 1.0
     assert get_volt_standard_ff_scale(-0.5, 0.0, 20.0) > get_volt_standard_ff_scale(0.5, 0.0, 20.0)
-    assert get_volt_standard_ff_scale(0.6, 0.7, 8.0) < get_volt_standard_ff_scale(0.6, 0.0, 8.0)
-    assert get_volt_standard_ff_scale(-0.6, -0.7, 8.0) > get_volt_standard_ff_scale(-0.6, 0.0, 8.0)
+    assert get_volt_standard_ff_scale(0.6, 0.7, 8.0) > get_volt_standard_ff_scale(0.6, 0.0, 8.0) > get_volt_standard_ff_scale(0.6, -0.7, 8.0)
+    assert get_volt_standard_ff_scale(-0.6, -0.7, 8.0) > get_volt_standard_ff_scale(-0.6, 0.0, 8.0) > get_volt_standard_ff_scale(-0.6, 0.7, 8.0)
     assert get_volt_standard_ff_scale(2.0, 0.0, 20.0) < get_volt_standard_ff_scale(0.8, 0.0, 20.0)
 
   def test_volt_standard_friction_threshold_curve(self):
@@ -157,8 +158,8 @@ class TestLatControl:
     right_turn_in = get_volt_standard_friction_threshold(6.0, -0.7, -0.8)
     left_unwind = get_volt_standard_friction_threshold(6.0, 0.7, -0.8)
     right_unwind = get_volt_standard_friction_threshold(6.0, -0.7, 0.8)
-    assert left_turn_in > base > right_turn_in
-    assert left_unwind < base and right_unwind < base
+    assert right_turn_in < left_turn_in < base
+    assert base < left_unwind < right_unwind
 
   def test_volt_standard_friction_scale_curve(self):
     base = get_volt_standard_friction_scale(25.0, 0.7, 0.8)
@@ -166,8 +167,13 @@ class TestLatControl:
     right_turn_in = get_volt_standard_friction_scale(6.0, -0.7, -0.8)
     left_unwind = get_volt_standard_friction_scale(6.0, 0.7, -0.8)
     right_unwind = get_volt_standard_friction_scale(6.0, -0.7, 0.8)
-    assert left_turn_in < base < right_turn_in
-    assert left_unwind > base and right_unwind > base
+    assert base < left_turn_in < right_turn_in
+    assert left_unwind < base and right_unwind < left_unwind
+
+  def test_volt_standard_center_taper_curve(self):
+    assert get_volt_standard_center_taper_scale(0.0, 10.0) > get_volt_standard_center_taper_scale(0.0, 25.0)
+    assert get_volt_standard_center_taper_scale(0.0, 25.0) < get_volt_standard_center_taper_scale(0.10, 25.0) < get_volt_standard_center_taper_scale(0.20, 25.0) <= 1.0
+    assert get_volt_standard_center_taper_scale(0.0, 25.0) > 0.85
 
   def test_genesis_g90_ff_scale_curve(self):
     assert get_genesis_g90_ff_scale(0.0, 0.0, 20.0) == 1.0

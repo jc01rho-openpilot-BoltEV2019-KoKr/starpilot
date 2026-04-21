@@ -68,11 +68,34 @@ function applySelectOptions(el, options) {
   }
 }
 
+function syncSelectValue(el, key) {
+  const targetValue = toSelectValue(state.values[key])
+  if (!targetValue) {
+    el.value = ""
+    return
+  }
+
+  if (key === "CarModel") {
+    const targetLabel = toSelectValue(state.values.CarModelName)
+    const options = Array.from(el.options)
+    const matchingIndex = options.findIndex(opt => {
+      if (opt.value !== targetValue) return false
+      return !targetLabel || opt.textContent === targetLabel
+    })
+    if (matchingIndex !== -1) {
+      el.selectedIndex = matchingIndex
+      return
+    }
+  }
+
+  el.value = targetValue
+}
+
 async function hydrateEndpointOptions(el, key, endpoint) {
   if (endpointOptionsCache[endpoint]) {
     applySelectOptions(el, endpointOptionsCache[endpoint])
     el.dataset.hydrated = "1"
-    el.value = toSelectValue(state.values[key])
+    syncSelectValue(el, key)
     return
   }
 
@@ -94,7 +117,7 @@ async function hydrateEndpointOptions(el, key, endpoint) {
 
   applySelectOptions(el, options)
   el.dataset.hydrated = "1"
-  el.value = toSelectValue(state.values[key])
+  syncSelectValue(el, key)
 }
 
 function syncInputs() {
@@ -115,7 +138,7 @@ function syncInputs() {
         el.dataset.endpoint = endpoint
         hydrateEndpointOptions(el, key, endpoint)
       } else {
-        el.value = toSelectValue(state.values[key])
+        syncSelectValue(el, key)
       }
       continue
     }
@@ -125,7 +148,7 @@ function syncInputs() {
         applySelectOptions(el, inlineOptions)
         el.dataset.hydrated = "1"
       }
-      el.value = toSelectValue(state.values[key])
+      syncSelectValue(el, key)
     }
   }
 }
@@ -513,12 +536,14 @@ async function updateParam(key, elType) {
   if (!el) return
 
   const param = state.paramMetaByKey[key] || {}
+  let selectedLabel = ""
 
   let formattedVal
   if (elType === "checkbox") {
     formattedVal = !!el.checked
   } else if (elType === "dropdown") {
     formattedVal = coerceValueByType(el.value, param.data_type)
+    selectedLabel = el.options?.[el.selectedIndex]?.textContent || ""
   } else {
     formattedVal = coerceValueByType(el.value, param.data_type)
   }
@@ -527,7 +552,7 @@ async function updateParam(key, elType) {
     const res = await fetch("/api/params", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value: formattedVal }),
+      body: JSON.stringify({ key, value: formattedVal, label: selectedLabel }),
     })
     const data = await res.json()
 

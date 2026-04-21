@@ -597,6 +597,15 @@ class StarPilotLongitudinalTuneLayout(StarPilotPanel):
         "visible": self._longitudinal_enabled,
       },
       {
+        "title": tr_noop("Coast Up To Leads"),
+        "desc": tr_noop("Allow openpilot to briefly coast toward far leads before applying normal throttle again."),
+        "type": "toggle",
+        "get_state": lambda: self._params.get_bool("CoastUpToLeads"),
+        "set_state": lambda s: self._params.put_bool("CoastUpToLeads", s),
+        "color": "#597497",
+        "visible": self._longitudinal_enabled,
+      },
+      {
         "title": tr_noop("Human-Like Lane Changes"),
         "desc": tr_noop("Use radar-informed behavior during lane changes when radar support is available."),
         "type": "toggle",
@@ -896,12 +905,21 @@ class StarPilotSLCOffsetsLayout(StarPilotPanel):
         {
           "title": tr_noop(f"Offset {i}"),
           "type": "value",
-          "get_value": lambda k=key: f"{self._params.get_int(k)} mph",
+          "get_value": lambda k=key: f"{self._params.get_int(k)}{self._speed_unit()}",
           "on_click": lambda k=key: self._show_speed_selector(k),
           "color": "#597497",
         }
       )
     self._rebuild_grid()
+
+  def _is_metric(self):
+    return self._params.get_bool("IsMetric")
+
+  def _speed_unit(self):
+    return " km/h" if self._is_metric() else " mph"
+
+  def _speed_range(self):
+    return (-150, 150) if self._is_metric() else (-99, 99)
 
   def _show_speed_selector(self, key):
     def on_close(res, val):
@@ -909,7 +927,10 @@ class StarPilotSLCOffsetsLayout(StarPilotPanel):
         self._params.put_int(key, int(val))
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(AetherSliderDialog(tr(key), -99, 100, 1, self._params.get_int(key), on_close, unit=" mph", color="#597497"))
+    min_value, max_value = self._speed_range()
+    gui_app.set_modal_overlay(
+      AetherSliderDialog(tr(key), min_value, max_value, 1, self._params.get_int(key), on_close, unit=self._speed_unit(), color="#597497")
+    )
 
 
 class StarPilotSLCQOLLayout(StarPilotPanel):
