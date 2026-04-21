@@ -152,21 +152,26 @@ VOLT_STANDARD_FF_CUTOFF = 1.30
 VOLT_STANDARD_FF_CUTOFF_WIDTH = 0.24
 VOLT_STANDARD_TRANSITION_SPEED = 10.0
 VOLT_STANDARD_PHASE_SCALE = 0.10
-VOLT_STANDARD_TURN_IN_BOOST_LEFT = -0.08
-VOLT_STANDARD_TURN_IN_BOOST_RIGHT = 0.20
-VOLT_STANDARD_UNWIND_TAPER_LEFT = 0.03
-VOLT_STANDARD_UNWIND_TAPER_RIGHT = 0.02
+VOLT_STANDARD_TURN_IN_BOOST_LEFT = 0.02
+VOLT_STANDARD_TURN_IN_BOOST_RIGHT = 0.30
+VOLT_STANDARD_UNWIND_TAPER_LEFT = 0.08
+VOLT_STANDARD_UNWIND_TAPER_RIGHT = 0.14
 VOLT_STANDARD_FRICTION_MULT = 1.04
 VOLT_STANDARD_FRICTION_LAT_RISE = 0.20
 VOLT_STANDARD_FRICTION_JERK_RISE = 0.24
-VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_LEFT = -0.08
-VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.12
-VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_LEFT = -0.06
-VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_RIGHT = -0.08
-VOLT_STANDARD_TURN_IN_FRICTION_BOOST_LEFT = -0.03
-VOLT_STANDARD_TURN_IN_FRICTION_BOOST_RIGHT = 0.06
-VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_LEFT = -0.04
-VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_RIGHT = -0.06
+VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.02
+VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.18
+VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_LEFT = 0.02
+VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.10
+VOLT_STANDARD_TURN_IN_FRICTION_BOOST_LEFT = 0.01
+VOLT_STANDARD_TURN_IN_FRICTION_BOOST_RIGHT = 0.10
+VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_LEFT = 0.02
+VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_RIGHT = 0.08
+VOLT_STANDARD_CENTER_TAPER_MAX = 0.11
+VOLT_STANDARD_CENTER_TAPER_LAT = 0.16
+VOLT_STANDARD_CENTER_TAPER_LAT_WIDTH = 0.03
+VOLT_STANDARD_CENTER_TAPER_SPEED = 17.0
+VOLT_STANDARD_CENTER_TAPER_SPEED_WIDTH = 2.5
 
 GENESIS_G90_LATERAL_TESTING_GROUND_ID = testing_ground.id_4
 GENESIS_G90_FF_GAIN_LEFT = 0.09
@@ -545,6 +550,13 @@ def get_volt_standard_friction_scale(v_ego: float, desired_lateral_accel: float,
   return min(max(friction_scale, 0.90), 1.14)
 
 
+def get_volt_standard_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _volt_standard_sigmoid((v_ego - VOLT_STANDARD_CENTER_TAPER_SPEED) / VOLT_STANDARD_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _volt_standard_sigmoid((VOLT_STANDARD_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / VOLT_STANDARD_CENTER_TAPER_LAT_WIDTH)
+  reduction = VOLT_STANDARD_CENTER_TAPER_MAX * speed_weight * center_weight
+  return 1.0 - reduction
+
+
 def genesis_g90_lateral_testing_ground_active() -> bool:
   return testing_ground.use(GENESIS_G90_LATERAL_TESTING_GROUND_ID)
 
@@ -877,6 +889,7 @@ class LatControlTorque(LatControl):
       genesis_g90_test_active = self.is_genesis_g90 and genesis_g90_lateral_testing_ground_active()
       kia_ev6_test_active = self.is_kia_ev6 and kia_ev6_lateral_testing_ground_active()
       volt_plexy_test_active = self.is_volt_cc and volt_plexy_lateral_testing_ground_active()
+      volt_standard_center_taper = get_volt_standard_center_taper_scale(setpoint, CS.vEgo) if volt_standard_test_active else 1.0
       friction_threshold = get_friction_threshold(CS.vEgo)
       friction_scale = 1.0
       if bolt_2022_2023_tuned_path_active:
@@ -887,9 +900,10 @@ class LatControlTorque(LatControl):
         friction_threshold = get_bolt_2018_2021_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = get_bolt_2018_2021_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
       elif volt_standard_test_active:
-        ff *= get_volt_standard_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+        ff *= get_volt_standard_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * volt_standard_center_taper
         friction_threshold = get_volt_standard_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = get_volt_standard_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
+        friction_scale = 1.0 + ((friction_scale - 1.0) * volt_standard_center_taper)
       elif genesis_g90_test_active:
         ff *= get_genesis_g90_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         friction_threshold = get_genesis_g90_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
@@ -919,6 +933,8 @@ class LatControlTorque(LatControl):
         output_torque *= get_bolt_2017_torque_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif bolt_2018_2021_tuned_path_active:
         output_torque *= get_bolt_2018_2021_dynamic_torque_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+      elif volt_standard_test_active:
+        output_torque *= volt_standard_center_taper
 
       pid_log.active = True
       pid_log.p = float(self.pid.p)

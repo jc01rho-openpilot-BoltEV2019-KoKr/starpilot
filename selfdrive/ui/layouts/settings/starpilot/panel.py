@@ -36,11 +36,48 @@ class StarPilotPanelInfo:
     instance: Widget
 
 
+class StarPilotParamsProxy:
+    def __init__(self, params: Params, params_memory: Params):
+        self._params = params
+        self._params_memory = params_memory
+
+    def _mark_updated(self):
+        self._params_memory.put_bool("StarPilotTogglesUpdated", True)
+
+    def put(self, key, value):
+        result = self._params.put(key, value)
+        self._mark_updated()
+        return result
+
+    def put_bool(self, key, value):
+        result = self._params.put_bool(key, value)
+        self._mark_updated()
+        return result
+
+    def put_int(self, key, value):
+        result = self._params.put_int(key, value)
+        self._mark_updated()
+        return result
+
+    def put_float(self, key, value):
+        result = self._params.put_float(key, value)
+        self._mark_updated()
+        return result
+
+    def remove(self, key):
+        result = self._params.remove(key)
+        self._mark_updated()
+        return result
+
+    def __getattr__(self, name):
+        return getattr(self._params, name)
+
+
 class StarPilotPanel(Widget):
     def __init__(self):
         super().__init__()
-        self._params = Params()
         self._params_memory = Params(memory=True)
+        self._params = StarPilotParamsProxy(Params(), self._params_memory)
         self._navigate_callback: Callable | None = None
         self._back_callback: Callable | None = None
         self._current_sub_panel = ""

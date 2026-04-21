@@ -38,6 +38,7 @@ BlindSpotMetrics
 BlindSpotPath
 BootLogo
 BorderMetrics
+BorderWidth
 CECurves
 CECurvesLead
 CELead
@@ -141,11 +142,13 @@ LKASButtonControl
 LaneChangeTime
 LaneChanges
 LaneDetectionWidth
+LaneLinesColor
 LaneLinesWidth
 LanguageSetting
 LateralTune
 LeadDepartingAlert
 LeadDetectionThreshold
+LeadIndicator
 LeadInfo
 LiveDelay
 LiveParameters
@@ -196,6 +199,8 @@ OneLaneChange
 OnroadDistanceButton
 OpenpilotEnabledToggle
 OverpassRequests
+PathColor
+PathEdgesColor
 PathEdgeWidth
 PathWidth
 PauseAOLOnBrake

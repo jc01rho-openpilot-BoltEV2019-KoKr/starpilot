@@ -968,6 +968,14 @@
         "parent_key": "LongitudinalTune"
       },
       {
+        "key": "CoastUpToLeads",
+        "label": "Coast Up To Leads",
+        "description": "Allow openpilot to briefly coast toward far leads before resuming normal throttle. Disable this if your vehicle shows gas/brake alternation while approaching distant traffic.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LongitudinalTune"
+      },
+      {
         "key": "HumanLaneChanges",
         "label": "Human-Like Lane Changes",
         "description": "Lane-change behavior that mimics human drivers by anticipating and tracking adjacent vehicles during lane changes.",
@@ -1609,6 +1617,14 @@
         "parent_key": "CustomUI"
       },
       {
+        "key": "RainbowPath",
+        "label": "Rainbow Road",
+        "description": "Color the driving path like a rainbow road.\n\nOn the Python UIs this overrides acceleration and braking path coloring.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI"
+      },
+      {
         "key": "AdjacentPath",
         "label": "Adjacent Lanes",
         "description": "Show the driving paths for the left and right lanes.",
@@ -1680,6 +1696,17 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 24.0,
+        "parent_key": "ModelUI"
+      },
+      {
+        "key": "BorderWidth",
+        "label": "Border Width",
+        "description": "Scale the driving-screen border thickness.\n\n100% matches the stock border width.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 25.0,
+        "max": 250.0,
+        "step": 5.0,
         "parent_key": "ModelUI"
       },
       {
@@ -2019,7 +2046,7 @@
       {
         "key": "GMDashSpoofOffsets",
         "label": "Apply Offsets To Dash Spoof",
-        "description": "On GM pedal-long cars, add the active global set-speed offset or SLC offset to the spoofed dash set speed.",
+        "description": "On GM pedal-long cars, add the configured set-speed offset to the spoofed dash set speed so it matches the on-screen set speed.",
         "data_type": "bool",
         "ui_type": "toggle"
       },

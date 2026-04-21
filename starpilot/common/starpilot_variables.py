@@ -281,7 +281,13 @@ def default_ev_tuning_enabled(CP):
   return bool(ev_vehicle)
 
 def get_starpilot_toggles(sm=messaging.SubMaster(["starpilotPlan"])):
-  toggles = process_starpilot_toggles(sm["starpilotPlan"].starpilotToggles)
+  toggles_text = sm["starpilotPlan"].starpilotToggles
+  if toggles_text:
+    get_starpilot_toggles._last_toggles_text = toggles_text
+  else:
+    toggles_text = getattr(get_starpilot_toggles, "_last_toggles_text", "")
+
+  toggles = process_starpilot_toggles(toggles_text)
 
   # Force drive-state controls must be authoritative from params so they
   # apply immediately even if starpilotPlan publication is temporarily stale.
@@ -845,6 +851,9 @@ class StarPilotVariables:
       toggle.custom_accel_profile_values = [custom_accel_defaults[key] for key in CUSTOM_ACCEL_PROFILE_PARAM_KEYS]
     toggle.human_acceleration = self.get_value("HumanAcceleration", condition=longitudinal_tuning)
     toggle.human_following = self.get_value("HumanFollowing", condition=longitudinal_tuning)
+    toggle.coast_up_to_leads = self.get_value("CoastUpToLeads", condition=longitudinal_tuning)
+    if longitudinal_tuning and self.params.get("CoastUpToLeads") is None:
+      toggle.coast_up_to_leads = True
     toggle.human_lane_changes = has_radar and self.get_value("HumanLaneChanges", condition=longitudinal_tuning)
     # Keep lead detection sensitivity normalized even when longitudinal tuning is disabled.
     # Some branches can return raw integer defaults (e.g. 35) when condition=False.

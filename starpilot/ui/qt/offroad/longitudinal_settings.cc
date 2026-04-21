@@ -148,6 +148,7 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
     {"DecelerationProfile", tr("Deceleration Profile"), tr("<b>How firmly openpilot slows down.</b> \"Eco\" favors coasting, \"Sport\" applies stronger braking."), ""},
     {"HumanAcceleration", tr("Human-Like Acceleration"), tr("<b>Acceleration that mimics human behavior</b> by easing the throttle at low speeds and adding extra power when taking off from a stop."), ""},
     {"HumanFollowing", tr("Human-Like Following"), tr("<b>Following behavior that mimics human drivers</b> by closing gaps behind faster vehicles for quicker takeoffs and dynamically adjusting the desired following distance for gentler, more efficient braking."), ""},
+    {"CoastUpToLeads", tr("Coast Up To Leads"), tr("<b>Allow openpilot to coast toward far leads before resuming normal throttle.</b> Disable this if your vehicle shows noticeable gas/brake alternation while approaching distant traffic."), ""},
     {"HumanLaneChanges", tr("Human-Like Lane Changes"), tr("<b>Lane-change behavior that mimics human drivers</b> by anticipating and tracking adjacent vehicles during lane changes."), ""},
     {"LeadDetectionThreshold", tr("Lead Detection Sensitivity"), tr("<b>How sensitive openpilot is to detecting vehicles.</b> Higher sensitivity allows quicker detection at longer distances but may react to non-vehicle objects; lower sensitivity is more conservative and reduces false detections."), ""},
     {"TacoTune", tr("\"Taco Bell Run\" Turn Speed Hack"), tr("<b>The turn-speed hack from comma's 2022 \"Taco Bell Run\".</b> Designed to slow down for left and right turns."), ""},
@@ -842,8 +843,10 @@ void StarPilotLongitudinalPanel::updateMetric(bool metric, bool bootRun) {
 
   static std::map<float, QString> imperialDistanceLabels;
   static std::map<float, QString> imperialSpeedLabels;
+  static std::map<float, QString> imperialOffsetLabels;
   static std::map<float, QString> metricDistanceLabels;
   static std::map<float, QString> metricSpeedLabels;
+  static std::map<float, QString> metricOffsetLabels;
 
   static bool labelsInitialized = false;
   if (!labelsInitialized) {
@@ -854,6 +857,9 @@ void StarPilotLongitudinalPanel::updateMetric(bool metric, bool bootRun) {
     for (int i = 0; i <= 99; ++i) {
       imperialSpeedLabels[i] = i == 0 ? tr("Off") : QString::number(i) + tr(" mph");
     }
+    for (int i = -99; i <= 99; ++i) {
+      imperialOffsetLabels[i] = i == 0 ? tr("Off") : QString::number(i) + tr(" mph");
+    }
 
     for (int i = 0; i <= 3; ++i) {
       metricDistanceLabels[i] = i == 0 ? tr("Off") : i == 1 ? QString::number(i) + tr(" meter") : QString::number(i) + tr(" meters");
@@ -861,6 +867,9 @@ void StarPilotLongitudinalPanel::updateMetric(bool metric, bool bootRun) {
 
     for (int i = 0; i <= 150; ++i) {
       metricSpeedLabels[i] = i == 0 ? tr("Off") : QString::number(i) + tr(" km/h");
+    }
+    for (int i = -150; i <= 150; ++i) {
+      metricOffsetLabels[i] = i == 0 ? tr("Off") : QString::number(i) + tr(" km/h");
     }
 
     labelsInitialized = true;
@@ -911,13 +920,13 @@ void StarPilotLongitudinalPanel::updateMetric(bool metric, bool bootRun) {
     ceSpeedToggle->updateControl(0, 150, metricSpeedLabels);
     customCruiseToggle->updateControl(1, 150, metricSpeedLabels);
     customCruiseLongToggle->updateControl(1, 150, metricSpeedLabels);
-    offset1Toggle->updateControl(-150, 150, metricSpeedLabels);
-    offset2Toggle->updateControl(-150, 150, metricSpeedLabels);
-    offset3Toggle->updateControl(-150, 150, metricSpeedLabels);
-    offset4Toggle->updateControl(-150, 150, metricSpeedLabels);
-    offset5Toggle->updateControl(-150, 150, metricSpeedLabels);
-    offset6Toggle->updateControl(-150, 150, metricSpeedLabels);
-    offset7Toggle->updateControl(-150, 150, metricSpeedLabels);
+    offset1Toggle->updateControl(-150, 150, metricOffsetLabels);
+    offset2Toggle->updateControl(-150, 150, metricOffsetLabels);
+    offset3Toggle->updateControl(-150, 150, metricOffsetLabels);
+    offset4Toggle->updateControl(-150, 150, metricOffsetLabels);
+    offset5Toggle->updateControl(-150, 150, metricOffsetLabels);
+    offset6Toggle->updateControl(-150, 150, metricOffsetLabels);
+    offset7Toggle->updateControl(-150, 150, metricOffsetLabels);
     setSpeedOffsetToggle->updateControl(-150, 150, metricSpeedLabels);
   } else {
     offset1Toggle->setTitle(tr("Speed Offset (0–24 mph)"));
@@ -946,13 +955,13 @@ void StarPilotLongitudinalPanel::updateMetric(bool metric, bool bootRun) {
     ceSpeedToggle->updateControl(0, 99, imperialSpeedLabels);
     customCruiseToggle->updateControl(1, 99, imperialSpeedLabels);
     customCruiseLongToggle->updateControl(1, 99, imperialSpeedLabels);
-    offset1Toggle->updateControl(-99, 99, imperialSpeedLabels);
-    offset2Toggle->updateControl(-99, 99, imperialSpeedLabels);
-    offset3Toggle->updateControl(-99, 99, imperialSpeedLabels);
-    offset4Toggle->updateControl(-99, 99, imperialSpeedLabels);
-    offset5Toggle->updateControl(-99, 99, imperialSpeedLabels);
-    offset6Toggle->updateControl(-99, 99, imperialSpeedLabels);
-    offset7Toggle->updateControl(-99, 99, imperialSpeedLabels);
+    offset1Toggle->updateControl(-99, 99, imperialOffsetLabels);
+    offset2Toggle->updateControl(-99, 99, imperialOffsetLabels);
+    offset3Toggle->updateControl(-99, 99, imperialOffsetLabels);
+    offset4Toggle->updateControl(-99, 99, imperialOffsetLabels);
+    offset5Toggle->updateControl(-99, 99, imperialOffsetLabels);
+    offset6Toggle->updateControl(-99, 99, imperialOffsetLabels);
+    offset7Toggle->updateControl(-99, 99, imperialOffsetLabels);
     setSpeedOffsetToggle->updateControl(0, 99, imperialSpeedLabels);
   }
 }
