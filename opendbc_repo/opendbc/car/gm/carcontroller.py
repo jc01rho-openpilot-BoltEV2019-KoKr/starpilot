@@ -5,7 +5,10 @@ from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, create_gas_in
 from opendbc.car.lateral import apply_driver_steer_torque_limits
 from opendbc.car.gm import gmcan
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.gm.values import ASCM_INT, CAR, CC_ONLY_CAR, CC_REGEN_PADDLE_CAR, DBC, EV_CAR, SDGM_CAR, AccState, CanBus, CarControllerParams, CruiseButtons, GMFlags
+from opendbc.car.gm.values import (
+  ASCM_INT, CAR, CC_ONLY_CAR, CC_REGEN_PADDLE_CAR, DBC, EV_CAR, SDGM_CAR, AccState, CanBus, CarControllerParams,
+  CruiseButtons, GMFlags,
+)
 from opendbc.car.interfaces import CarControllerBase
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.starpilot.common.testing_grounds import testing_ground
@@ -63,6 +66,14 @@ def should_spoof_ecm_cruise_status(CP):
     bool(CP.flags & GMFlags.PEDAL_LONG.value) and
     CP.carFingerprint in ECM_CRUISE_SPOOF_CARS and
     CP.enableGasInterceptorDEPRECATED
+  )
+
+
+def should_send_cc_button_spam(CP, CC, CS):
+  return (
+    bool(CP.flags & GMFlags.CC_LONG.value) and
+    CC.longActive and
+    CS.out.vEgo > CP.minEnableSpeed
   )
 
 
@@ -478,7 +489,11 @@ class CarController(CarControllerBase):
             interceptor_gas_cmd, press_regen_paddle = self.calc_pedal_command(actuators.accel, CC.longActive, CS.out.vEgo)
 
         maneuver_sng_launch = self.longitudinal_maneuver_mode and self.is_volt
-        if self.CP.enableGasInterceptorDEPRECATED and self.apply_gas > self.params.INACTIVE_REGEN and use_interceptor_sng_launch(self.CP, CS, maneuver_sng_launch):
+        if (
+          self.CP.enableGasInterceptorDEPRECATED and
+          self.apply_gas > self.params.INACTIVE_REGEN and
+          use_interceptor_sng_launch(self.CP, CS, maneuver_sng_launch)
+        ):
           interceptor_gas_cmd = self.params.SNG_INTERCEPTOR_GAS
           if maneuver_sng_launch:
             interceptor_gas_cmd = max(interceptor_gas_cmd, float(np.interp(actuators.accel, [0.0, 1.0, 2.0], [self.params.SNG_INTERCEPTOR_GAS, 0.11, 0.16])))
@@ -501,7 +516,7 @@ class CarController(CarControllerBase):
           can_sends.append(gmcan.create_regen_paddle_command(self.packer_pt, CanBus.POWERTRAIN, paddle_spoof_pressed))
 
         if self.CP.flags & GMFlags.CC_LONG.value:
-          if CC.longActive and CS.out.cruiseState.enabled and CS.out.vEgo > self.CP.minEnableSpeed:
+          if should_send_cc_button_spam(self.CP, CC, CS):
             # Using extend instead of append since the message is only sent intermittently
             can_sends.extend(gmcan.create_gm_cc_spam_command(self.packer_pt, self, CS, actuators, starpilot_toggles))
           elif (CS.out.cruiseState.enabled and CC.enabled and self.frame % 52 == 0 and

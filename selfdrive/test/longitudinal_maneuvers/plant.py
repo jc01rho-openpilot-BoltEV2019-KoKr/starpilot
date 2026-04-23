@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+import contextlib
+import gc
+import os
+import sys
 import time
 import numpy as np
 from types import SimpleNamespace
@@ -15,18 +19,55 @@ from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
 
 class Plant:
   messaging_initialized = False
+  messaging_prefix = None
+
+  @staticmethod
+  @contextlib.contextmanager
+  def _messaging_socket_env():
+    prefix = os.environ.get("OPENPILOT_PREFIX")
+    if sys.platform != "darwin" or not prefix:
+      yield
+      return
+
+    old_namespace = os.environ.get("OPENPILOT_ZMQ_NAMESPACE")
+    del os.environ["OPENPILOT_PREFIX"]
+    os.environ["OPENPILOT_ZMQ_NAMESPACE"] = prefix
+    try:
+      yield
+    finally:
+      os.environ["OPENPILOT_PREFIX"] = prefix
+      if old_namespace is None:
+        os.environ.pop("OPENPILOT_ZMQ_NAMESPACE", None)
+      else:
+        os.environ["OPENPILOT_ZMQ_NAMESPACE"] = old_namespace
+
+  @staticmethod
+  def _clear_messaging_sockets():
+    for attr in ("radar", "controls_state", "selfdrive_state", "car_state", "plan"):
+      if hasattr(Plant, attr):
+        delattr(Plant, attr)
+    with Plant._messaging_socket_env():
+      messaging.reset_context()
+    gc.collect()
 
   def __init__(self, lead_relevancy=False, speed=0.0, distance_lead=2.0,
                enabled=True, only_lead2=False, only_radar=False, e2e=False, personality=0, force_decel=False):
     self.rate = 1. / DT_MDL
 
-    if not Plant.messaging_initialized:
-      Plant.radar = messaging.pub_sock('radarState')
-      Plant.controls_state = messaging.pub_sock('controlsState')
-      Plant.selfdrive_state = messaging.pub_sock('selfdriveState')
-      Plant.car_state = messaging.pub_sock('carState')
-      Plant.plan = messaging.sub_sock('longitudinalPlan')
-      Plant.messaging_initialized = True
+    current_prefix = os.environ.get("OPENPILOT_PREFIX")
+    if Plant.messaging_prefix != current_prefix:
+      Plant._clear_messaging_sockets()
+      Plant.messaging_initialized = False
+
+    with Plant._messaging_socket_env():
+      if not Plant.messaging_initialized:
+        Plant.radar = messaging.pub_sock('radarState')
+        Plant.controls_state = messaging.pub_sock('controlsState')
+        Plant.selfdrive_state = messaging.pub_sock('selfdriveState')
+        Plant.car_state = messaging.pub_sock('carState')
+        Plant.plan = messaging.sub_sock('longitudinalPlan')
+        Plant.messaging_initialized = True
+        Plant.messaging_prefix = current_prefix
 
     self.v_lead_prev = 0.0
 
@@ -48,7 +89,8 @@ class Plant:
     self.rk = Ratekeeper(self.rate, print_delay_threshold=100.0)
     self.ts = 1. / self.rate
     time.sleep(0.1)
-    self.sm = messaging.SubMaster(['longitudinalPlan'])
+    with Plant._messaging_socket_env():
+      self.sm = messaging.SubMaster(['longitudinalPlan'])
 
     from opendbc.car.honda.values import CAR
     from opendbc.car.honda.interface import CarInterface
@@ -56,7 +98,9 @@ class Plant:
     self.planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=self.speed)
     self.starpilot_toggles = SimpleNamespace(
       taco_tune=False,
-      model_version=None,
+      classic_model=False,
+      tinygrad_model=True,
+      model_version="v11",
       stop_distance=6.0,
       longitudinalActuatorDelay=0.2,
       vEgoStopping=0.5,

@@ -7,13 +7,15 @@ import openpilot.starpilot.controls.starpilot_planner as starpilot_planner_modul
 from openpilot.starpilot.controls.lib.conditional_experimental_mode import ConditionalExperimentalMode
 
 
-def make_cem(*, model_length: float, model_stopped: bool = False, tracking_lead: bool = False):
+def make_cem(*, model_length: float, model_stopped: bool = False, tracking_lead: bool = False,
+             lead_status: bool = False, lead_d_rel: float = float("inf")):
   planner = SimpleNamespace(
     params=None,
     params_memory=None,
     model_length=model_length,
     model_stopped=model_stopped,
     tracking_lead=tracking_lead,
+    lead_one=SimpleNamespace(status=lead_status, dRel=lead_d_rel),
   )
   return ConditionalExperimentalMode(planner)
 
@@ -22,6 +24,12 @@ def make_sm(traffic_mode_enabled: bool = False):
   return {
     "starpilotCarState": SimpleNamespace(trafficModeEnabled=traffic_mode_enabled),
   }
+
+
+def run_stop_light_detector(cem, v_ego, *, steps: int, tracking_lead: bool = False):
+  for _ in range(steps):
+    cem.starpilot_planner.tracking_lead = tracking_lead
+    cem.stop_sign_and_light(v_ego, make_sm(), model_time=7.0)
 
 
 def test_low_speed_cruise_does_not_trigger_stop_light_from_model_stopped():
@@ -39,7 +47,41 @@ def test_predicted_stop_within_threshold_triggers_stop_light():
   model_length = v_ego * 4.0
 
   cem = make_cem(model_length=model_length)
-  cem.stop_sign_and_light(v_ego, make_sm(), model_time=7.0)
+  run_stop_light_detector(cem, v_ego, steps=20)
+
+  assert cem.stop_light_detected
+
+
+def test_chattering_lead_does_not_trigger_stop_light():
+  v_ego = 22 * CV.MPH_TO_MS
+  model_length = v_ego * 4.0
+
+  cem = make_cem(model_length=model_length)
+  for i in range(30):
+    cem.starpilot_planner.tracking_lead = (i % 2 == 0)
+    cem.starpilot_planner.lead_one.status = (i % 2 == 0)
+    cem.starpilot_planner.lead_one.dRel = model_length + 5.0
+    cem.stop_sign_and_light(v_ego, make_sm(), model_time=7.0)
+
+  assert not cem.stop_light_detected
+
+
+def test_close_visible_but_untracked_lead_blocks_stop_light():
+  v_ego = 22 * CV.MPH_TO_MS
+  model_length = v_ego * 4.0
+
+  cem = make_cem(model_length=model_length, lead_status=True, lead_d_rel=model_length + 5.0)
+  run_stop_light_detector(cem, v_ego, steps=30)
+
+  assert not cem.stop_light_detected
+
+
+def test_far_visible_lead_does_not_block_stop_light():
+  v_ego = 22 * CV.MPH_TO_MS
+  model_length = v_ego * 4.0
+
+  cem = make_cem(model_length=model_length, lead_status=True, lead_d_rel=v_ego * 7.0 + 30.0)
+  run_stop_light_detector(cem, v_ego, steps=30)
 
   assert cem.stop_light_detected
 
@@ -110,6 +152,7 @@ def test_starpilot_planner_updates_cem_with_current_frame_state(monkeypatch):
         planner.gps_location_service: SimpleNamespace(latitude=1.0, longitude=1.0, bearingDeg=90.0),
       }
 
+      planner.tracking_lead_filter.x = 1.0
       planner.update(0.0, False, sm, starpilot_toggles)
 
       assert seen == {

@@ -72,10 +72,12 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
       recovery_power = getattr(starpilot_toggles, "recovery_power", 1.0)
       plan = plan + recovery_power * model_output['planplus'][0]
       cloudlog.error(f"planplus applied: shape {model_output['planplus'].shape}, RECOVERY_POWER {recovery_power}")
+    v_ego_stopping = getattr(starpilot_toggles, "vEgoStopping", 0.3)
     desired_accel, should_stop = get_accel_from_plan_tomb_raider(plan[:,Plan.VELOCITY][:,0],
                                                                  plan[:,Plan.ACCELERATION][:,0],
                                                                  ModelConstants.T_IDXS,
-                                                                 action_t=long_action_t)
+                                                                 action_t=long_action_t,
+                                                                 vEgoStopping=v_ego_stopping)
     desired_accel = smooth_value(desired_accel, prev_action.desiredAcceleration, LONG_SMOOTH_SECONDS)
 
     if is_v9:

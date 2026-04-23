@@ -175,7 +175,7 @@ class StarPilotThemesLayout(StarPilotPanel):
           self._params.remove("StartupMessageTop")
           self._params.remove("StartupMessageBottom")
 
-    gui_app.set_modal_overlay(dialog, callback=on_select)
+    gui_app.push_widget(dialog, callback=on_select)
 
 
 class StarPilotPersonalizeLayout(StarPilotPanel):
@@ -329,4 +329,4 @@ class StarPilotPersonalizeLayout(StarPilotPanel):
         self._params.put(key, selected_slug)
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(dialog, callback=on_select)
+    gui_app.push_widget(dialog, callback=on_select)

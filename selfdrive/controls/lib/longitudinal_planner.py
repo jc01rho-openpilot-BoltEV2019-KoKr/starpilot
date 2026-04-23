@@ -23,6 +23,9 @@ A_CRUISE_MAX_VALS = [1.125, 1.125, 1.125, 1.125, 1.25, 1.25, 1.5]
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
+RAW_LEAD_SAFETY_MIN_CLOSING_SPEED = 0.5
+RAW_LEAD_SAFETY_TTC = 7.0
+RAW_LEAD_SAFETY_DISTANCE = 40.0
 
 # Uncertainty-based filter disable thresholds
 UNCERT_SLOPE_TRIG = 0.12  # per second
@@ -237,6 +240,21 @@ class LongitudinalPlanner:
 
     return max(accel_min, -required_decel)
 
+  @staticmethod
+  def raw_close_lead_needs_control(lead, v_ego):
+    if lead is None or not lead.status:
+      return False
+
+    closing_speed = float(v_ego - lead.vLead)
+    lead_braking = float(lead.aLeadK) < -0.5
+    if closing_speed <= RAW_LEAD_SAFETY_MIN_CLOSING_SPEED and not lead_braking:
+      return False
+
+    d_rel = max(float(lead.dRel), 0.0)
+    dynamic_distance = max(RAW_LEAD_SAFETY_DISTANCE, 3.0 * float(v_ego))
+    ttc = d_rel / max(closing_speed, 0.1) if closing_speed > 0.1 else float("inf")
+    return d_rel < dynamic_distance and (ttc < RAW_LEAD_SAFETY_TTC or lead_braking)
+
   def update(self, sm, starpilot_toggles):
     self.generation = getattr(starpilot_toggles, "model_version", None)
     self.mode = 'blended' if sm['selfdriveState'].experimentalMode else 'acc'
@@ -305,6 +323,10 @@ class LongitudinalPlanner:
     tracking_lead = bool(sm['starpilotPlan'].trackingLead)
     self.lead_one = sm['radarState'].leadOne
     self.lead_two = sm['radarState'].leadTwo
+    raw_close_lead_control = any(self.raw_close_lead_needs_control(lead, v_ego) for lead in (self.lead_one, self.lead_two))
+    # StarPilot trackingLead is debounce/model-length based. Keep a raw close-lead
+    # safety path so ACC/chill does not ignore a visible lead during that debounce.
+    lead_control_active = tracking_lead or raw_close_lead_control
 
     lead_dist = self.lead_one.dRel if self.lead_one.status else 50.0
 
@@ -423,7 +445,7 @@ class LongitudinalPlanner:
       self.mpc.mode = dec_mpc_mode
     self.mpc.update(sm['radarState'], v_cruise, x, v, a, j,
                     sm['starpilotPlan'].dangerFactor, sm['starpilotPlan'].tFollow,
-                    personality=personality, tracking_lead=tracking_lead)
+                    personality=personality, tracking_lead=lead_control_active)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
@@ -494,7 +516,7 @@ class LongitudinalPlanner:
     output_accel_min = get_vehicle_min_accel(self.CP, v_ego) if experimental_mlsim else accel_limits_turns[0]
 
     close_lead_caps = []
-    if tracking_lead:
+    if lead_control_active:
       for lead in (self.lead_one, self.lead_two):
         cap = self.get_close_lead_brake_cap(lead, v_ego, output_accel_min)
         if cap is not None:
@@ -504,13 +526,13 @@ class LongitudinalPlanner:
       self.a_desired = min(self.a_desired, close_lead_brake_cap)
       output_a_target = min(output_a_target, close_lead_brake_cap)
 
-    if tracking_lead and sm['carState'].standstill:
+    if lead_control_active and sm['carState'].standstill:
       moving_leads = [lead for lead in (self.lead_one, self.lead_two)
                       if lead.status and lead.vLead > 0.0 and lead.dRel >= STOP_DISTANCE - 0.5]
       if moving_leads:
         output_a_target = max(output_a_target, 0.3)
 
-    if tracking_lead and np.isfinite(v_cruise) and any(lead.status for lead in (self.lead_one, self.lead_two)):
+    if lead_control_active and np.isfinite(v_cruise) and any(lead.status for lead in (self.lead_one, self.lead_two)):
       # Keep follow/catchup behavior from pulling past the cruise target. Using the
       # same action horizon as the planner preserves normal accel farther below set speed.
       cruise_accel_cap = (v_cruise - v_ego + 0.01) / max(action_t, self.dt)

@@ -2,12 +2,15 @@ import pytest
 from types import SimpleNamespace
 from parameterized import parameterized
 
+from opendbc.can import CANPacker
+from opendbc.car import Bus, DT_CTRL
 from opendbc.car.car_helpers import interfaces
-from opendbc.car.gm.carcontroller import should_spoof_dash_speed
+from opendbc.car.gm import gmcan
+from opendbc.car.gm.carcontroller import should_send_cc_button_spam, should_spoof_dash_speed
 import opendbc.car.gm.interface as gm_interface
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.fingerprints import FINGERPRINTS
-from opendbc.car.gm.values import CAMERA_ACC_CAR, CAR, CC_ONLY_CAR, GM_RX_OFFSET
+from opendbc.car.gm.values import CAMERA_ACC_CAR, CAR, CC_ONLY_CAR, DBC, GM_RX_OFFSET, GMFlags, GMSafetyFlags
 
 CAMERA_DIAGNOSTIC_ADDRESS = 0x24b
 VOLT_CARS = (
@@ -78,6 +81,19 @@ class TestGMInterface:
     assert car_params.startingState
     assert car_params.startAccel == pytest.approx(1.15)
 
+  def test_volt_cc_sparse_fingerprint_without_camera_sets_no_camera(self):
+    CarInterface = interfaces[CAR.CHEVROLET_VOLT_CC]
+    fingerprint = {
+      0: FINGERPRINTS[CAR.CHEVROLET_VOLT][0].copy(),
+      1: {},
+    }
+
+    car_params = CarInterface.get_params(CAR.CHEVROLET_VOLT_CC, fingerprint, [], alpha_long=False, is_release=False, docs=False,
+                                         starpilot_toggles=_test_starpilot_toggles())
+
+    assert car_params.flags & GMFlags.NO_CAMERA.value
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_CAMERA.value
+
 
 class TestGMCarController:
   def test_dash_speed_spoof_respects_live_stock_acc_toggles(self):
@@ -91,3 +107,80 @@ class TestGMCarController:
     cp = SimpleNamespace(openpilotLongitudinalControl=True, enableGasInterceptorDEPRECATED=False)
 
     assert should_spoof_dash_speed(cp, SimpleNamespace(disable_openpilot_long=False))
+
+  def test_cc_button_spam_does_not_require_stock_cruise_enabled(self):
+    cp = SimpleNamespace(flags=GMFlags.CC_LONG.value, minEnableSpeed=10.0)
+    cc = SimpleNamespace(longActive=True)
+    cs = SimpleNamespace(out=SimpleNamespace(vEgo=11.0, cruiseState=SimpleNamespace(enabled=False)))
+
+    assert should_send_cc_button_spam(cp, cc, cs)
+
+  def test_cc_button_spam_requires_cc_long_and_speed(self):
+    cc = SimpleNamespace(longActive=True)
+    cs = SimpleNamespace(out=SimpleNamespace(vEgo=9.0, cruiseState=SimpleNamespace(enabled=True)))
+
+    assert not should_send_cc_button_spam(SimpleNamespace(flags=GMFlags.CC_LONG.value, minEnableSpeed=10.0), cc, cs)
+    assert not should_send_cc_button_spam(SimpleNamespace(flags=0, minEnableSpeed=10.0), cc, cs)
+
+  def test_volt_cc_redneck_spam_is_mirrored_to_camera_bus(self):
+    packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_CC][Bus.pt])
+    controller = SimpleNamespace(frame=int(0.3 / DT_CTRL), last_button_frame=0, apply_speed=0, malibu_button_phase=0)
+    cs = SimpleNamespace(
+      CP=SimpleNamespace(
+        carFingerprint=CAR.CHEVROLET_VOLT_CC,
+        flags=0,
+        minEnableSpeed=24 * CV.MPH_TO_MS,
+      ),
+      buttons_counter=2,
+      out=SimpleNamespace(
+        vEgo=25.0,
+        cruiseState=SimpleNamespace(speed=20.0),
+      ),
+    )
+    actuators = SimpleNamespace(accel=1.0)
+
+    msgs = gmcan.create_gm_cc_spam_command(packer, controller, cs, actuators, SimpleNamespace(is_metric=False))
+
+    assert [msg[2] for msg in msgs] == [0, 2]
+
+  def test_volt_cc_no_camera_redneck_spam_stays_on_powertrain_bus(self):
+    packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_CC][Bus.pt])
+    controller = SimpleNamespace(frame=int(0.3 / DT_CTRL), last_button_frame=0, apply_speed=0, malibu_button_phase=0)
+    cs = SimpleNamespace(
+      CP=SimpleNamespace(
+        carFingerprint=CAR.CHEVROLET_VOLT_CC,
+        flags=GMFlags.NO_CAMERA.value,
+        minEnableSpeed=24 * CV.MPH_TO_MS,
+      ),
+      buttons_counter=2,
+      out=SimpleNamespace(
+        vEgo=25.0,
+        cruiseState=SimpleNamespace(speed=20.0),
+      ),
+    )
+    actuators = SimpleNamespace(accel=1.0)
+
+    msgs = gmcan.create_gm_cc_spam_command(packer, controller, cs, actuators, SimpleNamespace(is_metric=False))
+
+    assert [msg[2] for msg in msgs] == [0]
+
+  def test_non_volt_cc_redneck_spam_stays_on_powertrain_bus(self):
+    packer = CANPacker(DBC[CAR.CHEVROLET_BOLT_CC_2018_2021][Bus.pt])
+    controller = SimpleNamespace(frame=int(0.3 / DT_CTRL), last_button_frame=0, apply_speed=0, malibu_button_phase=0)
+    cs = SimpleNamespace(
+      CP=SimpleNamespace(
+        carFingerprint=CAR.CHEVROLET_BOLT_CC_2018_2021,
+        flags=GMFlags.CC_LONG.value,
+        minEnableSpeed=24 * CV.MPH_TO_MS,
+      ),
+      buttons_counter=2,
+      out=SimpleNamespace(
+        vEgo=25.0,
+        cruiseState=SimpleNamespace(speed=20.0),
+      ),
+    )
+    actuators = SimpleNamespace(accel=1.0)
+
+    msgs = gmcan.create_gm_cc_spam_command(packer, controller, cs, actuators, SimpleNamespace(is_metric=False))
+
+    assert [msg[2] for msg in msgs] == [0]

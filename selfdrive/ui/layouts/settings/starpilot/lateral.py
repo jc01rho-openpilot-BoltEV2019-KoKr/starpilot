@@ -105,14 +105,14 @@ class StarPilotAdvancedLateralLayout(StarPilotPanel):
       if res == DialogResult.CONFIRM:
         self._params.put_float(key, float(val))
         self._rebuild_grid()
-    gui_app.set_modal_overlay(AetherSliderDialog(tr(key), min_v, max_v, step, self._params.get_float(key), on_close, unit=unit, color="#597497"))
+    gui_app.push_widget(AetherSliderDialog(tr(key), min_v, max_v, step, self._params.get_float(key), on_close, unit=unit, color="#597497"))
 
   def _on_reboot_toggle(self, key, state):
     self._params.put_bool(key, state)
     from openpilot.selfdrive.ui.ui_state import ui_state
     if ui_state.started:
       dialog = ConfirmDialog(tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"), on_close=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None)
-      gui_app.set_modal_overlay(dialog)
+      gui_app.push_widget(dialog)
 
 class StarPilotAlwaysOnLateralLayout(StarPilotPanel):
   def __init__(self):
@@ -129,13 +129,13 @@ class StarPilotAlwaysOnLateralLayout(StarPilotPanel):
       if res == DialogResult.CONFIRM:
         self._params.put_int(key, int(val))
         self._rebuild_grid()
-    gui_app.set_modal_overlay(AetherSliderDialog(tr(key), 0, 100, 1, self._params.get_int(key), on_close, unit=" mph", color="#597497"))
+    gui_app.push_widget(AetherSliderDialog(tr(key), 0, 100, 1, self._params.get_int(key), on_close, unit=" mph", color="#597497"))
 
   def _on_reboot_toggle(self, key, state):
     self._params.put_bool(key, state)
     from openpilot.selfdrive.ui.ui_state import ui_state
     if ui_state.started:
-      gui_app.set_modal_overlay(ConfirmDialog(tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"), on_close=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None))
+      gui_app.push_widget(ConfirmDialog(tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"), on_close=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None))
 
 class StarPilotLaneChangesLayout(StarPilotPanel):
   def __init__(self):
@@ -155,14 +155,14 @@ class StarPilotLaneChangesLayout(StarPilotPanel):
       if res == DialogResult.CONFIRM:
         self._params.put_int(key, int(val))
         self._rebuild_grid()
-    gui_app.set_modal_overlay(AetherSliderDialog(tr(key), 0, 100, 1, self._params.get_int(key), on_close, unit=" mph", color="#597497"))
+    gui_app.push_widget(AetherSliderDialog(tr(key), 0, 100, 1, self._params.get_int(key), on_close, unit=" mph", color="#597497"))
 
   def _show_float_selector(self, key, min_v, max_v, step, unit=""):
     def on_close(res, val):
       if res == DialogResult.CONFIRM:
         self._params.put_float(key, float(val))
         self._rebuild_grid()
-    gui_app.set_modal_overlay(AetherSliderDialog(tr(key), min_v, max_v, step, self._params.get_float(key), on_close, unit=unit, color="#597497"))
+    gui_app.push_widget(AetherSliderDialog(tr(key), min_v, max_v, step, self._params.get_float(key), on_close, unit=unit, color="#597497"))
 
 class StarPilotLateralTuneLayout(StarPilotPanel):
   def __init__(self):
@@ -192,7 +192,7 @@ class StarPilotLateralTuneLayout(StarPilotPanel):
     self._params.put_bool(key, state)
     from openpilot.selfdrive.ui.ui_state import ui_state
     if ui_state.started:
-      gui_app.set_modal_overlay(ConfirmDialog(tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"), on_close=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None))
+      gui_app.push_widget(ConfirmDialog(tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"), on_close=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None))
 
 class StarPilotLateralQOLLayout(StarPilotPanel):
   def __init__(self):
@@ -208,7 +208,7 @@ class StarPilotLateralQOLLayout(StarPilotPanel):
       if res == DialogResult.CONFIRM:
         self._params.put_int(key, int(val))
         self._rebuild_grid()
-    gui_app.set_modal_overlay(AetherSliderDialog(tr(key), 0, 100, 1, self._params.get_int(key), on_close, unit=" mph", color="#597497"))
+    gui_app.push_widget(AetherSliderDialog(tr(key), 0, 100, 1, self._params.get_int(key), on_close, unit=" mph", color="#597497"))
 
 class StarPilotLateralLayout(StarPilotPanel):
   def __init__(self):

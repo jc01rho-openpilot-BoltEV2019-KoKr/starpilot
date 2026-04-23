@@ -1,7 +1,7 @@
 from opendbc.car import DT_CTRL
 from opendbc.car.can_definitions import CanData
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.gm.values import CAR, CanBus, CruiseButtons
+from opendbc.car.gm.values import CAR, CanBus, CruiseButtons, GMFlags
 
 MALIBU_BUTTON_TABLE = {
   0: [0x10FF, 0x15EE, 0x1ADD, 0x1FCC],
@@ -314,7 +314,13 @@ def create_gm_cc_spam_command(packer, controller, CS, actuators, starpilot_toggl
         controller.malibu_button_phase = (controller.malibu_button_phase + 1) % 4
         return msgs
     idx = (CS.buttons_counter + 1) % 4  # Need to predict the next idx for '22-23 EUV
-    return [create_buttons(packer, CanBus.POWERTRAIN, idx, cruise_btn)]
+    msgs = [create_buttons(packer, CanBus.POWERTRAIN, idx, cruise_btn)]
+
+    # Flashed camera-forward Volt CC installs also need the button spoof on the
+    # camera side. Removed-camera installs set NO_CAMERA and keep this PT-only.
+    if CS.CP.carFingerprint == CAR.CHEVROLET_VOLT_CC and not (CS.CP.flags & GMFlags.NO_CAMERA.value):
+      msgs.append(create_buttons(packer, CanBus.CAMERA, idx, cruise_btn))
+    return msgs
   else:
     return []
 

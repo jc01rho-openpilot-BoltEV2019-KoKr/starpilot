@@ -1087,7 +1087,16 @@
         "description": "Automatically adjust driving behavior based on real-time weather. Helps maintain comfort and safety in low visibility, rain, or snow.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "is_parent_toggle": true,
         "parent_key": "QOLLongitudinal"
+      },
+      {
+        "key": "LowVisibilityOffsets",
+        "label": "Low Visibility (fog)",
+        "description": "Customise settings for driving in low visibility situations",
+        "ui_type": "group",
+        "is_parent_toggle": true,
+        "parent_key": "WeatherPresets"
       },
       {
         "key": "IncreaseFollowingLowVisibility",
@@ -1097,7 +1106,8 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 3.0,
-        "step": 0.01
+        "step": 0.01,
+        "parent_key": "LowVisibilityOffsets"
       },
       {
         "key": "IncreasedStoppedDistanceLowVisibility",
@@ -1106,7 +1116,8 @@
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
-        "max": 10.0
+        "max": 10.0,
+        "parent_key": "LowVisibilityOffsets"
       },
       {
         "key": "ReduceAccelerationLowVisibility",
@@ -1116,7 +1127,8 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 99.0,
-        "step": 1.0
+        "step": 1.0,
+        "parent_key": "LowVisibilityOffsets"
       },
       {
         "key": "ReduceLateralAccelerationLowVisibility",
@@ -1126,7 +1138,16 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 99.0,
-        "step": 1.0
+        "step": 1.0,
+        "parent_key": "LowVisibilityOffsets"
+      },
+      {
+        "key": "RainOffsets",
+        "label": "Light/Medium Rain",
+        "description": "Customise settings for driving in light & medium rain",
+        "ui_type": "group",
+        "is_parent_toggle": true,
+        "parent_key": "WeatherPresets"
       },
       {
         "key": "IncreaseFollowingRain",
@@ -1136,7 +1157,8 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 3.0,
-        "step": 0.01
+        "step": 0.01,
+        "parent_key": "RainOffsets"
       },
       {
         "key": "IncreasedStoppedDistanceRain",
@@ -1145,7 +1167,8 @@
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
-        "max": 10.0
+        "max": 10.0,
+        "parent_key": "RainOffsets"
       },
       {
         "key": "ReduceAccelerationRain",
@@ -1155,7 +1178,8 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 99.0,
-        "step": 1.0
+        "step": 1.0,
+        "parent_key": "RainOffsets"
       },
       {
         "key": "ReduceLateralAccelerationRain",
@@ -1165,7 +1189,16 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 99.0,
-        "step": 1.0
+        "step": 1.0,
+        "parent_key": "RainOffsets"
+      },
+      {
+        "key": "RainStormOffsets",
+        "label": "Heavy Rain",
+        "description": "Customise settings for driving in heavy rain",
+        "ui_type": "group",
+        "is_parent_toggle": true,
+        "parent_key": "WeatherPresets"
       },
       {
         "key": "IncreaseFollowingRainStorm",
@@ -1175,7 +1208,8 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 3.0,
-        "step": 0.01
+        "step": 0.01,
+        "parent_key": "RainStormOffsets"
       },
       {
         "key": "IncreasedStoppedDistanceRainStorm",
@@ -1184,7 +1218,8 @@
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
-        "max": 10.0
+        "max": 10.0,
+        "parent_key": "RainStormOffsets"
       },
       {
         "key": "ReduceAccelerationRainStorm",
@@ -1194,7 +1229,8 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 99.0,
-        "step": 1.0
+        "step": 1.0,
+        "parent_key": "RainStormOffsets"
       },
       {
         "key": "ReduceLateralAccelerationRainStorm",
@@ -1204,7 +1240,16 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 99.0,
-        "step": 1.0
+        "step": 1.0,
+        "parent_key": "RainStormOffsets"
+      },
+      {
+        "key": "SnowOffsets",
+        "label": "Snow",
+        "description": "Customise settings for driving in snow",
+        "ui_type": "group",
+        "is_parent_toggle": true,
+        "parent_key": "WeatherPresets"
       },
       {
         "key": "IncreaseFollowingSnow",
@@ -1214,7 +1259,8 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 3.0,
-        "step": 0.01
+        "step": 0.01,
+        "parent_key": "SnowOffsets"
       },
       {
         "key": "IncreasedStoppedDistanceSnow",
@@ -1223,7 +1269,8 @@
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
-        "max": 10.0
+        "max": 10.0,
+        "parent_key": "SnowOffsets"
       },
       {
         "key": "ReduceAccelerationSnow",
@@ -1233,7 +1280,8 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 99.0,
-        "step": 1.0
+        "step": 1.0,
+        "parent_key": "SnowOffsets"
       },
       {
         "key": "ReduceLateralAccelerationSnow",
@@ -1243,7 +1291,8 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 99.0,
-        "step": 1.0
+        "step": 1.0,
+        "parent_key": "SnowOffsets"
       },
       {
         "key": "SpeedLimitController",
@@ -1258,7 +1307,9 @@
         "label": "Vision Speed Limit Detection",
         "description": "Use the road camera to detect speed limit signs for SLC and speed limit filling.",
         "data_type": "bool",
-        "ui_type": "toggle"
+        "ui_type": "toggle",
+        "is_parent_toggle": true,
+        "parent_key": "SpeedLimitController"
       },
       {
         "key": "VisionSpeedLimitAutoBookmark",
@@ -1317,6 +1368,7 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 30.0,
+        "step": 0.1,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1327,6 +1379,7 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 30.0,
+        "step": 0.1,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1453,6 +1506,7 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
+        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1463,6 +1517,7 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
+        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1473,6 +1528,7 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
+        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1483,6 +1539,7 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
+        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1493,6 +1550,7 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
+        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1503,6 +1561,7 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
+        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1513,6 +1572,7 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
+        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1699,6 +1759,15 @@
         "parent_key": "ModelUI"
       },
       {
+        "key": "LaneLinesColor",
+        "label": "Lane Line Color",
+        "description": "Set a custom lane-line color for the Python UIs.\n\nUse Stock to follow the default line color behavior.",
+        "data_type": "string",
+        "ui_type": "color",
+        "default_color": "#00FF00",
+        "parent_key": "ModelUI"
+      },
+      {
         "key": "BorderWidth",
         "label": "Border Width",
         "description": "Scale the driving-screen border thickness.\n\n100% matches the stock border width.",
@@ -1720,6 +1789,15 @@
         "parent_key": "ModelUI"
       },
       {
+        "key": "PathEdgesColor",
+        "label": "Path Edge Color",
+        "description": "Set a custom path-edge color for the Python UIs.\n\nUse Stock to follow the default line color behavior.",
+        "data_type": "string",
+        "ui_type": "color",
+        "default_color": "#00FF00",
+        "parent_key": "ModelUI"
+      },
+      {
         "key": "PathWidth",
         "label": "Path Width",
         "description": "Set the driving-path width.\n\nDefault (6.1 feet) matches the width of a 2019 Lexus ES 350.",
@@ -1728,6 +1806,15 @@
         "min": 0.0,
         "max": 10.0,
         "step": 0.1,
+        "parent_key": "ModelUI"
+      },
+      {
+        "key": "PathColor",
+        "label": "Path Color",
+        "description": "Set a custom filled-path color for the Python UIs.\n\nUse Stock to follow the default path color behavior.",
+        "data_type": "string",
+        "ui_type": "color",
+        "default_color": "#30FF9C",
         "parent_key": "ModelUI"
       },
       {

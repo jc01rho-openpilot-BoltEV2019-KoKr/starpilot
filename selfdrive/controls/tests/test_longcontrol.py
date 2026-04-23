@@ -135,7 +135,7 @@ def test_volt_testing_ground_handoff_freezes_integrator(monkeypatch):
   CP.longitudinalTuning.kiBP = [0.0]
   CP.longitudinalTuning.kiV = [0.03]
 
-  monkeypatch.setattr(longcontrol.testing_ground, "use_2", True, raising=False)
+  monkeypatch.setattr(longcontrol, "testing_ground", SimpleNamespace(use_2=True))
 
   lc = LongControl(CP)
   freeze = lc._get_pedal_long_freeze(a_target=0.7, error=0.7, v_ego=8.0, accel_limits=(-3.0, 2.0))
@@ -154,7 +154,7 @@ def test_non_interceptor_volt_testing_ground_handoff_freezes_integrator(monkeypa
   CP.longitudinalTuning.kiBP = [0.0]
   CP.longitudinalTuning.kiV = [0.03]
 
-  monkeypatch.setattr(longcontrol.testing_ground, "use_2", True, raising=False)
+  monkeypatch.setattr(longcontrol, "testing_ground", SimpleNamespace(use_2=True))
 
   lc = LongControl(CP)
   freeze = lc._get_pedal_long_freeze(a_target=0.7, error=0.7, v_ego=8.0, accel_limits=(-3.0, 2.0))

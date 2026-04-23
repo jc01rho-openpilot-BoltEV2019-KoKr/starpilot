@@ -439,7 +439,7 @@ class StarPilotModelUILayout(StarPilotPanel):
         self._params.put_int(key, int(val))
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(AetherSliderDialog(tr(key), min_v, max_v, 1, self._params.get_int(key), on_close, unit=unit, color="#8B5CF6"))
+    gui_app.push_widget(AetherSliderDialog(tr(key), min_v, max_v, 1, self._params.get_int(key), on_close, unit=unit, color="#8B5CF6"))
 
   def _show_float_selector(self, key, min_v, max_v, step, unit="", convert=None, unconvert=None):
     current = self._params.get_float(key)
@@ -454,7 +454,7 @@ class StarPilotModelUILayout(StarPilotPanel):
         self._params.put_float(key, v)
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(AetherSliderDialog(tr(key), min_v, max_v, step, current, on_close, unit=unit, color="#8B5CF6"))
+    gui_app.push_widget(AetherSliderDialog(tr(key), min_v, max_v, step, current, on_close, unit=unit, color="#8B5CF6"))
 
   def _get_color_display(self, key):
     val = self._params.get(key, encoding='utf-8') or ""
@@ -476,7 +476,7 @@ class StarPilotModelUILayout(StarPilotPanel):
           self._params.put(key, dialog.selection)
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(dialog, callback=on_select)
+    gui_app.push_widget(dialog, callback=on_select)
 
 
 class StarPilotNavigationVisualsLayout(StarPilotPanel):
@@ -577,4 +577,4 @@ class StarPilotVisualQOLLayout(StarPilotPanel):
         self._params.put_int("CameraView", idx)
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(dialog, callback=on_select)
+    gui_app.push_widget(dialog, callback=on_select)
