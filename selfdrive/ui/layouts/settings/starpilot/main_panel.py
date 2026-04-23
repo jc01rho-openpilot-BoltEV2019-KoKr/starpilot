@@ -14,10 +14,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.longitudinal import StarP
 from openpilot.selfdrive.ui.layouts.settings.starpilot.lateral import StarPilotLateralLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.maps import StarPilotMapsLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.navigation import StarPilotNavigationLayout
-from openpilot.selfdrive.ui.layouts.settings.starpilot.data import StarPilotDataLayout
-from openpilot.selfdrive.ui.layouts.settings.starpilot.device import StarPilotDeviceLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.system_settings import StarPilotSystemLayout
-from openpilot.selfdrive.ui.layouts.settings.starpilot.utilities import StarPilotUtilitiesLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.visuals import StarPilotVisualsLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.themes import StarPilotThemesLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.vehicle import StarPilotVehicleSettingsLayout
@@ -94,9 +91,6 @@ class StarPilotLayout(Widget):
       StarPilotPanelType.LATERAL: StarPilotPanelInfo(tr_noop("Steering"), StarPilotLateralLayout()),
       StarPilotPanelType.MAPS: StarPilotPanelInfo(tr_noop("Map Data"), StarPilotMapsLayout()),
       StarPilotPanelType.NAVIGATION: StarPilotPanelInfo(tr_noop("Navigation"), StarPilotNavigationLayout()),
-      StarPilotPanelType.DATA: StarPilotPanelInfo(tr_noop("Data Management"), StarPilotDataLayout()),
-      StarPilotPanelType.DEVICE: StarPilotPanelInfo(tr_noop("Device Controls"), StarPilotDeviceLayout()),
-      StarPilotPanelType.UTILITIES: StarPilotPanelInfo(tr_noop("Utilities"), StarPilotUtilitiesLayout()),
       StarPilotPanelType.VISUALS: StarPilotPanelInfo(tr_noop("Appearance"), StarPilotVisualsLayout()),
       StarPilotPanelType.THEMES: StarPilotPanelInfo(tr_noop("Themes"), StarPilotThemesLayout()),
       StarPilotPanelType.VEHICLE: StarPilotPanelInfo(tr_noop("Vehicle Settings"), StarPilotVehicleSettingsLayout()),
@@ -201,9 +195,6 @@ class StarPilotLayout(Widget):
       "LATERAL": StarPilotPanelType.LATERAL,
       "MAPS": StarPilotPanelType.MAPS,
       "NAVIGATION": StarPilotPanelType.NAVIGATION,
-      "DATA": StarPilotPanelType.DATA,
-      "DEVICE": StarPilotPanelType.DEVICE,
-      "UTILITIES": StarPilotPanelType.UTILITIES,
       "VISUALS": StarPilotPanelType.VISUALS,
       "THEMES": StarPilotPanelType.THEMES,
       "VEHICLE": StarPilotPanelType.VEHICLE,

@@ -124,7 +124,7 @@ class StarPilotMapsLayout(StarPilotPanel):
         self._params.put("PreferredSchedule", schedule_param_value(dialog.selection))
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(dialog, callback=on_select)
+    gui_app.push_widget(dialog, callback=on_select)
 
   def _on_download(self):
     current_selected = self._params.get("MapsSelected", encoding="utf-8") or ""
@@ -133,15 +133,15 @@ class StarPilotMapsLayout(StarPilotPanel):
       self._params.put("MapsSelected", selected_raw)
     selected = [k.strip() for k in selected_raw.split(",") if k.strip()]
     if not selected:
-      gui_app.set_modal_overlay(alert_dialog(tr("Please select at least one region or state first!")))
+      gui_app.push_widget(alert_dialog(tr("Please select at least one region or state first!")))
       return
 
     def on_confirm(res):
       if res == DialogResult.CONFIRM:
         self._params_memory.put_bool("DownloadMaps", True)
-        gui_app.set_modal_overlay(alert_dialog(tr("Map download started in background.")))
+        gui_app.push_widget(alert_dialog(tr("Map download started in background.")))
 
-    gui_app.set_modal_overlay(ConfirmDialog(tr("Start downloading maps for selected regions?"), tr("Download"), on_close=on_confirm))
+    gui_app.push_widget(ConfirmDialog(tr("Start downloading maps for selected regions?"), tr("Download"), on_close=on_confirm))
 
   def _on_remove(self):
     def on_confirm(res):
@@ -149,7 +149,7 @@ class StarPilotMapsLayout(StarPilotPanel):
         maps_path = Path("/data/media/0/osm/offline")
         if maps_path.exists():
           shutil.rmtree(maps_path, ignore_errors=True)
-        gui_app.set_modal_overlay(alert_dialog(tr("Maps removed.")))
+        gui_app.push_widget(alert_dialog(tr("Maps removed.")))
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(ConfirmDialog(tr("Delete all downloaded map data?"), tr("Remove"), on_close=on_confirm))
+    gui_app.push_widget(ConfirmDialog(tr("Delete all downloaded map data?"), tr("Remove"), on_close=on_confirm))

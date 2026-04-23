@@ -1,4 +1,5 @@
 from __future__ import annotations
+import math
 import subprocess
 import time
 from pathlib import Path
@@ -7,14 +8,213 @@ import pyray as rl
 
 from openpilot.common.basedir import BASEDIR
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH
-from openpilot.system.ui.lib.application import gui_app
+from openpilot.system.ui.lib.application import gui_app, FontWeight, MouseEvent, MousePos
 from openpilot.system.ui.lib.multilang import tr, tr_noop
-from openpilot.system.ui.widgets import DialogResult
+from openpilot.system.ui.lib.text_measure import measure_text_cached
+from openpilot.system.ui.widgets import Widget
+from openpilot.system.ui.widgets.label import gui_label
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPanel
-from openpilot.selfdrive.ui.layouts.settings.starpilot.tabbed_panel import TabSectionSpec, TabbedSectionHost
-from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import TileGrid, ToggleTile, SPACING
+from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
+  AETHER_LIST_METRICS,
+  AetherListColors,
+  build_list_panel_frame,
+  draw_list_panel_shell,
+  AetherContinuousSlider,
+  draw_toggle_pill,
+)
+
+MODEL_PANEL_BG = AetherListColors.PANEL_BG
+MODEL_HEADER_TEXT = AetherListColors.HEADER
+MODEL_SUBTEXT = AetherListColors.SUBTEXT
+MODEL_MUTED = AetherListColors.MUTED
+
+SECTION_GAP = AETHER_LIST_METRICS.section_gap
+
+
+
+class SoundsManagerView(Widget):
+  def __init__(self, controller: "StarPilotSoundsLayout"):
+    super().__init__()
+    self._controller = controller
+    self._pressed_target: str | None = None
+
+    self._sliders: dict[str, AetherContinuousSlider] = {}
+    self._slider_was_dragging: dict[str, bool] = {}
+    self._toggle_rects: dict[str, rl.Rectangle] = {}
+    self._font = gui_app.font(FontWeight.BOLD)
+
+    self._init_sliders()
+
+  def _init_sliders(self):
+    for key in self._controller.VOLUME_KEYS:
+      val = self._controller._params.get_int(key, return_default=True, default=100)
+      
+      def on_change(v, k=key):
+        new_v = int(v)
+        if new_v != 101 and new_v < self._controller.VOLUME_INFO[k]["min"]:
+          new_v = self._controller.VOLUME_INFO[k]["min"]
+        self._controller._params.put_int(k, new_v)
+
+      slider = AetherContinuousSlider(
+        min_val=0.0,
+        max_val=101.0,
+        step=1.0,
+        current_val=float(val),
+        on_change=on_change,
+        title=tr(self._controller.VOLUME_INFO[key]["title"]),
+        unit="%",
+        labels={0.0: tr("Muted"), 101.0: tr("Auto")},
+        color=AetherListColors.PRIMARY
+      )
+      self._sliders[key] = slider
+      self._slider_was_dragging[key] = False
+
+    cd_val = self._controller._params.get_int(self._controller.COOLDOWN_KEY, return_default=True, default=0)
+    def on_cd_change(v):
+      self._controller._params.put_int(self._controller.COOLDOWN_KEY, int(v))
+    
+    cd_slider = AetherContinuousSlider(
+      min_val=0.0,
+      max_val=float(self._controller.COOLDOWN_INFO["max"]),
+      step=1.0,
+      current_val=float(cd_val),
+      on_change=on_cd_change,
+      title=tr(self._controller.COOLDOWN_INFO["title"]),
+      unit=" " + tr("min"),
+      labels={0.0: tr("Off"), 1.0: tr("1 minute")},
+      color=AetherListColors.PRIMARY
+    )
+    self._sliders[self._controller.COOLDOWN_KEY] = cd_slider
+    self._slider_was_dragging[self._controller.COOLDOWN_KEY] = False
+
+  def _handle_mouse_press(self, mouse_pos: MousePos):
+    self._pressed_target = self._target_at(mouse_pos)
+    for slider in self._sliders.values():
+      slider._handle_mouse_press(mouse_pos)
+
+  def _handle_mouse_release(self, mouse_pos: MousePos):
+    for slider in self._sliders.values():
+      slider._handle_mouse_release(mouse_pos)
+      
+    target = self._target_at(mouse_pos)
+    if self._pressed_target is not None and self._pressed_target == target:
+      self._activate_target(target)
+    self._pressed_target = None
+
+  def _handle_mouse_event(self, mouse_event: MouseEvent):
+    for slider in self._sliders.values():
+      slider._handle_mouse_event(mouse_event)
+
+  def _target_at(self, mouse_pos: MousePos) -> str | None:
+    for key, rect in self._toggle_rects.items():
+      if rl.check_collision_point_rec(mouse_pos, rect):
+        return f"toggle:{key}"
+    return None
+
+  def _activate_target(self, target: str):
+    if target.startswith("toggle:"):
+      key = target.split(":", 1)[1]
+      info = self._controller.ALERT_INFO.get(key)
+      if info and info.get("is_enabled", lambda: True)():
+        current = self._controller._params.get_bool(key)
+        self._controller._params.put_bool(key, not current)
+
+  def _render(self, rect: rl.Rectangle):
+    self.set_rect(rect)
+    self._toggle_rects.clear()
+
+    frame = build_list_panel_frame(rect)
+    draw_list_panel_shell(frame)
+
+    header_rect = frame.header
+    self._draw_header(header_rect)
+
+    # Reclaim the dead space! The global header allocates 210px, but our text only uses ~100px.
+    metrics = AETHER_LIST_METRICS
+    actual_header_height = 100
+    content_y = header_rect.y + actual_header_height
+    content_h = (frame.shell.y + frame.shell.height) - content_y - metrics.panel_padding_bottom
+
+    content_rect = rl.Rectangle(
+        frame.scroll.x,
+        content_y,
+        frame.scroll.width,
+        content_h
+    )
+    
+    col_width = (content_rect.width - SECTION_GAP) / 2
+    left_col = rl.Rectangle(content_rect.x, content_rect.y, col_width, content_rect.height)
+    right_col = rl.Rectangle(content_rect.x + col_width + SECTION_GAP, content_rect.y, col_width, content_rect.height)
+
+    self._draw_volume_section(left_col)
+    self._draw_utility_section(right_col)
+
+    for key, slider in self._sliders.items():
+      is_dragging = slider._is_dragging
+      if self._slider_was_dragging[key] and not is_dragging:
+        if key in self._controller.VOLUME_KEYS:
+          self._controller._test_sound(key)
+      self._slider_was_dragging[key] = is_dragging
+
+  def _draw_header(self, rect: rl.Rectangle):
+    title_rect = rl.Rectangle(rect.x, rect.y + 4, rect.width * 0.55, 40)
+    gui_label(title_rect, tr("Sounds & Alerts"), 40, MODEL_HEADER_TEXT, FontWeight.SEMI_BOLD)
+
+    subtitle_rect = rl.Rectangle(rect.x, rect.y + 48, rect.width * 0.58, 36)
+    gui_label(subtitle_rect, tr("Manage system volumes and custom alert toggles."), 24, MODEL_SUBTEXT, FontWeight.NORMAL)
+
+  def _draw_volume_section(self, rect: rl.Rectangle):
+    num_volumes = len(self._controller.VOLUME_KEYS)
+    vol_row_h = rect.height / num_volumes
+
+    for index, key in enumerate(self._controller.VOLUME_KEYS):
+      row_rect = rl.Rectangle(rect.x, rect.y + index * vol_row_h, rect.width, vol_row_h)
+      self._draw_slider_row(row_rect, key, self._controller.VOLUME_INFO[key])
+
+  def _draw_utility_section(self, rect: rl.Rectangle):
+    total_elements = 7 # 1 cooldown + 6 alerts
+    row_h = rect.height / total_elements
+
+    # Cooldown Slider (Index 0)
+    cd_row_rect = rl.Rectangle(rect.x, rect.y, rect.width, row_h)
+    self._draw_slider_row(cd_row_rect, self._controller.COOLDOWN_KEY, self._controller.COOLDOWN_INFO)
+    
+    # Custom Alert Toggle Pills (Indices 1 to 6)
+    for index, key in enumerate(self._controller.CUSTOM_ALERTS_KEYS):
+      row_rect = rl.Rectangle(rect.x, rect.y + (index + 1) * row_h, rect.width, row_h)
+      self._draw_toggle_row(row_rect, key, self._controller.ALERT_INFO[key])
+
+  def _draw_slider_row(self, rect: rl.Rectangle, key: str, info: dict):
+    slider = self._sliders[key]
+    
+    padded_rect = rl.Rectangle(rect.x, rect.y + 4, rect.width - 12, rect.height - 8)
+    
+    if not slider._is_dragging:
+      current_param = self._controller._params.get_int(key, return_default=True, default=100 if key != self._controller.COOLDOWN_KEY else 0)
+      if slider.current_val != current_param:
+         slider.current_val = float(current_param)
+
+    slider.render(padded_rect)
+
+  def _draw_toggle_row(self, rect: rl.Rectangle, key: str, info: dict):
+    padded_rect = rl.Rectangle(rect.x, rect.y + 4, rect.width - 12, rect.height - 8)
+    
+    current_val = self._controller._params.get_bool(key)
+    is_enabled = info.get("is_enabled", lambda: True)()
+    
+    mouse_pos = gui_app.last_mouse_event.pos
+    hovered = rl.check_collision_point_rec(mouse_pos, padded_rect)
+    pressed = self._pressed_target == f"toggle:{key}"
+    
+    status_str = tr("ON") if current_val else tr("OFF")
+    if not is_enabled: status_str = tr(info.get("disabled_label", "UNAVAILABLE"))
+    
+    draw_toggle_pill(padded_rect, current_val, is_enabled, tr(info["title"]), status_str, hovered, pressed)
+    
+    self._toggle_rects[key] = padded_rect
+
 
 class StarPilotSoundsLayout(StarPilotPanel):
   COOLDOWN_KEY = "SwitchbackModeCooldown"
@@ -37,42 +237,16 @@ class StarPilotSoundsLayout(StarPilotPanel):
     "SpeedLimitChangedAlert",
   ]
 
-  def __init__(self):
-    super().__init__()
-    self._section_tabs = TabbedSectionHost([
-      TabSectionSpec("volume_control", "Volumes", StarPilotVolumeControlLayout()),
-      TabSectionSpec("custom_alerts", "Alerts", StarPilotCustomAlertsLayout()),
-    ])
-
-  def set_navigate_callback(self, callback):
-    self._section_tabs.set_navigate_callback(callback)
-
-  def set_back_callback(self, callback):
-    self._section_tabs.set_back_callback(callback)
-
-  def _render(self, rect):
-    self._section_tabs.render(rect)
-
-  def set_current_sub_panel(self, sub_panel: str):
-    self._section_tabs.set_current_sub_panel(sub_panel)
-
-  def show_event(self):
-    self._section_tabs.show_event()
-
-  def hide_event(self):
-    self._section_tabs.hide_event()
-
-class StarPilotVolumeControlLayout(StarPilotPanel):
-  COOLDOWN_INFO = {"title": tr_noop("Switchback Mode Cooldown"), "icon": "toggle_icons/icon_mute.png", "min": 0, "max": 30}
+  COOLDOWN_INFO = {"title": tr_noop("Switchback Mode Cooldown"), "min": 0, "max": 30}
   VOLUME_INFO = {
-    "BelowSteerSpeedVolume": {"title": tr_noop("Min Steer Speed Alert"), "icon": "toggle_icons/icon_mute.png", "min": 0},
-    "DisengageVolume": {"title": tr_noop("Disengage Volume"), "icon": "toggle_icons/icon_mute.png", "min": 0},
-    "EngageVolume": {"title": tr_noop("Engage Volume"), "icon": "toggle_icons/icon_green_light.png", "min": 0},
-    "PromptVolume": {"title": tr_noop("Prompt Volume"), "icon": "toggle_icons/icon_message.png", "min": 0},
-    "PromptDistractedVolume": {"title": tr_noop("Distracted Volume"), "icon": "toggle_icons/icon_display.png", "min": 0},
-    "RefuseVolume": {"title": tr_noop("Refuse Volume"), "icon": "toggle_icons/icon_mute.png", "min": 0},
-    "WarningSoftVolume": {"title": tr_noop("Warning Soft"), "icon": "toggle_icons/icon_conditional.png", "min": 25},
-    "WarningImmediateVolume": {"title": tr_noop("Warning Immediate"), "icon": "toggle_icons/icon_conditional.png", "min": 25},
+    "BelowSteerSpeedVolume": {"title": tr_noop("Min Steer Speed Alert"), "min": 0},
+    "DisengageVolume": {"title": tr_noop("Disengage Volume"), "min": 0},
+    "EngageVolume": {"title": tr_noop("Engage Volume"), "min": 0},
+    "PromptVolume": {"title": tr_noop("Prompt Volume"), "min": 0},
+    "PromptDistractedVolume": {"title": tr_noop("Distracted Volume"), "min": 0},
+    "RefuseVolume": {"title": tr_noop("Refuse Volume"), "min": 0},
+    "WarningSoftVolume": {"title": tr_noop("Warning Soft"), "min": 25},
+    "WarningImmediateVolume": {"title": tr_noop("Warning Immediate"), "min": 25},
   }
 
   _sound_player_process = None
@@ -81,71 +255,35 @@ class StarPilotVolumeControlLayout(StarPilotPanel):
     super().__init__()
     self._init_sound_player()
 
-    self.SECTIONS = [
-      {
-        "title": tr_noop("Volume Levels"),
-        "categories": self._build_volume_categories(),
+    self.ALERT_INFO = {
+      "GoatScream": {"title": tr_noop("Goat Scream")},
+      "GoatScreamCriticalAlerts": {"title": tr_noop("Goat Critical")},
+      "GreenLightAlert": {"title": tr_noop("Green Light")},
+      "LeadDepartingAlert": {"title": tr_noop("Lead Departure")},
+      "LoudBlindspotAlert": {
+        "title": tr_noop("Loud Blindspot"), 
+        "is_enabled": lambda: starpilot_state.car_state.hasBSM,
+        "disabled_label": tr_noop("Needs BSM")
       },
-      {
-        "title": tr_noop("Safety & Cooldown"),
-        "categories": self._build_safety_categories(),
-      }
-    ]
-    self._rebuild_grid()
+      "SpeedLimitChangedAlert": {
+        "title": tr_noop("Speed Limit"),
+        "is_enabled": lambda: self._params.get_bool("ShowSpeedLimits") or (
+          starpilot_state.car_state.hasOpenpilotLongitudinal and self._params.get_bool("SpeedLimitController")
+        ),
+        "disabled_label": tr_noop("Needs Speed Limits")
+      },
+    }
 
-  def _build_volume_categories(self):
-    cats = []
-    for key in StarPilotSoundsLayout.VOLUME_KEYS:
-      info = self.VOLUME_INFO[key]
+    self._manager_view = SoundsManagerView(self)
 
-      def get_val(k=key):
-        return float(self._params.get_int(k, return_default=True, default=100))
+  def _render(self, rect: rl.Rectangle):
+    self._manager_view.render(rect)
 
-      def set_val(val, k=key):
-        new_v = int(val)
-        if new_v != 101 and new_v < self.VOLUME_INFO[k]["min"]:
-          new_v = self.VOLUME_INFO[k]["min"]
-        self._params.put_int(k, new_v)
+  def show_event(self):
+    super().show_event()
 
-      def test_cb(k=key):
-        self._test_sound(k)
-
-      cats.append({
-        "title": info["title"],
-        "type": "slider",
-        "get_value": get_val,
-        "set_value": set_val,
-        "on_test": test_cb,
-        "min_val": 0,
-        "max_val": 101,
-        "step": 1,
-        "unit": "%",
-        "labels": {0: tr("Muted"), 101: tr("Auto")},
-        "icon": info["icon"],
-        "color": "#3B82F6",
-      })
-    return cats
-
-  def _build_safety_categories(self):
-    def get_cooldown_val():
-      return float(self._params.get_int(StarPilotSoundsLayout.COOLDOWN_KEY, return_default=True, default=0))
-
-    def set_cooldown_val(val):
-      self._params.put_int(StarPilotSoundsLayout.COOLDOWN_KEY, int(val))
-
-    return [{
-      "title": self.COOLDOWN_INFO["title"],
-      "type": "slider",
-      "get_value": get_cooldown_val,
-      "set_value": set_cooldown_val,
-      "min_val": 0,
-      "max_val": float(self.COOLDOWN_INFO["max"]),
-      "step": 1,
-      "unit": " " + tr("min"),
-      "labels": {0: tr("Off"), 1: tr("1 minute")},
-      "icon": self.COOLDOWN_INFO["icon"],
-      "color": "#3B82F6",
-    }]
+  def hide_event(self):
+    super().hide_event()
 
   @classmethod
   def _init_sound_player(cls):
@@ -194,60 +332,3 @@ while True:
       self._sound_player_process.stdin.write(f"{sound_path}|{volume}\n".encode())
       self._sound_player_process.stdin.flush()
     except: pass
-
-class StarPilotCustomAlertsLayout(StarPilotPanel):
-  ALERT_INFO = {
-    "GoatScream": {"title": tr_noop("Goat Scream"), "icon": "toggle_icons/icon_sound.png"},
-    "GoatScreamCriticalAlerts": {"title": tr_noop("Goat Critical"), "icon": "toggle_icons/icon_sound.png"},
-    "GreenLightAlert": {"title": tr_noop("Green Light"), "icon": "toggle_icons/icon_green_light.png"},
-    "LeadDepartingAlert": {"title": tr_noop("Lead Departure"), "icon": "toggle_icons/icon_steering.png"},
-    "LoudBlindspotAlert": {"title": tr_noop("Loud Blindspot"), "icon": "toggle_icons/icon_display.png"},
-    "SpeedLimitChangedAlert": {"title": tr_noop("Speed Limit"), "icon": "toggle_icons/icon_speed_limit.png"},
-  }
-
-  def __init__(self):
-    super().__init__()
-    self._tile_grid = TileGrid(columns=2, padding=SPACING.tile_gap, uniform_width=True)
-    self.CATEGORIES = []
-    for key in StarPilotSoundsLayout.CUSTOM_ALERTS_KEYS:
-      info = self.ALERT_INFO[key]
-      self.CATEGORIES.append({
-        "title": info["title"],
-        "type": "toggle",
-        "get_state": lambda k=key: self._params.get_bool(k),
-        "set_state": lambda s, k=key: self._params.put_bool(k, s),
-        "icon": info["icon"],
-        "color": "#3B82F6",
-        "key": key # Store for visibility check
-      })
-    self._rebuild_grid()
-
-  def _rebuild_grid(self):
-    if not self.CATEGORIES:
-      return
-    self._tile_grid.clear()
-
-    for cat in self.CATEGORIES:
-      key = cat.get("key")
-      is_enabled = lambda: True
-      disabled_label = ""
-
-      if key == "LoudBlindspotAlert":
-        is_enabled = lambda: starpilot_state.car_state.hasBSM
-        disabled_label = tr_noop("Needs BSM")
-      elif key == "SpeedLimitChangedAlert":
-        is_enabled = lambda: self._params.get_bool("ShowSpeedLimits") or (
-          starpilot_state.car_state.hasOpenpilotLongitudinal and self._params.get_bool("SpeedLimitController")
-        )
-        disabled_label = tr_noop("Needs Speed Limits")
-
-      tile = ToggleTile(
-        title=tr(cat["title"]),
-        get_state=cat["get_state"],
-        set_state=cat["set_state"],
-        icon_path=cat.get("icon"),
-        bg_color=cat.get("color"),
-        is_enabled=is_enabled,
-        disabled_label=tr(disabled_label) if disabled_label else "",
-      )
-      self._tile_grid.add_tile(tile)

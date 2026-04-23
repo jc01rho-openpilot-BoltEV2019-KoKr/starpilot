@@ -38,6 +38,12 @@ class ConditionalExperimentalMode:
   LIGHT_SPEED_LOW = 50 * CV.MPH_TO_MS     # 50 mph threshold
   LIGHT_SPEED_HIGH = 60 * CV.MPH_TO_MS    # 60 mph threshold
   LIGHT_MAX_TIME = 9       # Balanced max time preserving city performance
+  LOW_SPEED_LIGHT_FILTER_TIME = 0.35
+  LEAD_CLEAR_FILTER_TIME_LOW = 0.6
+  LEAD_CLEAR_FILTER_TIME_HIGH = 0.35
+  STOP_LIGHT_ON_MARGIN = 2.5
+  STOP_LIGHT_OFF_MARGIN = 4.0
+  STOP_LIGHT_LEAD_BLOCK_MARGIN = 15.0
 
   # ===== END TUNING PARAMETERS =====
 
@@ -66,11 +72,13 @@ class ConditionalExperimentalMode:
     self.curvature_filter = FirstOrderFilter(0, self.FILTER_TIME_CURVE, DT_MDL)
     self.slow_lead_filter = FirstOrderFilter(0, self.FILTER_TIME_LEAD, DT_MDL)
     self.stop_light_filter = FirstOrderFilter(0, self.FILTER_TIME_LIGHT, DT_MDL)
+    self.lead_clear_filter = FirstOrderFilter(0, self.LEAD_CLEAR_FILTER_TIME_LOW, DT_MDL)
 
     self.curve_detected = False
     self.slow_lead_detected = False
     self.experimental_mode = False
     self.stop_light_detected = False
+    self.stop_light_model_detected = False
     self.prev_experimental_mode = False  # For hysteresis
     self.mode_hold_until = 0.0
     self.mode_false_since = 0.0
@@ -177,7 +185,8 @@ class ConditionalExperimentalMode:
 
       filter_time_curves = interp(speed_mph, bp, [low_filter_time, low_filter_time, tuned_filter_time_curves])
       filter_time_leads = interp(speed_mph, bp, [low_filter_time, low_filter_time, tuned_filter_time_leads])
-      filter_time_lights = interp(speed_mph, bp, [low_filter_time, low_filter_time, tuned_filter_time_lights])
+      filter_time_lights = interp(speed_mph, bp, [self.LOW_SPEED_LIGHT_FILTER_TIME, self.LOW_SPEED_LIGHT_FILTER_TIME, tuned_filter_time_lights])
+      lead_clear_filter_time = interp(speed_mph, bp, [self.LEAD_CLEAR_FILTER_TIME_LOW, self.LEAD_CLEAR_FILTER_TIME_LOW, self.LEAD_CLEAR_FILTER_TIME_HIGH])
       light_boost = interp(speed_mph, bp, [low_boost, low_boost, tuned_boost])
       cap_factor = interp(speed_mph, bp, [low_cap_factor, low_cap_factor, tuned_cap_factor])
 
@@ -185,11 +194,14 @@ class ConditionalExperimentalMode:
       self.curvature_filter = FirstOrderFilter(self.curvature_filter.x, filter_time_curves, DT_MDL)
       self.slow_lead_filter = FirstOrderFilter(self.slow_lead_filter.x, filter_time_leads, DT_MDL)
       self.stop_light_filter = FirstOrderFilter(self.stop_light_filter.x, filter_time_lights, DT_MDL)
+      self.lead_clear_filter.update_alpha(lead_clear_filter_time)
 
       # Disable stoplight detection at very high speeds to prevent false positives
       if speed_mph > 75:  # Disable above 75 mph
         self.stop_light_filter.x = 0
         self.stop_light_detected = False
+        self.stop_light_model_detected = False
+        self.lead_clear_filter.x = 0
         return
 
       # Adjust model time with interp boost and gradual cap
@@ -197,15 +209,30 @@ class ConditionalExperimentalMode:
       if cap_factor > 0:
         adjusted_model_time = min(adjusted_model_time, self.LIGHT_MAX_TIME * cap_factor + model_time * (1 - cap_factor))  # Gradual cap
 
-      model_stopping = self.starpilot_planner.model_length < v_ego * adjusted_model_time
+      stop_threshold = max(v_ego * adjusted_model_time, 0.0)
+      if self.stop_light_model_detected:
+        model_stopping = self.starpilot_planner.model_length < stop_threshold + self.STOP_LIGHT_OFF_MARGIN
+      else:
+        model_stopping = self.starpilot_planner.model_length < max(stop_threshold - self.STOP_LIGHT_ON_MARGIN, 0.0)
+      self.stop_light_model_detected = model_stopping
 
       # `model_stopped` is a coarse horizon-length check (< 50 m with current constants)
       # used elsewhere for force-stop/green-light behavior. Reusing it here causes
       # ordinary low-speed cruising to look like a stop prediction and can latch the
       # STOP_LIGHT CEM trigger. For the CEM detector, key strictly off the configured
       # "predicted stop within N seconds" threshold.
-      self.stop_light_filter.update(model_stopping)
-      self.stop_light_detected = bool(self.stop_light_filter.x >= THRESHOLD**2 and not self.starpilot_planner.tracking_lead)
+      # Key off relevant raw lead presence, not trackingLead. Vision-only GM can
+      # flap trackingLead around the model-length threshold while leadOne remains
+      # present; far/stale leads should not suppress true stop-light detection.
+      lead = getattr(self.starpilot_planner, "lead_one", None)
+      lead_distance = float(getattr(lead, "dRel", float("inf")))
+      lead_relevant = bool(getattr(lead, "status", False)) and lead_distance < stop_threshold + self.STOP_LIGHT_LEAD_BLOCK_MARGIN
+      self.lead_clear_filter.update(not lead_relevant)
+      lead_cleared = self.lead_clear_filter.x >= THRESHOLD
+      self.stop_light_filter.update(model_stopping and lead_cleared)
+      self.stop_light_detected = bool(self.stop_light_filter.x >= THRESHOLD**2 and lead_cleared)
     else:
       self.stop_light_filter.x = 0
       self.stop_light_detected = False
+      self.stop_light_model_detected = False
+      self.lead_clear_filter.x = 0

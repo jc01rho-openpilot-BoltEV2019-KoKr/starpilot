@@ -2,6 +2,11 @@ import { html, reactive } from "/assets/vendor/arrow-core.js"
 
 const endpointOptionsCache = {}
 const endpointOptionsInflight = {}
+const COLOR_UI_DEFAULTS = {
+  LaneLinesColor: "#00ff00",
+  PathEdgesColor: "#00ff00",
+  PathColor: "#30ff9c",
+}
 
 // Plain variables — scheduling/routing flags that must NOT be reactive
 let syncScheduled = false
@@ -38,8 +43,48 @@ function getSectionsWithSlug() {
   }))
 }
 
+function isGroupParam(param) {
+  return param?.ui_type === "group"
+}
+
+function isParamEnabledForChildren(paramOrKey) {
+  const param = typeof paramOrKey === "string" ? state.paramMetaByKey[paramOrKey] : paramOrKey
+  if (isGroupParam(param)) return true
+
+  const key = typeof paramOrKey === "string" ? paramOrKey : param?.key
+  return !!state.values[key]
+}
+
 function toSelectValue(value) {
   return value === null || value === undefined ? "" : String(value)
+}
+
+function normalizeHexColor(rawValue) {
+  const value = String(rawValue || "").trim()
+  if (!value || value.toLowerCase() === "stock") return ""
+
+  const stripped = value.startsWith("#") ? value.slice(1) : value
+  if (!/^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(stripped)) return ""
+  return `#${stripped.slice(0, 6).toLowerCase()}`
+}
+
+function getColorDefault(param) {
+  const candidate = normalizeHexColor(param?.default_color)
+  if (candidate) return candidate
+  return COLOR_UI_DEFAULTS[param?.key] || "#ffffff"
+}
+
+function resolveColorInputValue(param, rawValue = undefined) {
+  return normalizeHexColor(rawValue ?? state.values[param?.key]) || getColorDefault(param)
+}
+
+function formatColorDisplayValue(param, rawValue = undefined) {
+  const value = normalizeHexColor(rawValue ?? state.values[param?.key])
+  return value ? value.toUpperCase() : "Stock"
+}
+
+function isStockColorValue(rawValue) {
+  return normalizeHexColor(rawValue) === ""
 }
 
 function resolveEndpointTemplate(template) {
@@ -124,6 +169,14 @@ function syncInputs() {
   // Sync checkboxes — set DOM property directly (attribute alone is unreliable)
   for (const el of document.querySelectorAll("input[type='checkbox'].ds-toggle[id^='ds-']")) {
     el.checked = !!state.values[el.id.slice(3)]
+  }
+
+  // Sync color inputs — map unset/"stock" values to the picker fallback color.
+  for (const el of document.querySelectorAll("input[type='color'].ds-color[id^='ds-']")) {
+    const key = el.id.slice(3)
+    const param = state.paramMetaByKey[key]
+    if (!param) continue
+    el.value = resolveColorInputValue(param)
   }
 
   // Sync selects — hydrate options + set value
@@ -544,6 +597,8 @@ async function updateParam(key, elType) {
   } else if (elType === "dropdown") {
     formattedVal = coerceValueByType(el.value, param.data_type)
     selectedLabel = el.options?.[el.selectedIndex]?.textContent || ""
+  } else if (elType === "color") {
+    formattedVal = normalizeHexColor(el.value) || getColorDefault(param)
   } else {
     formattedVal = coerceValueByType(el.value, param.data_type)
   }
@@ -589,7 +644,44 @@ function revertInput(key, current, elType) {
     return
   }
 
+  if (elType === "color") {
+    const param = state.paramMetaByKey[key]
+    if (!param) return
+    el.value = resolveColorInputValue(param, current)
+    return
+  }
+
   el.value = current
+}
+
+async function resetColorParam(param) {
+  const key = param?.key
+  if (!key) return
+
+  const current = state.values[key]
+  if (isStockColorValue(current)) return
+
+  try {
+    const res = await fetch("/api/params", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value: "stock" }),
+    })
+    const data = await res.json()
+
+    if (res.ok) {
+      const updated = (data.updated && typeof data.updated === "object") ? data.updated : {}
+      state.values = { ...state.values, [key]: "stock", ...updated }
+      showParamSnackbar(data.message || `Parameter '${key}' reset to stock.`)
+      scheduleSyncInputs()
+    } else {
+      showParamSnackbar(data.error || "Failed to reset parameter", "error")
+      revertInput(key, current, "color")
+    }
+  } catch (e) {
+    showParamSnackbar("Network error — is the device reachable?", "error")
+    revertInput(key, current, "color")
+  }
 }
 
 function toggleManage(key) {
@@ -635,11 +727,13 @@ function handleSectionTabClick(sectionSlug, event) {
 
 function renderSettingRow(p) {
   if (p.parent_key && !state.filter) {
-    if (!state.values[p.parent_key]) return ""
+    if (!isParamEnabledForChildren(p.parent_key)) return ""
     if (!state.expanded[p.parent_key]) return ""
   }
 
   const isNumeric = p.ui_type === "numeric"
+  const isColor = p.ui_type === "color"
+  const isGroup = isGroupParam(p)
   const isChild = p.parent_key ? "ds-child-modifier" : ""
   const lockReason = getSettingLockReason(p)
   const isLocked = lockReason !== ""
@@ -652,14 +746,15 @@ function renderSettingRow(p) {
           ${p.description ? html`<div class="ds-row-desc">${p.description}</div>` : ""}
           ${lockReason ? html`<div class="ds-row-desc"><strong>Locked:</strong> ${lockReason}</div>` : ""}
 
-          ${() => p.is_parent_toggle && state.values[p.key] ? html`
+          ${() => p.is_parent_toggle && isParamEnabledForChildren(p) ? html`
             <div class="ds-manage-btn" @click="${() => toggleManage(p.key)}">
               ${state.expanded[p.key] ? "Close" : "Manage"}
               <i class="bi bi-chevron-${state.expanded[p.key] ? "up" : "down"}"></i>
             </div>
           ` : ""}
         </div>
-        ${isNumeric ? html`<span class="ds-row-value" id="ds-display-${p.key}">${() => {
+        ${(isNumeric || isColor) ? html`<span class="ds-row-value" id="ds-display-${p.key}">${() => {
+            if (isColor) return formatColorDisplayValue(p)
             const currentValue = state.values[p.key]
             const bounds = numericBounds(p)
             return currentValue !== undefined ? formatSliderValue(currentValue, String(bounds.step), p.precision, p.key) : ".."
@@ -733,7 +828,21 @@ function renderSettingRow(p) {
           @change="${() => updateParam(p.key, "dropdown")}">
           <option value="">Loading...</option>
         </select>
-      ` : html`
+      ` : p.ui_type === "color" ? html`
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+          <input
+            type="color"
+            class="ds-color"
+            id="ds-${p.key}"
+            ?disabled="${isLocked}"
+            value="${() => resolveColorInputValue(p)}"
+            @change="${() => updateParam(p.key, "color")}" />
+          <button
+            class="ds-reset-btn"
+            ?disabled="${() => isLocked || isStockColorValue(state.values[p.key])}"
+            @click="${() => resetColorParam(p)}">Stock</button>
+        </div>
+      ` : isGroup ? "" : html`
         <input
           type="checkbox"
           class="ds-toggle"
@@ -757,7 +866,7 @@ function renderSettingTree(paramsList, parentKey = null) {
     if (row) rendered.push(row)
 
     if (!hasChildParams(paramsList, param.key)) continue
-    if (!state.values[param.key] || !state.expanded[param.key]) continue
+    if (!isParamEnabledForChildren(param) || !state.expanded[param.key]) continue
 
     rendered.push(...renderSettingTree(paramsList, param.key))
   }

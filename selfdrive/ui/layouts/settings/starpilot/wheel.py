@@ -115,7 +115,7 @@ class StarPilotWheelLayout(StarPilotPanel):
         self._params_memory.put_bool("StarPilotTogglesUpdated", True)
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(dialog, callback=on_select)
+    gui_app.push_widget(dialog, callback=on_select)
 
   def _rebuild_grid(self):
     if not self.CATEGORIES:

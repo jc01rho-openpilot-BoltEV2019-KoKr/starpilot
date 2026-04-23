@@ -51,7 +51,7 @@ class StarPilotNavigationLayout(StarPilotPanel):
     self._rebuild_grid()
 
   def _on_setup(self):
-    gui_app.set_modal_overlay(
+    gui_app.push_widget(
       alert_dialog(tr("Mapbox Setup:\n1. Create account at mapbox.com\n2. Generate Public/Secret keys\n3. Add keys in 'Mapbox Credentials'"))
     )
 
@@ -134,7 +134,7 @@ class StarPilotMapboxLayout(StarPilotPanel):
           self._params.remove(key)
           self._rebuild_grid()
 
-      gui_app.set_modal_overlay(ConfirmDialog(tr(f"Remove your {key.replace('Mapbox', '')} key?"), tr("Remove"), on_close=on_remove))
+      gui_app.push_widget(ConfirmDialog(tr(f"Remove your {key.replace('Mapbox', '')} key?"), tr("Remove"), on_close=on_remove))
     else:
 
       def on_close(res, text):

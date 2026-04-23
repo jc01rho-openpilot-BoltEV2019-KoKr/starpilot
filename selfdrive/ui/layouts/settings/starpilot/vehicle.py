@@ -167,7 +167,7 @@ class StarPilotVehicleSettingsLayout(StarPilotPanel):
   def _on_select_make(self):
     makes = list(self._make_options)
     if not makes:
-      gui_app.set_modal_overlay(ConfirmDialog(tr("No fingerprint list available."), tr("OK"), on_close=lambda r: None))
+      gui_app.push_widget(ConfirmDialog(tr("No fingerprint list available."), tr("OK"), on_close=lambda r: None))
       return
 
     current_make = self._params.get("CarMake", encoding='utf-8') or ""
@@ -185,17 +185,17 @@ class StarPilotVehicleSettingsLayout(StarPilotPanel):
           self._params.remove("CarModelName")
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(dialog, callback=on_select)
+    gui_app.push_widget(dialog, callback=on_select)
 
   def _on_select_model(self):
     make = self._params.get("CarMake", encoding='utf-8') or ""
     if not make:
-      gui_app.set_modal_overlay(ConfirmDialog(tr("Please select a Car Make first!"), tr("OK"), on_close=lambda r: None))
+      gui_app.push_widget(ConfirmDialog(tr("Please select a Car Make first!"), tr("OK"), on_close=lambda r: None))
       return
 
     model_options = self._models_by_make.get(make, ())
     if not model_options:
-      gui_app.set_modal_overlay(ConfirmDialog(tr("No models available for this make."), tr("OK"), on_close=lambda r: None))
+      gui_app.push_widget(ConfirmDialog(tr("No models available for this make."), tr("OK"), on_close=lambda r: None))
       return
 
     option_labels = [option.option_label for option in model_options]
@@ -216,7 +216,7 @@ class StarPilotVehicleSettingsLayout(StarPilotPanel):
         self._params.put("CarMake", make)
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(dialog, callback=on_select)
+    gui_app.push_widget(dialog, callback=on_select)
 
   def _on_disable_long(self, state):
     if state:
@@ -230,7 +230,7 @@ class StarPilotVehicleSettingsLayout(StarPilotPanel):
             HARDWARE.reboot()
         self._rebuild_grid()
 
-      gui_app.set_modal_overlay(ConfirmDialog(tr("Disable openpilot longitudinal control?"), tr("Disable"), on_close=on_confirm))
+      gui_app.push_widget(ConfirmDialog(tr("Disable openpilot longitudinal control?"), tr("Disable"), on_close=on_confirm))
     else:
       self._params.put_bool("DisableOpenpilotLongitudinal", False)
       self._rebuild_grid()
@@ -447,7 +447,7 @@ class StarPilotToyotaVehicleLayout(StarPilotPanel):
         self._params.put_int("LockDoorsTimer", int(val))
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(
+    gui_app.push_widget(
       AetherSliderDialog(tr("Lock Doors Timer"), 0, 300, 5, self._params.get_int("LockDoorsTimer"), on_close, labels=_lock_doors_timer_labels(), color="#64748B")
     )
 
@@ -457,7 +457,7 @@ class StarPilotToyotaVehicleLayout(StarPilotPanel):
         self._params.put_float("ClusterOffset", float(val))
         self._rebuild_grid()
 
-    gui_app.set_modal_overlay(
+    gui_app.push_widget(
       AetherSliderDialog(tr("Dashboard Speed Offset"), 1.000, 1.050, 0.001, self._params.get_float("ClusterOffset"), on_close, unit="x", color="#64748B")
     )
 
