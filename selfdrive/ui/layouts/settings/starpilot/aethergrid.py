@@ -478,6 +478,7 @@ class AetherTile(Widget):
     self.on_click = on_click
     self._plate_offset: float = 0.0
     self._plate_target: float = 0.0
+    self._is_pressed: bool = False
 
   @property
   def _hit_rect(self) -> rl.Rectangle:
@@ -1237,7 +1238,7 @@ class RadioTileGroup(Widget):
     for i in range(len(self._option_offsets)):
       self._option_offsets[i] += (self._option_targets[i] - self._option_offsets[i]) * (1 - math.exp(-dt / PLATE_TAU))
     gap = SPACING.lg
-    option_w = 240 if len(self.options) <= 3 else 188
+    option_w = (rect.width - max(0, len(self.options) - 1) * gap) / max(1, len(self.options))
     total_width = len(self.options) * option_w + max(0, len(self.options) - 1) * gap
     if self.title:
       title_size = measure_text_cached(self._font_title, self.title, 40)

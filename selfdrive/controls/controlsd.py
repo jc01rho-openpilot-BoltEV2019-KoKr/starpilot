@@ -136,7 +136,10 @@ class Controls:
                                       CS.steerFaultTemporary, CS.steerFaultPermanent,
                                       standstill, self.CP.steerAtStandstill,
                                       self.sm['starpilotPlan'].lateralCheck)
-    CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and not self.sm['starpilotCarState'].pauseLongitudinal and self.CP.openpilotLongitudinalControl
+    # EcuDisableFailed is set when car started in READY mode (ECU disable was rejected)
+    # Disable longitudinal so stock ACC works instead
+    ecu_disable_failed = self.params.get_bool("EcuDisableFailed")
+    CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and not self.sm['starpilotCarState'].pauseLongitudinal and self.CP.openpilotLongitudinalControl and not ecu_disable_failed
 
     actuators = CC.actuators
     actuators.longControlState = self.LoC.long_control_state
@@ -162,7 +165,16 @@ class Controls:
       new_desired_curvature = self.sm['lateralManeuverPlan'].desiredCurvature if CC.latActive else self.curvature
     else:
       new_desired_curvature = model_v2.action.desiredCurvature if CC.latActive else self.curvature
-    self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
+
+    jerk_factor = 1.0
+    lat_accel_factor = 1.0
+    if model_v2.meta.laneChangeState in (LaneChangeState.laneChangeStarting, LaneChangeState.laneChangeFinishing) \
+        and CS.vEgo >= self.starpilot_toggles.minimum_lane_change_speed:
+      jerk_factor = self.starpilot_toggles.lane_change_jerk_factor
+      lat_accel_factor = self.starpilot_toggles.lane_change_lat_accel_factor
+
+    self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
+                                                               jerk_factor, lat_accel_factor)
     lat_delay = self.sm["liveDelay"].lateralDelay + LAT_SMOOTH_SECONDS
 
     actuators.curvature = self.desired_curvature

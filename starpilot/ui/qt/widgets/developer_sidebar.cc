@@ -1,5 +1,7 @@
 #include "starpilot/ui/qt/widgets/developer_sidebar.h"
 
+#include <QRegularExpression>
+
 void DeveloperSidebar::drawMetric(QPainter &p, const QPair<QString, QString> &label, QColor c, int y) {
   const QRect rect = {12, y, 275, 126};
 
@@ -17,7 +19,11 @@ void DeveloperSidebar::drawMetric(QPainter &p, const QPair<QString, QString> &la
 
   p.setPen(QColor(0xff, 0xff, 0xff));
   p.setFont(InterFont(35, QFont::DemiBold));
-  p.drawText(rect.adjusted(0, 0, -22, 0), Qt::AlignCenter, label.first + "\n" + label.second);
+  if (label.second.isEmpty()) {
+    p.drawText(rect.adjusted(8, 8, -22, -8), Qt::AlignCenter | Qt::TextWordWrap, label.first);
+  } else {
+    p.drawText(rect.adjusted(8, 8, -22, -8), Qt::AlignCenter, label.first + "\n" + label.second);
+  }
 }
 
 DeveloperSidebar::DeveloperSidebar(QWidget *parent) : QFrame(parent) {
@@ -144,6 +150,11 @@ void DeveloperSidebar::updateState(const UIState &s, const StarPilotUIState &fs)
   stiffnessFactorStatus = ItemStatus(QPair<QString, QString>(tr("STEER STIFF"), QString::number(liveParameters.getStiffnessFactor(), 'f', 5)), metricColor);
   torqueStatus = ItemStatus(QPair<QString, QString>(tr("TORQUE %"), torqueLabel), metricColor);
 
+  QString modelName = starpilot_scene.starpilot_toggles.value("model_name").toString();
+  modelName.remove(QRegularExpression("\\(.*\\)"));
+  modelName.remove(QRegularExpression("[^a-zA-Z0-9 \\-\\.:]"));
+  modelNameStatus = ItemStatus(QPair<QString, QString>(modelName.trimmed(), ""), metricColor);
+
   update();
 }
 
@@ -171,6 +182,7 @@ void DeveloperSidebar::paintEvent(QPaintEvent *event) {
   metricMap.insert(14, &accelerationJerkStatus);
   metricMap.insert(15, &dangerJerkStatus);
   metricMap.insert(16, &speedJerkStatus);
+  metricMap.insert(17, &modelNameStatus);
 
   int count = 0;
   for (size_t i = 0; i < metricAssignments.size(); ++i) {

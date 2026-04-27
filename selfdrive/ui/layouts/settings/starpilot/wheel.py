@@ -15,6 +15,7 @@ ACTION_OPTIONS = [
   {"id": 5, "name": "Toggle Experimental", "requires_longitudinal": True},
   {"id": 6, "name": "Toggle Traffic", "requires_longitudinal": True},
   {"id": 7, "name": "Toggle Switchback"},
+  {"id": 8, "name": "Create Bookmark"},
 ]
 ACTION_NAMES = [option["name"] for option in ACTION_OPTIONS]
 ACTION_IDS = {option["name"]: option["id"] for option in ACTION_OPTIONS}
@@ -30,6 +31,15 @@ class StarPilotWheelLayout(StarPilotPanel):
         "type": "toggle",
         "get_state": lambda: self._params.get_bool("RemapCancelToDistance"),
         "set_state": self._set_cancel_remap_state,
+        "color": "#64748B",
+      },
+      {
+        "title": tr_noop("Nostalgia Mode"),
+        "desc": tr_noop("Use the left paddle to pause openpilot acceleration and braking while Always On Lateral stays active on supported Hyundai CAN-FD cars."),
+        "type": "toggle",
+        "get_state": lambda: self._params.get_bool("NostalgiaMode"),
+        "set_state": lambda s: self._params.put_bool("NostalgiaMode", s),
+        "key": "NostalgiaMode",
         "color": "#64748B",
       },
       {
@@ -60,6 +70,54 @@ class StarPilotWheelLayout(StarPilotPanel):
         "on_click": lambda: self._show_action_picker("LKASButtonControl"),
         "is_enabled": lambda: not self._lkas_locked(),
         "key": "LKASButtonControl",
+        "color": "#64748B",
+      },
+      {
+        "title": tr_noop("Mode Button"),
+        "type": "value",
+        "get_value": lambda: self._get_action_name("ModeButtonControl"),
+        "on_click": lambda: self._show_action_picker("ModeButtonControl"),
+        "key": "ModeButtonControl",
+        "color": "#64748B",
+      },
+      {
+        "title": tr_noop("Mode (Long Press)"),
+        "type": "value",
+        "get_value": lambda: self._get_action_name("LongModeButtonControl"),
+        "on_click": lambda: self._show_action_picker("LongModeButtonControl"),
+        "key": "LongModeButtonControl",
+        "color": "#64748B",
+      },
+      {
+        "title": tr_noop("Mode (Very Long)"),
+        "type": "value",
+        "get_value": lambda: self._get_action_name("VeryLongModeButtonControl"),
+        "on_click": lambda: self._show_action_picker("VeryLongModeButtonControl"),
+        "key": "VeryLongModeButtonControl",
+        "color": "#64748B",
+      },
+      {
+        "title": tr_noop("Star Button"),
+        "type": "value",
+        "get_value": lambda: self._get_action_name("StarButtonControl"),
+        "on_click": lambda: self._show_action_picker("StarButtonControl"),
+        "key": "StarButtonControl",
+        "color": "#64748B",
+      },
+      {
+        "title": tr_noop("Star (Long Press)"),
+        "type": "value",
+        "get_value": lambda: self._get_action_name("LongStarButtonControl"),
+        "on_click": lambda: self._show_action_picker("LongStarButtonControl"),
+        "key": "LongStarButtonControl",
+        "color": "#64748B",
+      },
+      {
+        "title": tr_noop("Star (Very Long)"),
+        "type": "value",
+        "get_value": lambda: self._get_action_name("VeryLongStarButtonControl"),
+        "on_click": lambda: self._show_action_picker("VeryLongStarButtonControl"),
+        "key": "VeryLongStarButtonControl",
         "color": "#64748B",
       },
     ]
@@ -131,6 +189,12 @@ class StarPilotWheelLayout(StarPilotPanel):
       visible = True
       if key == "LKASButtonControl":
         visible &= not cs.isSubaru
+        visible &= not (cs.lkasAllowedForAOL and self._params.get_bool("AlwaysOnLateral") and self._params.get_bool("AlwaysOnLateralLKAS"))
+      if key == "NostalgiaMode":
+        visible &= cs.isHKGCanFd and cs.hasOpenpilotLongitudinal
+      if key in ("ModeButtonControl", "LongModeButtonControl", "VeryLongModeButtonControl",
+                 "StarButtonControl", "LongStarButtonControl", "VeryLongStarButtonControl"):
+        visible &= cs.hasModeStarButtons
       if not visible:
         continue
       tile_type = cat.get("type", "hub")

@@ -335,11 +335,13 @@ void StarPilotSettingsWindow::updateVariables() {
     std::string fallbackFingerprint = fallbackModel.toStdString();
 
     hasPedal = starpilot_toggles.value("has_pedal").toBool(true);
+    hasModeStarButtons = starpilot_toggles.contains("has_canfd_media_buttons") && starpilot_toggles.value("has_canfd_media_buttons").toBool();
     hasSDSU = starpilot_toggles.value("has_sdsu").toBool();
     hasZSS = starpilot_toggles.value("has_zss").toBool();
     isBolt = fallbackFingerprint.rfind("CHEVROLET_BOLT", 0) == 0;
     isGM = carMake == "gm";
     isHKG = carMake == "hyundai";
+    isHKGCanFd = isHKG && hasModeStarButtons;
     isSubaru = carMake == "subaru";
     isToyota = carMake == "toyota";
     isVolt = fallbackFingerprint.rfind("CHEVROLET_VOLT", 0) == 0;
@@ -382,6 +384,7 @@ void StarPilotSettingsWindow::updateVariables() {
     isTSK = CP.getSecOcRequired();
     isVolt = carFingerprint.rfind("CHEVROLET_VOLT", 0) == 0;
     latAccelFactor = CP.getLateralTuning().getTorque().getLatAccelFactor();
+    hasModeStarButtons = starpilot_toggles.contains("has_canfd_media_buttons") ? starpilot_toggles.value("has_canfd_media_buttons").toBool() : isHKGCanFd;
     lkasAllowedForAOL = starpilot_toggles.value("lkas_allowed_for_aol").toBool();
     longitudinalActuatorDelay = CP.getLongitudinalActuatorDelay();
     startAccel = CP.getStartAccel();

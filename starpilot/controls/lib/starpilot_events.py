@@ -22,7 +22,7 @@ class StarPilotEvents:
 
     self.events = Events(starpilot=True)
 
-    self.always_on_lateral_enabled_previously = False
+    self.always_on_lateral_allowed_previously = False
     self.previous_traffic_mode = False
     self.previous_switchback_mode = False
     self.random_event_playing = False
@@ -56,6 +56,12 @@ class StarPilotEvents:
       self.max_acceleration = max(acceleration, self.max_acceleration)
     else:
       self.max_acceleration = 0
+
+    if sm["starpilotCarState"].alwaysOnLateralAllowed != self.always_on_lateral_allowed_previously:
+      if sm["starpilotCarState"].alwaysOnLateralAllowed:
+        self.events.add(StarPilotEventName.lkasEnable)
+      else:
+        self.events.add(StarPilotEventName.lkasDisable)
 
     if self.starpilot_planner.starpilot_vcruise.forcing_stop:
       self.events.add(StarPilotEventName.forcingStop)
@@ -173,11 +179,10 @@ class StarPilotEvents:
           elif event_choice == "yourFrogTriedToKillMe":
             self.events.add(StarPilotEventName.yourFrogTriedToKillMe)
 
-      if "youveGotMail" not in self.played_events and sm["starpilotCarState"].alwaysOnLateralEnabled and not self.always_on_lateral_enabled_previously:
+      if "youveGotMail" not in self.played_events and sm["starpilotCarState"].alwaysOnLateralAllowed and not self.always_on_lateral_allowed_previously:
         if random.random() < RANDOM_EVENTS_CHANCE / DT_MDL:
           self.events.add(StarPilotEventName.youveGotMail)
 
-      self.always_on_lateral_enabled_previously = sm["starpilotCarState"].alwaysOnLateralEnabled
       self.random_event_playing |= bool({event for event in self.events.names if RANDOM_EVENT_START <= event <= RANDOM_EVENT_END})
 
     if self.error_log.is_file():
@@ -212,4 +217,5 @@ class StarPilotEvents:
     elif sm["starpilotModelV2"].turnDirection == TurnDirection.turnRight:
       self.events.add(StarPilotEventName.turningRight)
 
+    self.always_on_lateral_allowed_previously = sm["starpilotCarState"].alwaysOnLateralAllowed
     self.played_events.update(STARPILOT_EVENT_NAME[event] for event in self.events.names)

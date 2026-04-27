@@ -31,6 +31,7 @@ public:
   bool hasRadar = true;
   bool hasSDSU = false;
   bool hasSNG = false;
+  bool hasModeStarButtons = false;
   bool hasZSS = false;
   bool isAngleCar = false;
   bool isBolt = false;

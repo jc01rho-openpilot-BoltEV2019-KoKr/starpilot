@@ -24,9 +24,11 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   AetherListColors,
   AetherVerticalSlider,
+  TileGrid,
+  ToggleTile,
+  RadioTileGroup,
   build_list_panel_frame,
   draw_list_panel_shell,
-  draw_toggle_pill,
 )
 
 LEGACY_STARPILOT_PARAM_RENAMES = {
@@ -65,18 +67,14 @@ REPORT_CATEGORIES = [
 
 class SystemSettingsManagerView(Widget):
   """Single-view, zero-scroll, fully-flat system settings dashboard.
-  Left column: always-visible slider bands + toggles.
-  Right column: action groups filling full height."""
-
-  ROW_PAD = 4
-  BAND_GAP = 8  # gap between slider bands and between band zone and toggles
+  Left column: massive equalizer sliders and smart home style dashboard toggles.
+  Right column: categorized thick action cards."""
 
   def __init__(self, controller: "StarPilotSystemLayout"):
     super().__init__()
     self._controller = controller
     self._pressed_target: str | None = None
     self._action_rects: dict[str, rl.Rectangle] = {}
-    self._toggle_rects: dict[str, rl.Rectangle] = {}
 
     shutdown_labels = {0: tr("5 mins")}
     for i in range(1, 4): shutdown_labels[i] = f"{i * 15} mins"
@@ -92,9 +90,39 @@ class SystemSettingsManagerView(Widget):
       "LowVoltageShutdown": AetherVerticalSlider(11.8, 12.5, 0.1, self._controller._params.get_float("LowVoltageShutdown"), lambda v: self._controller._params.put_float("LowVoltageShutdown", float(v)), title="Low Volt", unit="V", color=AetherListColors.PRIMARY),
     }
 
-    # Slider bands: (label, slider_keys)
     self._display_band = ["ScreenBrightness", "ScreenBrightnessOnroad", "ScreenTimeout", "ScreenTimeoutOnroad"]
     self._power_band = ["DeviceShutdown", "LowVoltageShutdown"]
+
+    self._toggles = [
+      ToggleTile("Standby Mode", lambda: self._controller._params.get_bool("StandbyMode"), lambda v: self._controller._params.put_bool("StandbyMode", v)),
+      ToggleTile("Raise Temp", lambda: self._controller._params.get_bool("IncreaseThermalLimits"), lambda v: self._controller._params.put_bool("IncreaseThermalLimits", v)),
+      ToggleTile("No Uploads", lambda: self._controller._params.get_bool("NoUploads"), lambda v: self._controller._params.put_bool("NoUploads", v)),
+      ToggleTile("Konik Server", lambda: self._controller._get_konik_state(), lambda v: self._controller._on_konik_toggle(v)),
+      ToggleTile("No Onroad", lambda: self._controller._params.get_bool("DisableOnroadUploads"), lambda v: self._controller._params.put_bool("DisableOnroadUploads", v), is_enabled=lambda: not self._controller._params.get_bool("NoUploads")),
+      ToggleTile("No Logging", lambda: self._controller._params.get_bool("NoLogging"), lambda v: self._controller._params.put_bool("NoLogging", v)),
+      ToggleTile("HD Record", lambda: self._controller._params.get_bool("HigherBitrate"), lambda v: self._controller._on_higher_bitrate_toggle(v), is_enabled=lambda: not self._controller._params.get_bool("DisableOnroadUploads") and not self._controller._params.get_bool("NoUploads")),
+      ToggleTile("Debug Mode", lambda: self._controller._params.get_bool("DebugMode"), lambda v: self._controller._params.put_bool("DebugMode", v)),
+    ]
+    self._toggle_grid = TileGrid(columns=4, padding=16, uniform_width=True)
+    for t in self._toggles:
+      self._toggle_grid.add_tile(t)
+
+    self._drive_mode_radio = RadioTileGroup("", [tr("Auto"), tr("Onroad"), tr("Offroad")], self._get_drive_mode_index(), self._on_drive_mode_change)
+
+  def _get_drive_mode_index(self):
+    state = self._controller._get_force_drive_state()
+    if state == tr("Default"): return 0
+    if state == tr("Onroad"): return 1
+    if state == tr("Offroad"): return 2
+    return 0
+
+  def _on_drive_mode_change(self, idx):
+    if idx == 0:
+        self._controller.handle_action("DriveDefault")
+    elif idx == 1:
+        self._controller.handle_action("DriveOnroad")
+    elif idx == 2:
+        self._controller.handle_action("DriveOffroad")
 
   def _clear_ephemeral_state(self):
     self._pressed_target = None
@@ -112,26 +140,32 @@ class SystemSettingsManagerView(Widget):
     for action_id, rect in self._action_rects.items():
       if rl.check_collision_point_rec(mouse_pos, rect):
         self._pressed_target = f"action:{action_id}"
-        return
-    for toggle_id, rect in self._toggle_rects.items():
-      if rl.check_collision_point_rec(mouse_pos, rect):
-        self._pressed_target = f"toggle:{toggle_id}"
-        return
+        break
+    
+    for t in self._toggles:
+      t._handle_mouse_press(mouse_pos)
+    self._drive_mode_radio._handle_mouse_press(mouse_pos)
     for slider in self._vsliders.values():
       slider._handle_mouse_press(mouse_pos)
 
   def _handle_mouse_event(self, mouse_event: MouseEvent):
     for slider in self._vsliders.values():
       slider._handle_mouse_event(mouse_event)
+    for t in self._toggles:
+      t._handle_mouse_event(mouse_event)
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
     target = self._pressed_target
     self._pressed_target = None
-    if target:
-      prefix, action_id = target.split(":", 1)
-      rect = self._action_rects.get(action_id) if prefix == "action" else self._toggle_rects.get(action_id)
+    if target and target.startswith("action:"):
+      action_id = target.split(":", 1)[1]
+      rect = self._action_rects.get(action_id)
       if rect and rl.check_collision_point_rec(mouse_pos, rect):
         self._controller.handle_action(action_id)
+
+    for t in self._toggles:
+      t._handle_mouse_release(mouse_pos)
+    self._drive_mode_radio._handle_mouse_release(mouse_pos)
     for slider in self._vsliders.values():
       slider._handle_mouse_release(mouse_pos)
 
@@ -140,7 +174,6 @@ class SystemSettingsManagerView(Widget):
   def _render(self, rect: rl.Rectangle):
     self.set_rect(rect)
     self._action_rects.clear()
-    self._toggle_rects.clear()
 
     frame = build_list_panel_frame(rect)
     draw_list_panel_shell(frame)
@@ -153,7 +186,7 @@ class SystemSettingsManagerView(Widget):
     content_y = hdr.y + actual_header_h
     content_h = (frame.shell.y + frame.shell.height) - content_y - AETHER_LIST_METRICS.panel_padding_bottom
     content_w = frame.scroll.width
-    section_gap = AETHER_LIST_METRICS.section_gap
+    section_gap = 24
 
     col_w = (content_w - section_gap) / 2
     left_col = rl.Rectangle(frame.scroll.x, content_y, col_w, content_h)
@@ -161,7 +194,7 @@ class SystemSettingsManagerView(Widget):
 
     self._sync_slider_values()
     self._draw_left_column(left_col)
-    self._draw_actions_column(right_col)
+    self._draw_right_column(right_col)
 
   def _sync_slider_values(self):
     params = self._controller._params
@@ -175,130 +208,148 @@ class SystemSettingsManagerView(Widget):
   # --- Left column: slider bands + toggles ---
 
   def _draw_left_column(self, rect: rl.Rectangle):
-    params = self._controller._params
-    no_uploads = params.get_bool("NoUploads")
-    disable_onroad = params.get_bool("DisableOnroadUploads")
+    band_zone_h = rect.height * 0.45
+    toggle_zone_h = rect.height - band_zone_h - 16
 
-    # Slider bands take fixed proportion of height (40%), toggles take rest (60%)
-    band_zone_h = rect.height * 0.40
-    toggle_zone_h = rect.height - band_zone_h - self.BAND_GAP
-
-    # Two slider bands split the band zone: display (4 sliders) gets 55%, power (2 sliders) gets 45%
-    display_h = band_zone_h * 0.55
-    power_h = band_zone_h * 0.45 - self.BAND_GAP
+    display_h = band_zone_h * 0.60
+    power_h = band_zone_h * 0.40 - 16
 
     self._draw_slider_band(rl.Rectangle(rect.x, rect.y, rect.width, display_h), tr("Display"), self._display_band)
-    self._draw_slider_band(rl.Rectangle(rect.x, rect.y + display_h + self.BAND_GAP, rect.width, power_h), tr("Power"), self._power_band)
+    self._draw_slider_band(rl.Rectangle(rect.x, rect.y + display_h + 16, rect.width, power_h), tr("Power"), self._power_band)
 
-    # Toggles below
-    toggle_y = rect.y + band_zone_h + self.BAND_GAP
-    toggles = [
-      ("StandbyMode", tr("Standby Mode"), params.get_bool("StandbyMode"), True),
-      ("IncreaseThermalLimits", tr("Raise Thermal Limits"), params.get_bool("IncreaseThermalLimits"), True),
-      ("NoUploads", tr("Disable Uploads"), no_uploads, True),
-      ("UseKonikServer", tr("Use Konik Server"), self._controller._get_konik_state(), True),
-      ("DisableOnroadUploads", tr("No Onroad Uploads"), disable_onroad, not no_uploads),
-      ("NoLogging", tr("Disable Logging"), params.get_bool("NoLogging"), True),
-      ("HigherBitrate", tr("HD Recording"), params.get_bool("HigherBitrate"), not disable_onroad and not no_uploads),
-      ("DebugMode", tr("Debug Mode"), params.get_bool("DebugMode"), True),
-    ]
-    toggle_row_h = toggle_zone_h / len(toggles)
-    for i, (tid, title, val, enabled) in enumerate(toggles):
-      slot_y = toggle_y + i * toggle_row_h
-      inner = rl.Rectangle(rect.x, slot_y + self.ROW_PAD, rect.width, toggle_row_h - 2 * self.ROW_PAD)
-      self._render_toggle_pill(inner, tid, title, val, enabled)
+    toggle_y = rect.y + band_zone_h + 16
+    toggle_rect = rl.Rectangle(rect.x, toggle_y, rect.width, toggle_zone_h)
+    self._toggle_grid.render(toggle_rect)
 
   def _draw_slider_band(self, rect, label, slider_keys):
-    """Draws a labeled card containing vertical sliders arranged horizontally."""
-    # Card background
     rl.draw_rectangle_rounded(rect, 0.15, 16, rl.Color(28, 30, 36, 255))
     rl.draw_rectangle_rounded_lines_ex(rect, 0.15, 16, 1, rl.Color(255, 255, 255, 15))
 
-    # Section label at top-left
-    label_h = 18
-    gui_label(rl.Rectangle(rect.x + 12, rect.y + 4, rect.width * 0.3, label_h), label, 16, AetherListColors.MUTED, FontWeight.MEDIUM)
+    label_h = 24
+    gui_label(rl.Rectangle(rect.x + 16, rect.y + 12, rect.width * 0.3, label_h), label, 20, AetherListColors.SUBTEXT, FontWeight.BOLD)
 
-    # Slider zone
-    slider_top = rect.y + label_h + 6
-    slider_h = rect.height - label_h - 10
-    slider_area_w = rect.width - 16
+    slider_top = rect.y + label_h + 20
+    slider_h = rect.height - label_h - 32
+    slider_area_w = rect.width - 32
+    gap = 12
+    
+    # Force 4 columns mathematically so 2-item bands don't stretch into fat horizontal boxes
+    standard_n = 4
+    col_w = (slider_area_w - (standard_n - 1) * gap) / standard_n
+    
     n = len(slider_keys)
-    gap = 8
-    col_w = (slider_area_w - (n - 1) * gap) / n
-    start_x = rect.x + 8
+    content_w = n * col_w + (n - 1) * gap
+    start_x = rect.x + 16 + (slider_area_w - content_w) / 2
 
     for i, key in enumerate(slider_keys):
       col_x = start_x + i * (col_w + gap)
       self._vsliders[key].render(rl.Rectangle(col_x, slider_top, col_w, slider_h))
 
-  # --- Right column: action groups ---
+  # --- Right column: action cards ---
 
-  def _draw_actions_column(self, rect: rl.Rectangle):
-    state = self._controller._get_force_drive_state()
-    groups = [
-      (tr("Storage & Logs"), [
-        {"id": "Storage", "label": tr("Clear Data"), "danger": True},
-        {"id": "ErrorLogs", "label": tr("Clear Logs"), "danger": True}]),
-      (tr("System Backups"), [
-        {"id": "CreateBackup", "label": tr("Create")},
-        {"id": "RestoreBackup", "label": tr("Restore")},
-        {"id": "DeleteBackup", "label": tr("Delete"), "danger": True}]),
-      (tr("Toggle Backups"), [
-        {"id": "CreateToggleBackup", "label": tr("Create")},
-        {"id": "RestoreToggleBackup", "label": tr("Restore")},
-        {"id": "DeleteToggleBackup", "label": tr("Delete"), "danger": True}]),
-      (tr("Drive Mode"), [
-        {"id": "DriveDefault", "label": tr("Auto"), "active": state == tr("Default")},
-        {"id": "DriveOnroad", "label": tr("Onroad"), "active": state == tr("Onroad")},
-        {"id": "DriveOffroad", "label": tr("Offroad"), "active": state == tr("Offroad")}]),
-      (tr("Quick Actions"), [
-        {"id": "FlashPanda", "label": tr("Flash Panda")},
-        {"id": "ReportIssue", "label": tr("Report Issue")}]),
-      (tr("Reset"), [
-        {"id": "ResetDefaults", "label": tr("Reset Toggles"), "danger": True},
-        {"id": "ResetStock", "label": tr("Stock OP"), "danger": True}]),
-    ]
-    row_h = rect.height / len(groups)
-    for i, (title, actions) in enumerate(groups):
-      slot_y = rect.y + i * row_h
-      inner = rl.Rectangle(rect.x, slot_y + self.ROW_PAD, rect.width, row_h - 2 * self.ROW_PAD)
-      self._render_action_group(inner, title, actions)
+  def _draw_right_column(self, rect: rl.Rectangle):
+    gap = 16
+    total_h = rect.height - 2 * gap
+    h1 = total_h * 0.30
+    h2 = total_h * 0.40
+    h3 = total_h * 0.30
 
-  # --- Primitives ---
+    card1_rect = rl.Rectangle(rect.x, rect.y, rect.width, h1)
+    card2_rect = rl.Rectangle(rect.x, rect.y + h1 + gap, rect.width, h2)
+    card3_rect = rl.Rectangle(rect.x, rect.y + h1 + h2 + 2*gap, rect.width, h3)
 
-  def _render_toggle_pill(self, rect, toggle_id, title, value, enabled=True):
-    if enabled:
-      self._toggle_rects[toggle_id] = rect
+    self._draw_card_background(card1_rect, tr("Drive & Actions"))
+    self._draw_card1_content(card1_rect)
+
+    self._draw_card_background(card2_rect, tr("Backups Management"))
+    self._draw_card2_content(card2_rect)
+
+    self._draw_card_background(card3_rect, tr("Maintenance (Caution)"))
+    self._draw_card3_content(card3_rect)
+
+  def _draw_card_background(self, rect, title):
+    rl.draw_rectangle_rounded(rect, 0.15, 16, rl.Color(28, 30, 36, 255))
+    rl.draw_rectangle_rounded_lines_ex(rect, 0.15, 16, 1, rl.Color(255, 255, 255, 15))
+    gui_label(rl.Rectangle(rect.x + 16, rect.y + 12, rect.width, 24), title, 20, AetherListColors.SUBTEXT, FontWeight.BOLD)
+
+  def _draw_action_button(self, rect: rl.Rectangle, action_id: str, label: str, danger: bool = False, active: bool = False):
+    self._action_rects[action_id] = rect
     mouse_pos = gui_app.last_mouse_event.pos
     hovered = rl.check_collision_point_rec(mouse_pos, rect)
-    pressed = self._pressed_target == f"toggle:{toggle_id}"
-    draw_toggle_pill(rect, value, enabled, title, tr("ON") if value else tr("OFF"), hovered, pressed)
+    pressed = self._pressed_target == f"action:{action_id}"
+    
+    color = AetherListColors.PRIMARY if active else rl.Color(45, 48, 55, 255)
+    border_color = rl.Color(255, 255, 255, 20)
+    
+    if danger:
+        color = rl.Color(90, 35, 40, 255)
+        border_color = rl.Color(173, 78, 90, 180)
+        
+    if hovered: color = rl.Color(min(color.r + 20, 255), min(color.g + 20, 255), min(color.b + 20, 255), 255)
+    if pressed: color = rl.Color(max(color.r - 20, 0), max(color.g - 20, 0), max(color.b - 20, 0), 255)
+    
+    rl.draw_rectangle_rounded(rect, 0.25, 16, color)
+    rl.draw_rectangle_rounded_lines_ex(rect, 0.25, 16, 1, border_color)
+    text_color = rl.Color(255, 200, 200, 255) if danger else rl.WHITE
+    gui_label(rect, label, 24, text_color, FontWeight.BOLD, alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER)
 
-  def _render_action_group(self, rect, title, actions):
-    rl.draw_rectangle_rounded(rect, 0.3, 16, rl.Color(35, 35, 40, 255))
-    btn_h = min(52, rect.height - 20)
-    btn_y = rect.y + (rect.height - btn_h) / 2
-    title_y = rect.y + (rect.height - 24) / 2
-    title_w = rect.width * 0.30
-    gui_label(rl.Rectangle(rect.x + 20, title_y, title_w, 24), title, 22, rl.WHITE, FontWeight.BOLD)
-    btn_gap = 10
-    available_w = rect.width - title_w - 48
-    btn_w = (available_w - (len(actions) - 1) * btn_gap) / len(actions)
-    start_x = rect.x + rect.width - available_w - 16
-    mouse_pos = gui_app.last_mouse_event.pos
-    for i, action in enumerate(actions):
-      btn_rect = rl.Rectangle(start_x + i * (btn_w + btn_gap), btn_y, btn_w, btn_h)
-      self._action_rects[action["id"]] = btn_rect
-      hovered = rl.check_collision_point_rec(mouse_pos, btn_rect)
-      pressed = self._pressed_target == f"action:{action['id']}"
-      active = action.get("active", False)
-      color = AetherListColors.PRIMARY if active else rl.Color(60, 60, 65, 255)
-      if action.get("danger"):
-        color = AetherListColors.DANGER
-      if hovered: color = rl.Color(min(color.r + 20, 255), min(color.g + 20, 255), min(color.b + 20, 255), 255)
-      if pressed: color = rl.Color(max(color.r - 20, 0), max(color.g - 20, 0), max(color.b - 20, 0), 255)
-      rl.draw_rectangle_rounded(btn_rect, 0.4, 16, color)
-      gui_label(btn_rect, action["label"], 22, rl.WHITE, FontWeight.BOLD, alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER)
+  def _draw_card1_content(self, rect):
+    ACTION_BTN_H = 64
+    content_y = rect.y + 44
+    content_h = rect.height - 44 - 16
+    
+    num_rows = 2
+    gap = (content_h - (ACTION_BTN_H * num_rows)) / (num_rows + 1)
+    
+    ry = content_y + gap
+    radio_rect = rl.Rectangle(rect.x + 16, ry, rect.width - 32, ACTION_BTN_H)
+    self._drive_mode_radio.current_index = self._get_drive_mode_index()
+    self._drive_mode_radio.render(radio_rect)
+    
+    by = ry + ACTION_BTN_H + gap
+    btn_w = (rect.width - 32 - 16) / 2
+    self._draw_action_button(rl.Rectangle(rect.x + 16, by, btn_w, ACTION_BTN_H), "FlashPanda", tr("Flash Panda"))
+    self._draw_action_button(rl.Rectangle(rect.x + 16 + btn_w + 16, by, btn_w, ACTION_BTN_H), "ReportIssue", tr("Report Issue"))
+
+  def _draw_card2_content(self, rect):
+    ACTION_BTN_H = 64
+    content_y = rect.y + 44
+    content_h = rect.height - 44 - 16
+    
+    num_rows = 2
+    gap = (content_h - (ACTION_BTN_H * num_rows)) / (num_rows + 1)
+    
+    sys_y = content_y + gap
+    gui_label(rl.Rectangle(rect.x + 16, sys_y, 110, ACTION_BTN_H), tr("System:"), 22, rl.WHITE, FontWeight.SEMI_BOLD)
+    btn_w = (rect.width - 130 - 32 - 32) / 3
+    start_x = rect.x + 130
+    self._draw_action_button(rl.Rectangle(start_x, sys_y, btn_w, ACTION_BTN_H), "CreateBackup", tr("Create"))
+    self._draw_action_button(rl.Rectangle(start_x + btn_w + 16, sys_y, btn_w, ACTION_BTN_H), "RestoreBackup", tr("Restore"))
+    self._draw_action_button(rl.Rectangle(start_x + 2*(btn_w + 16), sys_y, btn_w, ACTION_BTN_H), "DeleteBackup", tr("Delete"), danger=True)
+
+    tog_y = sys_y + ACTION_BTN_H + gap
+    gui_label(rl.Rectangle(rect.x + 16, tog_y, 110, ACTION_BTN_H), tr("Toggles:"), 22, rl.WHITE, FontWeight.SEMI_BOLD)
+    self._draw_action_button(rl.Rectangle(start_x, tog_y, btn_w, ACTION_BTN_H), "CreateToggleBackup", tr("Create"))
+    self._draw_action_button(rl.Rectangle(start_x + btn_w + 16, tog_y, btn_w, ACTION_BTN_H), "RestoreToggleBackup", tr("Restore"))
+    self._draw_action_button(rl.Rectangle(start_x + 2*(btn_w + 16), tog_y, btn_w, ACTION_BTN_H), "DeleteToggleBackup", tr("Delete"), danger=True)
+
+  def _draw_card3_content(self, rect):
+    ACTION_BTN_H = 64
+    content_y = rect.y + 44
+    content_h = rect.height - 44 - 16
+    
+    num_rows = 2
+    gap = (content_h - (ACTION_BTN_H * num_rows)) / (num_rows + 1)
+    
+    btn_w = (rect.width - 32 - 16) / 2
+    
+    sys_y = content_y + gap
+    self._draw_action_button(rl.Rectangle(rect.x + 16, sys_y, btn_w, ACTION_BTN_H), "Storage", tr("Clear Data"), danger=True)
+    self._draw_action_button(rl.Rectangle(rect.x + 16 + btn_w + 16, sys_y, btn_w, ACTION_BTN_H), "ErrorLogs", tr("Clear Logs"), danger=True)
+    
+    tog_y = sys_y + ACTION_BTN_H + gap
+    self._draw_action_button(rl.Rectangle(rect.x + 16, tog_y, btn_w, ACTION_BTN_H), "ResetDefaults", tr("Reset Toggles"), danger=True)
+    self._draw_action_button(rl.Rectangle(rect.x + 16 + btn_w + 16, tog_y, btn_w, ACTION_BTN_H), "ResetStock", tr("Stock OP"), danger=True)
 
 class StarPilotSystemLayout(StarPilotPanel):
   def __init__(self):
@@ -317,27 +368,11 @@ class StarPilotSystemLayout(StarPilotPanel):
   def _render(self, rect: rl.Rectangle):
     self._manager_view.render(rect)
 
-
-
   def handle_action(self, action_id: str):
     if action_id == "ScreenManagement":
       self._params.put_bool("ScreenManagement", not self._params.get_bool("ScreenManagement"))
-    elif action_id == "StandbyMode":
-      self._params.put_bool("StandbyMode", not self._params.get_bool("StandbyMode"))
     elif action_id == "DeviceManagement":
       self._params.put_bool("DeviceManagement", not self._params.get_bool("DeviceManagement"))
-    elif action_id == "IncreaseThermalLimits":
-      self._params.put_bool("IncreaseThermalLimits", not self._params.get_bool("IncreaseThermalLimits"))
-    elif action_id == "UseKonikServer":
-      self._on_konik_toggle(not self._get_konik_state())
-    elif action_id == "NoLogging":
-      self._params.put_bool("NoLogging", not self._params.get_bool("NoLogging"))
-    elif action_id == "NoUploads":
-      self._params.put_bool("NoUploads", not self._params.get_bool("NoUploads"))
-    elif action_id == "DisableOnroadUploads":
-      self._params.put_bool("DisableOnroadUploads", not self._params.get_bool("DisableOnroadUploads"))
-    elif action_id == "HigherBitrate":
-      self._on_higher_bitrate_toggle(not self._params.get_bool("HigherBitrate"))
     elif action_id == "Storage":
       self._on_delete_driving_data()
     elif action_id == "ErrorLogs":
@@ -354,8 +389,6 @@ class StarPilotSystemLayout(StarPilotPanel):
       self._on_restore_toggle_backup()
     elif action_id == "DeleteToggleBackup":
       self._on_delete_toggle_backup()
-    elif action_id == "DebugMode":
-      self._params.put_bool("DebugMode", not self._params.get_bool("DebugMode"))
     elif action_id == "DriveDefault":
       self._params.put_bool("ForceOffroad", False)
       self._params.put_bool("ForceOnroad", False)

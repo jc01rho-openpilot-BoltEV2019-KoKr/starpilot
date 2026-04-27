@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import numpy as np
 
+from openpilot.common.params import Params
 from openpilot.selfdrive.controls.lib.longitudinal_planner import A_CRUISE_MIN, get_max_accel
 
 from openpilot.starpilot.common.accel_profile import (
@@ -80,9 +81,12 @@ def get_max_allowed_accel(v_ego, ev_tuning=True, truck_tuning=False):
 class StarPilotAcceleration:
   def __init__(self, StarPilotPlanner):
     self.starpilot_planner = StarPilotPlanner
+    self.params = Params()
 
     self.max_accel = 0
     self.min_accel = 0
+
+    self.last_gear_state = "init"
 
   def update(self, v_ego, sm, starpilot_toggles):
     eco_gear = sm["starpilotCarState"].ecoGear
@@ -100,10 +104,7 @@ class StarPilotAcceleration:
       if eco_gear:
         self.max_accel = get_max_accel_eco(v_ego, ev_tuning, truck_tuning)
       else:
-        if starpilot_toggles.acceleration_profile == ACCELERATION_PROFILES["SPORT"]:
-          self.max_accel = get_max_accel_sport(v_ego, ev_tuning, truck_tuning)
-        else:
-          self.max_accel = get_max_allowed_accel(v_ego, ev_tuning, truck_tuning)
+        self.max_accel = get_max_allowed_accel(v_ego, ev_tuning, truck_tuning)
     else:
       if starpilot_toggles.acceleration_profile == ACCELERATION_PROFILES["ECO"]:
         self.max_accel = get_max_accel_eco(v_ego, ev_tuning, truck_tuning)
@@ -135,3 +136,24 @@ class StarPilotAcceleration:
         self.min_accel = A_CRUISE_MIN_SPORT
       else:
         self.min_accel = A_CRUISE_MIN
+
+    # Sync AccelerationProfile and DecelerationProfile params so the UI reflects the active drive mode
+    # Eco → Eco, Normal → Standard, Sport → Sport+
+    gear_state = "eco" if eco_gear else ("sport" if sport_gear else "normal")
+    if gear_state != self.last_gear_state:
+      self.last_gear_state = gear_state
+      if gear_state == "eco":
+        if starpilot_toggles.map_acceleration:
+          self.params.put_nonblocking("AccelerationProfile", ACCELERATION_PROFILES["ECO"])
+        if starpilot_toggles.map_deceleration:
+          self.params.put_nonblocking("DecelerationProfile", DECELERATION_PROFILES["ECO"])
+      elif gear_state == "sport":
+        if starpilot_toggles.map_acceleration:
+          self.params.put_nonblocking("AccelerationProfile", ACCELERATION_PROFILES["SPORT_PLUS"])
+        if starpilot_toggles.map_deceleration:
+          self.params.put_nonblocking("DecelerationProfile", DECELERATION_PROFILES["SPORT"])
+      else:
+        if starpilot_toggles.map_acceleration:
+          self.params.put_nonblocking("AccelerationProfile", ACCELERATION_PROFILES["STANDARD"])
+        if starpilot_toggles.map_deceleration:
+          self.params.put_nonblocking("DecelerationProfile", DECELERATION_PROFILES["STANDARD"])

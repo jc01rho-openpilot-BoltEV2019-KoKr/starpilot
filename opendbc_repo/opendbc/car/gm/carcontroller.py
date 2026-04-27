@@ -53,6 +53,15 @@ def should_spoof_dash_speed(CP, starpilot_toggles):
   return True
 
 
+def should_send_acc_dashboard_status(CP, dash_speed_spoof_active):
+  status_car = CP.carFingerprint not in CC_ONLY_CAR or CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL
+  volt_camera_no_camera = (
+    CP.carFingerprint == CAR.CHEVROLET_VOLT_CAMERA and
+    bool(getattr(CP, "flags", 0) & GMFlags.NO_CAMERA.value)
+  )
+  return status_car and (dash_speed_spoof_active or volt_camera_no_camera)
+
+
 ECM_CRUISE_SPOOF_CARS = {
   CAR.CHEVROLET_BOLT_CC_2017,
   CAR.CHEVROLET_BOLT_CC_2018_2021,
@@ -75,6 +84,17 @@ def should_send_cc_button_spam(CP, CC, CS):
     CC.longActive and
     CS.out.vEgo > CP.minEnableSpeed
   )
+
+
+def get_adas_keepalive_step(CP, is_kaofui_car):
+  if CP.networkLocation == NetworkLocation.gateway:
+    base_step = CarControllerParams.ADAS_KEEPALIVE_STEP
+    return base_step if is_kaofui_car else base_step * 2
+
+  if CP.networkLocation == NetworkLocation.fwdCamera and bool(getattr(CP, "flags", 0) & GMFlags.NO_CAMERA.value):
+    return CarControllerParams.CAMERA_KEEPALIVE_STEP
+
+  return None
 
 
 def get_testing_ground_1_brake_switch_bias(v_ego: float) -> int:
@@ -556,8 +576,7 @@ class CarController(CarControllerBase):
           can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
                                                              idx, CC.enabled, near_stop, at_full_stop, self.CP))
 
-        is_bolt_acc_pedal = self.CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL
-        if dash_speed_spoof_active and (self.CP.carFingerprint not in CC_ONLY_CAR or is_bolt_acc_pedal):
+        if should_send_acc_dashboard_status(self.CP, dash_speed_spoof_active):
           send_fcw = hud_alert == VisualAlert.fcw
           can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, CC.enabled,
                                                               hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
@@ -592,8 +611,8 @@ class CarController(CarControllerBase):
               can_sends.append(gmcan.create_adas_steering_status(CanBus.OBSTACLE, idx))
               can_sends.append(gmcan.create_adas_accelerometer_speed_status(CanBus.OBSTACLE, CS.out.vEgo, idx))
 
-      keepalive_step = self.params.ADAS_KEEPALIVE_STEP if self.CP.carFingerprint in kaofui_cars else self.params.ADAS_KEEPALIVE_STEP * 2
-      if self.CP.networkLocation == NetworkLocation.gateway and self.frame % keepalive_step == 0:
+      keepalive_step = get_adas_keepalive_step(self.CP, self.CP.carFingerprint in kaofui_cars)
+      if keepalive_step is not None and self.frame % keepalive_step == 0:
         can_sends += gmcan.create_adas_keepalive(CanBus.POWERTRAIN)
 
       pedal_cancel = bool(self.CP.flags & GMFlags.PEDAL_LONG.value) and CS.out.cruiseState.enabled

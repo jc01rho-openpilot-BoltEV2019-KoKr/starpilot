@@ -996,7 +996,7 @@ void StarPilotLongitudinalPanel::updateToggles() {
       }
 
       else if (key == "MapGears") {
-        setVisible &= parent->isToyota;
+        setVisible &= parent->isToyota || parent->isHKG;
         setVisible &= !parent->isTSK;
       }
 
