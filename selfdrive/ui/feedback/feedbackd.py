@@ -11,16 +11,18 @@ ButtonType = car.CarState.ButtonEvent.Type
 
 def main():
   params = Params()
+  params_memory = Params(memory=True)
   pm = messaging.PubMaster(['userBookmark', 'audioFeedback'])
   sm = messaging.SubMaster(['rawAudioData', 'bookmarkButton', 'carState'])
   should_record_audio = False
   block_num = 0
   waiting_for_release = False
   early_stop_triggered = False
+  last_wheel_bookmark_counter = params_memory.get_int("WheelButtonBookmarkCounter")
 
   while True:
     sm.update()
-    should_send_bookmark = False
+    bookmark_requests = 0
 
     # TODO: https://github.com/commaai/openpilot/issues/36015
     if False and sm.updated['carState'] and sm['carState'].canValid:
@@ -35,7 +37,7 @@ def main():
                 early_stop_triggered = False
                 cloudlog.info("LKAS button pressed - starting 10-second audio feedback")
               else:
-                should_send_bookmark = True  # immediately send bookmark if toggle false
+                bookmark_requests += 1  # immediately send bookmark if toggle false
                 cloudlog.info("LKAS button pressed - bookmarking")
             elif should_record_audio and not waiting_for_release:  # Wait for release of second press to stop recording early
               waiting_for_release = True
@@ -52,7 +54,7 @@ def main():
       msg.audioFeedback.blockNum = block_num
       block_num += 1
       if (block_num * SAMPLE_BUFFER / SAMPLE_RATE) >= FEEDBACK_MAX_DURATION or early_stop_triggered:  # Check for timeout or early stop
-        should_send_bookmark = True  # send bookmark at end of audio segment
+        bookmark_requests += 1  # send bookmark at end of audio segment
         should_record_audio = False
         early_stop_triggered = False
         cloudlog.info("10-second recording completed or second button press - stopping audio feedback")
@@ -60,9 +62,15 @@ def main():
 
     if sm.updated['bookmarkButton']:
       cloudlog.info("Bookmark button pressed!")
-      should_send_bookmark = True
+      bookmark_requests += 1
 
-    if should_send_bookmark:
+    wheel_bookmark_counter = params_memory.get_int("WheelButtonBookmarkCounter")
+    if wheel_bookmark_counter > last_wheel_bookmark_counter:
+      bookmark_requests += wheel_bookmark_counter - last_wheel_bookmark_counter
+      last_wheel_bookmark_counter = wheel_bookmark_counter
+      cloudlog.info("Wheel button bookmark requested!")
+
+    for _ in range(bookmark_requests):
       msg = messaging.new_message('userBookmark', valid=True)
       pm.send('userBookmark', msg)
 

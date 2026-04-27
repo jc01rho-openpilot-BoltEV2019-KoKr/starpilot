@@ -82,6 +82,9 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   sportGear @13 :Bool;
   trafficModeEnabled @14 :Bool;
   gasStack @15 :Bool;  # Compatibility with older StarPilot payloads
+  modePressed @16 :Bool;
+  customPressed @17 :Bool;
+  alwaysOnLateralAllowed @18 :Bool;
 }
 
 struct StarPilotDeviceState @0xda96579883444c35 {
@@ -147,6 +150,8 @@ struct StarPilotOnroadEvent @0xa5cd762cd951a455 {
     youveGotMail @28;
     switchbackModeActive @29;
     switchbackModeInactive @30;
+    lkasEnable @31;
+    lkasDisable @32;
   }
 }
 

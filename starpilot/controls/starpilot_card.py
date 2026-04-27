@@ -25,6 +25,11 @@ class StarPilotCard:
     self.decel_pressed = False
     self.distancePressed_previously = False
     self.force_coast = False
+    self.modePressed_previously = False
+    self.mode_counter = 0
+    self.nostalgia_pause_longitudinal = False
+    self.customPressed_previously = False
+    self.custom_counter = 0
     self.pause_lateral = False
     self.pause_longitudinal = False
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled")
@@ -43,6 +48,8 @@ class StarPilotCard:
   def handle_button_event(self, key, sm, starpilot_toggles):
     if sm["carControl"].longActive and getattr(starpilot_toggles, f"experimental_mode_via_{key}"):
       self.handle_experimental_mode(sm, starpilot_toggles)
+    elif getattr(starpilot_toggles, f"bookmark_via_{key}"):
+      self.handle_bookmark()
     elif getattr(starpilot_toggles, f"force_coast_via_{key}"):
       self.force_coast = not self.force_coast
     elif getattr(starpilot_toggles, f"pause_lateral_via_{key}"):
@@ -54,6 +61,10 @@ class StarPilotCard:
       self.params_memory.put_bool("SwitchbackModeEnabled", self.switchback_mode_enabled)
     elif sm["carControl"].longActive and getattr(starpilot_toggles, f"traffic_mode_via_{key}"):
       self.traffic_mode_enabled = not self.traffic_mode_enabled
+
+  def handle_bookmark(self):
+    counter = self.params_memory.get_int("WheelButtonBookmarkCounter")
+    self.params_memory.put_int("WheelButtonBookmarkCounter", counter + 1)
 
   def handle_experimental_mode(self, sm, starpilot_toggles):
     if getattr(starpilot_toggles, "safe_mode", False):
@@ -69,6 +80,7 @@ class StarPilotCard:
 
   def update(self, carState, starpilotCarState, sm, starpilot_toggles):
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled")
+    nostalgia_mode = getattr(starpilot_toggles, "nostalgia_mode", False)
 
     if self.CP.brand == "hyundai":
       for be in carState.buttonEvents:
@@ -120,9 +132,48 @@ class StarPilotCard:
     if any(be.pressed and be.type == ButtonType.lkas for be in carState.buttonEvents):
       self.handle_button_event("lkas", sm, starpilot_toggles)
 
+    if not nostalgia_mode or not self.CP.openpilotLongitudinalControl or not sm["selfdriveState"].enabled:
+      self.nostalgia_pause_longitudinal = False
+    else:
+      if any(be.pressed and be.type == ButtonType.altButton2 for be in carState.buttonEvents) and sm["carControl"].longActive:
+        self.nostalgia_pause_longitudinal = True
+      if any(be.pressed and be.type in (ButtonType.accelCruise, ButtonType.resumeCruise,
+                                        ButtonType.decelCruise, ButtonType.setCruise) for be in carState.buttonEvents):
+        self.nostalgia_pause_longitudinal = False
+
+    if getattr(starpilot_toggles, "has_canfd_media_buttons", False):
+      if starpilotCarState.modePressed:
+        self.mode_counter += 1
+      elif not self.modePressed_previously:
+        self.mode_counter = 0
+      self.modePressed_previously = starpilotCarState.modePressed
+
+      if not starpilotCarState.modePressed and 1 <= self.mode_counter < self.long_press_threshold:
+        self.handle_button_event("mode", sm, starpilot_toggles)
+      elif self.mode_counter == self.long_press_threshold:
+        self.handle_button_event("mode_long", sm, starpilot_toggles)
+      elif self.mode_counter == self.very_long_press_threshold:
+        self.handle_button_event("mode_long", sm, starpilot_toggles)
+        self.handle_button_event("mode_very_long", sm, starpilot_toggles)
+
+      if starpilotCarState.customPressed:
+        self.custom_counter += 1
+      elif not self.customPressed_previously:
+        self.custom_counter = 0
+      self.customPressed_previously = starpilotCarState.customPressed
+
+      if not starpilotCarState.customPressed and 1 <= self.custom_counter < self.long_press_threshold:
+        self.handle_button_event("star", sm, starpilot_toggles)
+      elif self.custom_counter == self.long_press_threshold:
+        self.handle_button_event("star_long", sm, starpilot_toggles)
+      elif self.custom_counter == self.very_long_press_threshold:
+        self.handle_button_event("star_long", sm, starpilot_toggles)
+        self.handle_button_event("star_very_long", sm, starpilot_toggles)
+
     self.force_coast &= not (carState.brakePressed or carState.gasPressed)
 
     starpilotCarState.accelPressed = self.accel_pressed
+    starpilotCarState.alwaysOnLateralAllowed = self.always_on_lateral_allowed
     starpilotCarState.alwaysOnLateralEnabled = self.always_on_lateral_enabled
     starpilotCarState.decelPressed = self.decel_pressed
     starpilotCarState.distanceLongPressed = self.very_long_press_threshold > self.gap_counter >= self.long_press_threshold
@@ -130,7 +181,7 @@ class StarPilotCard:
     starpilotCarState.forceCoast = self.force_coast
     starpilotCarState.isParked = carState.gearShifter == GearShifter.park
     starpilotCarState.pauseLateral = self.pause_lateral
-    starpilotCarState.pauseLongitudinal = self.pause_longitudinal
+    starpilotCarState.pauseLongitudinal = self.pause_longitudinal or self.nostalgia_pause_longitudinal
     starpilotCarState.trafficModeEnabled = self.traffic_mode_enabled
 
     return starpilotCarState

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import random
 import re
 import urllib.request
 
@@ -89,6 +90,12 @@ class ModelManager:
       return raw.decode("utf-8", errors="ignore").strip()
     return str(raw).strip()
 
+  def _param_bool(self, key: str) -> bool:
+    try:
+      return bool(self.params.get_bool(key))
+    except Exception:
+      return self._param_text(key).lower() in {"1", "true", "yes", "on"}
+
   def _default_param_text(self, key: str) -> str:
     try:
       default_value = self.params.get_default_value(key)
@@ -99,6 +106,23 @@ class ModelManager:
     if isinstance(default_value, bytes):
       return default_value.decode("utf-8", errors="ignore").strip()
     return str(default_value).strip()
+
+  def _resolve_mirrored_param(self, primary_key: str, secondary_key: str) -> str:
+    primary_val = self._param_text(primary_key)
+    secondary_val = self._param_text(secondary_key)
+    if primary_val == secondary_val:
+      return secondary_val or primary_val
+
+    primary_default = self._default_param_text(primary_key)
+    secondary_default = self._default_param_text(secondary_key)
+    primary_non_default = bool(primary_val) and primary_val != primary_default
+    secondary_non_default = bool(secondary_val) and secondary_val != secondary_default
+
+    if secondary_non_default:
+      return secondary_val
+    if primary_non_default:
+      return primary_val
+    return secondary_val or primary_val
 
   def _load_catalog_from_params(self):
     self.available_models = [entry for entry in self._param_text("AvailableModels").split(",") if entry]
@@ -119,7 +143,7 @@ class ModelManager:
 
   def _ensure_model_params(self):
     selected_model = self._selected_model()
-    current_version = self._param_text("ModelVersion") or self._param_text("DrivingModelVersion")
+    current_version = self._resolve_mirrored_param("ModelVersion", "DrivingModelVersion")
     if not current_version:
       current_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or "v11"
 
@@ -141,8 +165,15 @@ class ModelManager:
       if index < len(self.model_versions) and model_key
     }
 
+  def _blacklisted_model_keys(self) -> set[str]:
+    return {
+      self._canonical_model_key(entry)
+      for entry in self._param_text("BlacklistedModels").split(",")
+      if entry.strip()
+    }
+
   def _selected_model(self) -> str:
-    selected = self._param_text("Model") or self._param_text("DrivingModel")
+    selected = self._resolve_mirrored_param("Model", "DrivingModel")
     if selected:
       return self._canonical_model_key(selected)
     default_value = self._default_param_text("Model") or self._default_param_text("DrivingModel")
@@ -178,6 +209,60 @@ class ModelManager:
       return False
     return all((MODELS_PATH / filename).is_file() for filename in required_files)
 
+  def _installed_model_choices(self) -> list[tuple[str, str, str]]:
+    self._load_catalog_from_params()
+    version_map = self._model_version_map()
+    blacklisted_keys = self._blacklisted_model_keys()
+    choices: list[tuple[str, str, str]] = []
+    seen_keys: set[str] = set()
+
+    for index, model_key in enumerate(self.available_models):
+      if not model_key:
+        continue
+
+      canonical_key = self._canonical_model_key(model_key)
+      if canonical_key in blacklisted_keys or canonical_key in seen_keys:
+        continue
+
+      model_version = version_map.get(model_key) or version_map.get(canonical_key) or ""
+      if not model_version and is_builtin_model_key(canonical_key):
+        model_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or "v11"
+
+      if not self._is_model_downloaded(model_key, model_version):
+        continue
+
+      model_name = self.available_model_names[index] if index < len(self.available_model_names) else canonical_key
+      choices.append((canonical_key, model_name, model_version))
+      seen_keys.add(canonical_key)
+
+    return choices
+
+  def randomize_selected_model(self) -> str | None:
+    if not self._param_bool("ModelRandomizer"):
+      return None
+
+    choices = self._installed_model_choices()
+    if not choices:
+      print("Model Randomizer skipped: no installed, non-blacklisted models available.")
+      return None
+
+    selected = self._selected_model()
+    eligible_choices = [choice for choice in choices if self._canonical_model_key(choice[0]) != selected]
+    if not eligible_choices:
+      eligible_choices = choices
+
+    model_key, model_name, model_version = random.choice(eligible_choices)
+    if not model_version:
+      model_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or "v11"
+
+    self._set_model_param_keys(model_key, model_name, model_version)
+    try:
+      self.params_memory.put_bool("StarPilotTogglesUpdated", True)
+    except Exception:
+      pass
+    print(f"Model Randomizer selected {model_name} ({model_key}, {model_version}).")
+    return model_key
+
   def _sync_selected_model_version(self):
     version_map = self._model_version_map()
     name_map = {model_key: model_name for model_key, model_name in zip(self.available_models, self.available_model_names)}
@@ -194,7 +279,7 @@ class ModelManager:
         self._set_model_param_keys(selected, selected_name, version)
         return
 
-    fallback_version = self._param_text("ModelVersion") or self._param_text("DrivingModelVersion")
+    fallback_version = self._resolve_mirrored_param("ModelVersion", "DrivingModelVersion")
     if not fallback_version:
       fallback_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or "v11"
     self._set_model_param_keys(selected, name_map.get(selected, ""), fallback_version)
@@ -390,6 +475,7 @@ class ModelManager:
 
     self.params_memory.put(DOWNLOAD_PROGRESS_PARAM, "All models downloaded!")
     self.params_memory.remove(MODEL_DOWNLOAD_ALL_PARAM)
+    self.randomize_selected_model()
 
   def update_tinygrad(self):
     # This branch ships tinygrad runtime in-tree. "Update" here refreshes local model files.

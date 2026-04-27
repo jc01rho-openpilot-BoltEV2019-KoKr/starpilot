@@ -291,6 +291,19 @@ class Car:
       # Initialize CarInterface, once controls are ready
       # TODO: this can make us miss at least a few cycles when doing an ECU knockout
       self.CI.init(self.CP, *self.can_callbacks)
+      # If ECU disable was skipped/failed, strip LONG safety flag from BOTH CarParams
+      # and StarPilotCarParams (pandad ORs both safetyParams together)
+      if self.CP.openpilotLongitudinalControl and self.params.get_bool("EcuDisableFailed"):
+        # ECU disable failed/rejected - switch to lateral-only mode with stock ACC
+        LONG_FLAG = 4  # HyundaiSafetyFlags.LONG
+        for cfg in self.CP.safetyConfigs:
+          cfg.safetyParam &= ~LONG_FLAG
+        for cfg in self.FPCP.safetyConfigs:
+          cfg.safetyParam &= ~LONG_FLAG
+        # Let stock ACC manage cruise (prevents "controls mismatch" error)
+        self.CP.pcmCruise = True
+        self.params.put("CarParams", self.CP.to_bytes())
+        self.params.put("StarPilotCarParams", self.FPCP.to_bytes())
       # signal pandad to switch to car safety mode
       self.params.put_bool_nonblocking("ControlsReady", True)
 

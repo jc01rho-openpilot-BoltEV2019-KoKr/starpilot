@@ -115,7 +115,7 @@ def sync_drive_stats(params, session):
   except Exception as exception:
     print(f"Failed to sync drive stats: {exception}")
 
-def transition_offroad(starpilot_planner, theme_manager, thread_manager, time_validated, sm, params, starpilot_toggles):
+def transition_offroad(starpilot_planner, model_manager, theme_manager, thread_manager, time_validated, sm, params, starpilot_toggles):
   params.put("LastGPSPosition", json.dumps(starpilot_planner.gps_position))
 
   if starpilot_toggles.lock_doors_timer != 0:
@@ -123,6 +123,8 @@ def transition_offroad(starpilot_planner, theme_manager, thread_manager, time_va
 
   if starpilot_toggles.random_themes:
     theme_manager.update_active_theme(time_validated, starpilot_toggles, randomize_theme=True)
+
+  model_manager.randomize_selected_model()
 
   if time_validated:
     thread_manager.run_with_lock(send_stats)
@@ -193,6 +195,7 @@ def starpilot_thread():
   run_update_checks = False
   safe_mode_active = safe_mode_enabled(params_raw)
   started_previously = False
+  model_randomizer_previously = params.get_bool("ModelRandomizer")
   time_validated = False
 
   error_log = ERROR_LOGS_PATH / "error.txt"
@@ -216,7 +219,7 @@ def starpilot_thread():
       starpilot_toggles = update_toggles(starpilot_variables, started, theme_manager, thread_manager, time_validated, params, starpilot_toggles)
       serialized_starpilot_toggles = serialize_starpilot_toggles(starpilot_toggles)
       toggle_broadcast_pending = True
-      transition_offroad(starpilot_planner, theme_manager, thread_manager, time_validated, sm, params, starpilot_toggles)
+      transition_offroad(starpilot_planner, model_manager, theme_manager, thread_manager, time_validated, sm, params, starpilot_toggles)
 
       run_update_checks = True
     elif started and not started_previously:
@@ -267,6 +270,11 @@ def starpilot_thread():
       starpilot_toggles = update_toggles(starpilot_variables, started, theme_manager, thread_manager, time_validated, params, starpilot_toggles)
       serialized_starpilot_toggles = serialize_starpilot_toggles(starpilot_toggles)
       toggle_broadcast_pending = True
+
+      model_randomizer_enabled = params.get_bool("ModelRandomizer")
+      if model_randomizer_enabled and not model_randomizer_previously and not started:
+        model_manager.randomize_selected_model()
+      model_randomizer_previously = model_randomizer_enabled
 
     periodic_update_due = monotonic_now >= next_periodic_update_check
     if periodic_update_due:

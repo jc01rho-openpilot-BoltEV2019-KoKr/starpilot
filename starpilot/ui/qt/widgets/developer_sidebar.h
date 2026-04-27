@@ -37,6 +37,7 @@ private:
   ItemStatus lateralEngagementStatus;
   ItemStatus longitudinalEngagementStatus;
   ItemStatus maxAccelerationStatus;
+  ItemStatus modelNameStatus;
   ItemStatus speedJerkStatus;
   ItemStatus steerAngleStatus;
   ItemStatus steerRatioStatus;

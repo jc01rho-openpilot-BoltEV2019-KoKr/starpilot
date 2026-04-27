@@ -395,14 +395,15 @@ class CarState(CarStateBase):
       if CP.enableBsm:
         pt_messages.append(("BCMBlindSpotMonitor", 10))
 
+    if CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value:
+      if ("ECMAcceleratorPos", 80) in pt_messages:
+        pt_messages.remove(("ECMAcceleratorPos", 80))
+      pt_messages.append(("EBCMBrakePedalPosition", 100))
+
     if CP.networkLocation == NetworkLocation.fwdCamera:
       pt_messages += [
         ("ASCMLKASteeringCmd", 0),
       ]
-      if CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value:
-        if ("ECMAcceleratorPos", 80) in pt_messages:
-          pt_messages.remove(("ECMAcceleratorPos", 80))
-        pt_messages.append(("EBCMBrakePedalPosition", 100))
 
     if CP.transmissionType == TransmissionType.direct:
       regen_paddle_rate = 50 if CP.carFingerprint in kaofui_state_cars else 40

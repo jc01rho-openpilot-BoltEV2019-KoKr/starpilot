@@ -1,21 +1,35 @@
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import IntFlag
 
-from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds
+from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds
+from opendbc.car.lateral import AngleSteeringLimits, ISO_LATERAL_ACCEL, ISO_LATERAL_JERK
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.structs import CarParams
 from opendbc.car.docs_definitions import CarHarness, CarDocs, CarParts
 from opendbc.car.fw_query_definitions import FwQueryConfig, Request, p16
 
 Ecu = CarParams.Ecu
+AVERAGE_ROAD_ROLL = 0.06  # conservative roll margin used by Hyundai CAN-FD angle steering safety
 
 
 class CarControllerParams:
   ACCEL_MIN = -3.5 # m/s
   ACCEL_MAX = 2.0 # m/s
+  ANGLE_LIMITS: AngleSteeringLimits = AngleSteeringLimits(
+    180,
+    ([], []),
+    ([], []),
+    MAX_LATERAL_ACCEL=ISO_LATERAL_ACCEL + (ACCELERATION_DUE_TO_GRAVITY * AVERAGE_ROAD_ROLL),
+    MAX_LATERAL_JERK=ISO_LATERAL_JERK + (ACCELERATION_DUE_TO_GRAVITY * AVERAGE_ROAD_ROLL),
+    MAX_ANGLE_RATE=5,
+  )
+  ANGLE_MAX_TORQUE_REDUCTION_GAIN = 1.0
+  ANGLE_MIN_TORQUE_REDUCTION_GAIN = 0.6
+  ANGLE_ACTIVE_TORQUE_REDUCTION_GAIN = 0.6
 
-  def __init__(self, CP):
+  def __init__(self, CP, vEgoRaw=100.):
+    self.ANGLE_LIMITS = self.ANGLE_LIMITS
     self.STEER_DELTA_UP = 3
     self.STEER_DELTA_DOWN = 7
     self.STEER_DRIVER_ALLOWANCE = 50
@@ -25,12 +39,26 @@ class CarControllerParams:
     self.STEER_STEP = 1  # 100 Hz
 
     if CP.flags & HyundaiFlags.CANFD:
-      self.STEER_MAX = 270
-      self.STEER_DRIVER_ALLOWANCE = 250
+      self.STEER_MAX = 409
+      self.STEER_DRIVER_ALLOWANCE = 100
       self.STEER_DRIVER_MULTIPLIER = 2
-      self.STEER_THRESHOLD = 250
-      self.STEER_DELTA_UP = 2
-      self.STEER_DELTA_DOWN = 3
+      self.STEER_THRESHOLD = 100
+      if vEgoRaw < 15.0:  # below ~34 mph - more aggressive for tight turns
+        self.STEER_DELTA_UP = 10
+        self.STEER_DELTA_DOWN = 8
+      else:
+        self.STEER_DELTA_UP = 2
+        self.STEER_DELTA_DOWN = 3
+
+    if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
+      self.STEER_THRESHOLD = 175
+
+      # The Sportage angle port is rough at low speed on the higher global jerk limit.
+      # Keep the branch-wide higher limit for other cars, but restore the older calmer
+      # jerk ceiling on this port only.
+      if CP.carFingerprint == CAR.KIA_SPORTAGE_HEV_2026:
+        self.ANGLE_LIMITS = replace(self.ANGLE_LIMITS,
+                                    MAX_LATERAL_JERK=3.0 + (ACCELERATION_DUE_TO_GRAVITY * AVERAGE_ROAD_ROLL))
 
     # To determine the limit for your car, find the maximum value that the stock LKAS will request.
     # If the max stock LKAS request is <384, add your car to this list.
@@ -66,6 +94,7 @@ class HyundaiSafetyFlags(IntFlag):
   CANFD_LKA_STEERING_ALT = 128
   FCEV_GAS = 256
   ALT_LIMITS_2 = 512
+  CANFD_ANGLE_STEERING = 1024
 
 
 class HyundaiStarPilotSafetyFlags(IntFlag):
@@ -137,6 +166,9 @@ class HyundaiFlags(IntFlag):
 
   # No SCC radar/camera cruise module. Stock longitudinal is regular cruise control only.
   NON_SCC = 2 ** 27
+
+  # Hyundai CAN-FD angle-based steering path used on newer ADAS platforms.
+  CANFD_ANGLE_STEERING = 2 ** 28
 
 
 @dataclass
@@ -357,7 +389,7 @@ class CAR(Platforms):
   HYUNDAI_IONIQ_6 = HyundaiCanFDPlatformConfig(
     [HyundaiCarDocs("Hyundai Ioniq 6 (with HDA II) 2023-24", "Highway Driving Assist II", car_parts=CarParts.common([CarHarness.hyundai_p]))],
     HYUNDAI_IONIQ_5.specs,
-    flags=HyundaiFlags.EV,
+    flags=HyundaiFlags.EV | HyundaiFlags.CANFD_LKA_STEERING | HyundaiFlags.CANFD_LKA_STEERING_ALT | HyundaiFlags.CANFD_NO_RADAR_DISABLE,
   )
   HYUNDAI_TUCSON_4TH_GEN = HyundaiCanFDPlatformConfig(
     [
@@ -483,6 +515,11 @@ class CAR(Platforms):
     ],
     # weight from SX and above trims, average of FWD and AWD version, steering ratio according to Kia News https://www.kiamedia.com/us/en/models/sportage/2023/specifications
     CarSpecs(mass=1725, wheelbase=2.756, steerRatio=13.6),
+  )
+  KIA_SPORTAGE_HEV_2026 = HyundaiCanFDPlatformConfig(
+    [HyundaiCarDocs("Kia Sportage Hybrid 2026", car_parts=CarParts.common([CarHarness.hyundai_n]))],
+    CarSpecs(mass=1812, wheelbase=2.756, steerRatio=13.7),
+    flags=HyundaiFlags.CANFD_ANGLE_STEERING,
   )
   KIA_SORENTO = HyundaiPlatformConfig(
     [
@@ -792,7 +829,9 @@ CAN_GEARS = {
 CANFD_CAR = CAR.with_flags(HyundaiFlags.CANFD)
 CANFD_RADAR_SCC_CAR = CAR.with_flags(HyundaiFlags.RADAR_SCC)  # TODO: merge with UNSUPPORTED_LONGITUDINAL_CAR
 
-CANFD_UNSUPPORTED_LONGITUDINAL_CAR = CAR.with_flags(HyundaiFlags.CANFD_NO_RADAR_DISABLE)  # TODO: merge with UNSUPPORTED_LONGITUDINAL_CAR
+# Cars with CANFD_NO_RADAR_DISABLE that now work with SecurityAccess handshake
+CANFD_SECURITYACCESS_CAR = {CAR.HYUNDAI_IONIQ_6, CAR.HYUNDAI_KONA_EV_2ND_GEN}
+CANFD_UNSUPPORTED_LONGITUDINAL_CAR = CAR.with_flags(HyundaiFlags.CANFD_NO_RADAR_DISABLE) - CANFD_SECURITYACCESS_CAR  # TODO: merge with UNSUPPORTED_LONGITUDINAL_CAR
 
 CAMERA_SCC_CAR = CAR.with_flags(HyundaiFlags.CAMERA_SCC)
 

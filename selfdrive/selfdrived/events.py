@@ -1314,6 +1314,14 @@ STARPILOT_EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
+  StarPilotEventName.lkasEnable: {
+    ET.WARNING: EngagementAlert(AudibleAlert.engage),
+  },
+
+  StarPilotEventName.lkasDisable: {
+    ET.PERMANENT: EngagementAlert(AudibleAlert.disengage),
+  },
+
   StarPilotEventName.turningLeft: {
     ET.WARNING: Alert(
       "Turning Left",

@@ -51,6 +51,7 @@ StarPilotLateralPanel::StarPilotLateralPanel(StarPilotSettingsWindow *parent, bo
     {"MinimumLaneChangeSpeed", tr("Minimum Lane Change Speed"), tr("<b>Lowest speed at which openpilot will change lanes.</b>"), ""},
     {"LaneDetectionWidth", tr("Minimum Lane Width"), tr("<b>Prevent automatic lane changes into lanes narrower than the set width.</b>"), ""},
     {"OneLaneChange", tr("One Lane Change Per Signal"), tr("<b>Limit automatic lane changes to one per turn-signal activation.</b>"), ""},
+    {"LaneChangeSmoothing", tr("Lane Change Smoothing"), tr("<b>Controls how smoothly openpilot commits to a lane change.</b> 10 is stock behavior; lower values produce a gentler, more gradual maneuver. 1 stretches the maneuver to ~8 seconds."), ""},
 
     {"LateralTune", tr("Lateral Tuning"), tr("<b>Miscellaneous steering control changes</b> to fine-tune how openpilot drives."), "../../starpilot/assets/toggle_icons/icon_lateral_tune.png"},
     {"TurnDesires", tr("Force Turn Desires Below Lane Change Speed"), tr("<b>While driving below the minimum lane change speed with an active turn signal, instruct openpilot to turn left/right.</b>"), ""},
@@ -111,6 +112,11 @@ StarPilotLateralPanel::StarPilotLateralPanel(StarPilotSettingsWindow *parent, bo
       lateralToggle = new StarPilotParamValueControl(param, title, desc, icon, 0, 15, QString(), std::map<float, QString>(), 0.1, true);
     } else if (param == "MinimumLaneChangeSpeed") {
       lateralToggle = new StarPilotParamValueControl(param, title, desc, icon, 0, 99, QString(), std::map<float, QString>(), 1, true);
+    } else if (param == "LaneChangeSmoothing") {
+      std::map<float, QString> smoothingLabels;
+      smoothingLabels[10] = tr("Stock");
+      smoothingLabels[1] = tr("Smoothest");
+      lateralToggle = new StarPilotParamValueControl(param, title, desc, icon, 1, 10, QString(), smoothingLabels, 1);
 
     } else if (param == "LateralTune") {
       StarPilotManageControl *lateralTuneToggle = new StarPilotManageControl(param, title, desc, icon);

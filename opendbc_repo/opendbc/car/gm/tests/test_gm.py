@@ -6,7 +6,7 @@ from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.gm import gmcan
-from opendbc.car.gm.carcontroller import should_send_cc_button_spam, should_spoof_dash_speed
+from opendbc.car.gm.carcontroller import should_send_acc_dashboard_status, should_send_cc_button_spam, should_spoof_dash_speed
 import opendbc.car.gm.interface as gm_interface
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.fingerprints import FINGERPRINTS
@@ -94,6 +94,20 @@ class TestGMInterface:
     assert car_params.flags & GMFlags.NO_CAMERA.value
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_CAMERA.value
 
+  def test_volt_gateway_without_accel_pos_uses_brake_pedal_message(self):
+    CarInterface = interfaces[CAR.CHEVROLET_VOLT]
+    fingerprint = _empty_fingerprint()
+    fingerprint[0][0xF1] = 6
+
+    car_params = CarInterface.get_params(CAR.CHEVROLET_VOLT, fingerprint, [], alpha_long=False, is_release=False, docs=False,
+                                         starpilot_toggles=_test_starpilot_toggles())
+
+    assert car_params.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value
+
+    pt_parser = CarInterface.CarState.get_can_parsers(car_params)[Bus.pt]
+    assert "ECMAcceleratorPos" not in pt_parser.vl
+    assert "EBCMBrakePedalPosition" in pt_parser.vl
+
 
 class TestGMCarController:
   def test_dash_speed_spoof_respects_live_stock_acc_toggles(self):
@@ -107,6 +121,21 @@ class TestGMCarController:
     cp = SimpleNamespace(openpilotLongitudinalControl=True, enableGasInterceptorDEPRECATED=False)
 
     assert should_spoof_dash_speed(cp, SimpleNamespace(disable_openpilot_long=False))
+
+  def test_volt_camera_no_camera_sends_acc_dashboard_without_dash_spoof(self):
+    cp = SimpleNamespace(carFingerprint=CAR.CHEVROLET_VOLT_CAMERA, flags=GMFlags.NO_CAMERA.value)
+
+    assert should_send_acc_dashboard_status(cp, dash_speed_spoof_active=False)
+
+  def test_acc_dashboard_no_camera_exception_is_volt_camera_only(self):
+    assert not should_send_acc_dashboard_status(
+      SimpleNamespace(carFingerprint=CAR.CHEVROLET_VOLT_CAMERA, flags=0),
+      dash_speed_spoof_active=False,
+    )
+    assert not should_send_acc_dashboard_status(
+      SimpleNamespace(carFingerprint=CAR.CHEVROLET_VOLT_CC, flags=GMFlags.NO_CAMERA.value),
+      dash_speed_spoof_active=False,
+    )
 
   def test_cc_button_spam_does_not_require_stock_cruise_enabled(self):
     cp = SimpleNamespace(flags=GMFlags.CC_LONG.value, minEnableSpeed=10.0)
