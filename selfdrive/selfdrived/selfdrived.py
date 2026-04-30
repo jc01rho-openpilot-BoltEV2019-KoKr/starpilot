@@ -6,6 +6,9 @@ import time
 import cereal.messaging as messaging
 from cereal import car, custom, log
 from msgq.visionipc import VisionIpcClient, VisionStreamType
+
+
+from opendbc.car.chrysler.values import pacifica_hybrid_aol_stock_acc_mode
 from opendbc.car.gm.values import GMFlags
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.common.constants import CV
@@ -280,6 +283,12 @@ class SelfdriveD:
           self.last_below_steer_speed_alert_time = now
       self.events.add_from_msg(car_events)
 
+      if (getattr(self.starpilot_toggles, "nostalgia_mode", False) and
+          self.CP.openpilotLongitudinalControl and
+          self.enabled and
+          any(be.type == ButtonType.altButton2 for be in CS.buttonEvents)):
+        self.events.add(EventName.buttonCancel)
+
       if self.CP.notCar:
         # wait for everything to init first
         if self.sm.frame > int(5. / DT_CTRL) and self.initialized:
@@ -465,7 +474,13 @@ class SelfdriveD:
 
     if not REPLAY:
       # Check for mismatch between openpilot and car's PCM
-      cruise_mismatch = CS.cruiseState.enabled and (not self.enabled or not self.CP.pcmCruise)
+      pacifica_hybrid_aol = pacifica_hybrid_aol_stock_acc_mode(
+        self.CP.carFingerprint,
+        self.CP.pcmCruise,
+        self.enabled,
+        self.sm['starpilotCarState'].alwaysOnLateralEnabled,
+      )
+      cruise_mismatch = CS.cruiseState.enabled and (not self.enabled or not self.CP.pcmCruise) and not pacifica_hybrid_aol
       self.cruise_mismatch_counter = self.cruise_mismatch_counter + 1 if cruise_mismatch else 0
       if self.cruise_mismatch_counter > int(6. / DT_CTRL):
         self.events.add(EventName.cruiseMismatch)

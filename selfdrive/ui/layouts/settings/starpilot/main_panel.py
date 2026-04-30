@@ -13,7 +13,6 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.driving_model import Star
 from openpilot.selfdrive.ui.layouts.settings.starpilot.longitudinal import StarPilotLongitudinalLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.lateral import StarPilotLateralLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.maps import StarPilotMapsLayout
-from openpilot.selfdrive.ui.layouts.settings.starpilot.navigation import StarPilotNavigationLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.system_settings import StarPilotSystemLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.visuals import StarPilotVisualsLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.themes import StarPilotThemesLayout
@@ -27,44 +26,38 @@ STARPILOT_ICONS_DIR = "toggle_icons"
 class StarPilotLayout(Widget):
   CATEGORIES = [
     {
-      "title": "Alerts and Sounds",
+      "title": "Alerts & Sounds",
       "icon": "icon_sound.png",
-      "desc": "Adjust alert volumes and enable custom notifications.",
       "buttons": [("MANAGE", "SOUNDS", 0)],
       "color": "#E63956",
     },
     {
       "title": "Driving Controls",
       "icon": "icon_steering.png",
-      "desc": "Fine-tune custom StarPilot acceleration, braking, and steering controls.",
       "buttons": [("DRIVING MODEL", "DRIVING_MODEL", 0), ("GAS / BRAKE", "LONGITUDINAL", 0), ("STEERING", "LATERAL", 0)],
       "color": "#3B82F6",
     },
     {
-      "title": "Navigation",
+      "title": "Map Data",
       "icon": "icon_navigate.png",
-      "desc": "Download map data for the Speed Limit Controller.",
-      "buttons": [("MAP DATA", "MAPS", 0), ("NAVIGATION", "NAVIGATION", 0)],
+      "buttons": [("MAP DATA", "MAPS", 0)],
       "color": "#10B981",
     },
     {
-      "title": "System Settings",
+      "title": "System",
       "icon": "icon_system.png",
-      "desc": "Adjust device behavior, manage storage and backups, and access maintenance tools from one touch-friendly settings page.",
       "buttons": [("MANAGE", "SYSTEM", 0)],
       "color": "#D946EF",
     },
     {
-      "title": "Theme and Appearance",
+      "title": "Appearance",
       "icon": "icon_display.png",
-      "desc": "Customize the look of the driving screen and interface, including themes!",
       "buttons": [("APPEARANCE", "VISUALS", 0), ("THEME", "THEMES", 0)],
       "color": "#8B5CF6",
     },
     {
       "title": "Vehicle Settings",
       "icon": "icon_vehicle.png",
-      "desc": "Configure car-specific options and steering wheel button mappings.",
       "buttons": [("VEHICLE SETTINGS", "VEHICLE", 0), ("WHEEL CONTROLS", "WHEEL", 0)],
       "color": "#64748B",
     },
@@ -90,7 +83,6 @@ class StarPilotLayout(Widget):
       StarPilotPanelType.LONGITUDINAL: StarPilotPanelInfo(tr_noop("Gas / Brake"), StarPilotLongitudinalLayout()),
       StarPilotPanelType.LATERAL: StarPilotPanelInfo(tr_noop("Steering"), StarPilotLateralLayout()),
       StarPilotPanelType.MAPS: StarPilotPanelInfo(tr_noop("Map Data"), StarPilotMapsLayout()),
-      StarPilotPanelType.NAVIGATION: StarPilotPanelInfo(tr_noop("Navigation"), StarPilotNavigationLayout()),
       StarPilotPanelType.VISUALS: StarPilotPanelInfo(tr_noop("Appearance"), StarPilotVisualsLayout()),
       StarPilotPanelType.THEMES: StarPilotPanelInfo(tr_noop("Themes"), StarPilotThemesLayout()),
       StarPilotPanelType.VEHICLE: StarPilotPanelInfo(tr_noop("Vehicle Settings"), StarPilotVehicleSettingsLayout()),
@@ -102,7 +94,6 @@ class StarPilotLayout(Widget):
       StarPilotPanelType.SOUNDS,
       StarPilotPanelType.SYSTEM,
       StarPilotPanelType.LATERAL,
-      StarPilotPanelType.NAVIGATION,
       StarPilotPanelType.MAPS,
       StarPilotPanelType.VISUALS,
       StarPilotPanelType.THEMES,
@@ -194,7 +185,6 @@ class StarPilotLayout(Widget):
       "LONGITUDINAL": StarPilotPanelType.LONGITUDINAL,
       "LATERAL": StarPilotPanelType.LATERAL,
       "MAPS": StarPilotPanelType.MAPS,
-      "NAVIGATION": StarPilotPanelType.NAVIGATION,
       "VISUALS": StarPilotPanelType.VISUALS,
       "THEMES": StarPilotPanelType.THEMES,
       "VEHICLE": StarPilotPanelType.VEHICLE,
@@ -222,7 +212,7 @@ class StarPilotLayout(Widget):
 
         tile = HubTile(
           title=tr(cat["title"]),
-          desc=tr(cat["desc"]),
+          desc=tr(cat.get("desc", "")),
           icon_path=f"{STARPILOT_ICONS_DIR}/{cat['icon']}",
           on_click=on_click,
           starpilot_icon=True,

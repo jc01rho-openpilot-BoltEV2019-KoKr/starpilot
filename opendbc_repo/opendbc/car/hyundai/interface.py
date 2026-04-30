@@ -22,6 +22,18 @@ ENABLE_BUTTONS = (ButtonType.accelCruise, ButtonType.decelCruise, ButtonType.can
 ECU_DISABLE_TIMESTAMP = 0.0
 
 
+def apply_platform_longitudinal_params(ret: structs.CarParams) -> None:
+  if not (ret.flags & HyundaiFlags.CANFD):
+    return
+
+  ret.startingState = True
+  ret.startAccel = 1.0
+  ret.longitudinalActuatorDelay = 0.5
+  ret.vEgoStopping = 0.3
+  ret.vEgoStarting = 0.1
+  ret.stoppingDecelRate = 0.4
+
+
 class CarInterface(CarInterfaceBase):
   CarState = CarState
   CarController = CarController
@@ -141,6 +153,9 @@ class CarInterface(CarInterfaceBase):
       # see https://github.com/commaai/opendbc/pull/1137/
       ret.dashcamOnly = True
 
+    if ret.flags & HyundaiFlags.NON_SCC:
+      ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.NON_SCC.value
+
     # Common longitudinal control setup
 
     ret.radarUnavailable = RADAR_START_ADDR not in fingerprint[1] or Bus.radar not in DBC[ret.carFingerprint]
@@ -152,10 +167,7 @@ class CarInterface(CarInterfaceBase):
     if ret.openpilotLongitudinalControl:
       ret.radarUnavailable = True
     ret.pcmCruise = not ret.openpilotLongitudinalControl
-    ret.startingState = True
-    ret.vEgoStarting = 0.1
-    ret.startAccel = 1.0
-    ret.longitudinalActuatorDelay = 0.5
+    apply_platform_longitudinal_params(ret)
 
     if ret.openpilotLongitudinalControl:
       ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.LONG.value

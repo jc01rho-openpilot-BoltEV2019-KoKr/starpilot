@@ -188,13 +188,21 @@ class SystemSettingsManagerView(Widget):
     content_w = frame.scroll.width
     section_gap = 24
 
-    col_w = (content_w - section_gap) / 2
-    left_col = rl.Rectangle(frame.scroll.x, content_y, col_w, content_h)
-    right_col = rl.Rectangle(frame.scroll.x + col_w + section_gap, content_y, col_w, content_h)
-
     self._sync_slider_values()
-    self._draw_left_column(left_col)
-    self._draw_right_column(right_col)
+    if content_w < 1260:
+      left_ratio = 0.56 if content_w < 1080 else 0.52
+      col_w = (content_w - section_gap) / 2
+      left_col = rl.Rectangle(frame.scroll.x, content_y, col_w * left_ratio + col_w * 0.44, content_h)
+      right_col_x = left_col.x + left_col.width + section_gap
+      right_col = rl.Rectangle(right_col_x, content_y, frame.scroll.x + content_w - right_col_x, content_h)
+      self._draw_left_column(left_col)
+      self._draw_right_column(right_col, compact=True)
+    else:
+      col_w = (content_w - section_gap) / 2
+      left_col = rl.Rectangle(frame.scroll.x, content_y, col_w, content_h)
+      right_col = rl.Rectangle(frame.scroll.x + col_w + section_gap, content_y, col_w, content_h)
+      self._draw_left_column(left_col)
+      self._draw_right_column(right_col, compact=False)
 
   def _sync_slider_values(self):
     params = self._controller._params
@@ -208,11 +216,11 @@ class SystemSettingsManagerView(Widget):
   # --- Left column: slider bands + toggles ---
 
   def _draw_left_column(self, rect: rl.Rectangle):
-    band_zone_h = rect.height * 0.45
+    band_zone_h = rect.height * (0.52 if rect.width < 760 else 0.45)
     toggle_zone_h = rect.height - band_zone_h - 16
 
-    display_h = band_zone_h * 0.60
-    power_h = band_zone_h * 0.40 - 16
+    display_h = band_zone_h * 0.58
+    power_h = band_zone_h - display_h - 16
 
     self._draw_slider_band(rl.Rectangle(rect.x, rect.y, rect.width, display_h), tr("Display"), self._display_band)
     self._draw_slider_band(rl.Rectangle(rect.x, rect.y + display_h + 16, rect.width, power_h), tr("Power"), self._power_band)
@@ -232,40 +240,50 @@ class SystemSettingsManagerView(Widget):
     slider_h = rect.height - label_h - 32
     slider_area_w = rect.width - 32
     gap = 12
-    
-    # Force 4 columns mathematically so 2-item bands don't stretch into fat horizontal boxes
-    standard_n = 4
-    col_w = (slider_area_w - (standard_n - 1) * gap) / standard_n
-    
+
     n = len(slider_keys)
-    content_w = n * col_w + (n - 1) * gap
+    cols = max(1, min(n, int((slider_area_w + gap) / (120 + gap))))
+    rows = (n + cols - 1) // cols
+    col_w = (slider_area_w - (cols - 1) * gap) / cols
+    row_gap = 12
+    total_slider_h = max(0, slider_h - row_gap * max(0, rows - 1))
+    cell_h = total_slider_h / max(1, rows)
+    content_w = min(n, cols) * col_w + max(0, min(n, cols) - 1) * gap
     start_x = rect.x + 16 + (slider_area_w - content_w) / 2
 
     for i, key in enumerate(slider_keys):
-      col_x = start_x + i * (col_w + gap)
-      self._vsliders[key].render(rl.Rectangle(col_x, slider_top, col_w, slider_h))
+      row = i // cols
+      col = i % cols
+      col_x = start_x + col * (col_w + gap)
+      col_y = slider_top + row * (cell_h + row_gap)
+      self._vsliders[key].render(rl.Rectangle(col_x, col_y, col_w, cell_h))
 
   # --- Right column: action cards ---
 
-  def _draw_right_column(self, rect: rl.Rectangle):
+  def _draw_right_column(self, rect: rl.Rectangle, compact: bool = False):
     gap = 16
     total_h = rect.height - 2 * gap
-    h1 = total_h * 0.30
-    h2 = total_h * 0.40
-    h3 = total_h * 0.30
+    if compact:
+      h1 = total_h * 0.26
+      h2 = total_h * 0.42
+      h3 = total_h * 0.32
+    else:
+      h1 = total_h * 0.30
+      h2 = total_h * 0.40
+      h3 = total_h * 0.30
 
     card1_rect = rl.Rectangle(rect.x, rect.y, rect.width, h1)
     card2_rect = rl.Rectangle(rect.x, rect.y + h1 + gap, rect.width, h2)
     card3_rect = rl.Rectangle(rect.x, rect.y + h1 + h2 + 2*gap, rect.width, h3)
 
     self._draw_card_background(card1_rect, tr("Drive & Actions"))
-    self._draw_card1_content(card1_rect)
+    self._draw_card1_content(card1_rect, compact=compact)
 
     self._draw_card_background(card2_rect, tr("Backups Management"))
-    self._draw_card2_content(card2_rect)
+    self._draw_card2_content(card2_rect, compact=compact)
 
     self._draw_card_background(card3_rect, tr("Maintenance (Caution)"))
-    self._draw_card3_content(card3_rect)
+    self._draw_card3_content(card3_rect, compact=compact)
 
   def _draw_card_background(self, rect, title):
     rl.draw_rectangle_rounded(rect, 0.15, 16, rl.Color(28, 30, 36, 255))
@@ -291,65 +309,99 @@ class SystemSettingsManagerView(Widget):
     rl.draw_rectangle_rounded(rect, 0.25, 16, color)
     rl.draw_rectangle_rounded_lines_ex(rect, 0.25, 16, 1, border_color)
     text_color = rl.Color(255, 200, 200, 255) if danger else rl.WHITE
-    gui_label(rect, label, 24, text_color, FontWeight.BOLD, alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER)
+    font_size = max(14, min(22, int(min(rect.width, rect.height) * 0.24)))
+    gui_label(rect, label, font_size, text_color, FontWeight.BOLD, alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER)
 
-  def _draw_card1_content(self, rect):
-    ACTION_BTN_H = 64
+  def _draw_button_row(self, rect: rl.Rectangle, buttons: list[tuple[str, str, bool]], columns: int, *, gap: int = 16, button_h: int | None = None):
+    cols = max(1, min(columns, len(buttons)))
+    rows = (len(buttons) + cols - 1) // cols
+    resolved_button_h = button_h if button_h is not None else max(34, min(64, int((rect.height - gap * max(0, rows - 1)) / max(1, rows))))
+    button_w = (rect.width - gap * max(0, cols - 1)) / cols
+    for idx, (action_id, label, danger) in enumerate(buttons):
+      row = idx // cols
+      col = idx % cols
+      bx = rect.x + col * (button_w + gap)
+      by = rect.y + row * (resolved_button_h + gap)
+      self._draw_action_button(rl.Rectangle(bx, by, button_w, resolved_button_h), action_id, label, danger=danger)
+    return rows * resolved_button_h + gap * max(0, rows - 1)
+
+  def _draw_card1_content(self, rect, compact: bool = False):
     content_y = rect.y + 44
     content_h = rect.height - 44 - 16
-    
-    num_rows = 2
-    gap = (content_h - (ACTION_BTN_H * num_rows)) / (num_rows + 1)
-    
+    if compact:
+      stacked = rect.width < 760
+      units = 3 if stacked else 2
+      gap = 10
+      control_h = max(30, min(64, int((content_h - gap * (units + 1)) / units)))
+    else:
+      ACTION_BTN_H = 64
+      gap = max(12, (content_h - (ACTION_BTN_H * 2)) / 3)
+      control_h = ACTION_BTN_H
+
     ry = content_y + gap
-    radio_rect = rl.Rectangle(rect.x + 16, ry, rect.width - 32, ACTION_BTN_H)
+    radio_rect = rl.Rectangle(rect.x + 16, ry, rect.width - 32, control_h)
     self._drive_mode_radio.current_index = self._get_drive_mode_index()
     self._drive_mode_radio.render(radio_rect)
     
-    by = ry + ACTION_BTN_H + gap
+    by = ry + control_h + gap
     btn_w = (rect.width - 32 - 16) / 2
-    self._draw_action_button(rl.Rectangle(rect.x + 16, by, btn_w, ACTION_BTN_H), "FlashPanda", tr("Flash Panda"))
-    self._draw_action_button(rl.Rectangle(rect.x + 16 + btn_w + 16, by, btn_w, ACTION_BTN_H), "ReportIssue", tr("Report Issue"))
+    if compact and rect.width < 760:
+      self._draw_button_row(rl.Rectangle(rect.x + 16, by, rect.width - 32, control_h * 2 + gap), [("FlashPanda", tr("Flash Panda"), False), ("ReportIssue", tr("Report Issue"), False)], 1, gap=gap, button_h=control_h)
+    else:
+      self._draw_action_button(rl.Rectangle(rect.x + 16, by, btn_w, control_h), "FlashPanda", tr("Flash Panda"))
+      self._draw_action_button(rl.Rectangle(rect.x + 16 + btn_w + 16, by, btn_w, control_h), "ReportIssue", tr("Report Issue"))
 
-  def _draw_card2_content(self, rect):
-    ACTION_BTN_H = 64
+  def _draw_card2_content(self, rect, compact: bool = False):
     content_y = rect.y + 44
-    content_h = rect.height - 44 - 16
-    
-    num_rows = 2
-    gap = (content_h - (ACTION_BTN_H * num_rows)) / (num_rows + 1)
+    if compact:
+      gap = 8
+      label_h = 18
+      cols = 2 if rect.width >= 560 else 1
+      rows_per_group = (3 + cols - 1) // cols
+      total_rows = rows_per_group * 2
+      available_h = rect.height - 44 - 16 - label_h * 2 - gap * 5
+      button_h = max(28, min(56, int(available_h / max(1, total_rows))))
+    else:
+      ACTION_BTN_H = 64
+      gap = max(12, (rect.height - 44 - 16 - (ACTION_BTN_H * 2)) / 3)
+      label_h = ACTION_BTN_H
+      cols = 3
+      rows_per_group = 1
+      button_h = ACTION_BTN_H
     
     sys_y = content_y + gap
-    gui_label(rl.Rectangle(rect.x + 16, sys_y, 110, ACTION_BTN_H), tr("System:"), 22, rl.WHITE, FontWeight.SEMI_BOLD)
-    btn_w = (rect.width - 130 - 32 - 32) / 3
-    start_x = rect.x + 130
-    self._draw_action_button(rl.Rectangle(start_x, sys_y, btn_w, ACTION_BTN_H), "CreateBackup", tr("Create"))
-    self._draw_action_button(rl.Rectangle(start_x + btn_w + 16, sys_y, btn_w, ACTION_BTN_H), "RestoreBackup", tr("Restore"))
-    self._draw_action_button(rl.Rectangle(start_x + 2*(btn_w + 16), sys_y, btn_w, ACTION_BTN_H), "DeleteBackup", tr("Delete"), danger=True)
+    label_w = 110 if rect.width >= 760 and not compact else 92
+    label_size = 22 if not compact else 18
+    gui_label(rl.Rectangle(rect.x + 16, sys_y, label_w, label_h), tr("System:"), label_size, rl.WHITE, FontWeight.SEMI_BOLD)
+    start_x = rect.x + label_w + 20
+    row_w = rect.width - (start_x - rect.x) - 16
+    system_h = self._draw_button_row(rl.Rectangle(start_x, sys_y, row_w, rows_per_group * button_h + gap * max(0, rows_per_group - 1)), [("CreateBackup", tr("Create"), False), ("RestoreBackup", tr("Restore"), False), ("DeleteBackup", tr("Delete"), True)], cols, gap=gap, button_h=button_h)
 
-    tog_y = sys_y + ACTION_BTN_H + gap
-    gui_label(rl.Rectangle(rect.x + 16, tog_y, 110, ACTION_BTN_H), tr("Toggles:"), 22, rl.WHITE, FontWeight.SEMI_BOLD)
-    self._draw_action_button(rl.Rectangle(start_x, tog_y, btn_w, ACTION_BTN_H), "CreateToggleBackup", tr("Create"))
-    self._draw_action_button(rl.Rectangle(start_x + btn_w + 16, tog_y, btn_w, ACTION_BTN_H), "RestoreToggleBackup", tr("Restore"))
-    self._draw_action_button(rl.Rectangle(start_x + 2*(btn_w + 16), tog_y, btn_w, ACTION_BTN_H), "DeleteToggleBackup", tr("Delete"), danger=True)
+    tog_y = sys_y + max(label_h, system_h) + gap
+    gui_label(rl.Rectangle(rect.x + 16, tog_y, label_w, label_h), tr("Toggles:"), label_size, rl.WHITE, FontWeight.SEMI_BOLD)
+    self._draw_button_row(rl.Rectangle(start_x, tog_y, row_w, rows_per_group * button_h + gap * max(0, rows_per_group - 1)), [("CreateToggleBackup", tr("Create"), False), ("RestoreToggleBackup", tr("Restore"), False), ("DeleteToggleBackup", tr("Delete"), True)], cols, gap=gap, button_h=button_h)
 
-  def _draw_card3_content(self, rect):
-    ACTION_BTN_H = 64
+  def _draw_card3_content(self, rect, compact: bool = False):
     content_y = rect.y + 44
-    content_h = rect.height - 44 - 16
-    
-    num_rows = 2
-    gap = (content_h - (ACTION_BTN_H * num_rows)) / (num_rows + 1)
-    
-    btn_w = (rect.width - 32 - 16) / 2
+    if compact:
+      gap = 10
+      columns = 2 if rect.width >= 520 else 1
+      rows_per_group = (2 + columns - 1) // columns
+      available_h = rect.height - 44 - 16 - gap * 3
+      button_h = max(30, min(56, int(available_h / max(2, rows_per_group * 2))))
+    else:
+      ACTION_BTN_H = 64
+      gap = max(12, (rect.height - 44 - 16 - (ACTION_BTN_H * 2)) / 3)
+      columns = 2
+      rows_per_group = 1
+      button_h = ACTION_BTN_H
     
     sys_y = content_y + gap
-    self._draw_action_button(rl.Rectangle(rect.x + 16, sys_y, btn_w, ACTION_BTN_H), "Storage", tr("Clear Data"), danger=True)
-    self._draw_action_button(rl.Rectangle(rect.x + 16 + btn_w + 16, sys_y, btn_w, ACTION_BTN_H), "ErrorLogs", tr("Clear Logs"), danger=True)
+    group_h = rows_per_group * button_h + gap * max(0, rows_per_group - 1)
+    system_h = self._draw_button_row(rl.Rectangle(rect.x + 16, sys_y, rect.width - 32, group_h), [("Storage", tr("Clear Data"), True), ("ErrorLogs", tr("Clear Logs"), True)], columns, gap=gap, button_h=button_h)
     
-    tog_y = sys_y + ACTION_BTN_H + gap
-    self._draw_action_button(rl.Rectangle(rect.x + 16, tog_y, btn_w, ACTION_BTN_H), "ResetDefaults", tr("Reset Toggles"), danger=True)
-    self._draw_action_button(rl.Rectangle(rect.x + 16 + btn_w + 16, tog_y, btn_w, ACTION_BTN_H), "ResetStock", tr("Stock OP"), danger=True)
+    tog_y = sys_y + system_h + gap
+    self._draw_button_row(rl.Rectangle(rect.x + 16, tog_y, rect.width - 32, group_h), [("ResetDefaults", tr("Reset Toggles"), True), ("ResetStock", tr("Stock OP"), True)], columns, gap=gap, button_h=button_h)
 
 class StarPilotSystemLayout(StarPilotPanel):
   def __init__(self):
@@ -429,7 +481,7 @@ class StarPilotSystemLayout(StarPilotPanel):
     if ui_state.started:
       gui_app.push_widget(
         ConfirmDialog(
-          tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"), on_close=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None
+          tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"), callback=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None
         )
       )
 
@@ -445,7 +497,7 @@ class StarPilotSystemLayout(StarPilotPanel):
     if ui_state.started:
       gui_app.push_widget(
         ConfirmDialog(
-          tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"), on_close=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None
+          tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"), callback=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None
         )
       )
 
@@ -474,7 +526,7 @@ class StarPilotSystemLayout(StarPilotPanel):
                   shutil.rmtree(entry, ignore_errors=True)
         threading.Thread(target=_task, daemon=True).start()
         gui_app.push_widget(alert_dialog(tr("Driving data deletion started.")))
-    gui_app.push_widget(ConfirmDialog(tr("Delete all driving data and footage?"), tr("Delete"), on_close=_do_delete))
+    gui_app.push_widget(ConfirmDialog(tr("Delete all driving data and footage?"), tr("Delete"), callback=_do_delete))
 
   def _on_delete_error_logs(self):
     def _do_delete(res):
@@ -482,7 +534,7 @@ class StarPilotSystemLayout(StarPilotPanel):
         shutil.rmtree("/data/error_logs", ignore_errors=True)
         os.makedirs("/data/error_logs", exist_ok=True)
         gui_app.push_widget(alert_dialog(tr("Error logs deleted.")))
-    gui_app.push_widget(ConfirmDialog(tr("Delete all error logs?"), tr("Delete"), on_close=_do_delete))
+    gui_app.push_widget(ConfirmDialog(tr("Delete all error logs?"), tr("Delete"), callback=_do_delete))
 
   def _get_backups(self, folder="backups"):
     b_dir = Path(f"/data/{folder}")
@@ -516,7 +568,7 @@ class StarPilotSystemLayout(StarPilotPanel):
     if not backups:
       gui_app.push_widget(alert_dialog(tr("No backups found.")))
       return
-    dialog = MultiOptionDialog(tr("Select Backup"), backups)
+
     def _on_select(res):
       if res == DialogResult.CONFIRM and dialog.selection:
         gui_app.push_widget(alert_dialog(tr("Restoring... device will reboot.")))
@@ -525,18 +577,22 @@ class StarPilotSystemLayout(StarPilotPanel):
           subprocess.run(["tar", "--use-compress-program=zstd", "-xf", f"/data/backups/{dialog.selection}", "-C", "/"])
           os.system("reboot")
         threading.Thread(target=_task, daemon=True).start()
-    gui_app.push_widget(dialog, callback=_on_select)
+
+    dialog = MultiOptionDialog(tr("Select Backup"), backups, callback=_on_select)
+    gui_app.push_widget(dialog)
 
   def _on_delete_backup(self):
     backups = self._get_backups("backups")
     if not backups:
       gui_app.push_widget(alert_dialog(tr("No backups found.")))
       return
-    dialog = MultiOptionDialog(tr("Delete Backup"), backups)
+
     def _on_select(res):
       if res == DialogResult.CONFIRM and dialog.selection:
         os.remove(f"/data/backups/{dialog.selection}")
-    gui_app.push_widget(dialog, callback=_on_select)
+
+    dialog = MultiOptionDialog(tr("Delete Backup"), backups, callback=_on_select)
+    gui_app.push_widget(dialog)
 
   def _on_create_toggle_backup(self):
     def on_name(res, name):
@@ -560,7 +616,7 @@ class StarPilotSystemLayout(StarPilotPanel):
     if not backups:
       gui_app.push_widget(alert_dialog(tr("No toggle backups found.")))
       return
-    dialog = MultiOptionDialog(tr("Select Toggle Backup"), backups)
+
     def _on_select(res):
       if res == DialogResult.CONFIRM and dialog.selection:
         def on_confirm(r2):
@@ -577,19 +633,23 @@ class StarPilotSystemLayout(StarPilotPanel):
               if old_path.exists():
                 old_path.replace(new_path)
             gui_app.push_widget(alert_dialog(tr("Toggles restored.")))
-        gui_app.push_widget(ConfirmDialog(tr("This will overwrite your current toggles."), tr("Restore"), on_close=on_confirm))
-    gui_app.push_widget(dialog, callback=_on_select)
+        gui_app.push_widget(ConfirmDialog(tr("This will overwrite your current toggles."), tr("Restore"), callback=on_confirm))
+
+    dialog = MultiOptionDialog(tr("Select Toggle Backup"), backups, callback=_on_select)
+    gui_app.push_widget(dialog)
 
   def _on_delete_toggle_backup(self):
     backups = self._get_backups("toggle_backups")
     if not backups:
       gui_app.push_widget(alert_dialog(tr("No toggle backups found.")))
       return
-    dialog = MultiOptionDialog(tr("Delete Toggle Backup"), backups)
+
     def _on_select(res):
       if res == DialogResult.CONFIRM and dialog.selection:
         shutil.rmtree(f"/data/toggle_backups/{dialog.selection}", ignore_errors=True)
-    gui_app.push_widget(dialog, callback=_on_select)
+
+    dialog = MultiOptionDialog(tr("Delete Toggle Backup"), backups, callback=_on_select)
+    gui_app.push_widget(dialog)
 
   def _get_force_drive_state(self):
     if self._params.get_bool("ForceOnroad"):

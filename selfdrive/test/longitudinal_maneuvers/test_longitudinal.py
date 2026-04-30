@@ -1,5 +1,6 @@
 import itertools
 from parameterized import parameterized_class
+import pytest
 
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import STOP_DISTANCE
 from openpilot.selfdrive.test.longitudinal_maneuvers.maneuver import Maneuver
@@ -189,3 +190,41 @@ class TestLongitudinalControl:
         print(maneuver.title, f'in {"e2e" if maneuver.e2e else "acc"} mode')
         valid, _ = maneuver.evaluate()
         assert valid
+
+
+@pytest.mark.parametrize("maneuver", [
+  Maneuver(
+    'vision gate: approach stopped car at 25m/s, initial distance 120m',
+    duration=20.,
+    initial_speed=25.,
+    lead_relevancy=True,
+    initial_distance_lead=120.,
+    speed_lead_values=[30., 0.],
+    breakpoints=[0., 1.],
+    track_lead_with_gate=True,
+  ),
+  Maneuver(
+    'vision gate: approach stopped car at 20m/s, initial distance 90m',
+    duration=20.,
+    initial_speed=20.,
+    lead_relevancy=True,
+    initial_distance_lead=90.,
+    speed_lead_values=[20., 0.],
+    breakpoints=[0., 1.],
+    track_lead_with_gate=True,
+  ),
+  Maneuver(
+    'vision gate: approach slower cut-in car at 20m/s',
+    duration=20.,
+    initial_speed=20.,
+    lead_relevancy=True,
+    initial_distance_lead=50.,
+    speed_lead_values=[15., 15.],
+    breakpoints=[1., 11.],
+    only_lead2=True,
+    track_lead_with_gate=True,
+  ),
+], ids=lambda maneuver: maneuver.title)
+def test_tracking_lead_gate_maneuvers(maneuver):
+  valid, _ = maneuver.evaluate()
+  assert valid

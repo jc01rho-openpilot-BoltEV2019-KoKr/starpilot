@@ -7,7 +7,7 @@ from opendbc.car.structs import CarParams
 from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
 from opendbc.safety.tests.common import CANPackerSafety
-from opendbc.safety.tests.hyundai_common import HyundaiAolLkasOnEngageBase, HyundaiAolLkasOnEngageStockBase, HyundaiButtonBase, HyundaiLongitudinalBase
+from opendbc.safety.tests.hyundai_common import Buttons, HyundaiAolLkasOnEngageBase, HyundaiAolLkasOnEngageStockBase, HyundaiButtonBase, HyundaiLongitudinalBase
 
 
 # 4 bit checkusm used in some hyundai messages
@@ -145,6 +145,27 @@ class TestHyundaiSafetyCameraSCC(TestHyundaiSafety):
     self.safety = libsafety_py.libsafety
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, HyundaiSafetyFlags.CAMERA_SCC)
     self.safety.init_tests()
+
+
+class TestHyundaiSafetyNonScc(TestHyundaiSafety):
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_kia_generic")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, HyundaiSafetyFlags.NON_SCC)
+    self.safety.init_tests()
+
+  def _pcm_status_msg(self, enable):
+    values = {"CF_Lvr_CruiseSet": 30 if enable else 0}
+    return self.packer.make_can_msg_safety("LVR12", 0, values)
+
+  def test_non_scc_uses_lvr12_rx_checks(self):
+    self._rx(self._user_gas_msg(False))
+    self._rx(self._torque_driver_msg(0))
+    self._rx(self._speed_msg(0))
+    self._rx(self._user_brake_msg(False))
+    self._rx(self._button_msg(Buttons.NONE))
+    self._rx(self._pcm_status_msg(False))
+    self.assertTrue(self.safety.safety_config_valid())
 
 
 class TestHyundaiSafetyFCEV(TestHyundaiSafety):

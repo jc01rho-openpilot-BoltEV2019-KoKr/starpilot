@@ -24,6 +24,13 @@
 #define HYUNDAI_CANFD_SCC_CONTROL_COMMON_TX_MSGS(e_can, longitudinal) \
   {0x1A0, e_can, 32, .check_relay = (longitudinal)},  /* SCC_CONTROL */ \
 
+#define HYUNDAI_CANFD_BLINDSPOT_DASH_TX_MSGS(e_can) \
+  {0x1BA, e_can, 24, .check_relay = false},  /* BLINDSPOTS_REAR_CORNERS */ \
+  {0x1E5, e_can, 16, .check_relay = false},  /* BLINDSPOTS_FRONT_CORNER_1 */ \
+  {0x31A, e_can, 32, .check_relay = false},  /* cluster blindspot overlay */ \
+  {0x3B5, e_can, 32, .check_relay = false},  /* cluster blindspot overlay */ \
+  {0x3C1, e_can, 8, .check_relay = false},  /* cluster lane change overlay */ \
+
 // *** Addresses checked in rx hook ***
 // EV, ICE, HYBRID: ACCELERATOR (0x35), ACCELERATOR_BRAKE_ALT (0x100), ACCELERATOR_ALT (0x105)
 #define HYUNDAI_CANFD_COMMON_RX_CHECKS(pt_bus)                                                                          \
@@ -284,6 +291,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
     HYUNDAI_CANFD_LKA_STEERING_COMMON_TX_MSGS(0, 1)
     HYUNDAI_CANFD_LFA_STEERING_COMMON_TX_MSGS(1)
     HYUNDAI_CANFD_SCC_CONTROL_COMMON_TX_MSGS(1, true)
+    HYUNDAI_CANFD_BLINDSPOT_DASH_TX_MSGS(1)
     {0x51,  0, 32, .check_relay = false},  // ADRV_0x51
     {0x730, 1,  8, .check_relay = false},  // tester present for ADAS ECU disable
     {0x160, 1, 16, .check_relay = false},  // ADRV_0x160
@@ -304,6 +312,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
     HYUNDAI_CANFD_CRUISE_BUTTON_TX_MSGS(2)
     HYUNDAI_CANFD_LFA_STEERING_COMMON_TX_MSGS(0)
     HYUNDAI_CANFD_SCC_CONTROL_COMMON_TX_MSGS(0, true)
+    HYUNDAI_CANFD_BLINDSPOT_DASH_TX_MSGS(0)
     {0x160, 0, 16, .check_relay = true}, // ADRV_0x160
     {0x7D0, 0, 8, .check_relay = false},  // tester present for radar ECU disable
   };
@@ -343,6 +352,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
 
       static CanMsg hyundai_canfd_lfa_steering_camera_scc_tx_msgs[] = {
         HYUNDAI_CANFD_LFA_STEERING_CAMERA_SCC_TX_MSGS(true)
+        HYUNDAI_CANFD_BLINDSPOT_DASH_TX_MSGS(0)
       };
 
       if (hyundai_canfd_alt_buttons) {

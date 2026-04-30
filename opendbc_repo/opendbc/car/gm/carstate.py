@@ -2,6 +2,7 @@ import copy
 from cereal import custom
 from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
+from opendbc.car import DT_CTRL
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.gm.values import (
@@ -26,6 +27,9 @@ TransmissionType = structs.CarParams.TransmissionType
 NetworkLocation = structs.CarParams.NetworkLocation
 
 STANDSTILL_THRESHOLD = 10 * 0.0311
+VOLT_EBCM_BRAKE_PRESSED_THRESHOLD = 6 / 0xd0
+AUTO_HOLD_MIN_DRIVE_TIME_S = 3.0
+AUTO_HOLD_REGEN_RELEASE_COOLDOWN_S = 1.0
 
 BUTTONS_DICT = {CruiseButtons.RES_ACCEL: ButtonType.accelCruise, CruiseButtons.DECEL_SET: ButtonType.decelCruise,
                 CruiseButtons.MAIN: ButtonType.mainCruise, CruiseButtons.CANCEL: ButtonType.cancel}
@@ -58,6 +62,12 @@ class CarState(CarStateBase):
     self.distance_button = 0
 
     self.single_pedal_mode = False
+    self.auto_hold_armed = False
+    self.auto_hold_engaged = False
+    self.auto_hold_drive_time = 0.0
+    self.auto_hold_fault_suppression_timer = 0.0
+    self.regen_release_timer = 0.0
+    self.user_regen_paddle_pressed = False
 
     self.pedal_steady = 0
     self.ecm_cruise_control_ts_nanos = 0
@@ -153,7 +163,9 @@ class CarState(CarStateBase):
       else:
         ret.brake = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"]
 
-    if self.CP.carFingerprint in {CAR.CHEVROLET_MALIBU_CC} or (self.CP.carFingerprint == CAR.CHEVROLET_BLAZER and not no_accel_pos):
+    if self.CP.carFingerprint == CAR.CHEVROLET_VOLT and no_accel_pos:
+      ret.brakePressed = ret.brake >= VOLT_EBCM_BRAKE_PRESSED_THRESHOLD
+    elif self.CP.carFingerprint in {CAR.CHEVROLET_MALIBU_CC} or (self.CP.carFingerprint == CAR.CHEVROLET_BLAZER and not no_accel_pos):
       ret.brakePressed = ret.brake >= 8
     elif (self.CP.flags & GMFlags.FORCE_BRAKE_C9.value) or ((self.CP.networkLocation == NetworkLocation.fwdCamera) and (self.CP.carFingerprint != CAR.CHEVROLET_BLAZER)):
       ret.brakePressed = pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0
@@ -165,9 +177,22 @@ class CarState(CarStateBase):
       analog_thresh = 0.10 if no_accel_pos else 8
       ret.brakePressed = ret.brake >= analog_thresh
 
+    in_drive_for_hold = ret.gearShifter in (GearShifter.drive, GearShifter.low, GearShifter.manumatic)
+    if in_drive_for_hold:
+      if ret.brakePressed:
+        self.auto_hold_drive_time = AUTO_HOLD_MIN_DRIVE_TIME_S
+      else:
+        self.auto_hold_drive_time = min(self.auto_hold_drive_time + DT_CTRL, AUTO_HOLD_MIN_DRIVE_TIME_S)
+    else:
+      self.auto_hold_drive_time = 0.0
+      self.auto_hold_armed = False
+      self.auto_hold_engaged = False
+
     # Regen braking is braking
     if self.CP.transmissionType == TransmissionType.direct:
       ret.regenBraking = pt_cp.vl["EBCMRegenPaddle"]["RegenPaddle"] != 0
+      if not ret.regenBraking and self.user_regen_paddle_pressed:
+        self.regen_release_timer = AUTO_HOLD_REGEN_RELEASE_COOLDOWN_S
       self.single_pedal_mode = (ret.gearShifter == GearShifter.low or
                                 pt_cp.vl["EVDriveMode"]["SinglePedalModeActive"] == 1 or
                                 (ret.regenBraking and ret.gearShifter == GearShifter.manumatic) or
@@ -176,6 +201,10 @@ class CarState(CarStateBase):
                                   CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
                                   CAR.CHEVROLET_BOLT_CC_2022_2023,
                                 } and self.CP.enableGasInterceptorDEPRECATED))
+      self.user_regen_paddle_pressed = ret.regenBraking
+
+    if self.regen_release_timer > 0.0:
+      self.regen_release_timer = max(self.regen_release_timer - DT_CTRL, 0.0)
 
     if self.CP.enableGasInterceptorDEPRECATED:
       gas = (pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS"] + pt_cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"]) / 2.
@@ -263,6 +292,10 @@ class CarState(CarStateBase):
     else:
       self.ecm_cruise_control_ts_nanos = 0
       self.accelerator_pedal2_ts_nanos = 0
+
+    if self.auto_hold_fault_suppression_timer > 0.0:
+      self.auto_hold_fault_suppression_timer = max(self.auto_hold_fault_suppression_timer - DT_CTRL, 0.0)
+      ret.accFaulted = False
 
     if self.CP.enableBsm and not sdgm_non_volt:
       ret.leftBlindspot = pt_cp.vl["BCMBlindSpotMonitor"]["LeftBSM"] == 1

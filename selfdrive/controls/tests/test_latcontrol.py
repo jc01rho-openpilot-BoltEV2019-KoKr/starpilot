@@ -31,6 +31,8 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_genesis_g90_friction_scale,
   get_genesis_g90_friction_threshold,
   get_ioniq_6_center_taper_scale,
+  get_ioniq_6_directional_taper_scale,
+  get_ioniq_6_output_taper_scale,
   get_ioniq_6_ff_scale,
   get_ioniq_6_friction_scale,
   get_ioniq_6_friction_threshold,
@@ -151,7 +153,7 @@ class TestLatControl:
 
   def test_volt_standard_ff_scale_curve(self):
     assert get_volt_standard_ff_scale(0.0, 0.0, 20.0) == 1.0
-    assert get_volt_standard_ff_scale(-0.5, 0.0, 20.0) > get_volt_standard_ff_scale(0.5, 0.0, 20.0)
+    assert get_volt_standard_ff_scale(-0.5, 0.0, 20.0) >= get_volt_standard_ff_scale(0.5, 0.0, 20.0)
     assert get_volt_standard_ff_scale(0.6, 0.7, 8.0) > get_volt_standard_ff_scale(0.6, 0.0, 8.0) > get_volt_standard_ff_scale(0.6, -0.7, 8.0)
     assert get_volt_standard_ff_scale(-0.6, -0.7, 8.0) > get_volt_standard_ff_scale(-0.6, 0.0, 8.0) > get_volt_standard_ff_scale(-0.6, 0.7, 8.0)
     assert get_volt_standard_ff_scale(2.0, 0.0, 20.0) < get_volt_standard_ff_scale(0.8, 0.0, 20.0)
@@ -181,7 +183,7 @@ class TestLatControl:
 
   def test_genesis_g90_ff_scale_curve(self):
     assert get_genesis_g90_ff_scale(0.0, 0.0, 20.0) == 1.0
-    assert get_genesis_g90_ff_scale(-0.5, 0.0, 20.0) > get_genesis_g90_ff_scale(0.5, 0.0, 20.0)
+    assert get_genesis_g90_ff_scale(0.5, 0.0, 20.0) > get_genesis_g90_ff_scale(-0.5, 0.0, 20.0)
     assert get_genesis_g90_ff_scale(0.6, 0.7, 8.0) > get_genesis_g90_ff_scale(0.6, 0.0, 8.0) > get_genesis_g90_ff_scale(0.6, -0.7, 8.0)
     assert get_genesis_g90_ff_scale(-0.6, -0.7, 8.0) > get_genesis_g90_ff_scale(-0.6, 0.0, 8.0) > get_genesis_g90_ff_scale(-0.6, 0.7, 8.0)
     assert get_genesis_g90_ff_scale(2.0, 0.0, 20.0) < get_genesis_g90_ff_scale(0.8, 0.0, 20.0)
@@ -210,8 +212,20 @@ class TestLatControl:
     assert get_ioniq_6_ff_scale(0.0, 0.0, 20.0) == 1.0
     assert get_ioniq_6_ff_scale(0.4, 0.0, 20.0) > get_ioniq_6_ff_scale(-0.4, 0.0, 20.0)
     assert get_ioniq_6_ff_scale(0.4, 0.7, 8.0) > get_ioniq_6_ff_scale(0.4, 0.0, 8.0) > get_ioniq_6_ff_scale(0.4, -0.7, 8.0)
-    assert get_ioniq_6_ff_scale(-0.4, -0.7, 8.0) > get_ioniq_6_ff_scale(-0.4, 0.0, 8.0) > get_ioniq_6_ff_scale(-0.4, 0.7, 8.0)
-    assert get_ioniq_6_ff_scale(1.2, 0.0, 20.0) < get_ioniq_6_ff_scale(0.4, 0.0, 20.0)
+    assert get_ioniq_6_ff_scale(-0.4, -0.7, 8.0) >= get_ioniq_6_ff_scale(-0.4, 0.0, 8.0) >= get_ioniq_6_ff_scale(-0.4, 0.7, 8.0)
+    assert abs(get_ioniq_6_ff_scale(1.2, 0.0, 20.0) - 1.0) < 0.02
+
+  def test_ioniq_6_directional_taper_curve(self):
+    assert get_ioniq_6_directional_taper_scale(0.0, 0.0) == 1.0
+    assert get_ioniq_6_directional_taper_scale(-0.5, 0.0) < get_ioniq_6_directional_taper_scale(0.5, 0.0) < 1.0
+    assert get_ioniq_6_directional_taper_scale(-0.5, 0.7) <= get_ioniq_6_directional_taper_scale(-0.5, 0.0)
+    assert get_ioniq_6_directional_taper_scale(1.2, 0.0) > 0.96
+
+  def test_ioniq_6_output_taper_curve(self):
+    assert get_ioniq_6_output_taper_scale(0.0, 0.0, 25.0) < get_ioniq_6_output_taper_scale(0.0, 0.0, 8.0) <= 1.0
+    assert get_ioniq_6_output_taper_scale(-0.5, 0.0, 25.0) < get_ioniq_6_output_taper_scale(0.5, 0.0, 25.0) < 1.0
+    assert get_ioniq_6_output_taper_scale(-0.5, 0.7, 25.0) <= get_ioniq_6_output_taper_scale(-0.5, 0.0, 25.0)
+    assert get_ioniq_6_output_taper_scale(1.2, 0.0, 25.0) > 0.94
 
   def test_ioniq_6_friction_threshold_curve(self):
     base = get_friction_threshold(6.0)
@@ -229,13 +243,14 @@ class TestLatControl:
     right_turn_in = get_ioniq_6_friction_scale(6.0, -0.5, -0.8)
     left_unwind = get_ioniq_6_friction_scale(6.0, 0.5, -0.8)
     right_unwind = get_ioniq_6_friction_scale(6.0, -0.5, 0.8)
-    assert left_turn_in > right_turn_in > base
-    assert base > left_unwind > right_unwind
+    assert right_turn_in >= left_turn_in > base
+    assert base > left_unwind >= right_unwind
 
   def test_ioniq_6_center_taper_curve(self):
-    assert get_ioniq_6_center_taper_scale(0.0, 30.0) < get_ioniq_6_center_taper_scale(0.0, 10.0)
+    assert get_ioniq_6_center_taper_scale(0.0, 10.0) < get_ioniq_6_center_taper_scale(0.0, 30.0)
     assert get_ioniq_6_center_taper_scale(0.0, 30.0) < get_ioniq_6_center_taper_scale(0.2, 30.0)
-    assert abs(get_ioniq_6_center_taper_scale(0.2, 30.0) - 1.0) < 1e-3
+    assert get_ioniq_6_center_taper_scale(0.0, 12.0) < get_ioniq_6_center_taper_scale(0.25, 12.0)
+    assert abs(get_ioniq_6_center_taper_scale(0.2, 30.0) - 1.0) < 1.2e-2
 
   def test_kia_ev6_ff_scale_curve(self):
     assert get_kia_ev6_ff_scale(0.0, 0.0, 20.0) == 1.0

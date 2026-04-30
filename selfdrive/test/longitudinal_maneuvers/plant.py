@@ -10,11 +10,15 @@ from types import SimpleNamespace
 from cereal import log
 import cereal.messaging as messaging
 from opendbc.car.interfaces import ACCEL_MAX, ACCEL_MIN
+from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import Ratekeeper, DT_MDL
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
+from openpilot.selfdrive.controls.lib.lead_behavior import should_track_lead
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import STOP_DISTANCE
 from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
+from openpilot.starpilot.common.starpilot_variables import THRESHOLD
 
 
 class Plant:
@@ -51,7 +55,8 @@ class Plant:
     gc.collect()
 
   def __init__(self, lead_relevancy=False, speed=0.0, distance_lead=2.0,
-               enabled=True, only_lead2=False, only_radar=False, e2e=False, personality=0, force_decel=False):
+               enabled=True, only_lead2=False, only_radar=False, track_lead_with_gate=False,
+               e2e=False, personality=0, force_decel=False):
     self.rate = 1. / DT_MDL
 
     current_prefix = os.environ.get("OPENPILOT_PREFIX")
@@ -82,9 +87,11 @@ class Plant:
     self.enabled = enabled
     self.only_lead2 = only_lead2
     self.only_radar = only_radar
+    self.track_lead_with_gate = track_lead_with_gate
     self.e2e = e2e
     self.personality = personality
     self.force_decel = force_decel
+    self.tracking_lead_filter = FirstOrderFilter(0.0, 0.5, DT_MDL)
 
     self.rk = Ratekeeper(self.rate, print_delay_threshold=100.0)
     self.ts = 1. / self.rate
@@ -179,6 +186,22 @@ class Plant:
     car_state.carState.vCruise = float(v_cruise * 3.6)
     car_control.carControl.orientationNED = [0., float(pitch), 0.]
 
+    tracking_lead = bool(status)
+    if self.track_lead_with_gate:
+      tracking_candidate = should_track_lead(
+        status,
+        float(d_rel),
+        float(position.x[-1]) if len(position.x) else 0.0,
+        STOP_DISTANCE,
+        float(self.speed),
+        v_lead=float(v_lead),
+        radar=bool(self.only_radar),
+      )
+      self.tracking_lead_filter.update(tracking_candidate)
+      tracking_lead = self.tracking_lead_filter.x >= THRESHOLD
+    else:
+      self.tracking_lead_filter.update(float(status))
+
     # ******** get controlsState messages for plotting ***
     starpilot_plan = SimpleNamespace(
       vCruise=float(v_cruise),
@@ -189,7 +212,7 @@ class Plant:
       accelerationJerk=5.0,
       dangerJerk=5.0,
       speedJerk=5.0,
-      trackingLead=bool(status),
+      trackingLead=bool(tracking_lead),
       desiredFollowDistance=float(d_rel),
       dangerFactor=1.0,
       tFollow=1.45,
