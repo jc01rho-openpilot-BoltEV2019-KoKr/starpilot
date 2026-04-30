@@ -441,7 +441,7 @@ class StarPilotCurveSpeedLayout(StarPilotPanel):
         self._params.remove("CurvatureData")
         self._rebuild_grid()
 
-    gui_app.push_widget(ConfirmDialog(tr("Reset Curve Data?"), tr("Confirm"), on_close=on_close))
+    gui_app.push_widget(ConfirmDialog(tr("Reset Curve Data?"), tr("Confirm"), callback=on_close))
 
 
 class StarPilotPersonalitiesLayout(StarPilotPanel):
@@ -537,7 +537,7 @@ class StarPilotPersonalityProfileLayout(StarPilotPanel):
           self._params.remove(self._profile + key)
         self._rebuild_grid()
 
-    gui_app.push_widget(ConfirmDialog(tr("Reset to Defaults?"), tr("Confirm"), on_close=on_close))
+    gui_app.push_widget(ConfirmDialog(tr("Reset to Defaults?"), tr("Confirm"), callback=on_close))
 
   def _show_float_selector(self, key, min_v, max_v, step, unit=""):
     def on_close(res, val):
@@ -662,14 +662,14 @@ class StarPilotLongitudinalTuneLayout(StarPilotPanel):
     option_labels = [tr(option_label) for _, option_label in options]
     label_to_value = {tr(option_label): option_value for option_value, option_label in options}
     default_option = next((tr(option_label) for option_value, option_label in options if option_value == current_value), option_labels[0])
-    dialog = MultiOptionDialog(tr(title), option_labels, default_option)
 
     def on_select(res):
       if res == DialogResult.CONFIRM and dialog.selection:
         self._params.put_int(key, label_to_value[dialog.selection])
         self._rebuild_grid()
 
-    gui_app.push_widget(dialog, callback=on_select)
+    dialog = MultiOptionDialog(tr(title), option_labels, default_option, callback=on_select)
+    gui_app.push_widget(dialog)
 
   def _show_int_selector(self, key, min_v, max_v, unit=""):
     def on_close(res, val):
@@ -723,6 +723,14 @@ class StarPilotLongitudinalQOLLayout(StarPilotPanel):
         "set_state": lambda s: self._params.put_bool("ForceStops", s),
         "color": "#597497",
         "visible": lambda: self._params.get_bool("QOLLongitudinal"),
+      },
+      {
+        "title": tr_noop("Force Stop Distance Offset"),
+        "type": "value",
+        "get_value": lambda: f"{self._params.get_int('ForceStopDistanceOffset'):+d} ft",
+        "on_click": lambda: self._show_int_selector("ForceStopDistanceOffset", -20, 20, " ft"),
+        "color": "#597497",
+        "visible": lambda: self._params.get_bool("QOLLongitudinal") and self._params.get_bool("ForceStops"),
       },
       {
         "title": tr_noop("Force Standstill State"),
@@ -866,10 +874,8 @@ class StarPilotSpeedLimitControllerLayout(StarPilotPanel):
     def show_secondary_dialog(primary):
       secondary_options = ["None"] + [option for option in ("Dashboard", "Map Data", "Vision") if option != primary]
       selected_secondary = current_secondary if current_secondary in secondary_options else "None"
-      secondary_dialog = MultiOptionDialog(tr("SLC Secondary Priority"), secondary_options, selected_secondary)
-      gui_app.push_widget(secondary_dialog, callback=lambda res: on_secondary_select(primary, secondary_dialog, res))
-
-    primary_dialog = MultiOptionDialog(tr("SLC Primary Priority"), primary_options, current_primary)
+      secondary_dialog = MultiOptionDialog(tr("SLC Secondary Priority"), secondary_options, selected_secondary, callback=lambda res: on_secondary_select(primary, secondary_dialog, res))
+      gui_app.push_widget(secondary_dialog)
 
     def on_primary_select(res):
       if res != DialogResult.CONFIRM or not primary_dialog.selection:
@@ -881,18 +887,19 @@ class StarPilotSpeedLimitControllerLayout(StarPilotPanel):
         return
       show_secondary_dialog(primary_dialog.selection)
 
-    gui_app.push_widget(primary_dialog, callback=on_primary_select)
+    primary_dialog = MultiOptionDialog(tr("SLC Primary Priority"), primary_options, current_primary, callback=on_primary_select)
+    gui_app.push_widget(primary_dialog)
 
   def _show_selection(self, key, options):
     current = self._params.get(key, encoding='utf-8') or "None"
-    dialog = MultiOptionDialog(tr(key), options, current)
 
     def on_select(res):
       if res == DialogResult.CONFIRM and dialog.selection:
         self._params.put(key, dialog.selection)
         self._rebuild_grid()
 
-    gui_app.push_widget(dialog, callback=on_select)
+    dialog = MultiOptionDialog(tr(key), options, current, callback=on_select)
+    gui_app.push_widget(dialog)
 
 
 class StarPilotSLCOffsetsLayout(StarPilotPanel):
@@ -938,7 +945,7 @@ class StarPilotSLCQOLLayout(StarPilotPanel):
     super().__init__()
     self.CATEGORIES = [
       {
-        "title": tr_noop("Match Speed on Engage"),
+        "title": tr_noop("Auto Match Speed Limits"),
         "type": "toggle",
         "get_state": lambda: self._params.get_bool("SetSpeedLimit"),
         "set_state": lambda s: self._params.put_bool("SetSpeedLimit", s),
@@ -1042,7 +1049,6 @@ class StarPilotWeatherLayout(StarPilotPanel):
 
   def _set_weather_key(self):
     options = ["ADD", "REMOVE"]
-    dialog = MultiOptionDialog(tr("Weather API Key"), options, "ADD")
 
     def on_select(res):
       if res == DialogResult.CONFIRM and dialog.selection:
@@ -1065,9 +1071,10 @@ class StarPilotWeatherLayout(StarPilotPanel):
               self._params.remove("WeatherAPIKey")
               self._rebuild_grid()
 
-          gui_app.push_widget(ConfirmDialog(tr("Remove API Key?"), tr("Confirm"), on_close=on_confirm))
+          gui_app.push_widget(ConfirmDialog(tr("Remove API Key?"), tr("Confirm"), callback=on_confirm))
 
-    gui_app.push_widget(dialog, callback=on_select)
+    dialog = MultiOptionDialog(tr("Weather API Key"), options, "ADD", callback=on_select)
+    gui_app.push_widget(dialog)
 
 
 class StarPilotWeatherBase(StarPilotPanel):

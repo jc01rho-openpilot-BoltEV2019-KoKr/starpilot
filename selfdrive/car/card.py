@@ -301,7 +301,10 @@ class Car:
         for cfg in self.FPCP.safetyConfigs:
           cfg.safetyParam &= ~LONG_FLAG
         # Let stock ACC manage cruise (prevents "controls mismatch" error)
+        # Clear openpilotLongitudinalControl so controlsd doesn't set
+        # cruiseControl.override=True (which fights stock ACC and causes engage flicker)
         self.CP.pcmCruise = True
+        self.CP.openpilotLongitudinalControl = False
         self.params.put("CarParams", self.CP.to_bytes())
         self.params.put("StarPilotCarParams", self.FPCP.to_bytes())
       # signal pandad to switch to car safety mode

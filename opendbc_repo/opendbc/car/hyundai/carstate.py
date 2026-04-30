@@ -21,6 +21,9 @@ ENABLE_BUTTONS = (Buttons.RES_ACCEL, Buttons.SET_DECEL, Buttons.CANCEL)
 BUTTONS_DICT = {Buttons.RES_ACCEL: ButtonType.accelCruise, Buttons.SET_DECEL: ButtonType.decelCruise,
                 Buttons.GAP_DIST: ButtonType.gapAdjustCruise, Buttons.CANCEL: ButtonType.cancel}
 
+IONIQ_6_BLINDSPOT_RIGHT_MASK = 0x08
+IONIQ_6_BLINDSPOT_LEFT_MASK = 0x10
+
 
 def calculate_canfd_speed_limit(CP, FPCP, cp, cp_cam, speed_factor):
   if not (FPCP.flags & HyundaiStarPilotFlags.SPEED_LIMIT_AVAILABLE):
@@ -32,6 +35,11 @@ def calculate_canfd_speed_limit(CP, FPCP, cp, cp_cam, speed_factor):
     return speed_limit * speed_factor if 1 <= speed_limit <= 252 else 0.0
   except (KeyError, ValueError):
     return 0.0
+
+
+def decode_ioniq_6_blindspot_radar_state(state: int) -> tuple[bool, bool]:
+  state_int = int(state)
+  return bool(state_int & IONIQ_6_BLINDSPOT_LEFT_MASK), bool(state_int & IONIQ_6_BLINDSPOT_RIGHT_MASK)
 
 
 class CarState(CarStateBase):
@@ -78,6 +86,15 @@ class CarState(CarStateBase):
     self.buttons_counter = 0
 
     self.cruise_info = {}
+    self.stock_lfa_msg = {}
+    self.stock_lfahda_cluster_msg = {}
+    self.stock_blinker_stalks_ts = 0
+    self.blindspots_rear_corners = {}
+    self.blindspots_front_corner_1 = {}
+    self.blindspots_rear_corners_ts = 0
+    self.blindspots_front_corner_1_ts = 0
+    self.left_blindspot_from_radar = False
+    self.right_blindspot_from_radar = False
 
     # On some cars, CLU15->CF_Clu_VehicleSpeed can oscillate faster than the dash updates. Sample at 5 Hz
     self.cluster_speed = 0
@@ -147,15 +164,17 @@ class CarState(CarStateBase):
       ret.cruiseState.standstill = False
       ret.cruiseState.nonAdaptive = False
     elif no_scc:
-      cruise_enabled = cp.vl["TCS13"]["ACC_REQ"] == 1
       cruise_set_speed = cp.vl["LVR12"]["CF_Lvr_CruiseSet"]
+      cruise_has_set_speed = 0 < cruise_set_speed < 255
+      # Some regular-cruise Forte trims never assert ACC_REQ even when stock cruise is engaged.
+      cruise_enabled = cp.vl["TCS13"]["ACC_REQ"] == 1 or cruise_has_set_speed
 
       # Regular-cruise Forte trims don't publish SCC11/SCC12; use the stock cruise request and set speed.
       ret.cruiseState.available = cruise_enabled or cp.vl["TCS13"]["ACCEnable"] == 0
       ret.cruiseState.enabled = cruise_enabled
       ret.cruiseState.standstill = False
       ret.cruiseState.nonAdaptive = False
-      if 0 < cruise_set_speed < 255:
+      if cruise_has_set_speed:
         ret.cruiseState.speed = cruise_set_speed * speed_conv
     else:
       ret.cruiseState.available = cp_cruise.vl["SCC11"]["MainMode_ACC"] == 1
@@ -202,7 +221,8 @@ class CarState(CarStateBase):
       aeb_src = "FCA11" if self.CP.flags & HyundaiFlags.USE_FCA.value else "SCC12"
       aeb_sig = "FCA_CmdAct" if self.CP.flags & HyundaiFlags.USE_FCA.value else "AEB_CmdAct"
       aeb_warning = cp_cruise.vl[aeb_src]["CF_VSM_Warn"] != 0
-      scc_warning = cp_cruise.vl["SCC12"]["TakeOverReq"] == 1  # sometimes only SCC system shows an FCW
+      # Regular-cruise Forte trims don't publish SCC12; avoid poisoning parser validity on no-SCC cars.
+      scc_warning = False if no_scc else cp_cruise.vl["SCC12"]["TakeOverReq"] == 1
       aeb_braking = cp_cruise.vl[aeb_src]["CF_VSM_DecCmdAct"] != 0 or cp_cruise.vl[aeb_src][aeb_sig] != 0
       ret.stockFcw = (aeb_warning or scc_warning) and not aeb_braking
       ret.stockAeb = aeb_warning and aeb_braking
@@ -283,13 +303,26 @@ class CarState(CarStateBase):
                                                                            cp.vl["BLINKERS"]["USE_ALT_LAMP"] == 1)
     ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_lamp(50, cp.vl["BLINKERS"][left_blinker_sig],
                                                                       cp.vl["BLINKERS"][right_blinker_sig])
+    self.left_blindspot_from_radar = False
+    self.right_blindspot_from_radar = False
+    if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
+      self.left_blindspot_from_radar, self.right_blindspot_from_radar = decode_ioniq_6_blindspot_radar_state(
+        cp.vl["BLINDSPOTS_FRONT_CORNER_2"]["SIDE_DETECT_STATE"])
     if self.CP.enableBsm:
       if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
-        ret.leftBlindspot = cp.vl["BLINDSPOTS_REAR_CORNERS"]["LEFT_MB"] != 0
-        ret.rightBlindspot = cp.vl["BLINDSPOTS_REAR_CORNERS"]["MORE_LEFT_PROB"] != 0
+        ret.leftBlindspot = (bool(cp.vl["BLINDSPOTS_REAR_CORNERS"]["BCW_LtIndSta"]) or
+                             self.left_blindspot_from_radar)
+        ret.rightBlindspot = (bool(cp.vl["BLINDSPOTS_REAR_CORNERS"]["BCW_RtIndSta"]) or
+                              self.right_blindspot_from_radar)
       else:
-        ret.leftBlindspot = cp.vl["BLINDSPOTS_REAR_CORNERS"]["FL_INDICATOR"] != 0
-        ret.rightBlindspot = cp.vl["BLINDSPOTS_REAR_CORNERS"]["FR_INDICATOR"] != 0
+        ret.leftBlindspot = bool(cp.vl["BLINDSPOTS_REAR_CORNERS"]["BCW_LtIndSta"])
+        ret.rightBlindspot = bool(cp.vl["BLINDSPOTS_REAR_CORNERS"]["BCW_RtIndSta"])
+
+    if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
+      self.blindspots_rear_corners = copy.copy(cp.vl["BLINDSPOTS_REAR_CORNERS"])
+      self.blindspots_front_corner_1 = copy.copy(cp.vl["BLINDSPOTS_FRONT_CORNER_1"])
+      self.blindspots_rear_corners_ts = cp.ts_nanos["BLINDSPOTS_REAR_CORNERS"]["CHECKSUM"]
+      self.blindspots_front_corner_1_ts = cp.ts_nanos["BLINDSPOTS_FRONT_CORNER_1"]["CHECKSUM"]
 
     # cruise state
     # CAN FD cars enable on main button press, set available if no TCS faults preventing engagement
@@ -329,6 +362,12 @@ class CarState(CarStateBase):
     if self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
       self.lfa_block_msg = copy.copy(cp_cam.vl["CAM_0x362"] if self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT
                                           else cp_cam.vl["CAM_0x2a4"])
+    if cp.ts_nanos["LFA"]["CHECKSUM"] > 0:
+      self.stock_lfa_msg = copy.copy(cp.vl["LFA"])
+    if cp.ts_nanos["LFAHDA_CLUSTER"]["CHECKSUM"] > 0:
+      self.stock_lfahda_cluster_msg = copy.copy(cp.vl["LFAHDA_CLUSTER"])
+    if cp.ts_nanos["BLINKER_STALKS"]["CHECKSUM_MAYBE"] > 0:
+      self.stock_blinker_stalks_ts = cp.ts_nanos["BLINKER_STALKS"]["CHECKSUM_MAYBE"]
 
     ret.buttonEvents = [*create_button_events(self.cruise_buttons[-1], prev_cruise_buttons, BUTTONS_DICT),
                         *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
@@ -350,6 +389,10 @@ class CarState(CarStateBase):
     fp_ret.modePressed = bool(self.mode_button)
     fp_ret.customPressed = bool(self.custom_button)
 
+    # ADAS camera dashboard stop-sign signal (CANFD HKG only). Registered as optional
+    # (freq=0); cars without it never publish, so the read returns 0 and the field stays 0.
+    fp_ret.dashboardStopSign = 1 if bool(cp_cam.vl["ADAS_0x380"]["STOP_SIGN"]) else 0
+
     return ret, fp_ret
 
   def get_can_parsers_canfd(self, CP):
@@ -365,9 +408,15 @@ class CarState(CarStateBase):
       msgs.append(("FR_CMR_02_100ms", 10))
     else:
       cam_msgs.append(("FR_CMR_02_100ms", 0))  # optional: not all non-LKA CANFD cars have this on CAM bus
+    msgs += [
+      ("LFA", 0),             # optional: may stop once OP takes over, but preserve stock UI fields when present
+      ("LFAHDA_CLUSTER", 0),  # optional: carries cluster icon state on some variants
+      ("BLINKER_STALKS", 0),  # optional: some trims publish live stalk/light state on ECAN during turn camera events
+    ]
     if CP.flags & HyundaiFlags.EV:
       msgs.append(("DRIVE_MODE_EV", 0))  # optional: not all CAN-FD EV variants publish drive mode
     msgs.append(("STEERING_WHEEL_MEDIA_BUTTONS", 0))  # optional: absent or slower on some CAN-FD variants
+    cam_msgs.append(("ADAS_0x380", 0))  # optional: dashboard stop-sign signal, only on ADAS-equipped HKG CANFD
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, CanBus(CP).ECAN),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_msgs, CanBus(CP).CAM),
@@ -377,7 +426,11 @@ class CarState(CarStateBase):
     if CP.flags & HyundaiFlags.CANFD:
       return self.get_can_parsers_canfd(CP)
 
+    msgs = []
+    if CP.flags & HyundaiFlags.NON_SCC and CP.flags & HyundaiFlags.USE_FCA.value:
+      msgs.append(("FCA11", 0))  # no-SCC Forte trims can stop publishing FCA11; don't let it poison canValid
+
     return {
-      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 0),
+      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, 0),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2),
     }

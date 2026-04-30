@@ -9,6 +9,7 @@ from openpilot.common.gps import get_gps_location_service
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
+from openpilot.selfdrive.controls.lib.lead_behavior import should_track_lead
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import A_CHANGE_COST, DANGER_ZONE_COST, J_EGO_COST, STOP_DISTANCE
 from openpilot.starpilot.common.starpilot_utilities import calculate_lane_width, calculate_road_curvature
 from openpilot.starpilot.common.starpilot_variables import CRUISING_SPEED, MINIMUM_LATERAL_ACCELERATION, PLANNER_TIME, THRESHOLD
@@ -122,7 +123,7 @@ class StarPilotPlanner:
     self.road_curvature_detected = (1 / abs(self.road_curvature))**0.5 < v_ego > CRUISING_SPEED and not (sm["carState"].leftBlinker or sm["carState"].rightBlinker)
 
     if not sm["carState"].standstill:
-      self.tracking_lead = self.update_lead_status(starpilot_toggles.stop_distance)
+      self.tracking_lead = self.update_lead_status(v_ego, starpilot_toggles.stop_distance)
 
     self.starpilot_following.update(controls_enabled, v_ego, sm, starpilot_toggles)
 
@@ -143,14 +144,16 @@ class StarPilotPlanner:
     else:
       self.starpilot_weather.weather_id = 0
 
-  def update_lead_status(self, stop_distance=STOP_DISTANCE):
-    # Keep a minimum lead-tracking cushion independent of user stop-distance tuning.
-    # Regressions here can cause ACC/chill to de-prioritize lead control at low speeds.
-    tracking_buffer = max(float(stop_distance), 4.0)
-
-    following_lead = self.lead_one.status
-    following_lead &= self.lead_one.dRel < self.model_length + tracking_buffer
-
+  def update_lead_status(self, v_ego, stop_distance=STOP_DISTANCE):
+    following_lead = should_track_lead(
+      self.lead_one.status,
+      self.lead_one.dRel,
+      self.model_length,
+      stop_distance,
+      v_ego,
+      v_lead=self.lead_one.vLead,
+      radar=bool(getattr(self.lead_one, "radar", False)),
+    )
     self.tracking_lead_filter.update(following_lead)
     return self.tracking_lead_filter.x >= THRESHOLD
 

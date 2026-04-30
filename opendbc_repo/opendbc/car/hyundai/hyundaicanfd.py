@@ -1,6 +1,6 @@
 import copy
 import numpy as np
-from opendbc.car import CanBusBase
+from opendbc.car import CanBusBase, CanData
 from opendbc.car.crc import CRC16_XMODEM
 from opendbc.car.hyundai.values import HyundaiFlags
 
@@ -91,24 +91,29 @@ def _create_angle_adas_cmd_msg(packer, CAN, apply_angle: float, lat_active: bool
   return packer.make_can_msg("ADAS_CMD_35_10ms", CAN.ECAN, values)
 
 
-def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque, apply_angle):
-  common_values = {
+def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque, apply_angle, lfa_base_values=None):
+  control_values = {
     "LKA_MODE": 2,
     "LKA_ICON": 2 if enabled else 1,
     "TORQUE_REQUEST": 0 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else apply_torque,
     "LKA_ASSIST": 0,
     "STEER_REQ": 0 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else (1 if lat_active else 0),
     "STEER_MODE": 0,
-    "HAS_LANE_SAFETY": 0,  # hide LKAS settings
-    "NEW_SIGNAL_2": 0,
-    "DAMP_FACTOR": 100,  # can potentially tuned for better perf [3, 200]
   }
 
-  lkas_values = copy.copy(common_values)
+  lkas_values = copy.copy(control_values)
   lkas_values["LKA_AVAILABLE"] = 0
 
-  lfa_values = copy.copy(common_values)
-  lfa_values["NEW_SIGNAL_1"] = 0
+  if lfa_base_values:
+    # Preserve stock UI/status fields and only override the actuation-relevant signals.
+    lfa_values = {k: v for k, v in lfa_base_values.items() if k not in ("CHECKSUM", "COUNTER")}
+    lfa_values.update(control_values)
+  else:
+    lfa_values = copy.copy(control_values)
+    lfa_values["HAS_LANE_SAFETY"] = 0  # hide LKAS settings
+    lfa_values["NEW_SIGNAL_1"] = 0
+    lfa_values["NEW_SIGNAL_2"] = 0
+    lfa_values["DAMP_FACTOR"] = 100  # can potentially tuned for better perf [3, 200]
 
   if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT:
     lkas_values["ADAS_StrAnglReqVal"] = apply_angle
@@ -188,32 +193,149 @@ def create_acc_cancel(packer, CP, CAN, cruise_info_copy):
   return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)
 
 
-def create_lfahda_cluster(packer, CAN, enabled):
-  values = {
+def create_lfahda_cluster(packer, CAN, enabled, base_values=None):
+  values = {k: v for k, v in base_values.items() if k not in ("CHECKSUM", "COUNTER")} if base_values else {}
+  values.update({
     "HDA_ICON": 1 if enabled else 0,
     "LFA_ICON": 2 if enabled else 0,
-  }
+  })
   return packer.make_can_msg("LFAHDA_CLUSTER", CAN.ECAN, values)
 
 
-def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_override, set_speed, hud_control):
+def create_blindspot_status_messages(packer, CAN, rear_values, front_corner_values,
+                                     left_blindspot=False, right_blindspot=False,
+                                     left_blinker=False, right_blinker=False):
+  # Reuse the last known-good payload but regenerate the rolling counter/checksum.
+  rear = {k: v for k, v in rear_values.items() if k not in ("CHECKSUM", "COUNTER")}
+  front = {k: v for k, v in front_corner_values.items() if k not in ("CHECKSUM", "COUNTER")}
+  left_state = 2 if left_blindspot and left_blinker else (1 if left_blindspot else 0)
+  right_state = 2 if right_blindspot and right_blinker else (1 if right_blindspot else 0)
+
+  rear["BCW_Sta"] = int(left_blindspot or right_blindspot)
+  rear["BCW_LtIndSta"] = left_state
+  rear["BCW_RtIndSta"] = right_state
+  rear["BCW_IndSta"] = max(left_state, right_state)
+  rear["OSMrrLamp_LtIndSta"] = left_state
+  rear["OSMrrLamp_RtIndSta"] = right_state
+  # Keep the older fields aligned where they still correlate on some platforms.
+  rear["FL_INDICATOR"] = left_state
+  rear["FR_INDICATOR"] = right_state
+  if "NEW_SIGNAL_3" not in front:
+    front["NEW_SIGNAL_3"] = 1
+
+  return [
+    packer.make_can_msg("BLINDSPOTS_REAR_CORNERS", CAN.ECAN, rear),
+    packer.make_can_msg("BLINDSPOTS_FRONT_CORNER_1", CAN.ECAN, front),
+  ]
+
+
+IONIQ_6_CLUSTER_BLINDSPOT_31A = {
+  "right": (
+    bytes.fromhex("fa7c10f0f0ffff03898aff0b0a8678ff000000007e0055550000000000000000"),
+    bytes.fromhex("ac0e11f0f0ffff03898aff0c0a8678ff000000007e0055550000000000000000"),
+    bytes.fromhex("76ce12f0f0ffff03898aff0b0a8678ff000000007e0055550000000000000000"),
+    bytes.fromhex("309713f0f0ffff03898aff0b0a8678ff000000007e0055550000000000000000"),
+    bytes.fromhex("d32214f0f0ffff03898aff0c0a8678ff000000007e0055550000000000000000"),
+    bytes.fromhex("957b15f0f0ffff03898aff0c0a8678ff000000007e0055550000000000000000"),
+  ),
+  "left": (
+    bytes.fromhex("851828f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("c34129f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("09aa2af0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("4ff32bf0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("bc6d2cf0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("fa342df0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+  ),
+}
+
+IONIQ_6_CLUSTER_BLINDSPOT_3B5 = {
+  "right": (
+    bytes.fromhex("caa95c00000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("8cf05d00000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("461b5e00000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("00425f00000000464600000000000000d7020000000069070000000000000000"),
+  ),
+  "left": (
+    bytes.fromhex("2c69c500000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("e682c600000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("21afc800000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("67f6c900000000464600000000000000da020000000069070000000000000000"),
+  ),
+}
+
+
+IONIQ_6_CLUSTER_LANE_CHANGE_3C1 = {
+  "right": {
+    "trigger": bytes.fromhex("e910300041000000"),
+    "steady": bytes.fromhex("ab20300001000000"),
+  },
+  "left": {
+    "trigger": bytes.fromhex("3d40304010000000"),
+    "steady": bytes.fromhex("3e50300000000000"),
+  },
+}
+
+
+def create_ioniq_6_cluster_blindspot_messages(CAN, frame, left_blindspot=False, right_blindspot=False,
+                                              left_blinker=False, right_blinker=False):
+  side = None
+  if left_blindspot and not right_blindspot:
+    side = "left"
+  elif right_blindspot and not left_blindspot:
+    side = "right"
+  elif left_blindspot and right_blindspot:
+    if left_blinker and not right_blinker:
+      side = "left"
+    elif right_blinker and not left_blinker:
+      side = "right"
+
+  if side is None:
+    return []
+
+  ret = []
+  if frame % 20 == 0:
+    seq_3b5 = IONIQ_6_CLUSTER_BLINDSPOT_3B5[side]
+    ret.append((0x3B5, seq_3b5[(frame // 20) % len(seq_3b5)], CAN.ECAN))
+  if frame % 100 == 0:
+    seq_31a = IONIQ_6_CLUSTER_BLINDSPOT_31A[side]
+    ret.append((0x31A, seq_31a[(frame // 100) % len(seq_31a)], CAN.ECAN))
+
+  return ret
+
+
+def create_ioniq_6_cluster_lane_change_messages(CAN, frame, side=None, trigger=False):
+  if side not in IONIQ_6_CLUSTER_LANE_CHANGE_3C1:
+    return []
+
+  if trigger:
+    return [(0x3C1, IONIQ_6_CLUSTER_LANE_CHANGE_3C1[side]["trigger"], CAN.ECAN)]
+  if frame % 20 == 0:
+    return [(0x3C1, IONIQ_6_CLUSTER_LANE_CHANGE_3C1[side]["steady"], CAN.ECAN)]
+  return []
+
+
+def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_override, set_speed, hud_control,
+                       main_mode_acc=1, jerk_lower=None, jerk_upper=None, direct_accel=False):
   jerk = 5
   jn = jerk / 50
   if not enabled or gas_override:
     a_val, a_raw = 0, 0
+  elif direct_accel:
+    a_raw = accel
+    a_val = accel
   else:
     a_raw = accel
     a_val = np.clip(accel, accel_last - jn, accel_last + jn)
 
   values = {
     "ACCMode": 0 if not enabled else (2 if gas_override else 1),
-    "MainMode_ACC": 1,
+    "MainMode_ACC": main_mode_acc,
     "StopReq": 1 if stopping else 0,
     "aReqValue": a_val,
     "aReqRaw": a_raw,
     "VSetDis": set_speed,
-    "JerkLowerLimit": jerk if enabled else 1,
-    "JerkUpperLimit": 3.0,
+    "JerkLowerLimit": jerk_lower if jerk_lower is not None else (jerk if enabled else 1),
+    "JerkUpperLimit": jerk_upper if jerk_upper is not None else 3.0,
 
     "ACC_ObjDist": 1,
     "ObjValid": 0,

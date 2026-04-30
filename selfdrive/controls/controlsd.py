@@ -10,6 +10,7 @@ from openpilot.common.realtime import config_realtime_process, DT_CTRL, Priority
 from openpilot.common.swaglog import cloudlog
 
 from opendbc.car.car_helpers import interfaces
+from opendbc.car.chrysler.values import pacifica_hybrid_aol_stock_acc_mode
 from opendbc.car.gm.values import CAR as GM_CAR
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lateral_active
@@ -63,6 +64,7 @@ class Controls:
     self.steer_limited_by_safety = False
     self.curvature = 0.0
     self.desired_curvature = 0.0
+    self.lc_smooth_elapsed = 0.0
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -168,10 +170,21 @@ class Controls:
 
     jerk_factor = 1.0
     lat_accel_factor = 1.0
-    if model_v2.meta.laneChangeState in (LaneChangeState.laneChangeStarting, LaneChangeState.laneChangeFinishing) \
-        and CS.vEgo >= self.starpilot_toggles.minimum_lane_change_speed:
-      jerk_factor = self.starpilot_toggles.lane_change_jerk_factor
-      lat_accel_factor = self.starpilot_toggles.lane_change_lat_accel_factor
+    if self.starpilot_toggles.lane_change_pace < 10:
+      t_target = self.starpilot_toggles.lane_change_t_target
+      set_jerk = self.starpilot_toggles.lane_change_jerk_factor
+      set_accel = self.starpilot_toggles.lane_change_lat_accel_factor
+      in_lane_change = model_v2.meta.laneChangeState in (LaneChangeState.laneChangeStarting, LaneChangeState.laneChangeFinishing) \
+          and CS.vEgo >= self.starpilot_toggles.minimum_lane_change_speed
+      if in_lane_change or 0.0 < self.lc_smooth_elapsed < t_target:
+        self.lc_smooth_elapsed = min(self.lc_smooth_elapsed + DT_CTRL, t_target)
+        progress = self.lc_smooth_elapsed / t_target  # 0 → 1 over T seconds
+        jerk_factor = set_jerk + (1.0 - set_jerk) * progress
+        lat_accel_factor = set_accel + (1.0 - set_accel) * progress
+        if not in_lane_change and self.lc_smooth_elapsed >= t_target:
+          self.lc_smooth_elapsed = 0.0
+      elif not in_lane_change:
+        self.lc_smooth_elapsed = 0.0
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
                                                                jerk_factor, lat_accel_factor)
@@ -204,6 +217,7 @@ class Controls:
 
   def publish(self, CC, lac_log):
     CS = self.sm['carState']
+    long_plan = self.sm['longitudinalPlan']
 
     # Orientation and angle rates can be useful for carcontroller
     # Only calibrated (car) frame is relevant for the carcontroller
@@ -213,8 +227,28 @@ class Controls:
       CC.angularVelocity = self.calibrated_pose.angular_velocity.xyz.tolist()
 
     CC.cruiseControl.override = CC.enabled and not CC.longActive and self.CP.openpilotLongitudinalControl
-    CC.cruiseControl.cancel = CS.cruiseState.enabled and (not CC.enabled or not self.CP.pcmCruise)
-    CC.cruiseControl.resume = CC.enabled and CS.cruiseState.standstill and not self.sm['longitudinalPlan'].shouldStop
+    pacifica_hybrid_aol = pacifica_hybrid_aol_stock_acc_mode(
+      self.CP.carFingerprint,
+      self.CP.pcmCruise,
+      CC.enabled,
+      self.sm['starpilotCarState'].alwaysOnLateralEnabled,
+    )
+    cancel_requested = CS.cruiseState.enabled and (not CC.enabled or not self.CP.pcmCruise)
+    CC.cruiseControl.cancel = cancel_requested and not pacifica_hybrid_aol
+
+    legacy_resume_hack = False
+    if len(long_plan.speeds):
+      planned_resume = long_plan.speeds[-1] > 0.1
+      # Some stock-ACC SNG hacks still rely on the legacy "planner wants speed"
+      # signal rather than longitudinalPlan.shouldStop going false first.
+      legacy_resume_hack = planned_resume and (
+        (self.CP.brand == "toyota" and self.CP.openpilotLongitudinalControl and not self.CP.autoResumeSng) or
+        (self.CP.brand == "gm" and getattr(self.starpilot_toggles, "volt_sng", False))
+      )
+
+    CC.cruiseControl.resume = CC.enabled and CS.cruiseState.standstill and (
+      not self.sm['longitudinalPlan'].shouldStop or legacy_resume_hack
+    )
 
     hudControl = CC.hudControl
     hud_set_speed = float(CS.vCruiseCluster * CV.KPH_TO_MS)

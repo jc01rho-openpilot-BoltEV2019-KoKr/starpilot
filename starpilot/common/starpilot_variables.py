@@ -555,6 +555,7 @@ class StarPilotVariables:
     toggle.hide_max_speed = self.get_value("HideMaxSpeed", condition=advanced_custom_ui and not toggle.debug_mode)
     toggle.hide_speed = self.get_value("HideSpeed", condition=advanced_custom_ui and not toggle.debug_mode)
     toggle.hide_speed_limit = self.get_value("HideSpeedLimit", condition=advanced_custom_ui and not toggle.debug_mode)
+    toggle.hide_steering_wheel = self.get_value("HideSteeringWheel", condition=advanced_custom_ui and not toggle.debug_mode)
     toggle.use_wheel_speed = self.get_value("WheelSpeed", condition=advanced_custom_ui)
 
     advanced_lateral_tuning = self.get_value("AdvancedLateralTune")
@@ -828,6 +829,7 @@ class StarPilotVariables:
     toggle.lane_change_lat_accel_factor = min(1.0, a_req * 1.3 / 3.0)
     toggle.lane_change_jerk_factor = min(1.0, j_req * 1.3 / 5.0)
     toggle.lane_change_time_max = 10.0 + (10 - pace) * 2.0 / 9.0
+    toggle.lane_change_t_target = t_target
 
     lateral_tuning = self.get_value("LateralTune")
     toggle.force_torque_controller = self.get_value("ForceTorqueController", condition=lateral_tuning and not is_torque_car and not is_angle_car)
@@ -971,7 +973,7 @@ class StarPilotVariables:
     if isinstance(toggle.model_version, bytes):
       toggle.model_version = toggle.model_version.decode("utf-8", "ignore")
     toggle.classic_model = toggle.model_version in {"v1", "v2", "v3", "v4"}
-    toggle.tinygrad_model = toggle.model_version in {"v8", "v9", "v10", "v11", "v12"}
+    toggle.tinygrad_model = toggle.model_version in {"v8", "v9", "v10", "v11", "v12", "v13"}
     toggle.tomb_raider = toggle.model == "space-lab"
 
     toggle.model_ui = self.get_value("ModelUI")
@@ -996,6 +998,7 @@ class StarPilotVariables:
     toggle.cruise_increase = self.get_value("CustomCruise", cast=float, condition=(quality_of_life_longitudinal and not pcm_cruise))
     toggle.cruise_increase_long = self.get_value("CustomCruiseLong", cast=float, condition=(quality_of_life_longitudinal and not pcm_cruise))
     toggle.force_stops = self.get_value("ForceStops", condition=quality_of_life_longitudinal)
+    toggle.force_stop_distance_offset = self.get_value("ForceStopDistanceOffset", cast=int, condition=(quality_of_life_longitudinal and toggle.force_stops))
     toggle.force_standstill = self.get_value("ForceStandstill", condition=quality_of_life_longitudinal)
     toggle.increase_stopped_distance = self.get_value("IncreasedStoppedDistance", cast=float, condition=quality_of_life_longitudinal, conversion=distance_conversion)
     map_gears = self.get_value("MapGears", condition=quality_of_life_longitudinal)
@@ -1187,6 +1190,15 @@ class StarPilotVariables:
       "RemapCancelToDistance",
       condition=toggle.car_make == "gm" and toggle.has_pedal and "BOLT" in toggle.car_model,
     )
+
+    gm_auto_hold_supported = toggle.car_model in {
+      GM_CAR.CHEVROLET_VOLT,
+      GM_CAR.CHEVROLET_VOLT_2019,
+      GM_CAR.CHEVROLET_VOLT_ASCM,
+      GM_CAR.CHEVROLET_VOLT_CAMERA,
+    }
+    gm_auto_hold_supported &= toggle.openpilot_longitudinal
+    toggle.gm_auto_hold = self.get_value("GMAutoHold", condition=gm_auto_hold_supported)
 
     toggle.volt_sng = self.get_value("VoltSNG", condition=toggle.car_model == "CHEVROLET_VOLT")
 

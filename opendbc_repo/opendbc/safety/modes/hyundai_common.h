@@ -48,6 +48,9 @@ bool hyundai_has_lda_button = false;
 extern bool hyundai_aol_lkas_on_engage;
 bool hyundai_aol_lkas_on_engage = false;
 
+extern bool hyundai_non_scc;
+bool hyundai_non_scc = false;
+
 static uint8_t hyundai_last_button_interaction;  // button messages since the user pressed an enable button
 
 void hyundai_common_init(uint16_t param) {
@@ -61,6 +64,7 @@ void hyundai_common_init(uint16_t param) {
 
   const int HYUNDAI_PARAM_HAS_LDA_BUTTON = 1024;
   const uint16_t HYUNDAI_PARAM_AOL_LKAS_ON_ENGAGE = 2048;
+  const uint16_t HYUNDAI_PARAM_NON_SCC = 4096;
 
   hyundai_ev_gas_signal = GET_FLAG(param, HYUNDAI_PARAM_EV_GAS);
   hyundai_hybrid_gas_signal = !hyundai_ev_gas_signal && GET_FLAG(param, HYUNDAI_PARAM_HYBRID_GAS);
@@ -72,6 +76,7 @@ void hyundai_common_init(uint16_t param) {
 
   hyundai_has_lda_button = GET_FLAG(param, HYUNDAI_PARAM_HAS_LDA_BUTTON);
   hyundai_aol_lkas_on_engage = GET_FLAG(param, HYUNDAI_PARAM_AOL_LKAS_ON_ENGAGE);
+  hyundai_non_scc = GET_FLAG(param, HYUNDAI_PARAM_NON_SCC);
 
   hyundai_last_button_interaction = HYUNDAI_PREV_BUTTON_SAMPLES;
 

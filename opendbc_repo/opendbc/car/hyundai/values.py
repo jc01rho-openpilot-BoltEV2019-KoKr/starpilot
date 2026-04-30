@@ -95,6 +95,7 @@ class HyundaiSafetyFlags(IntFlag):
   FCEV_GAS = 256
   ALT_LIMITS_2 = 512
   CANFD_ANGLE_STEERING = 1024
+  NON_SCC = 4096
 
 
 class HyundaiStarPilotSafetyFlags(IntFlag):

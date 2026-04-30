@@ -44,6 +44,10 @@ class ConditionalExperimentalMode:
   STOP_LIGHT_ON_MARGIN = 2.5
   STOP_LIGHT_OFF_MARGIN = 4.0
   STOP_LIGHT_LEAD_BLOCK_MARGIN = 15.0
+  STOP_LIGHT_HANDOFF_MAX_LEAD_SPEED = 2.0
+  STOP_APPROACH_LATCH_TIME = 1.0
+  STOP_APPROACH_MAX_LEAD_SPEED = 4.5
+  STOP_APPROACH_MIN_MODEL_PROB = 0.9
 
   # ===== END TUNING PARAMETERS =====
 
@@ -79,6 +83,7 @@ class ConditionalExperimentalMode:
     self.experimental_mode = False
     self.stop_light_detected = False
     self.stop_light_model_detected = False
+    self.stop_approach_hold_until = 0.0
     self.prev_experimental_mode = False  # For hysteresis
     self.mode_hold_until = 0.0
     self.mode_false_since = 0.0
@@ -169,6 +174,17 @@ class ConditionalExperimentalMode:
       self.slow_lead_detected = False
 
   def stop_sign_and_light(self, v_ego, sm, model_time):
+    now = time.monotonic()
+
+    # While the dashboard has confirmed a stop sign on this approach, pin CEM in EXP.
+    # Approaches routinely exceed the mode_hold_until/mode_false_since hysteresis (0.5s/0.25s),
+    # so without this the model briefly losing the sign drops CEM to CHILL and stalls the
+    # force-stop activation path. Latch is owned by starpilot_vcruise.
+    if getattr(self.starpilot_planner.starpilot_vcruise, 'stop_sign_confirmed', False):
+      self.stop_light_filter.x = 1.0
+      self.stop_light_detected = True
+      return
+
     if not sm["starpilotCarState"].trafficModeEnabled:
       speed_mph = v_ego * CV.MS_TO_MPH  # Convert m/s to mph
 
@@ -226,13 +242,39 @@ class ConditionalExperimentalMode:
       # present; far/stale leads should not suppress true stop-light detection.
       lead = getattr(self.starpilot_planner, "lead_one", None)
       lead_distance = float(getattr(lead, "dRel", float("inf")))
+      lead_speed = float(getattr(lead, "vLead", float("inf")))
+      lead_radar = bool(getattr(lead, "radar", False))
+      lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
       lead_relevant = bool(getattr(lead, "status", False)) and lead_distance < stop_threshold + self.STOP_LIGHT_LEAD_BLOCK_MARGIN
-      self.lead_clear_filter.update(not lead_relevant)
-      lead_cleared = self.lead_clear_filter.x >= THRESHOLD
+      vision_stop_approach = (
+        lead_relevant and
+        not lead_radar and
+        lead_prob >= self.STOP_APPROACH_MIN_MODEL_PROB and
+        lead_speed < self.STOP_APPROACH_MAX_LEAD_SPEED
+      )
+      if (self.stop_light_detected or self.stop_light_model_detected) and vision_stop_approach:
+        self.stop_approach_hold_until = now + self.STOP_APPROACH_LATCH_TIME
+      stop_approach_latched = now < self.stop_approach_hold_until and vision_stop_approach
+      handoff_to_stopped_lead = (
+        lead_relevant and
+        not self.starpilot_planner.tracking_lead and
+        (
+          (self.stop_light_detected and lead_speed < self.STOP_LIGHT_HANDOFF_MAX_LEAD_SPEED) or
+          stop_approach_latched
+        )
+      )
+      if handoff_to_stopped_lead:
+        lead_cleared = True
+      else:
+        self.lead_clear_filter.update(not lead_relevant)
+        lead_cleared = self.lead_clear_filter.x >= THRESHOLD
       self.stop_light_filter.update(model_stopping and lead_cleared)
-      self.stop_light_detected = bool(self.stop_light_filter.x >= THRESHOLD**2 and lead_cleared)
+      self.stop_light_detected = bool(
+        (self.stop_light_filter.x >= THRESHOLD**2 and lead_cleared) or handoff_to_stopped_lead
+      )
     else:
       self.stop_light_filter.x = 0
       self.stop_light_detected = False
       self.stop_light_model_detected = False
       self.lead_clear_filter.x = 0
+      self.stop_approach_hold_until = 0.0
