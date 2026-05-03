@@ -24,12 +24,33 @@ CANFD_BLINDSPOT_STATUS_STALE_NS = 200_000_000
 CANFD_BLINKER_STALKS_STALE_NS = 200_000_000
 HYUNDAI_CANFD_SCC_ACCEL_STEP = 5.0 / 50.0
 HYUNDAI_CANFD_SCC_DECEL_STEP = 12.5 / 50.0
-IONIQ_6_LONG_MIN_JERK = 0.5
-IONIQ_6_LONG_JERK_LIMIT = 4.0
+IONIQ_6_RESPONSE_MULTIPLIER = 1.2
+IONIQ_6_CANFD_SCC_ACCEL_STEP = (6.0 / 50.0) * IONIQ_6_RESPONSE_MULTIPLIER
+IONIQ_6_CANFD_SCC_DECEL_STEP = (15.0 / 50.0) * IONIQ_6_RESPONSE_MULTIPLIER
+GENESIS_G90_STOP_HOLD_SPEED_BP = [0.0, 0.03, 0.08, 0.16, 0.3, 0.5, 0.8, 1.2, 2.0, 3.0]
+GENESIS_G90_STOP_HOLD_ACCEL_V = [-0.10, -0.10, -0.12, -0.18, -0.30, -0.50, -0.75, -1.00, -1.40, -1.80]
+GENESIS_G90_STOP_HOLD_RELAX_SPEED_BP = [0.0, 0.08, 0.16, 0.3, 0.5, 0.8, 1.2, 2.0, 3.0]
+GENESIS_G90_STOP_HOLD_RELAX_STEP_V = [0.10, 0.10, 0.08, 0.06, 0.04, 0.035, 0.03, 0.022, 0.018]
+GENESIS_G90_RELEASE_SPEED_BP = [0.0, 0.3, 0.6]
+GENESIS_G90_RELEASE_ACCEL_STEP_V = [0.05, 0.07, 0.11]
+GENESIS_G90_RELEASE_DECEL_STEP_V = [0.16, 0.18, 0.18]
+GENESIS_G90_RELEASE_MAX_SPEED = 0.8
+IONIQ_6_LONG_MIN_JERK = 0.5 * IONIQ_6_RESPONSE_MULTIPLIER
+IONIQ_6_LONG_JERK_LIMIT = 4.8 * IONIQ_6_RESPONSE_MULTIPLIER
 IONIQ_6_LONG_LOOKAHEAD_JERK_BP = [2.0, 5.0, 20.0]
-IONIQ_6_LONG_LOOKAHEAD_JERK_V = [0.3, 0.45, 0.6]
+IONIQ_6_LONG_LOOKAHEAD_JERK_V = [0.3 / IONIQ_6_RESPONSE_MULTIPLIER,
+                                 0.45 / IONIQ_6_RESPONSE_MULTIPLIER,
+                                 0.6 / IONIQ_6_RESPONSE_MULTIPLIER]
 IONIQ_6_DYNAMIC_LOWER_JERK_BP = [-2.0, -1.5, -1.0, -0.25, -0.1, -0.025, -0.01, -0.005]
 IONIQ_6_DYNAMIC_LOWER_JERK_V = [3.3, 1.5, 1.0, 0.8, 0.7, 0.65, 0.55, 0.5]
+IONIQ_6_LAUNCH_HOLD_SPEED_BP = [0.0, 0.6, 1.25, 2.5]
+IONIQ_6_LAUNCH_HOLD_SPEED_V = [0.75, 0.6, 0.4, 0.0]
+IONIQ_6_STOP_HOLD_SPEED_BP = [0.0, 0.25, 0.6, 1.2]
+IONIQ_6_STOP_HOLD_SPEED_V = [-0.12, -0.10, -0.05, 0.0]
+IONIQ_6_STOP_RELEASE_JERK_BP = [0.0, 0.15, 0.5]
+IONIQ_6_STOP_RELEASE_JERK_V = [3.6 * IONIQ_6_RESPONSE_MULTIPLIER,
+                               4.2 * IONIQ_6_RESPONSE_MULTIPLIER,
+                               4.8 * IONIQ_6_RESPONSE_MULTIPLIER]
 
 
 @dataclass
@@ -39,8 +60,16 @@ class Ioniq6LongitudinalTuningState:
   accel_last: float = 0.0
   jerk_upper: float = 0.0
   jerk_lower: float = 0.0
+  launch_active: bool = False
   stopping: bool = False
   stopping_count: int = 0
+  long_control_state_last: LongCtrlState = LongCtrlState.off
+
+
+@dataclass
+class GenesisG90LongitudinalTuningState:
+  actual_accel: float = 0.0
+  release_active: bool = False
   long_control_state_last: LongCtrlState = LongCtrlState.off
 
 
@@ -58,7 +87,10 @@ def _calculate_ioniq_6_dynamic_lower_jerk(accel_error: float) -> float:
 
 def update_ioniq_6_longitudinal_tuning(state: Ioniq6LongitudinalTuningState, accel_cmd: float, v_ego: float, a_ego: float,
                                        long_control_state: LongCtrlState, long_active: bool) -> Ioniq6LongitudinalTuningState:
+  starting = long_control_state == LongCtrlState.starting
   stopping = long_control_state == LongCtrlState.stopping
+  restart_from_stop = state.long_control_state_last in (LongCtrlState.stopping, LongCtrlState.starting) and \
+                      long_control_state in (LongCtrlState.starting, LongCtrlState.pid) and accel_cmd > 0.0 and v_ego < 0.5
 
   if not long_active or not stopping:
     state.stopping = False
@@ -76,11 +108,18 @@ def update_ioniq_6_longitudinal_tuning(state: Ioniq6LongitudinalTuningState, acc
     state.accel_last = 0.0
     state.jerk_upper = 0.0
     state.jerk_lower = 0.0
+    state.launch_active = False
     state.long_control_state_last = long_control_state
     return state
 
-  upper_speed_limit = float(np.interp(v_ego, [0.0, 5.0, 20.0], [2.0, 3.0, 2.0])) if long_control_state == LongCtrlState.pid else IONIQ_6_LONG_MIN_JERK
-  lower_speed_limit = float(np.interp(v_ego, [0.0, 5.0, 20.0], [5.0, 3.5, 3.0]))
+  if accel_cmd <= 0.0 or v_ego >= IONIQ_6_LAUNCH_HOLD_SPEED_BP[-1]:
+    state.launch_active = False
+  elif starting or (state.launch_active and v_ego < IONIQ_6_LAUNCH_HOLD_SPEED_BP[-1]) or \
+      (state.long_control_state_last == LongCtrlState.starting and long_control_state == LongCtrlState.pid and v_ego < IONIQ_6_LAUNCH_HOLD_SPEED_BP[-1]):
+    state.launch_active = True
+
+  upper_speed_limit = float(np.interp(v_ego, [0.0, 5.0, 20.0], [2.0, 3.0, 2.0])) * IONIQ_6_RESPONSE_MULTIPLIER if long_control_state == LongCtrlState.pid else IONIQ_6_LONG_MIN_JERK
+  lower_speed_limit = float(np.interp(v_ego, [0.0, 5.0, 20.0], [5.0, 3.5, 3.0])) * IONIQ_6_RESPONSE_MULTIPLIER
 
   future_t_upper = float(np.interp(v_ego, IONIQ_6_LONG_LOOKAHEAD_JERK_BP, IONIQ_6_LONG_LOOKAHEAD_JERK_V))
   future_t_lower = float(np.interp(v_ego, IONIQ_6_LONG_LOOKAHEAD_JERK_BP, IONIQ_6_LONG_LOOKAHEAD_JERK_V))
@@ -96,12 +135,55 @@ def update_ioniq_6_longitudinal_tuning(state: Ioniq6LongitudinalTuningState, acc
   state.jerk_lower = min(dynamic_lower_jerk, lower_speed_limit)
 
   if state.stopping:
-    state.desired_accel = 0.0
+    state.desired_accel = float(np.interp(v_ego, IONIQ_6_STOP_HOLD_SPEED_BP, IONIQ_6_STOP_HOLD_SPEED_V))
+    state.jerk_upper = min(state.jerk_upper, float(np.interp(v_ego, [0.0, 1.2], [0.45, 0.65])) * IONIQ_6_RESPONSE_MULTIPLIER)
   else:
     state.desired_accel = float(np.clip(accel_cmd, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
+    if state.launch_active:
+      state.desired_accel = max(state.desired_accel, float(np.interp(v_ego, IONIQ_6_LAUNCH_HOLD_SPEED_BP, IONIQ_6_LAUNCH_HOLD_SPEED_V)))
+      state.jerk_upper = max(state.jerk_upper, float(np.interp(v_ego, [0.0, 2.5], [4.8, 3.2])) * IONIQ_6_RESPONSE_MULTIPLIER)
+      state.jerk_lower = max(state.jerk_lower, 1.0)
+    if restart_from_stop:
+      state.jerk_upper = min(state.jerk_upper, float(np.interp(v_ego, IONIQ_6_STOP_RELEASE_JERK_BP, IONIQ_6_STOP_RELEASE_JERK_V)))
 
   state.actual_accel = _jerk_limited_integrator(state.desired_accel, state.accel_last, state.jerk_upper, state.jerk_lower)
   state.accel_last = state.actual_accel
+  state.long_control_state_last = long_control_state
+  return state
+
+
+def update_genesis_g90_longitudinal_tuning(state: GenesisG90LongitudinalTuningState, accel_cmd: float, v_ego: float,
+                                           long_control_state: LongCtrlState, long_active: bool) -> GenesisG90LongitudinalTuningState:
+  if not long_active:
+    state.actual_accel = 0.0
+    state.release_active = False
+    state.long_control_state_last = long_control_state
+    return state
+
+  stopping = long_control_state == LongCtrlState.stopping
+  if stopping and v_ego <= GENESIS_G90_STOP_HOLD_SPEED_BP[-1]:
+    state.release_active = False
+    stop_brake_cap = float(np.interp(v_ego, GENESIS_G90_STOP_HOLD_SPEED_BP, GENESIS_G90_STOP_HOLD_ACCEL_V))
+    target_hold = min(0.0, max(accel_cmd, stop_brake_cap))
+    if state.actual_accel < target_hold:
+      relax_step = float(np.interp(v_ego, GENESIS_G90_STOP_HOLD_RELAX_SPEED_BP, GENESIS_G90_STOP_HOLD_RELAX_STEP_V))
+      state.actual_accel = min(state.actual_accel + relax_step, target_hold)
+    else:
+      state.actual_accel = target_hold
+  else:
+    if state.long_control_state_last == LongCtrlState.stopping and long_control_state == LongCtrlState.pid and \
+        accel_cmd > 0.0 and v_ego < GENESIS_G90_RELEASE_MAX_SPEED:
+      state.release_active = True
+
+    if state.release_active:
+      accel_step = float(np.interp(v_ego, GENESIS_G90_RELEASE_SPEED_BP, GENESIS_G90_RELEASE_ACCEL_STEP_V))
+      decel_step = float(np.interp(v_ego, GENESIS_G90_RELEASE_SPEED_BP, GENESIS_G90_RELEASE_DECEL_STEP_V))
+      state.actual_accel = float(np.clip(accel_cmd, state.actual_accel - decel_step, state.actual_accel + accel_step))
+      if v_ego >= GENESIS_G90_RELEASE_MAX_SPEED or accel_cmd <= 0.0 or state.actual_accel >= accel_cmd - 1e-3:
+        state.release_active = False
+    else:
+      state.actual_accel = accel_cmd
+
   state.long_control_state_last = long_control_state
   return state
 
@@ -151,6 +233,7 @@ class CarController(CarControllerBase):
     self._ioniq_6_lane_change_ui_side = None
     self._ioniq_6_lane_change_ui_trigger_frames = 0
     self._ioniq_6_long_tuning = Ioniq6LongitudinalTuningState()
+    self._genesis_g90_long_tuning = GenesisG90LongitudinalTuningState()
 
   def update(self, CC, CS, now_nanos, starpilot_toggles):
     actuators = CC.actuators
@@ -213,34 +296,45 @@ class CarController(CarControllerBase):
     self.long_active_ecu = self.CP.openpilotLongitudinalControl and not self.ecu_disable_failed
 
     use_ioniq_6_dynamic_long_tuning = self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and self.long_active_ecu and \
-                                      actuators.longControlState == LongCtrlState.pid
+                                      actuators.longControlState in (LongCtrlState.starting, LongCtrlState.pid, LongCtrlState.stopping)
     if use_ioniq_6_dynamic_long_tuning and self.frame % 5 == 0:
       self._ioniq_6_long_tuning = update_ioniq_6_longitudinal_tuning(self._ioniq_6_long_tuning, accel_cmd,
                                                                       CS.out.vEgo, CS.out.aEgo,
                                                                       actuators.longControlState, self.long_active_ecu)
-    use_ioniq_6_smoothed_accel = use_ioniq_6_dynamic_long_tuning and accel_cmd >= self._ioniq_6_long_tuning.actual_accel
+    use_ioniq_6_smoothed_accel = use_ioniq_6_dynamic_long_tuning and (
+      accel_cmd >= self._ioniq_6_long_tuning.actual_accel or
+      self._ioniq_6_long_tuning.launch_active or
+      self._ioniq_6_long_tuning.stopping
+    )
     if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and self.long_active_ecu:
       if use_ioniq_6_smoothed_accel:
         accel = self._ioniq_6_long_tuning.actual_accel
         stopping = self._ioniq_6_long_tuning.stopping
       elif use_ioniq_6_dynamic_long_tuning:
         accel = float(np.clip(accel_cmd,
-                              self.accel_last - HYUNDAI_CANFD_SCC_DECEL_STEP,
-                              self.accel_last + HYUNDAI_CANFD_SCC_ACCEL_STEP))
+                              self.accel_last - IONIQ_6_CANFD_SCC_DECEL_STEP,
+                              self.accel_last + IONIQ_6_CANFD_SCC_ACCEL_STEP))
         self._ioniq_6_long_tuning.desired_accel = accel_cmd
         self._ioniq_6_long_tuning.actual_accel = accel
         self._ioniq_6_long_tuning.accel_last = accel
         self._ioniq_6_long_tuning.jerk_upper = 3.0
         self._ioniq_6_long_tuning.jerk_lower = 5.0 if CC.enabled else 1.0
+        self._ioniq_6_long_tuning.launch_active = False
         self._ioniq_6_long_tuning.stopping = stopping
         self._ioniq_6_long_tuning.long_control_state_last = actuators.longControlState
+
+    if self.CP.carFingerprint == CAR.GENESIS_G90 and self.long_active_ecu:
+      self._genesis_g90_long_tuning = update_genesis_g90_longitudinal_tuning(self._genesis_g90_long_tuning, accel_cmd,
+                                                                              CS.out.vEgo, actuators.longControlState,
+                                                                              self.long_active_ecu)
+      accel = self._genesis_g90_long_tuning.actual_accel
 
     # *** common hyundai stuff ***
 
     # tester present - w/ no response (keeps relevant ECU disabled)
     if self.frame % 100 == 0 and not (self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC) and self.long_active_ecu:
       # for longitudinal control, either radar or ADAS driving ECU
-      addr, bus = 0x7d0, self.CAN.ECAN if self.CP.flags & HyundaiFlags.CANFD else 0
+      addr, bus = 0x7d0, self.CAN.ECAN if self.CP.flags & (HyundaiFlags.CANFD | HyundaiFlags.CAN_CANFD_BLENDED) else 0
       if self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING.value:
         addr, bus = 0x730, self.CAN.ECAN
       can_sends.append(make_tester_present_msg(addr, bus, suppress_response=True))
@@ -272,15 +366,22 @@ class CarController(CarControllerBase):
 
   def create_can_msgs(self, apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel, stopping, hud_control, actuators, CS, CC):
     can_sends = []
+    can_canfd_blended = bool(self.CP.flags & HyundaiFlags.CAN_CANFD_BLENDED)
 
     # HUD messages
     sys_warning, sys_state, left_lane_warning, right_lane_warning = process_hud_alert(CC.enabled, self.car_fingerprint,
                                                                                       hud_control)
 
-    can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
-                                              torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
-                                              hud_control.leftLaneVisible, hud_control.rightLaneVisible,
-                                              left_lane_warning, right_lane_warning))
+    if can_canfd_blended:
+      can_sends.extend(hyundaican.create_lkas11_can_canfd_blended(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
+                                                                  torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
+                                                                  hud_control.leftLaneVisible, hud_control.rightLaneVisible,
+                                                                  left_lane_warning, right_lane_warning, CS.msg_364))
+    else:
+      can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
+                                                torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
+                                                hud_control.leftLaneVisible, hud_control.rightLaneVisible,
+                                                left_lane_warning, right_lane_warning))
 
     # Button messages
     if not self.long_active_ecu:
@@ -294,24 +395,33 @@ class CarController(CarControllerBase):
           if (self.frame - self.last_button_frame) * DT_CTRL >= 0.15:
             self.last_button_frame = self.frame
 
+    if self.long_active_ecu and can_canfd_blended:
+      can_sends.extend(hyundaican.create_radar_aux_messages(self.packer, self.CAN, self.frame))
+
     if self.frame % 2 == 0 and self.long_active_ecu:
       # TODO: unclear if this is needed
       jerk = 3.0 if actuators.longControlState == LongCtrlState.pid else 1.0
       use_fca = self.CP.flags & HyundaiFlags.USE_FCA.value
-      can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled, accel, jerk, int(self.frame / 2),
-                                                      hud_control, set_speed_in_units, stopping,
-                                                      CC.cruiseControl.override, use_fca, self.CP))
+      if can_canfd_blended:
+        can_sends.extend(hyundaican.create_acc_commands_can_canfd_blended(self.packer, CC.enabled, accel, jerk,
+                                                                          int(self.frame / 2), hud_control,
+                                                                          set_speed_in_units, stopping,
+                                                                          CC.cruiseControl.override, use_fca, self.CP))
+      else:
+        can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled, accel, jerk, int(self.frame / 2),
+                                                        hud_control, set_speed_in_units, stopping,
+                                                        CC.cruiseControl.override, use_fca, self.CP))
 
     # 20 Hz LFA MFA message
     if self.frame % 5 == 0 and self.CP.flags & HyundaiFlags.SEND_LFA.value:
-      can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled))
+      can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled, self.frame, self.CP))
 
     # 5 Hz ACC options
-    if self.frame % 20 == 0 and self.long_active_ecu:
+    if self.frame % 20 == 0 and self.long_active_ecu and not can_canfd_blended:
       can_sends.extend(hyundaican.create_acc_opt(self.packer, self.CP))
 
     # 2 Hz front radar options
-    if self.frame % 50 == 0 and self.long_active_ecu:
+    if self.frame % 50 == 0 and self.long_active_ecu and not can_canfd_blended:
       can_sends.append(hyundaican.create_frt_radar_opt(self.packer))
 
     return can_sends
