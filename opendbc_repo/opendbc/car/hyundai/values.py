@@ -15,7 +15,7 @@ AVERAGE_ROAD_ROLL = 0.06  # conservative roll margin used by Hyundai CAN-FD angl
 
 class CarControllerParams:
   ACCEL_MIN = -3.5 # m/s
-  ACCEL_MAX = 2.0 # m/s
+  ACCEL_MAX = 3.5 # m/s
   ANGLE_LIMITS: AngleSteeringLimits = AngleSteeringLimits(
     180,
     ([], []),
@@ -53,12 +53,15 @@ class CarControllerParams:
     if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
       self.STEER_THRESHOLD = 175
 
-      # The Sportage angle port is rough at low speed on the higher global jerk limit.
-      # Keep the branch-wide higher limit for other cars, but restore the older calmer
-      # jerk ceiling on this port only.
+      # The Sportage angle port gets rough if it keeps the branch-wide higher jerk
+      # limit everywhere, but the fully calmed 3.0 m/s^3 cap lags too much in tight
+      # low-speed turns. Give it extra low-speed authority, then fade back to the
+      # calmer ceiling by normal road speeds.
       if CP.carFingerprint == CAR.KIA_SPORTAGE_HEV_2026:
+        sportage_low_speed_weight = min(max((15.0 - vEgoRaw) / 7.0, 0.0), 1.0)
+        sportage_lateral_jerk = 3.0 + (1.2 * sportage_low_speed_weight)
         self.ANGLE_LIMITS = replace(self.ANGLE_LIMITS,
-                                    MAX_LATERAL_JERK=3.0 + (ACCELERATION_DUE_TO_GRAVITY * AVERAGE_ROAD_ROLL))
+                                    MAX_LATERAL_JERK=sportage_lateral_jerk + (ACCELERATION_DUE_TO_GRAVITY * AVERAGE_ROAD_ROLL))
 
     # To determine the limit for your car, find the maximum value that the stock LKAS will request.
     # If the max stock LKAS request is <384, add your car to this list.
@@ -75,6 +78,13 @@ class CarControllerParams:
 
     elif CP.flags & HyundaiFlags.ALT_LIMITS_2:
       self.STEER_MAX = 170
+      self.STEER_DELTA_UP = 2
+      self.STEER_DELTA_DOWN = 3
+
+    elif CP.flags & HyundaiFlags.CAN_CANFD_BLENDED:
+      self.STEER_MAX = 404
+      self.STEER_DRIVER_ALLOWANCE = 50
+      self.STEER_THRESHOLD = 150
       self.STEER_DELTA_UP = 2
       self.STEER_DELTA_DOWN = 3
 
@@ -96,6 +106,8 @@ class HyundaiSafetyFlags(IntFlag):
   ALT_LIMITS_2 = 512
   CANFD_ANGLE_STEERING = 1024
   NON_SCC = 4096
+  CAN_CANFD_BLENDED = 8192
+  CANCEL_BTN_ENABLE = 16384
 
 
 class HyundaiStarPilotSafetyFlags(IntFlag):
@@ -171,6 +183,9 @@ class HyundaiFlags(IntFlag):
   # Hyundai CAN-FD angle-based steering path used on newer ADAS platforms.
   CANFD_ANGLE_STEERING = 2 ** 28
 
+  # Palisade/Telluride 2023+ uses CAN routing with CAN-FD-style checksums.
+  CAN_CANFD_BLENDED = 2 ** 29
+
 
 @dataclass
 class HyundaiCarDocs(CarDocs):
@@ -187,6 +202,9 @@ class HyundaiPlatformConfig(PlatformConfig):
 
     if self.flags & HyundaiFlags.MIN_STEER_32_MPH:
       self.specs = self.specs.override(minSteerSpeed=32 * CV.MPH_TO_MS)
+
+    if self.flags & HyundaiFlags.CAN_CANFD_BLENDED:
+      self.dbc_dict = {Bus.pt: "hyundai_palisade_2023_generated"}
 
 
 @dataclass
@@ -367,6 +385,16 @@ class CAR(Platforms):
     ],
     CarSpecs(mass=1999, wheelbase=2.9, steerRatio=15.6 * 1.15, tireStiffnessFactor=0.63),
     flags=HyundaiFlags.MANDO_RADAR | HyundaiFlags.CHECKSUM_CRC8,
+  )
+  HYUNDAI_PALISADE_2023 = HyundaiPlatformConfig(
+    [
+      HyundaiCarDocs("Hyundai Palisade (without HDA II) 2023-25", "Highway Driving Assist",
+                     car_parts=CarParts.common([CarHarness.hyundai_a])),
+      HyundaiCarDocs("Kia Telluride (without HDA II) 2023-25", "Highway Driving Assist",
+                     car_parts=CarParts.common([CarHarness.hyundai_l])),
+    ],
+    HYUNDAI_PALISADE.specs,
+    flags=HyundaiFlags.CHECKSUM_CRC8 | HyundaiFlags.CAN_CANFD_BLENDED | HyundaiFlags.RADAR_SCC,
   )
   HYUNDAI_VELOSTER = HyundaiPlatformConfig(
     [HyundaiCarDocs("Hyundai Veloster 2019-20", min_enable_speed=5. * CV.MPH_TO_MS, car_parts=CarParts.common([CarHarness.hyundai_e]))],
@@ -643,6 +671,15 @@ class Buttons:
   SET_DECEL = 2
   GAP_DIST = 3
   CANCEL = 4  # on newer models, this is a pause/resume button
+
+
+CANCEL_BUTTON_ENABLE_CARS = frozenset({
+  CAR.HYUNDAI_PALISADE_2023,
+})
+
+
+def hyundai_cancel_button_enables_cruise(car_fingerprint) -> bool:
+  return car_fingerprint in CANCEL_BUTTON_ENABLE_CARS
 
 
 def get_platform_codes(fw_versions: list[bytes]) -> set[tuple[bytes, bytes | None]]:

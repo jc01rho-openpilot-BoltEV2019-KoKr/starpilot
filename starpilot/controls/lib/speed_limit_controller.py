@@ -61,7 +61,7 @@ class SpeedLimitController:
     self.previous_source = "None"
     self.source = "None"
 
-
+    self._slc_adopt_counter = 0
 
     mapbox_requests_raw = self.starpilot_planner.params.get("MapBoxRequests", encoding="utf-8")
     try:
@@ -260,8 +260,12 @@ class SpeedLimitController:
     self.speed_limit_changed_timer += DT_MDL
     had_override = self.override_active(v_ego, sm["carState"].gasPressed)
 
-    speed_limit_accepted = (sm["starpilotCarState"].accelPressed and sm["carControl"].longActive) or self.starpilot_planner.params_memory.get_bool("SpeedLimitAccepted")
-    speed_limit_denied = sm["starpilotCarState"].decelPressed or (self.speed_limit_changed_timer >= 30)
+    long_active = sm["carControl"].longActive
+    speed_limit_accepted = (sm["starpilotCarState"].accelPressed and long_active) or self.starpilot_planner.params_memory.get_bool("SpeedLimitAccepted")
+    speed_limit_denied = sm["starpilotCarState"].decelPressed or (self.speed_limit_changed_timer >= 30 and long_active)
+
+    if not long_active and not sm["selfdriveState"].enabled:
+      speed_limit_accepted = True
 
     if speed_limit_accepted:
       self.source = desired_source
@@ -302,11 +306,16 @@ class SpeedLimitController:
     self.update_map_speed_limit(v_ego, sm)
     self.vision_limit = self.starpilot_planner.params_memory.get_float("VisionSpeedLimit") if getattr(self.starpilot_toggles, "vision_speed_limit_detection", False) else 0
 
+    configured_priorities = {
+      self.starpilot_toggles.speed_limit_priority1,
+      self.starpilot_toggles.speed_limit_priority2,
+    }
     limits = {
       "Dashboard": dashboard_speed_limit,
       "Map Data": self.map_speed_limit,
-      "Vision": self.vision_limit,
     }
+    if "Vision" in configured_priorities:
+      limits["Vision"] = self.vision_limit
     filtered_limits = {source: limit for source, limit in limits.items() if limit >= 1}
 
     if self.starpilot_toggles.speed_limit_priority_highest:
@@ -379,6 +388,21 @@ class SpeedLimitController:
       self.speed_limit_changed_timer = 0
       self.unconfirmed_speed_limit = 0
 
+    self._slc_adopt_counter += 1
+    if self._slc_adopt_counter % 4 == 0 and self.starpilot_planner.params_memory.get_bool("SLCAdoptSpeedLimit"):
+      self.starpilot_planner.params_memory.remove("SLCAdoptSpeedLimit")
+      if desired_target > 0:
+        self.overridden_speed = 0
+        self.denied_target = 0
+        self.source = desired_source
+        self.target = desired_target
+        self.previous_source = desired_source
+        self.previous_target = desired_target
+        self.speed_limit_changed_timer = 0
+        self.unconfirmed_speed_limit = 0
+        self.starpilot_planner.params.put_nonblocking("PreviousSpeedLimit", self.target)
+        self.starpilot_planner.params_memory.put_float("SLCForceCruiseSpeed", self.target + self.offset)
+
   def update_map_speed_limit(self, v_ego, sm):
     next_speed_limit_distance = sm["mapdOut"].nextSpeedLimitDistance
 
@@ -399,8 +423,8 @@ class SpeedLimitController:
           current_longitude = self.starpilot_planner.gps_position.get("longitude")
           next_speed_limit_distance = calculate_distance_to_point(current_latitude, current_longitude, next_latitude, next_longitude)
       else:
-        self.map_speed_limit = sm["mapdOut"].speedLimit
-        self.next_speed_limit = sm["mapdOut"].nextSpeedLimit
+        self.map_speed_limit = 0
+        self.next_speed_limit = 0
     else:
       self.map_speed_limit = sm["mapdOut"].speedLimit
       self.next_speed_limit = sm["mapdOut"].nextSpeedLimit

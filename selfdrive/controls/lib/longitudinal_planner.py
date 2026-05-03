@@ -26,7 +26,7 @@ ALLOW_THROTTLE_THRESHOLD = 0.4
 ALLOW_THROTTLE_HYSTERESIS = 0.05
 ALLOW_THROTTLE_ENABLE_THRESHOLD = ALLOW_THROTTLE_THRESHOLD + ALLOW_THROTTLE_HYSTERESIS
 ALLOW_THROTTLE_DISABLE_THRESHOLD = ALLOW_THROTTLE_THRESHOLD - ALLOW_THROTTLE_HYSTERESIS
-MIN_ALLOW_THROTTLE_SPEED = 2.5
+MIN_ALLOW_THROTTLE_SPEED = 5.0
 RAW_LEAD_SAFETY_MIN_CLOSING_SPEED = 0.5
 RAW_LEAD_SAFETY_TTC = 7.0
 RAW_LEAD_SAFETY_DISTANCE = 40.0
@@ -44,6 +44,18 @@ VISION_LEAD_APPROACH_FULL_MODEL_PROB = 0.98
 VISION_LEAD_APPROACH_DEFICIT_MAX_DECEL = 1.30
 VISION_LEAD_APPROACH_DEFICIT_BUFFER_MIN = 3.0
 VISION_LEAD_APPROACH_DEFICIT_BUFFER_GAIN = 0.20
+VISION_UNTRACKED_SLOW_LEAD_MIN_MODEL_PROB = 0.9
+VISION_UNTRACKED_SLOW_LEAD_FULL_MODEL_PROB = 0.97
+VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_SPEED = 3.0
+VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_RATIO = 0.16
+VISION_UNTRACKED_SLOW_LEAD_FULL_CLOSING_RATIO = 0.24
+VISION_UNTRACKED_SLOW_LEAD_TRIGGER_TTC = 16.0
+VISION_UNTRACKED_SLOW_LEAD_FULL_TTC = 8.0
+VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE_TIME = 4.25
+VISION_UNTRACKED_SLOW_LEAD_MIN_DISTANCE = 80.0
+VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE = 120.0
+VISION_UNTRACKED_SLOW_LEAD_MAX_DECEL = 0.7
+VISION_UNTRACKED_SLOW_LEAD_MIN_DECEL = 0.1
 VISION_SLOW_LEAD_MAX_SPEED = 5.0
 VISION_SLOW_LEAD_MIN_CLOSING_SPEED = 1.5
 VISION_SLOW_LEAD_TRIGGER_TTC = 4.5
@@ -77,6 +89,10 @@ VISION_LOW_SPEED_STOP_BUFFER_RELEASE_MARGIN = 0.9
 VISION_LOW_SPEED_STOP_BUFFER_HOLD_TIME = 0.8
 VISION_LOW_SPEED_STOP_BUFFER_MIN_BRAKE = 1.1
 VISION_LOW_SPEED_STOP_BUFFER_BRAKE_GAIN = 0.25
+LEAD_CATCHUP_ACCEL_MIN_EGO = 8.0
+LEAD_CATCHUP_ACCEL_MIN_LEAD_DELTA = -0.5
+LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_MIN = 4.0
+LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_GAIN = 0.15
 
 # Uncertainty-based filter disable thresholds
 UNCERT_SLOPE_TRIG = 0.12  # per second
@@ -342,6 +358,51 @@ class LongitudinalPlanner:
 
     return max(accel_min, -approach_decel)
 
+  def get_vision_untracked_slow_lead_cap(self, lead, v_ego, accel_min):
+    if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 0.0))
+    if lead_prob < VISION_UNTRACKED_SLOW_LEAD_MIN_MODEL_PROB:
+      return None
+
+    lead_brake = max(0.0, -float(lead.aLeadK))
+    reaction_t = max(self.CP.longitudinalActuatorDelay, self.dt)
+    closing_speed = max(0.0, v_ego - lead.vLead)
+    projected_closing_speed = closing_speed + lead_brake * reaction_t
+    if projected_closing_speed < VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_SPEED:
+      return None
+
+    closing_ratio = projected_closing_speed / max(float(v_ego), 0.1)
+    if closing_ratio < VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_RATIO:
+      return None
+
+    max_distance = float(np.clip(VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE_TIME * v_ego,
+                                 VISION_UNTRACKED_SLOW_LEAD_MIN_DISTANCE,
+                                 VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE))
+    if float(lead.dRel) > max_distance:
+      return None
+
+    projected_ttc = float(lead.dRel) / max(projected_closing_speed, 0.1)
+    if projected_ttc > VISION_UNTRACKED_SLOW_LEAD_TRIGGER_TTC:
+      return None
+
+    time_factor = float(np.clip((VISION_UNTRACKED_SLOW_LEAD_TRIGGER_TTC - projected_ttc) /
+                                (VISION_UNTRACKED_SLOW_LEAD_TRIGGER_TTC - VISION_UNTRACKED_SLOW_LEAD_FULL_TTC),
+                                0.0, 1.0))
+    prob_factor = float(np.clip((lead_prob - VISION_UNTRACKED_SLOW_LEAD_MIN_MODEL_PROB) /
+                                (VISION_UNTRACKED_SLOW_LEAD_FULL_MODEL_PROB - VISION_UNTRACKED_SLOW_LEAD_MIN_MODEL_PROB),
+                                0.0, 1.0))
+    closing_factor = float(np.clip((closing_ratio - VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_RATIO) /
+                                   (VISION_UNTRACKED_SLOW_LEAD_FULL_CLOSING_RATIO - VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_RATIO),
+                                   0.0, 1.0))
+    approach_decel = VISION_UNTRACKED_SLOW_LEAD_MAX_DECEL * np.clip(
+      0.5 * time_factor + 0.3 * prob_factor + 0.2 * closing_factor, 0.0, 1.0)
+    if approach_decel < VISION_UNTRACKED_SLOW_LEAD_MIN_DECEL:
+      return None
+
+    return max(accel_min, -approach_decel)
+
   def get_vision_slow_stopped_lead_cap(self, lead, v_ego, accel_min, t_follow):
     if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
       return None
@@ -455,6 +516,28 @@ class LongitudinalPlanner:
 
     min_stop_brake = VISION_LOW_SPEED_STOP_BUFFER_MIN_BRAKE + VISION_LOW_SPEED_STOP_BUFFER_BRAKE_GAIN * float(v_ego)
     return max(accel_min, -min_stop_brake), True
+
+  def get_lead_catchup_accel_cap(self, lead, v_ego, t_follow):
+    if lead is None or not lead.status or v_ego < LEAD_CATCHUP_ACCEL_MIN_EGO:
+      return None
+
+    lead_delta = float(lead.vLead) - float(v_ego)
+    if lead_delta < LEAD_CATCHUP_ACCEL_MIN_LEAD_DELTA:
+      return None
+
+    desired_gap = float(desired_follow_distance(v_ego, lead.vLead, t_follow))
+    gap_buffer = max(LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_MIN, LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_GAIN * float(v_ego))
+    gap_error = float(lead.dRel) - desired_gap
+    if gap_error > gap_buffer:
+      return None
+
+    # If the lead is already pace-matched or pulling away, keep any catch-up
+    # accel very small while we're near the follow target so we don't surge into
+    # the lead and immediately ask for brake again.
+    edge_cap = float(np.interp(lead_delta, [-0.5, 0.0, 1.0], [0.16, 0.08, 0.02]))
+    near_cap = min(edge_cap, 0.03)
+    gap_factor = float(np.clip(max(gap_error, 0.0) / max(gap_buffer, 0.1), 0.0, 1.0))
+    return float(np.interp(gap_factor, [0.0, 1.0], [near_cap, edge_cap]))
 
   @staticmethod
   def raw_close_lead_needs_control(lead, v_ego):
@@ -742,6 +825,19 @@ class LongitudinalPlanner:
     vision_cap_accel_min = min(comfort_output_accel_min, get_vehicle_min_accel(self.CP, v_ego))
     output_accel_min = comfort_output_accel_min
 
+    if not tracking_lead:
+      pretracking_vision_caps = []
+      for lead in (self.lead_one, self.lead_two):
+        if lead.status and not bool(getattr(lead, "radar", False)):
+          pretracking_cap = self.get_vision_untracked_slow_lead_cap(lead, v_ego, vision_cap_accel_min)
+          if pretracking_cap is not None:
+            pretracking_vision_caps.append(pretracking_cap)
+
+      if pretracking_vision_caps:
+        pretracking_vision_cap = min(pretracking_vision_caps)
+        self.a_desired = min(self.a_desired, pretracking_vision_cap)
+        output_a_target = min(output_a_target, pretracking_vision_cap)
+
     close_lead_caps = []
     vision_low_speed_stop_active = False
     vision_brake_cap_active = False
@@ -774,6 +870,12 @@ class LongitudinalPlanner:
                       if lead.status and lead.vLead > STANDSTILL_LEAD_NUDGE_MIN_SPEED and lead.dRel >= standstill_nudge_gap]
       if moving_leads:
         output_a_target = max(output_a_target, STANDSTILL_LEAD_NUDGE_ACCEL)
+
+    if lead_one_active:
+      lead_catchup_accel_cap = self.get_lead_catchup_accel_cap(self.lead_one, v_ego, effective_t_follow)
+      if lead_catchup_accel_cap is not None:
+        self.a_desired = min(self.a_desired, lead_catchup_accel_cap)
+        output_a_target = min(output_a_target, lead_catchup_accel_cap)
 
     if lead_control_active and np.isfinite(v_cruise) and any(lead.status for lead in (self.lead_one, self.lead_two)):
       # Keep follow/catchup behavior from pulling past the cruise target. Using the
@@ -809,7 +911,7 @@ class LongitudinalPlanner:
     longitudinalPlan.fcw = self.fcw
 
     longitudinalPlan.aTarget = float(self.output_a_target)
-    longitudinalPlan.shouldStop = bool(self.output_should_stop) or sm['starpilotPlan'].forcingStopLength < 1
+    longitudinalPlan.shouldStop = bool(self.output_should_stop) or (sm['starpilotPlan'].forcingStop and sm['starpilotPlan'].forcingStopLength < 1)
     longitudinalPlan.allowBrake = True
     longitudinalPlan.allowThrottle = bool(self.allow_throttle)
 

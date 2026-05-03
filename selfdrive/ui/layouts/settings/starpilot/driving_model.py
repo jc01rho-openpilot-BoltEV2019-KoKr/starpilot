@@ -30,47 +30,36 @@ from openpilot.system.ui.widgets import DialogResult, Widget
 from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog, alert_dialog
 from openpilot.system.ui.widgets.label import gui_label
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
-from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPanel
+from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   AetherButton,
   AetherChip,
   AetherListColors,
   AetherScrollbar,
-  AetherSliderDialog,
+  DEFAULT_PANEL_STYLE,
+  _point_hits,
   draw_action_rail,
   draw_action_pill,
   draw_busy_ring,
   draw_download_icon,
+  draw_empty_state_card,
   draw_heart_icon,
   draw_list_panel_shell,
+  draw_list_group_shell,
   build_list_panel_frame,
   draw_list_row_shell,
   draw_list_scroll_fades,
-  draw_soft_card,
+  draw_section_header,
+  draw_settings_list_row,
+  draw_settings_panel_header,
   draw_status_led,
-  draw_toggle_switch,
   draw_overflow_dots,
+  init_list_panel,
+  draw_interactive_rect,
+  resolve_interactive_target,
 )
 
-
-MODEL_PANEL_BG = AetherListColors.PANEL_BG
-MODEL_HEADER_TEXT = AetherListColors.HEADER
-MODEL_SUBTEXT = AetherListColors.SUBTEXT
-MODEL_MUTED = AetherListColors.MUTED
-MODEL_ROW_BG = AetherListColors.ROW_BG
-MODEL_ROW_BORDER = AetherListColors.ROW_BORDER
-MODEL_ROW_SEPARATOR = AetherListColors.ROW_SEPARATOR
-MODEL_ROW_HOVER = AetherListColors.ROW_HOVER
-MODEL_CURRENT_BG = AetherListColors.CURRENT_BG
-MODEL_CURRENT_BORDER = AetherListColors.CURRENT_BORDER
-MODEL_ACTION_BG = AetherListColors.ACTION_BG
-MODEL_ACTION_SEPARATOR = AetherListColors.ACTION_SEPARATOR
-MODEL_PRIMARY = AetherListColors.PRIMARY
-MODEL_PRIMARY_SOFT = AetherListColors.PRIMARY_SOFT
-MODEL_DANGER = AetherListColors.DANGER
-MODEL_DANGER_SOFT = AetherListColors.DANGER_SOFT
-MODEL_WARNING = AetherListColors.WARNING
 
 SECTION_GAP = AETHER_LIST_METRICS.section_gap
 SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height
@@ -83,6 +72,7 @@ BUTTON_HEIGHT = AETHER_LIST_METRICS.header_button_height
 FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
 CONFIRM_TIMEOUT_SECONDS = 3.0
 TRANSITION_SECONDS = 0.24
+PANEL_STYLE = DEFAULT_PANEL_STYLE
 
 
 @dataclass
@@ -224,8 +214,7 @@ class DrivingModelManagerView(Widget):
 
   def _target_at(self, mouse_pos: MousePos) -> str | None:
     for sub_key, rect in self._menu_sub_rects.items():
-      visible_rect = rl.get_collision_rec(rect, self._scroll_rect)
-      if visible_rect.width > 0 and visible_rect.height > 0 and rl.check_collision_point_rec(mouse_pos, visible_rect):
+      if _point_hits(mouse_pos, rect, self._scroll_rect, pad_x=6, pad_y=6):
         return f"menu:{sub_key}"
 
     for key, rect in self._action_rects.items():
@@ -307,17 +296,11 @@ class DrivingModelManagerView(Widget):
     self._utility_rects.clear()
     self._menu_sub_rects.clear()
 
-    frame = build_list_panel_frame(rect)
+    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE)
     self._shell_rect = frame.shell
-    draw_list_panel_shell(frame)
-
-    header_rect = frame.header
-    self._draw_header(header_rect)
-
-    scroll_rect = frame.scroll
     self._scroll_rect = scroll_rect
 
-    content_width = scroll_rect.width - AETHER_LIST_METRICS.content_right_gutter
+    self._draw_header(frame.header)
     self._content_height = self._measure_content_height(content_width)
     self._scroll_panel.set_enabled(lambda: not self._controller._is_download_active())
     self._scroll_offset = self._scroll_panel.update(scroll_rect, max(self._content_height, scroll_rect.height))
@@ -329,22 +312,16 @@ class DrivingModelManagerView(Widget):
     if self._content_height > scroll_rect.height:
       self._draw_scrollbar(scroll_rect)
 
-    draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset, MODEL_PANEL_BG, fade_height=FADE_HEIGHT)
+    draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset, AetherListColors.PANEL_BG, fade_height=FADE_HEIGHT)
 
   def _draw_header(self, rect: rl.Rectangle):
-    title_rect = rl.Rectangle(rect.x, rect.y + 4, rect.width * 0.55, 40)
-    gui_label(title_rect, tr("Driving Models"), 40, MODEL_HEADER_TEXT, FontWeight.SEMI_BOLD)
-
-    subtitle_text = self._controller.header_description_text()
-    if subtitle_text:
-      subtitle_rect = rl.Rectangle(rect.x, rect.y + 48, rect.width * 0.58, 36)
-      gui_label(subtitle_rect, subtitle_text, 24, MODEL_SUBTEXT, FontWeight.NORMAL)
+    draw_settings_panel_header(rect, tr("Driving Models"), self._controller.header_description_text(), subtitle_size=24)
 
     current_label_rect = rl.Rectangle(rect.x, rect.y + 96, 150, 22)
-    gui_label(current_label_rect, tr("Current Model"), 20, MODEL_MUTED, FontWeight.MEDIUM)
+    gui_label(current_label_rect, tr("Current Model"), 20, AetherListColors.MUTED, FontWeight.MEDIUM)
 
     current_value_rect = rl.Rectangle(rect.x + 150, rect.y + 94, rect.width * 0.44, 24)
-    gui_label(current_value_rect, self._controller._current_model_name, 22, MODEL_HEADER_TEXT, FontWeight.MEDIUM)
+    gui_label(current_value_rect, self._controller._current_model_name, 22, AetherListColors.HEADER, FontWeight.MEDIUM)
 
     right_panel_w = min(390, rect.width * 0.35)
     btn_gap = 10
@@ -411,32 +388,24 @@ class DrivingModelManagerView(Widget):
       self._draw_utility_section(rect.x, y, width, utility_rows)
 
   def _draw_empty_state(self, rect: rl.Rectangle):
-    state_rect = rl.Rectangle(rect.x, rect.y, rect.width - 18, rect.height)
-    draw_soft_card(state_rect, rl.Color(255, 255, 255, 5), rl.Color(255, 255, 255, 14), radius=0.08, segments=18)
-    gui_label(
-      rl.Rectangle(state_rect.x, state_rect.y + 42, state_rect.width, 40),
+    draw_empty_state_card(
+      rl.Rectangle(rect.x, rect.y, rect.width - AETHER_LIST_METRICS.content_right_gutter, rect.height),
       self._controller.empty_state_title(),
-      32,
-      MODEL_HEADER_TEXT,
-      FontWeight.MEDIUM,
-      alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER,
-    )
-    gui_label(
-      rl.Rectangle(state_rect.x + 48, state_rect.y + 88, state_rect.width - 96, 72),
       self._controller.empty_state_body(),
-      24,
-      MODEL_SUBTEXT,
-      FontWeight.NORMAL,
-      alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER,
+      title_size=32,
+      body_size=24,
+      body_inset_x=48,
+      title_top_padding=42,
+      body_height=72,
+      style=PANEL_STYLE,
     )
 
   def _draw_model_section(self, x: float, y: float, width: float, title: str, entries: list[ModelCatalogEntry]) -> float:
-    title_rect = rl.Rectangle(x, y, width - 18, SECTION_HEADER_HEIGHT)
-    gui_label(title_rect, title, 26, MODEL_SUBTEXT, FontWeight.MEDIUM)
+    draw_section_header(rl.Rectangle(x, y, width - AETHER_LIST_METRICS.content_right_gutter, SECTION_HEADER_HEIGHT), title, style=PANEL_STYLE)
     y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
     for index, entry in enumerate(entries):
-      row_rect = rl.Rectangle(x, y + index * ROW_HEIGHT, width - 18, ROW_HEIGHT)
+      row_rect = rl.Rectangle(x, y + index * ROW_HEIGHT, width - AETHER_LIST_METRICS.content_right_gutter, ROW_HEIGHT)
       self._draw_model_row(row_rect, entry, is_last=index == len(entries) - 1)
     return y + len(entries) * ROW_HEIGHT
 
@@ -462,17 +431,17 @@ class DrivingModelManagerView(Widget):
       pressed=pressed,
       is_last=is_last,
       alpha=alpha,
-      row_bg=MODEL_ROW_BG,
-      row_border=MODEL_ROW_BORDER,
-      row_separator=MODEL_ROW_SEPARATOR,
-      row_hover=MODEL_ROW_HOVER,
-      current_bg=MODEL_CURRENT_BG,
-      current_border=MODEL_CURRENT_BORDER,
+      row_bg=AetherListColors.ROW_BG,
+      row_border=AetherListColors.ROW_BORDER,
+      row_separator=AetherListColors.ROW_SEPARATOR,
+      row_hover=AetherListColors.ROW_HOVER,
+      current_bg=AetherListColors.CURRENT_BG,
+      current_border=AetherListColors.CURRENT_BORDER,
       row_radius=ROW_RADIUS,
       separator_inset=22,
     )
 
-    action_rect = draw_action_rail(draw_rect, ACTION_WIDTH, current=current, alpha=alpha, fill=MODEL_ACTION_BG, separator=MODEL_ACTION_SEPARATOR, inset_y=18)
+    action_rect = draw_action_rail(draw_rect, ACTION_WIDTH, current=current, alpha=alpha, fill=AetherListColors.ACTION_BG, separator=AetherListColors.ACTION_SEPARATOR, inset_y=18)
 
     info_rect = rl.Rectangle(draw_rect.x + 24, draw_rect.y + 18, draw_rect.width - ACTION_WIDTH - 42, draw_rect.height - 36)
     row_touchable = entry.installed and not self._controller._params.get_bool("ModelRandomizer")
@@ -504,11 +473,11 @@ class DrivingModelManagerView(Widget):
       draw_heart_icon(heart_center, heart_color)
       heart_offset = 34
     title_rect = rl.Rectangle(rect.x + heart_offset, rect.y, rect.width - heart_offset, 34)
-    gui_label(title_rect, entry.name, 34, MODEL_HEADER_TEXT, FontWeight.MEDIUM)
+    gui_label(title_rect, entry.name, 34, AetherListColors.HEADER, FontWeight.MEDIUM)
 
     meta_parts = [part for part in (entry.series, entry.released) if part]
     meta_rect = rl.Rectangle(rect.x, rect.y + 42, rect.width, 24)
-    gui_label(meta_rect, " • ".join(meta_parts), 22, MODEL_SUBTEXT, FontWeight.NORMAL)
+    gui_label(meta_rect, " • ".join(meta_parts), 22, AetherListColors.SUBTEXT, FontWeight.NORMAL)
 
     badge_parts: list[str] = []
     if current:
@@ -524,18 +493,18 @@ class DrivingModelManagerView(Widget):
 
     if badge_parts:
       badge_rect = rl.Rectangle(rect.x, rect.y + 78, rect.width, 22)
-      badge_color = MODEL_WARNING if entry.partial else MODEL_MUTED
+      badge_color = AetherListColors.WARNING if entry.partial else AetherListColors.MUTED
       gui_label(badge_rect, " • ".join(badge_parts), 20, badge_color, FontWeight.MEDIUM)
 
   def _draw_download_action(self, rect: rl.Rectangle):
     center_x = rect.x + rect.width / 2
     center_y = rect.y + rect.height / 2 - 8
-    draw_download_icon(rl.Vector2(center_x, center_y), MODEL_HEADER_TEXT)
+    draw_download_icon(rl.Vector2(center_x, center_y), AetherListColors.HEADER)
     gui_label(
       rl.Rectangle(rect.x + 16, rect.y + rect.height - 40, rect.width - 32, 22),
       tr("Download"),
       18,
-      MODEL_SUBTEXT,
+      AetherListColors.SUBTEXT,
       FontWeight.MEDIUM,
       alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER,
     )
@@ -543,14 +512,14 @@ class DrivingModelManagerView(Widget):
   def _draw_downloading_action(self, rect: rl.Rectangle, progress_text: str):
     center = rl.Vector2(rect.x + rect.width / 2, rect.y + rect.height / 2 - 8)
     phase = (time.monotonic() * 240.0) % 360.0
-    draw_busy_ring(center, phase, MODEL_PRIMARY)
+    draw_busy_ring(center, phase, AetherListColors.PRIMARY)
 
     label = progress_text if progress_text else tr("Downloading")
     gui_label(
       rl.Rectangle(rect.x + 16, rect.y + rect.height - 40, rect.width - 32, 22),
       label,
       17,
-      MODEL_SUBTEXT,
+      AetherListColors.SUBTEXT,
       FontWeight.MEDIUM,
       alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER,
     )
@@ -560,18 +529,18 @@ class DrivingModelManagerView(Widget):
       # Three-dot menu indicator
       center_x = rect.x + rect.width / 2
       center_y = rect.y + rect.height / 2 - 10
-      draw_overflow_dots(rl.Vector2(center_x, center_y), rl.Color(MODEL_HEADER_TEXT.r, MODEL_HEADER_TEXT.g, MODEL_HEADER_TEXT.b, min(MODEL_HEADER_TEXT.a, 200)))
+      draw_overflow_dots(rl.Vector2(center_x, center_y), rl.Color(AetherListColors.HEADER.r, AetherListColors.HEADER.g, AetherListColors.HEADER.b, min(AetherListColors.HEADER.a, 200)))
       gui_label(
         rl.Rectangle(rect.x + 16, rect.y + rect.height - 38, rect.width - 32, 22),
         tr("Options"),
         18,
-        MODEL_SUBTEXT,
+        AetherListColors.SUBTEXT,
         FontWeight.MEDIUM,
         alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER,
       )
     else:
       # Expanded sub-button menu
-      btn_h = 40
+      btn_h = 44
       gap = 8
       total_h = btn_h * 2 + gap
       start_y = rect.y + (rect.height - total_h) / 2
@@ -583,65 +552,52 @@ class DrivingModelManagerView(Widget):
       self._menu_sub_rects[f"{entry.key}:favorite"] = fav_rect
 
       # Delete button
-      draw_action_pill(delete_rect, tr("Delete"), MODEL_DANGER_SOFT, rl.Color(MODEL_DANGER.r, MODEL_DANGER.g, MODEL_DANGER.b, min(MODEL_DANGER.a, 70)), MODEL_DANGER)
+      draw_action_pill(delete_rect, tr("Delete"), AetherListColors.DANGER_SOFT, rl.Color(AetherListColors.DANGER.r, AetherListColors.DANGER.g, AetherListColors.DANGER.b, min(AetherListColors.DANGER.a, 70)), AetherListColors.DANGER)
 
       # Favorite toggle button
       is_fav = entry.user_favorite
-      fav_fill = rl.Color(210, 100, 130, 44) if is_fav else MODEL_PRIMARY_SOFT
-      fav_border = rl.Color((210 if is_fav else MODEL_PRIMARY.r), (100 if is_fav else MODEL_PRIMARY.g), (130 if is_fav else MODEL_PRIMARY.b), min((255 if is_fav else MODEL_PRIMARY.a), 70))
-      fav_text_color = rl.Color(210, 100, 130, 255) if is_fav else MODEL_PRIMARY
+      fav_fill = rl.Color(210, 100, 130, 44) if is_fav else AetherListColors.PRIMARY_SOFT
+      fav_border = rl.Color((210 if is_fav else AetherListColors.PRIMARY.r), (100 if is_fav else AetherListColors.PRIMARY.g), (130 if is_fav else AetherListColors.PRIMARY.b), min((255 if is_fav else AetherListColors.PRIMARY.a), 70))
+      fav_text_color = rl.Color(210, 100, 130, 255) if is_fav else AetherListColors.PRIMARY
       fav_label = tr("Unfavorite") if is_fav else tr("Favorite")
       draw_action_pill(fav_rect, fav_label, fav_fill, fav_border, fav_text_color)
 
   def _draw_current_action(self, rect: rl.Rectangle):
     chip_rect = rl.Rectangle(rect.x + 24, rect.y + (rect.height - 42) / 2, rect.width - 48, 42)
-    AetherChip(tr("Current"), rl.Color(89, 116, 151, 26), rl.Color(116, 136, 168, 52), MODEL_HEADER_TEXT, font_size=18).render(chip_rect)
+    AetherChip(tr("Current"), rl.Color(89, 116, 151, 26), rl.Color(116, 136, 168, 52), AetherListColors.HEADER, font_size=18).render(chip_rect)
 
   def _draw_protected_action(self, rect: rl.Rectangle):
     chip_rect = rl.Rectangle(rect.x + 20, rect.y + (rect.height - 42) / 2, rect.width - 40, 42)
-    AetherChip(tr("Protected"), rl.Color(255, 255, 255, 10), MODEL_MUTED, MODEL_SUBTEXT, font_size=18).render(chip_rect)
+    AetherChip(tr("Protected"), rl.Color(255, 255, 255, 10), AetherListColors.MUTED, AetherListColors.SUBTEXT, font_size=18).render(chip_rect)
 
   def _draw_utility_section(self, x: float, y: float, width: float, rows: list[dict]):
-    title_rect = rl.Rectangle(x, y, width - 18, SECTION_HEADER_HEIGHT)
-    gui_label(title_rect, tr("Automation and Tuning"), 26, MODEL_SUBTEXT, FontWeight.MEDIUM)
+    content_w = width - AETHER_LIST_METRICS.content_right_gutter
+    draw_section_header(rl.Rectangle(x, y, content_w, SECTION_HEADER_HEIGHT), tr("Automation and Tuning"), style=PANEL_STYLE)
     y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
-    container_rect = rl.Rectangle(x, y, width - 18, len(rows) * UTILITY_ROW_HEIGHT)
-    draw_soft_card(container_rect, rl.Color(255, 255, 255, 4), rl.Color(255, 255, 255, 15), radius=0.055, segments=18)
+    container_rect = rl.Rectangle(x, y, content_w, len(rows) * UTILITY_ROW_HEIGHT)
+    draw_list_group_shell(container_rect, style=PANEL_STYLE)
 
     for index, row in enumerate(rows):
-      row_rect = rl.Rectangle(x, y + index * UTILITY_ROW_HEIGHT, width - 18, UTILITY_ROW_HEIGHT)
+      row_rect = rl.Rectangle(x, y + index * UTILITY_ROW_HEIGHT, content_w, UTILITY_ROW_HEIGHT)
       self._draw_utility_row(row_rect, row, is_last=index == len(rows) - 1)
 
   def _draw_utility_row(self, rect: rl.Rectangle, row: dict, is_last: bool):
     mouse_pos = gui_app.last_mouse_event.pos
     hovered = rl.check_collision_point_rec(mouse_pos, rect)
     pressed = self._pressed_target == f"utility:{row['id']}"
-    bg = rl.Color(255, 255, 255, 8 if hovered else 0)
-    if pressed:
-      bg = rl.Color(255, 255, 255, 14)
-    if bg.a:
-      rl.draw_rectangle_rounded(rect, ROW_RADIUS, 18, bg)
-
-    if not is_last:
-      line_y = int(rect.y + rect.height - 1)
-      rl.draw_line(int(rect.x + 22), line_y, int(rect.x + rect.width - 22), line_y, MODEL_ROW_SEPARATOR)
-
     self._utility_rects[row["id"]] = rect
-    label_rect = rl.Rectangle(rect.x + 24, rect.y + 14, rect.width * 0.55, 28)
-    subtitle_rect = rl.Rectangle(rect.x + 24, rect.y + 46, rect.width * 0.60, 24)
-    gui_label(label_rect, row["title"], 28, MODEL_HEADER_TEXT, FontWeight.MEDIUM)
-    if row.get("subtitle"):
-      gui_label(subtitle_rect, row["subtitle"], 20, MODEL_SUBTEXT, FontWeight.NORMAL)
-
-    if row["type"] == "toggle":
-      draw_toggle_switch(rect, bool(row["value"]))
-    else:
-      value_rect = rl.Rectangle(rect.x + rect.width - AETHER_LIST_METRICS.utility_value_right, rect.y + 20, AETHER_LIST_METRICS.utility_value_width, 28)
-      gui_label(value_rect, row["value"], 24, MODEL_HEADER_TEXT, FontWeight.MEDIUM, alignment=rl.GuiTextAlignment.TEXT_ALIGN_RIGHT)
-      gui_label(
-        rl.Rectangle(rect.x + rect.width - AETHER_LIST_METRICS.utility_chevron_right, rect.y + 18, 26, 26), "›", 32, MODEL_MUTED, FontWeight.MEDIUM, alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER
-      )
+    draw_settings_list_row(
+      rect,
+      title=row["title"],
+      subtitle=row.get("subtitle", ""),
+      value="" if row["type"] == "toggle" else row["value"],
+      toggle_value=bool(row["value"]) if row["type"] == "toggle" else None,
+      hovered=hovered,
+      pressed=pressed,
+      is_last=is_last,
+      style=PANEL_STYLE,
+    )
 
   def _draw_scrollbar(self, rect: rl.Rectangle):
     self._scrollbar.render(rect, self._content_height, self._scroll_offset)
@@ -659,7 +615,7 @@ class DrivingModelManagerView(Widget):
     return alpha, offset_y, scale
 
 
-class StarPilotDrivingModelLayout(StarPilotPanel):
+class StarPilotDrivingModelLayout(_SettingsPage):
   def __init__(self):
     super().__init__()
 
@@ -690,17 +646,12 @@ class StarPilotDrivingModelLayout(StarPilotPanel):
 
   def _render(self, rect: rl.Rectangle):
     self._update_state()
-    self._manager_view.render(rect)
+    super()._render(rect)
 
   def show_event(self):
     super().show_event()
     self._fetch_manifest_async()
     self._update_model_metadata()
-    self._manager_view.show_event()
-
-  def hide_event(self):
-    super().hide_event()
-    self._manager_view.hide_event()
 
   def _fetch_manifest_async(self):
     if self._manifest_fetch_thread is not None and self._manifest_fetch_thread.is_alive():
@@ -1199,22 +1150,10 @@ class StarPilotDrivingModelLayout(StarPilotPanel):
     self._update_model_metadata()
 
   def _on_recovery_power_clicked(self):
-    def on_close(res, val):
-      if res == DialogResult.CONFIRM:
-        self._params.put_float("RecoveryPower", float(val))
-
-    gui_app.push_widget(
-      AetherSliderDialog(tr("Recovery Power"), 0.5, 2.0, 0.1, self._params.get_float("RecoveryPower"), on_close, unit="x", color="#597497")
-    )
+    self._show_slider("RecoveryPower", 0.5, 2.0, step=0.1, unit="x", value_type="float", title="Recovery Power")
 
   def _on_stop_distance_clicked(self):
-    def on_close(res, val):
-      if res == DialogResult.CONFIRM:
-        self._params.put_float("StopDistance", float(val))
-
-    gui_app.push_widget(
-      AetherSliderDialog(tr("Stop Distance"), 4.0, 10.0, 0.1, self._params.get_float("StopDistance"), on_close, unit="m", color="#597497")
-    )
+    self._show_slider("StopDistance", 4.0, 10.0, step=0.1, unit="m", value_type="float", title="Stop Distance")
 
   def _on_blacklist_clicked(self):
     blacklisted = [m.strip() for m in (self._params.get("BlacklistedModels", encoding="utf-8") or "").split(",") if m.strip()]

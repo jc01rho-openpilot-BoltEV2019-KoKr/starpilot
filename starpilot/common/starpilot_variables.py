@@ -501,7 +501,10 @@ class StarPilotVariables:
     latAccelFactor = CP.lateralTuning.torque.latAccelFactor
     if not math.isfinite(latAccelFactor):
       latAccelFactor = 0.0
-    toggle.lkas_allowed_for_aol = toggle.car_make == "hyundai" and bool(CP.flags & HyundaiFlags.CANFD or CP.flags & HyundaiFlags.HAS_LDA_BUTTON)
+    toggle.lkas_allowed_for_aol = (
+      (toggle.car_make == "hyundai" and bool(CP.flags & HyundaiFlags.CANFD or CP.flags & HyundaiFlags.HAS_LDA_BUTTON)) or
+      toggle.car_make == "honda"
+    )
     longitudinalActuatorDelay = CP.longitudinalActuatorDelay
     toggle.openpilot_longitudinal = CP.openpilotLongitudinalControl and not toggle.disable_openpilot_long
     pcm_cruise = CP.pcmCruise
@@ -943,7 +946,6 @@ class StarPilotVariables:
     else:
       toggle.custom_accel_profile_values = [custom_accel_defaults[key] for key in CUSTOM_ACCEL_PROFILE_PARAM_KEYS]
     toggle.human_acceleration = self.get_value("HumanAcceleration", condition=longitudinal_tuning)
-    toggle.human_following = self.get_value("HumanFollowing", condition=longitudinal_tuning)
     toggle.coast_up_to_leads = self.get_value("CoastUpToLeads", condition=longitudinal_tuning)
     if longitudinal_tuning and self.params.get("CoastUpToLeads") is None:
       toggle.coast_up_to_leads = True
@@ -1197,7 +1199,6 @@ class StarPilotVariables:
       GM_CAR.CHEVROLET_VOLT_ASCM,
       GM_CAR.CHEVROLET_VOLT_CAMERA,
     }
-    gm_auto_hold_supported &= toggle.openpilot_longitudinal
     toggle.gm_auto_hold = self.get_value("GMAutoHold", condition=gm_auto_hold_supported)
 
     toggle.volt_sng = self.get_value("VoltSNG", condition=toggle.car_model == "CHEVROLET_VOLT")

@@ -19,7 +19,8 @@ from opendbc.car.car_helpers import get_car, interfaces
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
-from openpilot.selfdrive.car.cruise import VCruiseHelper
+from openpilot.common.constants import CV
+from openpilot.selfdrive.car.cruise import VCruiseHelper, IMPERIAL_INCREMENT, V_CRUISE_MAX, V_CRUISE_MIN
 from openpilot.selfdrive.car.car_specific import MockCarState
 
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles, update_starpilot_toggles
@@ -83,6 +84,7 @@ class Car:
     self.last_actuators_output = structs.CarControl.Actuators()
 
     self.params = Params()
+    self.params_memory = Params(memory=True)
 
     self.can_callbacks = can_comm_callbacks(self.can_sock, self.pm.sock['sendcan'])
 
@@ -225,6 +227,16 @@ class Car:
       self.sm['starpilotPlan'].speedLimitChanged,
       self.starpilot_toggles,
     )
+    slc_force_speed = self.params_memory.get_float("SLCForceCruiseSpeed")
+    if slc_force_speed > 0:
+      if self.is_metric:
+        new_cruise_kph = round(slc_force_speed * CV.MS_TO_KPH)
+      else:
+        new_cruise_kph = round(slc_force_speed * CV.MS_TO_MPH) * IMPERIAL_INCREMENT
+      self.v_cruise_helper.v_cruise_kph = max(min(new_cruise_kph, V_CRUISE_MAX), V_CRUISE_MIN)
+      self.v_cruise_helper.v_cruise_cluster_kph = self.v_cruise_helper.v_cruise_kph
+      self.params_memory.remove("SLCForceCruiseSpeed")
+
     if self.sm['carControl'].enabled and not self.CC_prev.enabled:
       # Use CarState w/ buttons from the step selfdrived enables on
       desired_speed_limit = self.sm['starpilotPlan'].slcSpeedLimit + self.sm['starpilotPlan'].slcSpeedLimitOffset
@@ -290,10 +302,13 @@ class Car:
     if not self.initialized_prev:
       # Initialize CarInterface, once controls are ready
       # TODO: this can make us miss at least a few cycles when doing an ECU knockout
+      was_openpilot_long = self.CP.openpilotLongitudinalControl
       self.CI.init(self.CP, *self.can_callbacks)
       # If ECU disable was skipped/failed, strip LONG safety flag from BOTH CarParams
       # and StarPilotCarParams (pandad ORs both safetyParams together)
-      if self.CP.openpilotLongitudinalControl and self.params.get_bool("EcuDisableFailed"):
+      # Use the pre-init longitudinal state here, since Hyundai init() may already
+      # flip CP.openpilotLongitudinalControl to False as part of the fallback.
+      if was_openpilot_long and self.params.get_bool("EcuDisableFailed"):
         # ECU disable failed/rejected - switch to lateral-only mode with stock ACC
         LONG_FLAG = 4  # HyundaiSafetyFlags.LONG
         for cfg in self.CP.safetyConfigs:
