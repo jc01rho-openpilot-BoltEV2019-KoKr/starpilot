@@ -75,7 +75,7 @@ class StarPilotEvents:
     else:
       self.stopped_for_light = False
 
-    if "holidayActive" not in self.played_events and self.startup_seen and alerts_empty and len(self.events) == 0 and starpilot_toggles.current_holiday_theme != "stock":
+    if starpilot_toggles.current_holiday_theme != "stock" and "holidayActive" not in self.played_events and self.startup_seen and alerts_empty and len(self.events) == 0:
       self.events.add(StarPilotEventName.holidayActive)
 
     if self.starpilot_planner.tracking_lead and sm["carState"].standstill and sm["carState"].gearShifter not in NON_DRIVING_GEARS:
