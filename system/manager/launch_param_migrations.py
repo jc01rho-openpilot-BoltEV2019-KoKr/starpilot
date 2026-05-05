@@ -16,45 +16,52 @@ QT_STEER_KP_PLACEHOLDER = 1.0
 
 LAUNCH_PARAM_MIGRATION_MARKER = ".starpilot_launch_param_migrations_v2"
 BRANCH_DEFAULTS_MIGRATION_MARKER = ".starpilot_branch_defaults_migrations_v1"
+ACCELERATION_PROFILE_MIGRATION_MARKER = ".starpilot_acceleration_profile_default_v1"
+MARKER_DIRNAME = ".starpilot_param_migrations"
 
-BRANCH_BOOL_DEFAULTS = {
-  "ConditionalExperimental": True,
-  "CELead": True,
-  "CESlowerLead": True,
-  "CEStoppedLead": False,
-  "ForceStops": True,
+LEGACY_CE_STOPPED_LEAD_DEFAULT = True
+LEGACY_FORCE_STOPS_DEFAULT = False
+LEGACY_AGGRESSIVE_FOLLOW_HIGH_DEFAULT = 1.25
+LEGACY_STANDARD_FOLLOW_HIGH_DEFAULT = 1.45
+LEGACY_RELAXED_FOLLOW_DEFAULT = 1.75
+LEGACY_RELAXED_FOLLOW_HIGH_DEFAULT = 1.75
+LEGACY_JERK_DEFAULT = 50.0
+LEGACY_ACCELERATION_PROFILE_DEFAULT = 2
+
+STANDARD_ACCELERATION_PROFILE = 0
+
+BRANCH_BOOL_MIGRATIONS = {
+  "CEStoppedLead": (LEGACY_CE_STOPPED_LEAD_DEFAULT, False),
+  "ForceStops": (LEGACY_FORCE_STOPS_DEFAULT, True),
 }
 
-BRANCH_FLOAT_DEFAULTS = {
-  "AggressiveFollow": 1.25,
-  "AggressiveFollowHigh": 1.0,
-  "AggressiveJerkAcceleration": 50.0,
-  "AggressiveJerkDanger": 100.0,
-  "AggressiveJerkDeceleration": 50.0,
-  "AggressiveJerkSpeed": 50.0,
-  "AggressiveJerkSpeedDecrease": 50.0,
-  "StandardFollow": 1.45,
-  "StandardFollowHigh": 1.2,
-  "StandardJerkAcceleration": 100.0,
-  "StandardJerkDanger": 100.0,
-  "StandardJerkDeceleration": 100.0,
-  "StandardJerkSpeed": 100.0,
-  "StandardJerkSpeedDecrease": 100.0,
-  "RelaxedFollow": 1.6,
-  "RelaxedFollowHigh": 1.4,
-  "RelaxedJerkAcceleration": 100.0,
-  "RelaxedJerkDanger": 100.0,
-  "RelaxedJerkDeceleration": 100.0,
-  "RelaxedJerkSpeed": 100.0,
-  "RelaxedJerkSpeedDecrease": 100.0,
+BRANCH_FLOAT_MIGRATIONS = {
+  "AggressiveFollowHigh": (LEGACY_AGGRESSIVE_FOLLOW_HIGH_DEFAULT, 1.0),
+  "StandardFollowHigh": (LEGACY_STANDARD_FOLLOW_HIGH_DEFAULT, 1.2),
+  "StandardJerkAcceleration": (LEGACY_JERK_DEFAULT, 100.0),
+  "StandardJerkDeceleration": (LEGACY_JERK_DEFAULT, 100.0),
+  "StandardJerkSpeed": (LEGACY_JERK_DEFAULT, 100.0),
+  "StandardJerkSpeedDecrease": (LEGACY_JERK_DEFAULT, 100.0),
+  "RelaxedFollow": (LEGACY_RELAXED_FOLLOW_DEFAULT, 1.6),
+  "RelaxedFollowHigh": (LEGACY_RELAXED_FOLLOW_HIGH_DEFAULT, 1.4),
+  "RelaxedJerkAcceleration": (LEGACY_JERK_DEFAULT, 100.0),
+  "RelaxedJerkDeceleration": (LEGACY_JERK_DEFAULT, 100.0),
+  "RelaxedJerkSpeed": (LEGACY_JERK_DEFAULT, 100.0),
+  "RelaxedJerkSpeedDecrease": (LEGACY_JERK_DEFAULT, 100.0),
+}
+
+ACCELERATION_PROFILE_MIGRATION = {
+  "AccelerationProfile": (LEGACY_ACCELERATION_PROFILE_DEFAULT, STANDARD_ACCELERATION_PROFILE),
 }
 
 
 class ParamsLike(Protocol):
   def get_param_path(self, key: str = "") -> str: ...
   def get_bool(self, key: str) -> bool: ...
+  def get_int(self, key: str) -> int: ...
   def get_float(self, key: str) -> float: ...
   def put_bool(self, key: str, value: bool) -> None: ...
+  def put_int(self, key: str, value: int) -> None: ...
   def put_float(self, key: str, value: float) -> None: ...
 
 
@@ -63,11 +70,38 @@ def _approx_equal(lhs: float, rhs: float, tolerance: float = 1e-6) -> bool:
 
 
 def _default_marker_path(params: ParamsLike) -> Path:
-  return Path(params.get_param_path()) / LAUNCH_PARAM_MIGRATION_MARKER
+  return _marker_dir_path(params) / LAUNCH_PARAM_MIGRATION_MARKER
 
 
 def _branch_defaults_marker_path(params: ParamsLike) -> Path:
-  return Path(params.get_param_path()) / BRANCH_DEFAULTS_MIGRATION_MARKER
+  return _marker_dir_path(params) / BRANCH_DEFAULTS_MIGRATION_MARKER
+
+
+def _acceleration_profile_marker_path(params: ParamsLike) -> Path:
+  return _marker_dir_path(params) / ACCELERATION_PROFILE_MIGRATION_MARKER
+
+
+def _marker_dir_path(params: ParamsLike) -> Path:
+  params_path = Path(params.get_param_path())
+  # Params.clear_all() removes unknown files inside the params directory, so
+  # one-time migration markers must live alongside it, not inside it.
+  return params_path.parent / MARKER_DIRNAME / params_path.name
+
+
+def _param_file_exists(params: ParamsLike, key: str) -> bool:
+  return Path(params.get_param_path(key)).exists()
+
+
+def _should_migrate_bool_param(params: ParamsLike, key: str, legacy_default: bool) -> bool:
+  return not _param_file_exists(params, key) or params.get_bool(key) == legacy_default
+
+
+def _should_migrate_int_param(params: ParamsLike, key: str, legacy_default: int) -> bool:
+  return not _param_file_exists(params, key) or params.get_int(key) == legacy_default
+
+
+def _should_migrate_float_param(params: ParamsLike, key: str, legacy_default: float) -> bool:
+  return not _param_file_exists(params, key) or _approx_equal(params.get_float(key), legacy_default)
 
 
 def _apply_legacy_launch_param_migrations(params: ParamsLike, marker: Path) -> None:
@@ -103,21 +137,40 @@ def _apply_branch_default_migration(params: ParamsLike, marker: Path) -> None:
 
   marker.parent.mkdir(parents=True, exist_ok=True)
 
-  for key, value in BRANCH_BOOL_DEFAULTS.items():
-    params.put_bool(key, value)
+  for key, (legacy_default, new_default) in BRANCH_BOOL_MIGRATIONS.items():
+    if _should_migrate_bool_param(params, key, legacy_default):
+      params.put_bool(key, new_default)
 
-  for key, value in BRANCH_FLOAT_DEFAULTS.items():
-    params.put_float(key, value)
+  for key, (legacy_default, new_default) in BRANCH_FLOAT_MIGRATIONS.items():
+    if _should_migrate_float_param(params, key, legacy_default):
+      params.put_float(key, new_default)
+
+  marker.touch()
+
+
+def _apply_acceleration_profile_default_migration(params: ParamsLike, marker: Path) -> None:
+  if marker.exists():
+    return
+
+  marker.parent.mkdir(parents=True, exist_ok=True)
+
+  for key, (legacy_default, new_default) in ACCELERATION_PROFILE_MIGRATION.items():
+    if _should_migrate_int_param(params, key, legacy_default):
+      params.put_int(key, new_default)
 
   marker.touch()
 
 
 def apply_launch_param_migrations(params: ParamsLike, marker_path: Path | None = None,
-                                  branch_defaults_marker_path: Path | None = None) -> None:
+                                  branch_defaults_marker_path: Path | None = None,
+                                  acceleration_profile_marker_path: Path | None = None) -> None:
   _apply_legacy_launch_param_migrations(params, marker_path or _default_marker_path(params))
   # Keep branch-default rollout on its own marker so older installs that already
   # have the legacy marker still receive this one-time param reset.
   _apply_branch_default_migration(params, branch_defaults_marker_path or _branch_defaults_marker_path(params))
+  _apply_acceleration_profile_default_migration(
+    params, acceleration_profile_marker_path or _acceleration_profile_marker_path(params)
+  )
 
 
 def main() -> int:

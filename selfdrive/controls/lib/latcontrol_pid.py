@@ -15,25 +15,53 @@ def civic_bosch_modified_lateral_testing_ground_active() -> bool:
 def get_civic_bosch_modified_pid_output_scale(desired_angle_deg: float, desired_angle_delta_deg: float, v_ego: float) -> float:
   abs_angle = abs(desired_angle_deg)
   speed_weight = min(max((v_ego - 4.0) / 10.0, 0.0), 1.0)
-  center_speed_weight = 0.60 + (0.40 * speed_weight)
-  center_weight = min(max((14.0 - abs_angle) / 14.0, 0.0), 1.0)
-  angle_weight = min(max((abs_angle - 14.0) / 14.0, 0.0), 1.0)
+  center_speed_weight = 0.70 + (0.30 * speed_weight)
+  center_weight = min(max((18.0 - abs_angle) / 18.0, 0.0), 1.0)
+  mid_turn_weight = min(max((abs_angle - 10.0) / 10.0, 0.0), 1.0)
+  angle_weight = min(max((abs_angle - 18.0) / 10.0, 0.0), 1.0)
   phase = desired_angle_deg * desired_angle_delta_deg
 
   is_left = desired_angle_deg > 0.0
-  center_taper = 0.26
-  base_scale = 0.10 if is_left else 0.12
-  turn_in_scale = 0.10 if is_left else 0.14
-  unwind_scale = 0.14 if is_left else 0.20
+  center_taper = 0.32
+  mid_turn_scale = 0.12 if is_left else -0.10
+  mid_turn_turn_in_scale = 0.08 if is_left else -0.08
+  mid_turn_unwind_scale = -0.05 if is_left else -0.08
+  base_scale = 0.12 if is_left else 0.10
+  turn_in_scale = 0.12 if is_left else 0.12
+  unwind_scale = 0.14 if is_left else 0.18
 
   scale = 1.0 - (center_speed_weight * center_weight * center_taper)
+  scale += speed_weight * mid_turn_weight * mid_turn_scale
   scale += speed_weight * angle_weight * base_scale
   if phase > 0.2:
+    scale += speed_weight * mid_turn_weight * mid_turn_turn_in_scale
     scale += speed_weight * angle_weight * turn_in_scale
   elif phase < -0.2:
+    scale += speed_weight * mid_turn_weight * mid_turn_unwind_scale
     scale -= speed_weight * angle_weight * unwind_scale
 
-  return max(scale, 0.78)
+  return max(scale, 0.70)
+
+
+def get_civic_bosch_modified_pid_output_alpha(desired_angle_deg: float, desired_angle_delta_deg: float,
+                                              v_ego: float, output_torque: float, prev_output_torque: float) -> float:
+  abs_angle = abs(desired_angle_deg)
+  if abs_angle < 0.75 or abs_angle > 22.0:
+    return 1.0
+
+  speed_weight = min(max((v_ego - 4.0) / 10.0, 0.0), 1.0)
+  onset = min(max((abs_angle - 0.75) / 5.25, 0.0), 1.0)
+  cutoff = min(max((22.0 - abs_angle) / 8.0, 0.0), 1.0)
+  band_weight = onset * cutoff
+  small_curve_weight = min(max((12.0 - abs_angle) / 6.0, 0.0), 1.0)
+  large_turn_weight = min(max((abs_angle - 16.0) / 6.0, 0.0), 1.0)
+  transition_weight = min(abs(desired_angle_delta_deg) / 0.35, 1.0)
+  sign_change_weight = 1.0 if (output_torque * prev_output_torque) < 0.0 else 0.0
+
+  smoothing = band_weight * (0.36 + (0.22 * speed_weight) + (0.12 * transition_weight) + (0.12 * sign_change_weight))
+  smoothing *= 1.0 + (0.35 * small_curve_weight)
+  smoothing *= 1.0 - (0.50 * large_turn_weight)
+  return min(max(1.0 - smoothing, 0.14), 1.0)
 
 
 class LatControlPID(LatControl):
@@ -93,6 +121,9 @@ class LatControlPID(LatControl):
       if self.is_civic_bosch_modified and civic_bosch_modified_lateral_testing_ground_active():
         desired_angle_delta = angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
         output_torque *= get_civic_bosch_modified_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)
+        output_alpha = get_civic_bosch_modified_pid_output_alpha(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo,
+                                                                 output_torque, self.prev_output_torque)
+        output_torque = self.prev_output_torque + (output_alpha * (output_torque - self.prev_output_torque))
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       pid_log.active = True

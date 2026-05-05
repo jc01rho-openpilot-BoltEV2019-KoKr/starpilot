@@ -51,11 +51,17 @@ VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_RATIO = 0.16
 VISION_UNTRACKED_SLOW_LEAD_FULL_CLOSING_RATIO = 0.24
 VISION_UNTRACKED_SLOW_LEAD_TRIGGER_TTC = 16.0
 VISION_UNTRACKED_SLOW_LEAD_FULL_TTC = 8.0
-VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE_TIME = 4.25
+VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE_TIME = 4.4
 VISION_UNTRACKED_SLOW_LEAD_MIN_DISTANCE = 80.0
 VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE = 120.0
-VISION_UNTRACKED_SLOW_LEAD_MAX_DECEL = 0.7
+VISION_UNTRACKED_SLOW_LEAD_RELAXED_MAX_DISTANCE_TIME = 5.7
+VISION_UNTRACKED_SLOW_LEAD_MAX_DECEL = 0.85
 VISION_UNTRACKED_SLOW_LEAD_MIN_DECEL = 0.1
+VISION_UNTRACKED_SLOW_LEAD_RELAXED_MODEL_PROB = 0.68
+VISION_UNTRACKED_SLOW_LEAD_RELAXED_MAX_LEAD_SPEED = 8.0
+VISION_UNTRACKED_SLOW_LEAD_RELAXED_MAX_TTC = 10.0
+VISION_UNTRACKED_SLOW_LEAD_RELAXED_MIN_CLOSING_SPEED = 10.0
+VISION_UNTRACKED_SLOW_LEAD_RELAXED_FULL_CLOSING_SPEED = 16.0
 VISION_SLOW_LEAD_MAX_SPEED = 5.0
 VISION_SLOW_LEAD_MIN_CLOSING_SPEED = 1.5
 VISION_SLOW_LEAD_TRIGGER_TTC = 4.5
@@ -99,8 +105,24 @@ UNCERT_SLOPE_TRIG = 0.12  # per second
 UNCERT_MAG_TRIG = 0.50
 
 # Lookup table for turns
-_A_TOTAL_MAX_V = [1.7, 3.2]
-_A_TOTAL_MAX_BP = [20., 40.]
+_A_TOTAL_MAX_V = [3.5, 3.5, 3.2]
+_A_TOTAL_MAX_BP = [0., 20., 40.]
+
+_preap_follow_cache = None
+
+
+def get_preap_follow_limit(v_ego):
+  global _preap_follow_cache
+  if _preap_follow_cache is None:
+    try:
+      from opendbc.car.tesla.preap.constants import ACCEL_PREAP_BP, ACCEL_PREAP_FOLLOW
+      _preap_follow_cache = (ACCEL_PREAP_BP, ACCEL_PREAP_FOLLOW)
+    except ImportError:
+      _preap_follow_cache = (None, None)
+  bp, values = _preap_follow_cache
+  if bp is None:
+    return None
+  return float(np.interp(v_ego, bp, values))
 
 
 def get_longitudinal_personality(sm):
@@ -214,6 +236,13 @@ class LongitudinalPlanner:
     self.model_allow_throttle = True
     self.allow_throttle = True
     self.mode = 'acc'
+    self.is_preap = (
+      CP.brand == "tesla" and CP.carFingerprint == "TESLA_MODEL_S_PREAP" and
+      CP.openpilotLongitudinalControl and not CP.pcmCruise
+    )
+    self.nap_adaptive_accel = False
+    self._preap_params = None
+    self._preap_param_frame = 0
 
     self.generation = None
 
@@ -244,6 +273,15 @@ class LongitudinalPlanner:
     self._uncert_last_t = None
     self.effective_t_follow = None
     self.vision_low_speed_stop_hold_until = 0.0
+
+    if self.is_preap:
+      try:
+        from openpilot.common.params import Params
+        self._preap_params = Params()
+        self.nap_adaptive_accel = self._preap_params.get_bool("NAPAdaptiveAccel")
+      except Exception:
+        self._preap_params = None
+        self.nap_adaptive_accel = False
 
   @property
   def mlsim(self):
@@ -363,8 +401,6 @@ class LongitudinalPlanner:
       return None
 
     lead_prob = float(getattr(lead, "modelProb", 0.0))
-    if lead_prob < VISION_UNTRACKED_SLOW_LEAD_MIN_MODEL_PROB:
-      return None
 
     lead_brake = max(0.0, -float(lead.aLeadK))
     reaction_t = max(self.CP.longitudinalActuatorDelay, self.dt)
@@ -377,21 +413,42 @@ class LongitudinalPlanner:
     if closing_ratio < VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_RATIO:
       return None
 
-    max_distance = float(np.clip(VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE_TIME * v_ego,
+    projected_ttc = float(lead.dRel) / max(projected_closing_speed, 0.1)
+    if projected_ttc > VISION_UNTRACKED_SLOW_LEAD_TRIGGER_TTC:
+      return None
+
+    min_model_prob = VISION_UNTRACKED_SLOW_LEAD_MIN_MODEL_PROB
+    max_distance_time = VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE_TIME
+    if float(lead.vLead) <= VISION_UNTRACKED_SLOW_LEAD_RELAXED_MAX_LEAD_SPEED and \
+        projected_ttc <= VISION_UNTRACKED_SLOW_LEAD_RELAXED_MAX_TTC:
+      closing_relax = float(np.clip((projected_closing_speed - VISION_UNTRACKED_SLOW_LEAD_RELAXED_MIN_CLOSING_SPEED) /
+                                    (VISION_UNTRACKED_SLOW_LEAD_RELAXED_FULL_CLOSING_SPEED -
+                                     VISION_UNTRACKED_SLOW_LEAD_RELAXED_MIN_CLOSING_SPEED), 0.0, 1.0))
+      ttc_relax = float(np.clip((VISION_UNTRACKED_SLOW_LEAD_RELAXED_MAX_TTC - projected_ttc) /
+                                (VISION_UNTRACKED_SLOW_LEAD_RELAXED_MAX_TTC -
+                                 VISION_UNTRACKED_SLOW_LEAD_FULL_TTC), 0.0, 1.0))
+      relax_factor = closing_relax * ttc_relax
+      min_model_prob = float(np.interp(relax_factor, [0.0, 1.0],
+                                       [VISION_UNTRACKED_SLOW_LEAD_MIN_MODEL_PROB,
+                                        VISION_UNTRACKED_SLOW_LEAD_RELAXED_MODEL_PROB]))
+      max_distance_time = float(np.interp(relax_factor, [0.0, 1.0],
+                                          [VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE_TIME,
+                                           VISION_UNTRACKED_SLOW_LEAD_RELAXED_MAX_DISTANCE_TIME]))
+
+    max_distance = float(np.clip(max_distance_time * v_ego,
                                  VISION_UNTRACKED_SLOW_LEAD_MIN_DISTANCE,
                                  VISION_UNTRACKED_SLOW_LEAD_MAX_DISTANCE))
     if float(lead.dRel) > max_distance:
       return None
 
-    projected_ttc = float(lead.dRel) / max(projected_closing_speed, 0.1)
-    if projected_ttc > VISION_UNTRACKED_SLOW_LEAD_TRIGGER_TTC:
+    if lead_prob < min_model_prob:
       return None
 
     time_factor = float(np.clip((VISION_UNTRACKED_SLOW_LEAD_TRIGGER_TTC - projected_ttc) /
                                 (VISION_UNTRACKED_SLOW_LEAD_TRIGGER_TTC - VISION_UNTRACKED_SLOW_LEAD_FULL_TTC),
                                 0.0, 1.0))
-    prob_factor = float(np.clip((lead_prob - VISION_UNTRACKED_SLOW_LEAD_MIN_MODEL_PROB) /
-                                (VISION_UNTRACKED_SLOW_LEAD_FULL_MODEL_PROB - VISION_UNTRACKED_SLOW_LEAD_MIN_MODEL_PROB),
+    prob_factor = float(np.clip((lead_prob - min_model_prob) /
+                                (VISION_UNTRACKED_SLOW_LEAD_FULL_MODEL_PROB - min_model_prob),
                                 0.0, 1.0))
     closing_factor = float(np.clip((closing_ratio - VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_RATIO) /
                                    (VISION_UNTRACKED_SLOW_LEAD_FULL_CLOSING_RATIO - VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_RATIO),
@@ -555,6 +612,11 @@ class LongitudinalPlanner:
     return d_rel < dynamic_distance and (ttc < RAW_LEAD_SAFETY_TTC or lead_braking)
 
   def update(self, sm, starpilot_toggles):
+    if self.is_preap:
+      self._preap_param_frame += 1
+      if self._preap_params is not None and (self._preap_param_frame % 20) == 0:
+        self.nap_adaptive_accel = self._preap_params.get_bool("NAPAdaptiveAccel")
+
     self.generation = getattr(starpilot_toggles, "model_version", None)
     self.mode = 'blended' if sm['selfdriveState'].experimentalMode else 'acc'
     self.mpc.mode = 'acc'
@@ -635,6 +697,18 @@ class LongitudinalPlanner:
     lead_control_active = tracking_lead or raw_close_lead_control
     lead_one_active = bool(self.lead_one.status and lead_control_active)
     effective_t_follow = self.get_dynamic_t_follow(sm['starpilotPlan'].tFollow, self.lead_one if lead_one_active else None, v_ego)
+
+    if self.is_preap and self.nap_adaptive_accel and lead_one_active:
+      follow_limit = get_preap_follow_limit(v_ego)
+      if follow_limit is not None:
+        safe_dist = get_safe_obstacle_distance(v_ego, effective_t_follow)
+        lead_dist_ratio = float(self.lead_one.dRel) / max(safe_dist, 1.0)
+        cap_strength = float(np.clip(1.0 - (lead_dist_ratio - 1.2) / 0.3, 0.0, 1.0))
+        if cap_strength > 0.0:
+          accel_limits_turns[1] = min(
+            accel_limits_turns[1],
+            accel_limits_turns[1] * (1.0 - cap_strength) + follow_limit * cap_strength,
+          )
 
     lead_dist = self.lead_one.dRel if lead_one_active else 50.0
 

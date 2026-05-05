@@ -1,9 +1,12 @@
 from pathlib import Path
 
 from openpilot.system.manager.launch_param_migrations import (
+  ACCELERATION_PROFILE_MIGRATION_MARKER,
   BRANCH_DEFAULTS_MIGRATION_MARKER,
   DEFAULT_STEER_KP,
   LAUNCH_PARAM_MIGRATION_MARKER,
+  MARKER_DIRNAME,
+  STANDARD_ACCELERATION_PROFILE,
   apply_launch_param_migrations,
 )
 
@@ -32,11 +35,22 @@ class FileBackedFakeParams:
     value = self.get(key)
     return float(value) if value is not None else 0.0
 
+  def get_int(self, key):
+    value = self.get(key)
+    return int(float(value)) if value is not None else 0
+
   def put_bool(self, key, value):
     Path(self.get_param_path(key)).write_text("1" if value else "0", encoding="utf-8")
 
+  def put_int(self, key, value):
+    Path(self.get_param_path(key)).write_text(str(int(value)), encoding="utf-8")
+
   def put_float(self, key, value):
     Path(self.get_param_path(key)).write_text(str(float(value)), encoding="utf-8")
+
+
+def marker_path(tmp_path: Path, marker_name: str) -> Path:
+  return tmp_path / MARKER_DIRNAME / "params" / marker_name
 
 
 def test_apply_launch_param_migrations_sets_branch_defaults_once(tmp_path):
@@ -51,7 +65,7 @@ def test_apply_launch_param_migrations_sets_branch_defaults_once(tmp_path):
   assert params.get_bool("LongPitch")
   assert params.get_float("SteerKP") == DEFAULT_STEER_KP
   assert params.get_float("SteerKPStock") == DEFAULT_STEER_KP
-  assert (tmp_path / "params" / LAUNCH_PARAM_MIGRATION_MARKER).is_file()
+  assert marker_path(tmp_path, LAUNCH_PARAM_MIGRATION_MARKER).is_file()
 
 
 def test_apply_launch_param_migrations_initializes_use_prebuilt(tmp_path):
@@ -73,7 +87,7 @@ def test_apply_launch_param_migrations_does_not_overwrite_use_prebuilt(tmp_path)
 
 def test_apply_launch_param_migrations_does_not_reapply_after_marker(tmp_path):
   params = FileBackedFakeParams(tmp_path / "params")
-  marker = tmp_path / "params" / LAUNCH_PARAM_MIGRATION_MARKER
+  marker = marker_path(tmp_path, LAUNCH_PARAM_MIGRATION_MARKER)
 
   params.put_bool("LongPitch", False)
   params.put_float("SteerKP", 0.65)
@@ -91,9 +105,6 @@ def test_apply_launch_param_migrations_applies_branch_defaults_for_existing_inst
   params = FileBackedFakeParams(tmp_path / "params")
 
   params.put_bool("LongPitch", False)
-  params.put_bool("ConditionalExperimental", False)
-  params.put_bool("CELead", False)
-  params.put_bool("CESlowerLead", False)
   params.put_bool("CEStoppedLead", True)
   params.put_bool("ForceStops", False)
   params.put_float("AggressiveFollowHigh", 1.25)
@@ -102,14 +113,11 @@ def test_apply_launch_param_migrations_applies_branch_defaults_for_existing_inst
   params.put_float("RelaxedFollow", 1.75)
   params.put_float("RelaxedFollowHigh", 1.75)
   params.put_float("RelaxedJerkSpeed", 50.0)
-  (tmp_path / "params" / LAUNCH_PARAM_MIGRATION_MARKER).touch()
+  marker_path(tmp_path, LAUNCH_PARAM_MIGRATION_MARKER).touch()
 
   apply_launch_param_migrations(params)
 
   assert not params.get_bool("LongPitch")
-  assert params.get_bool("ConditionalExperimental")
-  assert params.get_bool("CELead")
-  assert params.get_bool("CESlowerLead")
   assert not params.get_bool("CEStoppedLead")
   assert params.get_bool("ForceStops")
   assert params.get_float("AggressiveFollowHigh") == 1.0
@@ -118,12 +126,12 @@ def test_apply_launch_param_migrations_applies_branch_defaults_for_existing_inst
   assert params.get_float("RelaxedFollow") == 1.6
   assert params.get_float("RelaxedFollowHigh") == 1.4
   assert params.get_float("RelaxedJerkSpeed") == 100.0
-  assert (tmp_path / "params" / BRANCH_DEFAULTS_MIGRATION_MARKER).is_file()
+  assert marker_path(tmp_path, BRANCH_DEFAULTS_MIGRATION_MARKER).is_file()
 
 
 def test_apply_launch_param_migrations_does_not_reapply_branch_defaults_after_marker(tmp_path):
   params = FileBackedFakeParams(tmp_path / "params")
-  branch_defaults_marker = tmp_path / "params" / BRANCH_DEFAULTS_MIGRATION_MARKER
+  branch_defaults_marker = marker_path(tmp_path, BRANCH_DEFAULTS_MIGRATION_MARKER)
 
   params.put_bool("ConditionalExperimental", False)
   params.put_bool("CEStoppedLead", True)
@@ -141,3 +149,56 @@ def test_apply_launch_param_migrations_does_not_reapply_branch_defaults_after_ma
   assert params.get_float("AggressiveFollowHigh") == 2.0
   assert params.get_float("StandardJerkAcceleration") == 25.0
   assert params.get_float("RelaxedFollow") == 2.0
+
+
+def test_apply_launch_param_migrations_preserves_custom_branch_defaults_without_marker(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+
+  params.put_bool("CEStoppedLead", True)
+  params.put_bool("ForceStops", True)
+  params.put_float("AggressiveFollowHigh", 2.0)
+  params.put_float("StandardJerkAcceleration", 25.0)
+  params.put_float("RelaxedFollow", 2.0)
+
+  apply_launch_param_migrations(params)
+
+  assert not params.get_bool("CEStoppedLead")
+  assert params.get_bool("ForceStops")
+  assert params.get_float("AggressiveFollowHigh") == 2.0
+  assert params.get_float("StandardJerkAcceleration") == 25.0
+  assert params.get_float("RelaxedFollow") == 2.0
+
+
+def test_apply_launch_param_migrations_updates_acceleration_profile_for_existing_installs(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+
+  params.put_int("AccelerationProfile", 2)
+  marker_path(tmp_path, LAUNCH_PARAM_MIGRATION_MARKER).touch()
+  marker_path(tmp_path, BRANCH_DEFAULTS_MIGRATION_MARKER).touch()
+
+  apply_launch_param_migrations(params)
+
+  assert params.get_int("AccelerationProfile") == STANDARD_ACCELERATION_PROFILE
+  assert marker_path(tmp_path, ACCELERATION_PROFILE_MIGRATION_MARKER).is_file()
+
+
+def test_apply_launch_param_migrations_does_not_reapply_acceleration_profile_after_marker(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+  acceleration_profile_marker = marker_path(tmp_path, ACCELERATION_PROFILE_MIGRATION_MARKER)
+
+  params.put_int("AccelerationProfile", 3)
+  acceleration_profile_marker.touch()
+
+  apply_launch_param_migrations(params)
+
+  assert params.get_int("AccelerationProfile") == 3
+
+
+def test_apply_launch_param_migrations_preserves_custom_acceleration_profile_without_marker(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+
+  params.put_int("AccelerationProfile", 1)
+
+  apply_launch_param_migrations(params)
+
+  assert params.get_int("AccelerationProfile") == 1

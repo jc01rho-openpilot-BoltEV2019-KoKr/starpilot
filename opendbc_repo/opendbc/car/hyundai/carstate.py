@@ -24,6 +24,8 @@ BUTTONS_DICT = {Buttons.RES_ACCEL: ButtonType.accelCruise, Buttons.SET_DECEL: Bu
 
 IONIQ_6_BLINDSPOT_RIGHT_MASK = 0x08
 IONIQ_6_BLINDSPOT_LEFT_MASK = 0x10
+IONIQ_6_IPEDAL_REGEN_STATE = 0x50
+IONIQ_6_IPEDAL_REGEN_STATE_2 = 0x03
 
 
 def calculate_canfd_speed_limit(CP, FPCP, cp, cp_cam, speed_factor):
@@ -41,6 +43,10 @@ def calculate_canfd_speed_limit(CP, FPCP, cp, cp_cam, speed_factor):
 def decode_ioniq_6_blindspot_radar_state(state: int) -> tuple[bool, bool]:
   state_int = int(state)
   return bool(state_int & IONIQ_6_BLINDSPOT_LEFT_MASK), bool(state_int & IONIQ_6_BLINDSPOT_RIGHT_MASK)
+
+
+def decode_ioniq_6_ipedal_state(regen_state: int, regen_state_2: int) -> bool:
+  return int(regen_state) == IONIQ_6_IPEDAL_REGEN_STATE and int(regen_state_2) == IONIQ_6_IPEDAL_REGEN_STATE_2
 
 
 class CarState(CarStateBase):
@@ -61,6 +67,8 @@ class CarState(CarStateBase):
     self.mode_button = 0
     self.custom_button = 0
     self.cancel_button_enable_in_progress = False
+    self.cruise_buttons_msg = {}
+    self.ipedal_active = False
 
     self.gear_msg_canfd = "ACCELERATOR" if CP.flags & HyundaiFlags.EV else \
                           "GEAR_ALT" if CP.flags & HyundaiFlags.CANFD_ALT_GEARS else \
@@ -89,6 +97,7 @@ class CarState(CarStateBase):
 
     self.cruise_info = {}
     self.msg_364 = {}
+    self.stock_lkas_msg = {}
     self.stock_lfa_msg = {}
     self.stock_lfahda_cluster_msg = {}
     self.stock_blinker_stalks_ts = 0
@@ -129,6 +138,19 @@ class CarState(CarStateBase):
       self.cancel_button_enable_in_progress = False
 
     return events
+
+  def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
+    if super().update_button_enable(buttonEvents):
+      return True
+
+    if not self.CP.pcmCruise and hyundai_cancel_button_enables_cruise(self.CP.carFingerprint):
+      for b in buttonEvents:
+        # Some Palisade 2023 routes still surface the pause/resume interaction as a
+        # plain cancel event even though stock ACC engages on the release edge.
+        if b.type == ButtonType.cancel and not b.pressed and not self.out.cruiseState.enabled:
+          return True
+
+    return False
 
   def update(self, can_parsers, starpilot_toggles) -> structs.CarState:
     cp = can_parsers[Bus.pt]
@@ -295,6 +317,7 @@ class CarState(CarStateBase):
 
     self.is_metric = cp.vl["CRUISE_BUTTONS_ALT"]["DISTANCE_UNIT"] != 1
     speed_factor = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
+    self.ipedal_active = False
 
     if self.CP.flags & (HyundaiFlags.EV | HyundaiFlags.HYBRID):
       ret.gasPressed = cp.vl[self.accelerator_msg_canfd]["ACCELERATOR_PEDAL"] > 1e-5
@@ -372,6 +395,10 @@ class CarState(CarStateBase):
     # TODO: find this message on ICE & HYBRID cars + cruise control signals (if exists)
     if self.CP.flags & HyundaiFlags.EV:
       ret.cruiseState.nonAdaptive = cp.vl["MANUAL_SPEED_LIMIT_ASSIST"]["MSLA_ENABLED"] == 1
+      if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
+        msla = cp.vl["MANUAL_SPEED_LIMIT_ASSIST"]
+        # Tolerate older/stale DBCs that do not yet expose the inferred regen state signals.
+        self.ipedal_active = decode_ioniq_6_ipedal_state(msla.get("EV_REGEN_STATE", 0), msla.get("EV_REGEN_STATE_2", 0))
 
     prev_cruise_buttons = self.cruise_buttons[-1]
     prev_main_buttons = self.main_buttons[-1]
@@ -382,13 +409,17 @@ class CarState(CarStateBase):
     self.lda_button = cp.vl[self.cruise_btns_msg_canfd]["LDA_BTN"]
     self.left_paddle = 0
     if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
+      self.cruise_buttons_msg = copy.copy(cp.vl["CRUISE_BUTTONS"])
       self.left_paddle = cp.vl["CRUISE_BUTTONS"]["LEFT_PADDLE"]
     self.buttons_counter = cp.vl[self.cruise_btns_msg_canfd]["COUNTER"]
     ret.accFaulted = cp.vl["TCS"]["ACCEnable"] != 0  # 0 ACC CONTROL ENABLED, 1-3 ACC CONTROL DISABLED
 
     if self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
+      lkas_msg = "LKAS_ALT" if self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT else "LKAS"
       self.lfa_block_msg = copy.copy(cp_cam.vl["CAM_0x362"] if self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT
                                           else cp_cam.vl["CAM_0x2a4"])
+      if cp_cam.ts_nanos[lkas_msg]["CHECKSUM"] > 0:
+        self.stock_lkas_msg = copy.copy(cp_cam.vl[lkas_msg])
     if cp.ts_nanos["LFA"]["CHECKSUM"] > 0:
       self.stock_lfa_msg = copy.copy(cp.vl["LFA"])
     if cp.ts_nanos["LFAHDA_CLUSTER"]["CHECKSUM"] > 0:
@@ -433,6 +464,7 @@ class CarState(CarStateBase):
       ]
     if CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
       msgs.append(("FR_CMR_02_100ms", 10))
+      cam_msgs.append(("LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT else "LKAS", 0))
     else:
       cam_msgs.append(("FR_CMR_02_100ms", 0))  # optional: not all non-LKA CANFD cars have this on CAM bus
     msgs += [
@@ -442,6 +474,7 @@ class CarState(CarStateBase):
     ]
     if CP.flags & HyundaiFlags.EV:
       msgs.append(("DRIVE_MODE_EV", 0))  # optional: not all CAN-FD EV variants publish drive mode
+      msgs.append(("MANUAL_SPEED_LIMIT_ASSIST", 0))  # optional: used for non-adaptive cruise state and Ioniq 6 i-Pedal latch detection
     msgs.append(("STEERING_WHEEL_MEDIA_BUTTONS", 0))  # optional: absent or slower on some CAN-FD variants
     cam_msgs.append(("ADAS_0x380", 0))  # optional: dashboard stop-sign signal, only on ADAS-equipped HKG CANFD
     return {
