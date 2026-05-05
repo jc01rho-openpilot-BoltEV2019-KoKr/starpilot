@@ -100,6 +100,7 @@ class ConditionalExperimentalMode:
     self.prev_experimental_mode = False  # For hysteresis
     self.mode_hold_until = 0.0
     self.mode_false_since = 0.0
+    self._prev_ce_status = None
 
   def update(self, v_ego, sm, starpilot_toggles):
     now = time.monotonic()
@@ -125,7 +126,10 @@ class ConditionalExperimentalMode:
 
       self.experimental_mode = triggered or hold_active or transition_buffer_active
       self.prev_experimental_mode = self.experimental_mode
-      self.params_memory.put_int("CEStatus", self.status_value if self.experimental_mode else CEStatus["OFF"])
+      ce_write_value = self.status_value if self.experimental_mode else CEStatus["OFF"]
+      if ce_write_value != self._prev_ce_status:
+        self.params_memory.put_int("CEStatus", ce_write_value)
+        self._prev_ce_status = ce_write_value
     elif not is_manual_ce_status(self.status_value):
       self.mode_hold_until = 0.0
       self.mode_false_since = 0.0
@@ -139,10 +143,14 @@ class ConditionalExperimentalMode:
       self.experimental_mode = standstill_stop_hold
       self.prev_experimental_mode = self.experimental_mode
       self.status_value = CEStatus["STOP_LIGHT"] if self.experimental_mode else CEStatus["OFF"]
-      self.params_memory.put_int("CEStatus", self.status_value if self.experimental_mode else CEStatus["OFF"])
+      ce_write_value = self.status_value
+      if ce_write_value != self._prev_ce_status:
+        self.params_memory.put_int("CEStatus", ce_write_value)
+        self._prev_ce_status = ce_write_value
     else:
       self.mode_hold_until = 0.0
       self.mode_false_since = 0.0
+      self._prev_ce_status = None
       self.experimental_mode = self.status_value == CEStatus["USER_OVERRIDDEN"]
       self.prev_experimental_mode = self.experimental_mode
       self.stop_light_detected &= not is_manual_ce_status(self.status_value)
@@ -318,9 +326,9 @@ class ConditionalExperimentalMode:
       cap_factor = interp(speed_mph, bp, [low_cap_factor, low_cap_factor, tuned_cap_factor])
 
       # Update filter times with interp
-      self.curvature_filter = FirstOrderFilter(self.curvature_filter.x, filter_time_curves, DT_MDL)
-      self.slow_lead_filter = FirstOrderFilter(self.slow_lead_filter.x, filter_time_leads, DT_MDL)
-      self.stop_light_filter = FirstOrderFilter(self.stop_light_filter.x, filter_time_lights, DT_MDL)
+      self.curvature_filter.update_alpha(filter_time_curves)
+      self.slow_lead_filter.update_alpha(filter_time_leads)
+      self.stop_light_filter.update_alpha(filter_time_lights)
       self.lead_clear_filter.update_alpha(lead_clear_filter_time)
 
       # Disable stoplight detection at very high speeds to prevent false positives

@@ -42,7 +42,8 @@ class StarPilotEvents:
     current_starpilot_alert = sm["selfdriveState"].alertType
     switchback_mode_enabled = self.starpilot_planner.params_memory.get_bool("SwitchbackModeEnabled")
 
-    alerts_empty = all(sm[state].alertText1 == "" and sm[state].alertText2 == "" for state in ["selfdriveState", "starpilotSelfdriveState"])
+    alerts_empty = (sm["selfdriveState"].alertText1 == "" and sm["selfdriveState"].alertText2 == "" and
+                    sm["starpilotSelfdriveState"].alertText1 == "" and sm["starpilotSelfdriveState"].alertText2 == "")
 
     self.events.clear()
 
@@ -89,7 +90,7 @@ class StarPilotEvents:
     else:
       self.tracked_lead_distance = 0
 
-    if "nnffLoaded" not in self.played_events and self.startup_seen and alerts_empty and len(self.events) == 0 and self.starpilot_planner.params.get("NNFFModelName") is not None and starpilot_toggles.nnff:
+    if starpilot_toggles.nnff and "nnffLoaded" not in self.played_events and self.startup_seen and alerts_empty and len(self.events) == 0 and self.starpilot_planner.params.get("NNFFModelName") is not None:
       self.events.add(StarPilotEventName.nnffLoaded)
 
     if self.random_event_playing:
