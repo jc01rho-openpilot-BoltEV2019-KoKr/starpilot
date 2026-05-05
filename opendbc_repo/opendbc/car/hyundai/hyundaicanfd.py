@@ -91,7 +91,8 @@ def _create_angle_adas_cmd_msg(packer, CAN, apply_angle: float, lat_active: bool
   return packer.make_can_msg("ADAS_CMD_35_10ms", CAN.ECAN, values)
 
 
-def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque, apply_angle, lfa_base_values=None):
+def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque, apply_angle,
+                             lfa_base_values=None, lkas_base_values=None):
   control_values = {
     "LKA_MODE": 2,
     "LKA_ICON": 2 if enabled else 1,
@@ -101,8 +102,12 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
     "STEER_MODE": 0,
   }
 
-  lkas_values = copy.copy(control_values)
-  lkas_values["LKA_AVAILABLE"] = 0
+  if lkas_base_values:
+    lkas_values = {k: v for k, v in lkas_base_values.items() if k not in ("CHECKSUM", "COUNTER")}
+    lkas_values.update(control_values)
+  else:
+    lkas_values = copy.copy(control_values)
+    lkas_values["LKA_AVAILABLE"] = 0
 
   if lfa_base_values:
     # Preserve stock UI/status fields and only override the actuation-relevant signals.
@@ -151,12 +156,15 @@ def create_suppress_lfa(packer, CAN, lfa_block_msg, lka_steering_alt):
   return packer.make_can_msg(suppress_msg, CAN.ACAN, values)
 
 
-def create_buttons(packer, CP, CAN, cnt, btn):
-  values = {
+def create_buttons(packer, CP, CAN, cnt, btn=0, base_values=None, left_paddle=False, right_paddle=False):
+  values = {k: v for k, v in base_values.items() if k not in ("_CHECKSUM", "COUNTER")} if base_values else {}
+  values.update({
     "COUNTER": cnt,
     "SET_ME_1": 1,
     "CRUISE_BUTTONS": btn,
-  }
+    "LEFT_PADDLE": int(left_paddle),
+    "RIGHT_PADDLE": int(right_paddle),
+  })
 
   bus = CAN.ECAN if CP.flags & HyundaiFlags.CANFD_LKA_STEERING else CAN.CAM
   return packer.make_can_msg("CRUISE_BUTTONS", bus, values)

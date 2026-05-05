@@ -45,12 +45,16 @@ IONIQ_6_DYNAMIC_LOWER_JERK_BP = [-2.0, -1.5, -1.0, -0.25, -0.1, -0.025, -0.01, -
 IONIQ_6_DYNAMIC_LOWER_JERK_V = [3.3, 1.5, 1.0, 0.8, 0.7, 0.65, 0.55, 0.5]
 IONIQ_6_LAUNCH_HOLD_SPEED_BP = [0.0, 0.6, 1.25, 2.5]
 IONIQ_6_LAUNCH_HOLD_SPEED_V = [0.75, 0.6, 0.4, 0.0]
-IONIQ_6_STOP_HOLD_SPEED_BP = [0.0, 0.25, 0.6, 1.2]
-IONIQ_6_STOP_HOLD_SPEED_V = [-0.12, -0.10, -0.05, 0.0]
+IONIQ_6_STOP_HOLD_SPEED_BP = [0.0, 0.08, 0.25, 0.6, 1.2]
+IONIQ_6_STOP_HOLD_SPEED_V = [-0.09, -0.095, -0.10, -0.05, 0.0]
+IONIQ_6_STOP_HOLD_JERK_BP = [0.0, 0.15, 0.6, 1.2]
+IONIQ_6_STOP_HOLD_JERK_V = [0.35, 0.40, 0.52, 0.65]
 IONIQ_6_STOP_RELEASE_JERK_BP = [0.0, 0.15, 0.5]
 IONIQ_6_STOP_RELEASE_JERK_V = [3.6 * IONIQ_6_RESPONSE_MULTIPLIER,
                                4.2 * IONIQ_6_RESPONSE_MULTIPLIER,
                                4.8 * IONIQ_6_RESPONSE_MULTIPLIER]
+IONIQ_6_IPEDAL_PRESS_SEND_COUNT = 6
+IONIQ_6_IPEDAL_RETRY_WAIT_FRAMES = 30
 
 
 @dataclass
@@ -136,7 +140,7 @@ def update_ioniq_6_longitudinal_tuning(state: Ioniq6LongitudinalTuningState, acc
 
   if state.stopping:
     state.desired_accel = float(np.interp(v_ego, IONIQ_6_STOP_HOLD_SPEED_BP, IONIQ_6_STOP_HOLD_SPEED_V))
-    state.jerk_upper = min(state.jerk_upper, float(np.interp(v_ego, [0.0, 1.2], [0.45, 0.65])) * IONIQ_6_RESPONSE_MULTIPLIER)
+    state.jerk_upper = min(state.jerk_upper, float(np.interp(v_ego, IONIQ_6_STOP_HOLD_JERK_BP, IONIQ_6_STOP_HOLD_JERK_V)) * IONIQ_6_RESPONSE_MULTIPLIER)
   else:
     state.desired_accel = float(np.clip(accel_cmd, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
     if state.launch_active:
@@ -233,7 +237,54 @@ class CarController(CarControllerBase):
     self._ioniq_6_lane_change_ui_side = None
     self._ioniq_6_lane_change_ui_trigger_frames = 0
     self._ioniq_6_long_tuning = Ioniq6LongitudinalTuningState()
+    self._ioniq_6_always_ipedal_pending = False
+    self._ioniq_6_always_ipedal_press_remaining = 0
+    self._ioniq_6_always_ipedal_retry_frame = 0
+    self._ioniq_6_always_ipedal_counter = 0
+    self._ioniq_6_last_gear = structs.CarState.GearShifter.unknown
     self._genesis_g90_long_tuning = GenesisG90LongitudinalTuningState()
+
+  def _reset_ioniq_6_always_ipedal(self) -> None:
+    self._ioniq_6_always_ipedal_pending = False
+    self._ioniq_6_always_ipedal_press_remaining = 0
+    self._ioniq_6_always_ipedal_retry_frame = 0
+
+  def _update_ioniq_6_always_ipedal(self, CC, CS, starpilot_toggles):
+    can_sends = []
+
+    if self.CP.carFingerprint != CAR.HYUNDAI_IONIQ_6 or not getattr(starpilot_toggles, "always_ipedal", False):
+      self._reset_ioniq_6_always_ipedal()
+      self._ioniq_6_last_gear = CS.out.gearShifter
+      return can_sends
+
+    drive = CS.out.gearShifter == structs.CarState.GearShifter.drive
+    drive_edge = drive and self._ioniq_6_last_gear != structs.CarState.GearShifter.drive
+
+    if drive_edge:
+      self._ioniq_6_always_ipedal_pending = not CS.ipedal_active
+      self._ioniq_6_always_ipedal_press_remaining = 0
+      self._ioniq_6_always_ipedal_retry_frame = self.frame
+    elif not drive or CS.ipedal_active:
+      self._reset_ioniq_6_always_ipedal()
+    elif CC.enabled:
+      self._ioniq_6_always_ipedal_pending = False
+      self._ioniq_6_always_ipedal_press_remaining = 0
+
+    if drive and self._ioniq_6_always_ipedal_pending and not CS.ipedal_active and not CC.enabled:
+      if self._ioniq_6_always_ipedal_press_remaining == 0 and self.frame >= self._ioniq_6_always_ipedal_retry_frame:
+        self._ioniq_6_always_ipedal_press_remaining = IONIQ_6_IPEDAL_PRESS_SEND_COUNT
+        self._ioniq_6_always_ipedal_counter = (int(CS.buttons_counter) + 1) % 0x10
+
+      if self._ioniq_6_always_ipedal_press_remaining > 0 and self.frame % 2 == 0:
+        can_sends.append(hyundaicanfd.create_buttons(self.packer, self.CP, self.CAN, self._ioniq_6_always_ipedal_counter,
+                                                     base_values=CS.cruise_buttons_msg, left_paddle=True))
+        self._ioniq_6_always_ipedal_counter = (self._ioniq_6_always_ipedal_counter + 1) % 0x10
+        self._ioniq_6_always_ipedal_press_remaining -= 1
+        if self._ioniq_6_always_ipedal_press_remaining == 0:
+          self._ioniq_6_always_ipedal_retry_frame = self.frame + IONIQ_6_IPEDAL_RETRY_WAIT_FRAMES
+
+    self._ioniq_6_last_gear = CS.out.gearShifter
+    return can_sends
 
   def update(self, CC, CS, now_nanos, starpilot_toggles):
     actuators = CC.actuators
@@ -346,7 +397,7 @@ class CarController(CarControllerBase):
     # *** CAN/CAN FD specific ***
     if self.CP.flags & HyundaiFlags.CANFD:
       can_sends.extend(self.create_canfd_msgs(now_nanos, apply_steer_req, apply_torque, apply_angle, set_speed_in_units, accel,
-                                              stopping, hud_control, CS, CC))
+                                              stopping, hud_control, CS, CC, starpilot_toggles))
     else:
       can_sends.extend(self.create_can_msgs(apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel,
                                             stopping, hud_control, actuators, CS, CC))
@@ -426,7 +477,7 @@ class CarController(CarControllerBase):
 
     return can_sends
 
-  def create_canfd_msgs(self, now_nanos, apply_steer_req, apply_torque, apply_angle, set_speed_in_units, accel, stopping, hud_control, CS, CC):
+  def create_canfd_msgs(self, now_nanos, apply_steer_req, apply_torque, apply_angle, set_speed_in_units, accel, stopping, hud_control, CS, CC, starpilot_toggles):
     can_sends = []
 
     lka_steering = self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING
@@ -436,9 +487,11 @@ class CarController(CarControllerBase):
     use_ioniq_6_smoothed_accel = use_ioniq_6_dynamic_long_tuning and CC.actuators.accel >= self._ioniq_6_long_tuning.actual_accel
 
     # steering control
+    preserve_stock_lkas = self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and not self.long_active_ecu
     can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled,
                                                            apply_steer_req, apply_torque, apply_angle,
-                                                           CS.stock_lfa_msg))
+                                                           CS.stock_lfa_msg,
+                                                           CS.stock_lkas_msg if preserve_stock_lkas else None))
 
     # prevent LFA from activating on LKA steering cars by sending "no lane lines detected" to ADAS ECU
     if self.frame % 5 == 0 and lka_steering:
@@ -474,6 +527,8 @@ class CarController(CarControllerBase):
                                                                                    lane_change_ui_side, trigger))
         if self._ioniq_6_lane_change_ui_trigger_frames > 0:
           self._ioniq_6_lane_change_ui_trigger_frames -= 1
+
+    can_sends.extend(self._update_ioniq_6_always_ipedal(CC, CS, starpilot_toggles))
 
     if self.long_active_ecu:
       if lka_steering:
