@@ -17,6 +17,8 @@ StarPilotAnnotatedCameraWidget::StarPilotAnnotatedCameraWidget(QWidget *parent) 
   nextMapsIcon = loadPixmap("../../starpilot/assets/other_images/next_maps_icon.png", {btn_size / 2, btn_size / 2}).scaled(iconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
   pausedIcon = loadPixmap("../../starpilot/assets/other_images/paused_icon.png", {widget_size, widget_size});
   speedIcon = loadPixmap("../../starpilot/assets/other_images/speed_icon.png", {widget_size, widget_size});
+  forceStopDashImg = loadPixmap("../../starpilot/assets/other_images/force_stop_dash.png", {btn_size, btn_size});
+  forceStopImg = loadPixmap("../../starpilot/assets/other_images/force_stop.png", {btn_size, btn_size});
   stopSignImg = loadPixmap("../../starpilot/assets/other_images/stop_sign.png", {btn_size, btn_size});
   turnIcon = loadPixmap("../../starpilot/assets/other_images/turn_icon.png", {widget_size, widget_size});
   visionIcon = loadPixmap("../../starpilot/assets/other_images/speed_icon.png", {btn_size / 2, btn_size / 2}).scaled(iconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -200,6 +202,9 @@ void StarPilotAnnotatedCameraWidget::updateState(const UIState &s, const StarPil
   desiredFollowDistance = starpilotPlan.getDesiredFollowDistance();
   experimentalMode = selfdriveState.getExperimentalMode();
   forceCoast = starpilotCarState.getForceCoast();
+  forcingStop = starpilotPlan.getForcingStop();
+  forcingStopLength = starpilotPlan.getForcingStopLength();
+  stopSignConfirmed = starpilotPlan.getStopSignConfirmed();
   laneWidthLeft = starpilotPlan.getLaneWidthLeft();
   laneWidthRight = starpilotPlan.getLaneWidthRight();
   lateralPaused = starpilotCarState.getPauseLateral();
@@ -313,7 +318,9 @@ void StarPilotAnnotatedCameraWidget::paintStarPilotWidgets(QPainter &p, UIState 
     compassPosition.setY(0);
   }
 
-  if (!speedLimitChanged && !(signalStyle == "static" && blinkerLeft) && cachedCscStatus) {
+  if (forcingStop) {
+    paintForceStop(p);
+  } else if (!speedLimitChanged && !(signalStyle == "static" && blinkerLeft) && cachedCscStatus) {
     if (cscTraining) {
       paintCurveSpeedControlTraining(p);
     } else if (isCruiseSet && cscControllingSpeed) {
@@ -1127,6 +1134,31 @@ void StarPilotAnnotatedCameraWidget::paintStandstillTimer(QPainter &p) {
   int seconds = standstillDuration % 60;
   QString secondStr = seconds == 1 ? tr("1 second") : tr("%1 seconds").arg(seconds);
   drawText(secondStr, 290, InterFont(66), whiteColor());
+
+  p.restore();
+}
+
+void StarPilotAnnotatedCameraWidget::paintForceStop(QPainter &p) {
+  p.save();
+
+  QRect forceStopRect(QPoint(setSpeedRect.right() + UI_BORDER_SIZE, setSpeedRect.top()), QSize(defaultSize.width() * 1.25, defaultSize.width() * 1.25));
+
+  p.setOpacity(1.0);
+
+  QRect cscRect(forceStopRect.topLeft() + QPoint(0, forceStopRect.height() + 10), QSize(forceStopRect.width(), 100));
+  p.setBrush(redColor(166));
+  p.setFont(InterFont(45, QFont::Bold));
+  p.setPen(QPen(QColor(255, 150, 150), 10));
+  p.drawRoundedRect(cscRect, 24, 24);
+  p.setPen(QPen(whiteColor(), 6));
+  p.drawText(cscRect.adjusted(20, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft,
+             QString::number(std::nearbyint(forcingStopLength * distanceConversion)) + leadDistanceUnit);
+
+  QPixmap &activeIcon = stopSignConfirmed ? forceStopDashImg : forceStopImg;
+  QSize imgSize = activeIcon.size();
+  QPoint imgPoint(forceStopRect.x() + (forceStopRect.width()  - imgSize.width())  / 2,
+                  forceStopRect.y() + (forceStopRect.height() - imgSize.height()) / 2);
+  p.drawPixmap(imgPoint, activeIcon);
 
   p.restore();
 }

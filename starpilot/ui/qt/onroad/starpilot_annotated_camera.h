@@ -72,6 +72,7 @@ private:
   void paintSpeedLimit(QPainter &p);
   void paintSpeedLimitSources(QPainter &p);
   void paintStandstillTimer(QPainter &p);
+  void paintForceStop(QPainter &p);
   void paintStoppingPoint(QPainter &p);
   void paintTurnSignals(QPainter &p);
   void paintWeather(QPainter &p);
@@ -83,6 +84,8 @@ private:
   bool blinkerRight;
   bool brakeLights;
   bool cscControllingSpeed;
+  bool forcingStop;
+  bool stopSignConfirmed;
   bool cscTraining;
   bool experimentalMode;
   bool forceCoast;
@@ -131,6 +134,7 @@ private:
 
   float accelerationEgo;
   float cscSpeed;
+  float forcingStopLength;
   float dashboardSpeedLimit;
   float distanceConversion;
   float laneWidthLeft;
@@ -170,6 +174,8 @@ private:
   QPixmap nextMapsIcon;
   QPixmap pausedIcon;
   QPixmap speedIcon;
+  QPixmap forceStopDashImg;
+  QPixmap forceStopImg;
   QPixmap stopSignImg;
   QPixmap turnIcon;
   QPixmap visionIcon;
