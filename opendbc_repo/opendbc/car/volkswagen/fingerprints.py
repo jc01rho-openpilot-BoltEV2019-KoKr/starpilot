@@ -392,7 +392,7 @@ FW_VERSIONS = {
     ],
   },
   CAR.VOLKSWAGEN_ID3_MK1: {
-    (Ecu.inverter, 0x17fc007c, None): [
+    (Ecu.unknown, 0x17fc007c, None): [
       b'\xf1\x871EA907121AH\xf1\x896050\xf1\x82010\x00',
     ],
     (Ecu.engine, 0x17fc0076, None): [
@@ -420,7 +420,7 @@ FW_VERSIONS = {
     ],
   },
   CAR.VOLKSWAGEN_ID3_MK2: {
-    (Ecu.inverter, 0x17fc007c, None): [],
+    (Ecu.unknown, 0x17fc007c, None): [],
     (Ecu.engine, 0x17fc0076, None): [],
     (Ecu.transmission, 0x7e1, None): [],
     (Ecu.srs, 0x715, None): [],
@@ -436,7 +436,7 @@ FW_VERSIONS = {
     ],
   },
   CAR.VOLKSWAGEN_ID4_MK1: {
-    (Ecu.inverter, 0x17fc007c, None): [
+    (Ecu.unknown, 0x17fc007c, None): [
       b'\xf1\x871EA907121BE\xf1\x896046\xf1\x82020\x00',
     ],
     (Ecu.engine, 0x17fc0076, None): [
@@ -467,7 +467,7 @@ FW_VERSIONS = {
     ],
   },
   CAR.VOLKSWAGEN_ID4_MK2: {
-    (Ecu.inverter, 0x17fc007c, None): [
+    (Ecu.unknown, 0x17fc007c, None): [
       b'\xf1\x870ET907121D \xf1\x897246\xf1\x82010',
     ],
     (Ecu.engine, 0x17fc0076, None): [
@@ -1095,7 +1095,7 @@ FW_VERSIONS = {
     ],
   },
   CAR.AUDI_Q4_MK1: {
-    (Ecu.inverter, 0x17fc007c, None): [],
+    (Ecu.unknown, 0x17fc007c, None): [],
     (Ecu.engine, 0x17fc0076, None): [],
     (Ecu.transmission, 0x7e1, None): [],
     (Ecu.srs, 0x715, None): [],
@@ -1107,7 +1107,7 @@ FW_VERSIONS = {
     (Ecu.fwdRadar, 0x757, None): [],
   },
   CAR.AUDI_Q4_MK2: {
-    (Ecu.inverter, 0x17fc007c, None): [
+    (Ecu.unknown, 0x17fc007c, None): [
       b'\xf1\x870ET907121G \xf1\x897260\xf1\x82040',
     ],
     (Ecu.engine, 0x17fc0076, None): [
@@ -1258,7 +1258,7 @@ FW_VERSIONS = {
     ],
   },
   CAR.CUPRA_BORN_MK1: {
-    (Ecu.inverter, 0x17fc007c, None): [
+    (Ecu.unknown, 0x17fc007c, None): [
       b'\xf1\x871EA907121AJ\xf1\x893510\xf1\x8201S\x00',
     ],
     (Ecu.engine, 0x17fc0076, None): [ # also on 0x18da01f1 with norm bit flips
@@ -1288,7 +1288,7 @@ FW_VERSIONS = {
     ],
   },
   CAR.SKODA_ENYAQ_MK1: {
-    (Ecu.inverter, 0x17fc007c, None): [],
+    (Ecu.unknown, 0x17fc007c, None): [],
     (Ecu.engine, 0x17fc0076, None): [],
     (Ecu.transmission, 0x7e1, None): [],
     (Ecu.srs, 0x715, None): [
@@ -1306,7 +1306,7 @@ FW_VERSIONS = {
     ],
   },
   CAR.SKODA_ENYAQ_MK2: {
-    (Ecu.inverter, 0x17fc007c, None): [
+    (Ecu.unknown, 0x17fc007c, None): [
       b'\xf1\x870ET907121G \xf1\x897260\xf1\x82040',
     ],
     (Ecu.engine, 0x17fc0076, None): [

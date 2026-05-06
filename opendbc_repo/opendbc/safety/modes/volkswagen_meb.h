@@ -228,10 +228,10 @@ static void volkswagen_meb_rx_hook(const CANPacket_t *msg) {
 
     // Update in-motion state by sampling wheel speeds
     if (msg->addr == MSG_ESC_51) {
-      uint32_t fr = msg->data[10] | msg->data[11] << 8;
-      uint32_t rr = msg->data[14] | msg->data[15] << 8;
-      uint32_t rl = msg->data[12] | msg->data[13] << 8;
-      uint32_t fl = msg->data[8] | msg->data[9] << 8;
+      uint32_t fr = msg->data[2] | msg->data[3] << 8;
+      uint32_t rr = msg->data[6] | msg->data[7] << 8;
+      uint32_t rl = msg->data[4] | msg->data[5] << 8;
+      uint32_t fl = msg->data[0] | msg->data[1] << 8;
 
       vehicle_moving = (fr > 0U) || (rr > 0U) || (rl > 0U) || (fl > 0U);
 
@@ -261,7 +261,7 @@ static void volkswagen_meb_rx_hook(const CANPacket_t *msg) {
       // When using stock ACC, enter controls on rising edge of stock ACC engage, exit on disengage
       // Always exit controls on main switch off
       // Signal: TSK_06.TSK_Status
-      int acc_status = ((msg->data[11] >> 0) & 0x07U);
+      int acc_status = ((msg->data[3] >> 0) & 0x07U);
       bool cruise_engaged = (acc_status == 3) || (acc_status == 4) || (acc_status == 5);
       acc_main_on = cruise_engaged || (acc_status == 2);
 
