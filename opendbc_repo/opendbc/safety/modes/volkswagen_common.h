@@ -1,18 +1,29 @@
 #pragma once
 
 extern const uint16_t FLAG_VOLKSWAGEN_LONG_CONTROL;
+extern const uint16_t FLAG_VOLKSWAGEN_ALT_CRC_VARIANT_1;
+extern const uint16_t FLAG_VOLKSWAGEN_DISABLE_RADAR;
+
 const uint16_t FLAG_VOLKSWAGEN_LONG_CONTROL = 1;
+const uint16_t FLAG_VOLKSWAGEN_ALT_CRC_VARIANT_1 = 2;
+const uint16_t FLAG_VOLKSWAGEN_DISABLE_RADAR = 8;
 
 static uint8_t volkswagen_crc8_lut_8h2f[256]; // Static lookup table for CRC8 poly 0x2F, aka 8H2F/AUTOSAR
 
 extern bool volkswagen_longitudinal;
 bool volkswagen_longitudinal = false;
 
+extern bool volkswagen_disable_radar;
+bool volkswagen_disable_radar = false;
+
 extern bool volkswagen_set_button_prev;
 bool volkswagen_set_button_prev = false;
 
 extern bool volkswagen_resume_button_prev;
 bool volkswagen_resume_button_prev = false;
+
+extern bool volkswagen_alt_crc_variant_1;
+bool volkswagen_alt_crc_variant_1 = false;
 
 extern bool volkswagen_brake_pedal_switch;
 extern bool volkswagen_brake_pressure_detected;
@@ -36,8 +47,7 @@ bool volkswagen_brake_pressure_detected = false;
 #define MSG_ESP_03      0x103U   // RX from ABS, for wheel speeds
 #define MSG_LS_01       0x10BU   // TX by OP, ACC control buttons for cancel/resume
 #define MSG_MOTOR_03    0x105U   // RX from ECU, for driver throttle input and brake switch status
-#define MSG_TSK_02      0x10CU   // RX from ECU, for ACC status from drivetrain coordinator
-#define MSG_ACC_05      0x10DU   // RX from radar, for ACC status
+#define MSG_TSK_04      0x10EU   // RX from ECU, for ACC status from drivetrain coordinator
 
 static void volkswagen_common_init(void) {
   volkswagen_set_button_prev = false;
