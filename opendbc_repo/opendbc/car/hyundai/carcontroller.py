@@ -56,6 +56,7 @@ IONIQ_6_STOP_RELEASE_JERK_V = [3.6 * IONIQ_6_RESPONSE_MULTIPLIER,
 IONIQ_6_IPEDAL_PRESS_SEND_COUNT = 6
 IONIQ_6_IPEDAL_LATCH_PRESS_SEND_COUNT = 10
 IONIQ_6_IPEDAL_PADDLE_BURST_COUNT = 3
+IONIQ_6_IPEDAL_NEXT_COUNTER_BURST_COUNT = 1
 IONIQ_6_MAX_REGEN_STATE = 0x3C
 IONIQ_6_MAX_REGEN_STATE_2 = 0x01
 IONIQ_6_IPEDAL_REGEN_STATE = 0x50
@@ -327,6 +328,11 @@ class CarController(CarControllerBase):
         paddle_msg = hyundaicanfd.create_ioniq_6_paddle_buttons(self.packer, self.CP, self.CAN,
                                                                 buttons_counter, left_paddle=True)
         can_sends.extend([paddle_msg] * IONIQ_6_IPEDAL_PADDLE_BURST_COUNT)
+        if max_regen_state or ipedal_latch_pending:
+          next_counter = hyundaicanfd.get_ioniq_6_cruise_buttons_next_counter(buttons_counter)
+          next_paddle_msg = hyundaicanfd.create_ioniq_6_paddle_buttons(self.packer, self.CP, self.CAN,
+                                                                       next_counter, left_paddle=True)
+          can_sends.extend([next_paddle_msg] * IONIQ_6_IPEDAL_NEXT_COUNTER_BURST_COUNT)
         self._ioniq_6_always_ipedal_press_remaining -= 1
         if self._ioniq_6_always_ipedal_press_remaining == 0:
           retry_wait_frames = IONIQ_6_IPEDAL_PROGRESS_RETRY_WAIT_FRAMES if regen_state_changed else IONIQ_6_IPEDAL_RETRY_WAIT_FRAMES

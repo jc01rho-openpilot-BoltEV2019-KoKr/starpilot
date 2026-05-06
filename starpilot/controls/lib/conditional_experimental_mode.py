@@ -45,6 +45,7 @@ class ConditionalExperimentalMode:
   STOP_LIGHT_OFF_MARGIN = 4.0
   STOP_LIGHT_LEAD_BLOCK_MARGIN = 15.0
   STOP_LIGHT_HANDOFF_MAX_LEAD_SPEED = 2.0
+  STOP_LIGHT_DETECTED_HOLD_TIME = 1.75
   STOP_APPROACH_LATCH_TIME = 1.0
   STOP_APPROACH_MAX_LEAD_SPEED = 4.5
   STOP_APPROACH_MIN_MODEL_PROB = 0.9
@@ -91,6 +92,7 @@ class ConditionalExperimentalMode:
     self.experimental_mode = False
     self.stop_light_detected = False
     self.stop_light_model_detected = False
+    self.stop_light_detected_hold_until = 0.0
     self.stop_approach_hold_until = 0.0
     self.standstill_stop_reason = None
     self.prev_experimental_mode = False  # For hysteresis
@@ -313,6 +315,7 @@ class ConditionalExperimentalMode:
         self.stop_light_filter.x = 0
         self.stop_light_detected = False
         self.stop_light_model_detected = False
+        self.stop_light_detected_hold_until = 0.0
         self.lead_clear_filter.x = 0
         return
 
@@ -348,7 +351,8 @@ class ConditionalExperimentalMode:
         lead_prob >= self.STOP_APPROACH_MIN_MODEL_PROB and
         lead_speed < self.STOP_APPROACH_MAX_LEAD_SPEED
       )
-      if (self.stop_light_detected or self.stop_light_model_detected) and vision_stop_approach:
+      stop_approach_hold_active = now < self.stop_approach_hold_until
+      if (self.stop_light_detected or self.stop_light_model_detected or stop_approach_hold_active) and vision_stop_approach:
         self.stop_approach_hold_until = now + self.STOP_APPROACH_LATCH_TIME
       stop_approach_latched = now < self.stop_approach_hold_until and vision_stop_approach
       handoff_to_stopped_lead = (
@@ -365,12 +369,21 @@ class ConditionalExperimentalMode:
         self.lead_clear_filter.update(not lead_relevant)
         lead_cleared = self.lead_clear_filter.x >= THRESHOLD
       self.stop_light_filter.update(model_stopping and lead_cleared)
+      detector_active = bool(
+        (self.stop_light_filter.x >= THRESHOLD**2 and lead_cleared) or handoff_to_stopped_lead or stop_approach_latched
+      )
+      if detector_active:
+        self.stop_light_detected_hold_until = now + self.STOP_LIGHT_DETECTED_HOLD_TIME
+
+      hold_context_ok = bool(not lead_relevant or vision_stop_approach)
       self.stop_light_detected = bool(
-        (self.stop_light_filter.x >= THRESHOLD**2 and lead_cleared) or handoff_to_stopped_lead
+        detector_active or
+        (hold_context_ok and now < self.stop_light_detected_hold_until)
       )
     else:
       self.stop_light_filter.x = 0
       self.stop_light_detected = False
       self.stop_light_model_detected = False
+      self.stop_light_detected_hold_until = 0.0
       self.lead_clear_filter.x = 0
       self.stop_approach_hold_until = 0.0
