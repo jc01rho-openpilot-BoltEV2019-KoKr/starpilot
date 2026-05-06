@@ -1,8 +1,10 @@
 from collections import defaultdict, namedtuple
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag, StrEnum
+from typing import List, Tuple
 
 from opendbc.car import Bus, CanBusBase, CarSpecs, DbcDict, PlatformConfig, Platforms, structs, uds
+from opendbc.car.lateral import CurvatureSteeringLimits
 from opendbc.can import CANDefine
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.docs_definitions import CarFootnote, CarHarness, CarDocs, CarParts, Column
@@ -14,6 +16,8 @@ NetworkLocation = structs.CarParams.NetworkLocation
 TransmissionType = structs.CarParams.TransmissionType
 GearShifter = structs.CarState.GearShifter
 Button = namedtuple('Button', ['event_type', 'can_addr', 'can_msg', 'values'])
+
+RADAR_DISABLE_STATE: dict[str, bool] = {"error": False}
 
 
 class CanBus(CanBusBase):
@@ -30,7 +34,7 @@ class CanBus(CanBusBase):
     return self.offset
 
   @property
-  def aux(self) -> int:
+  def alt(self) -> int:
     # NetworkLocation.fwdCamera: radar-camera object fusion CAN
     # NetworkLocation.gateway: powertrain CAN
     return self.offset + 1
@@ -60,8 +64,6 @@ class CarControllerParams:
   STEER_DRIVER_MULTIPLIER = 3              # weight driver torque heavily
   STEER_DRIVER_FACTOR = 1                  # from dbc
 
-  STEER_TIME_MAX = 360                     # Max time that EPS allows uninterrupted HCA steering control
-  STEER_TIME_ALERT = STEER_TIME_MAX - 10   # If mitigation fails, time to soft disengage before EPS timer expires
   STEER_TIME_STUCK_TORQUE = 1.9            # EPS limits same torque to 6 seconds, reset timer 3x within that period
 
   DEFAULT_MIN_STEER_SPEED = 0.4            # m/s, newer EPS racks fault below this speed, don't show a low speed alert
@@ -99,6 +101,64 @@ class CarControllerParams:
         "laneAssistUnavailNoSensorView": 3,  # "Lane Assist not available. No sensor view."
         "laneAssistTakeOver": 4,  # "Lane Assist: Please Take Over Steering"
         "laneAssistDeactivTrailer": 5,  # "Lane Assist: no function with trailer"
+      }
+
+    elif CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO):
+      self.AEB_CONTROL_STEP        = 100   # AWV_03 message frequency 1Hz
+      self.AEB_HUD_STEP            = 20    # MEB_AWV_01 message frequency 5Hz
+      self.LDW_STEP                = 10    # LDW_02 message frequency 10Hz
+      self.ACC_HUD_STEP            = 6     # MEB_ACC_01 message frequency 16Hz
+      self.STEER_DRIVER_ALLOWANCE  = 60    # Driver torque 0.6 Nm, begin steering reduction from MAX
+      self.STEER_DRIVER_SLIGHT_PRESS = 15  # Driver torque 0.15 Nm for slight steering override detection
+      self.STEER_DRIVER_MAX        = 300   # Driver torque 3.0 Nm, stop steering reduction at MIN
+      self.STEERING_POWER_MAX      = 50    # HCA_03 maximum steering power, percentage
+      self.STEERING_POWER_MIN      = 4     # HCA_03 minimum steering power, percentage
+      self.STEERING_POWER_STEP     = 2     # HCA_03 steering power counter steps
+
+      self.CURVATURE_PID: structs.CarParams.LateralPIDTuning = structs.CarParams.LateralPIDTuning(
+        kpBP = [10., 40.],
+        kiBP = [10., 40.],
+        kf   = 1.,
+        kpV  = [0., 1.45],
+        kiV  = [0., 0.12],
+      )
+
+      self.CURVATURE_LIMITS: CurvatureSteeringLimits = CurvatureSteeringLimits(
+        0.195,  # Max curvature for steering command, m^-1
+      )
+
+      if CP.flags & VolkswagenFlags.ALT_GEAR:
+        self.shifter_values = can_define.dv["Gateway_73"]["GE_Fahrstufe"]
+      else:
+        self.shifter_values = can_define.dv["Getriebe_11"]["GE_Fahrstufe"]
+
+      self.hca_status_values = can_define.dv["QFK_01"]["LatCon_HCA_Status"]
+
+      BASE_BUTTONS = [
+        Button(structs.CarState.ButtonEvent.Type.setCruise, "GRA_ACC_01", "GRA_Tip_Setzen", [1]),
+        Button(structs.CarState.ButtonEvent.Type.resumeCruise, "GRA_ACC_01", "GRA_Tip_Wiederaufnahme", [1]),
+        Button(structs.CarState.ButtonEvent.Type.accelCruise, "GRA_ACC_01", "GRA_Tip_Hoch", [1]),
+        Button(structs.CarState.ButtonEvent.Type.decelCruise, "GRA_ACC_01", "GRA_Tip_Runter", [1]),
+        Button(structs.CarState.ButtonEvent.Type.gapAdjustCruise, "GRA_ACC_01", "GRA_Verstellung_Zeitluecke", [3]),
+      ]
+
+      self.BUTTONS = BASE_BUTTONS + [
+        Button(structs.CarState.ButtonEvent.Type.cancel, "GRA_ACC_01", "GRA_Hauptschalter", [1]), # main button cancels ACC operation when ACC active
+      ]
+
+      self.BUTTONS_ALT = BASE_BUTTONS + [
+        Button(structs.CarState.ButtonEvent.Type.cancel, "GRA_ACC_01", "GRA_Abbrechen", [1]), # there is a physical cancel button
+      ]
+
+      self.LDW_MESSAGES = {
+        "none": 0,                        # Nothing to display
+        "laneAssistTakeOverUrgent": 4,    # "Lane Assist: Please Take Over Steering" (red)
+        "laneAssistTakeOver": 8,          # "Lane Assist: Please Take Over Steering" (white)
+      }
+      self.LDW_SOUNDS = {
+        "None": 0,                        # No sound
+        "Chime": 1,                       # Play a chime
+        "Beep": 2,                        # Play a loud beep
       }
 
     else:
@@ -139,7 +199,7 @@ class CarControllerParams:
           Button(structs.CarState.ButtonEvent.Type.accelCruise, "GRA_ACC_01", "GRA_Tip_Hoch", [1]),
           Button(structs.CarState.ButtonEvent.Type.decelCruise, "GRA_ACC_01", "GRA_Tip_Runter", [1]),
           Button(structs.CarState.ButtonEvent.Type.cancel, "GRA_ACC_01", "GRA_Abbrechen", [1]),
-          Button(structs.CarState.ButtonEvent.Type.gapAdjustCruise, "GRA_ACC_01", "GRA_Verstellung_Zeitluecke", [1, 3]),
+          Button(structs.CarState.ButtonEvent.Type.gapAdjustCruise, "GRA_ACC_01", "GRA_Verstellung_Zeitluecke", [1]),
         ]
 
       self.LDW_MESSAGES = {
@@ -162,6 +222,7 @@ class WMI(StrEnum):
   VOLKSWAGEN_MEXICO_CAR = "3VW"
   VOLKSWAGEN_ARGENTINA = "8AW"
   VOLKSWAGEN_BRASIL = "9BW"
+  VOLKSWAGEN_CHINA_FAW = "LFV"
   SAIC_VOLKSWAGEN = "LSV"
   SKODA = "TMB"
   SEAT = "VSS"
@@ -179,15 +240,26 @@ class WMI(StrEnum):
 
 class VolkswagenSafetyFlags(IntFlag):
   LONG_CONTROL = 1
+  ALT_CRC_VARIANT_1 = 2
+  DISABLE_RADAR = 8
 
 
 class VolkswagenFlags(IntFlag):
   # Detected flags
   STOCK_HCA_PRESENT = 1
   KOMBI_PRESENT = 4
+  STOCK_KLR_PRESENT = 64
+  STOCK_PSD_PRESENT = 32
+  STOCK_PSD_06_PRESENT = 1024
+  STOCK_DIAGNOSE_01_PRESENT = 2048
+  ALT_GEAR = 512
+  DISABLE_RADAR = 4096
 
   # Static flags
   PQ = 2
+  MEB = 16
+  MEB_GEN2 = 128
+  MQB_EVO = 256
   MLB = 8
 
 
@@ -208,6 +280,31 @@ class VolkswagenMQBPlatformConfig(PlatformConfig):
   # on camera-integrated cars, as we lose too many ECUs to reliably identify the vehicle
   chassis_codes: set[str] = field(default_factory=set)
   wmis: set[WMI] = field(default_factory=set)
+  model_years: set[str] = field(default_factory=set)
+
+
+@dataclass
+class VolkswagenMEBPlatformConfig(PlatformConfig):
+  dbc_dict: DbcDict = field(default_factory=lambda: {Bus.pt: 'vw_meb', Bus.radar: 'vw_meb'})
+  chassis_codes: set[str] = field(default_factory=set)
+  wmis: set[WMI] = field(default_factory=set)
+  model_years: set[str] = field(default_factory=set)
+
+  def init(self):
+    self.flags |= VolkswagenFlags.MEB
+    if self.flags & VolkswagenFlags.MEB_GEN2:
+      self.dbc_dict = {Bus.pt: 'vw_meb_2024', Bus.radar: 'vw_meb_2024'}
+
+
+@dataclass
+class VolkswagenMQBevoPlatformConfig(PlatformConfig):
+  dbc_dict: DbcDict = field(default_factory=lambda: {Bus.pt: 'vw_mqbevo', Bus.radar: 'vw_mqbevo'})
+  chassis_codes: set[str] = field(default_factory=set)
+  wmis: set[WMI] = field(default_factory=set)
+  model_years: set[str] = field(default_factory=set)
+
+  def init(self):
+    self.flags |= VolkswagenFlags.MQB_EVO
 
 
 @dataclass
@@ -226,6 +323,10 @@ class VolkswagenCarSpecs(CarSpecs):
 
 
 class Footnote(Enum):
+  SETUP = CarFootnote(
+    "The J533 harness plugs in at the CAN gateway under the dashboard, just above the steering column. " +
+    "More information can be found at <a href=\"https://docs.howtocomma.com/docs/j533-harness-install\" target=\"_blank\">this guide</a>.",
+    Column.MAKE, setup_note=True)
   KAMIQ = CarFootnote(
     "Not including the China market Kamiq, which is based on the (currently) unsupported PQ34 platform.",
     Column.MODEL)
@@ -250,6 +351,7 @@ class Footnote(Enum):
 class VWCarDocs(CarDocs):
   package: str = "Adaptive Cruise Control (ACC) & Lane Assist"
   car_parts: CarParts = field(default_factory=CarParts.common([CarHarness.vw_j533]))
+  footnotes: list[Enum] = field(default_factory=lambda: [Footnote.SETUP])
 
   def init_make(self, CP: structs.CarParams):
     self.footnotes.append(Footnote.VW_EXP_LONG)
@@ -296,7 +398,8 @@ class CAR(Platforms):
       VWCarDocs("Volkswagen Caddy 2019"),
       VWCarDocs("Volkswagen Caddy Maxi 2019"),
     ],
-    VolkswagenCarSpecs(mass=1613, wheelbase=2.6, minSteerSpeed=21 * CV.KPH_TO_MS),
+    #VolkswagenCarSpecs(mass=1613, wheelbase=2.6),
+    VolkswagenCarSpecs(mass=1550, wheelbase=2.682, steerRatio=15.5, centerToFrontRatio=0.505, tireStiffnessFactor=1.1),
     chassis_codes={"2K"},
     wmis={WMI.VOLKSWAGEN_COMMERCIAL_BUS_VAN},
   )
@@ -327,6 +430,45 @@ class CAR(Platforms):
     chassis_codes={"5G", "AU", "BA", "BE"},
     wmis={WMI.VOLKSWAGEN_MEXICO_CAR, WMI.VOLKSWAGEN_EUROPE_CAR},
   )
+  VOLKSWAGEN_GOLF_MK8 = VolkswagenMQBevoPlatformConfig(
+    [VWCarDocs("Volkswagen Golf 2020-25")],
+    VolkswagenCarSpecs(mass=1397, wheelbase=2.62),
+    chassis_codes={"CD"},
+    wmis={WMI.VOLKSWAGEN_EUROPE_CAR},
+  )
+  VOLKSWAGEN_ID3_MK1 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Volkswagen ID.3 2020-23")],
+    VolkswagenCarSpecs(mass=1935, wheelbase=2.77),
+    chassis_codes={"E1"},
+    wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR},
+    model_years={"L","M","N","P"},
+  )
+  VOLKSWAGEN_ID3_MK2 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Volkswagen ID.3 2024-25")],
+    VolkswagenCarSpecs(mass=1935, wheelbase=2.77),
+    chassis_codes={"E1"},
+    wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR},
+    model_years={"R","S"},
+    flags=VolkswagenFlags.MEB_GEN2,
+  )
+  VOLKSWAGEN_ID4_MK1 = VolkswagenMEBPlatformConfig(
+    [
+      VWCarDocs("Volkswagen ID.4 2021-23"),
+      VWCarDocs("Volkswagen ID.5 2022-23"),
+    ],
+    VolkswagenCarSpecs(mass=2224, wheelbase=2.77),
+    chassis_codes={"E2"},
+    wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR, WMI.VOLKSWAGEN_EUROPE_SUV},
+    #model_years={"M","N","P"},
+  )
+  VOLKSWAGEN_ID4_MK2 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Volkswagen ID.4 2024-25")],
+    VolkswagenCarSpecs(mass=2224, wheelbase=2.77),
+    chassis_codes={"E8"},
+    wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR, WMI.VOLKSWAGEN_EUROPE_SUV},
+    #model_years={"R","S"},
+    flags=VolkswagenFlags.MEB_GEN2,
+  )
   VOLKSWAGEN_JETTA_MK6 = VolkswagenPQPlatformConfig(
     [VWCarDocs("Volkswagen Jetta 2015-18")],
     VolkswagenCarSpecs(mass=1518, wheelbase=2.65, minSteerSpeed=50 * CV.KPH_TO_MS, minEnableSpeed=20 * CV.KPH_TO_MS),
@@ -335,7 +477,7 @@ class CAR(Platforms):
   )
   VOLKSWAGEN_JETTA_MK7 = VolkswagenMQBPlatformConfig(
     [
-      VWCarDocs("Volkswagen Jetta 2018-23"),
+      VWCarDocs("Volkswagen Jetta 2019-23"),
       VWCarDocs("Volkswagen Jetta GLI 2021-23"),
     ],
     VolkswagenCarSpecs(mass=1328, wheelbase=2.71),
@@ -427,18 +569,39 @@ class CAR(Platforms):
     ],
     VolkswagenCarSpecs(mass=1335, wheelbase=2.61),
     chassis_codes={"8V", "FF"},
-    wmis={WMI.AUDI_GERMANY_CAR, WMI.AUDI_SPORT},
+    wmis={WMI.AUDI_GERMANY_CAR, WMI.AUDI_SPORT, WMI.VOLKSWAGEN_CHINA_FAW},
   )
   AUDI_Q2_MK1 = VolkswagenMQBPlatformConfig(
     [VWCarDocs("Audi Q2 2018")],
     VolkswagenCarSpecs(mass=1205, wheelbase=2.61),
     chassis_codes={"GA"},
-    wmis={WMI.AUDI_GERMANY_CAR},
+    wmis={WMI.AUDI_GERMANY_CAR, WMI.VOLKSWAGEN_CHINA_FAW},
   )
   AUDI_Q3_MK2 = VolkswagenMQBPlatformConfig(
     [VWCarDocs("Audi Q3 2019-24")],
     VolkswagenCarSpecs(mass=1623, wheelbase=2.68),
     chassis_codes={"8U", "F3", "FS"},
+    wmis={WMI.AUDI_EUROPE_MPV, WMI.AUDI_GERMANY_CAR, WMI.VOLKSWAGEN_CHINA_FAW},
+  )
+  AUDI_Q4_MK1 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Audi Q4 2021-23")],
+    VolkswagenCarSpecs(mass=1965, wheelbase=2.764),
+    chassis_codes={"FZ"},
+    wmis={WMI.AUDI_EUROPE_MPV},
+    model_years={"M","N","P"},
+  )
+  AUDI_Q4_MK2 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Audi Q4 2024-25")],
+    VolkswagenCarSpecs(mass=1965, wheelbase=2.764),
+    chassis_codes={"FZ"},
+    wmis={WMI.AUDI_EUROPE_MPV},
+    model_years={"R","S"},
+    flags=VolkswagenFlags.MEB_GEN2,
+  )
+  AUDI_Q5_MK1 = VolkswagenMLBPlatformConfig(
+    [VWCarDocs("Audi Q5 2013-17")],
+    VolkswagenCarSpecs(mass=1895, wheelbase=2.81),
+    chassis_codes={"8R"},
     wmis={WMI.AUDI_EUROPE_MPV, WMI.AUDI_GERMANY_CAR},
   )
   PORSCHE_MACAN_MK1 = VolkswagenMLBPlatformConfig(
@@ -456,6 +619,36 @@ class CAR(Platforms):
     VolkswagenCarSpecs(mass=1300, wheelbase=2.64),
     chassis_codes={"5F"},
     wmis={WMI.SEAT},
+  )
+  SEAT_LEON_MK4 = VolkswagenMQBevoPlatformConfig(
+    [
+      VWCarDocs("SEAT Leon 2020-25"),
+    ],
+    VolkswagenCarSpecs(mass=1300, wheelbase=2.685),
+    chassis_codes={"KL"},
+    wmis={WMI.SEAT},
+  )
+  CUPRA_BORN_MK1 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("CUPRA Born 2022-23"),],
+    VolkswagenCarSpecs(mass=1950, wheelbase=2.766, steerRatio=15.9),
+    chassis_codes={"K1"},
+    model_years={"N","P"},
+    wmis={WMI.SEAT},
+  )
+  SKODA_ENYAQ_MK1 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Škoda Enyaq 2021-23"),],
+    VolkswagenCarSpecs(mass=1965, wheelbase=2.77),
+    chassis_codes={"NY"},
+    model_years={"M","N","P"},
+    wmis={WMI.SKODA},
+  )
+  SKODA_ENYAQ_MK2 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Škoda Enyaq 2024-25"),],
+    VolkswagenCarSpecs(mass=1965, wheelbase=2.77),
+    chassis_codes={"NY"},
+    model_years={"R", "S"},
+    wmis={WMI.SKODA},
+    flags=VolkswagenFlags.MEB_GEN2,
   )
   SKODA_FABIA_MK4 = VolkswagenMQBPlatformConfig(
     [VWCarDocs("Škoda Fabia 2022-23", footnotes=[Footnote.VW_MQB_A0])],
@@ -515,6 +708,7 @@ def match_fw_to_car_fuzzy(live_fw_versions, vin, offline_fw_versions) -> set[str
   # https://www.clubvw.org.au/vwreference/vwvin
   vin_obj = Vin(vin)
   chassis_code = vin_obj.vds[3:5]
+  model_year = vin_obj.vis[0]
 
   for platform in CAR:
     valid_ecus = set()
@@ -535,6 +729,8 @@ def match_fw_to_car_fuzzy(live_fw_versions, vin, offline_fw_versions) -> set[str
       continue
 
     if vin_obj.wmi in platform.config.wmis and chassis_code in platform.config.chassis_codes:
+      if platform.config.model_years and model_year not in platform.config.model_years:
+        continue
       candidates.add(platform)
 
   return {str(c) for c in candidates}
@@ -560,16 +756,18 @@ VOLKSWAGEN_VERSION_REQUEST_MULTI = bytes([uds.SERVICE_TYPE.READ_DATA_BY_IDENTIFI
 VOLKSWAGEN_VERSION_RESPONSE = bytes([uds.SERVICE_TYPE.READ_DATA_BY_IDENTIFIER + 0x40])
 
 VOLKSWAGEN_RX_OFFSET = 0x6a
+VOLKSWAGEN_RX_OFFSET_CANFD = 0x20000
 
 FW_QUERY_CONFIG = FwQueryConfig(
   requests=[request for bus, obd_multiplexing in [(1, True), (1, False), (0, False)] for request in [
     Request(
       [VOLKSWAGEN_VERSION_REQUEST_MULTI],
       [VOLKSWAGEN_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.srs, Ecu.eps, Ecu.fwdRadar, Ecu.fwdCamera],
+      whitelist_ecus=[Ecu.srs, Ecu.eps, Ecu.fwdRadar, Ecu.fwdCamera, Ecu.parkingAdas, Ecu.cornerRadar, Ecu.adas],
       rx_offset=VOLKSWAGEN_RX_OFFSET,
       bus=bus,
       obd_multiplexing=obd_multiplexing,
+      filter_mask=[(0x7FF, 0x700)],
     ),
     Request(
       [VOLKSWAGEN_VERSION_REQUEST_MULTI],
@@ -577,10 +775,23 @@ FW_QUERY_CONFIG = FwQueryConfig(
       whitelist_ecus=[Ecu.engine, Ecu.transmission],
       bus=bus,
       obd_multiplexing=obd_multiplexing,
+      filter_mask=[(0x7FF, 0x700)],
+    ),
+    Request(
+      [VOLKSWAGEN_VERSION_REQUEST_MULTI],
+      [VOLKSWAGEN_VERSION_RESPONSE],
+      whitelist_ecus=[Ecu.engine, Ecu.inverter],
+      rx_offset=VOLKSWAGEN_RX_OFFSET_CANFD,
+      bus=bus,
+      obd_multiplexing=obd_multiplexing,
+      filter_mask=[(0x1FFFFF00, 0x17FC0000)],
     ),
   ]],
   non_essential_ecus={Ecu.eps: list(CAR)},
-  extra_ecus=[(Ecu.fwdCamera, 0x74f, None)],
+  extra_ecus=[(Ecu.fwdCamera, 0x74f, None),
+              (Ecu.parkingAdas, 0x70a, None),
+              (Ecu.cornerRadar, 0x74e, None),
+              (Ecu.adas, 0x769, None)],
   match_fw_to_car_fuzzy=match_fw_to_car_fuzzy,
 )
 
