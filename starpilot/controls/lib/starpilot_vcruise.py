@@ -65,12 +65,16 @@ class StarPilotVCruise:
     long_control_active = sm["carControl"].longActive
 
     # ----- Activation paths -----
-    # CEM/model path: model predicted stop within ACTIVATION_M
+    # CEM/model path: model predicted stop within ACTIVATION_M.
+    # Exclude when tracking a lead — the handoff_to_stopped_lead path in CEM can set
+    # stop_light_detected even with a lead present, which would incorrectly activate
+    # Force Stop and stop the car far behind the lead instead of letting ACC handle it.
     cem_path = (self.starpilot_planner.starpilot_cem.stop_light_detected
                 and controls_enabled and starpilot_toggles.force_stops
                 and self.starpilot_planner.model_length < ACTIVATION_M
                 and self.override_force_stop_timer <= 0
-                and not self.starpilot_planner.driving_in_curve)
+                and not self.starpilot_planner.driving_in_curve
+                and not self.starpilot_planner.tracking_lead)
 
     # Dashboard path: ADAS camera confirms a stop sign on our road. Field is 0 on
     # platforms that don't publish ADAS_0x380, so dash_path is naturally inert there.
