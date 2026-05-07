@@ -45,6 +45,16 @@ def test_disable_far_lead_throttle_rejects_fast_closing():
   assert not should_disable
 
 
+def test_disable_far_lead_throttle_rejects_route_like_highway_stab_case():
+  should_disable = should_disable_far_lead_throttle(34.69, 68.5, 63.0, 2.31, False)
+  assert not should_disable
+
+
+def test_disable_far_lead_throttle_rejects_large_gap_near_pace_matched_case():
+  should_disable = should_disable_far_lead_throttle(32.43, 72.4, 56.0, 1.30, False)
+  assert not should_disable
+
+
 def test_should_track_lead_keeps_radar_leads_on_model_horizon():
   assert should_track_lead(True, 95.0, 100.0, 6.0, 30.0, v_lead=25.0, radar=True)
 

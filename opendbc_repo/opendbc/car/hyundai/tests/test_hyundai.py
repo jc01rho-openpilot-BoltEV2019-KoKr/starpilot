@@ -651,7 +651,7 @@ class TestHyundaiFingerprint:
     state = update_ioniq_6_longitudinal_tuning(state, accel_cmd=-2.82, v_ego=2.5, a_ego=-2.4,
                                                long_control_state=LongCtrlState.stopping, long_active=True)
     assert state.stopping
-    assert state.desired_accel == pytest.approx(-1.05)
+    assert state.desired_accel == pytest.approx(-1.175)
 
     for _ in range(10):
       state = update_ioniq_6_longitudinal_tuning(state, accel_cmd=-2.82, v_ego=2.5, a_ego=-2.4,

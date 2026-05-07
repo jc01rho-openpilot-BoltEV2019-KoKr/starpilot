@@ -61,12 +61,12 @@ def should_disable_far_lead_throttle(v_ego: float, lead_distance: float, desired
     return False
 
   # Don't coast if we're already materially above the requested headway.
-  if actual_hw > max(desired_hw + 0.45, 1.85):
+  if actual_hw > max(desired_hw + 0.15, 1.75):
     return False
 
   coast_window_open = lead_distance > desired_gap + max(4.0, 0.15 * v_ego)
-  coast_window_far = lead_distance < desired_gap + max(15.0, 0.75 * v_ego)
-  gentle_closing = closing_speed < max(1.5, 0.08 * v_ego)
+  coast_window_far = lead_distance < desired_gap + max(12.0, 0.60 * v_ego)
+  gentle_closing = 0.35 < closing_speed < max(1.35, 0.05 * v_ego)
   ttc = lead_distance / max(closing_speed, 1e-3) if closing_speed > 0.1 else 1e6
 
-  return coast_window_open and coast_window_far and gentle_closing and ttc > 6.0 and lead_distance > desired_gap + 6.0
+  return coast_window_open and coast_window_far and gentle_closing and ttc > 7.5 and lead_distance > desired_gap + 7.0
