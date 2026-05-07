@@ -85,7 +85,7 @@ STATUS_REMOVE_HEIGHT = 40
 STATUS_METRIC_GAP = 18
 STATUS_SELECTION_CHIP_HEIGHT = 30
 MAPS_TILE_GREEN = rl.Color(16, 185, 129, 255)
-MAPS_PANEL_STYLE = replace(
+PANEL_STYLE = replace(
   DEFAULT_PANEL_STYLE,
   accent=MAPS_TILE_GREEN,
   current_fill=rl.Color(16, 185, 129, 16),
@@ -180,7 +180,7 @@ class MapStatusCard(Widget):
         self._controller._on_remove()
 
   def _render(self, rect: rl.Rectangle):
-    draw_soft_card(rect, MAPS_PANEL_STYLE.surface_fill, MAPS_PANEL_STYLE.surface_border)
+    draw_soft_card(rect, PANEL_STYLE.surface_fill, PANEL_STYLE.surface_border)
 
     inset = STATUS_CARD_INSET
     content_x = rect.x + inset
@@ -233,7 +233,7 @@ class MapStatusCard(Widget):
           (tr("Last Updated"), self._controller._last_updated_text()),
         ],
         gap=STATUS_METRIC_GAP,
-        style=MAPS_PANEL_STYLE,
+        style=PANEL_STYLE,
         label_top_offset=0,
         value_top_offset=14,
         divider_top_offset=2,
@@ -247,7 +247,7 @@ class MapStatusCard(Widget):
           (tr("Last Updated"), self._controller._last_updated_text()),
         ],
         gap=STATUS_METRIC_GAP,
-        style=MAPS_PANEL_STYLE,
+        style=PANEL_STYLE,
         label_top_offset=0,
         value_top_offset=14,
         divider_top_offset=2,
@@ -361,7 +361,7 @@ class MapBrowserCard(Widget):
         hovered=hovered,
         pressed=pressed,
         title_size=28,
-        style=MAPS_PANEL_STYLE,
+        style=PANEL_STYLE,
       )
 
   def _row_height(self, count: int, row_height: float) -> float:
@@ -402,7 +402,7 @@ class MapBrowserCard(Widget):
         title_size=24,
         subtitle_size=17,
         show_underline=True,
-        style=MAPS_PANEL_STYLE,
+        style=PANEL_STYLE,
       )
 
   def _render_empty_state(self, rect: rl.Rectangle, title: str, body: str):
@@ -416,7 +416,7 @@ class MapBrowserCard(Widget):
       title_top_padding=24,
       body_height=48,
       border=rl.Color(255, 255, 255, 10),
-      style=MAPS_PANEL_STYLE,
+      style=PANEL_STYLE,
     )
 
   def _render_region_rows(self, rect: rl.Rectangle, regions: list[dict]):
@@ -451,9 +451,9 @@ class MapBrowserCard(Widget):
         action_pill_width=132 if selected else 108,
         title_size=34,
         subtitle_size=22,
-        row_separator=MAPS_PANEL_STYLE.divider_color,
-        current_bg=MAPS_PANEL_STYLE.current_fill,
-        current_border=MAPS_PANEL_STYLE.current_border,
+        row_separator=PANEL_STYLE.divider_color,
+        current_bg=PANEL_STYLE.current_fill,
+        current_border=PANEL_STYLE.current_border,
         action_fill=rl.Color(94, 168, 130, 18) if selected else rl.Color(255, 255, 255, 8),
         action_border=rl.Color(94, 168, 130, 38) if selected else rl.Color(255, 255, 255, 24),
         action_text_color=AetherListColors.HEADER,
@@ -463,7 +463,7 @@ class MapBrowserCard(Widget):
     return self._controller._browse_regions_for_active_group()
 
   def _render_section_header(self, rect: rl.Rectangle, title: str, *, count_text: str | None = None):
-    draw_section_header(rect, title, trailing_text=count_text or "", title_size=28, trailing_size=22, style=MAPS_PANEL_STYLE)
+    draw_section_header(rect, title, trailing_text=count_text or "", title_size=28, trailing_size=22, style=PANEL_STYLE)
 
   def _measure_height(self, width: float) -> float:
     if self._controller._showing_source_picker():
@@ -481,7 +481,7 @@ class MapBrowserCard(Widget):
     self.set_rect(rect)
     if not self._touch_valid():
       self._pressed_target = None
-    draw_soft_card(rect, MAPS_PANEL_STYLE.surface_fill, MAPS_PANEL_STYLE.surface_border)
+    draw_soft_card(rect, PANEL_STYLE.surface_fill, PANEL_STYLE.surface_border)
     self._source_rects.clear()
     self._context_tab_rects.clear()
     self._region_row_rects.clear()
@@ -1130,7 +1130,7 @@ class StarPilotMapsLayout(StarPilotPanel):
 
   def _render(self, rect: rl.Rectangle):
     self.set_rect(rect)
-    frame, scroll_rect, content_width = init_list_panel(rect, MAPS_PANEL_STYLE, MAPS_METRICS)
+    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE, MAPS_METRICS)
 
     hdr = frame.header
     draw_settings_panel_header(hdr, tr("Map Data"), tr("Use offline maps for speed-limit control and keep only the regions you need."),
