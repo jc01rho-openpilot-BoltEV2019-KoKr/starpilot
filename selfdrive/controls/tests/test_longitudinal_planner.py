@@ -228,6 +228,21 @@ def test_vision_lead_approach_cap_brakes_harder_when_inside_tight_gap():
   assert approach_cap < -0.5
 
 
+def test_vision_lead_approach_cap_brakes_harder_for_braking_tracked_lead_inside_tight_gap():
+  v_ego = 19.50
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=19.7, v_lead=16.25, a_lead=-0.83, radar=False, model_prob=0.98)
+
+  hard_cap = planner.get_close_lead_brake_cap(lead, v_ego, -3.0)
+  approach_cap = planner.get_vision_lead_approach_cap(lead, v_ego, -3.0, 1.45)
+
+  assert hard_cap == pytest.approx(-1.01, abs=0.03)
+  assert approach_cap is not None
+  assert approach_cap < -1.35
+  assert approach_cap < hard_cap
+
+
 def test_vision_lead_approach_cap_ignores_opening_lead_with_large_gap():
   v_ego = 19.37
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)

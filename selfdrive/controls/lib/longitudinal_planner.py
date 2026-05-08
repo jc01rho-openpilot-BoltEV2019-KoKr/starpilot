@@ -44,6 +44,11 @@ VISION_LEAD_APPROACH_FULL_MODEL_PROB = 0.98
 VISION_LEAD_APPROACH_DEFICIT_MAX_DECEL = 1.30
 VISION_LEAD_APPROACH_DEFICIT_BUFFER_MIN = 3.0
 VISION_LEAD_APPROACH_DEFICIT_BUFFER_GAIN = 0.20
+VISION_LEAD_APPROACH_BRAKING_DEFICIT_MIN = 0.75
+VISION_LEAD_APPROACH_BRAKING_MIN_LEAD_BRAKE = 0.45
+VISION_LEAD_APPROACH_BRAKING_FULL_LEAD_BRAKE = 1.20
+VISION_LEAD_APPROACH_BRAKING_FLOOR_MIN_DECEL = 1.30
+VISION_LEAD_APPROACH_BRAKING_FLOOR_MAX_DECEL = 1.75
 VISION_UNTRACKED_SLOW_LEAD_MIN_MODEL_PROB = 0.9
 VISION_UNTRACKED_SLOW_LEAD_FULL_MODEL_PROB = 0.97
 VISION_UNTRACKED_SLOW_LEAD_MIN_CLOSING_SPEED = 3.0
@@ -396,6 +401,18 @@ class LongitudinalPlanner:
     deficit_decel = VISION_LEAD_APPROACH_DEFICIT_MAX_DECEL * deficit_factor * prob_factor
     deficit_decel *= 0.5 + 0.5 * closing_factor
     approach_decel = max(approach_decel, deficit_decel)
+
+    # If a tracked vision lead is already far inside the tight-follow window and
+    # it is actively braking, don't stay stuck at the softer comfort cap.
+    if deficit_factor >= VISION_LEAD_APPROACH_BRAKING_DEFICIT_MIN and lead_brake >= VISION_LEAD_APPROACH_BRAKING_MIN_LEAD_BRAKE:
+      braking_floor = float(np.interp(
+        lead_brake,
+        [VISION_LEAD_APPROACH_BRAKING_MIN_LEAD_BRAKE, VISION_LEAD_APPROACH_BRAKING_FULL_LEAD_BRAKE],
+        [VISION_LEAD_APPROACH_BRAKING_FLOOR_MIN_DECEL, VISION_LEAD_APPROACH_BRAKING_FLOOR_MAX_DECEL],
+      ))
+      braking_floor *= 0.85 + 0.15 * max(closing_factor, prob_factor)
+      approach_decel = max(approach_decel, braking_floor)
+
     if approach_decel < VISION_LEAD_APPROACH_MIN_DECEL:
       return None
 
