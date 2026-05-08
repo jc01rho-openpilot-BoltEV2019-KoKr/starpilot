@@ -9,6 +9,7 @@ from opendbc.car.structs import CarControl, CarParams
 from opendbc.car.fw_versions import build_fw_dict, match_fw_to_car
 from opendbc.car.hyundai.carcontroller import CarController, Ioniq6LongitudinalTuningState, GenesisG90LongitudinalTuningState, \
                                               IONIQ_6_IPEDAL_PADDLE_BURST_COUNT, IONIQ_6_IPEDAL_NEXT_COUNTER_BURST_COUNT, \
+                                              calculate_angle_torque_reduction_gain, sp_smooth_angle, \
                                               update_ioniq_6_longitudinal_tuning, \
                                               update_genesis_g90_longitudinal_tuning
 from opendbc.car.hyundai.carstate import CarState, decode_ioniq_6_blindspot_radar_state, decode_ioniq_6_ipedal_intermediate_state, \
@@ -1073,6 +1074,32 @@ class TestHyundaiFingerprint:
     assert sportage_params.ANGLE_LIMITS.MAX_LATERAL_ACCEL > comparison_params.ANGLE_LIMITS.MAX_LATERAL_ACCEL
     assert sportage_params.ANGLE_LIMITS.MAX_ANGLE_RATE > comparison_params.ANGLE_LIMITS.MAX_ANGLE_RATE
     assert comparison_params.ANGLE_LIMITS.MAX_LATERAL_JERK == ioniq6_params.ANGLE_LIMITS.MAX_LATERAL_JERK
+
+  def test_angle_smoothing_is_speed_dependent(self):
+    target_angle = 12.0
+    last_angle = 0.0
+
+    low_speed_smoothed = sp_smooth_angle(0.0, target_angle, last_angle)
+    high_speed_smoothed = sp_smooth_angle(25.0, target_angle, last_angle)
+
+    assert last_angle < low_speed_smoothed < target_angle
+    assert high_speed_smoothed == pytest.approx(target_angle)
+    assert low_speed_smoothed < high_speed_smoothed
+
+  def test_angle_torque_reduction_gain_gives_up_on_driver_override(self):
+    sportage = CarParams.new_message()
+    sportage.carFingerprint = CAR.KIA_SPORTAGE_HEV_2026
+    sportage.flags = int(HyundaiFlags.CANFD | HyundaiFlags.CANFD_ANGLE_STEERING)
+    params = CarControllerParams(sportage)
+
+    no_override_cs = SimpleNamespace(out=SimpleNamespace(steeringTorque=0.0, steeringPressed=False))
+    override_cs = SimpleNamespace(out=SimpleNamespace(steeringTorque=float(params.STEER_THRESHOLD * 2), steeringPressed=True))
+
+    no_override_gain = calculate_angle_torque_reduction_gain(params, no_override_cs, params.ANGLE_ACTIVE_TORQUE_REDUCTION_GAIN, 1.0)
+    override_gain = calculate_angle_torque_reduction_gain(params, override_cs, 1.0, 1.0)
+
+    assert params.ANGLE_ACTIVE_TORQUE_REDUCTION_GAIN <= no_override_gain <= params.ANGLE_MAX_TORQUE_REDUCTION_GAIN
+    assert params.ANGLE_MIN_TORQUE_REDUCTION_GAIN <= override_gain < no_override_gain
 
   def test_ioniq_5_canfd_aux_messages_are_optional(self):
     toggles = get_test_toggles()
