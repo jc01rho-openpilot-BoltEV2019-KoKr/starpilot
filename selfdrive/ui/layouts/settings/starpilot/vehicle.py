@@ -35,6 +35,7 @@ from openpilot.selfdrive.ui.mici.layouts.settings.fingerprint_catalog import (
   get_fingerprint_catalog,
   shorten_model_label,
 )
+from openpilot.starpilot.common.starpilot_variables import migrate_cancel_button_controls
 
 
 ACTION_OPTIONS = [
@@ -466,9 +467,10 @@ class VehicleSettingsManagerView(Widget):
       rows.append({"target_id": "toggle:FrogsGoMoosTweak", "type": "toggle",
                     "title": tr("FrogsGoMoo Tweak"), "get_state": lambda: self._controller._params.get_bool("FrogsGoMoosTweak")})
 
-    rows.append({"target_id": "toggle:RemapCancelToDistance", "type": "toggle",
-                  "title": tr("Remap Cancel Button"), "subtitle": tr("Remap the Cancel button to act as the Distance button."),
-                  "get_state": lambda: self._controller._params.get_bool("RemapCancelToDistance")})
+    if cs.isBolt and cs.hasPedal:
+      rows.append({"target_id": "toggle:RemapCancelToDistance", "type": "toggle",
+                    "title": tr("Remap Cancel Button"), "subtitle": tr("Treat the Cancel button as an extra mappable steering-wheel button."),
+                    "get_state": lambda: self._controller._params.get_bool("RemapCancelToDistance")})
     if cs.isHKGCanFd:
       rows.append({"target_id": "toggle:AlwaysIPedal", "type": "toggle",
                     "title": tr("Always I-Pedal"),
@@ -487,6 +489,10 @@ class VehicleSettingsManagerView(Widget):
     for key in ("DistanceButtonControl", "LongDistanceButtonControl", "VeryLongDistanceButtonControl"):
       rows.append({"target_id": f"select:{key}", "type": "select", "title": tr(self._controller._action_title(key)),
                     "get_value": lambda k=key: self._controller._get_action_name(k), "pill_width": 140})
+    if cs.isBolt and cs.hasPedal and self._controller._params.get_bool("RemapCancelToDistance"):
+      for key in ("CancelButtonControl", "LongCancelButtonControl", "VeryLongCancelButtonControl"):
+        rows.append({"target_id": f"select:{key}", "type": "select", "title": tr(self._controller._action_title(key)),
+                      "get_value": lambda k=key: self._controller._get_action_name(k), "pill_width": 140})
     if not cs.isSubaru and not (cs.lkasAllowedForAOL and self._controller._params.get_bool("AlwaysOnLateral") and self._controller._params.get_bool("AlwaysOnLateralLKAS")):
       rows.append({"target_id": "select:LKASButtonControl", "type": "select", "title": tr("LKAS Button"),
                     "get_value": lambda: self._controller._get_action_name("LKASButtonControl"), "pill_width": 140})
@@ -507,8 +513,11 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
 
   def _action_title(self, key: str) -> str:
     titles = {
+      "CancelButtonControl": "Cancel Button",
       "DistanceButtonControl": "Distance Button",
+      "LongCancelButtonControl": "Cancel (Long Press)",
       "LongDistanceButtonControl": "Distance (Long Press)",
+      "VeryLongCancelButtonControl": "Cancel (Very Long)",
       "VeryLongDistanceButtonControl": "Distance (Very Long)",
       "LKASButtonControl": "LKAS Button",
       "ModeButtonControl": "Mode Button",
@@ -521,16 +530,10 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
     return titles.get(key, key)
 
   def _get_action_name(self, key: str) -> str:
-    if key == "LKASButtonControl" and self._params.get_bool("RemapCancelToDistance"):
-      if self._params.get_int("LKASButtonControl") != 0:
-        self._params.put_int("LKASButtonControl", 0)
-      return tr(ACTION_NAME_BY_ID[0])
     idx = self._params.get_int(key)
     return tr(ACTION_NAME_BY_ID.get(idx, ACTION_NAMES[0]))
 
   def _get_available_actions(self, key: str | None = None) -> list[str]:
-    if key == "LKASButtonControl" and self._params.get_bool("RemapCancelToDistance"):
-      return [tr(ACTION_NAME_BY_ID[0])]
     cs = starpilot_state.car_state
     return [tr(o["name"]) for o in ACTION_OPTIONS if cs.hasOpenpilotLongitudinal or not o.get("requires_longitudinal", False)]
 
@@ -550,8 +553,8 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
     if param_key == "RemapCancelToDistance":
       new_state = not self._params.get_bool("RemapCancelToDistance")
       self._params.put_bool("RemapCancelToDistance", new_state)
-      if new_state and self._params.get_int("LKASButtonControl") != 0:
-        self._params.put_int("LKASButtonControl", 0)
+      if new_state:
+        migrate_cancel_button_controls(self._params)
       return
     current = self._params.get_bool(param_key) if self._params.get(param_key, encoding="utf-8") is not None else False
     self._params.put_bool(param_key, not current)
@@ -616,10 +619,6 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
     gui_app.push_widget(dialog)
 
   def _show_action_picker(self, key: str):
-    if key == "LKASButtonControl" and self._params.get_bool("RemapCancelToDistance"):
-      if self._params.get_int("LKASButtonControl") != 0:
-        self._params.put_int("LKASButtonControl", 0)
-      return
     actions = self._get_available_actions(key)
     current = self._get_action_name(key)
     if current not in actions:

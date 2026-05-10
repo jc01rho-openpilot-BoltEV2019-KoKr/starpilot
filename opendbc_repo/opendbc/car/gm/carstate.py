@@ -39,6 +39,10 @@ BOLT_GEN1_CANCEL_PERSONALITY_CARS = {
   CAR.CHEVROLET_BOLT_CC_2017,
   CAR.CHEVROLET_BOLT_CC_2018_2021,
 }
+BOLT_CANCEL_BUTTON_CARS = BOLT_GEN1_CANCEL_PERSONALITY_CARS | {
+  CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+  CAR.CHEVROLET_BOLT_CC_2022_2023,
+}
 
 
 class CarState(CarStateBase):
@@ -317,7 +321,7 @@ class CarState(CarStateBase):
         getattr(starpilot_toggles, "remap_cancel_to_distance", False) and
         self.CP.openpilotLongitudinalControl and
         bool(self.CP.flags & GMFlags.PEDAL_LONG.value) and
-        self.CP.carFingerprint in (BOLT_GEN1_CANCEL_PERSONALITY_CARS | {CAR.CHEVROLET_MALIBU_HYBRID_CC})
+        self.CP.carFingerprint in (BOLT_CANCEL_BUTTON_CARS | {CAR.CHEVROLET_MALIBU_HYBRID_CC})
       )
     malibu_cancel_passthrough = (
       remap_cancel_to_distance and
@@ -325,32 +329,26 @@ class CarState(CarStateBase):
       self.CP.openpilotLongitudinalControl and
       bool(self.CP.flags & GMFlags.PEDAL_LONG.value)
     )
-    bolt_cancel_personality = (
+    bolt_cancel_button = (
       remap_cancel_to_distance and
-      self.CP.carFingerprint in BOLT_GEN1_CANCEL_PERSONALITY_CARS and
+      self.CP.carFingerprint in BOLT_CANCEL_BUTTON_CARS and
       self.CP.openpilotLongitudinalControl and
       bool(self.CP.flags & GMFlags.PEDAL_LONG.value)
     )
+    bolt_cancel_lkas_conflict = bolt_cancel_button and self.CP.carFingerprint in BOLT_GEN1_CANCEL_PERSONALITY_CARS
 
     cruise_button_map = BUTTONS_DICT
-    if malibu_cancel_passthrough or bolt_cancel_personality:
+    if malibu_cancel_passthrough or bolt_cancel_button:
       cruise_button_map = {k: v for k, v in BUTTONS_DICT.items() if k != CruiseButtons.CANCEL}
 
     cruise_events = create_button_events(
       self.cruise_buttons, prev_cruise_buttons, cruise_button_map, unpressed_btn=CruiseButtons.UNPRESS
     )
-    cancel_gap_events = []
-    if bolt_cancel_personality and self.cruise_buttons != prev_cruise_buttons:
-      if prev_cruise_buttons == CruiseButtons.CANCEL:
-        cancel_gap_events.append(structs.CarState.ButtonEvent(pressed=False, type=ButtonType.gapAdjustCruise))
-      if self.cruise_buttons == CruiseButtons.CANCEL:
-        cancel_gap_events.append(structs.CarState.ButtonEvent(pressed=True, type=ButtonType.gapAdjustCruise))
-
     suppress_malibu_side_buttons = malibu_cancel_passthrough and (
       self.cruise_buttons in (CruiseButtons.CANCEL, CruiseButtons.MAIN) or
       prev_cruise_buttons in (CruiseButtons.CANCEL, CruiseButtons.MAIN)
     )
-    suppress_bolt_cancel_lkas = bolt_cancel_personality and (
+    suppress_bolt_cancel_lkas = bolt_cancel_lkas_conflict and (
       self.cruise_buttons == CruiseButtons.CANCEL or
       prev_cruise_buttons == CruiseButtons.CANCEL
     )
@@ -365,7 +363,6 @@ class CarState(CarStateBase):
     if self.cruise_buttons != CruiseButtons.UNPRESS or prev_cruise_buttons != CruiseButtons.INIT:
       ret.buttonEvents = [
         *cruise_events,
-        *cancel_gap_events,
         *distance_events,
         *lkas_events,
       ]
@@ -374,9 +371,8 @@ class CarState(CarStateBase):
       ret.lowSpeedAlert = True
 
     fp_ret = custom.StarPilotCarState.new_message()
-    if bolt_cancel_personality and self.cruise_buttons == CruiseButtons.CANCEL:
-      # Feed long-press personality logic as if distance is held while CANCEL is held.
-      fp_ret.distancePressed = True
+    if bolt_cancel_button and self.cruise_buttons == CruiseButtons.CANCEL:
+      fp_ret.cancelPressed = True
     fp_ret.sportGear = pt_cp.vl["SportMode"]["SportMode"] == 1
 
     return ret, fp_ret

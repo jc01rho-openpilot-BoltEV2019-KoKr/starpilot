@@ -30,17 +30,33 @@ def test_get_starpilot_toggles_uses_last_non_empty_broadcast(monkeypatch):
 
 
 class _FakeParams:
-  def __init__(self, floats=None):
+  def __init__(self, floats=None, ints=None, bools=None):
     self.floats = dict(floats or {})
+    self.ints = dict(ints or {})
+    self.bools = dict(bools or {})
 
   def get_float(self, key):
     return float(self.floats.get(key, 0.0))
 
+  def get_int(self, key):
+    return int(self.ints.get(key, 0))
+
+  def get_bool(self, key):
+    return bool(self.bools.get(key, False))
+
   def put_float(self, key, value):
     self.floats[key] = float(value)
 
+  def put_int(self, key, value):
+    self.ints[key] = int(value)
+
+  def put_bool(self, key, value):
+    self.bools[key] = bool(value)
+
   def remove(self, key):
     self.floats.pop(key, None)
+    self.ints.pop(key, None)
+    self.bools.pop(key, None)
 
 
 def test_sync_stock_param_does_not_stomp_existing_custom_value_when_stock_missing():
@@ -52,3 +68,26 @@ def test_sync_stock_param_does_not_stomp_existing_custom_value_when_stock_missin
 
   assert params.get_float("SteerDelay") == 0.35
   assert params.get_float("SteerDelayStock") == 0.10
+
+
+def test_cancel_button_migration_copies_distance_actions_once():
+  params = _FakeParams(
+    ints={
+      "DistanceButtonControl": 8,
+      "LongDistanceButtonControl": 4,
+      "VeryLongDistanceButtonControl": 7,
+    },
+    bools={"RemapCancelToDistance": True},
+  )
+
+  assert spv.migrate_cancel_button_controls(params) is True
+  assert params.get_int("CancelButtonControl") == 8
+  assert params.get_int("LongCancelButtonControl") == 4
+  assert params.get_int("VeryLongCancelButtonControl") == 7
+  assert params.get_bool(spv.CANCEL_BUTTON_MIGRATION_KEY) is True
+
+  params.put_int("DistanceButtonControl", 1)
+  params.put_int("CancelButtonControl", 3)
+
+  assert spv.migrate_cancel_button_controls(params) is False
+  assert params.get_int("CancelButtonControl") == 3

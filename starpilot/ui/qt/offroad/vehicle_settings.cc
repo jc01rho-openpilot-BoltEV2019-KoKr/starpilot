@@ -178,7 +178,7 @@ StarPilotVehiclesPanel::StarPilotVehiclesPanel(StarPilotSettingsWindow *parent, 
     {"GMDashSpoofOffsets", tr("Apply Offsets To Dash Spoof"), tr("<b>On GM pedal-long cars, add the configured set-speed offset</b> to the spoofed dash set speed so it matches the on-screen set speed."), ""},
     {"LongPitch", tr("Smooth Pedal Response on Hills"), tr("<b>Smoothen acceleration and braking</b> when driving downhill/uphill."), ""},
     {"RemoteStartBootsComma", tr("Remote Start Boots comma"), tr("<b>Use the remote-start GM panda firmware at boot.</b><br><br>Required for GM remote-start startup signal behavior."), ""},
-    {"RemapCancelToDistance", tr("Remap Cancel To Distance"), tr("<b>On pedal-interceptor Bolts, remap the steering-wheel CANCEL button to distance/personality input.</b>"), ""},
+    {"RemapCancelToDistance", tr("Remap Cancel Button"), tr("<b>On pedal-interceptor Bolts, treat the steering-wheel CANCEL button as an extra mappable button.</b>"), ""},
     {"VoltSNG", tr("Stop-and-Go Hack"), tr("<b>Force stop-and-go</b> on the 2017 Chevy Volt."), ""},
 
     {"HKGToggles", tr("Hyundai/Kia/Genesis Settings"), tr("<b>StarPilot features for Genesis, Hyundai, and Kia vehicles.</b>"), ""},
@@ -306,11 +306,6 @@ StarPilotVehiclesPanel::StarPilotVehiclesPanel(StarPilotSettingsWindow *parent, 
   QSet<QString> rebootKeys = {"RemapCancelToDistance", "TacoTuneHacks"};
   for (const QString &key : rebootKeys) {
     QObject::connect(static_cast<ToggleControl*>(toggles[key]), &ToggleControl::toggleFlipped, [key, this](bool state) {
-      if (key == "RemapCancelToDistance" && state && params.getInt("LKASButtonControl") != 0) {
-        params.putInt("LKASButtonControl", 0);
-        updateStarPilotToggles();
-      }
-
       if (started) {
         if (key == "TacoTuneHacks" && state) {
           if (StarPilotConfirmationDialog::toggleReboot(this)) {

@@ -25,6 +25,7 @@ class StarPilotCard:
     self.prev_active = False
     self.prev_cruise_enabled = False
     self.decel_pressed = False
+    self.cancelPressed_previously = False
     self.distancePressed_previously = False
     self.force_coast = False
     self.modePressed_previously = False
@@ -37,6 +38,7 @@ class StarPilotCard:
     self.traffic_mode_enabled = False
 
     self.gap_counter = 0
+    self.cancel_counter = 0
     self._distance_poll_counter = 0
     self._onroad_distance_pressed = False
 
@@ -149,6 +151,22 @@ class StarPilotCard:
       self.handle_button_event("distance_long", sm, starpilot_toggles)
       self.handle_button_event("distance_very_long", sm, starpilot_toggles)
 
+    cancel_pressed = bool(getattr(starpilotCarState, "cancelPressed", False))
+    if cancel_pressed:
+      self.cancel_counter += 1
+    elif not self.cancelPressed_previously:
+      self.cancel_counter = 0
+
+    self.cancelPressed_previously = cancel_pressed
+
+    if not cancel_pressed and 1 <= self.cancel_counter < self.long_press_threshold:
+      self.handle_button_event("cancel", sm, starpilot_toggles)
+    elif self.cancel_counter == self.long_press_threshold:
+      self.handle_button_event("cancel_long", sm, starpilot_toggles)
+    elif self.cancel_counter == self.very_long_press_threshold:
+      self.handle_button_event("cancel_long", sm, starpilot_toggles)
+      self.handle_button_event("cancel_very_long", sm, starpilot_toggles)
+
     if any(be.pressed and be.type == ButtonType.lkas for be in carState.buttonEvents):
       self.handle_button_event("lkas", sm, starpilot_toggles)
 
@@ -186,6 +204,8 @@ class StarPilotCard:
     starpilotCarState.accelPressed = self.accel_pressed
     starpilotCarState.alwaysOnLateralAllowed = self.always_on_lateral_allowed
     starpilotCarState.alwaysOnLateralEnabled = self.always_on_lateral_enabled
+    starpilotCarState.cancelLongPressed = self.very_long_press_threshold > self.cancel_counter >= self.long_press_threshold
+    starpilotCarState.cancelVeryLongPressed = self.cancel_counter >= self.very_long_press_threshold
     starpilotCarState.decelPressed = self.decel_pressed
     starpilotCarState.distanceLongPressed = self.very_long_press_threshold > self.gap_counter >= self.long_press_threshold
     starpilotCarState.distanceVeryLongPressed = self.gap_counter >= self.very_long_press_threshold

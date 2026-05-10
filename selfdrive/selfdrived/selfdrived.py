@@ -11,7 +11,6 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType
 
 from opendbc.car.chrysler.values import pacifica_hybrid_aol_stock_acc_mode
 from opendbc.car.gm.values import GMFlags
-from opendbc.safety import ALTERNATIVE_EXPERIENCE
 
 from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper, DT_CTRL
@@ -160,6 +159,7 @@ class SelfdriveD:
     self.starpilot_AM = AlertManager()
     self.starpilot_events = Events(starpilot=True)
 
+    self.cancel_pressed_previously = False
     self.distance_pressed_previously = False
 
     self.display_timer = 0
@@ -168,8 +168,7 @@ class SelfdriveD:
 
     self.starpilot_events_prev = []
 
-    remap_cancel_to_distance = bool(self.CP.alternativeExperience & ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE)
-    self.has_menu = self.CP.brand == "gm" and not (self.CP.flags & GMFlags.NO_CAMERA.value) and not remap_cancel_to_distance
+    self.has_menu = self.CP.brand == "gm" and not (self.CP.flags & GMFlags.NO_CAMERA.value)
 
     self.FPCP = messaging.log_from_bytes(self.params.get("StarPilotCarParams", block=True), custom.StarPilotCarParams)
 
@@ -516,9 +515,21 @@ class SelfdriveD:
       if self.sm['modelV2'].frameDropPerc > 20:
         self.events.add(EventName.modeldLagging)
 
-    # Decrement personality on distance button press
+    # Decrement personality on configured steering-wheel button presses
     if self.CP.openpilotLongitudinalControl:
+      cancel_pressed = False
       distance_pressed = False
+
+      if self.starpilot_toggles.personality_profile_via_cancel:
+        cancel_pressed |= bool(getattr(self.sm['starpilotCarState'], "cancelPressed", False))
+        cancel_pressed &= not (
+          self.sm['starpilotCarState'].cancelLongPressed or
+          self.sm['starpilotCarState'].cancelVeryLongPressed
+        )
+      if self.starpilot_toggles.personality_profile_via_cancel_long:
+        cancel_pressed |= self.sm['starpilotCarState'].cancelLongPressed
+      if self.starpilot_toggles.personality_profile_via_cancel_very_long:
+        cancel_pressed |= self.sm['starpilotCarState'].cancelVeryLongPressed
 
       if self.starpilot_toggles.personality_profile_via_distance:
         distance_pressed |= any(not be.pressed and be.type == ButtonType.gapAdjustCruise for be in CS.buttonEvents)
@@ -530,6 +541,11 @@ class SelfdriveD:
       if self.starpilot_toggles.personality_profile_via_lkas:
         distance_pressed |= any(not be.pressed and be.type == ButtonType.lkas for be in CS.buttonEvents)
 
+      if not cancel_pressed and self.cancel_pressed_previously and not self.safe_mode:
+        self.personality = (self.personality - 1) % 3
+        self.params.put_nonblocking('LongitudinalPersonality', self.personality)
+        self.events.add(EventName.personalityChanged)
+
       if not distance_pressed and self.distance_pressed_previously and not self.safe_mode:
         if self.display_timer > 0 or not self.has_menu:
           self.personality = (self.personality - 1) % 3
@@ -537,6 +553,7 @@ class SelfdriveD:
           self.events.add(EventName.personalityChanged)
         self.display_timer = 350
 
+      self.cancel_pressed_previously = cancel_pressed
       self.distance_pressed_previously = distance_pressed
 
       self.display_timer -= 1

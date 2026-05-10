@@ -63,82 +63,6 @@ IONIQ_6_IPEDAL_REGEN_STATE = 0x50
 IONIQ_6_IPEDAL_REGEN_STATE_2_PENDING = 0x01
 IONIQ_6_IPEDAL_PROGRESS_RETRY_WAIT_FRAMES = 10
 IONIQ_6_IPEDAL_RETRY_WAIT_FRAMES = 30
-ANGLE_SAFETY_BASELINE_MODEL = "KIA_SPORTAGE_HEV_2026"
-
-
-def get_baseline_safety_cp():
-  from opendbc.car.hyundai.interface import CarInterface
-  return CarInterface.get_non_essential_params(ANGLE_SAFETY_BASELINE_MODEL)
-
-
-def calculate_angle_torque_reduction_gain(params, CS, apply_torque_last, target_torque_reduction_gain):
-  target_gain = max(target_torque_reduction_gain, params.ANGLE_ACTIVE_TORQUE_REDUCTION_GAIN)
-
-  driver_torque = abs(CS.out.steeringTorque)
-  alpha = np.interp(driver_torque, [params.STEER_THRESHOLD * 0.8, params.STEER_THRESHOLD * 2.0], [0.02, 0.1])
-
-  if CS.out.steeringPressed:
-    scale = 100.0
-    clamped_torque_gain = max(apply_torque_last, params.ANGLE_ACTIVE_TORQUE_REDUCTION_GAIN)
-    target_gain = params.ANGLE_MIN_TORQUE_REDUCTION_GAIN + (clamped_torque_gain - params.ANGLE_MIN_TORQUE_REDUCTION_GAIN) * \
-                  np.exp(-(driver_torque - params.STEER_THRESHOLD) / scale)
-
-  new_gain = apply_torque_last + alpha * (target_gain - apply_torque_last)
-  return float(np.clip(new_gain, params.ANGLE_MIN_TORQUE_REDUCTION_GAIN, params.ANGLE_MAX_TORQUE_REDUCTION_GAIN))
-
-
-def sp_smooth_angle(v_ego_raw: float, apply_angle: float, apply_angle_last: float) -> float:
-  if abs(apply_angle - apply_angle_last) <= 0.1:
-    return apply_angle
-
-  adjusted_alpha = np.interp(v_ego_raw, CarControllerParams.SMOOTHING_ANGLE_VEGO_MATRIX,
-                             CarControllerParams.SMOOTHING_ANGLE_ALPHA_MATRIX)
-  adjusted_alpha_limited = float(min(float(adjusted_alpha), 1.0))
-  return (apply_angle * adjusted_alpha_limited) + (apply_angle_last * (1.0 - adjusted_alpha_limited))
-
-
-class TorqueReductionGainController:
-  def __init__(self, angle_threshold=3.0, debounce_time=0.5, min_gain=0.0, max_gain=1.0,
-               ramp_up_rate=0.1, ramp_down_rate=0.05):
-    self.angle_threshold = angle_threshold
-    self.debounce_time = debounce_time
-    self.min_gain = min_gain
-    self.max_gain = max_gain
-    self.ramp_up_rate = ramp_up_rate
-    self.ramp_down_rate = ramp_down_rate
-    self.saturated_since = None
-    self.gain = min_gain
-    self.last_update_time = 0.0
-
-  def update(self, last_requested_angle, actual_angle, lat_active):
-    now = self.last_update_time + DT_CTRL if self.last_update_time > 0.0 else DT_CTRL
-    dt = now - self.last_update_time if self.last_update_time > 0.0 else DT_CTRL
-    self.last_update_time = now
-
-    angle_error = abs(last_requested_angle - actual_angle)
-    saturated = lat_active and angle_error > self.angle_threshold
-
-    if saturated:
-      if self.saturated_since is None:
-        self.saturated_since = now
-      elif (now - self.saturated_since) > self.debounce_time:
-        self.gain = min(self.gain + self.ramp_up_rate * dt, self.max_gain)
-    else:
-      self.saturated_since = None
-      self.gain = max(self.gain - self.ramp_down_rate * dt, self.min_gain)
-
-    if not lat_active:
-      self.gain = self.min_gain
-      self.saturated_since = None
-
-    return self.gain
-
-  def reset(self):
-    self.gain = self.min_gain
-    self.saturated_since = None
-    self.last_update_time = 0.0
-
-
 @dataclass
 class Ioniq6LongitudinalTuningState:
   desired_accel: float = 0.0
@@ -300,12 +224,10 @@ class CarController(CarControllerBase):
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.angle_limit_counter = 0
     self.VM = VehicleModel(CP)
-    self.BASELINE_VM = VehicleModel(get_baseline_safety_cp())
 
     self.accel_last = 0
     self.apply_torque_last = 0
     self.apply_angle_last = 0.0
-    self.angle_enable_smoothing_factor = True
     self.car_fingerprint = CP.carFingerprint
     self.last_button_frame = 0
     self.ecu_disable_failed = False
@@ -326,14 +248,6 @@ class CarController(CarControllerBase):
     self._ioniq_6_regen_request_sent = False
     self._ioniq_6_last_gear = structs.CarState.GearShifter.unknown
     self._genesis_g90_long_tuning = GenesisG90LongitudinalTuningState()
-    self.angle_torque_reduction_gain_controller = TorqueReductionGainController(
-      angle_threshold=0.3,
-      debounce_time=0.1,
-      min_gain=self.params.ANGLE_ACTIVE_TORQUE_REDUCTION_GAIN,
-      max_gain=self.params.ANGLE_MAX_TORQUE_REDUCTION_GAIN,
-      ramp_up_rate=self.params.ANGLE_RAMP_UP_TORQUE_REDUCTION_RATE,
-      ramp_down_rate=self.params.ANGLE_RAMP_DOWN_TORQUE_REDUCTION_RATE,
-    )
 
   def _reset_ioniq_6_always_ipedal(self) -> None:
     self._ioniq_6_always_ipedal_pending = False
@@ -442,23 +356,17 @@ class CarController(CarControllerBase):
       desired_angle = float(np.clip(actuators.steeringAngleDeg,
                                     -self.params.ANGLE_LIMITS.STEER_ANGLE_MAX,
                                     self.params.ANGLE_LIMITS.STEER_ANGLE_MAX))
-      if self.angle_enable_smoothing_factor and abs(CS.out.vEgoRaw) < CarControllerParams.SMOOTHING_ANGLE_MAX_VEGO:
-        desired_angle = sp_smooth_angle(CS.out.vEgoRaw, desired_angle, self.apply_angle_last)
-
       apply_angle = apply_steer_angle_limits_vm(desired_angle, self.apply_angle_last, CS.out.vEgoRaw,
                                                 CS.out.steeringAngleDeg, CC.latActive, self.params, self.VM)
 
-      if self.CP.carFingerprint != ANGLE_SAFETY_BASELINE_MODEL:
-        apply_angle = apply_steer_angle_limits_vm(apply_angle or desired_angle, self.apply_angle_last, CS.out.vEgoRaw,
-                                                  CS.out.steeringAngleDeg, CC.latActive, self.params, self.BASELINE_VM)
+      if CS.out.steeringPressed and abs(CS.out.steeringTorque) > self.params.STEER_THRESHOLD:
+        apply_torque = self.params.ANGLE_MIN_TORQUE_REDUCTION_GAIN
+      elif CC.latActive and CS.out.vEgoRaw < 0.3:
+        apply_torque = self.params.ANGLE_ACTIVE_TORQUE_REDUCTION_GAIN
+      else:
+        apply_torque = self.params.ANGLE_MAX_TORQUE_REDUCTION_GAIN if CC.latActive else 0.0
 
-      target_torque_reduction_gain = self.angle_torque_reduction_gain_controller.update(
-        last_requested_angle=self.apply_angle_last,
-        actual_angle=CS.out.steeringAngleDeg,
-        lat_active=CC.latActive,
-      )
-      apply_torque = calculate_angle_torque_reduction_gain(self.params, CS, self.apply_torque_last, target_torque_reduction_gain)
-      apply_steer_req = CC.latActive and apply_torque != 0
+      apply_steer_req = CC.latActive and apply_torque > 0.0
       torque_fault = False
 
       if apply_angle is None:

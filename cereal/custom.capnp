@@ -86,6 +86,9 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   customPressed @17 :Bool;
   alwaysOnLateralAllowed @18 :Bool;
   dashboardStopSign @19 :UInt8;  # 0 = no signal / platform doesn't publish
+  cancelPressed @20 :Bool;
+  cancelLongPressed @21 :Bool;
+  cancelVeryLongPressed @22 :Bool;
 }
 
 struct StarPilotDeviceState @0xda96579883444c35 {
