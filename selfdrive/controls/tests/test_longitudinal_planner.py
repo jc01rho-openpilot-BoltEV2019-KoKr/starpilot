@@ -995,3 +995,100 @@ def test_near_speed_follow_soft_brake_cap_limits_matched_follow_pulse():
 
   assert planner.mpc.filter_time_factor >= 0.24
   assert planner.output_a_target >= -0.33
+
+
+def test_near_speed_follow_soft_brake_cap_covers_slightly_opening_lead():
+  v_ego = 29.58
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=44.44, v_lead=30.65, radar=False, model_prob=0.98)
+
+  cap = planner.get_matched_follow_brake_cap(lead, v_ego, 1.45)
+
+  assert cap is not None
+  assert cap >= -0.14
+  assert cap <= -0.06
+
+
+def test_near_speed_follow_soft_brake_cap_extends_to_spacious_modest_closing():
+  v_ego = 23.69
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=49.48, v_lead=21.64, a_lead=-0.014, radar=False, model_prob=0.998)
+
+  cap = planner.get_matched_follow_brake_cap(lead, v_ego, 1.45)
+
+  assert cap is not None
+  assert cap >= -0.33
+  assert cap <= -0.22
+
+
+def test_near_speed_follow_soft_brake_cap_uses_raw_vehicle_speed_when_cluster_runs_high():
+  v_ego = 23.0073
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.0,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=47.52, v_lead=21.68, a_lead=-0.0646, radar=False, model_prob=0.998),
+  )
+  sm["carState"].vEgoCluster = 23.6931
+  sm["starpilotPlan"].maxAcceleration = 0.61
+
+  for _ in range(6):
+    planner.update(sm, make_toggles())
+
+  assert not planner.lead_is_matched_follow_window(sm["radarState"].leadOne, sm["carState"].vEgoCluster, 1.45)
+  assert planner.output_a_target > -0.35
+  assert planner.output_a_target < -0.22
+
+
+def test_near_speed_follow_soft_brake_cap_rejects_close_gap_even_with_modest_closing():
+  v_ego = 37.19
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=34.70, v_lead=35.88, radar=False, model_prob=0.99)
+
+  cap = planner.get_matched_follow_brake_cap(lead, v_ego, 1.0)
+
+  assert cap is None
+
+
+def test_follow_control_lead_prefers_active_lead1_for_matched_follow():
+  v_ego = 23.3
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  planner.lead_one = make_lead(status=True, d_rel=80.0, v_lead=20.0, radar=False, model_prob=0.6)
+  planner.lead_two = make_lead(status=True, d_rel=49.9, v_lead=21.9, radar=False, model_prob=0.98)
+  planner.mpc.source = "lead1"
+
+  follow_lead = planner.get_follow_control_lead(True, v_ego, 1.45)
+
+  assert follow_lead is planner.lead_two
+
+
+def test_follow_control_lead_keeps_matched_follow_lead_without_tracking_latch():
+  v_ego = 27.5
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  planner.lead_one = make_lead(status=True, d_rel=61.99, v_lead=27.63, radar=False, model_prob=0.99)
+
+  follow_lead = planner.get_follow_control_lead(False, v_ego, 1.45)
+
+  assert follow_lead is planner.lead_one
+
+
+def test_far_lead_soft_brake_cap_limits_high_confidence_distant_vision_lead():
+  v_ego = 32.37
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=82.07, v_lead=30.63, a_lead=-0.01, radar=False, model_prob=0.99)
+
+  cap = planner.get_far_lead_brake_cap(lead, v_ego, 1.70)
+
+  assert cap is not None
+  assert cap > -0.2
+  assert cap < -0.05

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import math
+import time
 
 import cereal.messaging as messaging
 
@@ -10,7 +11,7 @@ from openpilot.common.gps import get_gps_location_service
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
-from openpilot.selfdrive.controls.lib.lead_behavior import should_track_lead
+from openpilot.selfdrive.controls.lib.lead_behavior import is_radarless_matched_follow_window, should_track_lead
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import A_CHANGE_COST, DANGER_ZONE_COST, J_EGO_COST, STOP_DISTANCE
 
 from openpilot.starpilot.common.starpilot_utilities import calculate_lane_width, calculate_road_curvature
@@ -21,6 +22,8 @@ from openpilot.starpilot.controls.lib.starpilot_events import StarPilotEvents
 from openpilot.starpilot.controls.lib.starpilot_following import StarPilotFollowing
 from openpilot.starpilot.controls.lib.starpilot_vcruise import StarPilotVCruise
 from openpilot.starpilot.controls.lib.weather_checker import WeatherChecker
+
+RADARLESS_TRACK_HOLD_TIME = 0.45
 
 
 def _sanitize_json_value(value):
@@ -71,6 +74,7 @@ class StarPilotPlanner:
     self.gps_location_service = get_gps_location_service(self.params)
 
     self.tracking_lead_filter = FirstOrderFilter(0, 0.5, DT_MDL)
+    self.radarless_follow_hold_until = 0.0
 
   def shutdown(self):
     self.starpilot_vcruise.slc.shutdown()
@@ -101,7 +105,7 @@ class StarPilotPlanner:
     }
     self.gps_valid = self.gps_position["latitude"] != 0 or self.gps_position["longitude"] != 0
     bearing = self.gps_position["bearing"]
-    if starpilot_toggles.compass and abs(bearing - self._prev_gps_bearing) > 0.5:
+    if getattr(starpilot_toggles, "compass", False) and abs(bearing - self._prev_gps_bearing) > 0.5:
       self.params_memory.put("LastGPSPosition", json.dumps(self.gps_position))
       self._prev_gps_bearing = bearing
 
@@ -164,6 +168,26 @@ class StarPilotPlanner:
       v_lead=self.lead_one.vLead,
       radar=bool(getattr(self.lead_one, "radar", False)),
     )
+    now_t = time.monotonic()
+    lead_radar = bool(getattr(self.lead_one, "radar", False))
+    t_follow = max(float(getattr(self.starpilot_following, "t_follow", 0.0)), 1.45)
+    matched_follow_window = self.lead_one.status and is_radarless_matched_follow_window(
+      v_ego,
+      self.lead_one.dRel,
+      self.lead_one.vLead,
+      t_follow,
+      radar=lead_radar,
+      lead_brake=max(0.0, -float(getattr(self.lead_one, "aLeadK", 0.0))),
+      lead_prob=float(getattr(self.lead_one, "modelProb", 0.0)),
+    )
+    if matched_follow_window and (following_lead or self.tracking_lead or self.tracking_lead_filter.x >= THRESHOLD * 0.6):
+      self.radarless_follow_hold_until = now_t + RADARLESS_TRACK_HOLD_TIME
+    elif lead_radar or not self.lead_one.status:
+      self.radarless_follow_hold_until = 0.0
+
+    if not following_lead and matched_follow_window and now_t < self.radarless_follow_hold_until:
+      following_lead = True
+
     self.tracking_lead_filter.update(following_lead)
     return self.tracking_lead_filter.x >= THRESHOLD
 

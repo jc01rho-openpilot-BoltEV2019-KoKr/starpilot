@@ -23,6 +23,7 @@ from openpilot.selfdrive.ui.ui_state import device, ui_state
 from openpilot.system.ui.widgets.label import UnifiedLabel
 from openpilot.system.ui.widgets.html_render import HtmlModal, HtmlRenderer
 from openpilot.system.athena.registration import UNREGISTERED_DONGLE_ID
+from openpilot.starpilot.common.connect_server import prepare_konik_server_switch
 
 
 class ReviewTermsPage(TermsPage, NavScroller):
@@ -152,7 +153,7 @@ class ConnectServerBigButton(BigButton):
 
   def _apply_selection(self, selection: str):
     use_konik = selection == self._KONIK_OPTION
-    self._params.put_bool("UseKonikServer", use_konik)
+    prepare_konik_server_switch(use_konik, self._params)
 
     toggle_path = _konik_toggle_path()
     toggle_path.parent.mkdir(parents=True, exist_ok=True)

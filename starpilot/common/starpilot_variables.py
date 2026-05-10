@@ -457,7 +457,13 @@ class StarPilotVariables:
     current_value = self.params.get_float(key)
     if not math.isfinite(current_value):
       current_value = 0.0
-    if math.isclose(current_value, current_stock, abs_tol=1e-6) or math.isclose(current_stock, 0.0, abs_tol=1e-6):
+
+    # If the stock baseline was missing (0.0/unset), do not stomp an existing
+    # user override. Only backfill the live param when it was still effectively
+    # tracking the old stock value or was itself unset.
+    should_update_live_value = math.isclose(current_value, current_stock, abs_tol=1e-6)
+    should_update_live_value |= math.isclose(current_value, 0.0, abs_tol=1e-6)
+    if should_update_live_value:
       self.params.put_float(key, live_value)
 
     self.params.put_float(stock_key, live_value)

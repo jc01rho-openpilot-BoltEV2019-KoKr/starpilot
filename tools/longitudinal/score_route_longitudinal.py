@@ -5,6 +5,7 @@ import math
 import os
 from collections import defaultdict
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -17,6 +18,7 @@ from openpilot.selfdrive.controls.lib import longitudinal_planner as longitudina
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import STOP_DISTANCE
 from openpilot.tools.lib.logreader import LogReader
+from openpilot.tools.lib.url_file import hash_256
 
 
 for level_name in ("info", "warning", "error", "exception", "event"):
@@ -43,6 +45,10 @@ REQUIRED_SERVICES = {
   "selfdriveState",
   "starpilotPlan",
 }
+COMMA_DATA_CACHE_ROOT = Path("/tmp/comma_download_cache")
+ROUTE_CACHE_REBUILD_ROOT = Path("/tmp/starpilot_route_cache")
+MAX_CACHED_ROUTE_SEGMENTS = 255
+MAX_CONSECUTIVE_CACHE_MISSES = 4
 
 
 @dataclass
@@ -141,8 +147,117 @@ def is_vision_slow_lead(v_ego: float, lead_status: bool, lead_radar: bool, lead_
   )
 
 
-def score_route(route: str, capture_events: bool = False, max_events: int = 200) -> tuple[RouteMetrics, list[dict]]:
-  metrics = RouteMetrics(route=route)
+def cached_rlog_url(route: str, seg: int) -> str:
+  return f"https://commadata2.blob.core.windows.net/commadata2/{route}/{seg}/rlog.zst"
+
+
+def parse_route_identifier(identifier: str) -> tuple[str, str | None]:
+  parts = identifier.split("/")
+  if len(parts) < 2:
+    raise ValueError(f"Invalid route identifier: {identifier}")
+
+  route = "/".join(parts[:2])
+  remainder = parts[2:]
+  if not remainder:
+    return route, None
+
+  first = remainder[0]
+  if first in ("r", "q", "a", "i"):
+    return route, None
+  return route, first
+
+
+def cached_rlog_chunk_paths(route: str, seg: int, cache_root: Path = COMMA_DATA_CACHE_ROOT) -> list[Path]:
+  prefix = f"{hash_256(cached_rlog_url(route, seg))}_"
+  chunk_paths = []
+  for candidate in cache_root.glob(f"{prefix}*"):
+    suffix = candidate.name.removeprefix(prefix)
+    try:
+      chunk_index = float(suffix)
+    except ValueError:
+      continue
+    chunk_paths.append((chunk_index, candidate))
+  return [path for _, path in sorted(chunk_paths, key=lambda item: item[0])]
+
+
+def discover_cached_segment_indexes(route: str,
+                                    cache_root: Path = COMMA_DATA_CACHE_ROOT,
+                                    max_seg: int = MAX_CACHED_ROUTE_SEGMENTS) -> list[int]:
+  found: list[int] = []
+  consecutive_misses = 0
+  for seg in range(max_seg + 1):
+    if cached_rlog_chunk_paths(route, seg, cache_root):
+      found.append(seg)
+      consecutive_misses = 0
+    elif found:
+      consecutive_misses += 1
+      if consecutive_misses >= MAX_CONSECUTIVE_CACHE_MISSES:
+        break
+
+  if not found:
+    raise FileNotFoundError(f"No cached rlogs found for {route} under {cache_root}")
+  return found
+
+
+def select_segment_indexes(route: str, segment_slice: str | None, available_idxs: list[int]) -> list[int]:
+  if segment_slice is None:
+    return available_idxs
+
+  available_set = set(available_idxs)
+  if ":" not in segment_slice:
+    seg = int(segment_slice)
+    if seg not in available_set:
+      raise FileNotFoundError(f"Requested segment {seg} is not available in local cache for {route}")
+    return [seg]
+
+  raw_parts = segment_slice.split(":")
+  if len(raw_parts) > 3:
+    raise ValueError(f"Invalid segment slice: {segment_slice}")
+  parts = [int(part) if part else None for part in raw_parts]
+  while len(parts) < 3:
+    parts.append(None)
+  start, end, step = parts
+  max_seg = max(available_idxs)
+  if end is None or end < 0 or (start is not None and start < 0):
+    universe = list(range(max_seg + 1))
+  else:
+    universe = list(range(max(max_seg, end) + 1))
+  requested = universe[slice(start, end, step)]
+  missing = [seg for seg in requested if seg not in available_set]
+  if missing:
+    raise FileNotFoundError(f"Requested cached segments are unavailable for {route}: {missing[:8]}")
+  return requested
+
+
+def rebuild_cached_rlogs(identifier: str,
+                         cache_root: Path = COMMA_DATA_CACHE_ROOT,
+                         out_root: Path = ROUTE_CACHE_REBUILD_ROOT) -> tuple[str, list[str]]:
+  route, segment_slice = parse_route_identifier(identifier)
+  available_idxs = discover_cached_segment_indexes(route, cache_root)
+  requested_idxs = select_segment_indexes(route, segment_slice, available_idxs)
+  rebuilt_paths: list[str] = []
+
+  for seg in requested_idxs:
+    chunk_paths = cached_rlog_chunk_paths(route, seg, cache_root)
+    if not chunk_paths:
+      raise FileNotFoundError(f"Missing cached rlog chunks for {route}/{seg}")
+
+    out_path = out_root / route / str(seg) / "rlog.zst"
+    expected_size = sum(chunk_path.stat().st_size for chunk_path in chunk_paths)
+    if not out_path.exists() or out_path.stat().st_size != expected_size:
+      out_path.parent.mkdir(parents=True, exist_ok=True)
+      with out_path.open("wb") as out_file:
+        for chunk_path in chunk_paths:
+          with chunk_path.open("rb") as chunk_file:
+            out_file.write(chunk_file.read())
+    rebuilt_paths.append(str(out_path))
+
+  return route, rebuilt_paths
+
+
+def score_route(route: str, capture_events: bool = False, max_events: int = 200, use_cached_rlogs: bool = False) -> tuple[RouteMetrics, list[dict]]:
+  display_route = parse_route_identifier(route)[0] if use_cached_rlogs else route
+  metrics = RouteMetrics(route=display_route)
   planner = None
   toggles = default_toggles()
   state: dict[str, object] = {}
@@ -159,7 +274,13 @@ def score_route(route: str, capture_events: bool = False, max_events: int = 200)
   prev_plan_t: int | None = None
   prev_a_target: float | None = None
 
-  for msg in LogReader(route, sort_by_time=True):
+  logreader_input: str | list[str]
+  if use_cached_rlogs:
+    _, logreader_input = rebuild_cached_rlogs(route)
+  else:
+    logreader_input = route
+
+  for msg in LogReader(logreader_input, sort_by_time=True):
     which = msg.which()
     if which == "carParams" and planner is None:
       planner = LongitudinalPlanner(msg.carParams)
@@ -399,6 +520,8 @@ def parse_args() -> argparse.Namespace:
                       help="Total weight assigned to the priority subset")
   parser.add_argument("--planner-profile", choices=("current", "legacy_panic_bypass"), default="current",
                       help="Planner behavior profile used for local comparison runs")
+  parser.add_argument("--cached-rlogs", action="store_true",
+                      help="Replay from locally cached rlogs rebuilt from the download cache")
   parser.add_argument("--json-out", type=str,
                       help="Optional local output path for JSON results")
   parser.add_argument("--events-out", type=str,
@@ -412,7 +535,10 @@ def main() -> None:
   args = parse_args()
   configure_planner_profile(args.planner_profile)
 
-  scored = [score_route(route, capture_events=bool(args.events_out), max_events=args.max_events_per_route) for route in args.routes]
+  scored = [score_route(route,
+                        capture_events=bool(args.events_out),
+                        max_events=args.max_events_per_route,
+                        use_cached_rlogs=args.cached_rlogs) for route in args.routes]
   results = [result for result, _ in scored]
   events = {route: route_events for (result, route_events), route in zip(scored, args.routes)}
   payload = {

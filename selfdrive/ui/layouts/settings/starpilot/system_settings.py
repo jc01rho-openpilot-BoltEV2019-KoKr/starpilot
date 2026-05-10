@@ -41,6 +41,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_soft_card,
   draw_tab_card,
 )
+from openpilot.starpilot.common.connect_server import prepare_konik_server_switch
 
 LEGACY_STARPILOT_PARAM_RENAMES = {
   "FrogPilotApiToken": "StarPilotApiToken",
@@ -981,7 +982,7 @@ class StarPilotSystemLayout(_SettingsPage):
     return self._params.get_bool("UseKonikServer")
 
   def _on_konik_toggle(self, state):
-    self._params.put_bool("UseKonikServer", state)
+    prepare_konik_server_switch(state, self._params)
     cache_path = Path("/cache/use_konik")
     if state:
       cache_path.parent.mkdir(parents=True, exist_ok=True)

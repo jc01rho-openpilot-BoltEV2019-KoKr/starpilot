@@ -27,3 +27,28 @@ def test_get_starpilot_toggles_uses_last_non_empty_broadcast(monkeypatch):
   assert first.always_on_lateral is True
   assert second.always_on_lateral is True
   assert second.vision_speed_limit_detection is True
+
+
+class _FakeParams:
+  def __init__(self, floats=None):
+    self.floats = dict(floats or {})
+
+  def get_float(self, key):
+    return float(self.floats.get(key, 0.0))
+
+  def put_float(self, key, value):
+    self.floats[key] = float(value)
+
+  def remove(self, key):
+    self.floats.pop(key, None)
+
+
+def test_sync_stock_param_does_not_stomp_existing_custom_value_when_stock_missing():
+  params = _FakeParams({"SteerDelay": 0.35, "SteerDelayStock": 0.0})
+  variables = object.__new__(spv.StarPilotVariables)
+  variables.params = params
+
+  variables._sync_stock_param("SteerDelay", "SteerDelayStock", 0.10)
+
+  assert params.get_float("SteerDelay") == 0.35
+  assert params.get_float("SteerDelayStock") == 0.10

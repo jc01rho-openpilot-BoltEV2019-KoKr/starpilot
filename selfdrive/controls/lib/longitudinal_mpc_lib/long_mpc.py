@@ -13,7 +13,7 @@ from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.common.swaglog import cloudlog
-from openpilot.selfdrive.controls.lib.lead_behavior import get_tracked_lead_catchup_bias
+from openpilot.selfdrive.controls.lib.lead_behavior import get_tracked_lead_catchup_bias, is_radarless_matched_follow_window
 # WARNING: imports outside of constants will not trigger a rebuild
 from openpilot.selfdrive.modeld.constants import index_function
 
@@ -77,6 +77,8 @@ FAR_RADAR_LEAD_ACCEL_TAPER_MIN_GAP_EXCESS = 8.0
 FAR_RADAR_LEAD_ACCEL_TAPER_MIN_GAP_GAIN = 0.25
 FAR_RADAR_LEAD_ACCEL_TAPER_FULL_GAP_EXCESS = 25.0
 FAR_RADAR_LEAD_ACCEL_TAPER_FULL_GAP_GAIN = 0.9
+RADARLESS_MATCHED_FOLLOW_CRUISE_HYSTERESIS_MIN = 2.5
+RADARLESS_MATCHED_FOLLOW_CRUISE_HYSTERESIS_GAIN = 0.10
 
 # Function to get parameter value based on current speed
 def get_speed_based_param(speed_mph, param_array):
@@ -547,6 +549,25 @@ class LongitudinalMpc:
     lead_xv = self.extrapolate_lead(x_lead, v_lead, a_lead, a_lead_tau, v_ego)
     return lead_xv
 
+  @staticmethod
+  def get_radarless_matched_follow_cruise_hysteresis(lead, v_ego, t_follow):
+    if lead is None or not lead.status:
+      return 0.0
+
+    if not is_radarless_matched_follow_window(
+      v_ego,
+      lead.dRel,
+      lead.vLead,
+      t_follow,
+      radar=bool(getattr(lead, "radar", False)),
+      lead_brake=max(0.0, -float(getattr(lead, "aLeadK", 0.0))),
+      lead_prob=float(getattr(lead, "modelProb", 0.0)),
+    ):
+      return 0.0
+
+    return max(RADARLESS_MATCHED_FOLLOW_CRUISE_HYSTERESIS_MIN,
+               RADARLESS_MATCHED_FOLLOW_CRUISE_HYSTERESIS_GAIN * float(v_ego))
+
   def set_accel_limits(self, min_a, max_a):
     # TODO this sets a max accel limit, but the minimum limit is only for cruise decel
     # needs refactor
@@ -585,6 +606,11 @@ class LongitudinalMpc:
                                  v_lower,
                                  v_upper)
       cruise_obstacle = np.cumsum(T_DIFFS * v_cruise_clipped) + get_safe_obstacle_distance(v_cruise_clipped, t_follow)
+      prev_source = self.source
+      if prev_source == 'lead0':
+        cruise_obstacle += self.get_radarless_matched_follow_cruise_hysteresis(lead_one, v_ego, t_follow)
+      elif prev_source == 'lead1':
+        cruise_obstacle += self.get_radarless_matched_follow_cruise_hysteresis(lead_two, v_ego, t_follow)
       if tracking_lead and lead_one.status:
         desired_gap = desired_follow_distance(v_ego, lead_one.vLead, t_follow)
         closing_speed = max(0.0, v_ego - lead_one.vLead)
