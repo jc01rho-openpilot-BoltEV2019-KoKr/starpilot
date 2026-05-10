@@ -175,10 +175,11 @@ class TestHyundaiFingerprint:
     toggles = get_test_toggles()
     CP = CarInterface.get_params(CAR.HYUNDAI_PALISADE_2023, gen_empty_fingerprint(), [], True, False, False, toggles)
 
-    assert CP.startAccel == pytest.approx(1.1)
-    assert CP.stopAccel == pytest.approx(-1.2)
+    assert CP.startAccel == pytest.approx(1.2)
+    assert CP.stopAccel == pytest.approx(-1.1)
+    assert CP.vEgoStarting == pytest.approx(0.55)
     assert CP.vEgoStopping == pytest.approx(0.5)
-    assert CP.stoppingDecelRate == pytest.approx(0.45)
+    assert CP.stoppingDecelRate == pytest.approx(0.4)
 
   def test_kia_niro_phev_2022_longitudinal_params_soften_final_stop_hold(self):
     toggles = get_test_toggles()
