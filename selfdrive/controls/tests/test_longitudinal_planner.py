@@ -10,7 +10,7 @@ from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, get_coast_accel, get_vehicle_min_accel
-from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import soften_far_radar_lead_accel
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import soften_far_radar_lead_accel, should_trigger_planner_fcw
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 
 
@@ -200,6 +200,24 @@ def test_soften_far_radar_lead_accel_keeps_close_closing_brake():
   baseline = -0.76
   softened = soften_far_radar_lead_accel(68.0, 26.38, baseline, 29.38, 1.45, radar=True)
   assert softened == pytest.approx(baseline)
+
+
+def test_planner_fcw_suppresses_low_speed_opening_or_low_ttc_false_positives():
+  assert not should_trigger_planner_fcw(
+    make_lead(status=True, d_rel=7.156, v_lead=0.798, a_lead=0.021, radar=False, model_prob=0.99),
+    0.402,
+  )
+  assert not should_trigger_planner_fcw(
+    make_lead(status=True, d_rel=9.311, v_lead=0.911, a_lead=-0.263, radar=False, model_prob=0.99),
+    1.252,
+  )
+
+
+def test_planner_fcw_keeps_real_low_speed_closing_alerts():
+  assert should_trigger_planner_fcw(
+    make_lead(status=True, d_rel=1.8, v_lead=0.0, a_lead=0.0, radar=False, model_prob=0.99),
+    1.6,
+  )
 
 
 def test_vision_lead_approach_cap_brakes_before_hard_cap():

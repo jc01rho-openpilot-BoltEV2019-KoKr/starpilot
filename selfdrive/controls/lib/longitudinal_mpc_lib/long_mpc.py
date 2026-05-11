@@ -102,6 +102,9 @@ LIMIT_COST = 1e6
 ACADOS_SOLVER_TYPE = 'SQP_RTI'
 # Default lead acceleration decay set to 50% at 1s
 LEAD_ACCEL_TAU = 1.5
+FCW_MIN_MODEL_PROB = 0.9
+FCW_MIN_CLOSING_SPEED = 0.5
+FCW_MAX_TTC = 4.0
 
 
 # Fewer timestamps don't hurt performance and lead to
@@ -115,6 +118,18 @@ FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
+
+
+def should_trigger_planner_fcw(lead, v_ego: float) -> bool:
+  if lead is None or not lead.status or float(getattr(lead, "modelProb", 0.0)) <= FCW_MIN_MODEL_PROB:
+    return False
+
+  closing_speed = max(0.0, float(v_ego) - float(getattr(lead, "vLead", 0.0)))
+  if closing_speed < FCW_MIN_CLOSING_SPEED:
+    return False
+
+  ttc = max(0.0, float(getattr(lead, "dRel", 0.0))) / max(closing_speed, 1e-3)
+  return ttc < FCW_MAX_TTC
 
 def get_jerk_factor(aggressive_jerk_acceleration=0.5, aggressive_jerk_danger=0.5, aggressive_jerk_speed=0.5,
                     standard_jerk_acceleration=1.0, standard_jerk_danger=1.0, standard_jerk_speed=1.0,
@@ -652,7 +667,7 @@ class LongitudinalMpc:
 
     self.run()
     if (np.any(lead_xv_0[FCW_IDXS,0] - self.x_sol[FCW_IDXS,0] < CRASH_DISTANCE) and
-            lead_one.modelProb > 0.9):
+            should_trigger_planner_fcw(lead_one, v_ego)):
       self.crash_cnt += 1
     else:
       self.crash_cnt = 0
