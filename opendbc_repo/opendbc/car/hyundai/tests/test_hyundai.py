@@ -484,7 +484,7 @@ class TestHyundaiFingerprint:
     sends = controller._update_ioniq_6_always_ipedal(cc, cs, toggles)
 
     assert sends
-    assert [msg[1].hex() for msg in sends if msg[0] == 0x1CF] == ["9060002800000000"]
+    assert [msg[1].hex() for msg in sends if msg[0] == 0x1CF] == ["4650002800000000"]
     assert controller._ioniq_6_always_ipedal_press_remaining == 5
 
   def test_ioniq_6_always_ipedal_sends_regen_control_companion_once_max_regen_is_shown(self):
@@ -551,7 +551,7 @@ class TestHyundaiFingerprint:
     sends = controller._update_ioniq_6_always_ipedal(cc, cs, toggles)
 
     paddle_msgs = [msg for msg in sends if msg[0] == 0x1CF]
-    assert [msg[1].hex() for msg in paddle_msgs] == ["9060002800000000"]
+    assert [msg[1].hex() for msg in paddle_msgs] == ["4650002800000000"]
     regen_cmd = next(msg for msg in sends if msg[0] == 0x25A)
     assert regen_cmd[1][24:28] == bytes.fromhex("c00c1200")
     checksum = hyundaicanfd.hkg_can_fd_checksum(regen_cmd[0], None, bytearray(regen_cmd[1]))
@@ -564,7 +564,7 @@ class TestHyundaiFingerprint:
     sends = controller._update_ioniq_6_always_ipedal(cc, cs, toggles)
 
     paddle_msgs = [msg for msg in sends if msg[0] == 0x1CF]
-    assert [msg[1].hex() for msg in paddle_msgs] == ["2970002800000000"]
+    assert [msg[1].hex() for msg in paddle_msgs] == ["9060002800000000"]
     assert not any(msg[0] == 0x25A for msg in sends)
 
   def test_ioniq_6_longitudinal_params_match_canfd_tune(self):

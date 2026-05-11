@@ -326,15 +326,14 @@ class CarController(CarControllerBase):
                                                       else IONIQ_6_IPEDAL_PRESS_SEND_COUNT
         self._ioniq_6_regen_request_sent = False
         if max_regen_state or ipedal_latch_pending:
-          self._ioniq_6_ipedal_latch_counter = hyundaicanfd.get_ioniq_6_cruise_buttons_next_counter(buttons_counter) \
-                                               if 0 <= buttons_counter < hyundaicanfd.IONIQ_6_CRUISE_BUTTONS_COUNTER_MAX else -1
+          self._ioniq_6_ipedal_latch_counter = buttons_counter if 0 <= buttons_counter < hyundaicanfd.IONIQ_6_CRUISE_BUTTONS_COUNTER_MAX else -1
         else:
           self._ioniq_6_ipedal_latch_counter = -1
 
       if self._ioniq_6_always_ipedal_press_remaining > 0:
         if max_regen_state or ipedal_latch_pending:
           if self._ioniq_6_ipedal_latch_counter < 0 and 0 <= buttons_counter < hyundaicanfd.IONIQ_6_CRUISE_BUTTONS_COUNTER_MAX:
-            self._ioniq_6_ipedal_latch_counter = hyundaicanfd.get_ioniq_6_cruise_buttons_next_counter(buttons_counter)
+            self._ioniq_6_ipedal_latch_counter = buttons_counter
 
           if 0 <= self._ioniq_6_ipedal_latch_counter < hyundaicanfd.IONIQ_6_CRUISE_BUTTONS_COUNTER_MAX:
             # A real successful i-Pedal pull is a short held press followed by release, not a continuous hold.
