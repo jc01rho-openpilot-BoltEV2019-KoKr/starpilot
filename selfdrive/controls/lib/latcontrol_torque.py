@@ -178,9 +178,14 @@ BOLT_2022_2023_TURN_IN_BOOST_LEFT = 0.15
 BOLT_2022_2023_TURN_IN_BOOST_RIGHT = 0.09
 BOLT_2022_2023_UNWIND_TAPER_LEFT = 0.38
 BOLT_2022_2023_UNWIND_TAPER_RIGHT = 0.34
-BOLT_2022_2023_FRICTION_MULT = 1.13
+BOLT_2022_2023_FRICTION_MULT = 1.09
 BOLT_2022_2023_FRICTION_LAT_RISE = 0.22
 BOLT_2022_2023_FRICTION_JERK_RISE = 0.26
+BOLT_2022_2023_CENTER_TAPER_MAX = 0.11
+BOLT_2022_2023_CENTER_TAPER_LAT = 0.18
+BOLT_2022_2023_CENTER_TAPER_LAT_WIDTH = 0.03
+BOLT_2022_2023_CENTER_TAPER_SPEED = 25.0
+BOLT_2022_2023_CENTER_TAPER_SPEED_WIDTH = 2.5
 BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.14
 BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.08
 BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_LEFT = 0.26
@@ -691,6 +696,9 @@ def get_bolt_2022_2023_ff_scale(desired_lateral_accel: float, desired_lateral_je
   onset = _bolt_2022_2023_sigmoid((abs_lateral_accel - BOLT_2022_2023_FF_ONSET) / BOLT_2022_2023_FF_ONSET_WIDTH)
   cutoff = _bolt_2022_2023_sigmoid((BOLT_2022_2023_FF_CUTOFF - abs_lateral_accel) / BOLT_2022_2023_FF_CUTOFF_WIDTH)
   extra_scale = gain * onset * cutoff
+  speed_weight = _bolt_2022_2023_sigmoid((v_ego - BOLT_2022_2023_CENTER_TAPER_SPEED) / BOLT_2022_2023_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _bolt_2022_2023_sigmoid((BOLT_2022_2023_CENTER_TAPER_LAT - abs_lateral_accel) / BOLT_2022_2023_CENTER_TAPER_LAT_WIDTH)
+  center_taper = 1.0 - (BOLT_2022_2023_CENTER_TAPER_MAX * speed_weight * center_weight)
   low_speed_factor = _bolt_2022_2023_low_speed_factor(v_ego)
   transition_envelope = _bolt_2022_2023_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
   phase = _bolt_2022_2023_transition_phase(desired_lateral_accel, desired_lateral_jerk)
@@ -701,7 +709,7 @@ def get_bolt_2022_2023_ff_scale(desired_lateral_accel: float, desired_lateral_je
   unwind_envelope = (0.25 + 0.75 * low_speed_factor) * (1.0 + 0.45 * transition_envelope)
   unwind_taper = 1.0 - (_bolt_2022_2023_side_value(desired_lateral_accel, BOLT_2022_2023_UNWIND_TAPER_LEFT, BOLT_2022_2023_UNWIND_TAPER_RIGHT) *
                          unwind_weight * unwind_envelope)
-  return 1.0 + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
+  return 1.0 + (extra_scale * center_taper * turn_in_boost * max(unwind_taper, 0.0))
 
 
 def get_bolt_2022_2023_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
