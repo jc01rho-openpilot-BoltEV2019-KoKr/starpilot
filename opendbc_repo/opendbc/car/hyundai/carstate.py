@@ -30,6 +30,7 @@ IONIQ_6_IPEDAL_INTERMEDIATE_REGEN_STATE = 0x50
 IONIQ_6_IPEDAL_INTERMEDIATE_REGEN_STATE_2 = 0x01
 IONIQ_6_IPEDAL_REGEN_STATE = 0x50
 IONIQ_6_IPEDAL_REGEN_STATE_2 = 0x03
+CANFD_CAMERA_LEAD_MIN_DISTANCE = 0.1
 
 
 def calculate_canfd_speed_limit(CP, FPCP, cp, cp_cam, speed_factor):
@@ -59,6 +60,14 @@ def decode_ioniq_6_max_regen_state(regen_state: int, regen_state_2: int) -> bool
 
 def decode_ioniq_6_ipedal_intermediate_state(regen_state: int, regen_state_2: int) -> bool:
   return int(regen_state) == IONIQ_6_IPEDAL_INTERMEDIATE_REGEN_STATE and int(regen_state_2) == IONIQ_6_IPEDAL_INTERMEDIATE_REGEN_STATE_2
+
+
+def decode_canfd_camera_lead(distance: float, rel_speed: float) -> tuple[bool, float, float]:
+  lead_distance = float(distance)
+  lead_visible = lead_distance > CANFD_CAMERA_LEAD_MIN_DISTANCE
+  if not lead_visible:
+    return False, 0.0, 0.0
+  return True, lead_distance, float(rel_speed)
 
 
 class CarState(CarStateBase):
@@ -116,6 +125,10 @@ class CarState(CarStateBase):
     self.stock_lkas_msg = {}
     self.stock_lfa_msg = {}
     self.stock_lfahda_cluster_msg = {}
+    self.stock_camera_lead_visible = False
+    self.stock_camera_lead_distance = 0.0
+    self.stock_camera_lead_rel_speed = 0.0
+    self.stock_camera_lead_ts = 0
     self.stock_blinker_stalks_ts = 0
     self.blindspots_rear_corners = {}
     self.blindspots_front_corner_1 = {}
@@ -440,6 +453,13 @@ class CarState(CarStateBase):
                                           else cp_cam.vl["CAM_0x2a4"])
       if cp_cam.ts_nanos[lkas_msg]["CHECKSUM"] > 0:
         self.stock_lkas_msg = copy.copy(cp_cam.vl[lkas_msg])
+    lead_cp = cp if self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING else cp_cam
+    if lead_cp.ts_nanos["FR_CMR_03_50ms"]["FR_CMR_Crc3Val"] > 0:
+      self.stock_camera_lead_ts = lead_cp.ts_nanos["FR_CMR_03_50ms"]["FR_CMR_Crc3Val"]
+      self.stock_camera_lead_visible, self.stock_camera_lead_distance, self.stock_camera_lead_rel_speed = decode_canfd_camera_lead(
+        lead_cp.vl["FR_CMR_03_50ms"]["Longitudinal_Distance"],
+        lead_cp.vl["FR_CMR_03_50ms"]["Relative_Velocity"],
+      )
     if cp.ts_nanos["LFA"]["CHECKSUM"] > 0:
       self.stock_lfa_msg = copy.copy(cp.vl["LFA"])
     if cp.ts_nanos["LFAHDA_CLUSTER"]["CHECKSUM"] > 0:
@@ -484,9 +504,11 @@ class CarState(CarStateBase):
       ]
     if CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
       msgs.append(("FR_CMR_02_100ms", 10))
+      msgs.append(("FR_CMR_03_50ms", 0))
       cam_msgs.append(("LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT else "LKAS", 0))
     else:
       cam_msgs.append(("FR_CMR_02_100ms", 0))  # optional: not all non-LKA CANFD cars have this on CAM bus
+      cam_msgs.append(("FR_CMR_03_50ms", 0))  # optional: camera lead/cipv data is not present on every CAN-FD trim
     msgs += [
       ("LFA", 0),             # optional: may stop once OP takes over, but preserve stock UI fields when present
       ("LFAHDA_CLUSTER", 0),  # optional: carries cluster icon state on some variants

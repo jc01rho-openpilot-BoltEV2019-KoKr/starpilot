@@ -92,10 +92,13 @@ def _create_angle_adas_cmd_msg(packer, CAN, apply_angle: float, lat_active: bool
 
 
 def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque, apply_angle,
-                             lfa_base_values=None, lkas_base_values=None):
+                             lfa_base_values=None, lkas_base_values=None, lka_icon=None):
+  if lka_icon is None:
+    lka_icon = 2 if enabled else 1
+
   control_values = {
     "LKA_MODE": 2,
-    "LKA_ICON": 2 if enabled else 1,
+    "LKA_ICON": lka_icon,
     "TORQUE_REQUEST": 0 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else apply_torque,
     "LKA_ASSIST": 0,
     "STEER_REQ": 0 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else (1 if lat_active else 0),
@@ -275,11 +278,14 @@ def create_acc_cancel(packer, CP, CAN, cruise_info_copy):
   return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)
 
 
-def create_lfahda_cluster(packer, CAN, enabled, base_values=None):
+def create_lfahda_cluster(packer, CAN, enabled, base_values=None, lfa_icon=None):
+  if lfa_icon is None:
+    lfa_icon = 2 if enabled else 0
+
   values = {k: v for k, v in base_values.items() if k not in ("CHECKSUM", "COUNTER")} if base_values else {}
   values.update({
     "HDA_ICON": 1 if enabled else 0,
-    "LFA_ICON": 2 if enabled else 0,
+    "LFA_ICON": lfa_icon,
   })
   return packer.make_can_msg("LFAHDA_CLUSTER", CAN.ECAN, values)
 
@@ -397,7 +403,9 @@ def create_ioniq_6_cluster_lane_change_messages(CAN, frame, side=None, trigger=F
 
 
 def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_override, set_speed, hud_control,
-                       main_mode_acc=1, jerk_lower=None, jerk_upper=None, direct_accel=False):
+                       main_mode_acc=1, jerk_lower=None, jerk_upper=None, direct_accel=False,
+                       distance_setting=None,
+                       lead_distance=None, lead_rel_speed=None, lead_visible=None):
   jerk = 5
   jn = jerk / 50
   if not enabled or gas_override:
@@ -409,6 +417,18 @@ def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_ov
     a_raw = accel
     a_val = np.clip(accel, accel_last - jn, accel_last + jn)
 
+  if lead_distance is None and lead_rel_speed is None and lead_visible is None:
+    acc_obj_dist = 1.0
+    acc_obj_rel_spd = 0.0
+    obj_valid = 0
+    obj_status = 2
+  else:
+    lead_visible = bool(lead_visible)
+    acc_obj_dist = float(np.clip(lead_distance if lead_visible else 0.0, 0.0, 204.7))
+    acc_obj_rel_spd = float(np.clip(lead_rel_speed if lead_visible else 0.0, -16.4, 34.7))
+    obj_valid = int(not lead_visible)
+    obj_status = 0 if not (enabled and lead_visible) else (1 if gas_override else 2)
+
   values = {
     "ACCMode": 0 if not enabled else (2 if gas_override else 1),
     "MainMode_ACC": main_mode_acc,
@@ -419,13 +439,14 @@ def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_ov
     "JerkLowerLimit": jerk_lower if jerk_lower is not None else (jerk if enabled else 1),
     "JerkUpperLimit": jerk_upper if jerk_upper is not None else 3.0,
 
-    "ACC_ObjDist": 1,
-    "ObjValid": 0,
-    "OBJ_STATUS": 2,
+    "ACC_ObjDist": acc_obj_dist,
+    "ACC_ObjRelSpd": acc_obj_rel_spd,
+    "ObjValid": obj_valid,
+    "OBJ_STATUS": obj_status,
     "SET_ME_2": 0x4,
     "SET_ME_3": 0x3,
     "SET_ME_TMP_64": 0x64,
-    "DISTANCE_SETTING": hud_control.leadDistanceBars,
+    "DISTANCE_SETTING": int(np.clip(hud_control.leadDistanceBars if distance_setting is None else distance_setting, 0, 3)),
   }
 
   return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)

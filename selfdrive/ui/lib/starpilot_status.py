@@ -89,4 +89,6 @@ def get_mode_transition_banner_text(state: UIState):
     return "OVERRIDDEN"
   if enabled and state.sm["selfdriveState"].experimentalMode:
     return "EXPERIMENTAL"
+  if enabled:
+    return "CHILL"
   return None

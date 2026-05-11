@@ -22,6 +22,10 @@ MAX_ANGLE_FRAMES = 89
 MAX_ANGLE_CONSECUTIVE_FRAMES = 2
 CANFD_BLINDSPOT_STATUS_STALE_NS = 200_000_000
 CANFD_BLINKER_STALKS_STALE_NS = 200_000_000
+CANFD_CAMERA_LEAD_STALE_NS = 300_000_000
+CANFD_LEAD_MIN_DISTANCE = 0.1
+CANFD_FALLBACK_LEAD_DISTANCE = 20.0
+HYUNDAI_DASH_DISENGAGE_BLINK_TIME = 1.0
 HYUNDAI_CANFD_SCC_ACCEL_STEP = 5.0 / 50.0
 HYUNDAI_CANFD_SCC_DECEL_STEP = 12.5 / 50.0
 IONIQ_6_RESPONSE_MULTIPLIER = 1.2
@@ -62,6 +66,19 @@ IONIQ_6_IPEDAL_REGEN_STATE = 0x50
 IONIQ_6_IPEDAL_REGEN_STATE_2_PENDING = 0x01
 IONIQ_6_IPEDAL_PROGRESS_RETRY_WAIT_FRAMES = 10
 IONIQ_6_IPEDAL_RETRY_WAIT_FRAMES = 30
+
+
+def get_canfd_lead_distance_setting(lead_distance: float | None, default_setting: int) -> int:
+  default = int(np.clip(default_setting, 0, 3))
+  if lead_distance is None or lead_distance <= CANFD_LEAD_MIN_DISTANCE:
+    return default
+  if lead_distance < 20.0:
+    return 1
+  if lead_distance < 30.0:
+    return 2
+  return 3
+
+
 @dataclass
 class Ioniq6LongitudinalTuningState:
   desired_accel: float = 0.0
@@ -248,6 +265,46 @@ class CarController(CarControllerBase):
     self._ioniq_6_ipedal_latch_counter = -1
     self._ioniq_6_last_gear = structs.CarState.GearShifter.unknown
     self._genesis_g90_long_tuning = GenesisG90LongitudinalTuningState()
+    self._dash_lat_disengage_blink_frame = 0
+    self._dash_lat_disengage_init = False
+    self._dash_prev_lat_active = False
+
+  def _update_dash_icon_state(self, CC):
+    if CC.latActive:
+      self._dash_lat_disengage_init = False
+    elif self._dash_prev_lat_active:
+      self._dash_lat_disengage_init = True
+
+    if not self._dash_lat_disengage_init:
+      self._dash_lat_disengage_blink_frame = self.frame
+
+    disengaging = self._dash_lat_disengage_init and \
+                  (self.frame - self._dash_lat_disengage_blink_frame) * DT_CTRL < HYUNDAI_DASH_DISENGAGE_BLINK_TIME
+    self._dash_prev_lat_active = CC.latActive
+    lat_or_enabled = CC.enabled or CC.latActive
+    lka_icon = 2 if lat_or_enabled else 3 if disengaging else 1
+    lfa_icon = 2 if lat_or_enabled else 3 if disengaging else 0
+
+    return lka_icon, lfa_icon
+
+  def _get_canfd_scc_lead_state(self, CC, CS, now_nanos):
+    default_distance_setting = int(np.clip(getattr(CC.hudControl, "leadDistanceBars", 0), 0, 3))
+    openpilot_lead_visible = bool(getattr(CS, "openpilot_lead_visible", False) or CC.hudControl.leadVisible)
+    openpilot_lead_distance = float(np.clip(getattr(CS, "openpilot_lead_distance", 0.0), 0.0, 204.7))
+    openpilot_lead_rel_speed = float(np.clip(getattr(CS, "openpilot_lead_rel_speed", 0.0), -16.4, 34.7))
+    stock_camera_lead_fresh = now_nanos - getattr(CS, "stock_camera_lead_ts", 0) <= CANFD_CAMERA_LEAD_STALE_NS
+    stock_camera_lead_visible = stock_camera_lead_fresh and getattr(CS, "stock_camera_lead_visible", False)
+
+    if openpilot_lead_visible and openpilot_lead_distance > CANFD_LEAD_MIN_DISTANCE:
+      return True, openpilot_lead_distance, openpilot_lead_rel_speed, get_canfd_lead_distance_setting(openpilot_lead_distance, default_distance_setting)
+    if stock_camera_lead_visible:
+      lead_distance = float(np.clip(getattr(CS, "stock_camera_lead_distance", 0.0), 0.0, 204.7))
+      lead_rel_speed = float(np.clip(getattr(CS, "stock_camera_lead_rel_speed", 0.0), -16.4, 34.7))
+      return True, lead_distance, lead_rel_speed, get_canfd_lead_distance_setting(lead_distance, default_distance_setting)
+    if openpilot_lead_visible:
+      return True, CANFD_FALLBACK_LEAD_DISTANCE, 0.0, default_distance_setting
+
+    return False, 0.0, 0.0, default_distance_setting
 
   def _reset_ioniq_6_always_ipedal(self) -> None:
     self._ioniq_6_always_ipedal_pending = False
@@ -372,6 +429,7 @@ class CarController(CarControllerBase):
   def update(self, CC, CS, now_nanos, starpilot_toggles):
     actuators = CC.actuators
     hud_control = CC.hudControl
+    lka_icon, lfa_icon = self._update_dash_icon_state(CC)
 
     self.params = CarControllerParams(self.CP, CS.out.vEgoRaw)
     apply_angle = CS.out.steeringAngleDeg
@@ -486,10 +544,10 @@ class CarController(CarControllerBase):
     # *** CAN/CAN FD specific ***
     if self.CP.flags & HyundaiFlags.CANFD:
       can_sends.extend(self.create_canfd_msgs(now_nanos, apply_steer_req, apply_torque, apply_angle, set_speed_in_units, accel,
-                                              stopping, hud_control, CS, CC, starpilot_toggles))
+                                              stopping, hud_control, CS, CC, starpilot_toggles, lka_icon, lfa_icon))
     else:
       can_sends.extend(self.create_can_msgs(apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel,
-                                            stopping, hud_control, actuators, CS, CC))
+                                            stopping, hud_control, actuators, CS, CC, lfa_icon))
 
     new_actuators = actuators.as_builder()
     if self.CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
@@ -504,7 +562,7 @@ class CarController(CarControllerBase):
     self.frame += 1
     return new_actuators, can_sends
 
-  def create_can_msgs(self, apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel, stopping, hud_control, actuators, CS, CC):
+  def create_can_msgs(self, apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel, stopping, hud_control, actuators, CS, CC, lfa_icon):
     can_sends = []
     can_canfd_blended = bool(self.CP.flags & HyundaiFlags.CAN_CANFD_BLENDED)
 
@@ -554,7 +612,7 @@ class CarController(CarControllerBase):
 
     # 20 Hz LFA MFA message
     if self.frame % 5 == 0 and self.CP.flags & HyundaiFlags.SEND_LFA.value:
-      can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled, self.frame, self.CP))
+      can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled, self.frame, self.CP, lfa_icon))
 
     # 5 Hz ACC options
     if self.frame % 20 == 0 and self.long_active_ecu and not can_canfd_blended:
@@ -566,7 +624,8 @@ class CarController(CarControllerBase):
 
     return can_sends
 
-  def create_canfd_msgs(self, now_nanos, apply_steer_req, apply_torque, apply_angle, set_speed_in_units, accel, stopping, hud_control, CS, CC, starpilot_toggles):
+  def create_canfd_msgs(self, now_nanos, apply_steer_req, apply_torque, apply_angle, set_speed_in_units, accel, stopping,
+                        hud_control, CS, CC, starpilot_toggles, lka_icon, lfa_icon):
     can_sends = []
 
     lka_steering = self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING
@@ -580,7 +639,8 @@ class CarController(CarControllerBase):
     can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled,
                                                            apply_steer_req, apply_torque, apply_angle,
                                                            CS.stock_lfa_msg,
-                                                           CS.stock_lkas_msg if preserve_stock_lkas else None))
+                                                           CS.stock_lkas_msg if preserve_stock_lkas else None,
+                                                           lka_icon=lka_icon))
 
     # prevent LFA from activating on LKA steering cars by sending "no lane lines detected" to ADAS ECU
     if self.frame % 5 == 0 and lka_steering:
@@ -589,7 +649,8 @@ class CarController(CarControllerBase):
 
     # LFA and HDA icons
     if self.frame % 5 == 0 and (not lka_steering or lka_steering_long):
-      can_sends.append(hyundaicanfd.create_lfahda_cluster(self.packer, self.CAN, CC.enabled, CS.stock_lfahda_cluster_msg))
+      can_sends.append(hyundaicanfd.create_lfahda_cluster(self.packer, self.CAN, CC.enabled, CS.stock_lfahda_cluster_msg,
+                                                          lfa_icon=lfa_icon))
 
     # blinkers
     if lka_steering and self.CP.flags & HyundaiFlags.ENABLE_BLINKERS:
@@ -642,11 +703,16 @@ class CarController(CarControllerBase):
                                                                                  CC.leftBlinker,
                                                                                  CC.rightBlinker))
       if self.frame % 2 == 0:
+        lead_visible, lead_distance, lead_rel_speed, lead_distance_setting = self._get_canfd_scc_lead_state(CC, CS, now_nanos)
         acc_kwargs = {
           "main_mode_acc": int(CS.out.cruiseState.available),
           "direct_accel": True,
           "jerk_lower": 5.0,
           "jerk_upper": 3.0 if CC.actuators.longControlState == LongCtrlState.pid else 1.0,
+          "distance_setting": lead_distance_setting,
+          "lead_distance": lead_distance,
+          "lead_rel_speed": lead_rel_speed,
+          "lead_visible": lead_visible,
         }
         if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
           if use_ioniq_6_smoothed_accel:

@@ -8,10 +8,11 @@ from opendbc.car import Bus, ButtonType, gen_empty_fingerprint, structs
 from opendbc.car.structs import CarControl, CarParams
 from opendbc.car.fw_versions import build_fw_dict, match_fw_to_car
 from opendbc.car.hyundai.carcontroller import CarController, Ioniq6LongitudinalTuningState, GenesisG90LongitudinalTuningState, \
+                                             get_canfd_lead_distance_setting, \
                                              IONIQ_6_IPEDAL_PADDLE_BURST_COUNT, \
                                              update_ioniq_6_longitudinal_tuning, \
                                              update_genesis_g90_longitudinal_tuning
-from opendbc.car.hyundai.carstate import CarState, decode_ioniq_6_blindspot_radar_state, decode_ioniq_6_ipedal_intermediate_state, \
+from opendbc.car.hyundai.carstate import CarState, decode_canfd_camera_lead, decode_ioniq_6_blindspot_radar_state, decode_ioniq_6_ipedal_intermediate_state, \
                                         decode_ioniq_6_ipedal_state, decode_ioniq_6_max_regen_state
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai import hyundaican, hyundaicanfd
@@ -721,6 +722,120 @@ class TestHyundaiFingerprint:
     assert parser.vl["SCC_CONTROL"]["JerkLowerLimit"] == pytest.approx(5.0)
     assert parser.vl["SCC_CONTROL"]["JerkUpperLimit"] == pytest.approx(1.0)
 
+  def test_canfd_acc_control_accepts_lead_object_override(self):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.KIA_EV6
+    CP.flags = int(HyundaiFlags.CANFD)
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    can_bus = CanBus(CP)
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("SCC_CONTROL", 0)], can_bus.ECAN)
+
+    msg = hyundaicanfd.create_acc_control(packer, can_bus, enabled=True, accel_last=0.0, accel=0.1, stopping=False,
+                                          gas_override=False, set_speed=42, hud_control=SimpleNamespace(leadDistanceBars=3),
+                                          direct_accel=True, lead_distance=27.5, lead_rel_speed=-1.2, lead_visible=True)
+    parser.update([(1, [msg])])
+
+    assert parser.can_valid
+    assert parser.vl["SCC_CONTROL"]["ACC_ObjDist"] == pytest.approx(27.5)
+    assert parser.vl["SCC_CONTROL"]["ACC_ObjRelSpd"] == pytest.approx(-1.2)
+    assert parser.vl["SCC_CONTROL"]["ObjValid"] == 0
+    assert parser.vl["SCC_CONTROL"]["OBJ_STATUS"] == 2
+
+  def test_canfd_acc_control_hides_lead_object_when_not_visible(self):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.KIA_EV6
+    CP.flags = int(HyundaiFlags.CANFD)
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    can_bus = CanBus(CP)
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("SCC_CONTROL", 0)], can_bus.ECAN)
+
+    msg = hyundaicanfd.create_acc_control(packer, can_bus, enabled=True, accel_last=0.0, accel=0.1, stopping=False,
+                                          gas_override=False, set_speed=42, hud_control=SimpleNamespace(leadDistanceBars=3),
+                                          direct_accel=True, lead_distance=27.5, lead_rel_speed=-1.2, lead_visible=False)
+    parser.update([(1, [msg])])
+
+    assert parser.can_valid
+    assert parser.vl["SCC_CONTROL"]["ACC_ObjDist"] == pytest.approx(0.0)
+    assert parser.vl["SCC_CONTROL"]["ACC_ObjRelSpd"] == pytest.approx(0.0)
+    assert parser.vl["SCC_CONTROL"]["ObjValid"] == 1
+    assert parser.vl["SCC_CONTROL"]["OBJ_STATUS"] == 0
+
+  def test_canfd_acc_control_allows_distance_setting_override(self):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.KIA_EV6
+    CP.flags = int(HyundaiFlags.CANFD)
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    can_bus = CanBus(CP)
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("SCC_CONTROL", 0)], can_bus.ECAN)
+
+    msg = hyundaicanfd.create_acc_control(packer, can_bus, enabled=True, accel_last=0.0, accel=0.1, stopping=False,
+                                          gas_override=False, set_speed=42, hud_control=SimpleNamespace(leadDistanceBars=1),
+                                          direct_accel=True, distance_setting=3,
+                                          lead_distance=41.0, lead_rel_speed=-0.5, lead_visible=True)
+    parser.update([(1, [msg])])
+
+    assert parser.can_valid
+    assert parser.vl["SCC_CONTROL"]["DISTANCE_SETTING"] == 3
+    assert parser.vl["SCC_CONTROL"]["ACC_ObjDist"] == pytest.approx(41.0)
+
+  def test_canfd_lead_distance_setting_uses_detected_range(self):
+    assert get_canfd_lead_distance_setting(None, 2) == 2
+    assert get_canfd_lead_distance_setting(0.0, 2) == 2
+    assert get_canfd_lead_distance_setting(12.0, 3) == 1
+    assert get_canfd_lead_distance_setting(24.0, 1) == 2
+    assert get_canfd_lead_distance_setting(38.0, 1) == 3
+
+  def test_canfd_scc_lead_state_prefers_openpilot_lead_distance(self):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.KIA_EV6
+    CP.flags = int(HyundaiFlags.CANFD)
+
+    controller = CarController(DBC[CP.carFingerprint], CP)
+    cc = SimpleNamespace(hudControl=SimpleNamespace(leadVisible=True, leadDistanceBars=2))
+    cs = SimpleNamespace(
+      openpilot_lead_visible=True,
+      openpilot_lead_distance=37.5,
+      openpilot_lead_rel_speed=-1.3,
+      stock_camera_lead_ts=0,
+      stock_camera_lead_visible=False,
+      stock_camera_lead_distance=0.0,
+      stock_camera_lead_rel_speed=0.0,
+    )
+
+    lead_visible, lead_distance, lead_rel_speed, distance_setting = controller._get_canfd_scc_lead_state(cc, cs, now_nanos=1_000_000_000)
+
+    assert lead_visible
+    assert lead_distance == pytest.approx(37.5)
+    assert lead_rel_speed == pytest.approx(-1.3)
+    assert distance_setting == 3
+
+  def test_canfd_scc_lead_state_falls_back_to_hud_lead_when_no_distance_available(self):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.KIA_EV6
+    CP.flags = int(HyundaiFlags.CANFD)
+
+    controller = CarController(DBC[CP.carFingerprint], CP)
+    cc = SimpleNamespace(hudControl=SimpleNamespace(leadVisible=True, leadDistanceBars=2))
+    cs = SimpleNamespace(
+      openpilot_lead_visible=True,
+      openpilot_lead_distance=0.0,
+      openpilot_lead_rel_speed=0.0,
+      stock_camera_lead_ts=0,
+      stock_camera_lead_visible=False,
+      stock_camera_lead_distance=0.0,
+      stock_camera_lead_rel_speed=0.0,
+    )
+
+    lead_visible, lead_distance, lead_rel_speed, distance_setting = controller._get_canfd_scc_lead_state(cc, cs, now_nanos=1_000_000_000)
+
+    assert lead_visible
+    assert lead_distance == pytest.approx(20.0)
+    assert lead_rel_speed == pytest.approx(0.0)
+    assert distance_setting == 2
+
   def test_can_acc_commands_use_default_values(self):
     CP = CarParams.new_message()
     CP.carFingerprint = CAR.GENESIS_G90
@@ -871,6 +986,25 @@ class TestHyundaiFingerprint:
     assert parser.vl["LFA"]["STEER_REQ"] == 1
     assert parser.vl["LFA"]["LKA_ICON"] == 2
 
+  def test_ioniq_6_lfa_helper_allows_lka_icon_override(self):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.HYUNDAI_IONIQ_6
+    CP.flags = int(HyundaiFlags.CANFD | HyundaiFlags.CANFD_LKA_STEERING)
+    CP.openpilotLongitudinalControl = True
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    can_bus = CanBus(CP)
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LFA", 0)], can_bus.ECAN)
+
+    msgs = hyundaicanfd.create_steering_messages(packer, CP, can_bus, False, False, 0, 0.0, lka_icon=3)
+    lfa_msgs = [msg for msg in msgs if msg[0] == 0x12A]
+    assert len(lfa_msgs) == 1
+
+    parser.update([(1, lfa_msgs)])
+
+    assert parser.can_valid
+    assert parser.vl["LFA"]["LKA_ICON"] == 3
+
   def test_ioniq_6_lkas_alt_helper_preserves_stock_camera_fields(self):
     CP = CarParams.new_message()
     CP.carFingerprint = CAR.HYUNDAI_IONIQ_6
@@ -918,6 +1052,34 @@ class TestHyundaiFingerprint:
     assert parser.vl["LKAS_ALT"]["TORQUE_REQUEST"] == 123
     assert parser.vl["LKAS_ALT"]["STEER_REQ"] == 1
     assert parser.vl["LKAS_ALT"]["LKA_ICON"] == 2
+
+  def test_ioniq_6_lfahda_cluster_allows_lfa_icon_override(self):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.HYUNDAI_IONIQ_6
+    CP.flags = int(HyundaiFlags.CANFD | HyundaiFlags.CANFD_LKA_STEERING)
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    can_bus = CanBus(CP)
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LFAHDA_CLUSTER", 0)], can_bus.ECAN)
+
+    msg = hyundaicanfd.create_lfahda_cluster(packer, can_bus, False, lfa_icon=3)
+    parser.update([(1, [msg])])
+
+    assert parser.can_valid
+    assert parser.vl["LFAHDA_CLUSTER"]["LFA_ICON"] == 3
+
+  def test_g90_lfahda_mfc_allows_lfa_icon_override(self):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.GENESIS_G90
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LFAHDA_MFC", 0)], 0)
+
+    msg = hyundaican.create_lfahda_mfc(packer, False, frame=7, CP=CP, lfa_icon=3)
+    parser.update([(1, [msg])])
+
+    assert parser.can_valid
+    assert parser.vl["LFAHDA_MFC"]["LFA_Icon_State"] == 3
 
   def test_ioniq_6_blindspot_status_helper_regenerates_counter_checksum(self):
     CP = CarParams.new_message()
@@ -1001,6 +1163,10 @@ class TestHyundaiFingerprint:
     assert decode_ioniq_6_blindspot_radar_state(0x12) == (True, False)
     assert decode_ioniq_6_blindspot_radar_state(0x1A) == (True, True)
     assert decode_ioniq_6_blindspot_radar_state(10.0) == (False, True)
+
+  def test_canfd_camera_lead_decode(self):
+    assert decode_canfd_camera_lead(0.0, -1.0) == (False, 0.0, 0.0)
+    assert decode_canfd_camera_lead(25.0, -1.5) == (True, 25.0, -1.5)
 
   def test_ioniq_6_cluster_blindspot_helper_uses_captured_stock_sequences(self):
     CP = CarParams.new_message()
