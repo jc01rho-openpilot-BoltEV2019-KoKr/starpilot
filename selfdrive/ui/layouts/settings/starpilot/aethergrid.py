@@ -1253,6 +1253,7 @@ class AetherAdjustorRow(Widget):
     self._style = style
     self._color = color or style.accent
     self._presets = presets or []
+    self._preset_applied = False
     self._font_title = gui_app.font(FontWeight.MEDIUM)
     self._font_subtitle = gui_app.font(FontWeight.NORMAL)
     self._font_value = gui_app.font(FontWeight.SEMI_BOLD)
@@ -1351,6 +1352,7 @@ class AetherAdjustorRow(Widget):
           self._scrubber.set_value(preset_value)
           self._scrubber._on_change(self._scrubber.current_val)
           self._scrubber._commit_if_needed()
+          self._preset_applied = True
           return
       return
 

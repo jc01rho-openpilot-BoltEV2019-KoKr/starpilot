@@ -155,6 +155,9 @@ class SoundsManagerView(Widget):
       is_interacting = adjustor.is_interacting
       if self._was_interacting.get(key, False) and not is_interacting:
         self._controller._test_sound(key)
+      if adjustor._preset_applied:
+        adjustor._preset_applied = False
+        self._controller._test_sound(key)
       self._was_interacting[key] = is_interacting
 
   def _draw_header(self, rect: rl.Rectangle):
