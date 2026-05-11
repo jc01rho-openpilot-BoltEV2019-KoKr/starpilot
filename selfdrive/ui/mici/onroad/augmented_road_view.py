@@ -17,8 +17,8 @@ from openpilot.selfdrive.ui.mici.onroad.starpilot_status import (
   EXPERIMENTAL_COLOR,
   TRAFFIC_COLOR,
   get_border_color,
-  get_experimental_mode_banner_text,
 )
+from openpilot.selfdrive.ui.lib.starpilot_mode_banner import ModeTransitionBanner
 from openpilot.selfdrive.ui.mici.onroad.cameraview import CameraView
 from openpilot.selfdrive.ui.lib.starpilot_visuals import get_border_width
 from openpilot.system.ui.lib.application import FontWeight, gui_app, MousePos, MouseEvent
@@ -145,54 +145,6 @@ class BookmarkIcon(Widget):
       icon_x = self.rect.x + self.rect.width - round(self._offset_filter.x)
       icon_y = self.rect.y + (self.rect.height - self._icon.height) / 2  # Vertically centered
       rl.draw_texture(self._icon, int(icon_x), int(icon_y), rl.WHITE)
-
-
-class ExperimentalModeBanner(Widget):
-  SHOW_TIME_SECONDS = 2.5
-
-  def __init__(self):
-    super().__init__()
-    self._last_mode: str | None = None
-    self._visible_until = 0.0
-    self._label = UnifiedLabel(
-      "",
-      34,
-      FontWeight.BOLD,
-      text_color=rl.WHITE,
-      alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER,
-      alignment_vertical=rl.GuiTextAlignmentVertical.TEXT_ALIGN_MIDDLE,
-    )
-
-  def _update_state(self):
-    current_mode = get_experimental_mode_banner_text(ui_state)
-    if current_mode is None:
-      return
-
-    if self._last_mode is None:
-      self._last_mode = current_mode
-      return
-
-    if current_mode != self._last_mode:
-      self._last_mode = current_mode
-      self._label.set_text(f"{current_mode} MODE")
-      self._visible_until = time.monotonic() + self.SHOW_TIME_SECONDS
-
-  def _render(self, rect):
-    if not ui_state.started or time.monotonic() > self._visible_until:
-      return
-
-    banner_width = min(rect.width - 120, 520)
-    banner_height = 72
-    banner_rect = rl.Rectangle(
-      rect.x + (rect.width - banner_width) / 2,
-      rect.y + 22,
-      banner_width,
-      banner_height,
-    )
-
-    rl.draw_rectangle_rounded(banner_rect, 0.3, 12, rl.Color(0, 0, 0, 175))
-    rl.draw_rectangle_rounded_lines_ex(banner_rect, 0.3, 12, 4, get_border_color(ui_state))
-    self._label.render(banner_rect)
 
 
 class MinSteerSpeedBanner(Widget):
@@ -420,7 +372,7 @@ class AugmentedRoadView(CameraView):
     self._alert_renderer = AlertRenderer()
     self._driver_state_renderer = DriverStateRenderer()
     self._confidence_ball = ConfidenceBall()
-    self._experimental_mode_banner = ExperimentalModeBanner()
+    self._mode_transition_banner = ModeTransitionBanner()
     self._min_steer_speed_banner = MinSteerSpeedBanner()
     self._standstill_timer = StandstillTimerOverlay()
     self._offroad_label = UnifiedLabel("start the car to\nuse openpilot", 54, FontWeight.DISPLAY,
@@ -536,13 +488,14 @@ class AugmentedRoadView(CameraView):
     self._hud_renderer.set_can_draw_top_icons((not in_reverse) and (not is_driver_stream) and (alert_to_render is None))
     self._hud_renderer.set_wheel_critical_icon((not in_reverse) and (not is_driver_stream) and alert_to_render is not None and not not_animating_out and
                                                alert_to_render.visual_alert == car.CarControl.HUDControl.VisualAlert.steerRequired)
+    self._mode_transition_banner.update()
     # TODO: have alert renderer draw offroad mici label below
     if ui_state.started:
       self._alert_renderer.render(self._content_rect)
     if not in_reverse and not is_driver_stream:
       self._hud_renderer.render_foreground()
     if (not in_reverse) and (not is_driver_stream) and alert_to_render is None:
-      self._experimental_mode_banner.render(self._content_rect)
+      self._mode_transition_banner.render(self._content_rect)
     rendered_standstill_timer = False
     if not in_reverse and not is_driver_stream:
       rendered_standstill_timer = self._standstill_timer.render(self._content_rect, in_reverse)
