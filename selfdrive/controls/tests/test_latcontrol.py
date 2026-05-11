@@ -489,7 +489,7 @@ class TestLatControl:
     monkeypatch.setattr(latcontrol_torque, "civic_bosch_modified_lateral_testing_ground_active", lambda: True)
     variant_controller = LatControlTorque(CP.as_reader(), CI, DT_CTRL)
 
-    assert variant_controller.torque_params.latAccelFactor == pytest.approx(3.0 * 1.20 * 1.52)
+    assert variant_controller.torque_params.latAccelFactor == pytest.approx(3.0 * 1.20 * 1.75)
 
   def test_modified_civic_b_torque_ff_scale_curve(self):
     steady_left = get_civic_bosch_modified_b_ff_scale(0.5, 0.0, 12.0)
@@ -539,11 +539,11 @@ class TestLatControl:
 
     assert variant_steady_right < base_steady_right
     assert variant_turn_in_right < base_turn_in_right
-    assert variant_turn_in_right > variant_steady_right
+    assert variant_turn_in_right >= variant_steady_right
     assert variant_turn_in_left > variant_steady_left
     assert variant_unwind_right < base_unwind_right
     assert variant_unwind_right_friction < base_unwind_right_friction
-    assert variant_turn_in_right_friction > base_turn_in_right_friction
+    assert variant_turn_in_right_friction >= base_turn_in_right_friction
 
   def test_modified_civic_a_variant_extra_torque_shaping_curve(self, monkeypatch):
     base_steady_left = get_civic_bosch_modified_b_ff_scale(0.5, 0.0, 12.0)

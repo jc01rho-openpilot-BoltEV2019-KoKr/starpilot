@@ -14,6 +14,8 @@
 #include "starpilot/ui/qt/offroad/wheel_settings.h"
 #include "system/hardware/hw.h"
 
+#include <cmath>
+
 bool nnffLogFileExists(const QString &carFingerprint) {
   static QStringList models;
   static QMap<QString, QString> substitutes;
@@ -409,82 +411,35 @@ void StarPilotSettingsWindow::updateVariables() {
     float currentVEgoStartingStock = params.getFloat("VEgoStartingStock");
     float currentVEgoStoppingStock = params.getFloat("VEgoStoppingStock");
 
-    if (currentDelayStock != steerActuatorDelay && steerActuatorDelay != 0) {
-      if (params.getFloat("SteerDelay") == currentDelayStock || currentDelayStock == 0) {
-        params.putFloatNonBlocking("SteerDelay", steerActuatorDelay);
-      }
-      params.putFloatNonBlocking("SteerDelayStock", steerActuatorDelay);
-    }
+    auto nearlyEqual = [](float a, float b) {
+      return std::fabs(a - b) <= 1e-6f;
+    };
 
-    if (currentFrictionStock != friction && friction != 0) {
-      if (params.getFloat("SteerFriction") == currentFrictionStock || currentFrictionStock == 0) {
-        params.putFloatNonBlocking("SteerFriction", friction);
+    auto syncStockParam = [&](const char *key, const char *stockKey, float currentStock, float liveValue) {
+      if (nearlyEqual(currentStock, liveValue) || nearlyEqual(liveValue, 0.0f)) {
+        return;
       }
-      params.putFloatNonBlocking("SteerFrictionStock", friction);
-    }
 
-    if (currentKPStock != steerKp && steerKp != 0) {
-      if (params.getFloat("SteerKP") == currentKPStock || currentKPStock == 0) {
-        params.putFloatNonBlocking("SteerKP", steerKp);
+      float currentValue = params.getFloat(key);
+      bool shouldUpdateLiveValue = nearlyEqual(currentValue, currentStock) || nearlyEqual(currentValue, 0.0f);
+      if (shouldUpdateLiveValue) {
+        params.putFloatNonBlocking(key, liveValue);
       }
-      params.putFloatNonBlocking("SteerKPStock", steerKp);
-    }
 
-    if (currentLatAccelStock != latAccelFactor && latAccelFactor != 0) {
-      if (params.getFloat("SteerLatAccel") == currentLatAccelStock || currentLatAccelStock == 0) {
-        params.putFloatNonBlocking("SteerLatAccel", latAccelFactor);
-      }
-      params.putFloatNonBlocking("SteerLatAccelStock", latAccelFactor);
-    }
+      params.putFloatNonBlocking(stockKey, liveValue);
+    };
 
-    if (currentLongDelayStock != longitudinalActuatorDelay && longitudinalActuatorDelay != 0) {
-      if (params.getFloat("LongitudinalActuatorDelay") == currentLongDelayStock || currentLongDelayStock == 0) {
-        params.putFloatNonBlocking("LongitudinalActuatorDelay", longitudinalActuatorDelay);
-      }
-      params.putFloatNonBlocking("LongitudinalActuatorDelayStock", longitudinalActuatorDelay);
-    }
-
-    if (currentStartAccelStock != startAccel && startAccel != 0) {
-      if (params.getFloat("StartAccel") == currentStartAccelStock || currentStartAccelStock == 0) {
-        params.putFloatNonBlocking("StartAccel", startAccel);
-      }
-      params.putFloatNonBlocking("StartAccelStock", startAccel);
-    }
-
-    if (currentSteerRatioStock != steerRatio && steerRatio != 0) {
-      if (params.getFloat("SteerRatio") == currentSteerRatioStock || currentSteerRatioStock == 0) {
-        params.putFloatNonBlocking("SteerRatio", steerRatio);
-      }
-      params.putFloatNonBlocking("SteerRatioStock", steerRatio);
-    }
-
-    if (currentStopAccelStock != stopAccel && stopAccel != 0) {
-      if (params.getFloat("StopAccel") == currentStopAccelStock || currentStopAccelStock == 0) {
-        params.putFloatNonBlocking("StopAccel", stopAccel);
-      }
-      params.putFloatNonBlocking("StopAccelStock", stopAccel);
-    }
-
-    if (currentStoppingDecelRateStock != stoppingDecelRate && stoppingDecelRate != 0) {
-      if (params.getFloat("StoppingDecelRate") == currentStoppingDecelRateStock || currentStoppingDecelRateStock == 0) {
-        params.putFloatNonBlocking("StoppingDecelRate", stoppingDecelRate);
-      }
-      params.putFloatNonBlocking("StoppingDecelRateStock", stoppingDecelRate);
-    }
-
-    if (currentVEgoStartingStock != vEgoStarting && vEgoStarting != 0) {
-      if (params.getFloat("VEgoStarting") == currentVEgoStartingStock || currentVEgoStartingStock == 0) {
-        params.putFloatNonBlocking("VEgoStarting", vEgoStarting);
-      }
-      params.putFloatNonBlocking("VEgoStartingStock", vEgoStarting);
-    }
-
-    if (currentVEgoStoppingStock != vEgoStopping && vEgoStopping != 0) {
-      if (params.getFloat("VEgoStopping") == currentVEgoStoppingStock || currentVEgoStoppingStock == 0) {
-        params.putFloatNonBlocking("VEgoStopping", vEgoStopping);
-      }
-      params.putFloatNonBlocking("VEgoStoppingStock", vEgoStopping);
-    }
+    syncStockParam("SteerDelay", "SteerDelayStock", currentDelayStock, steerActuatorDelay);
+    syncStockParam("SteerFriction", "SteerFrictionStock", currentFrictionStock, friction);
+    syncStockParam("SteerKP", "SteerKPStock", currentKPStock, steerKp);
+    syncStockParam("SteerLatAccel", "SteerLatAccelStock", currentLatAccelStock, latAccelFactor);
+    syncStockParam("LongitudinalActuatorDelay", "LongitudinalActuatorDelayStock", currentLongDelayStock, longitudinalActuatorDelay);
+    syncStockParam("StartAccel", "StartAccelStock", currentStartAccelStock, startAccel);
+    syncStockParam("SteerRatio", "SteerRatioStock", currentSteerRatioStock, steerRatio);
+    syncStockParam("StopAccel", "StopAccelStock", currentStopAccelStock, stopAccel);
+    syncStockParam("StoppingDecelRate", "StoppingDecelRateStock", currentStoppingDecelRateStock, stoppingDecelRate);
+    syncStockParam("VEgoStarting", "VEgoStartingStock", currentVEgoStartingStock, vEgoStarting);
+    syncStockParam("VEgoStopping", "VEgoStoppingStock", currentVEgoStoppingStock, vEgoStopping);
 
     if (Hardware::PC() && (carMake == "mock" || carFingerprint == "MOCK")) {
       applyDesktopVehicleFallback();
