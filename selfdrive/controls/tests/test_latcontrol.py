@@ -50,6 +50,8 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_kia_ev6_ff_scale,
   get_kia_ev6_friction_scale,
   get_kia_ev6_friction_threshold,
+  get_sonata_hybrid_center_taper_scale,
+  get_sonata_hybrid_ff_scale,
   get_volt_standard_center_taper_scale,
   get_volt_standard_ff_scale,
   get_volt_standard_friction_scale,
@@ -216,6 +218,16 @@ class TestLatControl:
     assert get_volt_standard_center_taper_scale(0.0, 10.0) > get_volt_standard_center_taper_scale(0.0, 25.0)
     assert get_volt_standard_center_taper_scale(0.0, 25.0) < get_volt_standard_center_taper_scale(0.10, 25.0) < get_volt_standard_center_taper_scale(0.20, 25.0) <= 1.0
     assert get_volt_standard_center_taper_scale(0.0, 25.0) > 0.85
+
+  def test_sonata_hybrid_ff_scale_curve(self):
+    assert get_sonata_hybrid_ff_scale(0.0, 0.0, 20.0) == 1.0
+    assert get_sonata_hybrid_ff_scale(0.6, 0.0, 20.0) == get_sonata_hybrid_ff_scale(-0.6, 0.0, 20.0)
+    assert get_sonata_hybrid_ff_scale(0.30, 0.0, 20.0) < 1.0
+    assert get_sonata_hybrid_ff_scale(0.30, 0.0, 20.0) < get_sonata_hybrid_ff_scale(0.10, 0.0, 20.0)
+
+  def test_sonata_hybrid_center_taper_curve(self):
+    assert get_sonata_hybrid_center_taper_scale(0.0, 30.0) < get_sonata_hybrid_center_taper_scale(0.0, 15.0)
+    assert get_sonata_hybrid_center_taper_scale(0.0, 30.0) < get_sonata_hybrid_center_taper_scale(0.20, 30.0) <= 1.0
 
   def test_genesis_g90_ff_scale_curve(self):
     assert get_genesis_g90_ff_scale(0.0, 0.0, 20.0) == 1.0

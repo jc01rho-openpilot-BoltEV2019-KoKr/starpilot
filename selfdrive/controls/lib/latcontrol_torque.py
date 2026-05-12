@@ -114,6 +114,9 @@ IONIQ_5_CARS = (
 IONIQ_6_CARS = (
   HYUNDAI_CAR.HYUNDAI_IONIQ_6,
 )
+SONATA_HYBRID_CARS = (
+  HYUNDAI_CAR.HYUNDAI_SONATA_HYBRID,
+)
 KIA_EV6_CARS = (
   HYUNDAI_CAR.KIA_EV6,
 )
@@ -196,34 +199,46 @@ BOLT_2022_2023_UNWIND_FRICTION_REDUCTION_LEFT = 0.27
 BOLT_2022_2023_UNWIND_FRICTION_REDUCTION_RIGHT = 0.23
 
 VOLT_STANDARD_LATERAL_TESTING_GROUND_ID = testing_ground.id_3
-VOLT_STANDARD_FF_GAIN_LEFT = 0.11
-VOLT_STANDARD_FF_GAIN_RIGHT = 0.08
+VOLT_STANDARD_FF_GAIN_LEFT = 0.13
+VOLT_STANDARD_FF_GAIN_RIGHT = 0.06
 VOLT_STANDARD_FF_ONSET = 0.10
 VOLT_STANDARD_FF_ONSET_WIDTH = 0.05
 VOLT_STANDARD_FF_CUTOFF = 1.38
 VOLT_STANDARD_FF_CUTOFF_WIDTH = 0.28
 VOLT_STANDARD_TRANSITION_SPEED = 10.0
 VOLT_STANDARD_PHASE_SCALE = 0.10
-VOLT_STANDARD_TURN_IN_BOOST_LEFT = 0.26
-VOLT_STANDARD_TURN_IN_BOOST_RIGHT = 0.44
-VOLT_STANDARD_UNWIND_TAPER_LEFT = 0.34
-VOLT_STANDARD_UNWIND_TAPER_RIGHT = 0.72
+VOLT_STANDARD_TURN_IN_BOOST_LEFT = 0.32
+VOLT_STANDARD_TURN_IN_BOOST_RIGHT = 0.34
+VOLT_STANDARD_UNWIND_TAPER_LEFT = 0.28
+VOLT_STANDARD_UNWIND_TAPER_RIGHT = 0.82
 VOLT_STANDARD_FRICTION_MULT = 1.04
 VOLT_STANDARD_FRICTION_LAT_RISE = 0.20
 VOLT_STANDARD_FRICTION_JERK_RISE = 0.24
-VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.14
-VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.24
-VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_LEFT = 0.18
-VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.56
-VOLT_STANDARD_TURN_IN_FRICTION_BOOST_LEFT = 0.07
-VOLT_STANDARD_TURN_IN_FRICTION_BOOST_RIGHT = 0.13
-VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_LEFT = 0.20
-VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_RIGHT = 0.50
+VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.18
+VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.18
+VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_LEFT = 0.16
+VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.68
+VOLT_STANDARD_TURN_IN_FRICTION_BOOST_LEFT = 0.09
+VOLT_STANDARD_TURN_IN_FRICTION_BOOST_RIGHT = 0.10
+VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_LEFT = 0.18
+VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_RIGHT = 0.62
 VOLT_STANDARD_CENTER_TAPER_MAX = 0.12
 VOLT_STANDARD_CENTER_TAPER_LAT = 0.10
 VOLT_STANDARD_CENTER_TAPER_LAT_WIDTH = 0.018
 VOLT_STANDARD_CENTER_TAPER_SPEED = 20.0
 VOLT_STANDARD_CENTER_TAPER_SPEED_WIDTH = 2.5
+
+SONATA_HYBRID_BASE_LAT_ACCEL_FACTOR_MULT = 1.04
+SONATA_HYBRID_FF_REDUCTION = 0.08
+SONATA_HYBRID_FF_ONSET = 0.22
+SONATA_HYBRID_FF_ONSET_WIDTH = 0.08
+SONATA_HYBRID_FF_CUTOFF = 1.15
+SONATA_HYBRID_FF_CUTOFF_WIDTH = 0.35
+SONATA_HYBRID_CENTER_TAPER_MAX = 0.05
+SONATA_HYBRID_CENTER_TAPER_LAT = 0.14
+SONATA_HYBRID_CENTER_TAPER_LAT_WIDTH = 0.025
+SONATA_HYBRID_CENTER_TAPER_SPEED = 22.0
+SONATA_HYBRID_CENTER_TAPER_SPEED_WIDTH = 2.5
 
 GENESIS_G90_LATERAL_TESTING_GROUND_ID = testing_ground.id_4
 GENESIS_G90_FF_GAIN_LEFT = 0.20
@@ -817,6 +832,28 @@ def get_volt_standard_center_taper_scale(desired_lateral_accel: float, v_ego: fl
   return 1.0 - reduction
 
 
+def _sonata_hybrid_sigmoid(x: float) -> float:
+  return _sigmoid(x)
+
+
+def get_sonata_hybrid_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  del desired_lateral_jerk, v_ego
+  if desired_lateral_accel == 0.0:
+    return 1.0
+
+  abs_lateral_accel = abs(desired_lateral_accel)
+  onset = _sonata_hybrid_sigmoid((abs_lateral_accel - SONATA_HYBRID_FF_ONSET) / SONATA_HYBRID_FF_ONSET_WIDTH)
+  cutoff = _sonata_hybrid_sigmoid((SONATA_HYBRID_FF_CUTOFF - abs_lateral_accel) / SONATA_HYBRID_FF_CUTOFF_WIDTH)
+  return 1.0 - (SONATA_HYBRID_FF_REDUCTION * onset * cutoff)
+
+
+def get_sonata_hybrid_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _sonata_hybrid_sigmoid((v_ego - SONATA_HYBRID_CENTER_TAPER_SPEED) / SONATA_HYBRID_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _sonata_hybrid_sigmoid((SONATA_HYBRID_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / SONATA_HYBRID_CENTER_TAPER_LAT_WIDTH)
+  reduction = SONATA_HYBRID_CENTER_TAPER_MAX * speed_weight * center_weight
+  return 1.0 - reduction
+
+
 def genesis_g90_lateral_testing_ground_active() -> bool:
   return testing_ground.use(GENESIS_G90_LATERAL_TESTING_GROUND_ID)
 
@@ -1249,6 +1286,7 @@ class LatControlTorque(LatControl):
     self.is_genesis_g90 = CP.carFingerprint in GENESIS_G90_CARS
     self.is_ioniq_5 = CP.carFingerprint in IONIQ_5_CARS
     self.is_ioniq_6 = CP.carFingerprint in IONIQ_6_CARS
+    self.is_sonata_hybrid = CP.carFingerprint in SONATA_HYBRID_CARS
     self.is_kia_ev6 = CP.carFingerprint in KIA_EV6_CARS
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA_CAR.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_volt_cc = CP.carFingerprint == GM_CAR.CHEVROLET_VOLT_CC
@@ -1263,6 +1301,8 @@ class LatControlTorque(LatControl):
       self.torque_params.latAccelFactor *= IONIQ_5_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_6:
       self.torque_params.latAccelFactor *= IONIQ_6_BASE_LAT_ACCEL_FACTOR_MULT
+    if self.is_sonata_hybrid:
+      self.torque_params.latAccelFactor *= SONATA_HYBRID_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_civic_bosch_modified:
       self.torque_params.latAccelFactor *= CIVIC_BOSCH_MODIFIED_B_LAT_ACCEL_FACTOR_MULT
       if civic_bosch_modified_a_lateral_testing_ground_active():
@@ -1284,6 +1324,8 @@ class LatControlTorque(LatControl):
       latAccelFactor *= IONIQ_5_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_6:
       latAccelFactor *= IONIQ_6_BASE_LAT_ACCEL_FACTOR_MULT
+    if self.is_sonata_hybrid:
+      latAccelFactor *= SONATA_HYBRID_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_civic_bosch_modified:
       latAccelFactor *= CIVIC_BOSCH_MODIFIED_B_LAT_ACCEL_FACTOR_MULT
       if civic_bosch_modified_a_lateral_testing_ground_active():
@@ -1359,10 +1401,12 @@ class LatControlTorque(LatControl):
       genesis_g90_test_active = self.is_genesis_g90 and genesis_g90_lateral_testing_ground_active()
       ioniq_5_active = self.is_ioniq_5
       ioniq_6_active = self.is_ioniq_6
+      sonata_hybrid_active = self.is_sonata_hybrid
       kia_ev6_test_active = self.is_kia_ev6 and kia_ev6_lateral_testing_ground_active()
       volt_plexy_test_active = self.is_volt_cc and volt_plexy_lateral_testing_ground_active()
       volt_standard_center_taper = get_volt_standard_center_taper_scale(setpoint, CS.vEgo) if volt_standard_test_active else 1.0
       ioniq_6_center_taper = get_ioniq_6_center_taper_scale(setpoint, CS.vEgo) if ioniq_6_active else 1.0
+      sonata_hybrid_center_taper = get_sonata_hybrid_center_taper_scale(setpoint, CS.vEgo) if sonata_hybrid_active else 1.0
       friction_threshold = get_friction_threshold(CS.vEgo)
       friction_scale = 1.0
       if bolt_2022_2023_tuned_path_active:
@@ -1390,6 +1434,8 @@ class LatControlTorque(LatControl):
         friction_threshold = get_ioniq_6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk) / max(ioniq_6_center_taper, 1e-3)
         friction_scale = get_ioniq_6_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = 1.0 + ((friction_scale - 1.0) * ioniq_6_center_taper)
+      elif sonata_hybrid_active:
+        ff *= get_sonata_hybrid_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * sonata_hybrid_center_taper
       elif kia_ev6_test_active:
         ff *= get_kia_ev6_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         friction_threshold = get_kia_ev6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
