@@ -1698,6 +1698,14 @@
         "parent_key": "CustomUI"
       },
       {
+        "key": "ShowModeStatusBanner",
+        "label": "Show Mode Status Banner",
+        "description": "Show a popup banner when the Python driving UIs switch into chill, experimental, switchback, or override mode.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI"
+      },
+      {
         "key": "AdjacentPath",
         "label": "Adjacent Lanes",
         "description": "Show the driving paths for the left and right lanes.",

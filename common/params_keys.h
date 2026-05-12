@@ -476,6 +476,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ShowGPU", {PERSISTENT, BOOL, "0", "0", 3}},
     {"ShowIP", {PERSISTENT, BOOL, "0", "0", 3}},
     {"ShowMemoryUsage", {PERSISTENT, BOOL, "1", "0", 3}},
+    {"ShowModeStatusBanner", {PERSISTENT, BOOL, "1", "0", 2}},
     {"ShownToggleDescriptions", {PERSISTENT, JSON, "{}", "{}"}},
     {"ShowSLCOffset", {PERSISTENT, BOOL, "1", "0", 0}},
     {"ShowSpeedLimits", {PERSISTENT, BOOL, "1", "0", 1}},

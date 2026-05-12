@@ -261,6 +261,7 @@ ShowCSCStatus
 ShowGPU
 ShowIP
 ShowMemoryUsage
+ShowModeStatusBanner
 ShowSLCOffset
 ShowSpeedLimits
 ShowSteering
