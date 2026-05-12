@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from cereal import car
+import pytest
 
 import openpilot.selfdrive.controls.lib.longcontrol as longcontrol
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl, LongCtrlState, long_control_state_trans
@@ -289,3 +290,39 @@ def test_negative_target_unwinds_positive_accel_command_after_sign_flip():
 
   assert lc.long_control_state == LongCtrlState.pid
   assert output_accel <= 0.01
+
+
+def test_pedal_long_brake_bias_adds_small_negative_nudge_for_strong_decel_request():
+  CP = car.CarParams.new_message()
+  CP.brand = "gm"
+  CP.enableGasInterceptorDEPRECATED = True
+  CP.flags = 1
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
+
+  biased = lc._apply_pedal_long_brake_bias(-1.0, -3.0, CS)
+
+  assert biased < -1.0
+  assert biased == pytest.approx(-1.15, abs=0.03)
+
+
+def test_pedal_long_brake_bias_does_not_touch_non_pedal_or_mild_decel():
+  CP = car.CarParams.new_message()
+  CP.brand = "gm"
+  CP.enableGasInterceptorDEPRECATED = False
+  CP.flags = 0
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
+
+  assert lc._apply_pedal_long_brake_bias(-1.0, -3.0, CS) == -1.0
+  assert lc._apply_pedal_long_brake_bias(-0.4, -0.6, CS) == -0.4

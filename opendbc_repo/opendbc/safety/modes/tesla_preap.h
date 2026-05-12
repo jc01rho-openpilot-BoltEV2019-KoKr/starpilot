@@ -370,7 +370,7 @@ static bool tesla_preap_tx_hook(const CANPacket_t *msg) {
 static bool tesla_preap_fwd_hook(int bus_num, int addr) {
   (void)bus_num;
   (void)addr;
-  return false;
+  return true;
 }
 
 static safety_config tesla_preap_init(uint16_t param) {

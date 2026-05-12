@@ -719,10 +719,9 @@ function clearSearchFilter() {
   scheduleSyncInputs()
 }
 
+const cancelButtonKeys = new Set(["CancelButtonControl", "LongCancelButtonControl", "VeryLongCancelButtonControl"])
+
 function getSettingLockReason(param) {
-  if (param?.key === "LKASButtonControl" && !!state.values.RemapCancelToDistance) {
-    return "Cancel remap requires the LKAS button to stay on No Action."
-  }
   return ""
 }
 
@@ -747,6 +746,9 @@ function renderSettingRow(p) {
   if (p.parent_key && !state.filter) {
     if (!isParamEnabledForChildren(p.parent_key)) return ""
     if (!state.expanded[p.parent_key]) return ""
+  }
+  if (cancelButtonKeys.has(p?.key) && !state.values.RemapCancelToDistance) {
+    return ""
   }
 
   const isNumeric = p.ui_type === "numeric"

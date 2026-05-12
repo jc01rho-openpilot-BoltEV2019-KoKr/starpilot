@@ -93,12 +93,16 @@ BOLT_PEDAL_LONG_CARS = {
   CAR.CHEVROLET_MALIBU_HYBRID_CC,
 }
 
-# Cancel-to-personality mapping target: gen1 Bolt pedal-long paths only.
+# Cancel-button remap support uses the same safety path on all pedal-long Bolts,
+# but only gen1 needs extra LKAS suppression in CarState.
 BOLT_GEN1_CANCEL_PERSONALITY_CARS = {
   CAR.CHEVROLET_BOLT_CC_2017,
   CAR.CHEVROLET_BOLT_CC_2018_2021,
 }
-CANCEL_REMAP_DISTANCE_CARS = BOLT_GEN1_CANCEL_PERSONALITY_CARS
+CANCEL_REMAP_DISTANCE_CARS = BOLT_GEN1_CANCEL_PERSONALITY_CARS | {
+  CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+  CAR.CHEVROLET_BOLT_CC_2022_2023,
+}
 
 
 class CarInterface(CarInterfaceBase):

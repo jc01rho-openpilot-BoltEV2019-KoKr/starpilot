@@ -200,6 +200,18 @@ class CarInterface(CarInterfaceBase):
       ret.stoppingDecelRate = 0.55
       ret.vEgoStopping = 0.8
 
+    if candidate == CAR.HYUNDAI_PALISADE_2023:
+      ret.startAccel = 1.25
+      ret.stopAccel = -1.1
+      ret.stoppingDecelRate = 0.4
+      ret.vEgoStarting = 0.45
+      ret.vEgoStopping = 0.5
+
+    if candidate == CAR.KIA_NIRO_PHEV_2022:
+      ret.stopAccel = -1.5
+      ret.stoppingDecelRate = 0.55
+      ret.vEgoStopping = 0.7
+
     if candidate == CAR.KIA_OPTIMA_G4_FL:
       ret.steerActuatorDelay = 0.2
 

@@ -225,8 +225,8 @@ static void gm_rx_hook(const CANPacket_t *msg) {
       // Malibu Hybrid pedal-long frames use byte3 bit0 in combinations that can alias
       // CANCEL semantics; don't force a safety disengage on those RX edges.
       bool malibu_cancel_passthrough = remap_cancel_to_distance && gm_bolt_2022_pedal && gm_pedal_long && ((msg->data[3] & 0x1U) != 0U);
-      // Gen1 Bolt pedal-long uses CANCEL as an auxiliary input path.
-      bool bolt_cancel_passthrough = remap_cancel_to_distance && gm_pedal_long && !gm_has_acc && !gm_bolt_2022_pedal;
+      // No-ACC pedal-long Bolt paths use CANCEL as an auxiliary input path.
+      bool bolt_cancel_passthrough = remap_cancel_to_distance && gm_pedal_long && !gm_has_acc;
 
       // enter controls on falling edge of set or rising edge of resume (avoids fault)
       bool set = (button != GM_BTN_SET) && (cruise_button_prev == GM_BTN_SET);

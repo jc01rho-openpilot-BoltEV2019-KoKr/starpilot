@@ -46,6 +46,9 @@ def make_toggles(**overrides):
     "always_on_lateral_lkas": False,
     "always_on_lateral_main": False,
     "always_on_lateral_pause_speed": 0.0,
+    "bookmark_via_cancel": False,
+    "bookmark_via_cancel_long": False,
+    "bookmark_via_cancel_very_long": False,
     "bookmark_via_lkas": False,
     "conditional_experimental_mode": False,
     "experimental_mode_via_lkas": False,
@@ -167,3 +170,29 @@ def test_pacifica_hybrid_main_aol_waits_for_set_press(monkeypatch, tmp_path):
   ret = card.update(car_state, starpilot_car_state, sm, toggles)
   assert ret.alwaysOnLateralAllowed is False
   assert ret.alwaysOnLateralEnabled is False
+
+
+def test_cancel_button_short_press_can_run_independent_mapping(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
+  sm = make_sm()
+  toggles = make_toggles(bookmark_via_cancel=True)
+  starpilot_car_state = SimpleNamespace(distancePressed=False, cancelPressed=False)
+
+  card.update(make_car_state(), starpilot_car_state, sm, toggles)
+  assert card.params_memory.get_int("WheelButtonBookmarkCounter") == 0
+
+  starpilot_car_state.cancelPressed = True
+  ret = card.update(make_car_state(), starpilot_car_state, sm, toggles)
+  assert ret.cancelLongPressed is False
+  assert ret.cancelVeryLongPressed is False
+  assert card.params_memory.get_int("WheelButtonBookmarkCounter") == 0
+
+  starpilot_car_state.cancelPressed = False
+  ret = card.update(make_car_state(), starpilot_car_state, sm, toggles)
+  assert ret.cancelLongPressed is False
+  assert ret.cancelVeryLongPressed is False
+  assert card.params_memory.get_int("WheelButtonBookmarkCounter") == 1

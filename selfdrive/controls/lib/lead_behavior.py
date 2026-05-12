@@ -7,6 +7,13 @@ VISION_LEAD_TRACK_MIN_DISTANCE = 25.0
 VISION_LEAD_TRACK_BASE_TIME_GAP = 1.75
 VISION_LEAD_TRACK_CLOSING_GAIN = 0.20
 VISION_LEAD_TRACK_CLOSING_CAP = 2.50
+RADARLESS_MATCHED_FOLLOW_MIN_SPEED = 22.0
+RADARLESS_MATCHED_FOLLOW_MAX_REL_SPEED = 2.0
+RADARLESS_MATCHED_FOLLOW_MIN_HEADWAY = 0.95
+RADARLESS_MATCHED_FOLLOW_HEADWAY_BELOW_TARGET = 0.35
+RADARLESS_MATCHED_FOLLOW_HEADWAY_ABOVE_TARGET = 0.90
+RADARLESS_MATCHED_FOLLOW_MAX_LEAD_BRAKE = 0.35
+RADARLESS_MATCHED_FOLLOW_MIN_MODEL_PROB = 0.70
 
 
 def should_track_lead(lead_status: bool, lead_distance: float, model_length: float, stop_distance: float,
@@ -24,6 +31,27 @@ def should_track_lead(lead_status: bool, lead_distance: float, model_length: flo
                                                           VISION_LEAD_TRACK_CLOSING_CAP)
   vision_limit = max(VISION_LEAD_TRACK_MIN_DISTANCE, float(v_ego) * vision_time_gap + tracking_buffer)
   return float(lead_distance) < min(model_limit, vision_limit)
+
+
+def is_radarless_matched_follow_window(v_ego: float, lead_distance: float, v_lead: float, t_follow: float, *,
+                                       radar: bool = False, lead_brake: float = 0.0,
+                                       lead_prob: float = 0.0) -> bool:
+  if radar or float(t_follow) <= 0.0 or float(v_ego) < RADARLESS_MATCHED_FOLLOW_MIN_SPEED:
+    return False
+  if float(lead_prob) < RADARLESS_MATCHED_FOLLOW_MIN_MODEL_PROB:
+    return False
+  if float(lead_brake) > RADARLESS_MATCHED_FOLLOW_MAX_LEAD_BRAKE:
+    return False
+
+  relative_speed = float(v_ego) - float(v_lead)
+  if abs(relative_speed) > RADARLESS_MATCHED_FOLLOW_MAX_REL_SPEED:
+    return False
+
+  actual_headway = float(lead_distance) / max(float(v_ego), 1e-3)
+  min_headway = max(RADARLESS_MATCHED_FOLLOW_MIN_HEADWAY,
+                    float(t_follow) - RADARLESS_MATCHED_FOLLOW_HEADWAY_BELOW_TARGET)
+  max_headway = float(t_follow) + RADARLESS_MATCHED_FOLLOW_HEADWAY_ABOVE_TARGET
+  return min_headway <= actual_headway <= max_headway
 
 
 def get_tracked_lead_catchup_bias(v_ego: float, lead_distance: float, desired_gap: float, closing_speed: float,
@@ -61,12 +89,12 @@ def should_disable_far_lead_throttle(v_ego: float, lead_distance: float, desired
     return False
 
   # Don't coast if we're already materially above the requested headway.
-  if actual_hw > max(desired_hw + 0.45, 1.85):
+  if actual_hw > max(desired_hw + 0.15, 1.75):
     return False
 
   coast_window_open = lead_distance > desired_gap + max(4.0, 0.15 * v_ego)
-  coast_window_far = lead_distance < desired_gap + max(15.0, 0.75 * v_ego)
-  gentle_closing = closing_speed < max(1.5, 0.08 * v_ego)
+  coast_window_far = lead_distance < desired_gap + max(12.0, 0.60 * v_ego)
+  gentle_closing = 0.35 < closing_speed < max(1.35, 0.05 * v_ego)
   ttc = lead_distance / max(closing_speed, 1e-3) if closing_speed > 0.1 else 1e6
 
-  return coast_window_open and coast_window_far and gentle_closing and ttc > 6.0 and lead_distance > desired_gap + 6.0
+  return coast_window_open and coast_window_far and gentle_closing and ttc > 7.5 and lead_distance > desired_gap + 7.0

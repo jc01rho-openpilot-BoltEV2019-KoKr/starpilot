@@ -37,7 +37,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherChip,
   AetherListColors,
   AetherScrollbar,
-  DEFAULT_PANEL_STYLE,
+  panel_style_from_color,
   _point_hits,
   draw_action_rail,
   draw_action_pill,
@@ -72,7 +72,7 @@ BUTTON_HEIGHT = AETHER_LIST_METRICS.header_button_height
 FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
 CONFIRM_TIMEOUT_SECONDS = 3.0
 TRANSITION_SECONDS = 0.24
-PANEL_STYLE = DEFAULT_PANEL_STYLE
+PANEL_STYLE = panel_style_from_color("#3B82F6")
 
 
 @dataclass
@@ -108,10 +108,7 @@ class DrivingModelManagerView(Widget):
     self._scroll_offset = 0.0
     self._pressed_target: str | None = None
     self._can_click = True
-    self._row_rects: dict[str, rl.Rectangle] = {}
-    self._action_rects: dict[str, rl.Rectangle] = {}
-    self._utility_rects: dict[str, rl.Rectangle] = {}
-    self._menu_sub_rects: dict[str, rl.Rectangle] = {}
+    self._interactive_rects: dict[str, rl.Rectangle] = {}
     self._confirm_key: str | None = None
     self._confirm_until = 0.0
     self._transition_starts: dict[str, tuple[float, float]] = {}
@@ -202,36 +199,26 @@ class DrivingModelManagerView(Widget):
     self._can_click = True
 
   def _handle_mouse_event(self, mouse_event: MouseEvent):
-    del mouse_event
     if not self._scroll_panel.is_touch_valid():
       self._can_click = False
+      return
+    if self._pressed_target is not None and self._target_at(mouse_event.pos) != self._pressed_target:
+      self._pressed_target = None
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
-    target = self._target_at(mouse_pos)
+    target = self._target_at(mouse_pos) if self._scroll_panel.is_touch_valid() else None
     if self._pressed_target is not None and self._pressed_target == target and self._can_click:
       self._activate_target(target)
     self._pressed_target = None
+    self._can_click = True
 
   def _target_at(self, mouse_pos: MousePos) -> str | None:
-    for sub_key, rect in self._menu_sub_rects.items():
-      if _point_hits(mouse_pos, rect, self._scroll_rect, pad_x=6, pad_y=6):
-        return f"menu:{sub_key}"
-
-    for key, rect in self._action_rects.items():
-      visible_rect = rl.get_collision_rec(rect, self._scroll_rect)
-      if visible_rect.width > 0 and visible_rect.height > 0 and rl.check_collision_point_rec(mouse_pos, visible_rect):
-        return f"action:{key}"
-
-    for name, rect in self._utility_rects.items():
-      visible_rect = rl.get_collision_rec(rect, self._scroll_rect)
-      if visible_rect.width > 0 and visible_rect.height > 0 and rl.check_collision_point_rec(mouse_pos, visible_rect):
-        return f"utility:{name}"
-
-    for key, rect in self._row_rects.items():
-      visible_rect = rl.get_collision_rec(rect, self._scroll_rect)
-      if visible_rect.width > 0 and visible_rect.height > 0 and rl.check_collision_point_rec(mouse_pos, visible_rect):
-        return f"row:{key}"
-
+    for prefix in ("menu:", "action:", "utility:", "row:"):
+      for target_id, rect in self._interactive_rects.items():
+        if target_id.startswith(prefix):
+          pad_y = 6 if prefix == "menu:" else 0
+          if _point_hits(mouse_pos, rect, self._scroll_rect, pad_x=6, pad_y=pad_y):
+            return target_id
     return None
 
   def _activate_target(self, target: str | None):
@@ -291,10 +278,7 @@ class DrivingModelManagerView(Widget):
 
   def _render(self, rect: rl.Rectangle):
     self.set_rect(rect)
-    self._row_rects.clear()
-    self._action_rects.clear()
-    self._utility_rects.clear()
-    self._menu_sub_rects.clear()
+    self._interactive_rects.clear()
 
     frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE)
     self._shell_rect = frame.shell
@@ -389,7 +373,7 @@ class DrivingModelManagerView(Widget):
 
   def _draw_empty_state(self, rect: rl.Rectangle):
     draw_empty_state_card(
-      rl.Rectangle(rect.x, rect.y, rect.width - AETHER_LIST_METRICS.content_right_gutter, rect.height),
+      rl.Rectangle(rect.x, rect.y, rect.width, rect.height),
       self._controller.empty_state_title(),
       self._controller.empty_state_body(),
       title_size=32,
@@ -401,17 +385,20 @@ class DrivingModelManagerView(Widget):
     )
 
   def _draw_model_section(self, x: float, y: float, width: float, title: str, entries: list[ModelCatalogEntry]) -> float:
-    draw_section_header(rl.Rectangle(x, y, width - AETHER_LIST_METRICS.content_right_gutter, SECTION_HEADER_HEIGHT), title, style=PANEL_STYLE)
+    draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), title, style=PANEL_STYLE)
     y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
+    group_rect = rl.Rectangle(x, y, width, len(entries) * ROW_HEIGHT)
+    draw_list_group_shell(group_rect, style=PANEL_STYLE)
+
     for index, entry in enumerate(entries):
-      row_rect = rl.Rectangle(x, y + index * ROW_HEIGHT, width - AETHER_LIST_METRICS.content_right_gutter, ROW_HEIGHT)
+      row_rect = rl.Rectangle(x, y + index * ROW_HEIGHT, width, ROW_HEIGHT)
       self._draw_model_row(row_rect, entry, is_last=index == len(entries) - 1)
     return y + len(entries) * ROW_HEIGHT
 
   def _draw_model_row(self, rect: rl.Rectangle, entry: ModelCatalogEntry, is_last: bool):
     mouse_pos = gui_app.last_mouse_event.pos
-    row_hovered = rl.check_collision_point_rec(mouse_pos, rect)
+    row_hovered = bool(_point_hits(mouse_pos, rect, self._scroll_rect, pad_x=6, pad_y=0))
     target_key = f"row:{entry.key}"
     pressed = self._pressed_target == target_key
     current = self._controller.is_current_model(entry.key)
@@ -446,7 +433,7 @@ class DrivingModelManagerView(Widget):
     info_rect = rl.Rectangle(draw_rect.x + 24, draw_rect.y + 18, draw_rect.width - ACTION_WIDTH - 42, draw_rect.height - 36)
     row_touchable = entry.installed and not self._controller._params.get_bool("ModelRandomizer")
     if row_touchable:
-      self._row_rects[entry.key] = draw_rect
+      self._interactive_rects[f"row:{entry.key}"] = draw_rect
 
     self._draw_model_info(info_rect, entry, current)
 
@@ -456,10 +443,10 @@ class DrivingModelManagerView(Widget):
       elif not removable:
         self._draw_protected_action(action_rect)
       else:
-        self._action_rects[entry.key] = action_rect
+        self._interactive_rects[f"action:{entry.key}"] = action_rect
         self._draw_menu_action(action_rect, is_menu_open, entry)
     else:
-      self._action_rects[entry.key] = action_rect
+      self._interactive_rects[f"action:{entry.key}"] = action_rect
       if downloading:
         self._draw_downloading_action(action_rect, self._controller.download_progress_text())
       else:
@@ -512,7 +499,7 @@ class DrivingModelManagerView(Widget):
   def _draw_downloading_action(self, rect: rl.Rectangle, progress_text: str):
     center = rl.Vector2(rect.x + rect.width / 2, rect.y + rect.height / 2 - 8)
     phase = (time.monotonic() * 240.0) % 360.0
-    draw_busy_ring(center, phase, AetherListColors.PRIMARY)
+    draw_busy_ring(center, phase, PANEL_STYLE.accent)
 
     label = progress_text if progress_text else tr("Downloading")
     gui_label(
@@ -548,30 +535,30 @@ class DrivingModelManagerView(Widget):
       delete_rect = rl.Rectangle(rect.x + 10, start_y, rect.width - 20, btn_h)
       fav_rect = rl.Rectangle(rect.x + 10, start_y + btn_h + gap, rect.width - 20, btn_h)
 
-      self._menu_sub_rects[f"{entry.key}:delete"] = delete_rect
-      self._menu_sub_rects[f"{entry.key}:favorite"] = fav_rect
+      self._interactive_rects[f"menu:{entry.key}:delete"] = delete_rect
+      self._interactive_rects[f"menu:{entry.key}:favorite"] = fav_rect
 
       # Delete button
       draw_action_pill(delete_rect, tr("Delete"), AetherListColors.DANGER_SOFT, rl.Color(AetherListColors.DANGER.r, AetherListColors.DANGER.g, AetherListColors.DANGER.b, min(AetherListColors.DANGER.a, 70)), AetherListColors.DANGER)
 
       # Favorite toggle button
       is_fav = entry.user_favorite
-      fav_fill = rl.Color(210, 100, 130, 44) if is_fav else AetherListColors.PRIMARY_SOFT
-      fav_border = rl.Color((210 if is_fav else AetherListColors.PRIMARY.r), (100 if is_fav else AetherListColors.PRIMARY.g), (130 if is_fav else AetherListColors.PRIMARY.b), min((255 if is_fav else AetherListColors.PRIMARY.a), 70))
-      fav_text_color = rl.Color(210, 100, 130, 255) if is_fav else AetherListColors.PRIMARY
+      fav_fill = rl.Color(210, 100, 130, 44) if is_fav else rl.Color(PANEL_STYLE.accent.r, PANEL_STYLE.accent.g, PANEL_STYLE.accent.b, 26)
+      fav_border = rl.Color((210 if is_fav else PANEL_STYLE.accent.r), (100 if is_fav else PANEL_STYLE.accent.g), (130 if is_fav else PANEL_STYLE.accent.b), min((255 if is_fav else PANEL_STYLE.accent.a), 70))
+      fav_text_color = rl.Color(210, 100, 130, 255) if is_fav else PANEL_STYLE.accent
       fav_label = tr("Unfavorite") if is_fav else tr("Favorite")
       draw_action_pill(fav_rect, fav_label, fav_fill, fav_border, fav_text_color)
 
   def _draw_current_action(self, rect: rl.Rectangle):
     chip_rect = rl.Rectangle(rect.x + 24, rect.y + (rect.height - 42) / 2, rect.width - 48, 42)
-    AetherChip(tr("Current"), rl.Color(89, 116, 151, 26), rl.Color(116, 136, 168, 52), AetherListColors.HEADER, font_size=18).render(chip_rect)
+    AetherChip(tr("Current"), PANEL_STYLE.current_fill, PANEL_STYLE.current_border, AetherListColors.HEADER, font_size=18).render(chip_rect)
 
   def _draw_protected_action(self, rect: rl.Rectangle):
     chip_rect = rl.Rectangle(rect.x + 20, rect.y + (rect.height - 42) / 2, rect.width - 40, 42)
     AetherChip(tr("Protected"), rl.Color(255, 255, 255, 10), AetherListColors.MUTED, AetherListColors.SUBTEXT, font_size=18).render(chip_rect)
 
   def _draw_utility_section(self, x: float, y: float, width: float, rows: list[dict]):
-    content_w = width - AETHER_LIST_METRICS.content_right_gutter
+    content_w = width
     draw_section_header(rl.Rectangle(x, y, content_w, SECTION_HEADER_HEIGHT), tr("Automation and Tuning"), style=PANEL_STYLE)
     y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
@@ -584,9 +571,9 @@ class DrivingModelManagerView(Widget):
 
   def _draw_utility_row(self, rect: rl.Rectangle, row: dict, is_last: bool):
     mouse_pos = gui_app.last_mouse_event.pos
-    hovered = rl.check_collision_point_rec(mouse_pos, rect)
+    hovered = bool(_point_hits(mouse_pos, rect, self._scroll_rect, pad_x=6, pad_y=0))
     pressed = self._pressed_target == f"utility:{row['id']}"
-    self._utility_rects[row["id"]] = rect
+    self._interactive_rects[f"utility:{row['id']}"] = rect
     draw_settings_list_row(
       rect,
       title=row["title"],
@@ -723,7 +710,7 @@ class StarPilotDrivingModelLayout(_SettingsPage):
       f"{key}_driving_vision_metadata.pkl",
     ]
 
-    if version in {"v12", "v13"}:
+    if version in {"v12", "v13", "v14"}:
       files.extend(
         [
           f"{key}_driving_off_policy_tinygrad.pkl",
@@ -1150,10 +1137,10 @@ class StarPilotDrivingModelLayout(_SettingsPage):
     self._update_model_metadata()
 
   def _on_recovery_power_clicked(self):
-    self._show_slider("RecoveryPower", 0.5, 2.0, step=0.1, unit="x", value_type="float", title="Recovery Power")
+    self._show_slider("RecoveryPower", 0.5, 2.0, step=0.1, unit="x", value_type="float", title="Recovery Power", color=PANEL_STYLE.accent)
 
   def _on_stop_distance_clicked(self):
-    self._show_slider("StopDistance", 4.0, 10.0, step=0.1, unit="m", value_type="float", title="Stop Distance")
+    self._show_slider("StopDistance", 4.0, 10.0, step=0.1, unit="m", value_type="float", title="Stop Distance", color=PANEL_STYLE.accent)
 
   def _on_blacklist_clicked(self):
     blacklisted = [m.strip() for m in (self._params.get("BlacklistedModels", encoding="utf-8") or "").split(",") if m.strip()]

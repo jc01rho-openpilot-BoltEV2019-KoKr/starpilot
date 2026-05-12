@@ -45,6 +45,22 @@ ExitHandler do_exit;
 
 static uint64_t last_door_lock_command_time = 0;
 
+static bool is_tesla_preap(Params &params) {
+  const std::string car_params = params.get("CarParams");
+  if (car_params.empty()) {
+    return false;
+  }
+
+  try {
+    AlignedBuffer aligned_buf;
+    capnp::FlatArrayMessageReader cmsg(aligned_buf.align(car_params.data(), car_params.size()));
+    cereal::CarParams::Reader cp = cmsg.getRoot<cereal::CarParams>();
+    return cp.getCarFingerprint() == "TESLA_MODEL_S_PREAP";
+  } catch (...) {
+    return false;
+  }
+}
+
 bool check_all_connected(const std::vector<Panda *> &pandas) {
   for (const auto& panda : pandas) {
     if (!panda->connected()) {
@@ -453,7 +469,7 @@ void pandad_run(std::vector<Panda *> &pandas) {
 
   Params params;
   RateKeeper rk("pandad", 100);
-  SubMaster sm({"selfdriveState"});
+  SubMaster sm({"selfdriveState", "starpilotCarState"});
   PubMaster pm({"can", "pandaStates", "peripheralState"});
   PandaSafety panda_safety(pandas);
   Panda *peripheral_panda = pandas[0];
@@ -472,7 +488,11 @@ void pandad_run(std::vector<Panda *> &pandas) {
     // Process panda state at 10 Hz
     if (rk.frame() % 10 == 0) {
       sm.update(0);
-      engaged = sm.allAliveAndValid({"selfdriveState"}) && sm["selfdriveState"].getSelfdriveState().getEnabled();
+      const bool preap_aol_engaged = is_tesla_preap(params) &&
+                                     sm["starpilotCarState"].getStarpilotCarState().getAlwaysOnLateralEnabled();
+      engaged = sm.allAliveAndValid({"selfdriveState", "starpilotCarState"}) && (
+        sm["selfdriveState"].getSelfdriveState().getEnabled() || preap_aol_engaged
+      );
       is_onroad = params.getBool("IsOnroad");
       process_panda_state(pandas, &pm, engaged, is_onroad, spoofing_started);
       panda_safety.configureSafetyMode(is_onroad);

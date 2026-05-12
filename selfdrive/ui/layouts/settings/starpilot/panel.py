@@ -341,7 +341,7 @@ class _SettingsPage(StarPilotPanel):
   # ── shared dialog helpers ──
 
   def _show_slider(self, key, min_v, max_v, step=1, unit="",
-                   value_type="int", current_value=None, title=None):
+                   value_type="int", current_value=None, title=None, color=None):
     """Unified slider dialog (int/float).
     
     title: if provided, used as dialog title; otherwise uses tr(key).
@@ -356,7 +356,7 @@ class _SettingsPage(StarPilotPanel):
       current_value = self._params.get_float(key) if value_type == "float" else self._params.get_int(key)
     dialog_title = tr(title) if title else tr(key)
     gui_app.push_widget(AetherSliderDialog(dialog_title, min_v, max_v, step, current_value, on_close,
-                                           unit=unit, color=self.SLIDER_COLOR))
+                                           unit=unit, color=self.SLIDER_COLOR if color is None else color))
 
   def _show_string_select(self, key, options, default="None"):
     """String-based multi-option selector (puts string via params.put)."""

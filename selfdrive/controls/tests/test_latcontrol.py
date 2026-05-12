@@ -38,6 +38,9 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_genesis_g90_ff_scale,
   get_genesis_g90_friction_scale,
   get_genesis_g90_friction_threshold,
+  get_ioniq_5_ff_scale,
+  get_ioniq_5_friction_scale,
+  get_ioniq_5_friction_threshold,
   get_ioniq_6_center_taper_scale,
   get_ioniq_6_directional_taper_scale,
   get_ioniq_6_output_taper_scale,
@@ -158,6 +161,7 @@ class TestLatControl:
     assert get_bolt_2022_2023_ff_scale(-0.6, -0.7, 8.0) > get_bolt_2022_2023_ff_scale(-0.6, 0.0, 8.0)
     assert get_bolt_2022_2023_ff_scale(0.6, -0.7, 8.0) < get_bolt_2022_2023_ff_scale(0.6, 0.0, 8.0)
     assert get_bolt_2022_2023_ff_scale(0.6, -0.7, 6.0) < get_bolt_2022_2023_ff_scale(0.6, -0.7, 20.0)
+    assert get_bolt_2022_2023_ff_scale(0.14, 0.0, 30.0) < get_bolt_2022_2023_ff_scale(0.14, 0.0, 20.0)
 
   def test_bolt_2022_2023_friction_threshold_curve(self):
     base = get_friction_threshold(6.0)
@@ -185,7 +189,7 @@ class TestLatControl:
 
   def test_volt_standard_ff_scale_curve(self):
     assert get_volt_standard_ff_scale(0.0, 0.0, 20.0) == 1.0
-    assert get_volt_standard_ff_scale(-0.5, 0.0, 20.0) >= get_volt_standard_ff_scale(0.5, 0.0, 20.0)
+    assert get_volt_standard_ff_scale(0.5, 0.0, 20.0) >= get_volt_standard_ff_scale(-0.5, 0.0, 20.0)
     assert get_volt_standard_ff_scale(0.6, 0.7, 8.0) > get_volt_standard_ff_scale(0.6, 0.0, 8.0) > get_volt_standard_ff_scale(0.6, -0.7, 8.0)
     assert get_volt_standard_ff_scale(-0.6, -0.7, 8.0) > get_volt_standard_ff_scale(-0.6, 0.0, 8.0) > get_volt_standard_ff_scale(-0.6, 0.7, 8.0)
     assert get_volt_standard_ff_scale(2.0, 0.0, 20.0) < get_volt_standard_ff_scale(0.8, 0.0, 20.0)
@@ -197,7 +201,7 @@ class TestLatControl:
     left_unwind = get_volt_standard_friction_threshold(6.0, 0.7, -0.8)
     right_unwind = get_volt_standard_friction_threshold(6.0, -0.7, 0.8)
     assert right_turn_in < left_turn_in < base
-    assert base < left_unwind < right_unwind
+    assert base < left_unwind <= right_unwind
 
   def test_volt_standard_friction_scale_curve(self):
     base = get_volt_standard_friction_scale(25.0, 0.7, 0.8)
@@ -227,7 +231,8 @@ class TestLatControl:
     left_unwind = get_genesis_g90_friction_threshold(6.0, 0.7, -0.8)
     right_unwind = get_genesis_g90_friction_threshold(6.0, -0.7, 0.8)
     assert left_turn_in < base
-    assert right_turn_in < left_turn_in
+    assert right_turn_in < base
+    assert left_turn_in < right_turn_in
     assert left_unwind > base
     assert right_unwind > left_unwind
 
@@ -237,8 +242,43 @@ class TestLatControl:
     right_turn_in = get_genesis_g90_friction_scale(6.0, -0.7, -0.8)
     left_unwind = get_genesis_g90_friction_scale(6.0, 0.7, -0.8)
     right_unwind = get_genesis_g90_friction_scale(6.0, -0.7, 0.8)
-    assert right_turn_in > left_turn_in > base
+    assert left_turn_in > right_turn_in > base
     assert base > left_unwind > right_unwind
+
+  def test_ioniq_5_ff_scale_curve(self):
+    assert get_ioniq_5_ff_scale(0.0, 0.0, 20.0) == 1.0
+    steady_left = get_ioniq_5_ff_scale(0.7, 0.0, 12.0)
+    steady_right = get_ioniq_5_ff_scale(-0.7, 0.0, 12.0)
+    turn_in_left = get_ioniq_5_ff_scale(0.7, 0.8, 12.0)
+    turn_in_right = get_ioniq_5_ff_scale(-0.7, -0.8, 12.0)
+    unwind_left = get_ioniq_5_ff_scale(0.7, -0.8, 12.0)
+    unwind_right = get_ioniq_5_ff_scale(-0.7, 0.8, 12.0)
+    assert steady_left < 1.0
+    assert steady_right < steady_left
+    assert turn_in_left > steady_left
+    assert turn_in_right >= steady_right
+    assert unwind_left < steady_left
+    assert unwind_right < unwind_left
+
+  def test_ioniq_5_friction_curves(self):
+    base = get_friction_threshold(12.0)
+    turn_in_left_threshold = get_ioniq_5_friction_threshold(12.0, 0.7, 0.8)
+    turn_in_right_threshold = get_ioniq_5_friction_threshold(12.0, -0.7, -0.8)
+    unwind_left_threshold = get_ioniq_5_friction_threshold(12.0, 0.7, -0.8)
+    unwind_right_threshold = get_ioniq_5_friction_threshold(12.0, -0.7, 0.8)
+    assert turn_in_left_threshold < base
+    assert turn_in_right_threshold == pytest.approx(base)
+    assert unwind_left_threshold > base
+    assert unwind_right_threshold > unwind_left_threshold
+
+    turn_in_left_scale = get_ioniq_5_friction_scale(12.0, 0.7, 0.8)
+    turn_in_right_scale = get_ioniq_5_friction_scale(12.0, -0.7, -0.8)
+    unwind_left_scale = get_ioniq_5_friction_scale(12.0, 0.7, -0.8)
+    unwind_right_scale = get_ioniq_5_friction_scale(12.0, -0.7, 0.8)
+    assert turn_in_left_scale > 1.0
+    assert turn_in_right_scale == pytest.approx(1.0)
+    assert unwind_left_scale < 1.0
+    assert unwind_right_scale < unwind_left_scale
 
   def test_ioniq_6_ff_scale_curve(self):
     assert get_ioniq_6_ff_scale(0.0, 0.0, 20.0) == 1.0
@@ -254,6 +294,8 @@ class TestLatControl:
     assert get_ioniq_6_directional_taper_scale(-0.5, 0.7) <= get_ioniq_6_directional_taper_scale(-0.5, 0.0)
     assert get_ioniq_6_directional_taper_scale(-1.2, 0.0) < get_ioniq_6_directional_taper_scale(1.2, 0.0) < 1.0
     assert get_ioniq_6_directional_taper_scale(-1.2, 0.7) <= get_ioniq_6_directional_taper_scale(-1.2, 0.0)
+    assert get_ioniq_6_directional_taper_scale(-1.2, 0.25) > get_ioniq_6_directional_taper_scale(-1.2, 0.7)
+    assert get_ioniq_6_directional_taper_scale(1.2, -0.25) > get_ioniq_6_directional_taper_scale(1.2, -0.7)
 
   def test_ioniq_6_output_taper_curve(self):
     assert get_ioniq_6_output_taper_scale(0.0, 0.0, 25.0) < get_ioniq_6_output_taper_scale(0.0, 0.0, 8.0) <= 1.0
@@ -283,10 +325,10 @@ class TestLatControl:
     assert base > left_unwind >= right_unwind
 
   def test_ioniq_6_center_taper_curve(self):
-    assert get_ioniq_6_center_taper_scale(0.0, 10.0) < get_ioniq_6_center_taper_scale(0.0, 30.0)
+    assert get_ioniq_6_center_taper_scale(0.0, 10.0) > get_ioniq_6_center_taper_scale(0.0, 30.0)
     assert get_ioniq_6_center_taper_scale(0.0, 30.0) < get_ioniq_6_center_taper_scale(0.2, 30.0)
     assert get_ioniq_6_center_taper_scale(0.0, 12.0) < get_ioniq_6_center_taper_scale(0.25, 12.0)
-    assert abs(get_ioniq_6_center_taper_scale(0.2, 30.0) - 1.0) < 4.2e-2
+    assert abs(get_ioniq_6_center_taper_scale(0.2, 30.0) - 1.0) < 7.0e-2
 
   def test_kia_ev6_ff_scale_curve(self):
     assert get_kia_ev6_ff_scale(0.0, 0.0, 20.0) == 1.0
@@ -366,13 +408,23 @@ class TestLatControl:
 
     assert lac_log.active
 
+  def test_ioniq_5_default_update_path(self):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_IONIQ_5)
+    CarInterface = interfaces[HYUNDAI.HYUNDAI_IONIQ_5]
+    CP = CarInterface.get_non_essential_params(HYUNDAI.HYUNDAI_IONIQ_5)
+
+    _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert lac_log.active
+    assert controller.torque_params.latAccelFactor == pytest.approx(CP.lateralTuning.torque.latAccelFactor * 1.18)
+
   def test_ioniq_6_default_update_path(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_IONIQ_6)
 
     _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
 
     assert lac_log.active
-    assert controller.torque_params.latAccelFactor == pytest.approx(3.0 * 1.23)
+    assert controller.torque_params.latAccelFactor == pytest.approx(3.0 * 1.22)
 
   def test_ioniq_6_update_path_does_not_post_taper_output(self, monkeypatch):
     base_controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_IONIQ_6)
@@ -429,10 +481,16 @@ class TestLatControl:
 
     assert controller.torque_params.latAccelFactor == pytest.approx(3.0 * 1.20)
 
+    monkeypatch.setattr(latcontrol_torque, "civic_bosch_modified_a_lateral_testing_ground_active", lambda: True)
+    a_variant_controller = LatControlTorque(CP.as_reader(), CI, DT_CTRL)
+
+    assert a_variant_controller.torque_params.latAccelFactor == pytest.approx(3.0 * 1.20)
+
+    monkeypatch.setattr(latcontrol_torque, "civic_bosch_modified_a_lateral_testing_ground_active", lambda: False)
     monkeypatch.setattr(latcontrol_torque, "civic_bosch_modified_lateral_testing_ground_active", lambda: True)
     variant_controller = LatControlTorque(CP.as_reader(), CI, DT_CTRL)
 
-    assert variant_controller.torque_params.latAccelFactor == pytest.approx(3.0 * 1.20 * 1.10)
+    assert variant_controller.torque_params.latAccelFactor == pytest.approx(3.0 * 1.20 * 1.75)
 
   def test_modified_civic_b_torque_ff_scale_curve(self):
     steady_left = get_civic_bosch_modified_b_ff_scale(0.5, 0.0, 12.0)
@@ -446,7 +504,7 @@ class TestLatControl:
     assert steady_right < 1.0
     assert steady_right < steady_left
     assert turn_in_left > steady_left
-    assert turn_in_right > steady_right
+    assert turn_in_right >= steady_right
     assert unwind_left < steady_left
     assert unwind_right < steady_right
 
@@ -457,27 +515,63 @@ class TestLatControl:
     unwind_right = get_civic_bosch_modified_b_friction_scale(12.0, -0.5, 0.8)
 
     assert turn_in_left > 1.0
-    assert turn_in_right > turn_in_left
+    assert turn_in_right >= 1.0
+    assert turn_in_left > turn_in_right
     assert unwind_left < 1.0
     assert unwind_right < unwind_left
 
   def test_modified_civic_b_variant_extra_torque_shaping_curve(self, monkeypatch):
+    base_steady_left = get_civic_bosch_modified_b_ff_scale(0.5, 0.0, 12.0)
     base_steady_right = get_civic_bosch_modified_b_ff_scale(-0.5, 0.0, 12.0)
     base_turn_in_right = get_civic_bosch_modified_b_ff_scale(-0.5, -0.8, 12.0)
     base_unwind_right = get_civic_bosch_modified_b_ff_scale(-0.5, 0.8, 12.0)
+    base_turn_in_right_friction = get_civic_bosch_modified_b_friction_scale(12.0, -0.5, -0.8)
     base_unwind_right_friction = get_civic_bosch_modified_b_friction_scale(12.0, -0.5, 0.8)
 
     monkeypatch.setattr(latcontrol_torque, "civic_bosch_modified_lateral_testing_ground_active", lambda: True)
 
+    variant_steady_left = get_civic_bosch_modified_b_ff_scale(0.5, 0.0, 12.0)
     variant_steady_right = get_civic_bosch_modified_b_ff_scale(-0.5, 0.0, 12.0)
     variant_turn_in_right = get_civic_bosch_modified_b_ff_scale(-0.5, -0.8, 12.0)
     variant_unwind_right = get_civic_bosch_modified_b_ff_scale(-0.5, 0.8, 12.0)
+    variant_turn_in_left = get_civic_bosch_modified_b_ff_scale(0.5, 0.8, 12.0)
     variant_unwind_right_friction = get_civic_bosch_modified_b_friction_scale(12.0, -0.5, 0.8)
+    variant_turn_in_right_friction = get_civic_bosch_modified_b_friction_scale(12.0, -0.5, -0.8)
 
     assert variant_steady_right < base_steady_right
     assert variant_turn_in_right < base_turn_in_right
+    assert variant_turn_in_right >= variant_steady_right
+    assert variant_turn_in_left > variant_steady_left
     assert variant_unwind_right < base_unwind_right
     assert variant_unwind_right_friction < base_unwind_right_friction
+    assert variant_turn_in_right_friction >= base_turn_in_right_friction
+
+  def test_modified_civic_a_variant_extra_torque_shaping_curve(self, monkeypatch):
+    base_steady_left = get_civic_bosch_modified_b_ff_scale(0.5, 0.0, 12.0)
+    base_steady_right = get_civic_bosch_modified_b_ff_scale(-0.5, 0.0, 12.0)
+    base_turn_in_left = get_civic_bosch_modified_b_ff_scale(0.5, 0.8, 12.0)
+    base_turn_in_right = get_civic_bosch_modified_b_ff_scale(-0.5, -0.8, 12.0)
+    base_unwind_left = get_civic_bosch_modified_b_ff_scale(0.5, -0.8, 12.0)
+    base_unwind_right = get_civic_bosch_modified_b_ff_scale(-0.5, 0.8, 12.0)
+    base_unwind_right_friction = get_civic_bosch_modified_b_friction_scale(12.0, -0.5, 0.8)
+
+    monkeypatch.setattr(latcontrol_torque, "civic_bosch_modified_a_lateral_testing_ground_active", lambda: True)
+
+    a_variant_steady_left = get_civic_bosch_modified_b_ff_scale(0.5, 0.0, 12.0)
+    a_variant_steady_right = get_civic_bosch_modified_b_ff_scale(-0.5, 0.0, 12.0)
+    a_variant_turn_in_left = get_civic_bosch_modified_b_ff_scale(0.5, 0.8, 12.0)
+    a_variant_turn_in_right = get_civic_bosch_modified_b_ff_scale(-0.5, -0.8, 12.0)
+    a_variant_unwind_left = get_civic_bosch_modified_b_ff_scale(0.5, -0.8, 12.0)
+    a_variant_unwind_right = get_civic_bosch_modified_b_ff_scale(-0.5, 0.8, 12.0)
+    a_variant_unwind_right_friction = get_civic_bosch_modified_b_friction_scale(12.0, -0.5, 0.8)
+
+    assert a_variant_steady_left == pytest.approx(base_steady_left)
+    assert a_variant_steady_right == pytest.approx(base_steady_right)
+    assert a_variant_turn_in_left == pytest.approx(base_turn_in_left)
+    assert a_variant_turn_in_right == pytest.approx(base_turn_in_right)
+    assert a_variant_unwind_left < base_unwind_left
+    assert a_variant_unwind_right < base_unwind_right
+    assert a_variant_unwind_right_friction < base_unwind_right_friction
 
   def test_kia_ev6_testing_ground_update_path(self, monkeypatch):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_EV6)

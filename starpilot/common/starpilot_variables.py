@@ -136,6 +136,13 @@ BUTTON_FUNCTIONS = {
   "BOOKMARK": 8,
 }
 
+CANCEL_BUTTON_MIGRATION_KEY = "CancelButtonControlsMigrated"
+CANCEL_BUTTON_MAPPINGS = (
+  ("DistanceButtonControl", "CancelButtonControl"),
+  ("LongDistanceButtonControl", "LongCancelButtonControl"),
+  ("VeryLongDistanceButtonControl", "VeryLongCancelButtonControl"),
+)
+
 DEVELOPER_SIDEBAR_METRICS = {
   "NONE": 0,
   "ACCELERATION_CURRENT": 1,
@@ -315,16 +322,30 @@ def process_starpilot_toggles(toggles):
   return StarPilotVariables().starpilot_toggles
 
 def update_starpilot_toggles():
+  migrate_cancel_button_controls()
+
   if not hasattr(update_starpilot_toggles, "_params_memory"):
     update_starpilot_toggles._params_memory = Params(memory=True)
 
   update_starpilot_toggles._params_memory.put_bool("StarPilotTogglesUpdated", True)
+
+def migrate_cancel_button_controls(params: Params | None = None) -> bool:
+  params = params or Params(return_defaults=True)
+  if params.get_bool(CANCEL_BUTTON_MIGRATION_KEY) or not params.get_bool("RemapCancelToDistance"):
+    return False
+
+  for source_key, target_key in CANCEL_BUTTON_MAPPINGS:
+    params.put_int(target_key, params.get_int(source_key))
+
+  params.put_bool(CANCEL_BUTTON_MIGRATION_KEY, True)
+  return True
 
 class StarPilotVariables:
   def __init__(self):
     self.params = Params(return_defaults=True)
     self.params_raw = Params()
     self.params_memory = Params(memory=True)
+    migrate_cancel_button_controls(self.params)
 
     self.starpilot_toggles = SimpleNamespace()
     toggle = self.starpilot_toggles
@@ -457,7 +478,13 @@ class StarPilotVariables:
     current_value = self.params.get_float(key)
     if not math.isfinite(current_value):
       current_value = 0.0
-    if math.isclose(current_value, current_stock, abs_tol=1e-6) or math.isclose(current_stock, 0.0, abs_tol=1e-6):
+
+    # If the stock baseline was missing (0.0/unset), do not stomp an existing
+    # user override. Only backfill the live param when it was still effectively
+    # tracking the old stock value or was itself unset.
+    should_update_live_value = math.isclose(current_value, current_stock, abs_tol=1e-6)
+    should_update_live_value |= math.isclose(current_value, 0.0, abs_tol=1e-6)
+    if should_update_live_value:
       self.params.put_float(key, live_value)
 
     self.params.put_float(stock_key, live_value)
@@ -561,6 +588,10 @@ class StarPilotVariables:
 
     advanced_custom_ui = self.get_value("AdvancedCustomUI")
     toggle.hide_alerts = self.get_value("HideAlerts", condition=advanced_custom_ui and not toggle.debug_mode)
+    toggle.hide_changing_lanes_banner = self.get_value("HideChangingLanesBanner", condition=advanced_custom_ui and not toggle.debug_mode)
+    toggle.hide_distance_profile_banner = self.get_value("HideDistanceProfileBanner", condition=advanced_custom_ui and not toggle.debug_mode)
+    toggle.hide_turning_banner = self.get_value("HideTurningBanner", condition=advanced_custom_ui and not toggle.debug_mode)
+    toggle.hide_dm_icon = self.get_value("HideDMIcon", condition=advanced_custom_ui) and not toggle.debug_mode
     toggle.hide_lead_marker = self.get_value("HideLeadMarker", condition=advanced_custom_ui and toggle.openpilot_longitudinal and not toggle.debug_mode)
     toggle.hide_max_speed = self.get_value("HideMaxSpeed", condition=advanced_custom_ui and not toggle.debug_mode)
     toggle.hide_speed = self.get_value("HideSpeed", condition=advanced_custom_ui and not toggle.debug_mode)
@@ -771,6 +802,10 @@ class StarPilotVariables:
 
     toggle.always_ipedal = self.get_value("AlwaysIPedal", condition=toggle.car_model == HYUNDAI_CAR.HYUNDAI_IONIQ_6)
     toggle.nostalgia_mode = self.get_value("NostalgiaMode", condition=toggle.openpilot_longitudinal and toggle.car_model == HYUNDAI_CAR.HYUNDAI_IONIQ_6)
+    toggle.remap_cancel_to_distance = self.get_value(
+      "RemapCancelToDistance",
+      condition=toggle.car_make == "gm" and toggle.has_pedal and "BOLT" in toggle.car_model,
+    )
 
     distance_button_control = self.get_value("DistanceButtonControl", cast=float)
     toggle.experimental_mode_via_distance = toggle.openpilot_longitudinal and distance_button_control == BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"]
@@ -804,6 +839,51 @@ class StarPilotVariables:
     toggle.switchback_mode_via_distance_very_long = distance_button_control_very_long == BUTTON_FUNCTIONS["SWITCHBACK_MODE"]
     toggle.traffic_mode_via_distance_very_long = toggle.openpilot_longitudinal and distance_button_control_very_long == BUTTON_FUNCTIONS["TRAFFIC_MODE"]
     toggle.bookmark_via_distance_very_long = distance_button_control_very_long == BUTTON_FUNCTIONS["BOOKMARK"]
+
+    cancel_button_control = self.get_value(
+      "CancelButtonControl",
+      cast=float,
+      condition=toggle.remap_cancel_to_distance,
+    )
+    toggle.experimental_mode_via_cancel = toggle.openpilot_longitudinal and cancel_button_control == BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"]
+    toggle.experimental_mode_via_press |= toggle.experimental_mode_via_cancel
+    toggle.force_coast_via_cancel = toggle.openpilot_longitudinal and cancel_button_control == BUTTON_FUNCTIONS["FORCE_COAST"]
+    toggle.pause_lateral_via_cancel = cancel_button_control == BUTTON_FUNCTIONS["PAUSE_LATERAL"]
+    toggle.pause_longitudinal_via_cancel = toggle.openpilot_longitudinal and cancel_button_control == BUTTON_FUNCTIONS["PAUSE_LONGITUDINAL"]
+    toggle.personality_profile_via_cancel = toggle.openpilot_longitudinal and cancel_button_control == BUTTON_FUNCTIONS["PERSONALITY_PROFILE"]
+    toggle.switchback_mode_via_cancel = cancel_button_control == BUTTON_FUNCTIONS["SWITCHBACK_MODE"]
+    toggle.traffic_mode_via_cancel = toggle.openpilot_longitudinal and cancel_button_control == BUTTON_FUNCTIONS["TRAFFIC_MODE"]
+    toggle.bookmark_via_cancel = cancel_button_control == BUTTON_FUNCTIONS["BOOKMARK"]
+
+    cancel_button_control_long = self.get_value(
+      "LongCancelButtonControl",
+      cast=float,
+      condition=toggle.remap_cancel_to_distance,
+    )
+    toggle.experimental_mode_via_cancel_long = toggle.openpilot_longitudinal and cancel_button_control_long == BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"]
+    toggle.experimental_mode_via_press |= toggle.experimental_mode_via_cancel_long
+    toggle.force_coast_via_cancel_long = toggle.openpilot_longitudinal and cancel_button_control_long == BUTTON_FUNCTIONS["FORCE_COAST"]
+    toggle.pause_lateral_via_cancel_long = cancel_button_control_long == BUTTON_FUNCTIONS["PAUSE_LATERAL"]
+    toggle.pause_longitudinal_via_cancel_long = toggle.openpilot_longitudinal and cancel_button_control_long == BUTTON_FUNCTIONS["PAUSE_LONGITUDINAL"]
+    toggle.personality_profile_via_cancel_long = toggle.openpilot_longitudinal and cancel_button_control_long == BUTTON_FUNCTIONS["PERSONALITY_PROFILE"]
+    toggle.switchback_mode_via_cancel_long = cancel_button_control_long == BUTTON_FUNCTIONS["SWITCHBACK_MODE"]
+    toggle.traffic_mode_via_cancel_long = toggle.openpilot_longitudinal and cancel_button_control_long == BUTTON_FUNCTIONS["TRAFFIC_MODE"]
+    toggle.bookmark_via_cancel_long = cancel_button_control_long == BUTTON_FUNCTIONS["BOOKMARK"]
+
+    cancel_button_control_very_long = self.get_value(
+      "VeryLongCancelButtonControl",
+      cast=float,
+      condition=toggle.remap_cancel_to_distance,
+    )
+    toggle.experimental_mode_via_cancel_very_long = toggle.openpilot_longitudinal and cancel_button_control_very_long == BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"]
+    toggle.experimental_mode_via_press |= toggle.experimental_mode_via_cancel_very_long
+    toggle.force_coast_via_cancel_very_long = toggle.openpilot_longitudinal and cancel_button_control_very_long == BUTTON_FUNCTIONS["FORCE_COAST"]
+    toggle.pause_lateral_via_cancel_very_long = cancel_button_control_very_long == BUTTON_FUNCTIONS["PAUSE_LATERAL"]
+    toggle.pause_longitudinal_via_cancel_very_long = toggle.openpilot_longitudinal and cancel_button_control_very_long == BUTTON_FUNCTIONS["PAUSE_LONGITUDINAL"]
+    toggle.personality_profile_via_cancel_very_long = toggle.openpilot_longitudinal and cancel_button_control_very_long == BUTTON_FUNCTIONS["PERSONALITY_PROFILE"]
+    toggle.switchback_mode_via_cancel_very_long = cancel_button_control_very_long == BUTTON_FUNCTIONS["SWITCHBACK_MODE"]
+    toggle.traffic_mode_via_cancel_very_long = toggle.openpilot_longitudinal and cancel_button_control_very_long == BUTTON_FUNCTIONS["TRAFFIC_MODE"]
+    toggle.bookmark_via_cancel_very_long = cancel_button_control_very_long == BUTTON_FUNCTIONS["BOOKMARK"]
 
     toggle.frogsgomoo_tweak = self.get_value("FrogsGoMoosTweak", condition=toggle.openpilot_longitudinal and toggle.car_make == "toyota")
     toggle.stoppingDecelRate = 0.01 if toggle.frogsgomoo_tweak else toggle.stoppingDecelRate
@@ -983,7 +1063,7 @@ class StarPilotVariables:
     if isinstance(toggle.model_version, bytes):
       toggle.model_version = toggle.model_version.decode("utf-8", "ignore")
     toggle.classic_model = toggle.model_version in {"v1", "v2", "v3", "v4"}
-    toggle.tinygrad_model = toggle.model_version in {"v8", "v9", "v10", "v11", "v12", "v13"}
+    toggle.tinygrad_model = toggle.model_version in {"v8", "v9", "v10", "v11", "v12", "v13", "v14"}
     toggle.tomb_raider = toggle.model == "space-lab"
 
     toggle.model_ui = self.get_value("ModelUI")
@@ -1104,6 +1184,10 @@ class StarPilotVariables:
       toggle.wheel_image = "stock"
 
       toggle.hide_alerts = False
+      toggle.hide_changing_lanes_banner = False
+      toggle.hide_distance_profile_banner = False
+      toggle.hide_turning_banner = False
+      toggle.hide_dm_icon = False
       toggle.hide_lead_marker = False
       toggle.hide_max_speed = False
       toggle.hide_speed = False
@@ -1196,10 +1280,6 @@ class StarPilotVariables:
       condition=toggle.openpilot_longitudinal and toggle.car_make == "gm",
     )
     toggle.remote_start_boots_comma = self.get_value("RemoteStartBootsComma", condition=toggle.car_make == "gm")
-    toggle.remap_cancel_to_distance = self.get_value(
-      "RemapCancelToDistance",
-      condition=toggle.car_make == "gm" and toggle.has_pedal and "BOLT" in toggle.car_model,
-    )
 
     gm_auto_hold_supported = toggle.car_model in LEGACY_VOLT_STOCK_ACC_CARS
     toggle.gm_auto_hold = self.get_value("GMAutoHold", condition=gm_auto_hold_supported)

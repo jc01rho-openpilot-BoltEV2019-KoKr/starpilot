@@ -74,3 +74,19 @@ def get_experimental_mode_banner_text(state: UIState):
   if state.sm["selfdriveState"].experimentalMode:
     return "EXPERIMENTAL"
   return "CHILL"
+
+
+def get_mode_transition_banner_text(state: UIState):
+  enabled = state.sm["selfdriveState"].enabled
+  lateral_active = enabled or state.always_on_lateral_active
+  conditional_enabled = state.params.get_bool("ConditionalExperimental")
+
+  if state.status == UIStatus.OVERRIDE:
+    return "OVERRIDE"
+  if state.switchback_mode_enabled and lateral_active:
+    return "SWITCHBACK"
+  if conditional_enabled and enabled and state.conditional_status in CEM_MANUAL_OVERRIDE_STATUSES:
+    return "OVERRIDDEN"
+  if enabled and state.sm["selfdriveState"].experimentalMode:
+    return "EXPERIMENTAL"
+  return None

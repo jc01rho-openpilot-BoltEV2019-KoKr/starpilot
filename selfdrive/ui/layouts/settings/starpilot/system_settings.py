@@ -12,7 +12,7 @@ import pyray as rl
 
 from openpilot.system.hardware import HARDWARE
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MouseEvent, MousePos
-from openpilot.system.ui.lib.multilang import tr
+from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import DialogResult, Widget
@@ -29,7 +29,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherScrollbar,
   AetherSegmentedControl,
   AetherListColors,
-  DEFAULT_PANEL_STYLE,
+  panel_style_from_color,
   _point_hits,
   init_list_panel,
   draw_list_group_shell,
@@ -41,6 +41,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_soft_card,
   draw_tab_card,
 )
+from openpilot.starpilot.common.connect_server import prepare_konik_server_switch
 
 LEGACY_STARPILOT_PARAM_RENAMES = {
   "FrogPilotApiToken": "StarPilotApiToken",
@@ -65,15 +66,23 @@ EXCLUDED_KEYS = {
 }
 
 REPORT_CATEGORIES = [
-  "Acceleration feels harsh or jerky",
-  "An alert was unclear and I'm not sure what it meant",
-  "Braking is too sudden or uncomfortable",
-  "I'm not sure if this is normal or a bug:",
-  "My steering wheel buttons aren't working",
-  "openpilot disengages when I don't expect it",
-  "openpilot feels sluggish or slow to respond",
-  "Something else (please describe)",
+  tr_noop("Acceleration feels harsh or jerky"),
+  tr_noop("An alert was unclear and I'm not sure what it meant"),
+  tr_noop("Braking is too sudden or uncomfortable"),
+  tr_noop("I'm not sure if this is normal or a bug:"),
+  tr_noop("My steering wheel buttons aren't working"),
+  tr_noop("openpilot disengages when I don't expect it"),
+  tr_noop("openpilot feels sluggish or slow to respond"),
+  tr_noop("Something else (please describe)"),
 ]
+
+
+SECTION_GAP = AETHER_LIST_METRICS.section_gap
+SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height
+SECTION_HEADER_GAP = AETHER_LIST_METRICS.section_header_gap
+ROW_HEIGHT = AETHER_LIST_METRICS.row_height
+FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
+PANEL_STYLE = panel_style_from_color("#D946EF")
 
 
 class SystemSettingsManagerView(Widget):
@@ -83,17 +92,10 @@ class SystemSettingsManagerView(Widget):
   TAB_HEIGHT = 56
   TAB_GAP = 10
   TAB_BOTTOM_GAP = 18
-  SECTION_GAP = AETHER_LIST_METRICS.section_gap
-  SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height
-  SECTION_HEADER_GAP = AETHER_LIST_METRICS.section_header_gap
-  ROW_HEIGHT = AETHER_LIST_METRICS.row_height
-  FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
   COLUMN_GAP = 22
   TWO_COLUMN_BREAKPOINT = 1180
   ACTION_PILL_WIDTH = 132
   DANGER_PILL_WIDTH = 112
-
-  PANEL_STYLE = DEFAULT_PANEL_STYLE
 
   def __init__(self, controller: "StarPilotSystemLayout"):
     super().__init__()
@@ -216,8 +218,8 @@ class SystemSettingsManagerView(Widget):
           presets=spec.get("presets", []),
           is_active=lambda key=key: self._active_adjustor_key == key,
           set_active=lambda active, key=key: self._set_active_adjustor(key, active),
-          style=self.PANEL_STYLE,
-          color=self.PANEL_STYLE.accent,
+          style=PANEL_STYLE,
+          color=PANEL_STYLE.accent,
         )
       )
       adjustor.set_touch_valid_callback(lambda adjustor=adjustor: self._scroll_panel.is_touch_valid() or adjustor.is_interacting)
@@ -361,7 +363,7 @@ class SystemSettingsManagerView(Widget):
   def _stacked_section_height(self, sections: list[float]) -> float:
     if not sections:
       return 0.0
-    return max(0.0, sum(sections) - self.SECTION_GAP)
+    return sum(sections) + SECTION_GAP * (len(sections) - 1)
 
   def _uses_two_columns(self, width: float) -> bool:
     return width >= self.TWO_COLUMN_BREAKPOINT
@@ -490,7 +492,7 @@ class SystemSettingsManagerView(Widget):
   def _render(self, rect: rl.Rectangle):
     self.set_rect(rect)
 
-    frame, scroll_rect, content_width = init_list_panel(rect, self.PANEL_STYLE)
+    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE)
     self._scroll_rect = scroll_rect
 
     self._drive_mode_control.set_parent_rect(frame.header)
@@ -507,7 +509,7 @@ class SystemSettingsManagerView(Widget):
     if self._content_height > scroll_rect.height:
       self._scrollbar.render(scroll_rect, self._content_height, self._scroll_offset)
 
-    draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset, AetherListColors.PANEL_BG, fade_height=self.FADE_HEIGHT)
+    draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset, AetherListColors.PANEL_BG, fade_height=FADE_HEIGHT)
 
   def _draw_header(self, rect: rl.Rectangle):
     draw_settings_panel_header(rect, tr("System Settings"),
@@ -519,7 +521,7 @@ class SystemSettingsManagerView(Widget):
     self._draw_summary_card(summary_rect)
 
   def _draw_summary_card(self, rect: rl.Rectangle):
-    draw_soft_card(rect, self.PANEL_STYLE.surface_fill, self.PANEL_STYLE.surface_border)
+    draw_soft_card(rect, PANEL_STYLE.surface_fill, PANEL_STYLE.surface_border)
     inset = 18
     left_x = rect.x + inset
     left_w = rect.width * 0.40
@@ -560,7 +562,7 @@ class SystemSettingsManagerView(Widget):
   def _measure_active_tab_height(self, width: float) -> float:
     display_h = self._section_block_height(self._slider_section_height(self._display_slider_keys, width))
     power_h = self._section_block_height(self._slider_section_height(self._power_slider_keys, width))
-    backups_h = self._section_block_height(self._section_height(2, self.ROW_HEIGHT))
+    backups_h = self._section_block_height(self._section_height(2, ROW_HEIGHT))
     maintenance_h = self._section_block_height(self._maintenance_section_content_height())
     if self._active_tab_key == "basics":
       if self._uses_two_columns(width):
@@ -568,7 +570,7 @@ class SystemSettingsManagerView(Widget):
       return self._stacked_section_height([display_h, power_h])
 
     if self._active_tab_key == "connectivity":
-      group_heights = [self._section_block_height(self._section_height(len(self._toggle_defs_for_group(group)), self.ROW_HEIGHT)) for group in self._toggle_groups]
+      group_heights = [self._section_block_height(self._section_height(len(self._toggle_defs_for_group(group)), ROW_HEIGHT)) for group in self._toggle_groups]
       if self._uses_two_columns(width):
         return max(group_heights)
       return self._stacked_section_height(group_heights)
@@ -578,7 +580,7 @@ class SystemSettingsManagerView(Widget):
     return self._stacked_section_height([backups_h, maintenance_h])
 
   def _section_block_height(self, content_height: float) -> float:
-    return self.SECTION_HEADER_HEIGHT + self.SECTION_HEADER_GAP + content_height + self.SECTION_GAP
+    return SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + content_height
 
   def _slider_section_height(self, keys: list[str], width: float) -> float:
     total = 0.0
@@ -588,8 +590,8 @@ class SystemSettingsManagerView(Widget):
     return total
 
   def _maintenance_section_content_height(self) -> float:
-    support_h = self._section_height(len(self._support_rows), self.ROW_HEIGHT)
-    danger_h = self._section_height(len(self._danger_rows), self.ROW_HEIGHT)
+    support_h = self._section_height(len(self._support_rows), ROW_HEIGHT)
+    danger_h = self._section_height(len(self._danger_rows), ROW_HEIGHT)
     return support_h + 12 + 30 + danger_h
 
   def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
@@ -624,7 +626,7 @@ class SystemSettingsManagerView(Widget):
         title_size=26,
         subtitle_size=17,
         show_underline=True,
-        style=self.PANEL_STYLE,
+        style=PANEL_STYLE,
       )
 
   def _draw_basics_tab(self, y: float, x: float, width: float):
@@ -634,6 +636,7 @@ class SystemSettingsManagerView(Widget):
       self._draw_slider_section(y, x + column_w + self.COLUMN_GAP, column_w, tr("Power"), self._power_slider_keys)
       return
     y = self._draw_slider_section(y, x, width, tr("Display"), self._display_slider_keys)
+    y += SECTION_GAP
     self._draw_slider_section(y, x, width, tr("Power"), self._power_slider_keys)
 
   def _draw_connectivity_tab(self, y: float, x: float, width: float):
@@ -643,8 +646,10 @@ class SystemSettingsManagerView(Widget):
       self._draw_toggle_group_section(y, x + column_w + self.COLUMN_GAP, column_w, self._toggle_groups[1])
       return
     current_y = y
-    for group in self._toggle_groups:
+    for i, group in enumerate(self._toggle_groups):
       current_y = self._draw_toggle_group_section(current_y, x, width, group)
+      if i < len(self._toggle_groups) - 1:
+        current_y += SECTION_GAP
 
   def _draw_care_tab(self, y: float, x: float, width: float):
     if self._uses_two_columns(width):
@@ -653,17 +658,18 @@ class SystemSettingsManagerView(Widget):
       self._draw_maintenance_section(y, x + column_w + self.COLUMN_GAP, column_w)
       return
     y = self._draw_backups_section(y, x, width)
+    y += SECTION_GAP
     self._draw_maintenance_section(y, x, width)
 
   def _draw_slider_section(self, y: float, x: float, width: float, title: str, keys: list[str]) -> float:
-    draw_section_header(rl.Rectangle(x, y, width, self.SECTION_HEADER_HEIGHT), title, style=self.PANEL_STYLE)
-    y += self.SECTION_HEADER_HEIGHT + self.SECTION_HEADER_GAP
+    draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), title, style=PANEL_STYLE)
+    y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
     group_rect = rl.Rectangle(x, y, width, self._slider_section_height(keys, width))
-    draw_list_group_shell(group_rect)
+    draw_list_group_shell(group_rect, style=PANEL_STYLE)
     current_y = group_rect.y
     for index, key in enumerate(keys):
       current_y = self._draw_slider_row(rl.Rectangle(group_rect.x, current_y, group_rect.width, 0), key, is_last=index == len(keys) - 1)
-    return y + group_rect.height + self.SECTION_GAP
+    return y + group_rect.height
 
   def _draw_slider_row(self, rect: rl.Rectangle, key: str, is_last: bool) -> float:
     adjustor = self._adjustor_rows[key]
@@ -687,13 +693,13 @@ class SystemSettingsManagerView(Widget):
   def _draw_toggle_group_section(self, y: float, x: float, width: float, group: dict) -> float:
     toggles = self._toggle_defs_for_group(group)
     trailing_text = tr("{} toggles").format(len(toggles))
-    draw_section_header(rl.Rectangle(x, y, width, self.SECTION_HEADER_HEIGHT), group["title"], trailing_text=trailing_text, style=self.PANEL_STYLE)
-    y += self.SECTION_HEADER_HEIGHT + self.SECTION_HEADER_GAP
-    toggle_rect = rl.Rectangle(x, y, width, self._section_height(len(toggles), self.ROW_HEIGHT))
-    draw_list_group_shell(toggle_rect)
+    draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), group["title"], trailing_text=trailing_text, style=PANEL_STYLE)
+    y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
+    toggle_rect = rl.Rectangle(x, y, width, self._section_height(len(toggles), ROW_HEIGHT))
+    draw_list_group_shell(toggle_rect, style=PANEL_STYLE)
     for index, toggle_def in enumerate(toggles):
-      self._draw_toggle_row(rl.Rectangle(toggle_rect.x, toggle_rect.y + index * self.ROW_HEIGHT, toggle_rect.width, self.ROW_HEIGHT), toggle_def, is_last=index == len(toggles) - 1)
-    return y + toggle_rect.height + self.SECTION_GAP
+      self._draw_toggle_row(rl.Rectangle(toggle_rect.x, toggle_rect.y + index * ROW_HEIGHT, toggle_rect.width, ROW_HEIGHT), toggle_def, is_last=index == len(toggles) - 1)
+    return y + toggle_rect.height
 
   def _draw_toggle_row(self, rect: rl.Rectangle, toggle_def: dict, is_last: bool):
     target_id = f"toggle:{toggle_def['id']}"
@@ -712,18 +718,18 @@ class SystemSettingsManagerView(Widget):
       show_chevron=False,
       title_size=34,
       subtitle_size=22,
-      style=self.PANEL_STYLE,
+      style=PANEL_STYLE,
     )
 
   def _draw_backups_section(self, y: float, x: float, width: float) -> float:
-    draw_section_header(rl.Rectangle(x, y, width, self.SECTION_HEADER_HEIGHT), tr("Backups"), trailing_text=self._controller.backup_status_text(), style=self.PANEL_STYLE)
-    y += self.SECTION_HEADER_HEIGHT + self.SECTION_HEADER_GAP
+    draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), tr("Backups"), trailing_text=self._controller.backup_status_text(), style=PANEL_STYLE)
+    y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
-    summary_rect = rl.Rectangle(x, y, width, self.ROW_HEIGHT * 2)
-    draw_list_group_shell(summary_rect)
-    self._draw_backup_manager_row(rl.Rectangle(summary_rect.x, summary_rect.y, summary_rect.width, self.ROW_HEIGHT), "system", is_last=False)
-    self._draw_backup_manager_row(rl.Rectangle(summary_rect.x, summary_rect.y + self.ROW_HEIGHT, summary_rect.width, self.ROW_HEIGHT), "toggle", is_last=True)
-    return y + summary_rect.height + self.SECTION_GAP
+    summary_rect = rl.Rectangle(x, y, width, ROW_HEIGHT * 2)
+    draw_list_group_shell(summary_rect, style=PANEL_STYLE)
+    self._draw_backup_manager_row(rl.Rectangle(summary_rect.x, summary_rect.y, summary_rect.width, ROW_HEIGHT), "system", is_last=False)
+    self._draw_backup_manager_row(rl.Rectangle(summary_rect.x, summary_rect.y + ROW_HEIGHT, summary_rect.width, ROW_HEIGHT), "toggle", is_last=True)
+    return y + summary_rect.height
 
   def _draw_backup_manager_row(self, rect: rl.Rectangle, backup_kind: str, is_last: bool):
     target_id = f"backup:{backup_kind}"
@@ -752,20 +758,20 @@ class SystemSettingsManagerView(Widget):
       title_size=34,
       subtitle_size=22,
       action_text_size=18,
-      row_separator=self.PANEL_STYLE.divider_color,
+      row_separator=PANEL_STYLE.divider_color,
       action_fill=AetherListColors.CURRENT_BG,
-      action_border=rl.Color(89, 116, 151, 42),
+      action_border=PANEL_STYLE.current_border,
       action_text_color=AetherListColors.HEADER,
     )
 
   def _draw_maintenance_section(self, y: float, x: float, width: float):
-    draw_section_header(rl.Rectangle(x, y, width, self.SECTION_HEADER_HEIGHT), tr("Support & Maintenance"), style=self.PANEL_STYLE)
-    y += self.SECTION_HEADER_HEIGHT + self.SECTION_HEADER_GAP
+    draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), tr("Support & Maintenance"), style=PANEL_STYLE)
+    y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
-    support_rect = rl.Rectangle(x, y, width, self._section_height(len(self._support_rows), self.ROW_HEIGHT))
-    draw_list_group_shell(support_rect)
+    support_rect = rl.Rectangle(x, y, width, self._section_height(len(self._support_rows), ROW_HEIGHT))
+    draw_list_group_shell(support_rect, style=PANEL_STYLE)
     for index, row in enumerate(self._support_rows):
-      row_rect = rl.Rectangle(support_rect.x, support_rect.y + index * self.ROW_HEIGHT, support_rect.width, self.ROW_HEIGHT)
+      row_rect = rl.Rectangle(support_rect.x, support_rect.y + index * ROW_HEIGHT, support_rect.width, ROW_HEIGHT)
       self._draw_action_row(row_rect, row, is_last=index == len(self._support_rows) - 1)
     y += support_rect.height + 12
 
@@ -773,10 +779,10 @@ class SystemSettingsManagerView(Widget):
     gui_label(danger_title_rect, tr("Danger Zone"), 20, AetherListColors.DANGER, FontWeight.MEDIUM)
     y += 30
 
-    danger_rect = rl.Rectangle(x, y, width, self._section_height(len(self._danger_rows), self.ROW_HEIGHT))
-    draw_list_group_shell(danger_rect, fill=rl.Color(173, 78, 90, 10), border=rl.Color(173, 78, 90, 30))
+    danger_rect = rl.Rectangle(x, y, width, self._section_height(len(self._danger_rows), ROW_HEIGHT))
+    draw_list_group_shell(danger_rect, fill=rl.Color(173, 78, 90, 10), border=rl.Color(173, 78, 90, 30), style=PANEL_STYLE)
     for index, row in enumerate(self._danger_rows):
-      row_rect = rl.Rectangle(danger_rect.x, danger_rect.y + index * self.ROW_HEIGHT, danger_rect.width, self.ROW_HEIGHT)
+      row_rect = rl.Rectangle(danger_rect.x, danger_rect.y + index * ROW_HEIGHT, danger_rect.width, ROW_HEIGHT)
       self._draw_action_row(row_rect, row, is_last=index == len(self._danger_rows) - 1, danger=True)
 
   def _draw_action_row(self, rect: rl.Rectangle, row: dict, is_last: bool, *, danger: bool = False):
@@ -800,7 +806,7 @@ class SystemSettingsManagerView(Widget):
       title_size=34,
       subtitle_size=22,
       action_text_size=18,
-      row_separator=self.PANEL_STYLE.divider_color,
+      row_separator=PANEL_STYLE.divider_color,
       action_fill=action_fill,
       action_border=action_border,
       action_text_color=action_text_color,
@@ -976,7 +982,7 @@ class StarPilotSystemLayout(_SettingsPage):
     return self._params.get_bool("UseKonikServer")
 
   def _on_konik_toggle(self, state):
-    self._params.put_bool("UseKonikServer", state)
+    prepare_konik_server_switch(state, self._params)
     cache_path = Path("/cache/use_konik")
     if state:
       cache_path.parent.mkdir(parents=True, exist_ok=True)

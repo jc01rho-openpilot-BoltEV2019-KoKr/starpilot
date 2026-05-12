@@ -12,15 +12,15 @@ from cereal import messaging
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.common.time_helpers import system_time_valid
-from openpilot.system.athena.registration import register
 from openpilot.system.hardware import HARDWARE
 from openpilot.system.version import get_build_metadata
 
 from openpilot.starpilot.assets.theme_manager import ThemeManager
 from openpilot.starpilot.common.starpilot_backups import backup_starpilot
+from openpilot.starpilot.common.connect_server import sync_konik_dongle_id
 from openpilot.starpilot.common.maps_catalog import normalize_schedule_value, sanitize_selected_locations_csv
 from openpilot.starpilot.common.theme_asset_names import find_matching_theme_asset_file
-from openpilot.starpilot.common.starpilot_utilities import get_starpilot_api_info, is_FrogsGoMoo, is_url_pingable, run_cmd, use_konik_server
+from openpilot.starpilot.common.starpilot_utilities import get_starpilot_api_info, is_FrogsGoMoo, is_url_pingable, run_cmd
 from openpilot.starpilot.common.starpilot_variables import (
   ERROR_LOGS_PATH, STARPILOT_API, FROGS_GO_MOO_PATH, HD_LOGS_PATH, KONIK_LOGS_PATH, MAPS_PATH, THEME_SAVE_PATH,
   StarPilotVariables, get_starpilot_toggles
@@ -73,14 +73,7 @@ def starpilot_boot_functions(build_metadata, params):
   StarPilotVariables()
   ThemeManager(params, params_memory, boot_run=True).update_active_theme(time_validated=system_time_valid(), starpilot_toggles=get_starpilot_toggles(), boot_run=True)
 
-  if use_konik_server():
-    if params.get("KonikDongleId") is not None:
-      params.put("DongleId", params.get("KonikDongleId"))
-    else:
-      params.put("KonikDongleId", register(show_spinner=True, register_konik=True))
-      params.put("DongleId", params.get("KonikDongleId"))
-  elif params.get("DongleId") == params.get("KonikDongleId"):
-    params.put("DongleId", params.get("StockDongleId"))
+  sync_konik_dongle_id(params)
 
   def boot_thread():
     while not system_time_valid():

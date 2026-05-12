@@ -6,7 +6,7 @@ import pyray as rl
 
 from openpilot.common.basedir import BASEDIR
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH
-from openpilot.system.ui.lib.application import gui_app, FontWeight, MouseEvent, MousePos
+from openpilot.system.ui.lib.application import gui_app, MouseEvent, MousePos
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.system.ui.widgets import Widget
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -14,16 +14,16 @@ from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPanel
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
-  AetherContinuousSlider,
+  AetherAdjustorRow,
   AetherListColors,
-  DEFAULT_PANEL_STYLE,
+  panel_style_from_color,
   _point_hits,
   draw_settings_panel_header,
   draw_toggle_pill,
   init_list_panel,
 )
 
-PANEL_STYLE = DEFAULT_PANEL_STYLE
+PANEL_STYLE = panel_style_from_color("#E63956")
 SECTION_GAP = AETHER_LIST_METRICS.section_gap
 
 
@@ -33,72 +33,88 @@ class SoundsManagerView(Widget):
     super().__init__()
     self._controller = controller
     self._pressed_target: str | None = None
-
-    self._sliders: dict[str, AetherContinuousSlider] = {}
-    self._slider_was_dragging: dict[str, bool] = {}
+    self._adjustor_rows: dict[str, AetherAdjustorRow] = {}
+    self._was_interacting: dict[str, bool] = {}
     self._toggle_rects: dict[str, rl.Rectangle] = {}
+    self._active_adjustor_key: str | None = None
 
-    self._init_sliders()
+    self._init_adjustors()
 
-  def _init_sliders(self):
+  def _set_active_adjustor(self, key: str, active: bool):
+    if active:
+      if self._active_adjustor_key and self._active_adjustor_key != key:
+        old = self._adjustor_rows.get(self._active_adjustor_key)
+        if old:
+          old.reset_interaction()
+      self._active_adjustor_key = key
+    elif self._active_adjustor_key == key:
+      self._active_adjustor_key = None
+
+  def _init_adjustors(self):
     for key in self._controller.VOLUME_KEYS:
-      val = self._controller._params.get_int(key, return_default=True, default=100)
-      
-      def on_change(v, k=key):
+      info = self._controller.VOLUME_INFO[key]
+
+      def on_change(v, k=key, min_v=info["min"]):
         new_v = int(v)
-        if new_v != 101 and new_v < self._controller.VOLUME_INFO[k]["min"]:
-          new_v = self._controller.VOLUME_INFO[k]["min"]
+        if new_v != 101 and new_v < min_v:
+          new_v = min_v
         self._controller._params.put_int(k, new_v)
 
-      slider = AetherContinuousSlider(
-        min_val=0.0,
-        max_val=101.0,
-        step=1.0,
-        current_val=float(val),
+      adjustor = AetherAdjustorRow(
+        tr(info["title"]),
+        "",
+        0.0, 101.0, 1.0,
+        get_value=lambda k=key: float(self._controller._params.get_int(k, return_default=True, default=100)),
         on_change=on_change,
-        title=tr(self._controller.VOLUME_INFO[key]["title"]),
+        on_commit=None,
         unit="%",
         labels={0.0: tr("Muted"), 101.0: tr("Auto")},
-        color=AetherListColors.PRIMARY
+        presets=[0, 25, 50, 75, 101],
+        is_active=lambda k=key: self._active_adjustor_key == k,
+        set_active=lambda active, k=key: self._set_active_adjustor(k, active),
+        style=PANEL_STYLE,
+        color=PANEL_STYLE.accent,
       )
-      self._sliders[key] = slider
-      self._slider_was_dragging[key] = False
+      self._adjustor_rows[key] = adjustor
 
-    cd_val = self._controller._params.get_int(self._controller.COOLDOWN_KEY, return_default=True, default=0)
-    def on_cd_change(v):
-      self._controller._params.put_int(self._controller.COOLDOWN_KEY, int(v))
-    
-    cd_slider = AetherContinuousSlider(
-      min_val=0.0,
-      max_val=float(self._controller.COOLDOWN_INFO["max"]),
-      step=1.0,
-      current_val=float(cd_val),
-      on_change=on_cd_change,
-      title=tr(self._controller.COOLDOWN_INFO["title"]),
+    cd_key = self._controller.COOLDOWN_KEY
+    def on_cd_commit(v):
+      self._controller._params.put_int(cd_key, int(v))
+
+    cd_adjustor = AetherAdjustorRow(
+      tr(self._controller.COOLDOWN_INFO["title"]),
+      "",
+      0.0, float(self._controller.COOLDOWN_INFO["max"]), 1.0,
+      get_value=lambda: float(self._controller._params.get_int(cd_key, return_default=True, default=0)),
+      on_change=lambda _v: None,
+      on_commit=on_cd_commit,
       unit=" " + tr("min"),
-      labels={0.0: tr("Off"), 1.0: tr("1 minute")},
-      color=AetherListColors.PRIMARY
+      labels={0.0: tr("Off"), 1.0: tr("1 min")},
+      presets=[0, 1, 5, 10, 20, 30],
+      is_active=lambda: self._active_adjustor_key == cd_key,
+      set_active=lambda active: self._set_active_adjustor(cd_key, active),
+      style=PANEL_STYLE,
+      color=PANEL_STYLE.accent,
     )
-    self._sliders[self._controller.COOLDOWN_KEY] = cd_slider
-    self._slider_was_dragging[self._controller.COOLDOWN_KEY] = False
+    self._adjustor_rows[cd_key] = cd_adjustor
 
   def _handle_mouse_press(self, mouse_pos: MousePos):
     self._pressed_target = self._target_at(mouse_pos)
-    for slider in self._sliders.values():
-      slider._handle_mouse_press(mouse_pos)
+    for adjustor in self._adjustor_rows.values():
+      adjustor._handle_mouse_press(mouse_pos)
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
-    for slider in self._sliders.values():
-      slider._handle_mouse_release(mouse_pos)
-      
+    for adjustor in self._adjustor_rows.values():
+      adjustor._handle_mouse_release(mouse_pos)
+
     target = self._target_at(mouse_pos)
     if self._pressed_target is not None and self._pressed_target == target:
       self._activate_target(target)
     self._pressed_target = None
 
   def _handle_mouse_event(self, mouse_event: MouseEvent):
-    for slider in self._sliders.values():
-      slider._handle_mouse_event(mouse_event)
+    for adjustor in self._adjustor_rows.values():
+      adjustor._handle_mouse_event(mouse_event)
 
   def _target_at(self, mouse_pos: MousePos) -> str | None:
     for key, rect in self._toggle_rects.items():
@@ -127,78 +143,69 @@ class SoundsManagerView(Widget):
     content_y = frame.header.y + actual_header_height
     content_h = (frame.shell.y + frame.shell.height) - content_y - metrics.panel_padding_bottom
 
-    content_rect = rl.Rectangle(
-        frame.scroll.x,
-        content_y,
-        frame.scroll.width,
-        content_h
-    )
-    
-    col_width = (content_rect.width - SECTION_GAP) / 2
-    left_col = rl.Rectangle(content_rect.x, content_rect.y, col_width, content_rect.height)
-    right_col = rl.Rectangle(content_rect.x + col_width + SECTION_GAP, content_rect.y, col_width, content_rect.height)
+    col_width = (frame.scroll.width - SECTION_GAP) / 2
+    col_left = rl.Rectangle(frame.scroll.x, content_y, col_width, content_h)
+    col_right = rl.Rectangle(frame.scroll.x + col_width + SECTION_GAP, content_y, col_width, content_h)
 
-    self._draw_volume_section(left_col)
-    self._draw_utility_section(right_col)
+    self._draw_volume_column(col_left)
+    self._draw_utility_column(col_right)
 
-    for key, slider in self._sliders.items():
-      is_dragging = slider._is_dragging
-      if self._slider_was_dragging[key] and not is_dragging:
-        if key in self._controller.VOLUME_KEYS:
-          self._controller._test_sound(key)
-      self._slider_was_dragging[key] = is_dragging
+    for key in self._controller.VOLUME_KEYS:
+      adjustor = self._adjustor_rows[key]
+      is_interacting = adjustor.is_interacting
+      if self._was_interacting.get(key, False) and not is_interacting:
+        self._controller._test_sound(key)
+      if adjustor._preset_applied:
+        adjustor._preset_applied = False
+        self._controller._test_sound(key)
+      self._was_interacting[key] = is_interacting
 
   def _draw_header(self, rect: rl.Rectangle):
     draw_settings_panel_header(rect, tr("Sounds & Alerts"), tr("Manage system volumes and custom alert toggles."), subtitle_size=24)
 
-  def _draw_volume_section(self, rect: rl.Rectangle):
-    num_volumes = len(self._controller.VOLUME_KEYS)
-    vol_row_h = rect.height / num_volumes
+  def _draw_volume_column(self, rect: rl.Rectangle):
+    current_y = rect.y
+    for key in self._controller.VOLUME_KEYS:
+      adjustor = self._adjustor_rows[key]
+      row_h = adjustor.measure_height(rect.width)
+      row_rect = rl.Rectangle(rect.x, current_y, rect.width, row_h)
+      adjustor.set_is_last(True)
+      adjustor.set_parent_rect(rect)
+      adjustor.render(row_rect)
+      current_y += row_h
 
-    for index, key in enumerate(self._controller.VOLUME_KEYS):
-      row_rect = rl.Rectangle(rect.x, rect.y + index * vol_row_h, rect.width, vol_row_h)
-      self._draw_slider_row(row_rect, key, self._controller.VOLUME_INFO[key])
+  def _draw_utility_column(self, rect: rl.Rectangle):
+    current_y = rect.y
 
-  def _draw_utility_section(self, rect: rl.Rectangle):
-    total_elements = 7 # 1 cooldown + 6 alerts
-    row_h = rect.height / total_elements
+    cd_key = self._controller.COOLDOWN_KEY
+    adjustor = self._adjustor_rows[cd_key]
+    row_h = adjustor.measure_height(rect.width)
+    adjustor.set_is_last(True)
+    adjustor.set_parent_rect(rect)
+    adjustor.render(rl.Rectangle(rect.x, current_y, rect.width, row_h))
+    current_y += row_h
 
-    # Cooldown Slider (Index 0)
-    cd_row_rect = rl.Rectangle(rect.x, rect.y, rect.width, row_h)
-    self._draw_slider_row(cd_row_rect, self._controller.COOLDOWN_KEY, self._controller.COOLDOWN_INFO)
-    
-    # Custom Alert Toggle Pills (Indices 1 to 6)
-    for index, key in enumerate(self._controller.CUSTOM_ALERTS_KEYS):
-      row_rect = rl.Rectangle(rect.x, rect.y + (index + 1) * row_h, rect.width, row_h)
+    toggle_h = AETHER_LIST_METRICS.utility_row_height
+    for i, key in enumerate(self._controller.CUSTOM_ALERTS_KEYS):
+      row_rect = rl.Rectangle(rect.x, current_y, rect.width, toggle_h)
       self._draw_toggle_row(row_rect, key, self._controller.ALERT_INFO[key])
-
-  def _draw_slider_row(self, rect: rl.Rectangle, key: str, info: dict):
-    slider = self._sliders[key]
-    
-    padded_rect = rl.Rectangle(rect.x, rect.y + 4, rect.width - 12, rect.height - 8)
-    
-    if not slider._is_dragging:
-      current_param = self._controller._params.get_int(key, return_default=True, default=100 if key != self._controller.COOLDOWN_KEY else 0)
-      if slider.current_val != current_param:
-         slider.current_val = float(current_param)
-
-    slider.render(padded_rect)
+      current_y += toggle_h
 
   def _draw_toggle_row(self, rect: rl.Rectangle, key: str, info: dict):
     padded_rect = rl.Rectangle(rect.x, rect.y + 4, rect.width - 12, rect.height - 8)
-    
+
     current_val = self._controller._params.get_bool(key)
     is_enabled = info.get("is_enabled", lambda: True)()
-    
+
     mouse_pos = gui_app.last_mouse_event.pos
     hovered = _point_hits(mouse_pos, padded_rect, pad_x=6, pad_y=6)
     pressed = self._pressed_target == f"toggle:{key}"
-    
+
     status_str = tr("ON") if current_val else tr("OFF")
     if not is_enabled: status_str = tr(info.get("disabled_label", "UNAVAILABLE"))
-    
-    draw_toggle_pill(padded_rect, current_val, is_enabled, tr(info["title"]), status_str, hovered, pressed)
-    
+
+    draw_toggle_pill(padded_rect, current_val, is_enabled, tr(info["title"]), status_str, hovered, pressed, style=PANEL_STYLE)
+
     self._toggle_rects[key] = padded_rect
 
 
@@ -247,7 +254,7 @@ class StarPilotSoundsLayout(StarPilotPanel):
       "GreenLightAlert": {"title": tr_noop("Green Light")},
       "LeadDepartingAlert": {"title": tr_noop("Lead Departure")},
       "LoudBlindspotAlert": {
-        "title": tr_noop("Loud Blindspot"), 
+        "title": tr_noop("Loud Blindspot"),
         "is_enabled": lambda: starpilot_state.car_state.hasBSM,
         "disabled_label": tr_noop("Needs BSM")
       },

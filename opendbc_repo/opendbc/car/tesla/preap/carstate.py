@@ -6,10 +6,17 @@ from cereal import custom
 from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.common.conversions import Conversions as CV
+from opendbc.car.tesla.preap.nap_params import NAPParamKeys
 from opendbc.car.tesla.preap.engagement import PreAPEngagement
 from opendbc.car.tesla.preap.nap_conf import PEDAL_DI_PRESSED, nap_conf
 from opendbc.car.tesla.preap.pedal_feedback import PedalFeedback
 from opendbc.car.tesla.values import CANBUS, DBC, GEAR_MAP, STEER_THRESHOLD
+
+try:
+  from openpilot.common.params import Params as _NAPParams
+  _nap_params = _NAPParams()
+except ImportError:
+  _nap_params = None
 
 _DOORS = ("DOOR_STATE_FL", "DOOR_STATE_FR", "DOOR_STATE_RL", "DOOR_STATE_RR", "DOOR_STATE_FrontTrunk", "BOOT_STATE")
 
@@ -83,6 +90,14 @@ def update_preap(cs, can_parsers):
   cs.cruise_buttons = int(cp_chassis.vl["STW_ACTN_RQ"]["SpdCtrlLvr_Stat"])
   cs.msg_stw_actn_req = copy.copy(cp_chassis.vl["STW_ACTN_RQ"])
 
+  if _nap_params is not None:
+    dtr_dist = int(cp_chassis.vl["STW_ACTN_RQ"]["DTR_Dist_Rq"])
+    if dtr_dist != 255:
+      stalk_follow = min((dtr_dist // 33) + 1, 7)
+      if stalk_follow != cs.prev_stalk_follow:
+        _nap_params.put(NAPParamKeys.FOLLOW_DISTANCE, str(stalk_follow))
+        cs.prev_stalk_follow = stalk_follow
+
   curr_time_ms = _current_time_millis()
   ret.buttonEvents = cs.engagement.process_buttons(
     cs.cruise_buttons, cs.prev_cruise_buttons, curr_time_ms, ret.vEgo, cs.speed_units,
@@ -109,14 +124,25 @@ def update_preap(cs, can_parsers):
     if use_pedal:
       ret.gasPressed = cs.pedal.gas_pressed
 
+  cs.das_control = None
   cs.cruise_enabled_prev = ret.cruiseState.enabled
+  ret.pedalMaxRegen = cs.pccEvent == "pedalMaxRegen"
+  ret.teslaCCEngaged = cs.pccEvent == "teslaCCEngaged"
+  ret.teslaCCDisengaged = cs.pccEvent == "teslaCCDisengaged"
+  ret.teslaCCNotArmed = (
+    not nap_conf.use_pedal and
+    cs.cruiseEnabled and
+    cs.enableLongControl and
+    cs.di_cruise_state not in ("STANDBY", "ENABLED")
+  )
+  ret.pedalLongActive = cs.enableLongControl and nap_conf.use_pedal
   return ret, fp_ret
 
 
 def get_preap_can_parsers(CP):
   chassis_messages = [
     ("ESP_B", 0), ("BrakeMessage", 0), ("DI_state", 0), ("DI_torque2", 0),
-    ("GTW_carState", 0), ("STW_ANGLHP_STAT", 0), ("EPAS_sysStatus", 0), ("STW_ACTN_RQ", 0),
+    ("GTW_carState", 0), ("GTW_epasControl", 0), ("STW_ANGLHP_STAT", 0), ("EPAS_sysStatus", 0), ("STW_ACTN_RQ", 0),
   ]
   pt_messages = [("DI_torque1", 0)]
   pedal_messages = [("GAS_SENSOR", 50)] if nap_conf.use_pedal else []
@@ -126,4 +152,3 @@ def get_preap_can_parsers(CP):
     Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CANBUS.party),
     Bus.chassis: CANParser(DBC[CP.carFingerprint][Bus.chassis], chassis_messages, CANBUS.party),
   }
-

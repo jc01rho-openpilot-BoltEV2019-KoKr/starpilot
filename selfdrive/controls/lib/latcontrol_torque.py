@@ -48,13 +48,14 @@ UNWIND_LAT_ACCEL_NEAR_ZERO = 0.3
 MIN_LATERAL_CONTROL_SPEED = 0.3
 CIVIC_BOSCH_MODIFIED_B_FIXED_FRICTION_THRESHOLD = 0.30
 CIVIC_BOSCH_MODIFIED_B_LAT_ACCEL_FACTOR_MULT = 1.20
-CIVIC_BOSCH_MODIFIED_B_VARIANT_LAT_ACCEL_FACTOR_MULT = 1.10
+CIVIC_BOSCH_MODIFIED_A_VARIANT_LAT_ACCEL_FACTOR_MULT = 1.00
+CIVIC_BOSCH_MODIFIED_B_VARIANT_LAT_ACCEL_FACTOR_MULT = 1.75
 CIVIC_BOSCH_MODIFIED_B_TRANSITION_SPEED = 12.0
-CIVIC_BOSCH_MODIFIED_B_PHASE_SCALE = 0.10
+CIVIC_BOSCH_MODIFIED_B_PHASE_SCALE = 0.08
 CIVIC_BOSCH_MODIFIED_B_FF_ONSET = 0.18
 CIVIC_BOSCH_MODIFIED_B_FF_ONSET_WIDTH = 0.07
-CIVIC_BOSCH_MODIFIED_B_FF_CUTOFF = 1.00
-CIVIC_BOSCH_MODIFIED_B_FF_CUTOFF_WIDTH = 0.30
+CIVIC_BOSCH_MODIFIED_B_FF_CUTOFF = 1.35
+CIVIC_BOSCH_MODIFIED_B_FF_CUTOFF_WIDTH = 0.38
 CIVIC_BOSCH_MODIFIED_B_FF_REDUCTION_LEFT = 0.14
 CIVIC_BOSCH_MODIFIED_B_FF_REDUCTION_RIGHT = 0.24
 CIVIC_BOSCH_MODIFIED_B_TURN_IN_BOOST_LEFT = 0.04
@@ -65,16 +66,26 @@ CIVIC_BOSCH_MODIFIED_B_TURN_IN_FRICTION_BOOST_LEFT = 0.02
 CIVIC_BOSCH_MODIFIED_B_TURN_IN_FRICTION_BOOST_RIGHT = 0.00
 CIVIC_BOSCH_MODIFIED_B_UNWIND_FRICTION_REDUCTION_LEFT = 0.26
 CIVIC_BOSCH_MODIFIED_B_UNWIND_FRICTION_REDUCTION_RIGHT = 0.40
-CIVIC_BOSCH_MODIFIED_B_VARIANT_FF_REDUCTION_LEFT = 0.10
-CIVIC_BOSCH_MODIFIED_B_VARIANT_FF_REDUCTION_RIGHT = 0.20
-CIVIC_BOSCH_MODIFIED_B_VARIANT_TURN_IN_BOOST_LEFT = 0.04
+CIVIC_BOSCH_MODIFIED_A_VARIANT_FF_RESTORE_LEFT = 0.00
+CIVIC_BOSCH_MODIFIED_A_VARIANT_FF_RESTORE_RIGHT = 0.00
+CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_BOOST_LEFT = 0.00
+CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_BOOST_RIGHT = 0.00
+CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_TAPER_LEFT = 0.04
+CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_TAPER_RIGHT = 0.10
+CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_FRICTION_BOOST_LEFT = 0.00
+CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_FRICTION_BOOST_RIGHT = 0.00
+CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_FRICTION_REDUCTION_LEFT = 0.03
+CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_FRICTION_REDUCTION_RIGHT = 0.07
+CIVIC_BOSCH_MODIFIED_B_VARIANT_FF_REDUCTION_LEFT = 0.50
+CIVIC_BOSCH_MODIFIED_B_VARIANT_FF_REDUCTION_RIGHT = 0.82
+CIVIC_BOSCH_MODIFIED_B_VARIANT_TURN_IN_BOOST_LEFT = 0.00
 CIVIC_BOSCH_MODIFIED_B_VARIANT_TURN_IN_BOOST_RIGHT = 0.00
-CIVIC_BOSCH_MODIFIED_B_VARIANT_UNWIND_TAPER_LEFT = 0.28
-CIVIC_BOSCH_MODIFIED_B_VARIANT_UNWIND_TAPER_RIGHT = 0.42
-CIVIC_BOSCH_MODIFIED_B_VARIANT_TURN_IN_FRICTION_BOOST_LEFT = 0.02
+CIVIC_BOSCH_MODIFIED_B_VARIANT_UNWIND_TAPER_LEFT = 4.40
+CIVIC_BOSCH_MODIFIED_B_VARIANT_UNWIND_TAPER_RIGHT = 6.20
+CIVIC_BOSCH_MODIFIED_B_VARIANT_TURN_IN_FRICTION_BOOST_LEFT = 0.00
 CIVIC_BOSCH_MODIFIED_B_VARIANT_TURN_IN_FRICTION_BOOST_RIGHT = 0.00
-CIVIC_BOSCH_MODIFIED_B_VARIANT_UNWIND_FRICTION_REDUCTION_LEFT = 0.16
-CIVIC_BOSCH_MODIFIED_B_VARIANT_UNWIND_FRICTION_REDUCTION_RIGHT = 0.28
+CIVIC_BOSCH_MODIFIED_B_VARIANT_UNWIND_FRICTION_REDUCTION_LEFT = 2.80
+CIVIC_BOSCH_MODIFIED_B_VARIANT_UNWIND_FRICTION_REDUCTION_RIGHT = 4.20
 
 BOLT_2022_2023_CARS = (
   GM_CAR.CHEVROLET_BOLT_ACC_2022_2023,
@@ -96,6 +107,9 @@ VOLT_STANDARD_CARS = (
 )
 GENESIS_G90_CARS = (
   HYUNDAI_CAR.GENESIS_G90,
+)
+IONIQ_5_CARS = (
+  HYUNDAI_CAR.HYUNDAI_IONIQ_5,
 )
 IONIQ_6_CARS = (
   HYUNDAI_CAR.HYUNDAI_IONIQ_6,
@@ -152,54 +166,59 @@ BOLT_2018_2021_UNWIND_FRICTION_REDUCTION_LEFT = 0.17
 BOLT_2018_2021_UNWIND_FRICTION_REDUCTION_RIGHT = 0.27
 
 BOLT_2022_2023_LATERAL_TESTING_GROUND_ID = testing_ground.id_5
-BOLT_2022_2023_FF_GAIN_LEFT = 0.13
-BOLT_2022_2023_FF_GAIN_RIGHT = 0.07
+BOLT_2022_2023_FF_GAIN_LEFT = 0.11
+BOLT_2022_2023_FF_GAIN_RIGHT = 0.06
 BOLT_2022_2023_FF_ONSET = 0.12
 BOLT_2022_2023_FF_ONSET_WIDTH = 0.07
 BOLT_2022_2023_FF_CUTOFF = 1.35
 BOLT_2022_2023_FF_CUTOFF_WIDTH = 0.28
 BOLT_2022_2023_TRANSITION_SPEED = 9.0
 BOLT_2022_2023_PHASE_SCALE = 0.12
-BOLT_2022_2023_TURN_IN_BOOST_LEFT = 0.12
-BOLT_2022_2023_TURN_IN_BOOST_RIGHT = 0.06
-BOLT_2022_2023_UNWIND_TAPER_LEFT = 0.28
-BOLT_2022_2023_UNWIND_TAPER_RIGHT = 0.24
-BOLT_2022_2023_FRICTION_MULT = 1.15
+BOLT_2022_2023_TURN_IN_BOOST_LEFT = 0.15
+BOLT_2022_2023_TURN_IN_BOOST_RIGHT = 0.09
+BOLT_2022_2023_UNWIND_TAPER_LEFT = 0.38
+BOLT_2022_2023_UNWIND_TAPER_RIGHT = 0.34
+BOLT_2022_2023_FRICTION_MULT = 1.09
 BOLT_2022_2023_FRICTION_LAT_RISE = 0.22
 BOLT_2022_2023_FRICTION_JERK_RISE = 0.26
+BOLT_2022_2023_CENTER_TAPER_MAX = 0.11
+BOLT_2022_2023_CENTER_TAPER_LAT = 0.18
+BOLT_2022_2023_CENTER_TAPER_LAT_WIDTH = 0.03
+BOLT_2022_2023_CENTER_TAPER_SPEED = 25.0
+BOLT_2022_2023_CENTER_TAPER_SPEED_WIDTH = 2.5
 BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.14
 BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.08
-BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_LEFT = 0.20
-BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.16
+BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_LEFT = 0.26
+BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.22
 BOLT_2022_2023_TURN_IN_FRICTION_BOOST_LEFT = 0.08
 BOLT_2022_2023_TURN_IN_FRICTION_BOOST_RIGHT = 0.04
-BOLT_2022_2023_UNWIND_FRICTION_REDUCTION_LEFT = 0.21
-BOLT_2022_2023_UNWIND_FRICTION_REDUCTION_RIGHT = 0.17
+BOLT_2022_2023_UNWIND_FRICTION_REDUCTION_LEFT = 0.27
+BOLT_2022_2023_UNWIND_FRICTION_REDUCTION_RIGHT = 0.23
 
 VOLT_STANDARD_LATERAL_TESTING_GROUND_ID = testing_ground.id_3
-VOLT_STANDARD_FF_GAIN_LEFT = 0.09
-VOLT_STANDARD_FF_GAIN_RIGHT = 0.09
+VOLT_STANDARD_FF_GAIN_LEFT = 0.11
+VOLT_STANDARD_FF_GAIN_RIGHT = 0.08
 VOLT_STANDARD_FF_ONSET = 0.10
 VOLT_STANDARD_FF_ONSET_WIDTH = 0.05
-VOLT_STANDARD_FF_CUTOFF = 1.30
-VOLT_STANDARD_FF_CUTOFF_WIDTH = 0.24
+VOLT_STANDARD_FF_CUTOFF = 1.38
+VOLT_STANDARD_FF_CUTOFF_WIDTH = 0.28
 VOLT_STANDARD_TRANSITION_SPEED = 10.0
 VOLT_STANDARD_PHASE_SCALE = 0.10
-VOLT_STANDARD_TURN_IN_BOOST_LEFT = 0.18
-VOLT_STANDARD_TURN_IN_BOOST_RIGHT = 0.52
-VOLT_STANDARD_UNWIND_TAPER_LEFT = 0.22
-VOLT_STANDARD_UNWIND_TAPER_RIGHT = 0.50
+VOLT_STANDARD_TURN_IN_BOOST_LEFT = 0.26
+VOLT_STANDARD_TURN_IN_BOOST_RIGHT = 0.44
+VOLT_STANDARD_UNWIND_TAPER_LEFT = 0.34
+VOLT_STANDARD_UNWIND_TAPER_RIGHT = 0.72
 VOLT_STANDARD_FRICTION_MULT = 1.04
 VOLT_STANDARD_FRICTION_LAT_RISE = 0.20
 VOLT_STANDARD_FRICTION_JERK_RISE = 0.24
-VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.10
-VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.30
-VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_LEFT = 0.12
-VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.42
-VOLT_STANDARD_TURN_IN_FRICTION_BOOST_LEFT = 0.05
-VOLT_STANDARD_TURN_IN_FRICTION_BOOST_RIGHT = 0.16
-VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_LEFT = 0.12
-VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_RIGHT = 0.36
+VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.14
+VOLT_STANDARD_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.24
+VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_LEFT = 0.18
+VOLT_STANDARD_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.56
+VOLT_STANDARD_TURN_IN_FRICTION_BOOST_LEFT = 0.07
+VOLT_STANDARD_TURN_IN_FRICTION_BOOST_RIGHT = 0.13
+VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_LEFT = 0.20
+VOLT_STANDARD_UNWIND_FRICTION_REDUCTION_RIGHT = 0.50
 VOLT_STANDARD_CENTER_TAPER_MAX = 0.12
 VOLT_STANDARD_CENTER_TAPER_LAT = 0.10
 VOLT_STANDARD_CENTER_TAPER_LAT_WIDTH = 0.018
@@ -207,33 +226,55 @@ VOLT_STANDARD_CENTER_TAPER_SPEED = 20.0
 VOLT_STANDARD_CENTER_TAPER_SPEED_WIDTH = 2.5
 
 GENESIS_G90_LATERAL_TESTING_GROUND_ID = testing_ground.id_4
-GENESIS_G90_FF_GAIN_LEFT = 0.17
-GENESIS_G90_FF_GAIN_RIGHT = 0.16
+GENESIS_G90_FF_GAIN_LEFT = 0.20
+GENESIS_G90_FF_GAIN_RIGHT = 0.10
 GENESIS_G90_FF_ONSET = 0.10
 GENESIS_G90_FF_ONSET_WIDTH = 0.05
-GENESIS_G90_FF_CUTOFF = 1.75
-GENESIS_G90_FF_CUTOFF_WIDTH = 0.36
+GENESIS_G90_FF_CUTOFF = 2.10
+GENESIS_G90_FF_CUTOFF_WIDTH = 0.42
 GENESIS_G90_TRANSITION_SPEED = 8.5
 GENESIS_G90_PHASE_SCALE = 0.12
-GENESIS_G90_TURN_IN_BOOST_LEFT = 0.34
-GENESIS_G90_TURN_IN_BOOST_RIGHT = 0.42
-GENESIS_G90_UNWIND_TAPER_LEFT = 0.24
-GENESIS_G90_UNWIND_TAPER_RIGHT = 0.34
+GENESIS_G90_TURN_IN_BOOST_LEFT = 0.42
+GENESIS_G90_TURN_IN_BOOST_RIGHT = 0.34
+GENESIS_G90_UNWIND_TAPER_LEFT = 0.18
+GENESIS_G90_UNWIND_TAPER_RIGHT = 0.48
 GENESIS_G90_FRICTION_MULT = 1.02
 GENESIS_G90_FRICTION_LAT_RISE = 0.22
 GENESIS_G90_FRICTION_JERK_RISE = 0.24
-GENESIS_G90_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.14
-GENESIS_G90_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.18
-GENESIS_G90_UNWIND_THRESHOLD_INCREASE_LEFT = 0.16
-GENESIS_G90_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.26
-GENESIS_G90_TURN_IN_FRICTION_BOOST_LEFT = 0.09
-GENESIS_G90_TURN_IN_FRICTION_BOOST_RIGHT = 0.12
-GENESIS_G90_UNWIND_FRICTION_REDUCTION_LEFT = 0.14
-GENESIS_G90_UNWIND_FRICTION_REDUCTION_RIGHT = 0.22
+GENESIS_G90_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.18
+GENESIS_G90_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.15
+GENESIS_G90_UNWIND_THRESHOLD_INCREASE_LEFT = 0.10
+GENESIS_G90_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.32
+GENESIS_G90_TURN_IN_FRICTION_BOOST_LEFT = 0.11
+GENESIS_G90_TURN_IN_FRICTION_BOOST_RIGHT = 0.10
+GENESIS_G90_UNWIND_FRICTION_REDUCTION_LEFT = 0.10
+GENESIS_G90_UNWIND_FRICTION_REDUCTION_RIGHT = 0.30
+
+IONIQ_5_BASE_LAT_ACCEL_FACTOR_MULT = 1.18
+IONIQ_5_FF_ONSET = 0.10
+IONIQ_5_FF_ONSET_WIDTH = 0.05
+IONIQ_5_FF_CUTOFF = 1.20
+IONIQ_5_FF_CUTOFF_WIDTH = 0.30
+IONIQ_5_TRANSITION_SPEED = 11.0
+IONIQ_5_PHASE_SCALE = 0.10
+IONIQ_5_FF_REDUCTION_LEFT = 0.10
+IONIQ_5_FF_REDUCTION_RIGHT = 0.18
+IONIQ_5_TURN_IN_BOOST_LEFT = 0.04
+IONIQ_5_TURN_IN_BOOST_RIGHT = 0.00
+IONIQ_5_UNWIND_TAPER_LEFT = 0.40
+IONIQ_5_UNWIND_TAPER_RIGHT = 0.70
+IONIQ_5_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.05
+IONIQ_5_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.00
+IONIQ_5_UNWIND_THRESHOLD_INCREASE_LEFT = 0.18
+IONIQ_5_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.32
+IONIQ_5_TURN_IN_FRICTION_BOOST_LEFT = 0.02
+IONIQ_5_TURN_IN_FRICTION_BOOST_RIGHT = 0.00
+IONIQ_5_UNWIND_FRICTION_REDUCTION_LEFT = 0.15
+IONIQ_5_UNWIND_FRICTION_REDUCTION_RIGHT = 0.26
 
 IONIQ_6_FF_GAIN_LEFT = 0.045
 IONIQ_6_FF_GAIN_RIGHT = 0.015
-IONIQ_6_BASE_LAT_ACCEL_FACTOR_MULT = 1.23
+IONIQ_6_BASE_LAT_ACCEL_FACTOR_MULT = 1.22
 IONIQ_6_BASE_FRICTION_THRESHOLD = 0.36
 IONIQ_6_FF_ONSET = 0.10
 IONIQ_6_FF_ONSET_WIDTH = 0.04
@@ -241,24 +282,24 @@ IONIQ_6_FF_CUTOFF = 0.48
 IONIQ_6_FF_CUTOFF_WIDTH = 0.12
 IONIQ_6_TRANSITION_SPEED = 10.0
 IONIQ_6_PHASE_SCALE = 0.10
-IONIQ_6_TURN_IN_BOOST_LEFT = 1.28
-IONIQ_6_TURN_IN_BOOST_RIGHT = 1.36
-IONIQ_6_UNWIND_TAPER_LEFT = 2.18
-IONIQ_6_UNWIND_TAPER_RIGHT = 5.05
-IONIQ_6_FRICTION_MULT = 0.965
+IONIQ_6_TURN_IN_BOOST_LEFT = 1.58
+IONIQ_6_TURN_IN_BOOST_RIGHT = 1.82
+IONIQ_6_UNWIND_TAPER_LEFT = 3.05
+IONIQ_6_UNWIND_TAPER_RIGHT = 6.35
+IONIQ_6_FRICTION_MULT = 0.928
 IONIQ_6_FRICTION_LAT_RISE = 0.20
 IONIQ_6_FRICTION_JERK_RISE = 0.24
-IONIQ_6_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.50
-IONIQ_6_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.72
-IONIQ_6_UNWIND_THRESHOLD_INCREASE_LEFT = 2.55
-IONIQ_6_UNWIND_THRESHOLD_INCREASE_RIGHT = 6.20
-IONIQ_6_TURN_IN_FRICTION_BOOST_LEFT = 0.26
-IONIQ_6_TURN_IN_FRICTION_BOOST_RIGHT = 0.44
-IONIQ_6_UNWIND_FRICTION_REDUCTION_LEFT = 2.30
-IONIQ_6_UNWIND_FRICTION_REDUCTION_RIGHT = 5.70
-IONIQ_6_CENTER_TAPER_MAX = 0.056
-IONIQ_6_CENTER_TAPER_LAT = 0.22
-IONIQ_6_CENTER_TAPER_LAT_WIDTH = 0.02
+IONIQ_6_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.74
+IONIQ_6_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 1.18
+IONIQ_6_UNWIND_THRESHOLD_INCREASE_LEFT = 3.70
+IONIQ_6_UNWIND_THRESHOLD_INCREASE_RIGHT = 7.85
+IONIQ_6_TURN_IN_FRICTION_BOOST_LEFT = 0.40
+IONIQ_6_TURN_IN_FRICTION_BOOST_RIGHT = 0.72
+IONIQ_6_UNWIND_FRICTION_REDUCTION_LEFT = 3.35
+IONIQ_6_UNWIND_FRICTION_REDUCTION_RIGHT = 7.30
+IONIQ_6_CENTER_TAPER_MAX = 0.082
+IONIQ_6_CENTER_TAPER_LAT = 0.24
+IONIQ_6_CENTER_TAPER_LAT_WIDTH = 0.025
 IONIQ_6_CENTER_TAPER_SPEED = 18.0
 IONIQ_6_CENTER_TAPER_SPEED_WIDTH = 2.5
 IONIQ_6_LOW_MID_CENTER_TAPER_MAX = 0.088
@@ -270,19 +311,21 @@ IONIQ_6_LOW_MID_CENTER_TAPER_SPEED_WIDTH = 1.5
 IONIQ_6_DIRECTIONAL_TAPER_LAT_START = 0.19
 IONIQ_6_DIRECTIONAL_TAPER_LAT_END = 0.90
 IONIQ_6_DIRECTIONAL_TAPER_LAT_WIDTH = 0.06
-IONIQ_6_DIRECTIONAL_TAPER_BASE_LEFT = 0.14
-IONIQ_6_DIRECTIONAL_TAPER_BASE_RIGHT = 0.48
-IONIQ_6_DIRECTIONAL_TAPER_UNWIND_LEFT = 1.64
+IONIQ_6_DIRECTIONAL_TAPER_BASE_LEFT = 0.13
+IONIQ_6_DIRECTIONAL_TAPER_BASE_RIGHT = 0.45
+IONIQ_6_DIRECTIONAL_TAPER_UNWIND_LEFT = 1.82
 IONIQ_6_DIRECTIONAL_TAPER_UNWIND_RIGHT = 3.28
 IONIQ_6_DIRECTIONAL_TAPER_FLOOR_LEFT = 0.48
 IONIQ_6_DIRECTIONAL_TAPER_FLOOR_RIGHT = 0.52
 IONIQ_6_DIRECTIONAL_TAPER_UNWIND_FLOOR_LEFT = 0.10
 IONIQ_6_DIRECTIONAL_TAPER_UNWIND_FLOOR_RIGHT = 0.04
+IONIQ_6_DIRECTIONAL_TAPER_JERK_ONSET = 0.35
+IONIQ_6_DIRECTIONAL_TAPER_JERK_WIDTH = 0.08
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_START = 0.82
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_WIDTH = 0.12
-IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_LEFT = 0.13
-IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_RIGHT = 0.22
-IONIQ_6_HEAVY_DIRECTIONAL_TAPER_UNWIND_LEFT = 0.56
+IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_LEFT = 0.10
+IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_RIGHT = 0.17
+IONIQ_6_HEAVY_DIRECTIONAL_TAPER_UNWIND_LEFT = 0.62
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_UNWIND_RIGHT = 0.94
 IONIQ_6_OUTPUT_TAPER_SPEED = 8.5
 IONIQ_6_OUTPUT_TAPER_SPEED_WIDTH = 2.5
@@ -359,6 +402,10 @@ def civic_bosch_modified_lateral_testing_ground_active() -> bool:
   return testing_ground.use("8", "B")
 
 
+def civic_bosch_modified_a_lateral_testing_ground_active() -> bool:
+  return testing_ground.use("8", "A")
+
+
 def _civic_bosch_modified_b_low_speed_factor(v_ego: float) -> float:
   return 1.0 / (1.0 + (max(v_ego, 0.0) / CIVIC_BOSCH_MODIFIED_B_TRANSITION_SPEED) ** 2)
 
@@ -386,7 +433,12 @@ def get_civic_bosch_modified_b_ff_scale(desired_lateral_accel: float, desired_la
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
   low_speed_factor = _civic_bosch_modified_b_low_speed_factor(v_ego)
+  a_variant_active = civic_bosch_modified_a_lateral_testing_ground_active()
   variant_active = civic_bosch_modified_lateral_testing_ground_active()
+  if a_variant_active:
+    base_reduction -= (_civic_bosch_modified_b_side_value(desired_lateral_accel,
+                                                           CIVIC_BOSCH_MODIFIED_A_VARIANT_FF_RESTORE_LEFT,
+                                                           CIVIC_BOSCH_MODIFIED_A_VARIANT_FF_RESTORE_RIGHT) * onset * cutoff)
   if variant_active:
     base_reduction += (_civic_bosch_modified_b_side_value(desired_lateral_accel,
                                                            CIVIC_BOSCH_MODIFIED_B_VARIANT_FF_REDUCTION_LEFT,
@@ -396,6 +448,11 @@ def get_civic_bosch_modified_b_ff_scale(desired_lateral_accel: float, desired_la
                                                              CIVIC_BOSCH_MODIFIED_B_TURN_IN_BOOST_LEFT,
                                                              CIVIC_BOSCH_MODIFIED_B_TURN_IN_BOOST_RIGHT) *
                           turn_in_weight * (0.40 + 0.60 * low_speed_factor))
+  if a_variant_active:
+    turn_in_boost *= 1.0 + (_civic_bosch_modified_b_side_value(desired_lateral_accel,
+                                                                CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_BOOST_LEFT,
+                                                                CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_BOOST_RIGHT) *
+                             turn_in_weight * (0.40 + 0.60 * low_speed_factor))
   if variant_active:
     turn_in_boost *= 1.0 + (_civic_bosch_modified_b_side_value(desired_lateral_accel,
                                                                 CIVIC_BOSCH_MODIFIED_B_VARIANT_TURN_IN_BOOST_LEFT,
@@ -405,6 +462,11 @@ def get_civic_bosch_modified_b_ff_scale(desired_lateral_accel: float, desired_la
                                                             CIVIC_BOSCH_MODIFIED_B_UNWIND_TAPER_LEFT,
                                                             CIVIC_BOSCH_MODIFIED_B_UNWIND_TAPER_RIGHT) *
                          unwind_weight * (0.35 + 0.65 * low_speed_factor))
+  if a_variant_active:
+    unwind_taper *= 1.0 - (_civic_bosch_modified_b_side_value(desired_lateral_accel,
+                                                               CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_TAPER_LEFT,
+                                                               CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_TAPER_RIGHT) *
+                            unwind_weight * (0.35 + 0.65 * low_speed_factor))
   if variant_active:
     unwind_taper *= 1.0 - (_civic_bosch_modified_b_side_value(desired_lateral_accel,
                                                                CIVIC_BOSCH_MODIFIED_B_VARIANT_UNWIND_TAPER_LEFT,
@@ -424,6 +486,7 @@ def get_civic_bosch_modified_b_friction_scale(v_ego: float, desired_lateral_acce
   phase = _civic_bosch_modified_b_transition_phase(desired_lateral_accel, desired_lateral_jerk)
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
+  a_variant_active = civic_bosch_modified_a_lateral_testing_ground_active()
   variant_active = civic_bosch_modified_lateral_testing_ground_active()
 
   friction_scale = 1.0
@@ -431,6 +494,11 @@ def get_civic_bosch_modified_b_friction_scale(v_ego: float, desired_lateral_acce
                                                          CIVIC_BOSCH_MODIFIED_B_TURN_IN_FRICTION_BOOST_LEFT,
                                                          CIVIC_BOSCH_MODIFIED_B_TURN_IN_FRICTION_BOOST_RIGHT) *
                      envelope * turn_in_weight)
+  if a_variant_active:
+    friction_scale += (_civic_bosch_modified_b_side_value(desired_lateral_accel,
+                                                           CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_FRICTION_BOOST_LEFT,
+                                                           CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_FRICTION_BOOST_RIGHT) *
+                       envelope * turn_in_weight)
   if variant_active:
     friction_scale += (_civic_bosch_modified_b_side_value(desired_lateral_accel,
                                                            CIVIC_BOSCH_MODIFIED_B_VARIANT_TURN_IN_FRICTION_BOOST_LEFT,
@@ -440,6 +508,11 @@ def get_civic_bosch_modified_b_friction_scale(v_ego: float, desired_lateral_acce
                                                          CIVIC_BOSCH_MODIFIED_B_UNWIND_FRICTION_REDUCTION_LEFT,
                                                          CIVIC_BOSCH_MODIFIED_B_UNWIND_FRICTION_REDUCTION_RIGHT) *
                      envelope * unwind_weight)
+  if a_variant_active:
+    friction_scale -= (_civic_bosch_modified_b_side_value(desired_lateral_accel,
+                                                           CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_FRICTION_REDUCTION_LEFT,
+                                                           CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_FRICTION_REDUCTION_RIGHT) *
+                       envelope * unwind_weight)
   if variant_active:
     friction_scale -= (_civic_bosch_modified_b_side_value(desired_lateral_accel,
                                                            CIVIC_BOSCH_MODIFIED_B_VARIANT_UNWIND_FRICTION_REDUCTION_LEFT,
@@ -623,6 +696,9 @@ def get_bolt_2022_2023_ff_scale(desired_lateral_accel: float, desired_lateral_je
   onset = _bolt_2022_2023_sigmoid((abs_lateral_accel - BOLT_2022_2023_FF_ONSET) / BOLT_2022_2023_FF_ONSET_WIDTH)
   cutoff = _bolt_2022_2023_sigmoid((BOLT_2022_2023_FF_CUTOFF - abs_lateral_accel) / BOLT_2022_2023_FF_CUTOFF_WIDTH)
   extra_scale = gain * onset * cutoff
+  speed_weight = _bolt_2022_2023_sigmoid((v_ego - BOLT_2022_2023_CENTER_TAPER_SPEED) / BOLT_2022_2023_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _bolt_2022_2023_sigmoid((BOLT_2022_2023_CENTER_TAPER_LAT - abs_lateral_accel) / BOLT_2022_2023_CENTER_TAPER_LAT_WIDTH)
+  center_taper = 1.0 - (BOLT_2022_2023_CENTER_TAPER_MAX * speed_weight * center_weight)
   low_speed_factor = _bolt_2022_2023_low_speed_factor(v_ego)
   transition_envelope = _bolt_2022_2023_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
   phase = _bolt_2022_2023_transition_phase(desired_lateral_accel, desired_lateral_jerk)
@@ -633,7 +709,7 @@ def get_bolt_2022_2023_ff_scale(desired_lateral_accel: float, desired_lateral_je
   unwind_envelope = (0.25 + 0.75 * low_speed_factor) * (1.0 + 0.45 * transition_envelope)
   unwind_taper = 1.0 - (_bolt_2022_2023_side_value(desired_lateral_accel, BOLT_2022_2023_UNWIND_TAPER_LEFT, BOLT_2022_2023_UNWIND_TAPER_RIGHT) *
                          unwind_weight * unwind_envelope)
-  return 1.0 + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
+  return 1.0 + (extra_scale * center_taper * turn_in_boost * max(unwind_taper, 0.0))
 
 
 def get_bolt_2022_2023_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
@@ -813,6 +889,78 @@ def get_genesis_g90_friction_scale(v_ego: float, desired_lateral_accel: float, d
   return min(max(friction_scale, 0.92), 1.12)
 
 
+def _ioniq_5_sigmoid(x: float) -> float:
+  return _sigmoid(x)
+
+
+def _ioniq_5_low_speed_factor(v_ego: float) -> float:
+  return 1.0 / (1.0 + (max(v_ego, 0.0) / IONIQ_5_TRANSITION_SPEED) ** 2)
+
+
+def _ioniq_5_transition_phase(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  return math.tanh((desired_lateral_accel * desired_lateral_jerk) / IONIQ_5_PHASE_SCALE)
+
+
+def _ioniq_5_side_value(desired_lateral_accel: float, left_value: float, right_value: float) -> float:
+  return left_value if desired_lateral_accel >= 0.0 else right_value
+
+
+def _ioniq_5_transition_envelope(v_ego: float, desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  abs_lateral_accel = abs(desired_lateral_accel)
+  onset = _ioniq_5_sigmoid((abs_lateral_accel - IONIQ_5_FF_ONSET) / IONIQ_5_FF_ONSET_WIDTH)
+  cutoff = _ioniq_5_sigmoid((IONIQ_5_FF_CUTOFF - abs_lateral_accel) / IONIQ_5_FF_CUTOFF_WIDTH)
+  return onset * cutoff * _ioniq_5_low_speed_factor(v_ego)
+
+
+def get_ioniq_5_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  if desired_lateral_accel == 0.0:
+    return 1.0
+
+  envelope = _ioniq_5_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
+  phase = _ioniq_5_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  low_speed_factor = _ioniq_5_low_speed_factor(v_ego)
+
+  base_reduction = _ioniq_5_side_value(desired_lateral_accel, IONIQ_5_FF_REDUCTION_LEFT, IONIQ_5_FF_REDUCTION_RIGHT) * envelope
+  turn_in_boost = 1.0 + (_ioniq_5_side_value(desired_lateral_accel, IONIQ_5_TURN_IN_BOOST_LEFT, IONIQ_5_TURN_IN_BOOST_RIGHT) *
+                          turn_in_weight * (0.35 + 0.65 * low_speed_factor))
+  unwind_taper = 1.0 - (_ioniq_5_side_value(desired_lateral_accel, IONIQ_5_UNWIND_TAPER_LEFT, IONIQ_5_UNWIND_TAPER_RIGHT) *
+                         unwind_weight * (0.35 + 0.65 * low_speed_factor))
+  return (1.0 - base_reduction) * turn_in_boost * max(unwind_taper, 0.0)
+
+
+def get_ioniq_5_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
+  base_threshold = get_friction_threshold(v_ego)
+  envelope = _ioniq_5_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
+  phase = _ioniq_5_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+
+  threshold_scale = 1.0 - (_ioniq_5_side_value(desired_lateral_accel, IONIQ_5_TURN_IN_THRESHOLD_REDUCTION_LEFT, IONIQ_5_TURN_IN_THRESHOLD_REDUCTION_RIGHT) *
+                           envelope * turn_in_weight)
+  threshold_scale += (_ioniq_5_side_value(desired_lateral_accel, IONIQ_5_UNWIND_THRESHOLD_INCREASE_LEFT, IONIQ_5_UNWIND_THRESHOLD_INCREASE_RIGHT) *
+                      envelope * unwind_weight)
+  return base_threshold * min(max(threshold_scale, 0.86), 1.18)
+
+
+def get_ioniq_5_friction_scale(v_ego: float, desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  if desired_lateral_accel == 0.0 or desired_lateral_jerk == 0.0:
+    return 1.0
+
+  envelope = _ioniq_5_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
+  phase = _ioniq_5_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+
+  friction_scale = 1.0
+  friction_scale += (_ioniq_5_side_value(desired_lateral_accel, IONIQ_5_TURN_IN_FRICTION_BOOST_LEFT, IONIQ_5_TURN_IN_FRICTION_BOOST_RIGHT) *
+                     envelope * turn_in_weight)
+  friction_scale -= (_ioniq_5_side_value(desired_lateral_accel, IONIQ_5_UNWIND_FRICTION_REDUCTION_LEFT, IONIQ_5_UNWIND_FRICTION_REDUCTION_RIGHT) *
+                     envelope * unwind_weight)
+  return min(max(friction_scale, 0.86), 1.04)
+
+
 def _ioniq_6_sigmoid(x: float) -> float:
   return _sigmoid(x)
 
@@ -906,7 +1054,8 @@ def get_ioniq_6_directional_taper_scale(desired_lateral_accel: float, desired_la
   band_weight = onset * cutoff
   heavy_band_weight = _ioniq_6_sigmoid((abs_lateral_accel - IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_START) / IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_WIDTH)
   phase = _ioniq_6_transition_phase(desired_lateral_accel, desired_lateral_jerk)
-  unwind_weight = max(-phase, 0.0)
+  unwind_weight = max(-phase, 0.0) * _ioniq_6_sigmoid((abs(desired_lateral_jerk) - IONIQ_6_DIRECTIONAL_TAPER_JERK_ONSET) /
+                                                       IONIQ_6_DIRECTIONAL_TAPER_JERK_WIDTH)
   base_reduction = _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_DIRECTIONAL_TAPER_BASE_LEFT, IONIQ_6_DIRECTIONAL_TAPER_BASE_RIGHT)
   unwind_reduction = _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_DIRECTIONAL_TAPER_UNWIND_LEFT, IONIQ_6_DIRECTIONAL_TAPER_UNWIND_RIGHT)
   heavy_base_reduction = _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_LEFT, IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_RIGHT)
@@ -1098,6 +1247,7 @@ class LatControlTorque(LatControl):
     self.is_bolt_2017 = CP.carFingerprint in BOLT_2017_CARS
     self.is_volt_standard = CP.carFingerprint in VOLT_STANDARD_CARS
     self.is_genesis_g90 = CP.carFingerprint in GENESIS_G90_CARS
+    self.is_ioniq_5 = CP.carFingerprint in IONIQ_5_CARS
     self.is_ioniq_6 = CP.carFingerprint in IONIQ_6_CARS
     self.is_kia_ev6 = CP.carFingerprint in KIA_EV6_CARS
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA_CAR.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
@@ -1109,10 +1259,14 @@ class LatControlTorque(LatControl):
     self.torque_ff_scale_neg = 1.0
     self.torque_deadzone_boost = float(getattr(self.torque_params, "kfDEPRECATED", 0.0))
     self.torque_ki_mult = 1.0
+    if self.is_ioniq_5:
+      self.torque_params.latAccelFactor *= IONIQ_5_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_6:
       self.torque_params.latAccelFactor *= IONIQ_6_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_civic_bosch_modified:
       self.torque_params.latAccelFactor *= CIVIC_BOSCH_MODIFIED_B_LAT_ACCEL_FACTOR_MULT
+      if civic_bosch_modified_a_lateral_testing_ground_active():
+        self.torque_params.latAccelFactor *= CIVIC_BOSCH_MODIFIED_A_VARIANT_LAT_ACCEL_FACTOR_MULT
       if civic_bosch_modified_lateral_testing_ground_active():
         self.torque_params.latAccelFactor *= CIVIC_BOSCH_MODIFIED_B_VARIANT_LAT_ACCEL_FACTOR_MULT
     if self.is_bolt:
@@ -1126,10 +1280,14 @@ class LatControlTorque(LatControl):
         self.pid._k_i = [self.pid._k_i[0], [k * self.torque_ki_mult for k in self.pid._k_i[1]]]
 
   def update_live_torque_params(self, latAccelFactor, latAccelOffset, friction):
+    if self.is_ioniq_5:
+      latAccelFactor *= IONIQ_5_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_6:
       latAccelFactor *= IONIQ_6_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_civic_bosch_modified:
       latAccelFactor *= CIVIC_BOSCH_MODIFIED_B_LAT_ACCEL_FACTOR_MULT
+      if civic_bosch_modified_a_lateral_testing_ground_active():
+        latAccelFactor *= CIVIC_BOSCH_MODIFIED_A_VARIANT_LAT_ACCEL_FACTOR_MULT
       if civic_bosch_modified_lateral_testing_ground_active():
         latAccelFactor *= CIVIC_BOSCH_MODIFIED_B_VARIANT_LAT_ACCEL_FACTOR_MULT
     self.torque_params.latAccelFactor = latAccelFactor
@@ -1199,6 +1357,7 @@ class LatControlTorque(LatControl):
       bolt_2018_2021_tuned_path_active = self.is_bolt_2018_2021
       volt_standard_test_active = self.is_volt_standard and volt_standard_lateral_testing_ground_active()
       genesis_g90_test_active = self.is_genesis_g90 and genesis_g90_lateral_testing_ground_active()
+      ioniq_5_active = self.is_ioniq_5
       ioniq_6_active = self.is_ioniq_6
       kia_ev6_test_active = self.is_kia_ev6 and kia_ev6_lateral_testing_ground_active()
       volt_plexy_test_active = self.is_volt_cc and volt_plexy_lateral_testing_ground_active()
@@ -1222,6 +1381,10 @@ class LatControlTorque(LatControl):
         ff *= get_genesis_g90_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         friction_threshold = get_genesis_g90_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = get_genesis_g90_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
+      elif ioniq_5_active:
+        ff *= get_ioniq_5_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+        friction_threshold = get_ioniq_5_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
+        friction_scale = get_ioniq_5_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
       elif ioniq_6_active:
         ff *= get_ioniq_6_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * ioniq_6_center_taper
         friction_threshold = get_ioniq_6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk) / max(ioniq_6_center_taper, 1e-3)

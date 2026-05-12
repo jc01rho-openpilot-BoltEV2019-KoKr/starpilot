@@ -1,6 +1,27 @@
 #include "starpilot/ui/screenrecorder/screenrecorder.h"
 #include "starpilot/ui/qt/offroad/device_settings.h"
 
+namespace {
+
+std::string cacheParamsPath() {
+  return Hardware::PC() ? Path::comma_home() + "/cache/params" : "/cache/params";
+}
+
+void prepareKonikServerSwitch(bool use_konik) {
+  Params params;
+  Params params_cache(cacheParamsPath());
+
+  if (use_konik) {
+    params.remove("KonikDongleId");
+    params_cache.remove("KonikDongleId");
+  } else {
+    params.remove("DongleId");
+    params_cache.remove("DongleId");
+  }
+}
+
+}  // namespace
+
 StarPilotDevicePanel::StarPilotDevicePanel(StarPilotSettingsWindow *parent, bool forceOpen) : StarPilotListWidget(parent), parent(parent) {
   forceOpenDescriptions = forceOpen;
 
@@ -165,6 +186,7 @@ StarPilotDevicePanel::StarPilotDevicePanel(StarPilotSettingsWindow *parent, bool
         filePath = "/cache/use_HD";
       } else if (key == "UseKonikServer") {
         filePath = "/cache/use_konik";
+        prepareKonikServerSwitch(state);
       }
 
       if (!filePath.isEmpty()) {

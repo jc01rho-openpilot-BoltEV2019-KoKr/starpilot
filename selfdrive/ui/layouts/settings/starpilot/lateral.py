@@ -14,11 +14,11 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.longitudinal import (
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   AetherSliderDialog,
-  DEFAULT_PANEL_STYLE,
+  panel_style_from_color,
 )
 
 
-PANEL_STYLE = DEFAULT_PANEL_STYLE
+PANEL_STYLE = panel_style_from_color("#3B82F6")
 
 
 def _confirm_reboot_toggle(params, key, state):
@@ -168,6 +168,11 @@ class StarPilotLateralLayout(_SettingsPage):
                    get_value=lambda: f"{self._params.get_int('PauseLateralSpeed')} mph",
                    on_click=lambda: self._show_slider("PauseLateralSpeed", 0, 100, unit=" mph"),
                    visible=lambda: self._params.get_bool("QOLLateral")),
+        SettingRow("PauseLateralOnSignal", "toggle", tr_noop("Turn Signal Only"),
+                   subtitle=tr_noop("Only pause steering when the turn signal is active."),
+                   get_state=lambda: self._params.get_bool("PauseLateralOnSignal"),
+                   set_state=lambda s: self._params.put_bool("PauseLateralOnSignal", s),
+                   visible=lambda: self._params.get_bool("QOLLateral") and self._params.get_int("PauseLateralSpeed") > 0),
       ], tab_key="steering"),
 
       # ── Lane tab ──
@@ -257,4 +262,4 @@ class StarPilotLateralLayout(_SettingsPage):
       if res == DialogResult.CONFIRM:
         self._params.put_int("LaneChangeSmoothing", int(val))
     current = self._params.get_int("LaneChangeSmoothing") if self._params.get_int("LaneChangeSmoothing") > 0 else 10
-    gui_app.set_modal_overlay(AetherSliderDialog(tr("Lane Change Smoothing"), 1, 10, 1, current, on_close, color="#597497"))
+    gui_app.set_modal_overlay(AetherSliderDialog(tr("Lane Change Smoothing"), 1, 10, 1, current, on_close, color=PANEL_STYLE.accent))
