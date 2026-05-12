@@ -2318,8 +2318,8 @@
     "params": [
       {
         "key": "RemapCancelToDistance",
-        "label": "Remap Cancel To Distance",
-        "description": "On pedal-interceptor Bolts, remap the steering-wheel CANCEL button to distance/personality input.",
+        "label": "Remap Cancel Button",
+        "description": "On pedal-interceptor Bolts, treat the steering-wheel CANCEL button as an extra mappable button.",
         "data_type": "bool",
         "ui_type": "toggle"
       },
@@ -2336,6 +2336,51 @@
         "description": "Use the left paddle to pause openpilot acceleration and braking while Always On Lateral stays active on supported Hyundai CAN-FD cars.",
         "data_type": "bool",
         "ui_type": "toggle"
+      },
+      {
+        "key": "CancelButtonControl",
+        "label": "Cancel Button (Short Press)",
+        "description": "Action performed when the remapped \"Cancel\" button is pressed.",
+        "data_type": "int",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "No Action"
+          },
+          {
+            "value": 1,
+            "label": "Change Personality"
+          },
+          {
+            "value": 2,
+            "label": "Force Coast"
+          },
+          {
+            "value": 3,
+            "label": "Pause Steering"
+          },
+          {
+            "value": 4,
+            "label": "Pause Accel/Brake"
+          },
+          {
+            "value": 5,
+            "label": "Toggle Experimental"
+          },
+          {
+            "value": 6,
+            "label": "Toggle Traffic"
+          },
+          {
+            "value": 7,
+            "label": "Toggle Switchback"
+          },
+          {
+            "value": 8,
+            "label": "Create Bookmark"
+          }
+        ]
       },
       {
         "key": "DistanceButtonControl",
@@ -2383,9 +2428,99 @@
         ]
       },
       {
+        "key": "LongCancelButtonControl",
+        "label": "Cancel Button (Long Press)",
+        "description": "Action performed when the remapped \"Cancel\" button is pressed for more than 0.5 seconds.",
+        "data_type": "int",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "No Action"
+          },
+          {
+            "value": 1,
+            "label": "Change Personality"
+          },
+          {
+            "value": 2,
+            "label": "Force Coast"
+          },
+          {
+            "value": 3,
+            "label": "Pause Steering"
+          },
+          {
+            "value": 4,
+            "label": "Pause Accel/Brake"
+          },
+          {
+            "value": 5,
+            "label": "Toggle Experimental"
+          },
+          {
+            "value": 6,
+            "label": "Toggle Traffic"
+          },
+          {
+            "value": 7,
+            "label": "Toggle Switchback"
+          },
+          {
+            "value": 8,
+            "label": "Create Bookmark"
+          }
+        ]
+      },
+      {
         "key": "LongDistanceButtonControl",
         "label": "Distance Button (Long Press)",
         "description": "Action performed when the \"Distance\" button is pressed for more than 0.5 seconds.",
+        "data_type": "int",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "No Action"
+          },
+          {
+            "value": 1,
+            "label": "Change Personality"
+          },
+          {
+            "value": 2,
+            "label": "Force Coast"
+          },
+          {
+            "value": 3,
+            "label": "Pause Steering"
+          },
+          {
+            "value": 4,
+            "label": "Pause Accel/Brake"
+          },
+          {
+            "value": 5,
+            "label": "Toggle Experimental"
+          },
+          {
+            "value": 6,
+            "label": "Toggle Traffic"
+          },
+          {
+            "value": 7,
+            "label": "Toggle Switchback"
+          },
+          {
+            "value": 8,
+            "label": "Create Bookmark"
+          }
+        ]
+      },
+      {
+        "key": "VeryLongCancelButtonControl",
+        "label": "Cancel Button (Extra Long Press)",
+        "description": "Action performed when the remapped \"Cancel\" button is pressed for more than 2.5 seconds.",
         "data_type": "int",
         "ui_type": "dropdown",
         "options": [

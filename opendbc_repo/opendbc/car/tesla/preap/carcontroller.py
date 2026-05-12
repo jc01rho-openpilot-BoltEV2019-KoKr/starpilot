@@ -69,6 +69,8 @@ class PreAPLongController:
               freeze_integrator=in_engage_grace, orientation_ned=list(CC.orientationNED),
             )
             can_sends.append(tesla_can.create_pedal_command(nap_conf.di_to_pedal(self.prev_pedal_di), enable=1))
+            if self.prev_pedal_di <= 0.95 * PEDAL_DI_MIN and not in_engage_grace:
+              CS.pccEvent = "pedalMaxRegen"
           else:
             zero_torque_di = get_zero_torque().get(CS.out.vEgo)
             self.prev_pedal_di = zero_torque_di
@@ -87,4 +89,3 @@ class PreAPLongController:
   @staticmethod
   def _pedal_ready() -> bool:
     return nap_conf.pedal_calibrated and abs(nap_conf.pedal_factor) > 1e-6
-

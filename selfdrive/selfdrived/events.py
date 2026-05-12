@@ -473,7 +473,23 @@ def longitudinal_maneuver_alert(CP: car.CarParams, CS: car.CarState, sm: messagi
                Priority.LOW, VisualAlert.none, audible_alert, 0.2)
 
 
+def turning_alert(direction: str):
+  def func(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, starpilot_toggles: SimpleNamespace) -> Alert:
+    if starpilot_toggles.hide_turning_banner:
+      return EmptyAlert
+    return Alert(f"Turning {direction}", "", AlertStatus.normal, AlertSize.small, Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .1)
+  return func
+
+
+def changing_lanes_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, starpilot_toggles: SimpleNamespace) -> Alert:
+  if starpilot_toggles.hide_changing_lanes_banner:
+    return EmptyAlert
+  return Alert("Changing Lanes", "", AlertStatus.normal, AlertSize.small, Priority.LOW, VisualAlert.none, AudibleAlert.none, .1)
+
+
 def personality_changed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, starpilot_toggles: SimpleNamespace) -> Alert:
+  if starpilot_toggles.hide_distance_profile_banner:
+    return EmptyAlert
   personality = str(personality).title()
   return NormalPermanentAlert(f"Driving Personality: {personality}", duration=1.5)
 
@@ -498,17 +514,13 @@ def forcing_stop_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMas
     return Alert(
       "Holding the car at a stop",
       "Press the gas pedal or 'Resume' button to override",
-      StarPilotAlertStatus.starpilot, AlertSize.mid,
+      StarPilotAlertStatus.starpilot, AlertSize.small,
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 1.)
 
-  model_length = sm["starpilotPlan"].forcingStopLength
-  model_length_msg = f"{model_length:.1f} meters" if metric else f"{model_length * CV.METER_TO_FOOT:.1f} feet"
-
   return Alert(
-    f"Forcing the car to stop in {model_length_msg}",
-    "Press the gas pedal or 'Resume' button to override",
-    StarPilotAlertStatus.starpilot, AlertSize.mid,
-    Priority.MID, VisualAlert.none, AudibleAlert.prompt, 1.)
+    "", "",
+    StarPilotAlertStatus.starpilot, AlertSize.none,
+    Priority.MID, VisualAlert.none, AudibleAlert.none, .1)
 
 
 def holiday_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, starpilot_toggles: SimpleNamespace) -> Alert:
@@ -775,11 +787,7 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   },
 
   EventName.laneChange: {
-    ET.WARNING: Alert(
-      "Changing Lanes",
-      "",
-      AlertStatus.normal, AlertSize.small,
-      Priority.LOW, VisualAlert.none, AudibleAlert.none, .1),
+    ET.WARNING: changing_lanes_alert,
   },
 
   EventName.steerSaturated: {
@@ -990,6 +998,11 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.NO_ENTRY: NoEntryAlert("Calibration in Progress"),
   },
 
+  EventName.pedalNotCalibrated: {
+    ET.PERMANENT: NormalPermanentAlert("Pedal Not Calibrated", "Check Calibration"),
+    ET.NO_ENTRY: NoEntryAlert("Pedal Not Calibrated: Check Calibration"),
+  },
+
   EventName.calibrationRecalibrating: {
     ET.PERMANENT: calibration_incomplete_alert,
     ET.SOFT_DISABLE: soft_disable_alert("Device Remount Detected: Recalibrating"),
@@ -1190,12 +1203,56 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.WARNING: personality_changed_alert,
   },
 
-  EventName.ndaCameraWarn: {
-    ET.WARNING: nda_camera_warning_alert,
+  EventName.pedalCruiseEnabled: {
+    ET.WARNING: Alert(
+      "Pedal Cruise Engaged",
+      "",
+      AlertStatus.normal, AlertSize.small,
+      Priority.LOW, VisualAlert.none, AudibleAlert.engage, 0.8),
+  },
+
+  EventName.pedalCruiseDisabled: {
+    ET.WARNING: Alert(
+      "Pedal Cruise Disengaged",
+      "",
+      AlertStatus.normal, AlertSize.small,
+      Priority.LOW, VisualAlert.none, AudibleAlert.disengage, 0.8),
+  },
+
+  EventName.pedalMaxRegen: {
+    ET.WARNING: Alert(
+      "Max Regen Being Used",
+      "",
+      AlertStatus.userPrompt, AlertSize.small,
+      Priority.HIGH, VisualAlert.steerRequired, AudibleAlert.prompt, 2.),
+  },
+
+  EventName.teslaCCEngaged: {
+    ET.WARNING: Alert(
+      "Tesla Cruise Engaged",
+      "",
+      AlertStatus.normal, AlertSize.small,
+      Priority.LOW, VisualAlert.none, AudibleAlert.engage, 0.8),
+  },
+
+  EventName.teslaCCDisengaged: {
+    ET.WARNING: Alert(
+      "Tesla Cruise Disengaged",
+      "",
+      AlertStatus.normal, AlertSize.small,
+      Priority.LOW, VisualAlert.none, AudibleAlert.disengage, 0.8),
+  },
+
+  EventName.teslaCCNotArmed: {
+    ET.PERMANENT: NormalPermanentAlert("Arm Stock Cruise to Enable Speed Control"),
   },
 
   EventName.userBookmark: {
     ET.PERMANENT: NormalPermanentAlert("Bookmark Saved", duration=1.5),
+  },
+  
+  EventName.ndaCameraWarn: {
+    ET.WARNING: nda_camera_warning_alert,
   },
 
   EventName.audioFeedback: {
@@ -1323,19 +1380,11 @@ STARPILOT_EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   },
 
   StarPilotEventName.turningLeft: {
-    ET.WARNING: Alert(
-      "Turning Left",
-      "",
-      AlertStatus.normal, AlertSize.small,
-      Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .1),
+    ET.WARNING: turning_alert("Left"),
   },
 
   StarPilotEventName.turningRight: {
-    ET.WARNING: Alert(
-      "Turning Right",
-      "",
-      AlertStatus.normal, AlertSize.small,
-      Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .1),
+    ET.WARNING: turning_alert("Right"),
   },
 
   # Random Events

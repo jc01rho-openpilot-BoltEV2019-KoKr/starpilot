@@ -63,7 +63,7 @@ from openpilot.starpilot.common.maps_catalog import (
 from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state
 from openpilot.starpilot.common.starpilot_utilities import delete_file, get_lock_status, run_cmd
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH, ERROR_LOGS_PATH, EXCLUDED_KEYS, LEGACY_STARPILOT_PARAM_RENAMES, MAPS_PATH, MODELS_PATH, RESOURCES_REPO, SCREEN_RECORDINGS_PATH, STOCK_THEME_PATH, THEME_SAVE_PATH,\
-                                                           default_ev_tuning_enabled, update_starpilot_toggles
+                                                           default_ev_tuning_enabled, migrate_cancel_button_controls, update_starpilot_toggles
 from openpilot.starpilot.common.testing_grounds import (
   DEFAULT_TESTING_GROUND_VARIANT as SHARED_DEFAULT_TESTING_GROUND_VARIANT,
   TESTING_GROUND_VARIANT_LABELS as SHARED_TESTING_GROUND_VARIANT_LABELS,
@@ -783,17 +783,6 @@ def _get_param_int_value(key, default=0):
     return int(float(str(raw_value or default)))
   except Exception:
     return int(default)
-
-def _enforce_cancel_remap_lkas_lock():
-  if not params.get_bool("RemapCancelToDistance"):
-    return False
-
-  if _get_param_int_value("LKASButtonControl", 0) == 0:
-    return False
-
-  params.put("LKASButtonControl", "0")
-  update_starpilot_toggles()
-  return True
 
 def _get_system_uptime_seconds():
   try:
@@ -3822,21 +3811,23 @@ def setup(app):
         metered_enabled = str_val.strip() in ("1", "true", "True")
         gsm_metered_apply_result = _apply_cellular_metered_setting(metered_enabled)
 
-      locked_lkas = _enforce_cancel_remap_lkas_lock()
+      migrated_cancel_buttons = migrate_cancel_button_controls(params)
       update_starpilot_toggles()
 
       response = {"message": f"Parameter '{key}' updated successfully."}
       updated = {}
       if key == "RemapCancelToDistance" and params.get_bool("RemapCancelToDistance"):
         updated["RemapCancelToDistance"] = True
-        updated["LKASButtonControl"] = 0
-        response["message"] = "Remap Cancel To Distance enabled. LKAS Button has been locked to No Action."
-      elif key == "LKASButtonControl" and params.get_bool("RemapCancelToDistance"):
-        updated["LKASButtonControl"] = 0
-        updated["RemapCancelToDistance"] = True
-        response["message"] = "LKAS Button is locked to No Action while Remap Cancel To Distance is enabled."
-      elif locked_lkas:
-        updated["LKASButtonControl"] = 0
+        response["message"] = "Remap Cancel Button enabled."
+      if migrated_cancel_buttons:
+        if key == "RemapCancelToDistance" and params.get_bool("RemapCancelToDistance"):
+          response["message"] = "Remap Cancel Button enabled. Existing distance mappings were copied to the new cancel button."
+        for source_key, target_key in (
+          ("DistanceButtonControl", "CancelButtonControl"),
+          ("LongDistanceButtonControl", "LongCancelButtonControl"),
+          ("VeryLongDistanceButtonControl", "VeryLongCancelButtonControl"),
+        ):
+          updated[target_key] = _get_param_int_value(target_key, _get_param_int_value(source_key, 0))
 
       if gsm_metered_apply_result is not None:
         updated["GsmMetered"] = str_val.strip() in ("1", "true", "True")
@@ -3864,7 +3855,7 @@ def setup(app):
 
   @app.route("/api/params/all", methods=["GET"])
   def get_all_params():
-    _enforce_cancel_remap_lkas_lock()
+    migrate_cancel_button_controls(params)
     allowed_keys, types = _get_param_type_info()
     defaults_lookup = _get_default_param_values()
 
@@ -4339,14 +4330,14 @@ def setup(app):
     if f"{model_key}.thneed" in on_disk_files:
       return True
 
-    if model_version in ("v8", "v9", "v10", "v11", "v12", "v13"):
+    if model_version in ("v8", "v9", "v10", "v11", "v12", "v13", "v14"):
       required_files = {
         f"{model_key}_driving_policy_tinygrad.pkl",
         f"{model_key}_driving_vision_tinygrad.pkl",
         f"{model_key}_driving_policy_metadata.pkl",
         f"{model_key}_driving_vision_metadata.pkl",
       }
-      if model_version in ("v12", "v13"):
+      if model_version in ("v12", "v13", "v14"):
         required_files |= {
           f"{model_key}_driving_off_policy_tinygrad.pkl",
           f"{model_key}_driving_off_policy_metadata.pkl",

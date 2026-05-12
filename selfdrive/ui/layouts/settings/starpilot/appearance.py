@@ -13,7 +13,7 @@ from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     AetherSliderDialog,
-    DEFAULT_PANEL_STYLE,
+    panel_style_from_color,
 )
 from openpilot.selfdrive.ui.layouts.settings.starpilot.longitudinal import (
     SettingRow,
@@ -21,7 +21,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.longitudinal import (
     AetherSettingsView,
 )
 
-PANEL_STYLE = DEFAULT_PANEL_STYLE
+PANEL_STYLE = panel_style_from_color("#8B5CF6")
 
 # ── Theme paths & config (preserved from themes.py) ──
 
@@ -274,6 +274,26 @@ class StarPilotAppearanceLayout(_SettingsPage):
                            subtitle="",
                            get_state=lambda: self._params.get_bool("HideAlerts"),
                            set_state=lambda s: self._params.put_bool("HideAlerts", s)),
+                SettingRow("HideChangingLanesBanner", "toggle", tr_noop("Hide Changing Lanes Banner"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("HideChangingLanesBanner"),
+                           set_state=lambda s: self._params.put_bool("HideChangingLanesBanner", s)),
+                SettingRow("HideDistanceProfileBanner", "toggle", tr_noop("Hide Distance Profile Banner"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("HideDistanceProfileBanner"),
+                           set_state=lambda s: self._params.put_bool("HideDistanceProfileBanner", s)),
+                SettingRow("HideTurningBanner", "toggle", tr_noop("Hide Turning Banner"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("HideTurningBanner"),
+                           set_state=lambda s: self._params.put_bool("HideTurningBanner", s)),
+                SettingRow("HideDMIcon", "toggle", tr_noop("Hide Driver Monitoring Icon"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("HideDMIcon"),
+                           set_state=lambda s: self._params.put_bool("HideDMIcon", s)),
+                SettingRow("HideSteeringWheel", "toggle", tr_noop("Hide Steering Wheel"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("HideSteeringWheel"),
+                           set_state=lambda s: self._params.put_bool("HideSteeringWheel", s)),
             ], tab_key="display", column_pair="display"),
 
             SettingSection(tr_noop("Speed Info"), [
@@ -526,7 +546,7 @@ class StarPilotAppearanceLayout(_SettingsPage):
             if res == DialogResult.CONFIRM:
                 self._params.put_int(key, int(val))
         gui_app.push_widget(AetherSliderDialog(tr(key), min_v, max_v, 1, self._params.get_int(key), on_close,
-                                                 unit=unit, color="#8B5CF6"))
+                                                 unit=unit, color=PANEL_STYLE.accent))
 
     def _show_float_selector(self, key, min_v, max_v, step, unit="", convert=None, unconvert=None):
         current = self._params.get_float(key)
@@ -541,7 +561,7 @@ class StarPilotAppearanceLayout(_SettingsPage):
                 self._params.put_float(key, v)
 
         gui_app.push_widget(AetherSliderDialog(tr(key), min_v, max_v, step, current, on_close,
-                                                 unit=unit, color="#8B5CF6"))
+                                                 unit=unit, color=PANEL_STYLE.accent))
 
     # ── Unit-aware display helpers ──
 

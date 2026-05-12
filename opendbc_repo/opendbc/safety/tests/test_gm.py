@@ -414,6 +414,20 @@ class TestGmInterceptorSafety(common.GasInterceptorSafetyTest, TestGmCameraSafet
       self._rx(self._pcm_status_msg(enabled))
       self.assertEqual(enabled, self._tx(self._button_msg(Buttons.CANCEL)))
 
+  def test_cancel_remap_passthrough_does_not_disable_controls(self):
+    for extra_safety_param in (0, GMSafetyFlags.FLAG_GM_BOLT_2022_PEDAL):
+      self.safety.set_safety_hooks(
+        CarParams.SafetyModel.gm,
+        GMSafetyFlags.HW_CAM | GMSafetyFlags.FLAG_GM_NO_ACC | GMSafetyFlags.FLAG_GM_PEDAL_LONG |
+        GMSafetyFlags.FLAG_GM_GAS_INTERCEPTOR | extra_safety_param,
+      )
+      self.safety.init_tests()
+      self.safety.set_alternative_experience(0x40)
+      self._rx(self._pcm_status_msg(True))
+      self.safety.set_controls_allowed(True)
+      self._rx(self._button_msg(Buttons.CANCEL))
+      self.assertTrue(self.safety.get_controls_allowed())
+
   def test_disable_control_allowed_from_cruise(self):
     pass
 
@@ -517,23 +531,6 @@ class TestGmCcLongitudinalPandaSchedSafety(TestGmCcLongitudinalSafety):
     self.assertTrue(self.safety.get_longitudinal_allowed())
     self._rx(self._interceptor_user_gas(0))
     self.assertTrue(self.safety.get_longitudinal_allowed())
-
-  def test_buttons(self):
-    self.safety.set_controls_allowed(0)
-    for btn in range(8):
-      self.assertFalse(self._tx(self._button_msg(btn)))
-
-    self.safety.set_controls_allowed(1)
-    for btn in range(8):
-      self.assertFalse(self._tx(self._button_msg(btn)))
-
-    allowed_btns = {Buttons.UNPRESS, Buttons.RES_ACCEL, Buttons.DECEL_SET, Buttons.CANCEL}
-    for enabled in (True, False):
-      self._rx(self._pcm_status_msg(enabled))
-      for btn in range(8):
-        self.assertEqual(enabled and btn in allowed_btns, self._tx(self._button_msg(btn)))
-
-
 class TestGmVoltAutoHoldCameraSafety(TestGmCameraSafetyBase):
   TX_MSGS = TestGmCameraSafety.TX_MSGS + [[0x315, 0]]
   EXTRA_SAFETY_PARAM = GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED

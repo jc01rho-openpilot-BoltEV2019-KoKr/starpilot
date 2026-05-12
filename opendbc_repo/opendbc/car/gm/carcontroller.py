@@ -342,6 +342,9 @@ class CarController(CarControllerBase):
     else:
       urgency = float(np.clip(abs(accel) / 2.0, 0.0, 1.0))
       rate_up = np.interp(v_ego, [0.0, 3.0, 8.0, 20.0], [0.007, 0.012, 0.022, 0.036]) + 0.011 * urgency
+      if accel > 0.0 and v_ego > 6.0:
+        comfort_factor = np.interp(abs(accel), [0.0, 0.12, 0.25, 0.45, 0.8], [0.55, 0.58, 0.68, 0.82, 1.0])
+        rate_up *= comfort_factor
       if accel > 1.2:
         rate_up += np.interp(v_ego, [0.0, 4.0, 12.0, 25.0], [0.006, 0.005, 0.003, 0.002])
       rate_down = np.interp(v_ego, [0.0, 3.0, 8.0, 20.0], [0.008, 0.014, 0.026, 0.045]) + 0.015 * urgency

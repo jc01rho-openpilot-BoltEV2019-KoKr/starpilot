@@ -13,7 +13,7 @@ from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.common.swaglog import cloudlog
-from openpilot.selfdrive.controls.lib.lead_behavior import get_tracked_lead_catchup_bias
+from openpilot.selfdrive.controls.lib.lead_behavior import get_tracked_lead_catchup_bias, is_radarless_matched_follow_window
 # WARNING: imports outside of constants will not trigger a rebuild
 from openpilot.selfdrive.modeld.constants import index_function
 
@@ -77,6 +77,8 @@ FAR_RADAR_LEAD_ACCEL_TAPER_MIN_GAP_EXCESS = 8.0
 FAR_RADAR_LEAD_ACCEL_TAPER_MIN_GAP_GAIN = 0.25
 FAR_RADAR_LEAD_ACCEL_TAPER_FULL_GAP_EXCESS = 25.0
 FAR_RADAR_LEAD_ACCEL_TAPER_FULL_GAP_GAIN = 0.9
+RADARLESS_MATCHED_FOLLOW_CRUISE_HYSTERESIS_MIN = 2.5
+RADARLESS_MATCHED_FOLLOW_CRUISE_HYSTERESIS_GAIN = 0.10
 
 # Function to get parameter value based on current speed
 def get_speed_based_param(speed_mph, param_array):
@@ -100,6 +102,9 @@ LIMIT_COST = 1e6
 ACADOS_SOLVER_TYPE = 'SQP_RTI'
 # Default lead acceleration decay set to 50% at 1s
 LEAD_ACCEL_TAU = 1.5
+FCW_MIN_MODEL_PROB = 0.9
+FCW_MIN_CLOSING_SPEED = 0.5
+FCW_MAX_TTC = 4.0
 
 
 # Fewer timestamps don't hurt performance and lead to
@@ -113,6 +118,18 @@ FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
+
+
+def should_trigger_planner_fcw(lead, v_ego: float) -> bool:
+  if lead is None or not lead.status or float(getattr(lead, "modelProb", 0.0)) <= FCW_MIN_MODEL_PROB:
+    return False
+
+  closing_speed = max(0.0, float(v_ego) - float(getattr(lead, "vLead", 0.0)))
+  if closing_speed < FCW_MIN_CLOSING_SPEED:
+    return False
+
+  ttc = max(0.0, float(getattr(lead, "dRel", 0.0))) / max(closing_speed, 1e-3)
+  return ttc < FCW_MAX_TTC
 
 def get_jerk_factor(aggressive_jerk_acceleration=0.5, aggressive_jerk_danger=0.5, aggressive_jerk_speed=0.5,
                     standard_jerk_acceleration=1.0, standard_jerk_danger=1.0, standard_jerk_speed=1.0,
@@ -398,7 +415,8 @@ class LongitudinalMpc:
 
   def set_weights(self, acceleration_jerk=1.0, danger_jerk=1.0, speed_jerk=1.0, prev_accel_constraint=True,
                   personality=log.LongitudinalPersonality.standard, v_ego=0.0, lead_dist=50.0,
-                  uncertainty=0.0, accel_reengage=False, panic_bypass=False):
+                  uncertainty=0.0, accel_reengage=False, panic_bypass=False,
+                  filter_time_factor_floor=0.0):
     # Update parameters based on current speed with interpolation for smooth scaling
     speed_mph = v_ego * CV.MS_TO_MPH  # Convert m/s to mph
 
@@ -446,6 +464,8 @@ class LongitudinalMpc:
     # Hard bypass of smoothing when approaching fast or magnitude trips
     if panic_bypass:
       tgt_factor = 0.0
+    else:
+      tgt_factor = max(tgt_factor, float(filter_time_factor_floor))
 
     # Slew-limit changes to avoid step-wise filter jumps
     max_step = self.slew_per_sec * self.dt
@@ -544,6 +564,25 @@ class LongitudinalMpc:
     lead_xv = self.extrapolate_lead(x_lead, v_lead, a_lead, a_lead_tau, v_ego)
     return lead_xv
 
+  @staticmethod
+  def get_radarless_matched_follow_cruise_hysteresis(lead, v_ego, t_follow):
+    if lead is None or not lead.status:
+      return 0.0
+
+    if not is_radarless_matched_follow_window(
+      v_ego,
+      lead.dRel,
+      lead.vLead,
+      t_follow,
+      radar=bool(getattr(lead, "radar", False)),
+      lead_brake=max(0.0, -float(getattr(lead, "aLeadK", 0.0))),
+      lead_prob=float(getattr(lead, "modelProb", 0.0)),
+    ):
+      return 0.0
+
+    return max(RADARLESS_MATCHED_FOLLOW_CRUISE_HYSTERESIS_MIN,
+               RADARLESS_MATCHED_FOLLOW_CRUISE_HYSTERESIS_GAIN * float(v_ego))
+
   def set_accel_limits(self, min_a, max_a):
     # TODO this sets a max accel limit, but the minimum limit is only for cruise decel
     # needs refactor
@@ -582,6 +621,11 @@ class LongitudinalMpc:
                                  v_lower,
                                  v_upper)
       cruise_obstacle = np.cumsum(T_DIFFS * v_cruise_clipped) + get_safe_obstacle_distance(v_cruise_clipped, t_follow)
+      prev_source = self.source
+      if prev_source == 'lead0':
+        cruise_obstacle += self.get_radarless_matched_follow_cruise_hysteresis(lead_one, v_ego, t_follow)
+      elif prev_source == 'lead1':
+        cruise_obstacle += self.get_radarless_matched_follow_cruise_hysteresis(lead_two, v_ego, t_follow)
       if tracking_lead and lead_one.status:
         desired_gap = desired_follow_distance(v_ego, lead_one.vLead, t_follow)
         closing_speed = max(0.0, v_ego - lead_one.vLead)
@@ -623,7 +667,7 @@ class LongitudinalMpc:
 
     self.run()
     if (np.any(lead_xv_0[FCW_IDXS,0] - self.x_sol[FCW_IDXS,0] < CRASH_DISTANCE) and
-            lead_one.modelProb > 0.9):
+            should_trigger_planner_fcw(lead_one, v_ego)):
       self.crash_cnt += 1
     else:
       self.crash_cnt = 0

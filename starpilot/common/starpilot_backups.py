@@ -14,6 +14,47 @@ from openpilot.starpilot.common.starpilot_utilities import delete_file
 from openpilot.starpilot.common.starpilot_variables import EXCLUDED_KEYS, STARPILOT_BACKUPS, TOGGLE_BACKUPS
 
 
+MINIMUM_BACKUP_FREE_BYTES = 2 * 1024 * 1024 * 1024
+EXCLUDED_BACKUP_DIRS = frozenset({
+  ".git",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".venv",
+  "__pycache__",
+})
+EXCLUDED_BACKUP_SUFFIXES = frozenset({".a", ".o", ".pyc", ".pyo", ".so"})
+
+
+def backup_tar_filter(tarinfo):
+  path = Path(tarinfo.name)
+  if any(part in EXCLUDED_BACKUP_DIRS for part in path.parts):
+    return None
+
+  if path.suffix in EXCLUDED_BACKUP_SUFFIXES:
+    return None
+
+  return tarinfo
+
+
+def get_directory_size(path):
+  total_size = 0
+  for child in path.rglob("*"):
+    if not child.is_file() or child.is_symlink():
+      continue
+
+    relative_path = Path(path.name) / child.relative_to(path)
+    tarinfo = tarfile.TarInfo(str(relative_path))
+    if backup_tar_filter(tarinfo) is None:
+      continue
+
+    try:
+      total_size += child.stat().st_size
+    except OSError:
+      continue
+
+  return total_size
+
+
 def backup_starpilot(build_metadata, params):
   maximum_backups = 3
   cleanup_backups(STARPILOT_BACKUPS, maximum_backups)
@@ -26,10 +67,24 @@ def backup_starpilot(build_metadata, params):
           delete_file(backup, report=False)
 
   _, _, free = shutil.disk_usage(STARPILOT_BACKUPS)
+  backup_source = Path(BASEDIR)
   minimum_backup_size = params.get_int("MinimumBackupSize", return_default=True, default=0)
-  if free > minimum_backup_size * maximum_backups:
-    destination = STARPILOT_BACKUPS / f"{build_metadata.openpilot.git_commit}_{build_metadata.channel}_auto"
-    create_backup(Path(BASEDIR), destination, "Successfully backed up StarPilot!", "Failed to backup StarPilot...", params, minimum_backup_size, compressed=True)
+  estimated_backup_size = minimum_backup_size or get_directory_size(backup_source)
+  required_free = max(estimated_backup_size * maximum_backups, MINIMUM_BACKUP_FREE_BYTES)
+  if free <= required_free:
+    print("Insufficient free space for automatic StarPilot backup. Aborting...")
+    return
+
+  destination = STARPILOT_BACKUPS / f"{build_metadata.openpilot.git_commit}_{build_metadata.channel}_auto"
+  create_backup(
+    backup_source,
+    destination,
+    "Successfully backed up StarPilot!",
+    "Failed to backup StarPilot...",
+    params,
+    estimated_backup_size,
+    compressed=True,
+  )
 
 
 def backup_toggles(params, boot_run=False):
@@ -83,20 +138,26 @@ def create_backup(backup, destination, success_message, fail_message, params, mi
   if compressed:
     compressed_temp = destination.parent / f"{destination.name}_in_progress.tar.zst"
 
+    backup_error = None
+
     with open(compressed_temp, "wb") as f_out:
       cctx = zstd.ZstdCompressor()
       with cctx.stream_writer(f_out) as compressor:
         with tarfile.open(fileobj=compressor, mode="w") as tar:
           try:
-            tar.add(backup, arcname=destination.name)
-          except OSError:
-            pass
+            tar.add(backup, arcname=destination.name, filter=backup_tar_filter)
+          except OSError as error:
+            backup_error = error
+
+    if backup_error is not None:
+      delete_file(compressed_temp, report=False)
+      print(f"{fail_message} {backup_error}")
+      return
 
     compressed_temp.rename(final_destination)
 
     compressed_backup_size = final_destination.stat().st_size
-    if minimum_backup_size == 0 or compressed_backup_size < minimum_backup_size:
-      params.put("MinimumBackupSize", int(compressed_backup_size))
+    params.put_int("MinimumBackupSize", compressed_backup_size)
   else:
     in_progress_destination = destination.parent / f"{destination.name}_in_progress"
 

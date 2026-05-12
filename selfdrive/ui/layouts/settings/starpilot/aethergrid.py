@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import time
 import pyray as rl
@@ -278,6 +278,19 @@ DEFAULT_PANEL_STYLE = PanelStyle(
   underline_color=rl.Color(116, 136, 168, 150),
   accent=AetherListColors.PRIMARY,
 )
+
+
+def panel_style_from_color(hex_color: str, base: PanelStyle | None = None) -> PanelStyle:
+    color = hex_to_color(hex_color)
+    if base is None:
+        base = DEFAULT_PANEL_STYLE
+    return replace(
+        base,
+        accent=color,
+        current_fill=rl.Color(color.r, color.g, color.b, 16),
+        current_border=rl.Color(color.r, color.g, color.b, 42),
+        underline_color=rl.Color(color.r, color.g, color.b, 150),
+    )
 
 
 def _inflate_rect(rect: rl.Rectangle, pad_x: float = 10, pad_y: float = 6) -> rl.Rectangle:
@@ -791,11 +804,30 @@ def draw_settings_list_row(
     separator_inset=separator_inset,
   )
 
-  label_rect = rl.Rectangle(draw_rect.x + 24, draw_rect.y + 14, draw_rect.width * 0.55, 28)
-  subtitle_rect = rl.Rectangle(draw_rect.x + 24, draw_rect.y + 46, draw_rect.width * 0.60, 24)
-  gui_label(label_rect, title, title_size, resolved_title_color, FontWeight.MEDIUM)
+  # Compute text width based on right-side elements — no truncation, font-size reduces gracefully
+  text_left = draw_rect.x + 24
+  if toggle_value is not None:
+    text_right = draw_rect.x + draw_rect.width - AETHER_LIST_METRICS.toggle_width - AETHER_LIST_METRICS.toggle_right_inset - 12
+  elif value:
+    text_right = draw_rect.x + draw_rect.width - AETHER_LIST_METRICS.utility_value_right - 12
+  elif show_chevron:
+    text_right = draw_rect.x + draw_rect.width - AETHER_LIST_METRICS.utility_chevron_right - 26 - 12
+  else:
+    text_right = draw_rect.x + draw_rect.width - 24
+  text_width = max(100.0, text_right - text_left)
+  _draw_text_fit_common(
+    gui_app.font(FontWeight.MEDIUM), title,
+    rl.Vector2(text_left, draw_rect.y + 16),
+    text_width, title_size,
+    color=resolved_title_color,
+  )
   if subtitle:
-    gui_label(subtitle_rect, subtitle, subtitle_size, resolved_subtitle_color, FontWeight.NORMAL)
+    _draw_text_fit_common(
+      gui_app.font(FontWeight.NORMAL), subtitle,
+      rl.Vector2(text_left, draw_rect.y + 54),
+      text_width, subtitle_size,
+      color=resolved_subtitle_color,
+    )
 
   if toggle_value is not None:
     draw_toggle_switch(draw_rect, bool(toggle_value), is_enabled=enabled, track_color=style.accent)
@@ -1234,6 +1266,7 @@ class AetherAdjustorRow(Widget):
     self._style = style
     self._color = color or style.accent
     self._presets = presets or []
+    self._preset_applied = False
     self._font_title = gui_app.font(FontWeight.MEDIUM)
     self._font_subtitle = gui_app.font(FontWeight.NORMAL)
     self._font_value = gui_app.font(FontWeight.SEMI_BOLD)
@@ -1332,6 +1365,7 @@ class AetherAdjustorRow(Widget):
           self._scrubber.set_value(preset_value)
           self._scrubber._on_change(self._scrubber.current_val)
           self._scrubber._commit_if_needed()
+          self._preset_applied = True
           return
       return
 
@@ -3080,127 +3114,11 @@ class TileGrid(Widget):
         tile.render(_snap_rect(rl.Rectangle(row_x + c * (row_tile_w + self._gap), rect.y + r * (tile_h + self._gap), row_tile_w, tile_h)))
         tile_idx += 1
 
-class AetherContinuousSlider(Widget):
-  def __init__(self, min_val: float, max_val: float, step: float, current_val: float, on_change, title: str = "", unit: str = "", labels: dict | None = None, color: rl.Color | None = None):
-    super().__init__()
-    self.min_val = min_val
-    self.max_val = max_val
-    self.base_step = step
-    self.current_val = current_val
-    self.on_change = on_change
-    self.title = title
-    self.unit = unit
-    self.labels = labels or {}
-    self.color = color or rl.Color(54, 77, 239, 255)
-    
-    self._is_dragging = False
-    self._pending_drag = False
-    self._press_start_x = 0.0
-    self._last_mouse_x = 0.0
-    self._smooth_value = current_val
-    self._font = gui_app.font(FontWeight.BOLD)
 
-  def _handle_mouse_press(self, mouse_pos: MousePos):
-    if rl.check_collision_point_rec(mouse_pos, self._rect):
-      self._pending_drag = True
-      self._is_dragging = False
-      self._press_start_x = mouse_pos.x
-      self._last_mouse_x = mouse_pos.x
-
-  def _handle_mouse_release(self, mouse_pos: MousePos):
-    del mouse_pos
-    self._pending_drag = False
-    if self._is_dragging:
-      self._is_dragging = False
-
-  def _handle_mouse_event(self, mouse_event: MouseEvent):
-    if not self._touch_valid():
-      self._pending_drag = False
-      self._is_dragging = False
-      return
-
-    if self._pending_drag and not self._is_dragging:
-      if abs(mouse_event.pos.x - self._press_start_x) > 12:
-        self._pending_drag = False
-        self._is_dragging = True
-        self._last_mouse_x = mouse_event.pos.x
-      else:
-        return
-
-    if self._is_dragging:
-      dt = rl.get_frame_time()
-      dx = mouse_event.pos.x - self._last_mouse_x
-      self._last_mouse_x = mouse_event.pos.x
-      
-      velocity = abs(dx / max(dt, 0.001))
-      
-      if velocity > 1500:
-        step = self.base_step * 10
-      elif velocity > 500:
-        step = self.base_step * 5
-      else:
-        step = self.base_step
-        
-      self._update_val_from_absolute(mouse_event.pos.x, step)
-
-  def _update_val_from_absolute(self, mouse_x: float, step: float):
-    track_w = self._rect.width
-    if track_w <= 0: return
-    rel_x = max(0.0, min(1.0, (mouse_x - self._rect.x) / track_w))
-    val = self.min_val + rel_x * (self.max_val - self.min_val)
-    self._set_snapped_val(val, step)
-
-  def _set_snapped_val(self, val: float, step: float):
-    if step <= 0:
-      snapped = max(self.min_val, min(self.max_val, val))
-      if snapped != self.current_val:
-        self.current_val = snapped
-        self.on_change(self.current_val)
-      return
-    snapped = round((val - self.min_val) / step) * step + self.min_val
-    snapped = max(self.min_val, min(self.max_val, snapped))
-    if snapped != self.current_val:
-      self.current_val = snapped
-      self.on_change(self.current_val)
-
-  def _render(self, rect: rl.Rectangle):
-    rect = _snap_rect(rect)
-    self.set_rect(rect)
-    dt = rl.get_frame_time()
-    
-    self._smooth_value += (self.current_val - self._smooth_value) * (1 - math.exp(-dt / 0.060))
-    
-    _draw_rounded_fill(rect, rl.Color(28, 32, 40, 255), radius_px=18)
-    _draw_rounded_stroke(rect, rl.Color(255, 255, 255, 18), radius_px=18)
-    
-    value_range = self.max_val - self.min_val
-    frac = 0.0 if value_range == 0 else max(0.0, min(1.0, (self._smooth_value - self.min_val) / value_range))
-    meter_h = max(4, int(rect.height * 0.12))
-    meter_rect = _snap_rect(rl.Rectangle(rect.x + 20, rect.y + rect.height - meter_h - 10, rect.width - 40, meter_h))
-    fill_w = frac * meter_rect.width
-    rl.draw_rectangle_rec(meter_rect, rl.Color(255, 255, 255, 14))
-    if fill_w > 0:
-      fill_rect = _snap_rect(rl.Rectangle(meter_rect.x, meter_rect.y, fill_w, meter_rect.height))
-      rl.draw_rectangle_rec(fill_rect, _with_alpha(self.color, 190))
-      
-    title_size = max(18, min(24, int(rect.height * 0.34)))
-    value_size = max(18, min(24, int(rect.height * 0.34)))
-    title_y = rect.y + (rect.height - title_size) / 2 - 5
-    rl.draw_text_ex(self._font, self.title, rl.Vector2(round(rect.x + 24), round(title_y)), title_size, 0, AetherListColors.SUBTEXT)
-
-    val_str = self.labels.get(self.current_val, f"{int(self.current_val)}{self.unit}")
-    ts = measure_text_cached(self._font, val_str, value_size)
-    
-    text_color = AetherListColors.HEADER
-    text_x = rect.x + rect.width - ts.x - 24
-    text_y = rect.y + (rect.height - ts.y) / 2 - 5
-    rl.draw_text_ex(self._font, val_str, rl.Vector2(round(text_x), round(text_y)), value_size, 0, text_color)
-
-
-def draw_toggle_pill(rect: rl.Rectangle, is_on: bool, is_enabled: bool, title: str, status_str: str, hovered: bool, pressed: bool):
+def draw_toggle_pill(rect: rl.Rectangle, is_on: bool, is_enabled: bool, title: str, status_str: str, hovered: bool, pressed: bool, style: PanelStyle = DEFAULT_PANEL_STYLE):
   rect = _snap_rect(rect)
   bg_color = rl.Color(28, 32, 40, 170 if not is_enabled else 255)
-  accent = AetherListColors.PRIMARY if is_on and is_enabled else rl.Color(255, 255, 255, 52 if is_enabled else 20)
+  accent = style.accent if is_on and is_enabled else rl.Color(255, 255, 255, 52 if is_enabled else 20)
   _draw_rounded_fill(rect, bg_color, radius_px=18)
   _draw_rounded_stroke(rect, _with_alpha(accent, 92 if is_on and is_enabled else accent.a), radius_px=18)
 
@@ -3209,7 +3127,7 @@ def draw_toggle_pill(rect: rl.Rectangle, is_on: bool, is_enabled: bool, title: s
     _draw_rounded_fill(rect, overlay, radius_px=18)
 
   if is_on and is_enabled:
-    rl.draw_rectangle_rec(rl.Rectangle(rect.x, rect.y, 1, rect.height), _with_alpha(AetherListColors.PRIMARY, 160))
+    rl.draw_rectangle_rec(rl.Rectangle(rect.x, rect.y, 1, rect.height), _with_alpha(style.accent, 160))
 
   font = gui_app.font(FontWeight.BOLD)
   title_size = max(16, min(22, int(rect.height * 0.26)))

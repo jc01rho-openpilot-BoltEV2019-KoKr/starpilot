@@ -37,6 +37,8 @@ class CarState(CarStateBase):
       self.enableLongControl = False
       self.enableJustCC = False
       self.pedal_speed_kph = 0.0
+      self.prev_stalk_follow = 0
+      self.pccEvent = None
       self.preap_cc_cancel_needed = False
       self.preap_cc_engage_needed = False
       self.di_cruise_state = "OFF"
@@ -52,6 +54,11 @@ class CarState(CarStateBase):
       self.autopark = False
     self.autopark_prev = autopark_now
     self.cruise_enabled_prev = cruise_enabled
+
+  def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
+    if self.CP.carFingerprint == CAR.TESLA_MODEL_S_PREAP:
+      return False
+    return super().update_button_enable(buttonEvents)
 
   def update(self, can_parsers, starpilot_toggles) -> structs.CarState:
     if self.CP.carFingerprint == CAR.TESLA_MODEL_S_PREAP:

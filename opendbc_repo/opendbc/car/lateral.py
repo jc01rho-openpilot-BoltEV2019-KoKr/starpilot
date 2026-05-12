@@ -24,6 +24,11 @@ class AngleSteeringLimits:
   MAX_ANGLE_RATE: float = math.inf
 
 
+@dataclass
+class CurvatureSteeringLimits:
+  CURVATURE_MAX: float
+
+
 def apply_driver_steer_torque_limits(apply_torque: int, apply_torque_last: int, driver_torque: float, LIMITS, steer_max: int = None):
   # some safety modes utilize a dynamic max steer
   if steer_max is None:
@@ -89,6 +94,21 @@ def apply_std_steer_angle_limits(apply_angle: float, apply_angle_last: float, v_
     new_apply_angle = steering_angle
 
   return float(np.clip(new_apply_angle, -limits.STEER_ANGLE_MAX, limits.STEER_ANGLE_MAX))
+
+
+def apply_std_curvature_limits(apply_curvature: float, apply_curvature_last: float, v_ego: float, steering_curvature: float,
+                               steering_pressed: bool, steer_step: int, lat_active: bool,
+                               limits: CurvatureSteeringLimits) -> float:
+  max_delta = ISO_LATERAL_JERK / max(v_ego ** 2, 1.) * (DT_CTRL * steer_step)
+  new_apply_curvature = rate_limit(apply_curvature, apply_curvature_last, -max_delta, max_delta)
+
+  max_curvature = min(limits.CURVATURE_MAX, ISO_LATERAL_ACCEL / max(v_ego ** 2, 1.))
+  new_apply_curvature = np.clip(new_apply_curvature, -max_curvature, max_curvature)
+
+  if not lat_active:
+    new_apply_curvature = steering_curvature
+
+  return float(np.clip(new_apply_curvature, -limits.CURVATURE_MAX, limits.CURVATURE_MAX))
 
 
 def get_max_angle_delta_vm(v_ego_raw: float, VM: VehicleModel, limits):

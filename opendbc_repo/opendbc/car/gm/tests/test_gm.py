@@ -11,6 +11,8 @@ import opendbc.car.gm.interface as gm_interface
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.fingerprints import FINGERPRINTS
 from opendbc.car.gm.values import CAMERA_ACC_CAR, CAR, CC_ONLY_CAR, DBC, GM_RX_OFFSET, GMFlags, GMSafetyFlags
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
+from openpilot.common.params import Params
 
 CAMERA_DIAGNOSTIC_ADDRESS = 0x24b
 VOLT_CARS = (
@@ -32,6 +34,7 @@ def _test_starpilot_toggles():
     cluster_offset=1.0,
     disable_openpilot_long=False,
     force_fingerprint=False,
+    remap_cancel_to_distance=False,
     vEgoStopping=0.5,
     volt_sng=False,
   )
@@ -120,6 +123,23 @@ class TestGMInterface:
     pt_parser = CarInterface.CarState.get_can_parsers(car_params)[Bus.pt]
     assert "ECMAcceleratorPos" not in pt_parser.vl
     assert "EBCMBrakePedalPosition" in pt_parser.vl
+
+  def test_bolt_gen2_pedal_cancel_remap_sets_alt_exp(self):
+    CarInterface = interfaces[CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL]
+    fingerprint = _empty_fingerprint()
+    fingerprint[0][0x201] = 8
+
+    params = Params()
+    toggles = _test_starpilot_toggles()
+    try:
+      params.put_bool("RemapCancelToDistance", True)
+      car_params = CarInterface.get_params(CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL, fingerprint, [], alpha_long=False,
+                                           is_release=False, docs=False, starpilot_toggles=toggles)
+    finally:
+      params.remove("RemapCancelToDistance")
+
+    assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_BOLT_2022_PEDAL.value
 
 
 class TestGMCarController:

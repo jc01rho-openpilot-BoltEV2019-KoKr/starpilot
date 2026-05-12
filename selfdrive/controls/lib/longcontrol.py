@@ -237,6 +237,23 @@ class LongControl:
     bleed = interp(abs(error), [0.25, 0.75, 1.5], [0.55, 0.25, 0.0])
     self.pid.i *= bleed
 
+  def _apply_pedal_long_brake_bias(self, output_accel, a_target, CS):
+    if not self.is_gm_pedal_long:
+      return output_accel
+    if output_accel >= -0.05 or a_target >= -0.80:
+      return output_accel
+    if CS.vEgo <= 5.0:
+      return output_accel
+
+    authority_gap = max(0.0, abs(a_target) - abs(output_accel))
+    if authority_gap <= 0.40:
+      return output_accel
+
+    speed_factor = interp(CS.vEgo, [5.0, 12.0, 25.0], [0.0, 0.7, 1.0])
+    max_bias = interp(abs(a_target), [0.8, 2.0, 3.5], [0.0, 0.10, 0.20])
+    bias = min(authority_gap * 0.12, max_bias) * speed_factor
+    return output_accel - float(bias)
+
   @staticmethod
   def _cap_positive_output_on_negative_target(output_accel, a_target, error, CS):
     if output_accel <= 0.0:
@@ -291,6 +308,7 @@ class LongControl:
       raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward,
                                          freeze_integrator=freeze_integrator)
       raw_output_accel = self._cap_positive_output_on_negative_target(raw_output_accel, a_target, error, CS)
+      raw_output_accel = self._apply_pedal_long_brake_bias(raw_output_accel, a_target, CS)
 
 
       if self.transitioning and self.prev_mode == 'acc' and self.current_mode == 'blended':

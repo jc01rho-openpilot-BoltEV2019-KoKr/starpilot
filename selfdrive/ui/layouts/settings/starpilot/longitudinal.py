@@ -21,7 +21,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherListColors,
   AetherScrollbar,
   AetherSliderDialog,
-  DEFAULT_PANEL_STYLE,
+  panel_style_from_color,
   _point_hits,
   draw_list_group_shell,
   draw_list_scroll_fades,
@@ -42,7 +42,7 @@ from openpilot.starpilot.common.accel_profile import (
 from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state
 
 
-PANEL_STYLE = DEFAULT_PANEL_STYLE
+PANEL_STYLE = panel_style_from_color("#3B82F6")
 SECTION_GAP = AETHER_LIST_METRICS.section_gap
 SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height
 SECTION_HEADER_GAP = AETHER_LIST_METRICS.section_header_gap
@@ -1198,7 +1198,11 @@ class StarPilotSLCQOLLayout(_SettingsPage):
         SettingRow("SLCMapbox", "toggle", tr_noop("Mapbox Fallback"),
                    subtitle="",
                    get_state=lambda: self._params.get_bool("SLCMapboxFiller"),
-                    set_state=lambda s: self._params.put_bool("SLCMapboxFiller", s)),
+                     set_state=lambda s: self._params.put_bool("SLCMapboxFiller", s)),
+        SettingRow("VisionSpeedLimit", "toggle", tr_noop("Vision Detection"),
+                   subtitle=tr_noop("Use the road camera to detect speed limit signs for SLC."),
+                   get_state=lambda: self._params.get_bool("VisionSpeedLimitDetection"),
+                   set_state=lambda s: self._params.put_bool("VisionSpeedLimitDetection", s)),
       ]),
     ]
     self._manager_view = AetherSettingsView(

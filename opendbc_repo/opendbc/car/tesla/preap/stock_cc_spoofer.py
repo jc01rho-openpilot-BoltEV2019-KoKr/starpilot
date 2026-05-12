@@ -12,6 +12,8 @@ class StockCCSpoofer:
     self.cc_engage_start_frame = 0
     self.cancel_pending = False
     self.cancel_frame = -1_000_000
+    self.prev_di_cc_engaged = False
+    self.pcc_event = None
 
   def update(self, CS, frame: int, tesla_can, can_bus_party: int):
     can_sends = []
@@ -40,6 +42,15 @@ class StockCCSpoofer:
         if sent is not None:
           can_sends.append(sent)
 
+    di_cc_engaged = getattr(CS, "di_cruise_state", "OFF") == "ENABLED"
+    if di_cc_engaged and not self.prev_di_cc_engaged:
+      self.pcc_event = "teslaCCEngaged"
+    elif not di_cc_engaged and self.prev_di_cc_engaged:
+      self.pcc_event = "teslaCCDisengaged"
+    else:
+      self.pcc_event = None
+    self.prev_di_cc_engaged = di_cc_engaged
+
     return can_sends
 
   @staticmethod
@@ -49,4 +60,3 @@ class StockCCSpoofer:
       return None
     counter = (int(msg_stw.get("MC_STW_ACTN_RQ", 0)) + 1) % 16
     return tesla_can.create_action_request(button, can_bus_party, counter, msg_stw)
-

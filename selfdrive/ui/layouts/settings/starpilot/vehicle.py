@@ -10,13 +10,13 @@ from openpilot.system.ui.widgets import DialogResult, Widget
 from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
 from openpilot.system.ui.widgets.label import gui_label
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
-from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPanel
+from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   AetherListColors,
   AetherScrollbar,
   AetherSliderDialog,
-  DEFAULT_PANEL_STYLE,
+  panel_style_from_color,
   _point_hits,
   draw_list_group_shell,
   draw_list_scroll_fades,
@@ -35,18 +35,19 @@ from openpilot.selfdrive.ui.mici.layouts.settings.fingerprint_catalog import (
   get_fingerprint_catalog,
   shorten_model_label,
 )
+from openpilot.starpilot.common.starpilot_variables import migrate_cancel_button_controls
 
 
 ACTION_OPTIONS = [
-  {"id": 0, "name": "No Action"},
-  {"id": 1, "name": "Change Personality", "requires_longitudinal": True},
-  {"id": 2, "name": "Force Coast", "requires_longitudinal": True},
-  {"id": 3, "name": "Pause Steering"},
-  {"id": 4, "name": "Pause Accel/Brake", "requires_longitudinal": True},
-  {"id": 5, "name": "Toggle Experimental", "requires_longitudinal": True},
-  {"id": 6, "name": "Toggle Traffic", "requires_longitudinal": True},
-  {"id": 7, "name": "Toggle Switchback"},
-  {"id": 8, "name": "Create Bookmark"},
+  {"id": 0, "name": tr_noop("No Action")},
+  {"id": 1, "name": tr_noop("Change Personality"), "requires_longitudinal": True},
+  {"id": 2, "name": tr_noop("Force Coast"), "requires_longitudinal": True},
+  {"id": 3, "name": tr_noop("Pause Steering")},
+  {"id": 4, "name": tr_noop("Pause Accel/Brake"), "requires_longitudinal": True},
+  {"id": 5, "name": tr_noop("Toggle Experimental"), "requires_longitudinal": True},
+  {"id": 6, "name": tr_noop("Toggle Traffic"), "requires_longitudinal": True},
+  {"id": 7, "name": tr_noop("Toggle Switchback")},
+  {"id": 8, "name": tr_noop("Create Bookmark")},
 ]
 ACTION_NAMES = [o["name"] for o in ACTION_OPTIONS]
 ACTION_IDS = {o["name"]: o["id"] for o in ACTION_OPTIONS}
@@ -60,6 +61,14 @@ def _lock_doors_timer_labels():
   return labels
 
 
+SECTION_GAP = AETHER_LIST_METRICS.section_gap
+SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height
+SECTION_HEADER_GAP = AETHER_LIST_METRICS.section_header_gap
+ROW_HEIGHT = AETHER_LIST_METRICS.row_height
+FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
+PANEL_STYLE = panel_style_from_color("#64748B")
+
+
 class VehicleSettingsManagerView(Widget):
   HEADER_SUBTITLE_HEIGHT = 24
   HEADER_SUMMARY_GAP = 12
@@ -67,15 +76,8 @@ class VehicleSettingsManagerView(Widget):
   TAB_HEIGHT = 56
   TAB_GAP = 10
   TAB_BOTTOM_GAP = 18
-  SECTION_GAP = AETHER_LIST_METRICS.section_gap
-  SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height
-  SECTION_HEADER_GAP = AETHER_LIST_METRICS.section_header_gap
-  ROW_HEIGHT = AETHER_LIST_METRICS.row_height
-  FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
-  COLUMN_GAP = 22
   TWO_COLUMN_BREAKPOINT = 1180
-
-  PANEL_STYLE = DEFAULT_PANEL_STYLE
+  COLUMN_GAP = 22
 
   def __init__(self, controller: "StarPilotVehicleSettingsLayout"):
     super().__init__()
@@ -109,12 +111,12 @@ class VehicleSettingsManagerView(Widget):
   def _section_block_height(self, content_height: float) -> float:
     if content_height <= 0:
       return 0.0
-    return self.SECTION_HEADER_HEIGHT + self.SECTION_HEADER_GAP + content_height + self.SECTION_GAP
+    return SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + content_height
 
   def _stacked_section_height(self, sections: list[float]) -> float:
     if not sections:
       return 0.0
-    return max(0.0, sum(sections) - self.SECTION_GAP)
+    return max(0.0, sum(sections) - SECTION_GAP)
 
   def _interactive_state(self, target_id: str, rect: rl.Rectangle, *, pad_y: float = 0) -> tuple[bool, bool]:
     self._interactive_rects[target_id] = rect
@@ -194,9 +196,8 @@ class VehicleSettingsManagerView(Widget):
 
   def _render(self, rect: rl.Rectangle):
     self.set_rect(rect)
-    self._interactive_rects.clear()
 
-    frame, scroll_rect, content_width = init_list_panel(rect, self.PANEL_STYLE)
+    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE)
     self._shell_rect = frame.shell
     self._scroll_rect = scroll_rect
 
@@ -213,7 +214,7 @@ class VehicleSettingsManagerView(Widget):
     if self._content_height > scroll_rect.height:
       self._scrollbar.render(scroll_rect, self._content_height, self._scroll_offset)
 
-    draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset, AetherListColors.PANEL_BG, fade_height=self.FADE_HEIGHT)
+    draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset, AetherListColors.PANEL_BG, fade_height=FADE_HEIGHT)
 
   def _draw_header(self, rect: rl.Rectangle):
     draw_settings_panel_header(rect, tr("Vehicle Settings"),
@@ -225,7 +226,7 @@ class VehicleSettingsManagerView(Widget):
     self._draw_summary_card(summary_rect)
 
   def _draw_summary_card(self, rect: rl.Rectangle):
-    draw_soft_card(rect, self.PANEL_STYLE.surface_fill, self.PANEL_STYLE.surface_border)
+    draw_soft_card(rect, PANEL_STYLE.surface_fill, PANEL_STYLE.surface_border)
     inset = 18
     left_x = rect.x + inset
     left_w = rect.width * 0.40
@@ -252,7 +253,7 @@ class VehicleSettingsManagerView(Widget):
       draw_metric_strip(
         rl.Rectangle(left_x, rect.y + 72, max(240.0, rect.width * 0.38), 30),
         metrics,
-        style=self.PANEL_STYLE,
+        style=PANEL_STYLE,
         label_top_offset=0,
         value_top_offset=14,
         divider_top_offset=2,
@@ -286,19 +287,19 @@ class VehicleSettingsManagerView(Widget):
 
   def _measure_active_tab_height(self, width: float) -> float:
     if self._active_tab_key == "identity":
-      return self._section_block_height(self._section_height(3, self.ROW_HEIGHT))
+      return self._section_block_height(self._section_height(3, ROW_HEIGHT))
     if self._active_tab_key == "features":
       rows = self._build_driving_rows()
       if self._uses_two_columns(width):
         max_per_col = (len(rows) + 1) // 2
-        return self._section_block_height(self._section_height(max_per_col, self.ROW_HEIGHT))
-      return self._section_block_height(self._section_height(len(rows), self.ROW_HEIGHT))
+        return self._section_block_height(self._section_height(max_per_col, ROW_HEIGHT))
+      return self._section_block_height(self._section_height(len(rows), ROW_HEIGHT))
     if self._active_tab_key == "controls":
       rows = self._build_steering_rows()
       if self._uses_two_columns(width):
         max_per_col = (len(rows) + 1) // 2
-        return self._section_block_height(self._section_height(max_per_col, self.ROW_HEIGHT))
-      return self._section_block_height(self._section_height(len(rows), self.ROW_HEIGHT))
+        return self._section_block_height(self._section_height(max_per_col, ROW_HEIGHT))
+      return self._section_block_height(self._section_height(len(rows), ROW_HEIGHT))
     return 0
 
   def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
@@ -333,7 +334,7 @@ class VehicleSettingsManagerView(Widget):
         title_size=26,
         subtitle_size=17,
         show_underline=True,
-        style=self.PANEL_STYLE,
+        style=PANEL_STYLE,
       )
 
   def _draw_identity_tab(self, y: float, x: float, width: float):
@@ -346,12 +347,12 @@ class VehicleSettingsManagerView(Widget):
        "subtitle": tr("Manually select vehicle instead of auto-detecting."),
        "get_state": lambda: self._controller._params.get_bool("ForceFingerprint")},
     ]
-    draw_section_header(rl.Rectangle(x, y, width, self.SECTION_HEADER_HEIGHT), tr("Vehicle Identity"), style=self.PANEL_STYLE)
-    y += self.SECTION_HEADER_HEIGHT + self.SECTION_HEADER_GAP
-    container_rect = rl.Rectangle(x, y, width, len(rows) * self.ROW_HEIGHT)
-    draw_list_group_shell(container_rect)
+    draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), tr("Vehicle Identity"), style=PANEL_STYLE)
+    y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
+    container_rect = rl.Rectangle(x, y, width, len(rows) * ROW_HEIGHT)
+    draw_list_group_shell(container_rect, style=PANEL_STYLE)
     for index, row in enumerate(rows):
-      row_rect = rl.Rectangle(x, y + index * self.ROW_HEIGHT, width, self.ROW_HEIGHT)
+      row_rect = rl.Rectangle(x, y + index * ROW_HEIGHT, width, ROW_HEIGHT)
       self._draw_row(row_rect, row, is_last=index == len(rows) - 1)
 
   def _draw_features_tab(self, y: float, x: float, width: float):
@@ -381,12 +382,12 @@ class VehicleSettingsManagerView(Widget):
   def _draw_row_group(self, y: float, x: float, width: float, rows: list[dict]):
     if not rows:
       return y
-    container_rect = rl.Rectangle(x, y, width, len(rows) * self.ROW_HEIGHT)
-    draw_list_group_shell(container_rect)
+    container_rect = rl.Rectangle(x, y, width, len(rows) * ROW_HEIGHT)
+    draw_list_group_shell(container_rect, style=PANEL_STYLE)
     for index, row in enumerate(rows):
-      row_rect = rl.Rectangle(x, y + index * self.ROW_HEIGHT, width, self.ROW_HEIGHT)
+      row_rect = rl.Rectangle(x, y + index * ROW_HEIGHT, width, ROW_HEIGHT)
       self._draw_row(row_rect, row, is_last=index == len(rows) - 1)
-    return y + len(rows) * self.ROW_HEIGHT + self.SECTION_GAP
+    return y + len(rows) * ROW_HEIGHT
 
   def _draw_row(self, rect: rl.Rectangle, row: dict, is_last: bool):
     target_id = row["target_id"]
@@ -398,7 +399,7 @@ class VehicleSettingsManagerView(Widget):
         rect, title=row["title"], subtitle=row.get("subtitle", ""),
         toggle_value=row["get_state"](), hovered=hovered, pressed=pressed,
         is_last=is_last, show_chevron=False, title_size=34, subtitle_size=22,
-        style=self.PANEL_STYLE,
+        style=PANEL_STYLE,
       )
     elif row_type == "select":
       draw_selection_list_row(
@@ -407,9 +408,9 @@ class VehicleSettingsManagerView(Widget):
         is_last=is_last, action_width=188, action_pill=True,
         action_pill_width=row.get("pill_width", 108), action_pill_height=44,
         title_size=34, subtitle_size=22, action_text_size=18,
-        row_separator=self.PANEL_STYLE.divider_color,
-        action_fill=self.PANEL_STYLE.current_fill,
-        action_border=self.PANEL_STYLE.current_border,
+        row_separator=PANEL_STYLE.divider_color,
+        action_fill=PANEL_STYLE.current_fill,
+        action_border=PANEL_STYLE.current_border,
         action_text_color=AetherListColors.HEADER,
       )
     elif row_type == "info":
@@ -417,7 +418,7 @@ class VehicleSettingsManagerView(Widget):
         rect, title=row["title"], value=row["get_value"](),
         hovered=False, pressed=False, is_last=is_last,
         show_chevron=False, title_size=34, subtitle_size=22,
-        style=self.PANEL_STYLE,
+        style=PANEL_STYLE,
       )
 
   def _build_driving_rows(self) -> list[dict]:
@@ -466,9 +467,10 @@ class VehicleSettingsManagerView(Widget):
       rows.append({"target_id": "toggle:FrogsGoMoosTweak", "type": "toggle",
                     "title": tr("FrogsGoMoo Tweak"), "get_state": lambda: self._controller._params.get_bool("FrogsGoMoosTweak")})
 
-    rows.append({"target_id": "toggle:RemapCancelToDistance", "type": "toggle",
-                  "title": tr("Remap Cancel Button"), "subtitle": tr("Remap the Cancel button to act as the Distance button."),
-                  "get_state": lambda: self._controller._params.get_bool("RemapCancelToDistance")})
+    if cs.isBolt and cs.hasPedal:
+      rows.append({"target_id": "toggle:RemapCancelToDistance", "type": "toggle",
+                    "title": tr("Remap Cancel Button"), "subtitle": tr("Treat the Cancel button as an extra mappable steering-wheel button."),
+                    "get_state": lambda: self._controller._params.get_bool("RemapCancelToDistance")})
     if cs.isHKGCanFd:
       rows.append({"target_id": "toggle:AlwaysIPedal", "type": "toggle",
                     "title": tr("Always I-Pedal"),
@@ -487,6 +489,10 @@ class VehicleSettingsManagerView(Widget):
     for key in ("DistanceButtonControl", "LongDistanceButtonControl", "VeryLongDistanceButtonControl"):
       rows.append({"target_id": f"select:{key}", "type": "select", "title": tr(self._controller._action_title(key)),
                     "get_value": lambda k=key: self._controller._get_action_name(k), "pill_width": 140})
+    if cs.isBolt and cs.hasPedal and self._controller._params.get_bool("RemapCancelToDistance"):
+      for key in ("CancelButtonControl", "LongCancelButtonControl", "VeryLongCancelButtonControl"):
+        rows.append({"target_id": f"select:{key}", "type": "select", "title": tr(self._controller._action_title(key)),
+                      "get_value": lambda k=key: self._controller._get_action_name(k), "pill_width": 140})
     if not cs.isSubaru and not (cs.lkasAllowedForAOL and self._controller._params.get_bool("AlwaysOnLateral") and self._controller._params.get_bool("AlwaysOnLateralLKAS")):
       rows.append({"target_id": "select:LKASButtonControl", "type": "select", "title": tr("LKAS Button"),
                     "get_value": lambda: self._controller._get_action_name("LKASButtonControl"), "pill_width": 140})
@@ -498,27 +504,20 @@ class VehicleSettingsManagerView(Widget):
     return rows
 
 
-class StarPilotVehicleSettingsLayout(StarPilotPanel):
+class StarPilotVehicleSettingsLayout(_SettingsPage):
   def __init__(self):
     super().__init__()
     self._make_options, self._models_by_make, self._models_by_value, self._make_by_model = get_fingerprint_catalog()
     self._manager_view = VehicleSettingsManagerView(self)
 
-  def _render(self, rect: rl.Rectangle):
-    self._manager_view.render(rect)
-
-  def show_event(self):
-    super().show_event()
-    self._manager_view.show_event()
-
-  def hide_event(self):
-    super().hide_event()
-    self._manager_view.hide_event()
 
   def _action_title(self, key: str) -> str:
     titles = {
+      "CancelButtonControl": "Cancel Button",
       "DistanceButtonControl": "Distance Button",
+      "LongCancelButtonControl": "Cancel (Long Press)",
       "LongDistanceButtonControl": "Distance (Long Press)",
+      "VeryLongCancelButtonControl": "Cancel (Very Long)",
       "VeryLongDistanceButtonControl": "Distance (Very Long)",
       "LKASButtonControl": "LKAS Button",
       "ModeButtonControl": "Mode Button",
@@ -531,18 +530,12 @@ class StarPilotVehicleSettingsLayout(StarPilotPanel):
     return titles.get(key, key)
 
   def _get_action_name(self, key: str) -> str:
-    if key == "LKASButtonControl" and self._params.get_bool("RemapCancelToDistance"):
-      if self._params.get_int("LKASButtonControl") != 0:
-        self._params.put_int("LKASButtonControl", 0)
-      return ACTION_NAME_BY_ID[0]
     idx = self._params.get_int(key)
-    return ACTION_NAME_BY_ID.get(idx, ACTION_NAMES[0])
+    return tr(ACTION_NAME_BY_ID.get(idx, ACTION_NAMES[0]))
 
   def _get_available_actions(self, key: str | None = None) -> list[str]:
-    if key == "LKASButtonControl" and self._params.get_bool("RemapCancelToDistance"):
-      return [ACTION_NAME_BY_ID[0]]
     cs = starpilot_state.car_state
-    return [o["name"] for o in ACTION_OPTIONS if cs.hasOpenpilotLongitudinal or not o.get("requires_longitudinal", False)]
+    return [tr(o["name"]) for o in ACTION_OPTIONS if cs.hasOpenpilotLongitudinal or not o.get("requires_longitudinal", False)]
 
   def _on_toggle(self, param_key: str):
     if param_key == "DisableOpenpilotLongitudinal":
@@ -560,8 +553,8 @@ class StarPilotVehicleSettingsLayout(StarPilotPanel):
     if param_key == "RemapCancelToDistance":
       new_state = not self._params.get_bool("RemapCancelToDistance")
       self._params.put_bool("RemapCancelToDistance", new_state)
-      if new_state and self._params.get_int("LKASButtonControl") != 0:
-        self._params.put_int("LKASButtonControl", 0)
+      if new_state:
+        migrate_cancel_button_controls(self._params)
       return
     current = self._params.get_bool(param_key) if self._params.get(param_key, encoding="utf-8") is not None else False
     self._params.put_bool(param_key, not current)
@@ -626,10 +619,6 @@ class StarPilotVehicleSettingsLayout(StarPilotPanel):
     gui_app.push_widget(dialog)
 
   def _show_action_picker(self, key: str):
-    if key == "LKASButtonControl" and self._params.get_bool("RemapCancelToDistance"):
-      if self._params.get_int("LKASButtonControl") != 0:
-        self._params.put_int("LKASButtonControl", 0)
-      return
     actions = self._get_available_actions(key)
     current = self._get_action_name(key)
     if current not in actions:
@@ -648,7 +637,7 @@ class StarPilotVehicleSettingsLayout(StarPilotPanel):
         self._params.put_int("LockDoorsTimer", int(val))
 
     gui_app.push_widget(AetherSliderDialog(tr("Lock Doors Timer"), 0, 300, 5,
-                                            self._params.get_int("LockDoorsTimer"), on_close, labels=_lock_doors_timer_labels()))
+                                            self._params.get_int("LockDoorsTimer"), on_close, labels=_lock_doors_timer_labels(), color=PANEL_STYLE.accent))
 
   def _show_offset_selector(self):
     def on_close(res, val):
@@ -656,7 +645,7 @@ class StarPilotVehicleSettingsLayout(StarPilotPanel):
         self._params.put_float("ClusterOffset", float(val))
 
     gui_app.push_widget(AetherSliderDialog(tr("Dashboard Speed Offset"), 1.000, 1.050, 0.001,
-                                            self._params.get_float("ClusterOffset"), on_close, unit="x"))
+                                            self._params.get_float("ClusterOffset"), on_close, unit="x", color=PANEL_STYLE.accent))
 
   def _get_display_make(self) -> str:
     make = self._params.get("CarMake", encoding="utf-8") or ""

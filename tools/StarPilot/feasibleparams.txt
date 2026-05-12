@@ -72,6 +72,7 @@ CustomPersonalities
 CustomSignals
 CustomSounds
 CustomUI
+CancelButtonControl
 DebugMode
 DecelerationProfile
 DeveloperMetrics
@@ -154,6 +155,7 @@ LiveParameters
 LiveTorqueParameters
 LockDoors
 LockDoorsTimer
+LongCancelButtonControl
 LongDistanceButtonControl
 LongPitch
 LongitudinalActuatorDelay
@@ -333,6 +335,7 @@ VEgoStarting
 VEgoStartingStock
 VEgoStopping
 VEgoStoppingStock
+VeryLongCancelButtonControl
 VeryLongDistanceButtonControl
 VoltSNG
 WarningImmediateVolume
