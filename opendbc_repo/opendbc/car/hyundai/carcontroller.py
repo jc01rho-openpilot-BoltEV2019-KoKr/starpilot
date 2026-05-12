@@ -57,15 +57,6 @@ IONIQ_6_STOP_RELEASE_JERK_BP = [0.0, 0.15, 0.5]
 IONIQ_6_STOP_RELEASE_JERK_V = [3.6 * IONIQ_6_RESPONSE_MULTIPLIER,
                                4.2 * IONIQ_6_RESPONSE_MULTIPLIER,
                                4.8 * IONIQ_6_RESPONSE_MULTIPLIER]
-def get_canfd_lead_distance_setting(lead_distance: float | None, default_setting: int) -> int:
-  default = int(np.clip(default_setting, 0, 3))
-  if lead_distance is None or lead_distance <= CANFD_LEAD_MIN_DISTANCE:
-    return default
-  if lead_distance < 20.0:
-    return 1
-  if lead_distance < 30.0:
-    return 2
-  return 3
 
 
 @dataclass
@@ -266,7 +257,6 @@ class CarController(CarControllerBase):
     return lka_icon, lfa_icon
 
   def _get_canfd_scc_lead_state(self, CC, CS, now_nanos):
-    default_distance_setting = int(np.clip(getattr(CC.hudControl, "leadDistanceBars", 0), 0, 3))
     openpilot_lead_visible = bool(getattr(CS, "openpilot_lead_visible", False) or CC.hudControl.leadVisible)
     openpilot_lead_distance = float(np.clip(getattr(CS, "openpilot_lead_distance", 0.0), 0.0, 204.7))
     openpilot_lead_rel_speed = float(np.clip(getattr(CS, "openpilot_lead_rel_speed", 0.0), -16.4, 34.7))
@@ -274,15 +264,15 @@ class CarController(CarControllerBase):
     stock_camera_lead_visible = stock_camera_lead_fresh and getattr(CS, "stock_camera_lead_visible", False)
 
     if openpilot_lead_visible and openpilot_lead_distance > CANFD_LEAD_MIN_DISTANCE:
-      return True, openpilot_lead_distance, openpilot_lead_rel_speed, get_canfd_lead_distance_setting(openpilot_lead_distance, default_distance_setting)
+      return True, openpilot_lead_distance, openpilot_lead_rel_speed
     if stock_camera_lead_visible:
       lead_distance = float(np.clip(getattr(CS, "stock_camera_lead_distance", 0.0), 0.0, 204.7))
       lead_rel_speed = float(np.clip(getattr(CS, "stock_camera_lead_rel_speed", 0.0), -16.4, 34.7))
-      return True, lead_distance, lead_rel_speed, get_canfd_lead_distance_setting(lead_distance, default_distance_setting)
+      return True, lead_distance, lead_rel_speed
     if openpilot_lead_visible:
-      return True, CANFD_FALLBACK_LEAD_DISTANCE, 0.0, default_distance_setting
+      return True, CANFD_FALLBACK_LEAD_DISTANCE, 0.0
 
-    return False, 0.0, 0.0, default_distance_setting
+    return False, 0.0, 0.0
 
   def update(self, CC, CS, now_nanos, starpilot_toggles):
     actuators = CC.actuators
@@ -559,13 +549,12 @@ class CarController(CarControllerBase):
                                                                                  CC.leftBlinker,
                                                                                  CC.rightBlinker))
       if self.frame % 2 == 0:
-        lead_visible, lead_distance, lead_rel_speed, lead_distance_setting = self._get_canfd_scc_lead_state(CC, CS, now_nanos)
+        lead_visible, lead_distance, lead_rel_speed = self._get_canfd_scc_lead_state(CC, CS, now_nanos)
         acc_kwargs = {
           "main_mode_acc": int(CS.out.cruiseState.available),
           "direct_accel": True,
           "jerk_lower": 5.0,
           "jerk_upper": 3.0 if CC.actuators.longControlState == LongCtrlState.pid else 1.0,
-          "distance_setting": lead_distance_setting,
           "lead_distance": lead_distance,
           "lead_rel_speed": lead_rel_speed,
           "lead_visible": lead_visible,

@@ -8,7 +8,6 @@ from opendbc.car import Bus, ButtonType, gen_empty_fingerprint, structs
 from opendbc.car.structs import CarControl, CarParams
 from opendbc.car.fw_versions import build_fw_dict, match_fw_to_car
 from opendbc.car.hyundai.carcontroller import CarController, Ioniq6LongitudinalTuningState, GenesisG90LongitudinalTuningState, \
-                                             get_canfd_lead_distance_setting, \
                                              update_ioniq_6_longitudinal_tuning, \
                                              update_genesis_g90_longitudinal_tuning
 from opendbc.car.hyundai.carstate import CarState, decode_canfd_camera_lead, decode_ioniq_6_blindspot_radar_state
@@ -508,32 +507,6 @@ class TestHyundaiFingerprint:
     assert parser.vl["SCC_CONTROL"]["ObjValid"] == 1
     assert parser.vl["SCC_CONTROL"]["OBJ_STATUS"] == 0
 
-  def test_canfd_acc_control_allows_distance_setting_override(self):
-    CP = CarParams.new_message()
-    CP.carFingerprint = CAR.KIA_EV6
-    CP.flags = int(HyundaiFlags.CANFD)
-
-    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
-    can_bus = CanBus(CP)
-    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("SCC_CONTROL", 0)], can_bus.ECAN)
-
-    msg = hyundaicanfd.create_acc_control(packer, can_bus, enabled=True, accel_last=0.0, accel=0.1, stopping=False,
-                                          gas_override=False, set_speed=42, hud_control=SimpleNamespace(leadDistanceBars=1),
-                                          direct_accel=True, distance_setting=3,
-                                          lead_distance=41.0, lead_rel_speed=-0.5, lead_visible=True)
-    parser.update([(1, [msg])])
-
-    assert parser.can_valid
-    assert parser.vl["SCC_CONTROL"]["DISTANCE_SETTING"] == 3
-    assert parser.vl["SCC_CONTROL"]["ACC_ObjDist"] == pytest.approx(41.0)
-
-  def test_canfd_lead_distance_setting_uses_detected_range(self):
-    assert get_canfd_lead_distance_setting(None, 2) == 2
-    assert get_canfd_lead_distance_setting(0.0, 2) == 2
-    assert get_canfd_lead_distance_setting(12.0, 3) == 1
-    assert get_canfd_lead_distance_setting(24.0, 1) == 2
-    assert get_canfd_lead_distance_setting(38.0, 1) == 3
-
   def test_canfd_scc_lead_state_prefers_openpilot_lead_distance(self):
     CP = CarParams.new_message()
     CP.carFingerprint = CAR.KIA_EV6
@@ -551,12 +524,11 @@ class TestHyundaiFingerprint:
       stock_camera_lead_rel_speed=0.0,
     )
 
-    lead_visible, lead_distance, lead_rel_speed, distance_setting = controller._get_canfd_scc_lead_state(cc, cs, now_nanos=1_000_000_000)
+    lead_visible, lead_distance, lead_rel_speed = controller._get_canfd_scc_lead_state(cc, cs, now_nanos=1_000_000_000)
 
     assert lead_visible
     assert lead_distance == pytest.approx(37.5)
     assert lead_rel_speed == pytest.approx(-1.3)
-    assert distance_setting == 3
 
   def test_canfd_scc_lead_state_falls_back_to_hud_lead_when_no_distance_available(self):
     CP = CarParams.new_message()
@@ -575,12 +547,11 @@ class TestHyundaiFingerprint:
       stock_camera_lead_rel_speed=0.0,
     )
 
-    lead_visible, lead_distance, lead_rel_speed, distance_setting = controller._get_canfd_scc_lead_state(cc, cs, now_nanos=1_000_000_000)
+    lead_visible, lead_distance, lead_rel_speed = controller._get_canfd_scc_lead_state(cc, cs, now_nanos=1_000_000_000)
 
     assert lead_visible
     assert lead_distance == pytest.approx(20.0)
     assert lead_rel_speed == pytest.approx(0.0)
-    assert distance_setting == 2
 
   def test_can_acc_commands_use_default_values(self):
     CP = CarParams.new_message()

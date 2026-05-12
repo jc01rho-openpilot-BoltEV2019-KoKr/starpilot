@@ -333,7 +333,6 @@ def create_ioniq_6_cluster_lane_change_messages(CAN, frame, side=None, trigger=F
 
 def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_override, set_speed, hud_control,
                        main_mode_acc=1, jerk_lower=None, jerk_upper=None, direct_accel=False,
-                       distance_setting=None,
                        lead_distance=None, lead_rel_speed=None, lead_visible=None):
   jerk = 5
   jn = jerk / 50
@@ -375,7 +374,7 @@ def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_ov
     "SET_ME_2": 0x4,
     "SET_ME_3": 0x3,
     "SET_ME_TMP_64": 0x64,
-    "DISTANCE_SETTING": int(np.clip(hud_control.leadDistanceBars if distance_setting is None else distance_setting, 0, 3)),
+    "DISTANCE_SETTING": hud_control.leadDistanceBars,
   }
 
   return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)
