@@ -21,7 +21,6 @@ MAX_ANGLE = 85
 MAX_ANGLE_FRAMES = 89
 MAX_ANGLE_CONSECUTIVE_FRAMES = 2
 CANFD_BLINDSPOT_STATUS_STALE_NS = 200_000_000
-CANFD_BLINKER_STALKS_STALE_NS = 200_000_000
 CANFD_CAMERA_LEAD_STALE_NS = 300_000_000
 CANFD_LEAD_MIN_DISTANCE = 0.1
 CANFD_FALLBACK_LEAD_DISTANCE = 20.0
@@ -231,7 +230,7 @@ class CarController(CarControllerBase):
     self._params = Params()
     self.long_active_ecu = self.CP.openpilotLongitudinalControl
     self._ioniq_6_lane_change_ui_side = None
-    self._ioniq_6_lane_change_ui_trigger_frames = 0
+    self._ioniq_6_lane_change_ui_frames = 0
     self._ioniq_6_long_tuning = Ioniq6LongitudinalTuningState()
     self._genesis_g90_long_tuning = GenesisG90LongitudinalTuningState()
     self._dash_lat_disengage_blink_frame = 0
@@ -504,27 +503,26 @@ class CarController(CarControllerBase):
     if lka_steering and self.CP.flags & HyundaiFlags.ENABLE_BLINKERS:
       can_sends.extend(hyundaicanfd.create_spas_messages(self.packer, self.CAN, CC.leftBlinker, CC.rightBlinker))
 
+    lane_change_ui_side = None
     if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
-      lane_change_ui_side = None
       if CC.leftBlinker and not CC.rightBlinker:
         lane_change_ui_side = "left"
       elif CC.rightBlinker and not CC.leftBlinker:
         lane_change_ui_side = "right"
-      stock_blinker_stalks_live = now_nanos - CS.stock_blinker_stalks_ts <= CANFD_BLINKER_STALKS_STALE_NS
 
       if lane_change_ui_side != self._ioniq_6_lane_change_ui_side:
         self._ioniq_6_lane_change_ui_side = lane_change_ui_side
-        self._ioniq_6_lane_change_ui_trigger_frames = 6 if lane_change_ui_side is not None else 0
+        self._ioniq_6_lane_change_ui_frames = 0
 
-      if stock_blinker_stalks_live:
-        self._ioniq_6_lane_change_ui_trigger_frames = 0
-
-      if lane_change_ui_side is not None and not stock_blinker_stalks_live:
-        trigger = self._ioniq_6_lane_change_ui_trigger_frames > 0
-        can_sends.extend(hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(self.CAN, self.frame,
-                                                                                   lane_change_ui_side, trigger))
-        if self._ioniq_6_lane_change_ui_trigger_frames > 0:
-          self._ioniq_6_lane_change_ui_trigger_frames -= 1
+      if lane_change_ui_side is None or not self.long_active_ecu:
+        self._ioniq_6_lane_change_ui_frames = 0
+      else:
+        # The stock Ioniq 6 lane-change animation stops when the ADAS ECU is disabled,
+        # so replay the captured ECAN cluster frames ourselves while OP long is active.
+        can_sends.extend(hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(self.CAN,
+                                                                                   self._ioniq_6_lane_change_ui_frames,
+                                                                                   lane_change_ui_side))
+        self._ioniq_6_lane_change_ui_frames += 1
 
     if self.long_active_ecu:
       if lka_steering:
@@ -542,7 +540,7 @@ class CarController(CarControllerBase):
                                                                          CS.right_blindspot_from_radar,
                                                                          CC.leftBlinker,
                                                                          CC.rightBlinker))
-      if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
+      if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and lane_change_ui_side is None:
         can_sends.extend(hyundaicanfd.create_ioniq_6_cluster_blindspot_messages(self.CAN, self.frame,
                                                                                  CS.left_blindspot_from_radar,
                                                                                  CS.right_blindspot_from_radar,

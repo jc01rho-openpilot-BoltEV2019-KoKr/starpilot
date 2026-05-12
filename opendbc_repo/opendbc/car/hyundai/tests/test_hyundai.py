@@ -907,26 +907,48 @@ class TestHyundaiFingerprint:
     both_msgs = hyundaicanfd.create_ioniq_6_cluster_blindspot_messages(can_bus, 0, True, True)
     assert both_msgs == []
 
-  def test_ioniq_6_cluster_lane_change_helper_uses_stock_trigger_and_hold(self):
+  def test_ioniq_6_cluster_lane_change_helper_replays_stock_animation_family(self):
     CP = CarParams.new_message()
     CP.carFingerprint = CAR.HYUNDAI_IONIQ_6
     CP.flags = int(HyundaiFlags.CANFD | HyundaiFlags.CANFD_LKA_STEERING)
 
     can_bus = CanBus(CP)
 
-    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 7, "right") == []
-    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 0, "right", trigger=True) == [
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 1, "right") == []
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 0, "right") == [
       (0x3C1, bytes.fromhex("e910300041000000"), can_bus.ECAN),
     ]
-    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 20, "right") == [
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 4, "right") == [
+      (0x3C1, bytes.fromhex("e910300041000000"), can_bus.ECAN),
+      (0x3B5, bytes.fromhex("9f687600000000464600000000000000d7020000000069070000000000000000"), can_bus.ECAN),
+    ]
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 7, "right") == [
       (0x3C1, bytes.fromhex("ab20300001000000"), can_bus.ECAN),
     ]
-    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 0, "left", trigger=True) == [
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 24, "right") == [
+      (0x3B5, bytes.fromhex("d9317700000000464600000000000000d7020000000069070000000000000000"), can_bus.ECAN),
+    ]
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 30, "right") == [
+      (0x31A, bytes.fromhex("eb4518f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"), can_bus.ECAN),
+    ]
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 34, "right") == [
+      (0x3C1, bytes.fromhex("ab20300001000000"), can_bus.ECAN),
+    ]
+
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 0, "left") == [
       (0x3C1, bytes.fromhex("3d40304010000000"), can_bus.ECAN),
     ]
-    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 20, "left") == [
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 4, "left") == [
+      (0x3C1, bytes.fromhex("3d40304010000000"), can_bus.ECAN),
+      (0x3B5, bytes.fromhex("e682c600000000464600000000000000da020000000069070000000000000000"), can_bus.ECAN),
+    ]
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 7, "left") == [
       (0x3C1, bytes.fromhex("3e50300000000000"), can_bus.ECAN),
     ]
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 30, "left") == [
+      (0x31A, bytes.fromhex("851828f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"), can_bus.ECAN),
+    ]
+    assert hyundaicanfd.create_ioniq_6_cluster_lane_change_messages(can_bus, 5, "none") == []
 
   def test_sportage_angle_jerk_override_is_scoped(self):
     sportage = CarParams.new_message()
