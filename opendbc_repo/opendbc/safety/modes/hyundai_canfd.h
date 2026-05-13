@@ -77,7 +77,7 @@ static uint32_t hyundai_canfd_get_checksum(const CANPacket_t *msg) {
 }
 
 static void hyundai_canfd_rx_all_hook(const CANPacket_t *msg) {
-  UNUSED(msg);
+  SAFETY_UNUSED(msg);
 }
 
 static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {

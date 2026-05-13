@@ -6,6 +6,7 @@ from opendbc.car.structs import CarParams
 from opendbc.car import gen_empty_fingerprint
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.carcontroller import (
+  CarController,
   get_civic_bosch_modified_steering_pressed,
   get_civic_bosch_modified_torque_lpf_tau,
   get_honda_bosch_wind_brake_mps2,
@@ -13,9 +14,14 @@ from opendbc.car.honda.carcontroller import (
 )
 from opendbc.car.honda.hondacan import create_lkas_hud
 from opendbc.car.honda.fingerprints import FW_VERSIONS
-from opendbc.car.honda.values import CAR, HONDA_BOSCH, HONDA_BOSCH_TJA_CONTROL, HondaFlags
+from opendbc.car.honda.values import CAR, DBC, HONDA_BOSCH, HONDA_BOSCH_TJA_CONTROL, CarControllerParams, HondaFlags, HondaSafetyFlags, \
+                                     HondaStarPilotFlags
 
 HONDA_FW_VERSION_RE = rb"[A-Z0-9]{5}-[A-Z0-9]{3}(-|,)[A-Z0-9]{4}(\x00){2}$"
+
+
+def get_test_toggles() -> SimpleNamespace:
+  return SimpleNamespace(always_on_lateral_lkas=False, force_torque_controller=False, nnff=False, nnff_lite=False)
 
 
 class TestHondaFingerprint:
@@ -178,3 +184,54 @@ class TestHondaFingerprint:
     torque_cp = CarInterface.get_params(CAR.HONDA_CLARITY, gen_empty_fingerprint(), car_fw, False, False, False, torque_toggles)
 
     assert torque_cp.lateralTuning.which() == "torque"
+
+  def test_canfd_bosch_alpha_long_is_available(self):
+    toggles = get_test_toggles()
+
+    CP = CarInterface.get_params(CAR.HONDA_PILOT_4G, gen_empty_fingerprint(), [], True, False, False, toggles)
+
+    assert CP.alphaLongitudinalAvailable
+    assert CP.openpilotLongitudinalControl
+    assert CP.safetyConfigs[-1].safetyParam & HondaSafetyFlags.BOSCH_CANFD
+    assert CP.safetyConfigs[-1].safetyParam & HondaSafetyFlags.BOSCH_LONG
+
+  def test_nidec_pedal_detection_enables_interceptor_path(self):
+    toggles = get_test_toggles()
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[0][0x201] = 6
+
+    CP = CarInterface.get_params(CAR.HONDA_CIVIC, fingerprint, [], False, False, False, toggles)
+    accel_limits = CarInterface.get_pid_accel_limits(CP, current_speed=5.0, cruise_speed=12.0)
+
+    assert CP.enableGasInterceptorDEPRECATED
+    assert not CP.pcmCruise
+    assert accel_limits == (CarControllerParams.NIDEC_ACCEL_MIN, CarControllerParams.NIDEC_ACCEL_MAX)
+
+  def test_honda_camera_message_flag_uses_fingerprint_detection(self):
+    toggles = get_test_toggles()
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[0][0x35E] = 8
+
+    CP = CarInterface.get_params(CAR.HONDA_ACCORD, fingerprint, [], True, False, False, toggles)
+    FPCP = CarInterface.get_starpilot_params(CAR.HONDA_ACCORD, fingerprint, [], CP, toggles)
+
+    assert FPCP.flags & HondaStarPilotFlags.HAS_CAMERA_MESSAGES
+
+  def test_honda_live_learning_params_reload(self, monkeypatch):
+    toggles = get_test_toggles()
+
+    class FakeParams:
+      def get_float(self, key, block=False, return_default=False, default=0.0):
+        if key == "HondaGasFactorParams":
+          return 1.25
+        if key == "HondaWindFactorParams":
+          return 0.85
+        return default
+
+    monkeypatch.setattr("opendbc.car.honda.carcontroller.Params", lambda: FakeParams())
+
+    CP = CarInterface.get_params(CAR.HONDA_ACCORD, gen_empty_fingerprint(), [], True, False, False, toggles)
+    controller = CarController(DBC[CP.carFingerprint], CP)
+
+    assert controller.bosch_gas_factor == pytest.approx(1.25)
+    assert controller.bosch_wind_factor == pytest.approx(0.85)

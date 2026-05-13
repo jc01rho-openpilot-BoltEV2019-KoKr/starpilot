@@ -2,7 +2,8 @@ import math
 import numpy as np
 
 from opendbc.can import CANPacker
-from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
+from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, create_gas_interceptor_command, rate_limit, make_tester_present_msg, structs
+from opendbc.car.common.pid import PIDController
 from opendbc.car.honda import hondacan
 from opendbc.car.honda.values import (
   CAR,
@@ -16,6 +17,7 @@ from opendbc.car.honda.values import (
   HondaFlags,
 )
 from opendbc.car.interfaces import CarControllerBase
+from openpilot.common.params import Params
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -206,6 +208,7 @@ class CarController(CarControllerBase):
     super().__init__(dbc_names, CP)
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.params = CarControllerParams(CP)
+    self.param_store = Params()
     self.CAN = hondacan.CanBus(CP)
     self.tja_control = CP.carFingerprint in HONDA_BOSCH_TJA_CONTROL
 
@@ -225,10 +228,15 @@ class CarController(CarControllerBase):
     self.prev_torque_cmd = 0.0
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_robust_prev = False
-    self.bosch_gas_factor = 1.0
-    self.bosch_wind_factor = 1.0
-    self.bosch_wind_factor_before_brake = 0.0
+    self.bosch_last_gas = 0.0
+    self.bosch_gas_factor = self.param_store.get_float("HondaGasFactorParams", default=1.0)
+    self.bosch_wind_factor = self.param_store.get_float("HondaWindFactorParams", default=1.0)
+    self.bosch_wind_factor_before_brake = self.bosch_wind_factor
+    self.bosch_gas_factor_before_gasmax = self.bosch_gas_factor
+    self.bosch_wind_factor_before_gasmax = self.bosch_wind_factor
     self.pitch = 0.0
+    self.brake_pid = PIDController(k_p=([0.0], [0.0]), k_i=([0.0], [0.5]), pos_limit=0.0, neg_limit=-2.0, rate=50)
+    self.brake_pid.reset()
 
   def _modified_civic_standard_active(self) -> bool:
     return self.CP.carFingerprint == CAR.HONDA_CIVIC_BOSCH and bool(self.CP.flags & HondaFlags.EPS_MODIFIED)
@@ -249,6 +257,7 @@ class CarController(CarControllerBase):
     hud_control = CC.hudControl
     hud_v_cruise = hud_control.setSpeed / CS.v_cruise_factor if hud_control.speedVisible else 255
     pcm_cancel_cmd = CC.cruiseControl.cancel
+    gas_interceptor_command = 0.0
     if len(CC.orientationNED) == 3:
       self.pitch = CC.orientationNED[1]
     hill_brake = math.sin(self.pitch) * ACCELERATION_DUE_TO_GRAVITY
@@ -305,20 +314,21 @@ class CarController(CarControllerBase):
     # tester present - w/ no response (keeps radar disabled)
     if self.CP.carFingerprint in (HONDA_BOSCH - HONDA_BOSCH_RADARLESS) and self.CP.openpilotLongitudinalControl:
       if self.frame % 10 == 0:
-        can_sends.append(make_tester_present_msg(0x18DAB0F1, 1, suppress_response=True))
+        can_sends.append(make_tester_present_msg(0x18DAB0F1, self.CAN.pt, suppress_response=True))
 
     # Send steering command.
     can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, CC.latActive, self.tja_control))
 
     # wind brake from air resistance decel at high speed
-    wind_brake = np.interp(CS.out.vEgo, [0.0, 2.3, 35.0], [0.001, 0.002, 0.15])
+    wind_brake = float(np.interp(CS.out.vEgo, [0.0, 2.3, 35.0], [0.001, 0.002, 0.15]))
+    wind_brake_mps2 = get_honda_bosch_wind_brake_mps2(CS.out.vEgo)
     # all of this is only relevant for HONDA NIDEC
     max_accel = np.interp(CS.out.vEgo, self.params.NIDEC_MAX_ACCEL_BP, self.params.NIDEC_MAX_ACCEL_V)
     # TODO this 1.44 is just to maintain previous behavior
     pcm_speed_BP = [-wind_brake, -wind_brake * (3 / 4), 0.0, 0.5]
     # The Honda ODYSSEY seems to have different PCM_ACCEL
     # msgs, is it other cars too?
-    if not CC.longActive:
+    if self.CP.enableGasInterceptorDEPRECATED or not CC.longActive:
       pcm_speed = 0.0
       pcm_accel = int(0.0)
     elif self.CP.carFingerprint in HONDA_NIDEC_ALT_PCM_ACCEL:
@@ -345,27 +355,54 @@ class CarController(CarControllerBase):
         ts = self.frame * DT_CTRL
 
         if self.CP.carFingerprint in HONDA_BOSCH:
-          self.accel = float(np.clip(accel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX))
-          gas_pedal_force = self.accel
+          if accel < 0.0 and CS.out.vEgo > 1e-3:
+            brake_addon = self.brake_pid.update(error=accel - CS.out.aEgo, speed=CS.out.vEgo)
+            target_accel = min(accel, accel + brake_addon)
+          else:
+            self.brake_pid.reset()
+            target_accel = accel
+
+          self.accel = float(np.clip(target_accel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX))
+          gas_pedal_force = self.accel + hill_brake
+
           if self.CP.carFingerprint not in HONDA_BOSCH_RADARLESS:
-            wind_brake_mps2 = get_honda_bosch_wind_brake_mps2(CS.out.vEgo)
-            if (actuators.longControlState == LongCtrlState.pid) and (not CS.out.gasPressed):
-              gas_pedal_force += wind_brake_mps2 * self.bosch_wind_factor + hill_brake
-              self.bosch_gas_factor, self.bosch_wind_factor, self.bosch_wind_factor_before_brake = update_honda_bosch_live_learning(
-                self.bosch_gas_factor,
-                self.bosch_wind_factor,
-                self.bosch_wind_factor_before_brake,
-                self.accel,
-                CS.out.aEgo,
-                gas_pedal_force,
-                wind_brake_mps2,
-                bool(CS.out.brakePressed),
-                CS.out.vEgo,
-              )
-            else:
-              gas_pedal_force += wind_brake_mps2 + hill_brake
+            gas_pedal_force += wind_brake_mps2 * self.bosch_wind_factor
+
+            if actuators.longControlState == LongCtrlState.pid and not CS.out.gasPressed:
+              gas_error = self.accel - CS.out.aEgo
+
+              if gas_error != 0.0 and gas_pedal_force > 0.0:
+                if self.CP.carFingerprint == CAR.HONDA_INSIGHT:
+                  gas_learn_speed = 150.0
+                elif self.CP.carFingerprint in (CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR):
+                  gas_learn_speed = 300.0
+                else:
+                  gas_learn_speed = 50.0
+                self.bosch_gas_factor = float(np.clip(self.bosch_gas_factor + gas_error / gas_learn_speed * gas_pedal_force, 0.1, 3.0))
+
+              if gas_error != 0.0 and not CS.out.brakePressed and CS.out.vEgo > 0.0:
+                wind_learn_speed = 100.0 if self.CP.carFingerprint in (CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR) else 1000.0
+                wind_adjust = 1.0 + wind_brake_mps2 / wind_learn_speed
+                if gas_error > 0.0:
+                  self.bosch_wind_factor = float(np.clip(self.bosch_wind_factor * wind_adjust, 0.1, 3.0))
+                else:
+                  self.bosch_wind_factor = float(np.clip(self.bosch_wind_factor / wind_adjust, 0.1, 3.0))
+
+              if gas_pedal_force <= 0.0:
+                self.bosch_wind_factor = max(self.bosch_wind_factor, self.bosch_wind_factor_before_brake)
+              else:
+                self.bosch_wind_factor_before_brake = self.bosch_wind_factor
+
+              if gas_pedal_force >= self.params.BOSCH_ACCEL_MAX:
+                self.bosch_gas_factor = min(self.bosch_gas_factor, self.bosch_gas_factor_before_gasmax)
+                self.bosch_wind_factor = min(self.bosch_wind_factor, self.bosch_wind_factor_before_gasmax)
+              else:
+                self.bosch_gas_factor_before_gasmax = self.bosch_gas_factor
+                self.bosch_wind_factor_before_gasmax = self.bosch_wind_factor
 
           self.gas = float(np.interp(gas_pedal_force * self.bosch_gas_factor, self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V))
+          self.gas = min(self.gas, max(60.0, self.bosch_last_gas + 60.0))
+          self.bosch_last_gas = self.gas
 
           stopping = actuators.longControlState == LongCtrlState.stopping
           self.stopping_counter = self.stopping_counter + 1 if stopping else 0
@@ -385,6 +422,33 @@ class CarController(CarControllerBase):
           )
           self.apply_brake_last = apply_brake
           self.brake = apply_brake / self.params.NIDEC_BRAKE_MAX
+
+          if self.CP.enableGasInterceptorDEPRECATED:
+            gas_error = actuators.accel - CS.out.aEgo
+
+            if not CS.out.gasPressed and actuators.longControlState == LongCtrlState.pid:
+              if gas_error != 0.0 and gas > 0.0:
+                self.bosch_gas_factor = float(np.clip(self.bosch_gas_factor + gas_error / 150.0 * (gas * 4.8), 0.1, 3.0))
+              if gas_error != 0.0 and not CS.out.brakePressed and CS.out.vEgo > 0.0:
+                wind_adjust = 1.0 + (wind_brake * 4.8) / 1000.0
+                if gas_error > 0.0:
+                  self.bosch_wind_factor = float(np.clip(self.bosch_wind_factor * wind_adjust, 0.1, 5.0))
+                else:
+                  self.bosch_wind_factor = float(np.clip(self.bosch_wind_factor / wind_adjust, 0.1, 5.0))
+              if gas <= 0.0:
+                self.bosch_wind_factor = max(self.bosch_wind_factor, self.bosch_wind_factor_before_brake)
+              else:
+                self.bosch_wind_factor_before_brake = self.bosch_wind_factor
+
+            gas_mult = float(np.interp(CS.out.vEgo, [0.0, 10.0], [0.4, 1.0]))
+            if CC.longActive:
+              gas_interceptor_command = float(np.clip(
+                gas_mult * ((gas * self.bosch_gas_factor) - brake + (wind_brake * self.bosch_wind_factor * 3.0 / 4.0)),
+                0.0,
+                1.0,
+              ))
+            idx = (self.frame // 2) % 0x10
+            can_sends.append(create_gas_interceptor_command(self.packer, gas_interceptor_command, idx))
 
     # Send dashboard UI commands.
     if self.frame % 10 == 0:
@@ -410,7 +474,14 @@ class CarController(CarControllerBase):
           can_sends.append(hondacan.create_legacy_brake_command(self.packer, self.CAN.pt))
         if self.CP.carFingerprint not in HONDA_BOSCH:
           self.speed = pcm_speed
-          self.gas = pcm_accel / self.params.NIDEC_GAS_MAX
+          if self.CP.enableGasInterceptorDEPRECATED:
+            self.gas = gas_interceptor_command
+          else:
+            self.gas = pcm_accel / self.params.NIDEC_GAS_MAX
+
+    if self.frame > 0 and self.frame % 6000 == 0:
+      self.param_store.put_float("HondaGasFactorParams", self.bosch_gas_factor)
+      self.param_store.put_float("HondaWindFactorParams", self.bosch_wind_factor)
 
     new_actuators = actuators.as_builder()
     new_actuators.speed = self.speed
