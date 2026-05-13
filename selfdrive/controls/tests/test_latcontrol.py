@@ -20,6 +20,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   get_civic_bosch_modified_pid_output_scale,
 )
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
+  get_civic_bosch_modified_a_center_taper_scale,
   LatControlTorque,
   get_civic_bosch_modified_b_ff_scale,
   get_civic_bosch_modified_b_friction_scale,
@@ -587,6 +588,10 @@ class TestLatControl:
     assert a_variant_unwind_left < base_unwind_left
     assert a_variant_unwind_right < base_unwind_right
     assert a_variant_unwind_right_friction < base_unwind_right_friction
+
+  def test_modified_civic_a_variant_center_taper_curve(self):
+    assert get_civic_bosch_modified_a_center_taper_scale(0.0, 25.0) < get_civic_bosch_modified_a_center_taper_scale(0.0, 10.0)
+    assert get_civic_bosch_modified_a_center_taper_scale(0.0, 25.0) < get_civic_bosch_modified_a_center_taper_scale(0.35, 25.0) <= 1.0
 
   def test_kia_ev6_testing_ground_update_path(self, monkeypatch):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_EV6)

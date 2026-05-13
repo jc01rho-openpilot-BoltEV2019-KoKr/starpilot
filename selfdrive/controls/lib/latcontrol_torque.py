@@ -76,6 +76,11 @@ CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_FRICTION_BOOST_LEFT = 0.00
 CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_FRICTION_BOOST_RIGHT = 0.00
 CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_FRICTION_REDUCTION_LEFT = 0.03
 CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_FRICTION_REDUCTION_RIGHT = 0.07
+CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_MAX = 0.12
+CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_LAT = 0.24
+CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_LAT_WIDTH = 0.05
+CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_SPEED = 18.0
+CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_SPEED_WIDTH = 2.5
 CIVIC_BOSCH_MODIFIED_B_VARIANT_FF_REDUCTION_LEFT = 0.50
 CIVIC_BOSCH_MODIFIED_B_VARIANT_FF_REDUCTION_RIGHT = 0.82
 CIVIC_BOSCH_MODIFIED_B_VARIANT_TURN_IN_BOOST_LEFT = 0.00
@@ -431,6 +436,15 @@ def civic_bosch_modified_lateral_testing_ground_active() -> bool:
 
 def civic_bosch_modified_a_lateral_testing_ground_active() -> bool:
   return testing_ground.use("8", "A")
+
+
+def get_civic_bosch_modified_a_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _sigmoid((v_ego - CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_SPEED) /
+                          CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _sigmoid((CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                           CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_LAT_WIDTH)
+  reduction = CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_MAX * speed_weight * center_weight
+  return 1.0 - reduction
 
 
 def _civic_bosch_modified_b_low_speed_factor(v_ego: float) -> float:
@@ -1450,6 +1464,9 @@ class LatControlTorque(LatControl):
       volt_standard_center_taper = get_volt_standard_center_taper_scale(setpoint, CS.vEgo) if volt_standard_test_active else 1.0
       ioniq_6_center_taper = get_ioniq_6_center_taper_scale(setpoint, CS.vEgo) if ioniq_6_active else 1.0
       sonata_hybrid_center_taper = get_sonata_hybrid_center_taper_scale(setpoint, CS.vEgo) if sonata_hybrid_active else 1.0
+      civic_bosch_modified_a_center_taper = get_civic_bosch_modified_a_center_taper_scale(setpoint, CS.vEgo) if (
+        self.is_civic_bosch_modified and civic_bosch_modified_a_lateral_testing_ground_active()
+      ) else 1.0
       friction_threshold = get_friction_threshold(CS.vEgo)
       friction_scale = 1.0
       if bolt_2022_2023_tuned_path_active:
@@ -1488,9 +1505,10 @@ class LatControlTorque(LatControl):
         friction_threshold = get_volt_plexy_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = get_volt_plexy_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
       elif self.is_civic_bosch_modified:
-        ff *= get_civic_bosch_modified_b_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+        ff *= get_civic_bosch_modified_b_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * civic_bosch_modified_a_center_taper
         friction_threshold = CIVIC_BOSCH_MODIFIED_B_FIXED_FRICTION_THRESHOLD
         friction_scale = get_civic_bosch_modified_b_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
+        friction_scale = 1.0 + ((friction_scale - 1.0) * civic_bosch_modified_a_center_taper)
       ff += friction_scale * get_friction(error_with_lsf + JERK_GAIN * desired_lateral_jerk, lateral_accel_deadzone, friction_threshold, self.torque_params)
       deadzone_boost_active = False
       if self.torque_deadzone_boost > 0.0 and abs(gravity_adjusted_future_lateral_accel) < DEADZONE_BOOST_LAT_ACCEL:
@@ -1510,6 +1528,8 @@ class LatControlTorque(LatControl):
         output_torque *= get_bolt_2018_2021_dynamic_torque_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif volt_standard_test_active:
         output_torque *= volt_standard_center_taper
+      elif self.is_civic_bosch_modified and civic_bosch_modified_a_lateral_testing_ground_active():
+        output_torque *= civic_bosch_modified_a_center_taper
       pid_log.active = True
       pid_log.p = float(self.pid.p)
       pid_log.i = float(self.pid.i)
