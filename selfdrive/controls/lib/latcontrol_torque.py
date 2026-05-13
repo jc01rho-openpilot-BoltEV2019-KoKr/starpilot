@@ -334,6 +334,11 @@ IONIQ_6_CENTER_TAPER_LAT = 0.24
 IONIQ_6_CENTER_TAPER_LAT_WIDTH = 0.025
 IONIQ_6_CENTER_TAPER_SPEED = 18.0
 IONIQ_6_CENTER_TAPER_SPEED_WIDTH = 2.5
+IONIQ_6_HIGHWAY_CENTER_TAPER_MAX = 0.022
+IONIQ_6_HIGHWAY_CENTER_TAPER_LAT = 0.14
+IONIQ_6_HIGHWAY_CENTER_TAPER_LAT_WIDTH = 0.03
+IONIQ_6_HIGHWAY_CENTER_TAPER_SPEED = 26.0
+IONIQ_6_HIGHWAY_CENTER_TAPER_SPEED_WIDTH = 1.8
 IONIQ_6_LOW_MID_CENTER_TAPER_MAX = 0.088
 IONIQ_6_LOW_MID_CENTER_TAPER_LAT = 0.28
 IONIQ_6_LOW_MID_CENTER_TAPER_LAT_WIDTH = 0.06
@@ -1128,6 +1133,11 @@ def get_ioniq_6_center_taper_scale(desired_lateral_accel: float, v_ego: float) -
   center_weight = _ioniq_6_sigmoid((IONIQ_6_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / IONIQ_6_CENTER_TAPER_LAT_WIDTH)
   high_speed_reduction = IONIQ_6_CENTER_TAPER_MAX * speed_weight * center_weight
 
+  highway_speed_weight = _ioniq_6_sigmoid((v_ego - IONIQ_6_HIGHWAY_CENTER_TAPER_SPEED) / IONIQ_6_HIGHWAY_CENTER_TAPER_SPEED_WIDTH)
+  highway_center_weight = _ioniq_6_sigmoid((IONIQ_6_HIGHWAY_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                                           IONIQ_6_HIGHWAY_CENTER_TAPER_LAT_WIDTH)
+  highway_center_reduction = IONIQ_6_HIGHWAY_CENTER_TAPER_MAX * highway_speed_weight * highway_center_weight
+
   low_mid_onset = _ioniq_6_sigmoid((v_ego - IONIQ_6_LOW_MID_CENTER_TAPER_SPEED_MIN) / IONIQ_6_LOW_MID_CENTER_TAPER_SPEED_WIDTH)
   low_mid_cutoff = _ioniq_6_sigmoid((IONIQ_6_LOW_MID_CENTER_TAPER_SPEED_MAX - v_ego) / IONIQ_6_LOW_MID_CENTER_TAPER_SPEED_WIDTH)
   low_mid_speed_weight = low_mid_onset * low_mid_cutoff
@@ -1135,7 +1145,7 @@ def get_ioniq_6_center_taper_scale(desired_lateral_accel: float, v_ego: float) -
                                            IONIQ_6_LOW_MID_CENTER_TAPER_LAT_WIDTH)
   low_mid_reduction = IONIQ_6_LOW_MID_CENTER_TAPER_MAX * low_mid_speed_weight * low_mid_center_weight
 
-  return 1.0 - min(high_speed_reduction + low_mid_reduction, 0.12)
+  return 1.0 - min(high_speed_reduction + highway_center_reduction + low_mid_reduction, 0.12)
 
 
 def get_ioniq_6_directional_taper_scale(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
