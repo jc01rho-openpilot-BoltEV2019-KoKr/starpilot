@@ -181,6 +181,7 @@ def test_stop_light_hold_bridges_short_no_lead_model_flicker(monkeypatch):
 
   run_stop_light_detector(cem, v_ego, steps=20)
   assert cem.stop_light_detected
+  cem.stop_light_detected_hold_until = 11.75
 
   monotonic_values = iter([10.0, 11.0, 14.5, 16.5, 18.5])
   monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", lambda: next(monotonic_values))
@@ -231,6 +232,73 @@ def test_stop_light_hold_refreshes_through_stopped_approach_lead(monkeypatch):
   assert cem.stop_light_detected
 
   cem.starpilot_planner.lead_one.vLead = 6.0
+  cem.stop_sign_and_light(v_ego, make_sm(), model_time=7.0)
+  assert not cem.stop_light_detected
+
+
+def test_stop_light_approach_latch_clears_once_tracked_lead_takes_over(monkeypatch):
+  v_ego = 20 * CV.MPH_TO_MS
+  model_length = v_ego * 4.0
+  cem = make_cem(
+    model_length=model_length,
+    lead_status=True,
+    lead_d_rel=model_length - 5.0,
+    lead_v_lead=0.5,
+    lead_model_prob=0.98,
+  )
+
+  run_stop_light_detector(cem, v_ego, steps=20)
+  assert cem.stop_light_detected
+
+  monotonic_values = iter([20.0, 20.2])
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", lambda: next(monotonic_values))
+
+  cem.starpilot_planner.model_length = v_ego * 9.0
+  cem.stop_light_detected = False
+  cem.stop_light_model_detected = False
+  cem.stop_light_filter.x = 0.0
+
+  cem.stop_sign_and_light(v_ego, make_sm(), model_time=7.0)
+  assert cem.stop_light_detected
+
+  cem.starpilot_planner.tracking_lead = True
+  cem.stop_sign_and_light(v_ego, make_sm(), model_time=7.0)
+  assert not cem.stop_light_detected
+
+
+def test_stopped_lead_handoff_does_not_hold_cem_on_empty_road(monkeypatch):
+  v_ego = 40 * CV.MPH_TO_MS
+  cem = make_cem(
+    model_length=v_ego * 9.0,
+    tracking_lead=False,
+    lead_status=False,
+  )
+  cem.stop_light_detected = True
+  cem.stop_light_model_detected = False
+  cem.stop_light_filter.x = 0.0
+  cem.stop_approach_hold_until = 11.0
+  cem.stop_light_detected_hold_until = 0.0
+
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", lambda: 10.2)
+
+  cem.stop_sign_and_light(v_ego, make_sm(), model_time=7.0)
+
+  assert not cem.stop_light_detected
+
+
+def test_borderline_empty_road_model_dip_does_not_refresh_long_hold(monkeypatch):
+  v_ego = 20 * CV.MPH_TO_MS
+  stop_threshold = v_ego * 7.0
+  cem = make_cem(model_length=stop_threshold - 4.0)
+  cem.stop_light_filter.x = conditional_experimental_mode_module.THRESHOLD ** 2
+
+  monotonic_values = iter([10.0, 10.2])
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", lambda: next(monotonic_values))
+
+  cem.stop_sign_and_light(v_ego, make_sm(), model_time=7.0)
+  assert cem.stop_light_detected_hold_until == 0.0
+
+  cem.starpilot_planner.model_length = stop_threshold + 20.0
   cem.stop_sign_and_light(v_ego, make_sm(), model_time=7.0)
   assert not cem.stop_light_detected
 

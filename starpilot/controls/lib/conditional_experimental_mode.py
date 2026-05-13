@@ -43,6 +43,7 @@ class ConditionalExperimentalMode:
   LEAD_CLEAR_FILTER_TIME_HIGH = 0.35
   STOP_LIGHT_ON_MARGIN = 2.5
   STOP_LIGHT_OFF_MARGIN = 4.0
+  STOP_LIGHT_MODEL_HOLD_STRONG_MARGIN = 10.0
   STOP_LIGHT_LEAD_BLOCK_MARGIN = 15.0
   STOP_LIGHT_HANDOFF_MAX_LEAD_SPEED = 2.0
   STOP_LIGHT_DETECTED_HOLD_TIME = 1.75
@@ -365,6 +366,7 @@ class ConditionalExperimentalMode:
       lead_speed = float(getattr(lead, "vLead", float("inf")))
       lead_radar = bool(getattr(lead, "radar", False))
       lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
+      tracking_lead = bool(self.starpilot_planner.tracking_lead)
       lead_relevant = bool(getattr(lead, "status", False)) and lead_distance < stop_threshold + self.STOP_LIGHT_LEAD_BLOCK_MARGIN
       vision_stop_approach = (
         lead_relevant and
@@ -373,12 +375,13 @@ class ConditionalExperimentalMode:
         lead_speed < self.STOP_APPROACH_MAX_LEAD_SPEED
       )
       stop_approach_hold_active = now < self.stop_approach_hold_until
-      if (self.stop_light_detected or self.stop_light_model_detected or stop_approach_hold_active) and vision_stop_approach:
+      trackable_stop_approach = vision_stop_approach and not tracking_lead
+      if (self.stop_light_detected or self.stop_light_model_detected or stop_approach_hold_active) and trackable_stop_approach:
         self.stop_approach_hold_until = now + self.STOP_APPROACH_LATCH_TIME
-      stop_approach_latched = now < self.stop_approach_hold_until and vision_stop_approach
+      stop_approach_latched = now < self.stop_approach_hold_until and trackable_stop_approach
       handoff_to_stopped_lead = (
         lead_relevant and
-        not self.starpilot_planner.tracking_lead and
+        not tracking_lead and
         (
           (self.stop_light_detected and lead_speed < self.STOP_LIGHT_HANDOFF_MAX_LEAD_SPEED) or
           stop_approach_latched
@@ -390,13 +393,16 @@ class ConditionalExperimentalMode:
         self.lead_clear_filter.update(not lead_relevant)
         lead_cleared = self.lead_clear_filter.x >= THRESHOLD
       self.stop_light_filter.update(model_stopping and lead_cleared)
-      detector_active = bool(
-        (self.stop_light_filter.x >= THRESHOLD**2 and lead_cleared) or handoff_to_stopped_lead or stop_approach_latched
+      model_detector_active = bool(self.stop_light_filter.x >= THRESHOLD**2 and lead_cleared)
+      detector_active = bool(model_detector_active or handoff_to_stopped_lead or stop_approach_latched)
+      model_hold_qualifies = bool(
+        self.starpilot_planner.model_stopped or
+        self.starpilot_planner.model_length < max(stop_threshold - self.STOP_LIGHT_MODEL_HOLD_STRONG_MARGIN, 0.0)
       )
-      if detector_active:
+      if model_detector_active and model_hold_qualifies:
         self.stop_light_detected_hold_until = now + self.STOP_LIGHT_DETECTED_HOLD_TIME
 
-      hold_context_ok = bool(not lead_relevant or vision_stop_approach)
+      hold_context_ok = bool((not lead_relevant) or trackable_stop_approach)
       self.stop_light_detected = bool(
         detector_active or
         (hold_context_ok and now < self.stop_light_detected_hold_until)

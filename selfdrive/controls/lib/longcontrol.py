@@ -12,7 +12,7 @@ CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 clip = np.clip
 interp = np.interp
 STOPPING_RELEASE_HYSTERESIS = 0.35
-STOPPING_RELEASE_MIN_ACCEL = 0.2
+STOPPING_RELEASE_MIN_ACCEL = 0.15
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
