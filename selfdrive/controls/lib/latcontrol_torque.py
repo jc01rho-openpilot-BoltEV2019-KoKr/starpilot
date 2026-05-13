@@ -229,16 +229,28 @@ VOLT_STANDARD_CENTER_TAPER_SPEED = 20.0
 VOLT_STANDARD_CENTER_TAPER_SPEED_WIDTH = 2.5
 
 SONATA_HYBRID_BASE_LAT_ACCEL_FACTOR_MULT = 1.04
-SONATA_HYBRID_FF_REDUCTION = 0.08
+SONATA_HYBRID_FF_REDUCTION_LEFT = 0.06
+SONATA_HYBRID_FF_REDUCTION_RIGHT = 0.14
 SONATA_HYBRID_FF_ONSET = 0.22
 SONATA_HYBRID_FF_ONSET_WIDTH = 0.08
 SONATA_HYBRID_FF_CUTOFF = 1.15
 SONATA_HYBRID_FF_CUTOFF_WIDTH = 0.35
+SONATA_HYBRID_TRANSITION_SPEED = 8.0
+SONATA_HYBRID_PHASE_SCALE = 0.12
+SONATA_HYBRID_TURN_IN_BOOST_LEFT = 0.04
+SONATA_HYBRID_TURN_IN_BOOST_RIGHT = 0.00
+SONATA_HYBRID_UNWIND_TAPER_LEFT = 0.08
+SONATA_HYBRID_UNWIND_TAPER_RIGHT = 0.18
 SONATA_HYBRID_CENTER_TAPER_MAX = 0.05
 SONATA_HYBRID_CENTER_TAPER_LAT = 0.14
 SONATA_HYBRID_CENTER_TAPER_LAT_WIDTH = 0.025
 SONATA_HYBRID_CENTER_TAPER_SPEED = 22.0
 SONATA_HYBRID_CENTER_TAPER_SPEED_WIDTH = 2.5
+SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_MAX = 0.10
+SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_LAT = 0.09
+SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_LAT_WIDTH = 0.02
+SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_SPEED_MAX = 6.0
+SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_SPEED_WIDTH = 1.0
 
 GENESIS_G90_LATERAL_TESTING_GROUND_ID = testing_ground.id_4
 GENESIS_G90_FF_GAIN_LEFT = 0.20
@@ -836,21 +848,52 @@ def _sonata_hybrid_sigmoid(x: float) -> float:
   return _sigmoid(x)
 
 
+def _sonata_hybrid_low_speed_factor(v_ego: float) -> float:
+  return 1.0 / (1.0 + (max(v_ego, 0.0) / SONATA_HYBRID_TRANSITION_SPEED) ** 2)
+
+
+def _sonata_hybrid_transition_phase(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  return math.tanh((desired_lateral_accel * desired_lateral_jerk) / SONATA_HYBRID_PHASE_SCALE)
+
+
+def _sonata_hybrid_side_value(desired_lateral_accel: float, left_value: float, right_value: float) -> float:
+  return left_value if desired_lateral_accel >= 0.0 else right_value
+
+
 def get_sonata_hybrid_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
-  del desired_lateral_jerk, v_ego
   if desired_lateral_accel == 0.0:
     return 1.0
 
   abs_lateral_accel = abs(desired_lateral_accel)
   onset = _sonata_hybrid_sigmoid((abs_lateral_accel - SONATA_HYBRID_FF_ONSET) / SONATA_HYBRID_FF_ONSET_WIDTH)
   cutoff = _sonata_hybrid_sigmoid((SONATA_HYBRID_FF_CUTOFF - abs_lateral_accel) / SONATA_HYBRID_FF_CUTOFF_WIDTH)
-  return 1.0 - (SONATA_HYBRID_FF_REDUCTION * onset * cutoff)
+  base_reduction = _sonata_hybrid_side_value(desired_lateral_accel,
+                                             SONATA_HYBRID_FF_REDUCTION_LEFT,
+                                             SONATA_HYBRID_FF_REDUCTION_RIGHT) * onset * cutoff
+  phase = _sonata_hybrid_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  low_speed_factor = _sonata_hybrid_low_speed_factor(v_ego)
+  turn_in_boost = 1.0 + (_sonata_hybrid_side_value(desired_lateral_accel,
+                                                    SONATA_HYBRID_TURN_IN_BOOST_LEFT,
+                                                    SONATA_HYBRID_TURN_IN_BOOST_RIGHT) *
+                         turn_in_weight * low_speed_factor)
+  unwind_taper = 1.0 - (_sonata_hybrid_side_value(desired_lateral_accel,
+                                                   SONATA_HYBRID_UNWIND_TAPER_LEFT,
+                                                   SONATA_HYBRID_UNWIND_TAPER_RIGHT) *
+                        unwind_weight * (0.35 + 0.65 * low_speed_factor))
+  return (1.0 - base_reduction) * turn_in_boost * max(unwind_taper, 0.0)
 
 
 def get_sonata_hybrid_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
   speed_weight = _sonata_hybrid_sigmoid((v_ego - SONATA_HYBRID_CENTER_TAPER_SPEED) / SONATA_HYBRID_CENTER_TAPER_SPEED_WIDTH)
   center_weight = _sonata_hybrid_sigmoid((SONATA_HYBRID_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / SONATA_HYBRID_CENTER_TAPER_LAT_WIDTH)
   reduction = SONATA_HYBRID_CENTER_TAPER_MAX * speed_weight * center_weight
+  low_speed_weight = _sonata_hybrid_sigmoid((SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_SPEED_MAX - v_ego) /
+                                            SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_SPEED_WIDTH)
+  low_speed_center_weight = _sonata_hybrid_sigmoid((SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                                                   SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_LAT_WIDTH)
+  reduction += SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_MAX * low_speed_weight * low_speed_center_weight
   return 1.0 - reduction
 
 

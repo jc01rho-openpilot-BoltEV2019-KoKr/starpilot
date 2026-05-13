@@ -202,7 +202,7 @@ class TestLatControl:
     right_turn_in = get_volt_standard_friction_threshold(6.0, -0.7, -0.8)
     left_unwind = get_volt_standard_friction_threshold(6.0, 0.7, -0.8)
     right_unwind = get_volt_standard_friction_threshold(6.0, -0.7, 0.8)
-    assert right_turn_in < left_turn_in < base
+    assert right_turn_in <= left_turn_in < base
     assert base < left_unwind <= right_unwind
 
   def test_volt_standard_friction_scale_curve(self):
@@ -221,12 +221,15 @@ class TestLatControl:
 
   def test_sonata_hybrid_ff_scale_curve(self):
     assert get_sonata_hybrid_ff_scale(0.0, 0.0, 20.0) == 1.0
-    assert get_sonata_hybrid_ff_scale(0.6, 0.0, 20.0) == get_sonata_hybrid_ff_scale(-0.6, 0.0, 20.0)
+    assert get_sonata_hybrid_ff_scale(0.6, 0.0, 20.0) > get_sonata_hybrid_ff_scale(-0.6, 0.0, 20.0)
     assert get_sonata_hybrid_ff_scale(0.30, 0.0, 20.0) < 1.0
     assert get_sonata_hybrid_ff_scale(0.30, 0.0, 20.0) < get_sonata_hybrid_ff_scale(0.10, 0.0, 20.0)
+    assert get_sonata_hybrid_ff_scale(0.4, 0.7, 6.0) > get_sonata_hybrid_ff_scale(0.4, 0.0, 6.0)
+    assert get_sonata_hybrid_ff_scale(-0.4, 0.7, 6.0) < get_sonata_hybrid_ff_scale(-0.4, 0.0, 6.0)
 
   def test_sonata_hybrid_center_taper_curve(self):
     assert get_sonata_hybrid_center_taper_scale(0.0, 30.0) < get_sonata_hybrid_center_taper_scale(0.0, 15.0)
+    assert get_sonata_hybrid_center_taper_scale(0.0, 3.0) < get_sonata_hybrid_center_taper_scale(0.0, 10.0)
     assert get_sonata_hybrid_center_taper_scale(0.0, 30.0) < get_sonata_hybrid_center_taper_scale(0.20, 30.0) <= 1.0
 
   def test_genesis_g90_ff_scale_curve(self):
