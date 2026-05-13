@@ -950,6 +950,62 @@ def test_no_throttle_cap_stays_at_coast_limit_until_throttle_returns():
   assert planner.output_a_target == pytest.approx(accel_coast, abs=1e-3)
 
 
+def test_low_speed_follow_catchup_accel_cap_limits_close_vision_catchup():
+  v_ego = 7.8
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=18.4, v_lead=8.2, radar=False, model_prob=0.98)
+
+  cap = planner.get_lead_catchup_accel_cap(lead, v_ego, 1.45)
+
+  assert cap is not None
+  assert 0.15 <= cap <= 0.45
+
+
+def test_low_speed_follow_catchup_uses_raw_vehicle_speed_when_cluster_runs_high():
+  v_ego = 7.8
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.6,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=16.0, v_lead=8.4, radar=False, model_prob=0.99),
+  )
+  sm["carState"].vEgoCluster = 9.2
+  sm["starpilotPlan"].vCruise = v_ego + 4.0
+
+  for _ in range(6):
+    planner.update(sm, make_toggles())
+
+  assert planner.output_a_target <= 0.20
+
+
+def test_low_speed_follow_transition_brake_cap_softens_first_sign_flip():
+  v_ego = 7.7
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=18.6, v_lead=7.6, radar=False, model_prob=0.98)
+
+  cap = planner.get_low_speed_follow_transition_brake_cap(lead, v_ego, 1.45, 0.59, -0.24)
+
+  assert cap is not None
+  assert -0.14 <= cap <= -0.08
+
+
+def test_low_speed_follow_transition_brake_cap_stays_off_when_gap_is_tight():
+  v_ego = 7.7
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=13.0, v_lead=7.6, radar=False, model_prob=0.98)
+
+  cap = planner.get_low_speed_follow_transition_brake_cap(lead, v_ego, 1.45, 0.59, -0.24)
+
+  assert cap is None
+
+
 def test_far_near_speed_follow_keeps_uncertainty_smoothing_active():
   v_ego = 30.0
 
