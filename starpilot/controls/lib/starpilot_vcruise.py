@@ -111,10 +111,15 @@ class StarPilotVCruise:
     if dash_path:
       self.stop_sign_confirmed = True
 
+    raw_model_stopped = bool(getattr(self.starpilot_planner, "raw_model_stopped", False))
+
     # Timer ramp. Faster commitment when the dashboard confirms.
     if force_stop_active and not sm["carState"].standstill:
       rate = DT_MDL * 2 if dash_active else DT_MDL
       self.force_stop_timer = min(self.force_stop_timer + rate, 2.0)
+    elif (self.forcing_stop and sm["carState"].standstill and not dash_active and
+          not self.starpilot_planner.starpilot_cem.stop_light_detected and not raw_model_stopped):
+      self.force_stop_timer = 0.0
     else:
       self.force_stop_timer = max(self.force_stop_timer - DT_MDL * 0.25, 0.0)
 

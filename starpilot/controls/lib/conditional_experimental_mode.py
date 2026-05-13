@@ -239,7 +239,12 @@ class ConditionalExperimentalMode:
       return
 
     slower_lead = starpilot_toggles.conditional_slower_lead and self.starpilot_planner.starpilot_following.slower_lead
-    stopped_lead = starpilot_toggles.conditional_stopped_lead and lead_speed < 1
+    stopped_lead = bool(
+      starpilot_toggles.conditional_stopped_lead and
+      lead_status and
+      lead_speed < 1 and
+      lead_distance < max(40.0, v_ego * self.SLOW_LEAD_CONTINUITY_MAX_DISTANCE_TIME)
+    )
     vision_slow_lead_candidate = bool(
       lead_status and
       lead_prob >= self.SLOW_LEAD_CONTINUITY_MIN_MODEL_PROB and

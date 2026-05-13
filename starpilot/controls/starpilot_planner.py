@@ -54,6 +54,7 @@ class StarPilotPlanner:
     self.gps_valid = False
     self.lateral_check = False
     self.model_stopped = False
+    self.raw_model_stopped = False
     self.road_curvature_detected = False
     self.tracking_lead = False
     self._prev_gps_bearing = 0
@@ -127,8 +128,8 @@ class StarPilotPlanner:
 
     self.model_length = sm["modelV2"].position.x[-1]
 
-    self.model_stopped = self.model_length < CRUISING_SPEED * PLANNER_TIME
-    self.model_stopped |= self.starpilot_vcruise.forcing_stop
+    self.raw_model_stopped = self.model_length < CRUISING_SPEED * PLANNER_TIME
+    self.model_stopped = self.raw_model_stopped or self.starpilot_vcruise.forcing_stop
 
     self.road_curvature, self.time_to_curve = calculate_road_curvature(sm["modelV2"], v_ego)
 

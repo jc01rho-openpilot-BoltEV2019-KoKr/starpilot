@@ -286,6 +286,40 @@ def test_stopped_lead_handoff_does_not_hold_cem_on_empty_road(monkeypatch):
   assert not cem.stop_light_detected
 
 
+def test_stopped_lead_toggle_does_not_self_trigger_without_a_real_lead():
+  v_ego = 25 * CV.MPH_TO_MS
+  cem = make_cem(
+    model_length=v_ego * 6.0,
+    tracking_lead=False,
+    lead_status=False,
+    lead_v_lead=0.0,
+  )
+  toggles = SimpleNamespace(conditional_slower_lead=False, conditional_stopped_lead=True)
+
+  for _ in range(24):
+    cem.slow_lead(toggles, v_ego)
+
+  assert not cem.slow_lead_detected
+
+
+def test_stopped_lead_toggle_still_triggers_for_real_close_stopped_lead():
+  v_ego = 25 * CV.MPH_TO_MS
+  cem = make_cem(
+    model_length=v_ego * 4.0,
+    tracking_lead=True,
+    lead_status=True,
+    lead_d_rel=18.0,
+    lead_v_lead=0.4,
+    lead_model_prob=0.99,
+  )
+  toggles = SimpleNamespace(conditional_slower_lead=False, conditional_stopped_lead=True)
+
+  for _ in range(24):
+    cem.slow_lead(toggles, v_ego)
+
+  assert cem.slow_lead_detected
+
+
 def test_borderline_empty_road_model_dip_does_not_refresh_long_hold(monkeypatch):
   v_ego = 20 * CV.MPH_TO_MS
   stop_threshold = v_ego * 7.0
