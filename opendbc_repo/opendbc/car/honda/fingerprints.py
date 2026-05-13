@@ -255,6 +255,7 @@ FW_VERSIONS = {
       b'57114-TGL-G330\x00\x00',
     ],
     (Ecu.eps, 0x18da30f1, None): [
+      b'39990-TBA-C120\x00\x00',
       b'39990-TBA-C020\x00\x00',
       b'39990-TBA-C120\x00\x00',
       b'39990-TEA-T330\x00\x00',
