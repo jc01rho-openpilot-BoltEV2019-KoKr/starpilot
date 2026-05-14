@@ -1,0 +1,16 @@
+services:
+  starpilot-runner:
+    image: ${RUNNER_IMAGE}
+    container_name: starpilot-runner
+    restart: unless-stopped
+    environment:
+      GITHUB_REPOSITORY_URL: ${GITHUB_REPOSITORY_URL}
+      RUNNER_NAME: ${RUNNER_NAME}
+      RUNNER_LABELS: ${RUNNER_LABELS}
+      RUNNER_WORKDIR: ${RUNNER_WORKDIR}
+      RUNNER_TOKEN: ${RUNNER_TOKEN}
+      DOCKER_GID: ${DOCKER_GID:-}
+      REMOVE_RUNNER_ON_EXIT: ${REMOVE_RUNNER_ON_EXIT:-0}
+    volumes:
+      - ${RUNNER_DATA_PATH}:/runner
+      - /var/run/docker.sock:/var/run/docker.sock

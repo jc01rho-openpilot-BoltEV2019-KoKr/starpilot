@@ -153,7 +153,7 @@ lenv = {
 }
 
 # Allow callers to override cache/temp dirs used by subprocesses (e.g. tinygrad model compilation).
-for key in ("HOME", "TMPDIR", "XDG_CACHE_HOME", "CACHEDB"):
+for key in ("HOME", "TMPDIR", "XDG_CACHE_HOME", "CACHEDB", "PARAMS_ROOT"):
   if key in os.environ:
     lenv[key] = os.environ[key]
 
@@ -404,12 +404,22 @@ if arch == "larch64" and os.environ.get("SP_TICI_SYSROOT"):
   qt_arm_moc = os.path.join(qt_tool_bin, "moc")
   qt_arm_uic = os.path.join(qt_tool_bin, "uic")
   qt_arm_rcc = os.path.join(qt_tool_bin, "rcc")
+  qt_host_bin = os.environ.get("SP_QT_HOST_BIN", "/usr/lib/qt5/bin")
+  qt_host_moc = os.environ.get("SP_QT_HOST_MOC", os.path.join(qt_host_bin, "moc"))
+  qt_host_uic = os.environ.get("SP_QT_HOST_UIC", os.path.join(qt_host_bin, "uic"))
+  qt_host_rcc = os.environ.get("SP_QT_HOST_RCC", "rcc")
   if platform.machine() in ("aarch64", "arm64"):
-    if os.path.isfile(qt_arm_moc):
+    if "SP_QT_HOST_MOC" in os.environ:
+      qt_env['QT3_MOC'] = qt_host_moc
+    elif os.path.isfile(qt_arm_moc):
       qt_env['QT3_MOC'] = qt_arm_moc
-    if os.path.isfile(qt_arm_uic):
+    if "SP_QT_HOST_UIC" in os.environ:
+      qt_env['QT3_UIC'] = qt_host_uic
+    elif os.path.isfile(qt_arm_uic):
       qt_env['QT3_UIC'] = qt_arm_uic
-    if os.path.isfile(qt_arm_rcc):
+    if "SP_QT_HOST_RCC" in os.environ:
+      qt_env['SP_QT_RCC'] = qt_host_rcc
+    elif os.path.isfile(qt_arm_rcc):
       qt_env['SP_QT_RCC'] = qt_arm_rcc
   else:
     qt_qemu = shutil.which("qemu-aarch64-static") or shutil.which("qemu-aarch64")
@@ -417,19 +427,17 @@ if arch == "larch64" and os.environ.get("SP_TICI_SYSROOT"):
     if qt_qemu and os.path.isfile(qt_arm_moc):
       qt_env['QT3_MOC'] = f"{qt_qemu} -L {qt_tool_root} {qt_arm_moc}"
     else:
-      qt_host_bin = os.environ.get("SP_QT_HOST_BIN", "/usr/lib/qt5/bin")
-      qt_env['QT3_MOC'] = os.environ.get("SP_QT_HOST_MOC", os.path.join(qt_host_bin, "moc"))
+      qt_env['QT3_MOC'] = qt_host_moc
 
     if qt_qemu and os.path.isfile(qt_arm_uic):
       qt_env['QT3_UIC'] = f"{qt_qemu} -L {qt_tool_root} {qt_arm_uic}"
     else:
-      qt_host_bin = os.environ.get("SP_QT_HOST_BIN", "/usr/lib/qt5/bin")
-      qt_env['QT3_UIC'] = os.environ.get("SP_QT_HOST_UIC", os.path.join(qt_host_bin, "uic"))
+      qt_env['QT3_UIC'] = qt_host_uic
 
     if qt_qemu and os.path.isfile(qt_arm_rcc):
       qt_env['SP_QT_RCC'] = f"{qt_qemu} -L {qt_tool_root} {qt_arm_rcc}"
     else:
-      qt_env['SP_QT_RCC'] = os.environ.get("SP_QT_HOST_RCC", "rcc")
+      qt_env['SP_QT_RCC'] = qt_host_rcc
 
 qt_env['CPPPATH'] += qt_dirs + ["#third_party/qrcode"]
 qt_flags = [

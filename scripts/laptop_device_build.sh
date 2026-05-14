@@ -5,6 +5,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+HOST_ROOT_DIR="${COMMA_HOST_ROOT_DIR:-${ROOT_DIR}}"
+DOCKER_RUN_USER="${COMMA_DOCKER_RUN_USER:-$(id -u):$(id -g)}"
+
 # Make Docker Desktop binaries discoverable (docker + credential helpers) even
 # when the caller shell PATH is minimal.
 if [[ -d /Applications/Docker.app/Contents/Resources/bin ]]; then
@@ -14,6 +17,9 @@ fi
 IMAGE_NAME="${COMMA_BUILD_IMAGE:-starpilot-larch64-builder:latest}"
 SYSROOT_DIR_DEFAULT="${ROOT_DIR}/.comma_sysroot"
 SYSROOT_DIR="${COMMA_SYSROOT_DIR:-${SYSROOT_DIR_DEFAULT}}"
+HOST_SYSROOT_DIR="${COMMA_HOST_SYSROOT_DIR:-${SYSROOT_DIR}}"
+HOST_CACHE_DIR="${COMMA_HOST_CACHE_DIR:-${HOST_ROOT_DIR}/.cache}"
+HOST_DOCKERFILE_PATH="${COMMA_HOST_DOCKERFILE_PATH:-${HOST_ROOT_DIR}/tools/laptop_device_build/Dockerfile}"
 
 usage() {
   cat <<'EOF'
@@ -98,11 +104,23 @@ detect_engine() {
   err "No container runtime found (install docker or podman)."
 }
 
+build_container_image_cmd() {
+  local engine="$1"
+  shift
+
+  if [[ "${engine##*/}" == "docker" ]] && "${engine}" buildx version >/dev/null 2>&1; then
+    "${engine}" buildx build --load --platform linux/arm64 "$@"
+    return
+  fi
+
+  "${engine}" build --pull --platform linux/arm64 "$@"
+}
+
 ensure_image_exists() {
   local engine="$1"
   if ! "${engine}" image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
     echo "Container image ${IMAGE_NAME} not found. Building it now..."
-    "${engine}" build --pull --platform linux/arm64 -f tools/laptop_device_build/Dockerfile -t "${IMAGE_NAME}" .
+    build_container_image_cmd "${engine}" --pull -f "${HOST_DOCKERFILE_PATH}" -t "${IMAGE_NAME}" "${HOST_ROOT_DIR}"
   fi
   assert_image_arch "${engine}"
   ensure_image_capnp_version "${engine}"
@@ -161,7 +179,7 @@ ensure_image_capnp_version() {
   fi
 
   echo "Container image ${IMAGE_NAME} has Cap'n Proto ${actual:-unknown}, expected ${expected}. Rebuilding it now..."
-  "${engine}" build --pull --platform linux/arm64 -f tools/laptop_device_build/Dockerfile -t "${IMAGE_NAME}" .
+  build_container_image_cmd "${engine}" --pull -f "${HOST_DOCKERFILE_PATH}" -t "${IMAGE_NAME}" "${HOST_ROOT_DIR}"
 
   actual="$(image_capnp_version "${engine}")"
   if [[ "${actual}" != "${expected}" ]]; then
@@ -191,9 +209,9 @@ default_jobs() {
 build_container_image() {
   local engine
   engine="$(detect_engine)"
-  "${engine}" build --pull --platform linux/arm64 \
-    -f tools/laptop_device_build/Dockerfile \
-    -t "${IMAGE_NAME}" .
+  build_container_image_cmd "${engine}" --pull \
+    -f "${HOST_DOCKERFILE_PATH}" \
+    -t "${IMAGE_NAME}" "${HOST_ROOT_DIR}"
   assert_image_arch "${engine}"
 }
 
@@ -351,12 +369,13 @@ setup_sysroot_from_agnos() {
   local engine
   engine="$(detect_engine)"
   ensure_image_exists "${engine}"
-  mkdir -p "${SYSROOT_DIR}" "${ROOT_DIR}/.cache/agnos"
+  mkdir -p "${SYSROOT_DIR}" "${ROOT_DIR}/.cache/agnos" "${HOST_CACHE_DIR}/agnos"
 
   "${engine}" run --rm --platform linux/arm64 \
-    -v "${ROOT_DIR}:/work" \
-    -v "${SYSROOT_DIR}:/opt/tici-sysroot" \
-    -v "${ROOT_DIR}/.cache:/work/.cache" \
+    --user "${DOCKER_RUN_USER}" \
+    -v "${HOST_ROOT_DIR}:/work" \
+    -v "${HOST_SYSROOT_DIR}:/opt/tici-sysroot" \
+    -v "${HOST_CACHE_DIR}:/work/.cache" \
     -w /work \
     "${IMAGE_NAME}" \
     python3 tools/laptop_device_build/extract_sysroot_from_agnos.py \
@@ -380,7 +399,7 @@ run_larch64_scons() {
   echo "    jobs: ${jobs}"
   echo "    note: warp artifact precompile can take several minutes on first run"
 
-  mkdir -p "${ROOT_DIR}/.cache/scons"
+  mkdir -p "${ROOT_DIR}/.cache/scons" "${HOST_CACHE_DIR}/scons"
 
   local extra_args=""
   local jobs_prefix="-j${jobs}"
@@ -407,7 +426,10 @@ export SP_BUILD_WARP_ARTIFACTS="\${SP_BUILD_WARP_ARTIFACTS:-0}"
 export SP_SKIP_DM_TINYGRAD_PKL="\${SP_SKIP_DM_TINYGRAD_PKL:-1}"
 export LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/aarch64-linux-gnu:/lib/aarch64-linux-gnu:/opt/tici-sysroot/usr/local/lib:/opt/tici-sysroot/usr/lib/aarch64-linux-gnu:/opt/tici-sysroot/lib/aarch64-linux-gnu:/system/vendor/lib64:\${LD_LIBRARY_PATH:-}
 export TMPDIR=/tmp
+export HOME=/tmp
+export PARAMS_ROOT=/tmp/params
 mkdir -p "\${UV_CACHE_DIR}"
+mkdir -p "\${PARAMS_ROOT}"
 UV_PROJECT_ENVIRONMENT=/work/.venv-linux-arm64 uv sync --frozen --all-extras
 source /work/.venv-linux-arm64/bin/activate
 CACHE_FLAG="--cache-disable"
@@ -419,11 +441,12 @@ EOF
 )"
 
   "${engine}" run --rm --platform linux/arm64 \
-    -v "${ROOT_DIR}:/work" \
-    -v "${SYSROOT_DIR}:/opt/tici-sysroot:ro" \
-    -v "${SYSROOT_DIR}/system/vendor/lib64:/system/vendor/lib64:ro" \
-    -v "${ROOT_DIR}/.cache:/work/.cache" \
-    -v "${ROOT_DIR}/.cache/scons:/data/scons_cache" \
+    --user "${DOCKER_RUN_USER}" \
+    -v "${HOST_ROOT_DIR}:/work" \
+    -v "${HOST_SYSROOT_DIR}:/opt/tici-sysroot:ro" \
+    -v "${HOST_SYSROOT_DIR}/system/vendor/lib64:/system/vendor/lib64:ro" \
+    -v "${HOST_CACHE_DIR}:/work/.cache" \
+    -v "${HOST_CACHE_DIR}/scons:/data/scons_cache" \
     -w /work \
     "${IMAGE_NAME}" bash -lc "${cmd}"
 
@@ -537,7 +560,7 @@ run_manager() {
   ensure_image_exists "${engine}"
   assert_runtime_machine "${engine}"
   ensure_sysroot_layout
-  mkdir -p "${ROOT_DIR}/.cache/scons"
+  mkdir -p "${ROOT_DIR}/.cache/scons" "${HOST_CACHE_DIR}/scons"
 
   local manager_args_q=""
   if [[ "${#manager_args[@]}" -gt 0 ]]; then
@@ -556,7 +579,10 @@ export SP_TICI_SYSROOT=/opt/tici-sysroot
 export SP_BUILD_WARP_ARTIFACTS="\${SP_BUILD_WARP_ARTIFACTS:-0}"
 export LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/aarch64-linux-gnu:/lib/aarch64-linux-gnu:/opt/tici-sysroot/usr/local/lib:/opt/tici-sysroot/usr/lib/aarch64-linux-gnu:/opt/tici-sysroot/lib/aarch64-linux-gnu:/system/vendor/lib64:\${LD_LIBRARY_PATH:-}
 export TMPDIR=/tmp
+export HOME=/tmp
+export PARAMS_ROOT=/tmp/params
 mkdir -p "\${UV_CACHE_DIR}"
+mkdir -p "\${PARAMS_ROOT}"
 UV_PROJECT_ENVIRONMENT=/work/.venv-linux-arm64 uv sync --frozen --all-extras
 source /work/.venv-linux-arm64/bin/activate
 cd /work
@@ -565,11 +591,12 @@ EOF
 )"
 
   "${engine}" run --rm --platform linux/arm64 \
-    -v "${ROOT_DIR}:/work" \
-    -v "${SYSROOT_DIR}:/opt/tici-sysroot:ro" \
-    -v "${SYSROOT_DIR}/system/vendor/lib64:/system/vendor/lib64:ro" \
-    -v "${ROOT_DIR}/.cache:/work/.cache" \
-    -v "${ROOT_DIR}/.cache/scons:/data/scons_cache" \
+    --user "${DOCKER_RUN_USER}" \
+    -v "${HOST_ROOT_DIR}:/work" \
+    -v "${HOST_SYSROOT_DIR}:/opt/tici-sysroot:ro" \
+    -v "${HOST_SYSROOT_DIR}/system/vendor/lib64:/system/vendor/lib64:ro" \
+    -v "${HOST_CACHE_DIR}:/work/.cache" \
+    -v "${HOST_CACHE_DIR}/scons:/data/scons_cache" \
     -w /work \
     "${IMAGE_NAME}" bash -lc "${cmd}"
 }
@@ -580,11 +607,12 @@ run_shell() {
   ensure_image_exists "${engine}"
   ensure_sysroot_layout
   "${engine}" run --rm -it --platform linux/arm64 \
-    -v "${ROOT_DIR}:/work" \
-    -v "${SYSROOT_DIR}:/opt/tici-sysroot:ro" \
-    -v "${SYSROOT_DIR}/system/vendor/lib64:/system/vendor/lib64:ro" \
-    -v "${ROOT_DIR}/.cache:/work/.cache" \
-    -v "${ROOT_DIR}/.cache/scons:/data/scons_cache" \
+    --user "${DOCKER_RUN_USER}" \
+    -v "${HOST_ROOT_DIR}:/work" \
+    -v "${HOST_SYSROOT_DIR}:/opt/tici-sysroot:ro" \
+    -v "${HOST_SYSROOT_DIR}/system/vendor/lib64:/system/vendor/lib64:ro" \
+    -v "${HOST_CACHE_DIR}:/work/.cache" \
+    -v "${HOST_CACHE_DIR}/scons:/data/scons_cache" \
     -w /work \
     "${IMAGE_NAME}" bash
 }

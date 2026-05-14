@@ -3,237 +3,112 @@ name: Compile StarPilot
 on:
   workflow_dispatch:
     inputs:
-      not_vetted:
-        description: "This branch is not vetted"
-        type: boolean
-        default: false
-        required: false
-      publish_custom_branch:
-        description: "Push to custom branch:"
+      target_ref:
+        description: "Branch to build and publish back to"
         type: string
-        default: ""
-        required: false
-      publish_starpilot:
-        description: "Push to StarPilot"
-        type: boolean
-        default: false
-        required: false
-      publish_staging:
-        description: "Push to StarPilot-Staging"
-        type: boolean
-        default: false
-        required: false
-      publish_testing:
-        description: "Push to StarPilot-Testing"
-        type: boolean
-        default: false
-        required: false
-      runner:
-        description: "Select runner"
-        type: choice
-        options:
-          - c3
-          - c3x
-        default: "c3"
+        default: "master"
         required: true
-      update_translations:
-        description: "Update missing/outdated translations"
-        type: boolean
-        default: false
+      jobs:
+        description: "Optional parallel job count passed to ./build"
+        type: string
+        default: "12"
         required: false
-      vet_existing_translations:
-        description: "Vet existing translations"
-        type: boolean
-        default: false
-        required: false
+
+concurrency:
+  group: compile-starpilot-${{ inputs.target_ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 env:
-  BASE_DIR: ${{ github.workspace }}
-  BUILD_DIR: "/data/openpilot"
-  CUSTOM_BRANCH: ${{ inputs.publish_custom_branch }}
-  GIT_EMAIL: "91348155+FrogAi@users.noreply.github.com"
-  GIT_NAME: "James"
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  GIT_EMAIL: "168790843+firestar5683@users.noreply.github.com"
+  GIT_NAME: "StarPilot Build Bot"
+  TARGET_REF: ${{ inputs.target_ref }}
 
 jobs:
-  get_branch:
-    runs-on: [self-hosted, "${{ inputs.runner }}"]
-    outputs:
-      branch: ${{ steps.get_branch.outputs.branch }}
-      python_version: ${{ steps.get_python_version.outputs.python_version }}
+  build_and_push:
+    runs-on: [self-hosted, truenas, starpilot-build]
+    timeout-minutes: 720
     steps:
-      - name: Get Current Branch
-        id: get_branch
+      - name: Validate target branch
+        shell: bash
         run: |
-          cd "$BUILD_DIR"
-          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
 
-      - name: Get Python Version
-        id: get_python_version
-        run: |
-          echo "python_version=$(tr -d '[:space:]' < "$BUILD_DIR/.python-version")" >> $GITHUB_OUTPUT
+          if [[ -z "${TARGET_REF}" ]]; then
+            echo "target_ref is required." >&2
+            exit 1
+          fi
 
-  translate:
-    needs: get_branch
-    if: inputs.update_translations
-    runs-on: ubuntu-latest
-    steps:
-      - name: Configure Git Identity
-        run: |
-          git config --global user.name "$GIT_NAME"
-          git config --global user.email "$GIT_EMAIL"
+          if [[ "${TARGET_REF}" == refs/heads/* ]]; then
+            echo "BUILD_BRANCH=${TARGET_REF#refs/heads/}" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_BRANCH=${TARGET_REF}" >> "$GITHUB_ENV"
+          fi
 
-      - name: Checkout Required Files
+      - name: Checkout target branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.get_branch.outputs.branch }}
-          sparse-checkout: |
-            starpilot/ui/
-            selfdrive/controls/lib/alerts_offroad.json
-            selfdrive/ui/
-            selfdrive/ui/translations/
-            selfdrive/ui/translations/auto_translate.py
-            selfdrive/ui/update_translations.py
+          ref: ${{ env.BUILD_BRANCH }}
+          fetch-depth: 0
+          submodules: recursive
 
-      - name: Set Up Python
-        uses: actions/setup-python@v4
-        with:
-          cache: "pip"
-          python-version: ${{ needs.get_branch.outputs.python_version }}
-
-      - name: Install Dependencies
+      - name: Configure git identity
+        shell: bash
         run: |
-          pip install requests
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends qttools5-dev-tools
+          set -euo pipefail
+          git config user.name "$GIT_NAME"
+          git config user.email "$GIT_EMAIL"
+          git config http.postBuffer 104857600
 
-      - name: Update Translations
+      - name: Ensure branch exists on origin
+        shell: bash
         run: |
-          python selfdrive/ui/update_translations.py --vanish
+          set -euo pipefail
+          git ls-remote --exit-code --heads origin "refs/heads/${BUILD_BRANCH}" >/dev/null
 
-      - name: Update Missing Translations
-        continue-on-error: true
-        timeout-minutes: 300
+      - name: Link persistent sysroot
+        shell: bash
         run: |
-          python selfdrive/ui/translations/auto_translate.py --all-files
+          set -euo pipefail
+          ls -ld /runner /runner/sysroots /runner/sysroots/default || true
+          ls -ld /runner/sysroots/default/usr /runner/sysroots/default/usr/local /runner/sysroots/default/usr/local/lib || true
+          rm -rf .comma_sysroot
+          ln -s /runner/sysroots/default .comma_sysroot
+          ls -ld .comma_sysroot .comma_sysroot/usr .comma_sysroot/usr/local .comma_sysroot/usr/local/lib
 
-      - name: Vet Existing Translations
-        if: inputs.vet_existing_translations
-        continue-on-error: true
-        timeout-minutes: 300
+      - name: Run StarPilot device build
+        shell: bash
         run: |
-          python selfdrive/ui/translations/auto_translate.py --all-files --vet-translations
+          set -euo pipefail
 
-      - name: Commit and Push Translations
+          export COMMA_HOST_ROOT_DIR="/mnt/Apparition/My_App_Data/starpilot-runner/_work/${GITHUB_REPOSITORY#*/}/${GITHUB_REPOSITORY#*/}"
+          export COMMA_HOST_SYSROOT_DIR="/mnt/Apparition/My_App_Data/starpilot-runner/sysroots/default"
+          export COMMA_HOST_CACHE_DIR="/mnt/Apparition/My_App_Data/starpilot-runner/_work/${GITHUB_REPOSITORY#*/}/${GITHUB_REPOSITORY#*/}/.cache"
+          export COMMA_SYSROOT_DIR="/runner/sysroots/default"
+
+          if [[ -n "${{ inputs.jobs }}" ]]; then
+            ./build "${{ inputs.jobs }}"
+          else
+            ./build
+          fi
+
+      - name: Commit build output
+        shell: bash
         run: |
-          if git diff --quiet selfdrive/ui/translations/*.ts; then
-            echo "No translation updates detected."
+          set -euo pipefail
+
+          if [[ -z "$(git status --porcelain --untracked-files=no)" ]]; then
+            echo "No build output changes detected."
             exit 0
           fi
 
-          git fetch --unshallow origin "${{ needs.get_branch.outputs.branch }}"
-          git checkout "${{ needs.get_branch.outputs.branch }}"
-          git add selfdrive/ui/translations/*.ts
-          git commit --amend --no-edit
-          git push --force origin "${{ needs.get_branch.outputs.branch }}"
+          git add -u
+          git commit -m "build"
 
-  build_and_push:
-    needs: [get_branch, translate]
-    if: ${{ !failure() && !cancelled() && needs.get_branch.result == 'success' }}
-    runs-on: [self-hosted, "${{ inputs.runner }}"]
-    permissions:
-      contents: write
-    defaults:
-      run:
-        working-directory: ${{ env.BUILD_DIR }}
-    steps:
-      - name: Configure Git
+      - name: Push build commit
+        shell: bash
         run: |
-          git config http.postBuffer 104857600
-          git config user.name "$GIT_NAME"
-          git config user.email "$GIT_EMAIL"
-          git remote set-url origin "https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/FrogAi/StarPilot.git"
-
-      - name: Sync Translation Updates
-        if: inputs.update_translations
-        run: |
-          git fetch origin "${{ needs.get_branch.outputs.branch }}"
-          git reset --hard FETCH_HEAD
-
-      - name: Take Ownership of Build Directory
-        run: |
-          sudo chown -R $(whoami):$(whoami) .
-
-      - name: Clean Build Artifacts
-        run: |
-          find . -name "matlab.*.md" -delete
-
-          find . -type d \( -iname "debug" -o -iname "test" -o -iname "tests" -o -name '__pycache__' \) -exec rm -rf {} +
-
-          find . -type f \( \
-            -name '*.a' -o \
-            -name '*.o' -o \
-            -name '*.onnx' -o \
-            -name '*.os' -o \
-            -name '*.pyc' -o \
-            -name 'moc_*' \
-          \) -delete
-
-          find .github -mindepth 1 -maxdepth 1 ! -name 'workflows' -exec rm -rf {} +
-          find .github/workflows -mindepth 1 ! \( \
-            -type f \( \
-              -name 'compile_starpilot.yaml' -o \
-              -name 'review_pull_request.yaml' -o \
-              -name 'schedule_update.yaml' -o \
-              -name 'update_pr_branch.yaml' -o \
-              -name 'update_release_branch.yaml' -o \
-              -name 'update_tinygrad.yaml' \
-            \) \
-          \) -exec rm -rf {} +
-
-          find panda/board -type f \
-            ! -name '__init__.py' \
-            ! -name 'bootstub.panda.bin' \
-            ! -name 'bootstub.panda_h7.bin' \
-            ! -name 'panda.bin.signed' \
-            ! -name 'panda_h7.bin.signed' \
-            -delete
-
-          find third_party/ -name '*Darwin*' -exec rm -rf {} +
-          find third_party/ -name '*x86*' -exec rm -rf {} +
-
-          rm -f .gitignore .gitmodules .gitattributes .lfsconfig .overlay_init
-
-          rm -rf .sconsign.dblite .vscode/ Jenkinsfile release/ scripts/ site_scons/ teleoprtc_repo/
-
-          find . -type d -empty ! -path "./.git*" -delete
-
-          touch prebuilt
-          [ "${{ inputs.not_vetted }}" = "true" ] && touch not_vetted || true
-
-      - name: Add Update Date File
-        if: inputs.publish_staging
-        continue-on-error: true
-        run: |
-          curl -fLsS https://raw.githubusercontent.com/FrogAi/StarPilot/StarPilot-Staging/.github/update_date -o .github/update_date || echo "No update_date found, skipping..."
-
-      - name: Commit and Push Build
-        run: |
-          git add -f .
-          git commit -m "Compile StarPilot"
-          git push --force origin HEAD
-
-          if [ "${{ inputs.publish_starpilot }}" = "true" ]; then
-            git push --force origin HEAD:StarPilot
-          fi
-
-          if [ "${{ inputs.publish_staging }}" = "true" ]; then
-            git push --force origin HEAD:StarPilot-Staging
-          fi
-
-          if [ "${{ inputs.publish_testing }}" = "true" ]; then
-            git push --force origin HEAD:StarPilot-Testing
-          fi
-
-          if [ -n "$CUSTOM_BRANCH" ]; then
-            git push --force origin HEAD:"$CUSTOM_BRANCH"
-          fi
+          set -euo pipefail
+          git push origin "HEAD:refs/heads/${BUILD_BRANCH}"
