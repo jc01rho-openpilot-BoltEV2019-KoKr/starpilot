@@ -2,6 +2,7 @@ import re
 from types import SimpleNamespace
 import pytest
 
+from opendbc.car import structs
 from opendbc.car.structs import CarParams
 from opendbc.car import gen_empty_fingerprint
 from opendbc.car.honda.interface import CarInterface
@@ -116,7 +117,7 @@ class TestHondaFingerprint:
   def test_official_modified_eps_firmwares_restored(self):
     assert b'39990-TVA,A150\x00\x00' in FW_VERSIONS[CAR.HONDA_ACCORD][(CarParams.Ecu.eps, 0x18DA30F1, None)]
     assert b'39990-TBA,A030\x00\x00' in FW_VERSIONS[CAR.HONDA_CIVIC][(CarParams.Ecu.eps, 0x18DA30F1, None)]
-    assert b'39990-TBA,C120\x00\x00' in FW_VERSIONS[CAR.HONDA_CIVIC_BOSCH][(CarParams.Ecu.eps, 0x18DA30F1, None)]
+    assert b'39990-TBA-C120\x00\x00' in FW_VERSIONS[CAR.HONDA_CIVIC_BOSCH][(CarParams.Ecu.eps, 0x18DA30F1, None)]
     assert b'39990-TGG,A020\x00\x00' in FW_VERSIONS[CAR.HONDA_CIVIC_BOSCH][(CarParams.Ecu.eps, 0x18DA30F1, None)]
     assert b'39990-TLA,A040\x00\x00' in FW_VERSIONS[CAR.HONDA_CRV_5G][(CarParams.Ecu.eps, 0x18DA30F1, None)]
 
@@ -132,7 +133,7 @@ class TestHondaFingerprint:
     assert list(civic_cp.lateralTuning.pid.kpV) == pytest.approx([0.3])
     assert list(civic_cp.lateralTuning.pid.kiV) == pytest.approx([0.1])
 
-    civic_bosch_fw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=b'39990-TBA,C120\x00\x00', address=0x18DA30F1, subAddress=0)]
+    civic_bosch_fw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=b'39990-TGG,A020\x00\x00', address=0x18DA30F1, subAddress=0)]
     civic_bosch_cp = CarInterface.get_params(CAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), civic_bosch_fw, False, False, False, toggles)
     assert not civic_bosch_cp.dashcamOnly
     assert civic_bosch_cp.flags & HondaFlags.EPS_MODIFIED
@@ -235,3 +236,33 @@ class TestHondaFingerprint:
 
     assert controller.bosch_gas_factor == pytest.approx(1.25)
     assert controller.bosch_wind_factor == pytest.approx(0.85)
+
+  def test_honda_bosch_controller_does_not_deepen_planner_braking(self, monkeypatch):
+    toggles = get_test_toggles()
+    CP = CarInterface.get_params(CAR.HONDA_HRV_3G, gen_empty_fingerprint(), [], True, False, False, toggles)
+    controller = CarController(DBC[CP.carFingerprint], CP)
+
+    monkeypatch.setattr("opendbc.car.honda.carcontroller.hondacan.create_steering_control", lambda *args, **kwargs: (0, []))
+    monkeypatch.setattr("opendbc.car.honda.carcontroller.hondacan.create_acc_commands", lambda *args, **kwargs: [])
+
+    CC = structs.CarControl.new_message()
+    CC.enabled = True
+    CC.longActive = True
+    CC.latActive = False
+    CC.cruiseControl.cancel = False
+    CC.cruiseControl.resume = False
+    CC.hudControl.speedVisible = False
+    CC.hudControl.setSpeed = 0.0
+    CC.hudControl.visualAlert = structs.CarControl.HUDControl.VisualAlert.none
+    CC.actuators.accel = -0.3
+    CC.actuators.torque = 0.0
+    CC.actuators.longControlState = structs.CarControl.Actuators.LongControlState.pid
+
+    controller.frame = 2
+    CS = SimpleNamespace(
+      out=SimpleNamespace(vEgo=25.0, aEgo=1.5, steeringPressed=False, gasPressed=False, brakePressed=False),
+      v_cruise_factor=1.0,
+    )
+
+    new_actuators, _ = controller.update(CC.as_reader(), CS, 0, toggles)
+    assert new_actuators.accel == pytest.approx(-0.3)

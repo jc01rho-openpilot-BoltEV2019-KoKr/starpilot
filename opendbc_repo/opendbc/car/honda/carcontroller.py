@@ -3,7 +3,6 @@ import numpy as np
 
 from opendbc.can import CANPacker
 from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, create_gas_interceptor_command, rate_limit, make_tester_present_msg, structs
-from opendbc.car.common.pid import PIDController
 from opendbc.car.honda import hondacan
 from opendbc.car.honda.values import (
   CAR,
@@ -235,8 +234,6 @@ class CarController(CarControllerBase):
     self.bosch_gas_factor_before_gasmax = self.bosch_gas_factor
     self.bosch_wind_factor_before_gasmax = self.bosch_wind_factor
     self.pitch = 0.0
-    self.brake_pid = PIDController(k_p=([0.0], [0.0]), k_i=([0.0], [0.5]), pos_limit=0.0, neg_limit=-2.0, rate=50)
-    self.brake_pid.reset()
 
   def _modified_civic_standard_active(self) -> bool:
     return self.CP.carFingerprint == CAR.HONDA_CIVIC_BOSCH and bool(self.CP.flags & HondaFlags.EPS_MODIFIED)
@@ -355,14 +352,7 @@ class CarController(CarControllerBase):
         ts = self.frame * DT_CTRL
 
         if self.CP.carFingerprint in HONDA_BOSCH:
-          if accel < 0.0 and CS.out.vEgo > 1e-3:
-            brake_addon = self.brake_pid.update(error=accel - CS.out.aEgo, speed=CS.out.vEgo)
-            target_accel = min(accel, accel + brake_addon)
-          else:
-            self.brake_pid.reset()
-            target_accel = accel
-
-          self.accel = float(np.clip(target_accel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX))
+          self.accel = float(np.clip(accel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX))
           gas_pedal_force = self.accel + hill_brake
 
           if self.CP.carFingerprint not in HONDA_BOSCH_RADARLESS:
