@@ -102,8 +102,10 @@ VISION_LEAD_TFOLLOW_GAP_BUFFER_MIN = 8.0
 VISION_LEAD_TFOLLOW_GAP_BUFFER_GAIN = 0.35
 VISION_LOW_SPEED_STOP_BUFFER_MAX_EGO_SPEED = 6.5
 VISION_LOW_SPEED_STOP_BUFFER_MAX_LEAD_SPEED = 3.25
+VISION_LOW_SPEED_STOP_BUFFER_HOLD_MAX_LEAD_SPEED = 4.0
 VISION_LOW_SPEED_STOP_BUFFER_MIN_MODEL_PROB = 0.9
 VISION_LOW_SPEED_STOP_BUFFER_MIN_CLOSING_SPEED = 0.35
+VISION_LOW_SPEED_STOP_BUFFER_MIN_HOLD_REL_SPEED = -0.2
 VISION_LOW_SPEED_STOP_BUFFER_BASE = 3.8
 VISION_LOW_SPEED_STOP_BUFFER_EGO_GAIN = 0.80
 VISION_LOW_SPEED_STOP_BUFFER_LEAD_GAIN = 0.25
@@ -646,11 +648,17 @@ class LongitudinalPlanner:
       return None, False
 
     lead_speed = max(float(lead.vLead), 0.0)
+    relative_speed = float(v_ego) - lead_speed
     closing_speed = max(0.0, v_ego - lead_speed)
-    valid_context = (
+    entry_context = (
       v_ego <= VISION_LOW_SPEED_STOP_BUFFER_MAX_EGO_SPEED and
       lead_speed <= VISION_LOW_SPEED_STOP_BUFFER_MAX_LEAD_SPEED and
       closing_speed >= VISION_LOW_SPEED_STOP_BUFFER_MIN_CLOSING_SPEED
+    )
+    hold_context = (
+      v_ego <= VISION_LOW_SPEED_STOP_BUFFER_MAX_EGO_SPEED and
+      lead_speed <= VISION_LOW_SPEED_STOP_BUFFER_HOLD_MAX_LEAD_SPEED and
+      relative_speed >= VISION_LOW_SPEED_STOP_BUFFER_MIN_HOLD_REL_SPEED
     )
 
     now_t = time.monotonic()
@@ -658,11 +666,14 @@ class LongitudinalPlanner:
                        VISION_LOW_SPEED_STOP_BUFFER_EGO_GAIN * float(v_ego) +
                        VISION_LOW_SPEED_STOP_BUFFER_LEAD_GAIN * lead_speed)
     release_buffer = entry_buffer + VISION_LOW_SPEED_STOP_BUFFER_RELEASE_MARGIN
-    if valid_context and float(lead.dRel) <= entry_buffer:
+    if entry_context and float(lead.dRel) <= entry_buffer:
       self.vision_low_speed_stop_hold_until = now_t + VISION_LOW_SPEED_STOP_BUFFER_HOLD_TIME
 
     latched = now_t < self.vision_low_speed_stop_hold_until
-    active = valid_context and (float(lead.dRel) <= entry_buffer or (latched and float(lead.dRel) <= release_buffer))
+    active = bool(
+      (entry_context and float(lead.dRel) <= entry_buffer) or
+      (latched and hold_context and float(lead.dRel) <= release_buffer)
+    )
     if not active:
       return None, False
 

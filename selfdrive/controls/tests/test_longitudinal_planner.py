@@ -8,6 +8,7 @@ import pytest
 from cereal import log
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
+import openpilot.selfdrive.controls.lib.longitudinal_planner as longitudinal_planner_module
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, get_coast_accel, get_vehicle_min_accel
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import soften_far_radar_lead_accel, should_trigger_planner_fcw
@@ -779,6 +780,25 @@ def test_acc_mode_low_speed_vision_stop_buffer_brakes_harder_for_close_slow_visi
   assert planner.mode == "acc"
   assert planner.output_should_stop
   assert planner.output_a_target <= -2.7
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_low_speed_vision_stop_buffer_stays_latched_when_closure_softens_near_stop(model_version, monkeypatch):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.55)
+  lead = make_lead(status=True, d_rel=2.1, v_lead=0.05, a_lead=-0.02, radar=False, model_prob=0.99)
+
+  monotonic_values = iter([10.0, 10.1])
+  monkeypatch.setattr(longitudinal_planner_module.time, "monotonic", lambda: next(monotonic_values))
+
+  cap_armed, active_armed = planner.get_vision_low_speed_stop_buffer_cap(lead, 0.55, -2.0)
+  cap_held, active_held = planner.get_vision_low_speed_stop_buffer_cap(lead, 0.34, -2.0)
+
+  assert active_armed
+  assert cap_armed is not None
+  assert active_held
+  assert cap_held is not None
+  assert cap_held <= -1.25
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
