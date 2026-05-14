@@ -62,7 +62,7 @@ def make_sm(*, gas_pressed, enabled=True, accel_pressed=False, decel_pressed=Fal
     "carControl": SimpleNamespace(longActive=True),
     "carState": SimpleNamespace(gasPressed=gas_pressed, steeringAngleDeg=0.0),
     "liveParameters": SimpleNamespace(angleOffsetDeg=0.0),
-    "mapdOut": SimpleNamespace(nextSpeedLimitDistance=0.0, nextSpeedLimit=0.0, speedLimit=0.0),
+    "mapdOut": SimpleNamespace(nextSpeedLimitDistance=0.0, nextSpeedLimit=0.0, speedLimit=0.0, waySelectionType=0),
     "selfdriveState": SimpleNamespace(enabled=enabled),
     "starpilotCarState": SimpleNamespace(accelPressed=accel_pressed, decelPressed=decel_pressed),
   }
