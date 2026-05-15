@@ -134,13 +134,15 @@ jobs:
           WORKSPACE_REL="${GITHUB_WORKSPACE#/runner}"
           export COMMA_HOST_ROOT_DIR="${RUNNER_HOST_ROOT}${WORKSPACE_REL}"
           export COMMA_HOST_SYSROOT_DIR="${RUNNER_HOST_ROOT}/sysroots/default"
-          export COMMA_HOST_CACHE_DIR="${COMMA_HOST_ROOT_DIR}/.cache"
+          export COMMA_HOST_CACHE_DIR="${RUNNER_HOST_ROOT}/cache/work"
+          export COMMA_HOST_VENV_DIR="${RUNNER_HOST_ROOT}/cache/venv-linux-arm64"
           export COMMA_SYSROOT_DIR="/runner/sysroots/default"
 
           echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
           echo "COMMA_HOST_ROOT_DIR=${COMMA_HOST_ROOT_DIR}"
           echo "COMMA_HOST_SYSROOT_DIR=${COMMA_HOST_SYSROOT_DIR}"
           echo "COMMA_HOST_CACHE_DIR=${COMMA_HOST_CACHE_DIR}"
+          echo "COMMA_HOST_VENV_DIR=${COMMA_HOST_VENV_DIR}"
 
           JOBS="${{ inputs.jobs }}"
 

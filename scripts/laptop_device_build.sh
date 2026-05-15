@@ -7,6 +7,7 @@ cd "${ROOT_DIR}"
 
 HOST_ROOT_DIR="${COMMA_HOST_ROOT_DIR:-${ROOT_DIR}}"
 DOCKER_RUN_USER="${COMMA_DOCKER_RUN_USER:-$(id -u):$(id -g)}"
+HOST_VENV_DIR="${COMMA_HOST_VENV_DIR:-${HOST_ROOT_DIR}/.venv-linux-arm64}"
 
 # Make Docker Desktop binaries discoverable (docker + credential helpers) even
 # when the caller shell PATH is minimal.
@@ -399,7 +400,7 @@ run_larch64_scons() {
   echo "    jobs: ${jobs}"
   echo "    note: warp artifact precompile can take several minutes on first run"
 
-  mkdir -p "${ROOT_DIR}/.cache/scons" "${HOST_CACHE_DIR}/scons"
+  mkdir -p "${ROOT_DIR}/.cache/scons" "${HOST_CACHE_DIR}/scons" "${HOST_VENV_DIR}"
 
   local extra_args=""
   local jobs_prefix="-j${jobs}"
@@ -443,6 +444,7 @@ EOF
   "${engine}" run --rm --platform linux/arm64 \
     --user "${DOCKER_RUN_USER}" \
     -v "${HOST_ROOT_DIR}:/work" \
+    -v "${HOST_VENV_DIR}:/work/.venv-linux-arm64" \
     -v "${HOST_SYSROOT_DIR}:/opt/tici-sysroot:ro" \
     -v "${HOST_SYSROOT_DIR}/system/vendor/lib64:/system/vendor/lib64:ro" \
     -v "${HOST_CACHE_DIR}:/work/.cache" \
@@ -560,7 +562,7 @@ run_manager() {
   ensure_image_exists "${engine}"
   assert_runtime_machine "${engine}"
   ensure_sysroot_layout
-  mkdir -p "${ROOT_DIR}/.cache/scons" "${HOST_CACHE_DIR}/scons"
+  mkdir -p "${ROOT_DIR}/.cache/scons" "${HOST_CACHE_DIR}/scons" "${HOST_VENV_DIR}"
 
   local manager_args_q=""
   if [[ "${#manager_args[@]}" -gt 0 ]]; then
@@ -593,6 +595,7 @@ EOF
   "${engine}" run --rm --platform linux/arm64 \
     --user "${DOCKER_RUN_USER}" \
     -v "${HOST_ROOT_DIR}:/work" \
+    -v "${HOST_VENV_DIR}:/work/.venv-linux-arm64" \
     -v "${HOST_SYSROOT_DIR}:/opt/tici-sysroot:ro" \
     -v "${HOST_SYSROOT_DIR}/system/vendor/lib64:/system/vendor/lib64:ro" \
     -v "${HOST_CACHE_DIR}:/work/.cache" \
@@ -609,6 +612,7 @@ run_shell() {
   "${engine}" run --rm -it --platform linux/arm64 \
     --user "${DOCKER_RUN_USER}" \
     -v "${HOST_ROOT_DIR}:/work" \
+    -v "${HOST_VENV_DIR}:/work/.venv-linux-arm64" \
     -v "${HOST_SYSROOT_DIR}:/opt/tici-sysroot:ro" \
     -v "${HOST_SYSROOT_DIR}/system/vendor/lib64:/system/vendor/lib64:ro" \
     -v "${HOST_CACHE_DIR}:/work/.cache" \
