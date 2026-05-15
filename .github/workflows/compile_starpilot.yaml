@@ -85,7 +85,8 @@ jobs:
 
           export COMMA_HOST_ROOT_DIR="/mnt/Apparition/My_App_Data/starpilot-runner/_work/${GITHUB_REPOSITORY#*/}/${GITHUB_REPOSITORY#*/}"
           export COMMA_HOST_SYSROOT_DIR="/mnt/Apparition/My_App_Data/starpilot-runner/sysroots/default"
-          export COMMA_HOST_CACHE_DIR="/mnt/Apparition/My_App_Data/starpilot-runner/_work/${GITHUB_REPOSITORY#*/}/${GITHUB_REPOSITORY#*/}/.cache"
+          export COMMA_HOST_CACHE_DIR="/mnt/Apparition/My_App_Data/starpilot-runner/cache/work"
+          export COMMA_HOST_VENV_DIR="/mnt/Apparition/My_App_Data/starpilot-runner/cache/venv-linux-arm64"
           export COMMA_SYSROOT_DIR="/runner/sysroots/default"
 
           if [[ -n "${{ inputs.jobs }}" ]]; then
