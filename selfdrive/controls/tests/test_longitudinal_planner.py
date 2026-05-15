@@ -8,6 +8,7 @@ import pytest
 from cereal import log
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
+import openpilot.selfdrive.controls.lib.longitudinal_planner as longitudinal_planner_module
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, get_coast_accel, get_vehicle_min_accel
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import soften_far_radar_lead_accel, should_trigger_planner_fcw
@@ -759,6 +760,48 @@ def test_acc_mode_low_speed_vision_stop_buffer_sets_should_stop_before_tiny_gap(
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_low_speed_vision_stop_buffer_brakes_harder_for_close_slow_vision_lead(model_version):
+  v_ego = 6.2
+
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.1,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=9.35, v_lead=2.8, a_lead=-0.2, radar=False, model_prob=0.99),
+  )
+  sm["starpilotPlan"].vCruise = v_ego + 4.0
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert planner.mode == "acc"
+  assert planner.output_should_stop
+  assert planner.output_a_target <= -2.7
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_low_speed_vision_stop_buffer_stays_latched_when_closure_softens_near_stop(model_version, monkeypatch):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.55)
+  lead = make_lead(status=True, d_rel=2.1, v_lead=0.05, a_lead=-0.02, radar=False, model_prob=0.99)
+
+  monotonic_values = iter([10.0, 10.1])
+  monkeypatch.setattr(longitudinal_planner_module.time, "monotonic", lambda: next(monotonic_values))
+
+  cap_armed, active_armed = planner.get_vision_low_speed_stop_buffer_cap(lead, 0.55, -2.0)
+  cap_held, active_held = planner.get_vision_low_speed_stop_buffer_cap(lead, 0.34, -2.0)
+
+  assert active_armed
+  assert cap_armed is not None
+  assert active_held
+  assert cap_held is not None
+  assert cap_held <= -1.25
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
 def test_standstill_moving_lead_does_not_force_resume_while_should_stop(model_version):
   v_ego = 0.0
 
@@ -948,6 +991,62 @@ def test_no_throttle_cap_stays_at_coast_limit_until_throttle_returns():
 
   assert not planner.allow_throttle
   assert planner.output_a_target == pytest.approx(accel_coast, abs=1e-3)
+
+
+def test_low_speed_follow_catchup_accel_cap_limits_close_vision_catchup():
+  v_ego = 7.8
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=18.4, v_lead=8.2, radar=False, model_prob=0.98)
+
+  cap = planner.get_lead_catchup_accel_cap(lead, v_ego, 1.45)
+
+  assert cap is not None
+  assert 0.15 <= cap <= 0.45
+
+
+def test_low_speed_follow_catchup_uses_raw_vehicle_speed_when_cluster_runs_high():
+  v_ego = 7.8
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.6,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=16.0, v_lead=8.4, radar=False, model_prob=0.99),
+  )
+  sm["carState"].vEgoCluster = 9.2
+  sm["starpilotPlan"].vCruise = v_ego + 4.0
+
+  for _ in range(6):
+    planner.update(sm, make_toggles())
+
+  assert planner.output_a_target <= 0.20
+
+
+def test_low_speed_follow_transition_brake_cap_softens_first_sign_flip():
+  v_ego = 7.7
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=18.6, v_lead=7.6, radar=False, model_prob=0.98)
+
+  cap = planner.get_low_speed_follow_transition_brake_cap(lead, v_ego, 1.45, 0.59, -0.24)
+
+  assert cap is not None
+  assert -0.14 <= cap <= -0.08
+
+
+def test_low_speed_follow_transition_brake_cap_stays_off_when_gap_is_tight():
+  v_ego = 7.7
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=13.0, v_lead=7.6, radar=False, model_prob=0.98)
+
+  cap = planner.get_low_speed_follow_transition_brake_cap(lead, v_ego, 1.45, 0.59, -0.24)
+
+  assert cap is None
 
 
 def test_far_near_speed_follow_keeps_uncertainty_smoothing_active():

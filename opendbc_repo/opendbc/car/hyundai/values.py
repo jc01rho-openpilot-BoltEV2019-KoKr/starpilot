@@ -125,7 +125,6 @@ class HyundaiSafetyFlags(IntFlag):
 class HyundaiStarPilotSafetyFlags(IntFlag):
   HAS_LDA_BUTTON = 1024
   AOL_LKAS_ON_ENGAGE = 2048
-  ALLOW_IPEDAL_PADDLE = 32768
 
 
 class HyundaiStarPilotFlags(IntFlag):

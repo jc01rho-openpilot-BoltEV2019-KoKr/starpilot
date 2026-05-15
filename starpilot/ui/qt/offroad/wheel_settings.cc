@@ -55,21 +55,6 @@ StarPilotWheelPanel::StarPilotWheelPanel(StarPilotSettingsWindow *parent, bool f
     update();
   });
 
-  ParamControl *alwaysIPedalToggle = new ParamControl(
-    "AlwaysIPedal",
-    tr("Always I-Pedal"),
-    tr("<b>Automatically spoof the left paddle when shifting into Drive</b> until i-Pedal latches on supported Hyundai CAN-FD cars."),
-    "../../starpilot/assets/toggle_icons/icon_mute.png"
-  );
-  toggles["AlwaysIPedal"] = alwaysIPedalToggle;
-  addItem(alwaysIPedalToggle);
-  QObject::connect(alwaysIPedalToggle, &AbstractControl::hideDescriptionEvent, [this]() {
-    update();
-  });
-  QObject::connect(alwaysIPedalToggle, &AbstractControl::showDescriptionEvent, [this]() {
-    update();
-  });
-
   const std::vector<std::tuple<QString, QString, QString, QString>> wheelToggles {
     {"CancelButtonControl", tr("Cancel Button"), tr("<b>Action performed when the remapped \"Cancel\" button is pressed.</b>"), "../../starpilot/assets/toggle_icons/icon_mute.png"},
     {"DistanceButtonControl", tr("Distance Button"), tr("<b>Action performed when the \"Distance\" button is pressed.</b>"), "../../starpilot/assets/toggle_icons/icon_mute.png"},
@@ -148,10 +133,6 @@ void StarPilotWheelPanel::updateToggles() {
     if (!showAllToggles && key == "NostalgiaMode") {
       setVisible &= parent->isHKGCanFd;
       setVisible &= parent->hasOpenpilotLongitudinal;
-    }
-
-    if (!showAllToggles && key == "AlwaysIPedal") {
-      setVisible &= parent->isHKGCanFd;
     }
 
     if (!showAllToggles && (

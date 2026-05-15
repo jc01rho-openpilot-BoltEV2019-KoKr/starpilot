@@ -18,7 +18,7 @@ from opendbc.car.common.basedir import BASEDIR
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.common.simple_kalman import KF1D, get_kalman_gain
 from opendbc.car.gm.values import CAR as GM
-from opendbc.car.honda.values import CAR as HONDA, HONDA_BOSCH, HONDA_CAMERA_MESSAGE_CARS, HondaFlags, HondaSafetyFlags, HondaStarPilotFlags
+from opendbc.car.honda.values import CAR as HONDA, HONDA_BOSCH, HondaFlags, HondaSafetyFlags, HondaStarPilotFlags
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import CAR as HYUNDAI, CANFD_CAR, HyundaiFlags, HyundaiStarPilotFlags, HyundaiStarPilotSafetyFlags
 from opendbc.car.mock.values import CAR as MOCK
@@ -215,8 +215,7 @@ class CarInterfaceBase(ABC):
 
       elif platform in HONDA:
         fp_ret.canUsePedal = candidate not in HONDA_BOSCH
-        # Only enable TSR parsing on Hondas confirmed to publish CAMERA_MESSAGES.
-        if candidate in HONDA_CAMERA_MESSAGE_CARS:
+        if any(0x35E in bus_fingerprint for bus_fingerprint in fingerprint.values()):
           fp_ret.flags |= int(HondaStarPilotFlags.HAS_CAMERA_MESSAGES)
 
       elif platform in HYUNDAI:
@@ -232,9 +231,6 @@ class CarInterfaceBase(ABC):
           fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON.value
         if starpilot_toggles.always_on_lateral_lkas:
           fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
-        if candidate == HYUNDAI.HYUNDAI_IONIQ_6 and getattr(starpilot_toggles, "always_ipedal", False):
-          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.ALLOW_IPEDAL_PADDLE.value
-
       elif platform in TOYOTA:
         fp_ret.canUsePedal = not CP.autoResumeSng
         fp_ret.canUseSDSU = candidate not in UNSUPPORTED_DSU_CAR and candidate not in TSS2_CAR

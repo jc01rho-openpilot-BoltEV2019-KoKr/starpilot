@@ -92,10 +92,13 @@ def _create_angle_adas_cmd_msg(packer, CAN, apply_angle: float, lat_active: bool
 
 
 def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque, apply_angle,
-                             lfa_base_values=None, lkas_base_values=None):
+                             lfa_base_values=None, lkas_base_values=None, lka_icon=None):
+  if lka_icon is None:
+    lka_icon = 2 if enabled else 1
+
   control_values = {
     "LKA_MODE": 2,
-    "LKA_ICON": 2 if enabled else 1,
+    "LKA_ICON": lka_icon,
     "TORQUE_REQUEST": 0 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else apply_torque,
     "LKA_ASSIST": 0,
     "STEER_REQ": 0 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else (1 if lat_active else 0),
@@ -159,77 +162,6 @@ def create_suppress_lfa(packer, CAN, lfa_block_msg, lka_steering_alt):
   return packer.make_can_msg(suppress_msg, CAN.ACAN, values)
 
 
-IONIQ_6_CRUISE_BUTTONS_COUNTER_MAX = 15
-IONIQ_6_CRUISE_BUTTONS_BASE_CHECKSUMS = (
-  0x56, 0xEF, 0x39, 0x80, 0x88,
-  0x31, 0xE7, 0x5E, 0xF7, 0x4E,
-  0x98, 0x21, 0x29, 0x90, 0x46,
-)
-IONIQ_6_CRUISE_BUTTONS_LEFT_PADDLE_CHECKSUM_XOR = 0x77
-IONIQ_6_CRUISE_BUTTONS_RIGHT_PADDLE_CHECKSUM_XOR = 0xD4
-IONIQ_6_REGEN_CONTROL_REQUEST_TAILS = {
-  (0xA8, 0x0C, 0x12, 0x0E): (0xC0, 0x0C, 0x12, 0x00),
-  (0xA8, 0x0E, 0x07, 0x0E): (0x85, 0x0E, 0x07, 0x0C),
-  (0x18, 0x10, 0x07, 0x02): (0xB5, 0x10, 0x07, 0x00),
-  (0xA8, 0x10, 0x07, 0x0E): (0xB5, 0x10, 0x07, 0x00),
-}
-
-
-def get_ioniq_6_cruise_buttons_next_counter(counter: int) -> int:
-  return (int(counter) + 1) % IONIQ_6_CRUISE_BUTTONS_COUNTER_MAX
-
-
-def create_ioniq_6_paddle_buttons(packer, CP, CAN, cnt, left_paddle=False, right_paddle=False):
-  if left_paddle and right_paddle:
-    raise ValueError("Ioniq 6 paddle spoof only supports one paddle at a time")
-  if cnt < 0 or cnt >= IONIQ_6_CRUISE_BUTTONS_COUNTER_MAX:
-    raise ValueError(f"Invalid Ioniq 6 cruise buttons counter: {cnt}")
-
-  values = {
-    "COUNTER": cnt,
-    "SET_ME_1": 1,
-    "CRUISE_BUTTONS": 0,
-    "ADAPTIVE_CRUISE_MAIN_BTN": 0,
-    "NORMAL_CRUISE_MAIN_BTN": 0,
-    "LDA_BTN": 0,
-    "LEFT_PADDLE": int(left_paddle),
-    "RIGHT_PADDLE": int(right_paddle),
-  }
-
-  address = packer.dbc.name_to_msg["CRUISE_BUTTONS"].address
-  dat = packer.pack(address, values)
-  checksum = IONIQ_6_CRUISE_BUTTONS_BASE_CHECKSUMS[cnt]
-  if left_paddle:
-    checksum ^= IONIQ_6_CRUISE_BUTTONS_LEFT_PADDLE_CHECKSUM_XOR
-  if right_paddle:
-    checksum ^= IONIQ_6_CRUISE_BUTTONS_RIGHT_PADDLE_CHECKSUM_XOR
-  dat[0] = checksum
-
-  bus = CAN.ECAN if CP.flags & HyundaiFlags.CANFD_LKA_STEERING else CAN.CAM
-  return address, bytes(dat), bus
-
-
-def get_ioniq_6_regen_control_request_tail(base_values):
-  base_tail = tuple(int(base_values.get(f"BYTE{i}", 0)) for i in range(24, 28))
-  return IONIQ_6_REGEN_CONTROL_REQUEST_TAILS.get(base_tail)
-
-
-def create_ioniq_6_regen_control(packer, CP, CAN, base_values):
-  request_tail = get_ioniq_6_regen_control_request_tail(base_values)
-  if request_tail is None:
-    raise ValueError(f"Unsupported Ioniq 6 regen control tail: {tuple(int(base_values.get(f'BYTE{i}', 0)) for i in range(24, 28))}")
-
-  values = {k: v for k, v in base_values.items() if k != "CHECKSUM"}
-  address = packer.dbc.name_to_msg["IONIQ_6_REGEN_CONTROL"].address
-  dat = bytearray(packer.pack(address, values))
-  dat[24:28] = bytes(request_tail)
-
-  checksum = hkg_can_fd_checksum(address, None, dat)
-  dat[0] = checksum & 0xFF
-  dat[1] = (checksum >> 8) & 0xFF
-  return address, bytes(dat), CAN.ECAN
-
-
 def create_buttons(packer, CP, CAN, cnt, btn=0, base_values=None, left_paddle=False, right_paddle=False):
   values = {k: v for k, v in base_values.items() if k not in ("_CHECKSUM", "COUNTER")} if base_values else {}
   values.update({
@@ -275,11 +207,14 @@ def create_acc_cancel(packer, CP, CAN, cruise_info_copy):
   return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)
 
 
-def create_lfahda_cluster(packer, CAN, enabled, base_values=None):
+def create_lfahda_cluster(packer, CAN, enabled, base_values=None, lfa_icon=None):
+  if lfa_icon is None:
+    lfa_icon = 2 if enabled else 0
+
   values = {k: v for k, v in base_values.items() if k not in ("CHECKSUM", "COUNTER")} if base_values else {}
   values.update({
     "HDA_ICON": 1 if enabled else 0,
-    "LFA_ICON": 2 if enabled else 0,
+    "LFA_ICON": lfa_icon,
   })
   return packer.make_can_msg("LFAHDA_CLUSTER", CAN.ECAN, values)
 
@@ -357,6 +292,125 @@ IONIQ_6_CLUSTER_LANE_CHANGE_3C1 = {
   },
 }
 
+# Captured from a stock Ioniq 6 route that shows the cluster lane-change animation
+# on ECAN after the trigger/hold 0x3C1 states above.
+IONIQ_6_CLUSTER_LANE_CHANGE_3B5 = {
+  "right": (
+    bytes.fromhex("9f687600000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("d9317700000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("58457800000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("1e1c7900000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("d4f77a00000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("92ae7b00000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("61307c00000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("27697d00000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("ed827e00000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("abdb7f00000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("dd978000000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("9bce8100000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("51258200000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("177c8300000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("e4e28400000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("18ba8500000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("68508600000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("94088700000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("157c8800000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("53258900000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("99ce8a00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("df978b00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("2c098c00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("6a508d00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("a0bb8e00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("e6e28f00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("a2529000000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("e40b9100000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("2ee09200000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("d2b89300000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("9b279400000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("677f9500000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("17959600000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("ebcd9700000000464600000000000000d7020000000069070000000000000000"),
+    bytes.fromhex("d0b89800000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("96e19900000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("5c0a9a00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("1a539b00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("e9cd9c00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("af949d00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("657f9e00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("23269f00000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("cc0fa000000000464600000000000000d8020000000069070000000000000000"),
+    bytes.fromhex("bba6a100000000464600000000000000d9020000000069070000000000000000"),
+    bytes.fromhex("714da200000000464600000000000000d9020000000069070000000000000000"),
+    bytes.fromhex("3714a300000000464600000000000000d9020000000069070000000000000000"),
+  ),
+  "left": (
+    bytes.fromhex("e682c600000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("d2dbc700000000464600000000000000d9020000000069070000000000000000"),
+    bytes.fromhex("21afc800000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("67f6c900000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("ad1dca00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("eb44cb00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("18dacc00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("5e83cd00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("9468ce00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("d231cf00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("9681d000000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("d0d8d100000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("1a33d200000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("5c6ad300000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("ddf4d400000000464600000000000000d9020000000069070000000000000000"),
+    bytes.fromhex("e9add500000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("2346d600000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("651fd700000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("e46bd800000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("d032d900000000464600000000000000d9020000000069070000000000000000"),
+    bytes.fromhex("68d9da00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("2e80db00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("dd1edc00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("9b47dd00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("51acde00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("17f5df00000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("f8dce000000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("be85e100000000464600000000000000da020000000069070000000000000000"),
+    bytes.fromhex("746ee200000000464600000000000000da020000000069070000000000000000"),
+  ),
+}
+
+IONIQ_6_CLUSTER_LANE_CHANGE_31A = {
+  "right": (
+    bytes.fromhex("eb4518f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("757119f0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
+    bytes.fromhex("bf9a1af0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
+    bytes.fromhex("f9c31bf0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
+    bytes.fromhex("0a5d1cf0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
+    bytes.fromhex("4c041df0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
+    bytes.fromhex("86ef1ef0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
+    bytes.fromhex("18db1ff0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("f7f220f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+  ),
+  "left": (
+    bytes.fromhex("851828f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("c34129f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("09aa2af0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("4ff32bf0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("bc6d2cf0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+    bytes.fromhex("fa342df0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
+  ),
+}
+
+IONIQ_6_CLUSTER_LANE_CHANGE_3C1_BURST = {
+  0: "trigger",
+  4: "trigger",
+  7: "steady",
+  10: "steady",
+  13: "steady",
+  16: "steady",
+}
+
+IONIQ_6_CLUSTER_LANE_CHANGE_3C1_STEADY_START = 34
+IONIQ_6_CLUSTER_LANE_CHANGE_3B5_START = 4
+IONIQ_6_CLUSTER_LANE_CHANGE_31A_START = 30
+
 
 def create_ioniq_6_cluster_blindspot_messages(CAN, frame, left_blindspot=False, right_blindspot=False,
                                               left_blinker=False, right_blinker=False):
@@ -385,19 +439,31 @@ def create_ioniq_6_cluster_blindspot_messages(CAN, frame, left_blindspot=False, 
   return ret
 
 
-def create_ioniq_6_cluster_lane_change_messages(CAN, frame, side=None, trigger=False):
+def create_ioniq_6_cluster_lane_change_messages(CAN, frame, side=None):
   if side not in IONIQ_6_CLUSTER_LANE_CHANGE_3C1:
     return []
 
-  if trigger:
-    return [(0x3C1, IONIQ_6_CLUSTER_LANE_CHANGE_3C1[side]["trigger"], CAN.ECAN)]
-  if frame % 20 == 0:
-    return [(0x3C1, IONIQ_6_CLUSTER_LANE_CHANGE_3C1[side]["steady"], CAN.ECAN)]
-  return []
+  ret = []
+  frame_phase = IONIQ_6_CLUSTER_LANE_CHANGE_3C1_BURST.get(frame)
+  if frame_phase is None and frame >= IONIQ_6_CLUSTER_LANE_CHANGE_3C1_STEADY_START and \
+     (frame - IONIQ_6_CLUSTER_LANE_CHANGE_3C1_STEADY_START) % 20 == 0:
+    frame_phase = "steady"
+  if frame_phase is not None:
+    ret.append((0x3C1, IONIQ_6_CLUSTER_LANE_CHANGE_3C1[side][frame_phase], CAN.ECAN))
+
+  if frame >= IONIQ_6_CLUSTER_LANE_CHANGE_3B5_START and (frame - IONIQ_6_CLUSTER_LANE_CHANGE_3B5_START) % 20 == 0:
+    seq_3b5 = IONIQ_6_CLUSTER_LANE_CHANGE_3B5[side]
+    ret.append((0x3B5, seq_3b5[((frame - IONIQ_6_CLUSTER_LANE_CHANGE_3B5_START) // 20) % len(seq_3b5)], CAN.ECAN))
+  if frame >= IONIQ_6_CLUSTER_LANE_CHANGE_31A_START and (frame - IONIQ_6_CLUSTER_LANE_CHANGE_31A_START) % 100 == 0:
+    seq_31a = IONIQ_6_CLUSTER_LANE_CHANGE_31A[side]
+    ret.append((0x31A, seq_31a[((frame - IONIQ_6_CLUSTER_LANE_CHANGE_31A_START) // 100) % len(seq_31a)], CAN.ECAN))
+
+  return ret
 
 
 def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_override, set_speed, hud_control,
-                       main_mode_acc=1, jerk_lower=None, jerk_upper=None, direct_accel=False):
+                       main_mode_acc=1, jerk_lower=None, jerk_upper=None, direct_accel=False,
+                       lead_distance=None, lead_rel_speed=None, lead_visible=None):
   jerk = 5
   jn = jerk / 50
   if not enabled or gas_override:
@@ -409,6 +475,18 @@ def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_ov
     a_raw = accel
     a_val = np.clip(accel, accel_last - jn, accel_last + jn)
 
+  if lead_distance is None and lead_rel_speed is None and lead_visible is None:
+    acc_obj_dist = 1.0
+    acc_obj_rel_spd = 0.0
+    obj_valid = 0
+    obj_status = 2
+  else:
+    lead_visible = bool(lead_visible)
+    acc_obj_dist = float(np.clip(lead_distance if lead_visible else 0.0, 0.0, 204.7))
+    acc_obj_rel_spd = float(np.clip(lead_rel_speed if lead_visible else 0.0, -16.4, 34.7))
+    obj_valid = int(not lead_visible)
+    obj_status = 0 if not (enabled and lead_visible) else (1 if gas_override else 2)
+
   values = {
     "ACCMode": 0 if not enabled else (2 if gas_override else 1),
     "MainMode_ACC": main_mode_acc,
@@ -419,9 +497,10 @@ def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_ov
     "JerkLowerLimit": jerk_lower if jerk_lower is not None else (jerk if enabled else 1),
     "JerkUpperLimit": jerk_upper if jerk_upper is not None else 3.0,
 
-    "ACC_ObjDist": 1,
-    "ObjValid": 0,
-    "OBJ_STATUS": 2,
+    "ACC_ObjDist": acc_obj_dist,
+    "ACC_ObjRelSpd": acc_obj_rel_spd,
+    "ObjValid": obj_valid,
+    "OBJ_STATUS": obj_status,
     "SET_ME_2": 0x4,
     "SET_ME_3": 0x3,
     "SET_ME_TMP_64": 0x64,

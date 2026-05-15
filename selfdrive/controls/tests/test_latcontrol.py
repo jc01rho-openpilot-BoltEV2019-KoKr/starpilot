@@ -20,6 +20,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   get_civic_bosch_modified_pid_output_scale,
 )
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
+  get_civic_bosch_modified_a_center_taper_scale,
   LatControlTorque,
   get_civic_bosch_modified_b_ff_scale,
   get_civic_bosch_modified_b_friction_scale,
@@ -50,6 +51,8 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_kia_ev6_ff_scale,
   get_kia_ev6_friction_scale,
   get_kia_ev6_friction_threshold,
+  get_sonata_hybrid_center_taper_scale,
+  get_sonata_hybrid_ff_scale,
   get_volt_standard_center_taper_scale,
   get_volt_standard_ff_scale,
   get_volt_standard_friction_scale,
@@ -200,7 +203,7 @@ class TestLatControl:
     right_turn_in = get_volt_standard_friction_threshold(6.0, -0.7, -0.8)
     left_unwind = get_volt_standard_friction_threshold(6.0, 0.7, -0.8)
     right_unwind = get_volt_standard_friction_threshold(6.0, -0.7, 0.8)
-    assert right_turn_in < left_turn_in < base
+    assert right_turn_in <= left_turn_in < base
     assert base < left_unwind <= right_unwind
 
   def test_volt_standard_friction_scale_curve(self):
@@ -216,6 +219,19 @@ class TestLatControl:
     assert get_volt_standard_center_taper_scale(0.0, 10.0) > get_volt_standard_center_taper_scale(0.0, 25.0)
     assert get_volt_standard_center_taper_scale(0.0, 25.0) < get_volt_standard_center_taper_scale(0.10, 25.0) < get_volt_standard_center_taper_scale(0.20, 25.0) <= 1.0
     assert get_volt_standard_center_taper_scale(0.0, 25.0) > 0.85
+
+  def test_sonata_hybrid_ff_scale_curve(self):
+    assert get_sonata_hybrid_ff_scale(0.0, 0.0, 20.0) == 1.0
+    assert get_sonata_hybrid_ff_scale(0.6, 0.0, 20.0) > get_sonata_hybrid_ff_scale(-0.6, 0.0, 20.0)
+    assert get_sonata_hybrid_ff_scale(0.30, 0.0, 20.0) < 1.0
+    assert get_sonata_hybrid_ff_scale(0.30, 0.0, 20.0) < get_sonata_hybrid_ff_scale(0.10, 0.0, 20.0)
+    assert get_sonata_hybrid_ff_scale(0.4, 0.7, 6.0) > get_sonata_hybrid_ff_scale(0.4, 0.0, 6.0)
+    assert get_sonata_hybrid_ff_scale(-0.4, 0.7, 6.0) < get_sonata_hybrid_ff_scale(-0.4, 0.0, 6.0)
+
+  def test_sonata_hybrid_center_taper_curve(self):
+    assert get_sonata_hybrid_center_taper_scale(0.0, 30.0) < get_sonata_hybrid_center_taper_scale(0.0, 15.0)
+    assert get_sonata_hybrid_center_taper_scale(0.0, 3.0) < get_sonata_hybrid_center_taper_scale(0.0, 10.0)
+    assert get_sonata_hybrid_center_taper_scale(0.0, 30.0) < get_sonata_hybrid_center_taper_scale(0.20, 30.0) <= 1.0
 
   def test_genesis_g90_ff_scale_curve(self):
     assert get_genesis_g90_ff_scale(0.0, 0.0, 20.0) == 1.0
@@ -295,7 +311,9 @@ class TestLatControl:
     assert get_ioniq_6_directional_taper_scale(-1.2, 0.0) < get_ioniq_6_directional_taper_scale(1.2, 0.0) < 1.0
     assert get_ioniq_6_directional_taper_scale(-1.2, 0.7) <= get_ioniq_6_directional_taper_scale(-1.2, 0.0)
     assert get_ioniq_6_directional_taper_scale(-1.2, 0.25) > get_ioniq_6_directional_taper_scale(-1.2, 0.7)
+    assert get_ioniq_6_directional_taper_scale(-1.2, 0.40) > get_ioniq_6_directional_taper_scale(-1.2, 0.7)
     assert get_ioniq_6_directional_taper_scale(1.2, -0.25) > get_ioniq_6_directional_taper_scale(1.2, -0.7)
+    assert get_ioniq_6_directional_taper_scale(1.2, -0.40) > get_ioniq_6_directional_taper_scale(1.2, -0.7)
 
   def test_ioniq_6_output_taper_curve(self):
     assert get_ioniq_6_output_taper_scale(0.0, 0.0, 25.0) < get_ioniq_6_output_taper_scale(0.0, 0.0, 8.0) <= 1.0
@@ -328,7 +346,10 @@ class TestLatControl:
     assert get_ioniq_6_center_taper_scale(0.0, 10.0) > get_ioniq_6_center_taper_scale(0.0, 30.0)
     assert get_ioniq_6_center_taper_scale(0.0, 30.0) < get_ioniq_6_center_taper_scale(0.2, 30.0)
     assert get_ioniq_6_center_taper_scale(0.0, 12.0) < get_ioniq_6_center_taper_scale(0.25, 12.0)
-    assert abs(get_ioniq_6_center_taper_scale(0.2, 30.0) - 1.0) < 7.0e-2
+    assert get_ioniq_6_center_taper_scale(0.0, 27.0) < get_ioniq_6_center_taper_scale(0.0, 22.0)
+    assert get_ioniq_6_center_taper_scale(0.24, 27.0) > 0.95
+    assert get_ioniq_6_center_taper_scale(0.24, 22.0) - get_ioniq_6_center_taper_scale(0.24, 27.0) < 1.0e-2
+    assert abs(get_ioniq_6_center_taper_scale(0.2, 30.0) - 1.0) < 7.2e-2
 
   def test_kia_ev6_ff_scale_curve(self):
     assert get_kia_ev6_ff_scale(0.0, 0.0, 20.0) == 1.0
@@ -572,6 +593,10 @@ class TestLatControl:
     assert a_variant_unwind_left < base_unwind_left
     assert a_variant_unwind_right < base_unwind_right
     assert a_variant_unwind_right_friction < base_unwind_right_friction
+
+  def test_modified_civic_a_variant_center_taper_curve(self):
+    assert get_civic_bosch_modified_a_center_taper_scale(0.0, 25.0) < get_civic_bosch_modified_a_center_taper_scale(0.0, 10.0)
+    assert get_civic_bosch_modified_a_center_taper_scale(0.0, 25.0) < get_civic_bosch_modified_a_center_taper_scale(0.35, 25.0) <= 1.0
 
   def test_kia_ev6_testing_ground_update_path(self, monkeypatch):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_EV6)

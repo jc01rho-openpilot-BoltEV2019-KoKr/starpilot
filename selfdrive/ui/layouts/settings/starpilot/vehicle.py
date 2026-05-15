@@ -471,11 +471,6 @@ class VehicleSettingsManagerView(Widget):
       rows.append({"target_id": "toggle:RemapCancelToDistance", "type": "toggle",
                     "title": tr("Remap Cancel Button"), "subtitle": tr("Treat the Cancel button as an extra mappable steering-wheel button."),
                     "get_state": lambda: self._controller._params.get_bool("RemapCancelToDistance")})
-    if cs.isHKGCanFd:
-      rows.append({"target_id": "toggle:AlwaysIPedal", "type": "toggle",
-                    "title": tr("Always I-Pedal"),
-                    "subtitle": tr("Spoof the left paddle after shifting into Drive until i-Pedal latches."),
-                    "get_state": lambda: self._controller._params.get_bool("AlwaysIPedal")})
     if cs.isHKGCanFd and cs.hasOpenpilotLongitudinal:
       rows.append({"target_id": "toggle:NostalgiaMode", "type": "toggle",
                     "title": tr("Nostalgia Mode"),

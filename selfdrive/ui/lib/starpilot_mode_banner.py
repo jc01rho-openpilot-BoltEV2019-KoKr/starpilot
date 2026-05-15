@@ -27,12 +27,18 @@ class ModeTransitionBanner:
     )
 
   def update(self):
+    current_mode = get_mode_transition_banner_text(ui_state) if ui_state.started else None
+
     if not ui_state.started:
       self._last_mode = None
       self._visible_until = 0.0
       return
 
-    current_mode = get_mode_transition_banner_text(ui_state)
+    if not ui_state.params.get_bool("ShowModeStatusBanner", default=True):
+      self._last_mode = current_mode
+      self._visible_until = 0.0
+      return
+
     if self._last_mode is None:
       self._last_mode = current_mode
       return
@@ -44,7 +50,9 @@ class ModeTransitionBanner:
         self._visible_until = time.monotonic() + self.SHOW_TIME_SECONDS
 
   def render(self, rect: rl.Rectangle):
-    if not ui_state.started or time.monotonic() > self._visible_until:
+    if (not ui_state.started or
+        not ui_state.params.get_bool("ShowModeStatusBanner", default=True) or
+        time.monotonic() > self._visible_until):
       return
 
     banner_width = min(rect.width - 120, self._width)

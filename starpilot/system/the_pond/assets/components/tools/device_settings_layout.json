@@ -1698,6 +1698,14 @@
         "parent_key": "CustomUI"
       },
       {
+        "key": "ShowModeStatusBanner",
+        "label": "Show Mode Status Banner",
+        "description": "Show a popup banner when the Python driving UIs switch into chill, experimental, switchback, or override mode.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI"
+      },
+      {
         "key": "AdjacentPath",
         "label": "Adjacent Lanes",
         "description": "Show the driving paths for the left and right lanes.",
@@ -2320,13 +2328,6 @@
         "key": "RemapCancelToDistance",
         "label": "Remap Cancel Button",
         "description": "On pedal-interceptor Bolts, treat the steering-wheel CANCEL button as an extra mappable button.",
-        "data_type": "bool",
-        "ui_type": "toggle"
-      },
-      {
-        "key": "AlwaysIPedal",
-        "label": "Always I-Pedal",
-        "description": "Automatically spoof the left paddle when shifting into Drive until i-Pedal latches on supported Hyundai CAN-FD cars.",
         "data_type": "bool",
         "ui_type": "toggle"
       },

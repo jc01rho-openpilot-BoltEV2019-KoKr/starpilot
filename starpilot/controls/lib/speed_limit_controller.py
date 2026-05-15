@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
 
+from cereal import custom
 from openpilot.starpilot.common.starpilot_utilities import calculate_bearing_offset, calculate_distance_to_point, is_url_pingable
 
 FREE_MAPBOX_REQUESTS = 100_000
@@ -428,8 +429,14 @@ class SpeedLimitController:
         self.map_speed_limit = 0
         self.next_speed_limit = 0
     else:
-      self.map_speed_limit = sm["mapdOut"].speedLimit
-      self.next_speed_limit = sm["mapdOut"].nextSpeedLimit
+      way_sel = sm["mapdOut"].waySelectionType
+      if way_sel in (custom.WaySelectionType.current,
+                     custom.WaySelectionType.predicted,
+                     custom.WaySelectionType.extended):
+        self.map_speed_limit = sm["mapdOut"].speedLimit
+        self.next_speed_limit = sm["mapdOut"].nextSpeedLimit
+      else:
+        self.next_speed_limit = 0
 
     if self.next_speed_limit > 0:
       if self.map_speed_limit < self.next_speed_limit:

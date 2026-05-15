@@ -479,6 +479,14 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
   current_safety_config.tx_msgs_len = 0;
   current_safety_config.disable_forwarding = false;
 
+  enable_gas_interceptor = false;
+  gas_interceptor_prev = 0;
+
+  aol_allowed = false;
+  lkas_button_prev = false;
+  lkas_on = false;
+  main_button_prev = false;
+
   int set_status = -1;  // not set
   int hook_config_count = sizeof(safety_hook_registry) / sizeof(safety_hook_config);
   for (int i = 0; i < hook_config_count; i++) {
@@ -501,14 +509,6 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
       current_safety_config.rx_checks[j].status = (RxStatus){0};
     }
   }
-
-  enable_gas_interceptor = false;
-  gas_interceptor_prev = 0;
-
-  aol_allowed = false;
-  lkas_button_prev = false;
-  lkas_on = false;
-  main_button_prev = false;
 
   return set_status;
 }

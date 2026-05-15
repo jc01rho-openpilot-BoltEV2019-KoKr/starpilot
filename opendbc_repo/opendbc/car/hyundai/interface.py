@@ -201,11 +201,11 @@ class CarInterface(CarInterfaceBase):
       ret.vEgoStopping = 0.8
 
     if candidate == CAR.HYUNDAI_PALISADE_2023:
-      ret.startAccel = 1.25
-      ret.stopAccel = -1.1
-      ret.stoppingDecelRate = 0.4
-      ret.vEgoStarting = 0.45
-      ret.vEgoStopping = 0.5
+      ret.startAccel = 1.3
+      ret.stopAccel = -0.85
+      ret.stoppingDecelRate = 0.35
+      ret.vEgoStarting = 0.5
+      ret.vEgoStopping = 0.35
 
     if candidate == CAR.KIA_NIRO_PHEV_2022:
       ret.stopAccel = -1.5

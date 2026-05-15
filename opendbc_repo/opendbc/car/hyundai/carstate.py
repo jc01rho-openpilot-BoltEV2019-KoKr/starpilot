@@ -24,12 +24,7 @@ BUTTONS_DICT = {Buttons.RES_ACCEL: ButtonType.accelCruise, Buttons.SET_DECEL: Bu
 
 IONIQ_6_BLINDSPOT_RIGHT_MASK = 0x08
 IONIQ_6_BLINDSPOT_LEFT_MASK = 0x10
-IONIQ_6_MAX_REGEN_STATE = 0x3C
-IONIQ_6_MAX_REGEN_STATE_2 = 0x01
-IONIQ_6_IPEDAL_INTERMEDIATE_REGEN_STATE = 0x50
-IONIQ_6_IPEDAL_INTERMEDIATE_REGEN_STATE_2 = 0x01
-IONIQ_6_IPEDAL_REGEN_STATE = 0x50
-IONIQ_6_IPEDAL_REGEN_STATE_2 = 0x03
+CANFD_CAMERA_LEAD_MIN_DISTANCE = 0.1
 
 
 def calculate_canfd_speed_limit(CP, FPCP, cp, cp_cam, speed_factor):
@@ -49,16 +44,12 @@ def decode_ioniq_6_blindspot_radar_state(state: int) -> tuple[bool, bool]:
   return bool(state_int & IONIQ_6_BLINDSPOT_LEFT_MASK), bool(state_int & IONIQ_6_BLINDSPOT_RIGHT_MASK)
 
 
-def decode_ioniq_6_ipedal_state(regen_state: int, regen_state_2: int) -> bool:
-  return int(regen_state) == IONIQ_6_IPEDAL_REGEN_STATE and int(regen_state_2) == IONIQ_6_IPEDAL_REGEN_STATE_2
-
-
-def decode_ioniq_6_max_regen_state(regen_state: int, regen_state_2: int) -> bool:
-  return int(regen_state) == IONIQ_6_MAX_REGEN_STATE and int(regen_state_2) == IONIQ_6_MAX_REGEN_STATE_2
-
-
-def decode_ioniq_6_ipedal_intermediate_state(regen_state: int, regen_state_2: int) -> bool:
-  return int(regen_state) == IONIQ_6_IPEDAL_INTERMEDIATE_REGEN_STATE and int(regen_state_2) == IONIQ_6_IPEDAL_INTERMEDIATE_REGEN_STATE_2
+def decode_canfd_camera_lead(distance: float, rel_speed: float) -> tuple[bool, float, float]:
+  lead_distance = float(distance)
+  lead_visible = lead_distance > CANFD_CAMERA_LEAD_MIN_DISTANCE
+  if not lead_visible:
+    return False, 0.0, 0.0
+  return True, lead_distance, float(rel_speed)
 
 
 class CarState(CarStateBase):
@@ -80,11 +71,6 @@ class CarState(CarStateBase):
     self.custom_button = 0
     self.cancel_button_enable_in_progress = False
     self.cruise_buttons_msg = {}
-    self.ipedal_active = False
-    self.ipedal_regen_state = 0
-    self.ipedal_regen_state_2 = 0
-    self.ioniq_6_regen_control_msg = {}
-    self.ioniq_6_regen_control_ts = 0
 
     self.gear_msg_canfd = "ACCELERATOR" if CP.flags & HyundaiFlags.EV else \
                           "GEAR_ALT" if CP.flags & HyundaiFlags.CANFD_ALT_GEARS else \
@@ -116,6 +102,10 @@ class CarState(CarStateBase):
     self.stock_lkas_msg = {}
     self.stock_lfa_msg = {}
     self.stock_lfahda_cluster_msg = {}
+    self.stock_camera_lead_visible = False
+    self.stock_camera_lead_distance = 0.0
+    self.stock_camera_lead_rel_speed = 0.0
+    self.stock_camera_lead_ts = 0
     self.stock_blinker_stalks_ts = 0
     self.blindspots_rear_corners = {}
     self.blindspots_front_corner_1 = {}
@@ -333,7 +323,6 @@ class CarState(CarStateBase):
 
     self.is_metric = cp.vl["CRUISE_BUTTONS_ALT"]["DISTANCE_UNIT"] != 1
     speed_factor = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
-    self.ipedal_active = False
 
     if self.CP.flags & (HyundaiFlags.EV | HyundaiFlags.HYBRID):
       ret.gasPressed = cp.vl[self.accelerator_msg_canfd]["ACCELERATOR_PEDAL"] > 1e-5
@@ -411,15 +400,6 @@ class CarState(CarStateBase):
     # TODO: find this message on ICE & HYBRID cars + cruise control signals (if exists)
     if self.CP.flags & HyundaiFlags.EV:
       ret.cruiseState.nonAdaptive = cp.vl["MANUAL_SPEED_LIMIT_ASSIST"]["MSLA_ENABLED"] == 1
-      if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
-        msla = cp.vl["MANUAL_SPEED_LIMIT_ASSIST"]
-        self.ipedal_regen_state = int(msla.get("EV_REGEN_STATE", 0))
-        self.ipedal_regen_state_2 = int(msla.get("EV_REGEN_STATE_2", 0))
-        self.ipedal_active = decode_ioniq_6_ipedal_state(self.ipedal_regen_state, self.ipedal_regen_state_2)
-        if cp.ts_nanos["IONIQ_6_REGEN_CONTROL"]["CHECKSUM"] > 0:
-          self.ioniq_6_regen_control_msg = copy.copy(cp.vl["IONIQ_6_REGEN_CONTROL"])
-          self.ioniq_6_regen_control_ts = cp.ts_nanos["IONIQ_6_REGEN_CONTROL"]["CHECKSUM"]
-
     prev_cruise_buttons = self.cruise_buttons[-1]
     prev_main_buttons = self.main_buttons[-1]
     prev_lda_button = self.lda_button
@@ -440,6 +420,13 @@ class CarState(CarStateBase):
                                           else cp_cam.vl["CAM_0x2a4"])
       if cp_cam.ts_nanos[lkas_msg]["CHECKSUM"] > 0:
         self.stock_lkas_msg = copy.copy(cp_cam.vl[lkas_msg])
+    lead_cp = cp if self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING else cp_cam
+    if lead_cp.ts_nanos["FR_CMR_03_50ms"]["FR_CMR_Crc3Val"] > 0:
+      self.stock_camera_lead_ts = lead_cp.ts_nanos["FR_CMR_03_50ms"]["FR_CMR_Crc3Val"]
+      self.stock_camera_lead_visible, self.stock_camera_lead_distance, self.stock_camera_lead_rel_speed = decode_canfd_camera_lead(
+        lead_cp.vl["FR_CMR_03_50ms"]["Longitudinal_Distance"],
+        lead_cp.vl["FR_CMR_03_50ms"]["Relative_Velocity"],
+      )
     if cp.ts_nanos["LFA"]["CHECKSUM"] > 0:
       self.stock_lfa_msg = copy.copy(cp.vl["LFA"])
     if cp.ts_nanos["LFAHDA_CLUSTER"]["CHECKSUM"] > 0:
@@ -484,9 +471,11 @@ class CarState(CarStateBase):
       ]
     if CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
       msgs.append(("FR_CMR_02_100ms", 10))
+      msgs.append(("FR_CMR_03_50ms", 0))
       cam_msgs.append(("LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT else "LKAS", 0))
     else:
       cam_msgs.append(("FR_CMR_02_100ms", 0))  # optional: not all non-LKA CANFD cars have this on CAM bus
+      cam_msgs.append(("FR_CMR_03_50ms", 0))  # optional: camera lead/cipv data is not present on every CAN-FD trim
     msgs += [
       ("LFA", 0),             # optional: may stop once OP takes over, but preserve stock UI fields when present
       ("LFAHDA_CLUSTER", 0),  # optional: carries cluster icon state on some variants
@@ -495,8 +484,6 @@ class CarState(CarStateBase):
     if CP.flags & HyundaiFlags.EV:
       msgs.append(("DRIVE_MODE_EV", 0))  # optional: not all CAN-FD EV variants publish drive mode
       msgs.append(("MANUAL_SPEED_LIMIT_ASSIST", 0))  # optional: used for non-adaptive cruise state and Ioniq 6 i-Pedal latch detection
-      if CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
-        msgs.append(("IONIQ_6_REGEN_CONTROL", 0))
     msgs.append(("STEERING_WHEEL_MEDIA_BUTTONS", 0))  # optional: absent or slower on some CAN-FD variants
     cam_msgs.append(("ADAS_0x380", 0))  # optional: dashboard stop-sign signal, only on ADAS-equipped HKG CANFD
     return {

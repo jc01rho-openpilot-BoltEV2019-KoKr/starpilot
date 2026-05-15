@@ -1,0 +1,35 @@
+name: Publish TrueNAS Runner Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Container tag to publish to GHCR"
+        type: string
+        default: "latest"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push runner image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tools/truenas_github_runner/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/starpilot-truenas-runner:${{ inputs.image_tag }}

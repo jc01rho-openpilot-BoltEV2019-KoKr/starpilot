@@ -165,9 +165,12 @@ def create_clu11(packer, frame, clu11, button, CP):
   return packer.make_can_msg("CLU11", bus, values)
 
 
-def create_lfahda_mfc(packer, enabled, frame=None, CP=None):
+def create_lfahda_mfc(packer, enabled, frame=None, CP=None, lfa_icon=None):
+  if lfa_icon is None:
+    lfa_icon = 2 if enabled else 0
+
   values = {
-    "LFA_Icon_State": 2 if enabled else 0,
+    "LFA_Icon_State": lfa_icon,
   }
   can_canfd_blended = CP is not None and bool(CP.flags & HyundaiFlags.CAN_CANFD_BLENDED)
   bus = CanBus(CP).ECAN if can_canfd_blended else 0

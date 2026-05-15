@@ -27,6 +27,7 @@ from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 from openpilot.starpilot.controls.starpilot_card import StarPilotCard
 
 REPLAY = "REPLAY" in os.environ
+OPENPILOT_LEAD_MIN_DISTANCE = 0.1
 
 EventName = log.OnroadEvent.EventName
 
@@ -72,7 +73,7 @@ class Car:
 
   def __init__(self, CI=None, RI=None) -> None:
     self.can_sock = messaging.sub_sock('can', timeout=20)
-    self.sm = messaging.SubMaster(['pandaStates', 'carControl', 'onroadEvents'])
+    self.sm = messaging.SubMaster(['pandaStates', 'carControl', 'onroadEvents', 'radarState'])
     self.pm = messaging.PubMaster(['sendcan', 'carState', 'carParams', 'carOutput', 'liveTracks'])
 
     self.can_rcv_cum_timeout_counter = 0
@@ -338,10 +339,31 @@ class Car:
     if self.sm.all_alive(['carControl']):
       # send car controls over can
       now_nanos = self.can_log_mono_time if REPLAY else int(time.monotonic() * 1e9)
+      self._update_openpilot_lead_state(CC)
       self.last_actuators_output, can_sends = self.CI.apply(CC, now_nanos, self.starpilot_toggles)
       self.pm.send('sendcan', can_list_to_can_capnp(can_sends, msgtype='sendcan', valid=CS.canValid))
 
       self.CC_prev = CC
+
+  def _update_openpilot_lead_state(self, CC: car.CarControl) -> None:
+    lead_visible = bool(CC.hudControl.leadVisible)
+    lead_distance = 0.0
+    lead_rel_speed = 0.0
+
+    if self.sm.seen['radarState'] and self.sm.valid['radarState']:
+      lead = self.sm['radarState'].leadOne
+      if lead.status:
+        lead_visible = True
+        lead_distance = max(float(lead.dRel), 0.0)
+        lead_rel_speed = float(lead.vRel)
+
+    if lead_distance <= OPENPILOT_LEAD_MIN_DISTANCE:
+      lead_distance = 0.0
+      lead_rel_speed = 0.0
+
+    self.CI.CS.openpilot_lead_visible = lead_visible
+    self.CI.CS.openpilot_lead_distance = lead_distance
+    self.CI.CS.openpilot_lead_rel_speed = lead_rel_speed
 
   def step(self):
     CS, RD, FPCS = self.state_update()

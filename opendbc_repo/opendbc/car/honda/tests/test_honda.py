@@ -2,10 +2,12 @@ import re
 from types import SimpleNamespace
 import pytest
 
+from opendbc.car import structs
 from opendbc.car.structs import CarParams
 from opendbc.car import gen_empty_fingerprint
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.carcontroller import (
+  CarController,
   get_civic_bosch_modified_steering_pressed,
   get_civic_bosch_modified_torque_lpf_tau,
   get_honda_bosch_wind_brake_mps2,
@@ -13,9 +15,14 @@ from opendbc.car.honda.carcontroller import (
 )
 from opendbc.car.honda.hondacan import create_lkas_hud
 from opendbc.car.honda.fingerprints import FW_VERSIONS
-from opendbc.car.honda.values import CAR, HONDA_BOSCH, HONDA_BOSCH_TJA_CONTROL, HondaFlags
+from opendbc.car.honda.values import CAR, DBC, HONDA_BOSCH, HONDA_BOSCH_TJA_CONTROL, CarControllerParams, HondaFlags, HondaSafetyFlags, \
+                                     HondaStarPilotFlags
 
 HONDA_FW_VERSION_RE = rb"[A-Z0-9]{5}-[A-Z0-9]{3}(-|,)[A-Z0-9]{4}(\x00){2}$"
+
+
+def get_test_toggles() -> SimpleNamespace:
+  return SimpleNamespace(always_on_lateral_lkas=False, force_torque_controller=False, nnff=False, nnff_lite=False)
 
 
 class TestHondaFingerprint:
@@ -110,6 +117,7 @@ class TestHondaFingerprint:
   def test_official_modified_eps_firmwares_restored(self):
     assert b'39990-TVA,A150\x00\x00' in FW_VERSIONS[CAR.HONDA_ACCORD][(CarParams.Ecu.eps, 0x18DA30F1, None)]
     assert b'39990-TBA,A030\x00\x00' in FW_VERSIONS[CAR.HONDA_CIVIC][(CarParams.Ecu.eps, 0x18DA30F1, None)]
+    assert b'39990-TBA-C120\x00\x00' in FW_VERSIONS[CAR.HONDA_CIVIC_BOSCH][(CarParams.Ecu.eps, 0x18DA30F1, None)]
     assert b'39990-TGG,A020\x00\x00' in FW_VERSIONS[CAR.HONDA_CIVIC_BOSCH][(CarParams.Ecu.eps, 0x18DA30F1, None)]
     assert b'39990-TLA,A040\x00\x00' in FW_VERSIONS[CAR.HONDA_CRV_5G][(CarParams.Ecu.eps, 0x18DA30F1, None)]
 
@@ -124,6 +132,11 @@ class TestHondaFingerprint:
     assert list(civic_cp.lateralParams.torqueV) == [0, 2560, 3840]
     assert list(civic_cp.lateralTuning.pid.kpV) == pytest.approx([0.3])
     assert list(civic_cp.lateralTuning.pid.kiV) == pytest.approx([0.1])
+
+    civic_bosch_fw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=b'39990-TGG,A020\x00\x00', address=0x18DA30F1, subAddress=0)]
+    civic_bosch_cp = CarInterface.get_params(CAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), civic_bosch_fw, False, False, False, toggles)
+    assert not civic_bosch_cp.dashcamOnly
+    assert civic_bosch_cp.flags & HondaFlags.EPS_MODIFIED
 
     accord_fw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=b'39990-TVA,A150\x00\x00', address=0x18DA30F1, subAddress=0)]
     accord_cp = CarInterface.get_params(CAR.HONDA_ACCORD, gen_empty_fingerprint(), accord_fw, False, False, False, toggles)
@@ -172,3 +185,84 @@ class TestHondaFingerprint:
     torque_cp = CarInterface.get_params(CAR.HONDA_CLARITY, gen_empty_fingerprint(), car_fw, False, False, False, torque_toggles)
 
     assert torque_cp.lateralTuning.which() == "torque"
+
+  def test_canfd_bosch_alpha_long_is_available(self):
+    toggles = get_test_toggles()
+
+    CP = CarInterface.get_params(CAR.HONDA_PILOT_4G, gen_empty_fingerprint(), [], True, False, False, toggles)
+
+    assert CP.alphaLongitudinalAvailable
+    assert CP.openpilotLongitudinalControl
+    assert CP.safetyConfigs[-1].safetyParam & HondaSafetyFlags.BOSCH_CANFD
+    assert CP.safetyConfigs[-1].safetyParam & HondaSafetyFlags.BOSCH_LONG
+
+  def test_nidec_pedal_detection_enables_interceptor_path(self):
+    toggles = get_test_toggles()
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[0][0x201] = 6
+
+    CP = CarInterface.get_params(CAR.HONDA_CIVIC, fingerprint, [], False, False, False, toggles)
+    accel_limits = CarInterface.get_pid_accel_limits(CP, current_speed=5.0, cruise_speed=12.0)
+
+    assert CP.enableGasInterceptorDEPRECATED
+    assert not CP.pcmCruise
+    assert accel_limits == (CarControllerParams.NIDEC_ACCEL_MIN, CarControllerParams.NIDEC_ACCEL_MAX)
+
+  def test_honda_camera_message_flag_uses_fingerprint_detection(self):
+    toggles = get_test_toggles()
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[0][0x35E] = 8
+
+    CP = CarInterface.get_params(CAR.HONDA_ACCORD, fingerprint, [], True, False, False, toggles)
+    FPCP = CarInterface.get_starpilot_params(CAR.HONDA_ACCORD, fingerprint, [], CP, toggles)
+
+    assert FPCP.flags & HondaStarPilotFlags.HAS_CAMERA_MESSAGES
+
+  def test_honda_live_learning_params_reload(self, monkeypatch):
+    toggles = get_test_toggles()
+
+    class FakeParams:
+      def get_float(self, key, block=False, return_default=False, default=0.0):
+        if key == "HondaGasFactorParams":
+          return 1.25
+        if key == "HondaWindFactorParams":
+          return 0.85
+        return default
+
+    monkeypatch.setattr("opendbc.car.honda.carcontroller.Params", lambda: FakeParams())
+
+    CP = CarInterface.get_params(CAR.HONDA_ACCORD, gen_empty_fingerprint(), [], True, False, False, toggles)
+    controller = CarController(DBC[CP.carFingerprint], CP)
+
+    assert controller.bosch_gas_factor == pytest.approx(1.25)
+    assert controller.bosch_wind_factor == pytest.approx(0.85)
+
+  def test_honda_bosch_controller_does_not_deepen_planner_braking(self, monkeypatch):
+    toggles = get_test_toggles()
+    CP = CarInterface.get_params(CAR.HONDA_HRV_3G, gen_empty_fingerprint(), [], True, False, False, toggles)
+    controller = CarController(DBC[CP.carFingerprint], CP)
+
+    monkeypatch.setattr("opendbc.car.honda.carcontroller.hondacan.create_steering_control", lambda *args, **kwargs: (0, []))
+    monkeypatch.setattr("opendbc.car.honda.carcontroller.hondacan.create_acc_commands", lambda *args, **kwargs: [])
+
+    CC = structs.CarControl.new_message()
+    CC.enabled = True
+    CC.longActive = True
+    CC.latActive = False
+    CC.cruiseControl.cancel = False
+    CC.cruiseControl.resume = False
+    CC.hudControl.speedVisible = False
+    CC.hudControl.setSpeed = 0.0
+    CC.hudControl.visualAlert = structs.CarControl.HUDControl.VisualAlert.none
+    CC.actuators.accel = -0.3
+    CC.actuators.torque = 0.0
+    CC.actuators.longControlState = structs.CarControl.Actuators.LongControlState.pid
+
+    controller.frame = 2
+    CS = SimpleNamespace(
+      out=SimpleNamespace(vEgo=25.0, aEgo=1.5, steeringPressed=False, gasPressed=False, brakePressed=False),
+      v_cruise_factor=1.0,
+    )
+
+    new_actuators, _ = controller.update(CC.as_reader(), CS, 0, toggles)
+    assert new_actuators.accel == pytest.approx(-0.3)
