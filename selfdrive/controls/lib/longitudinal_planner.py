@@ -38,6 +38,18 @@ STANDSTILL_LEAD_DEPART_MAX_EGO_SPEED = 1.5
 STANDSTILL_LEAD_DEPART_MIN_LEAD_SPEED = 0.6
 STANDSTILL_LEAD_DEPART_MIN_GAP_MARGIN = 1.5
 STANDSTILL_LEAD_DEPART_MIN_MODEL_ACCEL = 0.08
+LEAD_DEPART_ACCEL_HOLD_TIME = 1.2
+LEAD_DEPART_ACCEL_HOLD_MAX_EGO_SPEED = 1.5
+LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_SPEED = 0.6
+LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_DELTA = 0.5
+LEAD_DEPART_ACCEL_HOLD_MIN_GAP = 3.5
+LEAD_DEPART_ACCEL_HOLD_FULL_GAP = 6.0
+LEAD_DEPART_ACCEL_HOLD_FULL_LEAD_SPEED = 2.2
+LEAD_DEPART_ACCEL_HOLD_MIN_MODEL_PROB = 0.85
+LEAD_DEPART_ACCEL_HOLD_MIN_MODEL_ACCEL = 0.12
+LEAD_DEPART_ACCEL_HOLD_MAX_LEAD_BRAKE = 0.2
+LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL = 0.25
+LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL = 0.45
 CLOSE_LEAD_BRAKE_CAP_MAX_TTC = 25.0
 VISION_LEAD_APPROACH_MIN_CLOSING_SPEED = 2.0
 VISION_LEAD_APPROACH_TRIGGER_TIME = 4.5
@@ -118,6 +130,12 @@ VISION_LOW_SPEED_STOP_BUFFER_RELEASE_MARGIN = 0.9
 VISION_LOW_SPEED_STOP_BUFFER_HOLD_TIME = 0.8
 VISION_LOW_SPEED_STOP_BUFFER_MIN_BRAKE = 1.25
 VISION_LOW_SPEED_STOP_BUFFER_BRAKE_GAIN = 0.25
+VISION_CLOSE_STOP_HOLD_MAX_EGO_SPEED = 0.75
+VISION_CLOSE_STOP_HOLD_MAX_LEAD_SPEED = 0.8
+VISION_CLOSE_STOP_HOLD_MAX_DISTANCE = 2.8
+VISION_CLOSE_STOP_HOLD_MIN_MODEL_PROB = 0.95
+VISION_CLOSE_STOP_HOLD_MIN_BRAKE = 0.12
+VISION_CLOSE_STOP_HOLD_MAX_BRAKE = 0.28
 MANUAL_STOP_RESUME_OVERRIDE_TIME = 3.0
 MANUAL_STOP_RESUME_OVERRIDE_MAX_SPEED = 2.0
 MANUAL_STOP_RESUME_OVERRIDE_MIN_ACCEL = 0.2
@@ -378,6 +396,7 @@ class LongitudinalPlanner:
     self.vision_lead_approach_confirm_t = 0.0
     self.untracked_slow_lead_confirm_t = 0.0
     self.manual_stop_resume_override_until = 0.0
+    self.lead_depart_accel_hold_until = 0.0
 
     if self.is_preap:
       try:
@@ -713,6 +732,29 @@ class LongitudinalPlanner:
     min_stop_brake = VISION_LOW_SPEED_STOP_BUFFER_MIN_BRAKE + VISION_LOW_SPEED_STOP_BUFFER_BRAKE_GAIN * float(v_ego)
     return max(accel_min, -min_stop_brake), True
 
+  def get_vision_close_stop_hold_cap(self, lead, v_ego, accel_min, should_stop):
+    if not should_stop or lead is None or not lead.status or bool(getattr(lead, "radar", False)):
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 0.0))
+    if lead_prob < VISION_CLOSE_STOP_HOLD_MIN_MODEL_PROB:
+      return None
+
+    lead_speed = max(float(lead.vLead), 0.0)
+    if (
+      float(v_ego) > VISION_CLOSE_STOP_HOLD_MAX_EGO_SPEED or
+      lead_speed > VISION_CLOSE_STOP_HOLD_MAX_LEAD_SPEED or
+      float(lead.dRel) > VISION_CLOSE_STOP_HOLD_MAX_DISTANCE
+    ):
+      return None
+
+    distance_factor = float(np.clip((VISION_CLOSE_STOP_HOLD_MAX_DISTANCE - float(lead.dRel)) /
+                                    max(VISION_CLOSE_STOP_HOLD_MAX_DISTANCE - 1.8, 0.1), 0.0, 1.0))
+    speed_factor = float(np.clip(float(v_ego) / max(VISION_CLOSE_STOP_HOLD_MAX_EGO_SPEED, 0.1), 0.0, 1.0))
+    hold_brake = VISION_CLOSE_STOP_HOLD_MIN_BRAKE + 0.08 * distance_factor + 0.08 * speed_factor
+    hold_brake = float(np.clip(hold_brake, VISION_CLOSE_STOP_HOLD_MIN_BRAKE, VISION_CLOSE_STOP_HOLD_MAX_BRAKE))
+    return max(accel_min, -hold_brake)
+
   def _update_manual_stop_resume_override(self, sm):
     now_t = time.monotonic()
     lead = sm["radarState"].leadOne
@@ -735,6 +777,36 @@ class LongitudinalPlanner:
       float(getattr(sm["carState"], "vEgo", 0.0)) < MANUAL_STOP_RESUME_OVERRIDE_MAX_SPEED and
       now_t < self.manual_stop_resume_override_until
     )
+
+  def get_lead_depart_accel_floor(self, lead, v_ego, model_desired_accel):
+    if lead is None or not lead.status:
+      return None
+
+    lead_radar = bool(getattr(lead, "radar", False))
+    lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
+    if not lead_radar and lead_prob < LEAD_DEPART_ACCEL_HOLD_MIN_MODEL_PROB:
+      return None
+
+    lead_speed = max(float(lead.vLead), 0.0)
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    lead_delta = lead_speed - float(v_ego)
+    if (
+      float(v_ego) > LEAD_DEPART_ACCEL_HOLD_MAX_EGO_SPEED or
+      lead_speed < LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_SPEED or
+      lead_delta < LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_DELTA or
+      float(lead.dRel) < LEAD_DEPART_ACCEL_HOLD_MIN_GAP or
+      lead_brake > LEAD_DEPART_ACCEL_HOLD_MAX_LEAD_BRAKE or
+      float(model_desired_accel) < LEAD_DEPART_ACCEL_HOLD_MIN_MODEL_ACCEL
+    ):
+      return None
+
+    gap_factor = float(np.clip((float(lead.dRel) - LEAD_DEPART_ACCEL_HOLD_MIN_GAP) /
+                               max(LEAD_DEPART_ACCEL_HOLD_FULL_GAP - LEAD_DEPART_ACCEL_HOLD_MIN_GAP, 0.1), 0.0, 1.0))
+    lead_factor = float(np.clip((lead_speed - LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_SPEED) /
+                                max(LEAD_DEPART_ACCEL_HOLD_FULL_LEAD_SPEED - LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_SPEED, 0.1), 0.0, 1.0))
+    accel_cap = LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL + (LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL - LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL) * np.clip(
+      0.55 * lead_factor + 0.45 * gap_factor, 0.0, 1.0)
+    return min(accel_cap, max(float(model_desired_accel), LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL))
 
   def get_lead_catchup_accel_cap(self, lead, v_ego, t_follow):
     if lead is None or not lead.status:
@@ -1511,6 +1583,40 @@ class LongitudinalPlanner:
     if lead_control_active and lead_depart_ready and not output_should_stop and float(sm['carState'].vEgo) <= STANDSTILL_LEAD_DEPART_MAX_EGO_SPEED:
       output_a_target = max(output_a_target, STANDSTILL_LEAD_DEPART_MIN_ACCEL)
 
+    if output_should_stop or bool(getattr(sm['starpilotPlan'], 'forcingStop', False)) or bool(getattr(sm['starpilotPlan'], 'redLight', False)):
+      self.lead_depart_accel_hold_until = 0.0
+
+    lead_depart_accel_floor = None
+    if lead_control_active and not output_should_stop:
+      lead_depart_accel_floors = [
+        floor for floor in (
+          self.get_lead_depart_accel_floor(self.lead_one, scene_v_ego, model_desired_accel),
+          self.get_lead_depart_accel_floor(self.lead_two, scene_v_ego, model_desired_accel),
+        ) if floor is not None
+      ]
+      if lead_depart_accel_floors:
+        lead_depart_accel_floor = max(lead_depart_accel_floors)
+        if sm['carState'].standstill:
+          self.lead_depart_accel_hold_until = now_t + LEAD_DEPART_ACCEL_HOLD_TIME
+
+    lead_depart_accel_hold_active = (
+      lead_depart_accel_floor is not None and
+      now_t < self.lead_depart_accel_hold_until and
+      float(sm['carState'].vEgo) <= LEAD_DEPART_ACCEL_HOLD_MAX_EGO_SPEED
+    )
+
+    if lead_control_active and output_should_stop:
+      close_stop_hold_caps = [
+        cap for cap in (
+          self.get_vision_close_stop_hold_cap(self.lead_one, scene_v_ego, output_accel_min, output_should_stop),
+          self.get_vision_close_stop_hold_cap(self.lead_two, scene_v_ego, output_accel_min, output_should_stop),
+        ) if cap is not None
+      ]
+      if close_stop_hold_caps:
+        close_stop_hold_cap = min(close_stop_hold_caps)
+        self.a_desired = min(self.a_desired, close_stop_hold_cap)
+        output_a_target = min(output_a_target, close_stop_hold_cap)
+
     if lead_one_active:
       lead_catchup_accel_cap = self.get_lead_catchup_accel_cap(self.lead_one, scene_v_ego, effective_t_follow)
       if lead_catchup_accel_cap is not None:
@@ -1574,6 +1680,9 @@ class LongitudinalPlanner:
       if tracked_vision_model_brake_cap is not None:
         self.a_desired = max(self.a_desired, tracked_vision_model_brake_cap)
         output_a_target = max(output_a_target, tracked_vision_model_brake_cap)
+
+    if lead_depart_accel_hold_active:
+      output_a_target = max(output_a_target, lead_depart_accel_floor)
 
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))
