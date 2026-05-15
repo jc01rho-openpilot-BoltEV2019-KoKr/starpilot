@@ -33,6 +33,11 @@ RAW_LEAD_SAFETY_TTC = 7.0
 RAW_LEAD_SAFETY_DISTANCE = 40.0
 STANDSTILL_LEAD_NUDGE_ACCEL = 0.05
 STANDSTILL_LEAD_NUDGE_MIN_SPEED = 0.0
+STANDSTILL_LEAD_DEPART_MIN_ACCEL = 0.20
+STANDSTILL_LEAD_DEPART_MAX_EGO_SPEED = 1.5
+STANDSTILL_LEAD_DEPART_MIN_LEAD_SPEED = 0.6
+STANDSTILL_LEAD_DEPART_MIN_GAP_MARGIN = 1.5
+STANDSTILL_LEAD_DEPART_MIN_MODEL_ACCEL = 0.08
 CLOSE_LEAD_BRAKE_CAP_MAX_TTC = 25.0
 VISION_LEAD_APPROACH_MIN_CLOSING_SPEED = 2.0
 VISION_LEAD_APPROACH_TRIGGER_TIME = 4.5
@@ -113,6 +118,9 @@ VISION_LOW_SPEED_STOP_BUFFER_RELEASE_MARGIN = 0.9
 VISION_LOW_SPEED_STOP_BUFFER_HOLD_TIME = 0.8
 VISION_LOW_SPEED_STOP_BUFFER_MIN_BRAKE = 1.25
 VISION_LOW_SPEED_STOP_BUFFER_BRAKE_GAIN = 0.25
+MANUAL_STOP_RESUME_OVERRIDE_TIME = 3.0
+MANUAL_STOP_RESUME_OVERRIDE_MAX_SPEED = 2.0
+MANUAL_STOP_RESUME_OVERRIDE_MIN_ACCEL = 0.2
 LEAD_CATCHUP_ACCEL_MIN_EGO = 8.0
 LEAD_CATCHUP_ACCEL_MIN_LEAD_DELTA = -0.5
 LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_MIN = 4.0
@@ -172,6 +180,30 @@ FAR_LEAD_COMFORT_BRAKE_CAP_FULL_HEADWAY_MARGIN = 1.00
 FAR_LEAD_COMFORT_BRAKE_CAP_MIN_DECEL = 0.05
 FAR_LEAD_COMFORT_BRAKE_CAP_MAX_DECEL = 0.18
 FAR_LEAD_COMFORT_BRAKE_CAP_FULL_RELAX_DECEL = 0.05
+TRACKED_VISION_MODEL_FLOOR_MIN_SPEED = 10.0
+TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_PROB = 0.95
+TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_DECEL = 0.80
+TRACKED_VISION_MODEL_FLOOR_MIN_CLOSING_SPEED = 1.0
+TRACKED_VISION_MODEL_FLOOR_MAX_TTC = 22.0
+TRACKED_VISION_MODEL_FLOOR_MIN_GAP_MARGIN = -2.0
+TRACKED_VISION_MODEL_FLOOR_MAX_GAP_BUFFER_MIN = 4.0
+TRACKED_VISION_MODEL_FLOOR_MAX_GAP_BUFFER_GAIN = 0.25
+TRACKED_VISION_MODEL_FLOOR_MIN_DECEL = 0.35
+TRACKED_VISION_MODEL_FLOOR_MAX_DECEL = 1.10
+TRACKED_VISION_MODEL_FLOOR_LEAD_BRAKE_MAX = 0.18
+TRACKED_VISION_MODEL_CAP_MIN_SPEED = 14.0
+TRACKED_VISION_MODEL_CAP_MAX_SPEED = 32.0
+TRACKED_VISION_MODEL_CAP_MIN_MODEL_PROB = 0.95
+TRACKED_VISION_MODEL_CAP_MAX_MODEL_DECEL = 0.75
+TRACKED_VISION_MODEL_CAP_MIN_CLOSING_SPEED = 0.75
+TRACKED_VISION_MODEL_CAP_MAX_CLOSING_SPEED = 4.0
+TRACKED_VISION_MODEL_CAP_MAX_LEAD_BRAKE = 0.55
+TRACKED_VISION_MODEL_CAP_MIN_TTC = 7.0
+TRACKED_VISION_MODEL_CAP_MIN_GAP_MARGIN = -1.5
+TRACKED_VISION_MODEL_CAP_MAX_GAP_BUFFER_MIN = 4.0
+TRACKED_VISION_MODEL_CAP_MAX_GAP_BUFFER_GAIN = 0.25
+TRACKED_VISION_MODEL_CAP_MIN_DECEL = 0.45
+TRACKED_VISION_MODEL_CAP_MAX_DECEL = 1.10
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [3.5, 3.5, 3.2]
@@ -345,6 +377,7 @@ class LongitudinalPlanner:
     self.vision_low_speed_stop_hold_until = 0.0
     self.vision_lead_approach_confirm_t = 0.0
     self.untracked_slow_lead_confirm_t = 0.0
+    self.manual_stop_resume_override_until = 0.0
 
     if self.is_preap:
       try:
@@ -680,6 +713,29 @@ class LongitudinalPlanner:
     min_stop_brake = VISION_LOW_SPEED_STOP_BUFFER_MIN_BRAKE + VISION_LOW_SPEED_STOP_BUFFER_BRAKE_GAIN * float(v_ego)
     return max(accel_min, -min_stop_brake), True
 
+  def _update_manual_stop_resume_override(self, sm):
+    now_t = time.monotonic()
+    lead = sm["radarState"].leadOne
+    no_lead = not bool(getattr(lead, "status", False))
+    try:
+      starpilot_car_state = sm["starpilotCarState"]
+    except KeyError:
+      starpilot_car_state = None
+    accel_pressed = bool(getattr(starpilot_car_state, "accelPressed", False))
+    model_should_stop = bool(getattr(sm["modelV2"].action, "shouldStop", False))
+    standstill = bool(getattr(sm["carState"], "standstill", False))
+    forcing_stop = bool(getattr(sm["starpilotPlan"], "forcingStop", False))
+    red_light = bool(getattr(sm["starpilotPlan"], "redLight", False))
+
+    if standstill and no_lead and accel_pressed and (forcing_stop or red_light or model_should_stop):
+      self.manual_stop_resume_override_until = now_t + MANUAL_STOP_RESUME_OVERRIDE_TIME
+
+    return bool(
+      no_lead and
+      float(getattr(sm["carState"], "vEgo", 0.0)) < MANUAL_STOP_RESUME_OVERRIDE_MAX_SPEED and
+      now_t < self.manual_stop_resume_override_until
+    )
+
   def get_lead_catchup_accel_cap(self, lead, v_ego, t_follow):
     if lead is None or not lead.status:
       return None
@@ -901,6 +957,91 @@ class LongitudinalPlanner:
       [0.0, FAR_LEAD_COMFORT_BRAKE_CAP_FULL_RELAX_DECEL],
     ))
     return -max(0.0, cap_decel - relax_decel)
+
+  def get_tracked_vision_model_brake_floor(self, lead, v_ego, accel_min, t_follow, model_desired):
+    if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
+      return None
+    if float(v_ego) < TRACKED_VISION_MODEL_FLOOR_MIN_SPEED:
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 0.0))
+    if lead_prob < TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_PROB:
+      return None
+
+    model_brake = max(0.0, -float(model_desired))
+    if model_brake < TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_DECEL:
+      return None
+
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    reaction_t = max(self.CP.longitudinalActuatorDelay, self.dt)
+    projected_closing_speed = max(0.0, float(v_ego) - float(lead.vLead)) + lead_brake * reaction_t
+    if projected_closing_speed < TRACKED_VISION_MODEL_FLOOR_MIN_CLOSING_SPEED:
+      return None
+
+    desired_gap = float(desired_follow_distance(v_ego, lead.vLead, t_follow))
+    gap_margin = float(lead.dRel) - desired_gap
+    max_gap_margin = max(TRACKED_VISION_MODEL_FLOOR_MAX_GAP_BUFFER_MIN,
+                         TRACKED_VISION_MODEL_FLOOR_MAX_GAP_BUFFER_GAIN * float(v_ego))
+    if gap_margin < TRACKED_VISION_MODEL_FLOOR_MIN_GAP_MARGIN or gap_margin > max_gap_margin:
+      return None
+
+    projected_ttc = float(lead.dRel) / max(projected_closing_speed, 0.1)
+    if projected_ttc > TRACKED_VISION_MODEL_FLOOR_MAX_TTC:
+      return None
+
+    floor_decel = float(np.interp(
+      model_brake,
+      [TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_DECEL, 1.6],
+      [TRACKED_VISION_MODEL_FLOOR_MIN_DECEL, TRACKED_VISION_MODEL_FLOOR_MAX_DECEL],
+    ))
+    floor_decel += float(np.interp(lead_brake, [0.0, 0.8], [0.0, TRACKED_VISION_MODEL_FLOOR_LEAD_BRAKE_MAX]))
+    return max(accel_min, -min(TRACKED_VISION_MODEL_FLOOR_MAX_DECEL, floor_decel))
+
+  def get_tracked_vision_model_brake_cap(self, lead, v_ego, t_follow, model_desired):
+    if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
+      return None
+    if not (TRACKED_VISION_MODEL_CAP_MIN_SPEED <= float(v_ego) <= TRACKED_VISION_MODEL_CAP_MAX_SPEED):
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 0.0))
+    if lead_prob < TRACKED_VISION_MODEL_CAP_MIN_MODEL_PROB:
+      return None
+
+    model_brake = max(0.0, -float(model_desired))
+    if model_brake > TRACKED_VISION_MODEL_CAP_MAX_MODEL_DECEL:
+      return None
+
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    if lead_brake > TRACKED_VISION_MODEL_CAP_MAX_LEAD_BRAKE:
+      return None
+
+    reaction_t = max(self.CP.longitudinalActuatorDelay, self.dt)
+    projected_closing_speed = max(0.0, float(v_ego) - float(lead.vLead)) + lead_brake * reaction_t
+    if not (TRACKED_VISION_MODEL_CAP_MIN_CLOSING_SPEED <= projected_closing_speed <= TRACKED_VISION_MODEL_CAP_MAX_CLOSING_SPEED):
+      return None
+
+    desired_gap = float(desired_follow_distance(v_ego, lead.vLead, t_follow))
+    gap_margin = float(lead.dRel) - desired_gap
+    max_gap_margin = max(TRACKED_VISION_MODEL_CAP_MAX_GAP_BUFFER_MIN,
+                         TRACKED_VISION_MODEL_CAP_MAX_GAP_BUFFER_GAIN * float(v_ego))
+    if gap_margin < TRACKED_VISION_MODEL_CAP_MIN_GAP_MARGIN or gap_margin > max_gap_margin:
+      return None
+
+    projected_ttc = float(lead.dRel) / max(projected_closing_speed, 0.1)
+    if projected_ttc < TRACKED_VISION_MODEL_CAP_MIN_TTC:
+      return None
+
+    cap_decel = float(np.interp(
+      model_brake,
+      [0.0, TRACKED_VISION_MODEL_CAP_MAX_MODEL_DECEL],
+      [TRACKED_VISION_MODEL_CAP_MIN_DECEL, TRACKED_VISION_MODEL_CAP_MAX_DECEL],
+    ))
+    cap_decel += float(np.interp(
+      projected_closing_speed,
+      [TRACKED_VISION_MODEL_CAP_MIN_CLOSING_SPEED, TRACKED_VISION_MODEL_CAP_MAX_CLOSING_SPEED],
+      [0.0, 0.08],
+    ))
+    return -min(TRACKED_VISION_MODEL_CAP_MAX_DECEL, cap_decel)
 
   @staticmethod
   def raw_close_lead_needs_control(lead, v_ego):
@@ -1263,6 +1404,7 @@ class LongitudinalPlanner:
     comfort_output_accel_min = get_vehicle_min_accel(self.CP, v_ego) if experimental_mlsim else accel_limits_turns[0]
     vision_cap_accel_min = min(comfort_output_accel_min, get_vehicle_min_accel(self.CP, v_ego))
     output_accel_min = comfort_output_accel_min
+    model_desired_accel = float(sm['modelV2'].action.desiredAcceleration)
 
     if not tracking_lead:
       pretracking_vision_caps = []
@@ -1341,12 +1483,33 @@ class LongitudinalPlanner:
       self.a_desired = min(self.a_desired, close_lead_brake_cap)
       output_a_target = min(output_a_target, close_lead_brake_cap)
 
-    if lead_control_active and sm['carState'].standstill:
-      standstill_nudge_gap = max(float(getattr(starpilot_toggles, "stop_distance", STOP_DISTANCE)), STOP_DISTANCE) - 0.5
-      moving_leads = [lead for lead in (self.lead_one, self.lead_two)
-                      if lead.status and lead.vLead > STANDSTILL_LEAD_NUDGE_MIN_SPEED and lead.dRel >= standstill_nudge_gap]
-      if moving_leads:
-        output_a_target = max(output_a_target, STANDSTILL_LEAD_NUDGE_ACCEL)
+    standstill_nudge_gap = max(float(getattr(starpilot_toggles, "stop_distance", STOP_DISTANCE)), STOP_DISTANCE) - 0.5
+    moving_leads = [lead for lead in (self.lead_one, self.lead_two)
+                    if lead.status and lead.vLead > STANDSTILL_LEAD_NUDGE_MIN_SPEED and lead.dRel >= standstill_nudge_gap]
+    lead_depart_ready = any(
+      lead.status and
+      lead.vLead >= STANDSTILL_LEAD_DEPART_MIN_LEAD_SPEED and
+      lead.dRel >= standstill_nudge_gap + STANDSTILL_LEAD_DEPART_MIN_GAP_MARGIN
+      for lead in (self.lead_one, self.lead_two)
+    )
+
+    if lead_control_active and sm['carState'].standstill and moving_leads:
+      output_a_target = max(output_a_target, STANDSTILL_LEAD_NUDGE_ACCEL)
+
+    if (
+      lead_control_active and
+      sm['carState'].standstill and
+      lead_depart_ready and
+      not bool(getattr(sm['starpilotPlan'], 'forcingStop', False)) and
+      not bool(getattr(sm['starpilotPlan'], 'redLight', False)) and
+      model_desired_accel >= STANDSTILL_LEAD_DEPART_MIN_MODEL_ACCEL
+    ):
+      vision_low_speed_stop_active = False
+      output_should_stop = False
+      output_a_target = max(output_a_target, STANDSTILL_LEAD_DEPART_MIN_ACCEL)
+
+    if lead_control_active and lead_depart_ready and not output_should_stop and float(sm['carState'].vEgo) <= STANDSTILL_LEAD_DEPART_MAX_EGO_SPEED:
+      output_a_target = max(output_a_target, STANDSTILL_LEAD_DEPART_MIN_ACCEL)
 
     if lead_one_active:
       lead_catchup_accel_cap = self.get_lead_catchup_accel_cap(self.lead_one, scene_v_ego, effective_t_follow)
@@ -1365,6 +1528,18 @@ class LongitudinalPlanner:
 
     follow_control_lead = self.get_follow_control_lead(lead_control_active, scene_v_ego, effective_t_follow)
     if follow_control_lead is not None and not panic_bypass:
+      if not output_should_stop and not vision_low_speed_stop_active:
+        tracked_vision_model_brake_floor = self.get_tracked_vision_model_brake_floor(
+          follow_control_lead,
+          scene_v_ego,
+          output_accel_min,
+          effective_t_follow,
+          model_desired_accel,
+        )
+        if tracked_vision_model_brake_floor is not None:
+          self.a_desired = min(self.a_desired, tracked_vision_model_brake_floor)
+          output_a_target = min(output_a_target, tracked_vision_model_brake_floor)
+
       matched_follow_brake_cap = self.get_matched_follow_brake_cap(follow_control_lead, scene_v_ego, effective_t_follow)
       if matched_follow_brake_cap is not None:
         self.a_desired = max(self.a_desired, matched_follow_brake_cap)
@@ -1389,8 +1564,24 @@ class LongitudinalPlanner:
         self.a_desired = max(self.a_desired, far_lead_brake_cap)
         output_a_target = max(output_a_target, far_lead_brake_cap)
 
+    if follow_control_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
+      tracked_vision_model_brake_cap = self.get_tracked_vision_model_brake_cap(
+        follow_control_lead,
+        scene_v_ego,
+        effective_t_follow,
+        model_desired_accel,
+      )
+      if tracked_vision_model_brake_cap is not None:
+        self.a_desired = max(self.a_desired, tracked_vision_model_brake_cap)
+        output_a_target = max(output_a_target, tracked_vision_model_brake_cap)
+
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))
+
+    manual_stop_resume_override = self._update_manual_stop_resume_override(sm)
+    if manual_stop_resume_override:
+      output_a_target = max(output_a_target, MANUAL_STOP_RESUME_OVERRIDE_MIN_ACCEL)
+      output_should_stop = False
 
     self.output_a_target = output_a_target
     self.output_should_stop = bool(output_should_stop or vision_low_speed_stop_active)
@@ -1414,7 +1605,13 @@ class LongitudinalPlanner:
     longitudinalPlan.fcw = self.fcw
 
     longitudinalPlan.aTarget = float(self.output_a_target)
-    longitudinalPlan.shouldStop = bool(self.output_should_stop) or (sm['starpilotPlan'].forcingStop and sm['starpilotPlan'].forcingStopLength < 1)
+    force_stop_handoff = bool(
+      sm['starpilotPlan'].forcingStop and (
+        sm['starpilotPlan'].forcingStopLength < 1.0 or
+        sm['starpilotPlan'].vCruise <= 0.0
+      )
+    )
+    longitudinalPlan.shouldStop = bool(self.output_should_stop) or force_stop_handoff
     longitudinalPlan.allowBrake = True
     longitudinalPlan.allowThrottle = bool(self.allow_throttle)
 
