@@ -432,6 +432,7 @@ class SpeedLimitController:
         self.map_speed_limit = sm["mapdOut"].speedLimit
         self.next_speed_limit = sm["mapdOut"].nextSpeedLimit
       else:
+        self.map_speed_limit = 0
         self.next_speed_limit = 0
 
     if self.next_speed_limit > 0:
