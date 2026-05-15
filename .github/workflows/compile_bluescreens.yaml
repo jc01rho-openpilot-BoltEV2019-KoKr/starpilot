@@ -1,0 +1,209 @@
+name: Compile Bluescreens
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: "Branch to build and publish back to"
+        type: string
+        default: "bluescreensonly2"
+        required: true
+      jobs:
+        description: "Optional parallel job count passed to ./build"
+        type: string
+        default: "12"
+        required: false
+      enable_scons_cache:
+        description: "Enable SCons cache for faster incremental builds"
+        type: boolean
+        default: true
+        required: false
+      build_all:
+        description: "Build everything"
+        type: boolean
+        default: true
+        required: false
+      build_ui:
+        description: "Build UI (selfdrive/ui)"
+        type: boolean
+        default: true
+        required: false
+      build_params:
+        description: "Build params Python extension"
+        type: boolean
+        default: false
+        required: false
+      build_cereal:
+        description: "Build cereal messaging bridge"
+        type: boolean
+        default: false
+        required: false
+      build_panda:
+        description: "Build panda firmware outputs"
+        type: boolean
+        default: true
+        required: false
+      build_modeld:
+        description: "Build modeld Python extension"
+        type: boolean
+        default: false
+        required: false
+      build_controls:
+        description: "Build controls solvers + locationd generated models"
+        type: boolean
+        default: false
+        required: false
+
+concurrency:
+  group: compile-bluescreens-${{ inputs.target_ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  GIT_EMAIL: "168790843+firestar5683@users.noreply.github.com"
+  GIT_NAME: "StarPilot Build Bot"
+  TARGET_REF: ${{ inputs.target_ref }}
+
+jobs:
+  build_and_push:
+    runs-on: [self-hosted, truenas, starpilot-build]
+    timeout-minutes: 720
+    steps:
+      - name: Validate target branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TARGET_REF}" ]]; then
+            echo "target_ref is required." >&2
+            exit 1
+          fi
+
+          if [[ "${TARGET_REF}" == refs/heads/* ]]; then
+            echo "BUILD_BRANCH=${TARGET_REF#refs/heads/}" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_BRANCH=${TARGET_REF}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_BRANCH }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Configure git identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "$GIT_NAME"
+          git config user.email "$GIT_EMAIL"
+          git config http.postBuffer 104857600
+
+      - name: Ensure branch exists on origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-remote --exit-code --heads origin "refs/heads/${BUILD_BRANCH}" >/dev/null
+
+      - name: Link persistent sysroot
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -ld /runner /runner/sysroots /runner/sysroots/default || true
+          ls -ld /runner/sysroots/default/usr /runner/sysroots/default/usr/local /runner/sysroots/default/usr/local/lib || true
+          rm -rf .comma_sysroot
+          ln -s /runner/sysroots/default .comma_sysroot
+          ls -ld .comma_sysroot .comma_sysroot/usr .comma_sysroot/usr/local .comma_sysroot/usr/local/lib
+
+      - name: Run Bluescreens build
+        shell: bash
+        env:
+          SP_ENABLE_SCONS_CACHE: ${{ inputs.enable_scons_cache && '1' || '0' }}
+        run: |
+          set -euo pipefail
+
+          RUNNER_HOST_ROOT="/mnt/Apparition/My_App_Data/starpilot-runner"
+          if [[ "${GITHUB_WORKSPACE}" != /runner/_work/* ]]; then
+            echo "Unexpected GITHUB_WORKSPACE: ${GITHUB_WORKSPACE}" >&2
+            exit 1
+          fi
+
+          WORKSPACE_REL="${GITHUB_WORKSPACE#/runner}"
+          export COMMA_HOST_ROOT_DIR="${RUNNER_HOST_ROOT}${WORKSPACE_REL}"
+          export COMMA_HOST_SYSROOT_DIR="${RUNNER_HOST_ROOT}/sysroots/default"
+          export COMMA_HOST_CACHE_DIR="${COMMA_HOST_ROOT_DIR}/.cache"
+          export COMMA_SYSROOT_DIR="/runner/sysroots/default"
+
+          echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
+          echo "COMMA_HOST_ROOT_DIR=${COMMA_HOST_ROOT_DIR}"
+          echo "COMMA_HOST_SYSROOT_DIR=${COMMA_HOST_SYSROOT_DIR}"
+          echo "COMMA_HOST_CACHE_DIR=${COMMA_HOST_CACHE_DIR}"
+
+          JOBS="${{ inputs.jobs }}"
+
+          if [[ "${{ inputs.build_all }}" == "true" ]]; then
+            if [[ -n "${JOBS}" ]]; then
+              ./build "${JOBS}"
+            else
+              ./build
+            fi
+            exit 0
+          fi
+
+          TARGETS=()
+          [[ "${{ inputs.build_ui }}" == "true" ]] && TARGETS+=("selfdrive/ui/ui")
+          [[ "${{ inputs.build_params }}" == "true" ]] && TARGETS+=("common/params_pyx.so")
+          [[ "${{ inputs.build_cereal }}" == "true" ]] && TARGETS+=("cereal/messaging/bridge")
+          if [[ "${{ inputs.build_panda }}" == "true" ]]; then
+            TARGETS+=(
+              "panda/board/obj/panda.bin.signed"
+              "panda/board/obj/panda_h7.bin.signed"
+              "panda/board/obj/panda_remote.bin.signed"
+              "panda/board/obj/panda_h7_remote.bin.signed"
+              "panda/board/obj/panda_jungle_h7.bin.signed"
+              "panda/board/obj/body_h7.bin.signed"
+            )
+          fi
+          [[ "${{ inputs.build_modeld }}" == "true" ]] && TARGETS+=("selfdrive/modeld/models/commonmodel_pyx.so")
+          if [[ "${{ inputs.build_controls }}" == "true" ]]; then
+            TARGETS+=(
+              "selfdrive/controls/lib/lateral_mpc_lib/c_generated_code/libacados_ocp_solver_lat.so"
+              "selfdrive/controls/lib/longitudinal_mpc_lib/c_generated_code/libacados_ocp_solver_long.so"
+              "selfdrive/locationd/models/generated/car.cpp"
+              "selfdrive/locationd/models/generated/pose.cpp"
+            )
+          fi
+
+          if [[ ${#TARGETS[@]} -eq 0 ]]; then
+            echo "No partial targets selected; defaulting to UI + panda"
+            TARGETS=("selfdrive/ui/ui" "panda/board/obj/panda.bin.signed")
+          fi
+
+          echo "Running partial build for targets: ${TARGETS[*]}"
+          if [[ -n "${JOBS}" ]]; then
+            ./build "${JOBS}" "${TARGETS[@]}"
+          else
+            ./build "$(nproc)" "${TARGETS[@]}"
+          fi
+
+      - name: Commit build output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$(git status --porcelain --untracked-files=no)" ]]; then
+            echo "No build output changes detected."
+            exit 0
+          fi
+
+          git add -u
+          git commit -m "build"
+
+      - name: Push build commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin "HEAD:refs/heads/${BUILD_BRANCH}"
