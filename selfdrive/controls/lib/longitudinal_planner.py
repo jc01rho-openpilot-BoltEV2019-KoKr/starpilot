@@ -139,6 +139,7 @@ VISION_CLOSE_STOP_HOLD_MAX_BRAKE = 0.28
 MANUAL_STOP_RESUME_OVERRIDE_TIME = 3.0
 MANUAL_STOP_RESUME_OVERRIDE_MAX_SPEED = 2.0
 MANUAL_STOP_RESUME_OVERRIDE_MIN_ACCEL = 0.2
+FORCE_STOP_HANDOFF_MAX_VCRUISE = 0.5
 LEAD_CATCHUP_ACCEL_MIN_EGO = 8.0
 LEAD_CATCHUP_ACCEL_MIN_LEAD_DELTA = -0.5
 LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_MIN = 4.0
@@ -1687,6 +1688,18 @@ class LongitudinalPlanner:
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))
 
+    force_stop_handoff = bool(
+      getattr(sm['starpilotPlan'], 'forcingStop', False) and
+      not lead_control_active and
+      (
+        float(getattr(sm['starpilotPlan'], 'forcingStopLength', float('inf'))) < 1.0 or
+        float(getattr(sm['starpilotPlan'], 'vCruise', float('inf'))) <= FORCE_STOP_HANDOFF_MAX_VCRUISE
+      )
+    )
+
+    if force_stop_handoff:
+      output_should_stop = True
+
     manual_stop_resume_override = self._update_manual_stop_resume_override(sm)
     if manual_stop_resume_override:
       output_a_target = max(output_a_target, MANUAL_STOP_RESUME_OVERRIDE_MIN_ACCEL)
@@ -1717,7 +1730,7 @@ class LongitudinalPlanner:
     force_stop_handoff = bool(
       sm['starpilotPlan'].forcingStop and (
         sm['starpilotPlan'].forcingStopLength < 1.0 or
-        sm['starpilotPlan'].vCruise <= 0.0
+        sm['starpilotPlan'].vCruise <= FORCE_STOP_HANDOFF_MAX_VCRUISE
       )
     )
     longitudinalPlan.shouldStop = bool(self.output_should_stop) or force_stop_handoff

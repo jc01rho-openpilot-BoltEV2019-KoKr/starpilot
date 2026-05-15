@@ -1207,6 +1207,59 @@ def test_publish_force_stop_handoff_sets_should_stop_when_vcruise_zero():
   assert pm.sent["longitudinalPlan"].longitudinalPlan.shouldStop
 
 
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_force_stop_handoff_sets_output_should_stop_before_zero_vcruise(model_version):
+  v_ego = 1.25
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(v_ego, desired_accel=-0.35, min_accel=-1.0, experimental_mode=False)
+  sm["starpilotPlan"].forcingStop = True
+  sm["starpilotPlan"].forcingStopLength = 6.5
+  sm["starpilotPlan"].vCruise = 0.4
+  sm["modelV2"].action.shouldStop = False
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert planner.output_should_stop
+
+
+def test_publish_force_stop_handoff_sets_should_stop_when_vcruise_low():
+  class FakePM:
+    def __init__(self):
+      self.sent = {}
+
+    def send(self, name, msg):
+      self.sent[name] = msg
+
+  class FakeSM(dict):
+    def all_checks(self, service_list=None):
+      return True
+
+    logMonoTime = {"modelV2": int(1e9)}
+
+  v_ego = 1.25
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  planner.output_a_target = -0.35
+  planner.output_should_stop = False
+  planner.v_desired_trajectory = np.zeros(CONTROL_N)
+  planner.a_desired_trajectory = np.zeros(CONTROL_N)
+  planner.j_desired_trajectory = np.zeros(CONTROL_N)
+  planner.fcw = False
+  planner.mpc.source = "cruise"
+  planner.mpc.solve_time = 0.0
+  pm = FakePM()
+
+  sm = FakeSM(make_sm(v_ego, desired_accel=0.0, min_accel=-1.0, experimental_mode=False))
+  sm["starpilotPlan"].forcingStop = True
+  sm["starpilotPlan"].forcingStopLength = 6.5
+  sm["starpilotPlan"].vCruise = 0.4
+
+  planner.publish(sm, pm)
+
+  assert pm.sent["longitudinalPlan"].longitudinalPlan.shouldStop
+
+
 def test_allow_throttle_hysteresis_filters_gas_prob_chatter():
   v_ego = 10.0
 

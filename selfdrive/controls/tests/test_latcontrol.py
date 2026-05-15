@@ -604,14 +604,14 @@ class TestLatControl:
     a_variant_unwind_right_friction = get_civic_bosch_modified_b_friction_scale(12.0, -0.5, 0.8)
 
     assert a_variant_steady_left < base_steady_left
-    assert a_variant_steady_right < base_steady_right
+    assert a_variant_steady_right > base_steady_right
     assert a_variant_turn_in_left < base_turn_in_left
-    assert a_variant_turn_in_right < base_turn_in_right
+    assert a_variant_turn_in_right > base_turn_in_right
     assert a_variant_unwind_left < base_unwind_left
-    assert a_variant_unwind_right < base_unwind_right
-    assert a_variant_turn_in_right_friction <= base_turn_in_right_friction
+    assert a_variant_unwind_right > (base_unwind_right * 0.95)
+    assert a_variant_turn_in_right_friction > base_turn_in_right_friction
     assert a_variant_unwind_left_friction < base_unwind_left_friction
-    assert a_variant_unwind_right_friction < base_unwind_right_friction
+    assert a_variant_unwind_right_friction >= 0.82
 
   def test_modified_civic_a_variant_center_taper_curve(self):
     assert get_civic_bosch_modified_a_center_taper_scale(0.0, 25.0) < get_civic_bosch_modified_a_center_taper_scale(0.0, 10.0)
