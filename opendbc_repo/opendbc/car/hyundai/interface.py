@@ -208,8 +208,8 @@ class CarInterface(CarInterfaceBase):
       ret.vEgoStopping = 0.35
 
     if candidate == CAR.KIA_NIRO_PHEV_2022:
-      ret.stopAccel = -1.5
-      ret.stoppingDecelRate = 0.55
+      ret.stopAccel = -1.4
+      ret.stoppingDecelRate = 0.5
       ret.vEgoStopping = 0.7
 
     if candidate == CAR.KIA_OPTIMA_G4_FL:

@@ -47,6 +47,11 @@ class UserRequest:
   CHECK = 1
   FETCH = 2
 
+
+class UpdateAborted(Exception):
+  pass
+
+
 class WaitTimeHelper:
   def __init__(self):
     self.ready_event = threading.Event()
@@ -73,6 +78,38 @@ def write_time_to_param(params, param) -> None:
 
 def run(cmd: list[str], cwd: str = None) -> str:
   return subprocess.check_output(cmd, cwd=cwd, stderr=subprocess.STDOUT, encoding='utf8')
+
+
+def run_with_offroad_abort(cmd: list[str], params: Params, cwd: str = None, poll_interval: float = 0.5) -> str:
+  proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+  output: list[str] = []
+
+  try:
+    while True:
+      try:
+        stdout, _ = proc.communicate(timeout=poll_interval)
+        if stdout:
+          output.append(stdout)
+        if proc.returncode:
+          raise subprocess.CalledProcessError(proc.returncode, cmd, ''.join(output))
+        return ''.join(output)
+      except subprocess.TimeoutExpired:
+        if not params.get_bool("IsOffroad"):
+          proc.terminate()
+          try:
+            stdout, _ = proc.communicate(timeout=5)
+            if stdout:
+              output.append(stdout)
+          except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, _ = proc.communicate()
+            if stdout:
+              output.append(stdout)
+          raise UpdateAborted(f"aborted {' '.join(cmd)} because vehicle went onroad")
+  finally:
+    if proc.poll() is None:
+      proc.kill()
+      proc.communicate()
 
 
 def set_consistent_flag(consistent: bool) -> None:
@@ -374,7 +411,12 @@ class Updater:
     else:
       cloudlog.info(f"up to date on {cur_branch} ({str(cur_commit)[:7]})")
 
+  def require_offroad(self, context: str) -> None:
+    if not self.params.get_bool("IsOffroad"):
+      raise UpdateAborted(f"{context} blocked because vehicle is onroad")
+
   def fetch_update(self) -> None:
+    self.require_offroad("update fetch")
     cloudlog.info("attempting git fetch inside staging overlay")
 
     self.params.put("UpdaterState", "downloading...")
@@ -388,7 +430,7 @@ class Updater:
     run(["git", "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"], OVERLAY_MERGED)
 
     branch = self.target_branch
-    git_fetch_output = run(["git", "fetch", "origin", branch], OVERLAY_MERGED)
+    git_fetch_output = run_with_offroad_abort(["git", "fetch", "origin", branch], self.params, OVERLAY_MERGED)
     cloudlog.info("git fetch success: %s", git_fetch_output)
 
     cloudlog.info("git reset in progress")
@@ -401,14 +443,19 @@ class Updater:
       ["git", "submodule", "update", "--init", "--recursive"],
       ["git", "submodule", "foreach", "--recursive", "git", "reset", "--hard"],
     ]
-    r = [run(cmd, OVERLAY_MERGED) for cmd in cmds]
+    r = []
+    for cmd in cmds:
+      self.require_offroad("update apply")
+      r.append(run_with_offroad_abort(cmd, self.params, OVERLAY_MERGED))
     cloudlog.info("git reset success: %s", '\n'.join(r))
 
     # TODO: show agnos download progress
     if AGNOS:
+      self.require_offroad("AGNOS update")
       handle_agnos_update()
 
     # Create the finalized, ready-to-swap update
+    self.require_offroad("update finalization")
     self.params.put("UpdaterState", "finalizing update...")
     finalize_update()
     cloudlog.info("finalize success!")
@@ -484,7 +531,8 @@ def main() -> None:
 
         update_failed_count += 1
 
-        if manual_update_requested or user_requested_action or (params.get_bool("IsOffroad") and automatic_updates_enabled):
+        should_check = manual_update_requested or user_requested_action or (params.get_bool("IsOffroad") and automatic_updates_enabled)
+        if should_check:
           # check for update
           params.put("UpdaterState", "checking...")
           updater.check_for_update()
@@ -497,6 +545,8 @@ def main() -> None:
             cloudlog.info("skipping fetch, connection metered")
           elif wait_helper.user_request == UserRequest.CHECK:
             cloudlog.info("skipping fetch, only checking")
+          elif not params.get_bool("IsOffroad"):
+            cloudlog.info("skipping fetch, vehicle went onroad")
           else:
             updater.fetch_update()
             write_time_to_param(params, "UpdaterLastFetchTime")
@@ -514,6 +564,10 @@ def main() -> None:
           returncode=e.returncode
         )
         exception = f"command failed: {e.cmd}\n{e.output}"
+        OVERLAY_INIT.unlink(missing_ok=True)
+      except UpdateAborted as e:
+        cloudlog.warning(str(e))
+        exception = str(e)
         OVERLAY_INIT.unlink(missing_ok=True)
       except Exception as e:
         cloudlog.exception("uncaught updated exception, shouldn't happen")

@@ -751,6 +751,7 @@ def manager_thread() -> None:
 
   started_prev = False
   ignition_prev = False
+  warned_onroad_reboot = False
 
   # StarPilot variables
   sm = sm.extend(['starpilotPlan'])
@@ -809,8 +810,15 @@ def manager_thread() -> None:
     # Exit main loop when uninstall/shutdown/reboot is needed
     shutdown = False
     for param in ("DoUninstall", "DoShutdown", "DoReboot"):
+      if param == "DoReboot" and started:
+        if params.get_bool(param):
+          if not warned_onroad_reboot:
+            cloudlog.warning("ignoring DoReboot while onroad; deferring until offroad")
+            warned_onroad_reboot = True
+        continue
       if params.get_bool(param):
         shutdown = True
+        warned_onroad_reboot = False
         params.put("LastManagerExitReason", f"{param} {datetime.datetime.now()}")
         cloudlog.warning(f"Shutting down manager - {param} set")
 

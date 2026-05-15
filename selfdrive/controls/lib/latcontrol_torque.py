@@ -66,16 +66,16 @@ CIVIC_BOSCH_MODIFIED_B_TURN_IN_FRICTION_BOOST_LEFT = 0.02
 CIVIC_BOSCH_MODIFIED_B_TURN_IN_FRICTION_BOOST_RIGHT = 0.00
 CIVIC_BOSCH_MODIFIED_B_UNWIND_FRICTION_REDUCTION_LEFT = 0.26
 CIVIC_BOSCH_MODIFIED_B_UNWIND_FRICTION_REDUCTION_RIGHT = 0.40
-CIVIC_BOSCH_MODIFIED_A_VARIANT_FF_RESTORE_LEFT = 0.00
-CIVIC_BOSCH_MODIFIED_A_VARIANT_FF_RESTORE_RIGHT = 0.00
+CIVIC_BOSCH_MODIFIED_A_VARIANT_FF_RESTORE_LEFT = -0.03
+CIVIC_BOSCH_MODIFIED_A_VARIANT_FF_RESTORE_RIGHT = 0.05
 CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_BOOST_LEFT = 0.00
-CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_BOOST_RIGHT = 0.00
-CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_TAPER_LEFT = 0.04
-CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_TAPER_RIGHT = 0.10
+CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_BOOST_RIGHT = 0.04
+CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_TAPER_LEFT = 0.10
+CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_TAPER_RIGHT = 0.04
 CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_FRICTION_BOOST_LEFT = 0.00
-CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_FRICTION_BOOST_RIGHT = 0.00
-CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_FRICTION_REDUCTION_LEFT = 0.03
-CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_FRICTION_REDUCTION_RIGHT = 0.07
+CIVIC_BOSCH_MODIFIED_A_VARIANT_TURN_IN_FRICTION_BOOST_RIGHT = 0.03
+CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_FRICTION_REDUCTION_LEFT = 0.08
+CIVIC_BOSCH_MODIFIED_A_VARIANT_UNWIND_FRICTION_REDUCTION_RIGHT = 0.03
 CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_MAX = 0.12
 CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_LAT = 0.24
 CIVIC_BOSCH_MODIFIED_A_VARIANT_CENTER_TAPER_LAT_WIDTH = 0.05
@@ -115,6 +115,10 @@ GENESIS_G90_CARS = (
 )
 IONIQ_5_CARS = (
   HYUNDAI_CAR.HYUNDAI_IONIQ_5,
+)
+IONIQ_EV_OLD_CARS = (
+  HYUNDAI_CAR.HYUNDAI_IONIQ_EV_LTD,
+  HYUNDAI_CAR.HYUNDAI_IONIQ_EV_2020,
 )
 IONIQ_6_CARS = (
   HYUNDAI_CAR.HYUNDAI_IONIQ_6,
@@ -234,18 +238,18 @@ VOLT_STANDARD_CENTER_TAPER_SPEED = 20.0
 VOLT_STANDARD_CENTER_TAPER_SPEED_WIDTH = 2.5
 
 SONATA_HYBRID_BASE_LAT_ACCEL_FACTOR_MULT = 1.04
-SONATA_HYBRID_FF_REDUCTION_LEFT = 0.09
-SONATA_HYBRID_FF_REDUCTION_RIGHT = 0.20
+SONATA_HYBRID_FF_REDUCTION_LEFT = 0.07
+SONATA_HYBRID_FF_REDUCTION_RIGHT = 0.22
 SONATA_HYBRID_FF_ONSET = 0.22
 SONATA_HYBRID_FF_ONSET_WIDTH = 0.08
 SONATA_HYBRID_FF_CUTOFF = 1.35
 SONATA_HYBRID_FF_CUTOFF_WIDTH = 0.40
 SONATA_HYBRID_TRANSITION_SPEED = 8.0
 SONATA_HYBRID_PHASE_SCALE = 0.12
-SONATA_HYBRID_TURN_IN_BOOST_LEFT = 0.08
+SONATA_HYBRID_TURN_IN_BOOST_LEFT = 0.12
 SONATA_HYBRID_TURN_IN_BOOST_RIGHT = 0.00
-SONATA_HYBRID_UNWIND_TAPER_LEFT = 0.14
-SONATA_HYBRID_UNWIND_TAPER_RIGHT = 0.12
+SONATA_HYBRID_UNWIND_TAPER_LEFT = 0.18
+SONATA_HYBRID_UNWIND_TAPER_RIGHT = 0.10
 SONATA_HYBRID_CENTER_TAPER_MAX = 0.05
 SONATA_HYBRID_CENTER_TAPER_LAT = 0.14
 SONATA_HYBRID_CENTER_TAPER_LAT_WIDTH = 0.025
@@ -303,6 +307,25 @@ IONIQ_5_TURN_IN_FRICTION_BOOST_LEFT = 0.02
 IONIQ_5_TURN_IN_FRICTION_BOOST_RIGHT = 0.00
 IONIQ_5_UNWIND_FRICTION_REDUCTION_LEFT = 0.15
 IONIQ_5_UNWIND_FRICTION_REDUCTION_RIGHT = 0.26
+
+IONIQ_EV_OLD_BASE_LAT_ACCEL_FACTOR_MULT = 1.08
+IONIQ_EV_OLD_FF_REDUCTION_LEFT = 0.08
+IONIQ_EV_OLD_FF_REDUCTION_RIGHT = 0.16
+IONIQ_EV_OLD_FF_ONSET = 0.14
+IONIQ_EV_OLD_FF_ONSET_WIDTH = 0.05
+IONIQ_EV_OLD_FF_CUTOFF = 1.10
+IONIQ_EV_OLD_FF_CUTOFF_WIDTH = 0.30
+IONIQ_EV_OLD_TRANSITION_SPEED = 10.0
+IONIQ_EV_OLD_PHASE_SCALE = 0.10
+IONIQ_EV_OLD_TURN_IN_BOOST_LEFT = 0.06
+IONIQ_EV_OLD_TURN_IN_BOOST_RIGHT = 0.00
+IONIQ_EV_OLD_UNWIND_TAPER_LEFT = 0.18
+IONIQ_EV_OLD_UNWIND_TAPER_RIGHT = 0.08
+IONIQ_EV_OLD_CENTER_TAPER_MAX = 0.10
+IONIQ_EV_OLD_CENTER_TAPER_LAT = 0.14
+IONIQ_EV_OLD_CENTER_TAPER_LAT_WIDTH = 0.03
+IONIQ_EV_OLD_CENTER_TAPER_SPEED = 24.0
+IONIQ_EV_OLD_CENTER_TAPER_SPEED_WIDTH = 2.2
 
 IONIQ_6_FF_GAIN_LEFT = 0.045
 IONIQ_6_FF_GAIN_RIGHT = 0.015
@@ -1060,6 +1083,48 @@ def get_ioniq_5_friction_scale(v_ego: float, desired_lateral_accel: float, desir
   return min(max(friction_scale, 0.86), 1.04)
 
 
+def _ioniq_ev_old_sigmoid(x: float) -> float:
+  return _sigmoid(x)
+
+
+def _ioniq_ev_old_low_speed_factor(v_ego: float) -> float:
+  return 1.0 / (1.0 + (max(v_ego, 0.0) / IONIQ_EV_OLD_TRANSITION_SPEED) ** 2)
+
+
+def _ioniq_ev_old_transition_phase(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  return math.tanh((desired_lateral_accel * desired_lateral_jerk) / IONIQ_EV_OLD_PHASE_SCALE)
+
+
+def _ioniq_ev_old_side_value(desired_lateral_accel: float, left_value: float, right_value: float) -> float:
+  return left_value if desired_lateral_accel >= 0.0 else right_value
+
+
+def get_ioniq_ev_old_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  if desired_lateral_accel == 0.0:
+    return 1.0
+
+  abs_lateral_accel = abs(desired_lateral_accel)
+  onset = _ioniq_ev_old_sigmoid((abs_lateral_accel - IONIQ_EV_OLD_FF_ONSET) / IONIQ_EV_OLD_FF_ONSET_WIDTH)
+  cutoff = _ioniq_ev_old_sigmoid((IONIQ_EV_OLD_FF_CUTOFF - abs_lateral_accel) / IONIQ_EV_OLD_FF_CUTOFF_WIDTH)
+  base_reduction = _ioniq_ev_old_side_value(desired_lateral_accel, IONIQ_EV_OLD_FF_REDUCTION_LEFT, IONIQ_EV_OLD_FF_REDUCTION_RIGHT) * onset * cutoff
+  phase = _ioniq_ev_old_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  low_speed_factor = _ioniq_ev_old_low_speed_factor(v_ego)
+  turn_in_boost = 1.0 + (_ioniq_ev_old_side_value(desired_lateral_accel, IONIQ_EV_OLD_TURN_IN_BOOST_LEFT, IONIQ_EV_OLD_TURN_IN_BOOST_RIGHT) *
+                         turn_in_weight * (0.35 + 0.65 * low_speed_factor))
+  unwind_taper = 1.0 - (_ioniq_ev_old_side_value(desired_lateral_accel, IONIQ_EV_OLD_UNWIND_TAPER_LEFT, IONIQ_EV_OLD_UNWIND_TAPER_RIGHT) *
+                        unwind_weight * (0.35 + 0.65 * low_speed_factor))
+  return (1.0 - base_reduction) * turn_in_boost * max(unwind_taper, 0.0)
+
+
+def get_ioniq_ev_old_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _ioniq_ev_old_sigmoid((v_ego - IONIQ_EV_OLD_CENTER_TAPER_SPEED) / IONIQ_EV_OLD_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _ioniq_ev_old_sigmoid((IONIQ_EV_OLD_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / IONIQ_EV_OLD_CENTER_TAPER_LAT_WIDTH)
+  reduction = IONIQ_EV_OLD_CENTER_TAPER_MAX * speed_weight * center_weight
+  return 1.0 - reduction
+
+
 def _ioniq_6_sigmoid(x: float) -> float:
   return _sigmoid(x)
 
@@ -1352,6 +1417,7 @@ class LatControlTorque(LatControl):
     self.is_volt_standard = CP.carFingerprint in VOLT_STANDARD_CARS
     self.is_genesis_g90 = CP.carFingerprint in GENESIS_G90_CARS
     self.is_ioniq_5 = CP.carFingerprint in IONIQ_5_CARS
+    self.is_ioniq_ev_old = CP.carFingerprint in IONIQ_EV_OLD_CARS
     self.is_ioniq_6 = CP.carFingerprint in IONIQ_6_CARS
     self.is_sonata_hybrid = CP.carFingerprint in SONATA_HYBRID_CARS
     self.is_kia_ev6 = CP.carFingerprint in KIA_EV6_CARS
@@ -1366,6 +1432,8 @@ class LatControlTorque(LatControl):
     self.torque_ki_mult = 1.0
     if self.is_ioniq_5:
       self.torque_params.latAccelFactor *= IONIQ_5_BASE_LAT_ACCEL_FACTOR_MULT
+    if self.is_ioniq_ev_old:
+      self.torque_params.latAccelFactor *= IONIQ_EV_OLD_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_6:
       self.torque_params.latAccelFactor *= IONIQ_6_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_sonata_hybrid:
@@ -1389,6 +1457,8 @@ class LatControlTorque(LatControl):
   def update_live_torque_params(self, latAccelFactor, latAccelOffset, friction):
     if self.is_ioniq_5:
       latAccelFactor *= IONIQ_5_BASE_LAT_ACCEL_FACTOR_MULT
+    if self.is_ioniq_ev_old:
+      latAccelFactor *= IONIQ_EV_OLD_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_6:
       latAccelFactor *= IONIQ_6_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_sonata_hybrid:
@@ -1467,11 +1537,13 @@ class LatControlTorque(LatControl):
       volt_standard_test_active = self.is_volt_standard and volt_standard_lateral_testing_ground_active()
       genesis_g90_test_active = self.is_genesis_g90 and genesis_g90_lateral_testing_ground_active()
       ioniq_5_active = self.is_ioniq_5
+      ioniq_ev_old_active = self.is_ioniq_ev_old
       ioniq_6_active = self.is_ioniq_6
       sonata_hybrid_active = self.is_sonata_hybrid
       kia_ev6_test_active = self.is_kia_ev6 and kia_ev6_lateral_testing_ground_active()
       volt_plexy_test_active = self.is_volt_cc and volt_plexy_lateral_testing_ground_active()
       volt_standard_center_taper = get_volt_standard_center_taper_scale(setpoint, CS.vEgo) if volt_standard_test_active else 1.0
+      ioniq_ev_old_center_taper = get_ioniq_ev_old_center_taper_scale(setpoint, CS.vEgo) if ioniq_ev_old_active else 1.0
       ioniq_6_center_taper = get_ioniq_6_center_taper_scale(setpoint, CS.vEgo) if ioniq_6_active else 1.0
       sonata_hybrid_center_taper = get_sonata_hybrid_center_taper_scale(setpoint, CS.vEgo) if sonata_hybrid_active else 1.0
       civic_bosch_modified_a_center_taper = get_civic_bosch_modified_a_center_taper_scale(setpoint, CS.vEgo) if (
@@ -1499,6 +1571,9 @@ class LatControlTorque(LatControl):
         ff *= get_ioniq_5_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         friction_threshold = get_ioniq_5_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = get_ioniq_5_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
+      elif ioniq_ev_old_active:
+        ff *= get_ioniq_ev_old_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * ioniq_ev_old_center_taper
+        friction_scale = 1.0 + ((friction_scale - 1.0) * ioniq_ev_old_center_taper)
       elif ioniq_6_active:
         ff *= get_ioniq_6_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * ioniq_6_center_taper
         friction_threshold = get_ioniq_6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk) / max(ioniq_6_center_taper, 1e-3)

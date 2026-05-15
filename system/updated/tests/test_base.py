@@ -227,6 +227,27 @@ class ParamsBaseUpdateTest(TestBaseUpdate):
       self._test_params("master", False, True)
       self._test_finalized_update("master", *self.MOCK_RELEASES["master"])
 
+  def test_download_blocked_onroad(self):
+    self.setup_remote_release("release3")
+    self.setup_basedir_release("release3")
+
+    with self.additional_context(), processes_context(["updated"]) as [updated]:
+      self.wait_for_idle()
+
+      self.MOCK_RELEASES["release3"] = ("0.1.3", "1.2", "0.1.3 release notes")
+      self.update_remote_release("release3")
+
+      self.send_check_for_updates_signal(updated)
+      self.wait_for_fetch_available()
+      self._test_params("release3", True, False)
+
+      self.params.put_bool("IsOffroad", False)
+      self.send_download_signal(updated)
+      self.wait_for_idle()
+
+      assert not self.params.get_bool("UpdateAvailable")
+      assert not get_consistent_flag(str(self.staging_root / "finalized"))
+
   def test_agnos_update(self, mocker):
     # Start on release3, push an update with an agnos change
     self.setup_remote_release("release3")

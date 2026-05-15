@@ -13,6 +13,9 @@ clip = np.clip
 interp = np.interp
 STOPPING_RELEASE_HYSTERESIS = 0.35
 STOPPING_RELEASE_MIN_ACCEL = 0.15
+MOVING_STOP_FOLLOW_MIN_GAP = 0.25
+NEGATIVE_TARGET_CREEP_GUARD_SPEED = 0.35
+NEGATIVE_TARGET_CREEP_GUARD_DECEL = 0.40
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
@@ -184,6 +187,17 @@ class LongControl:
 
     return self.stop_release_counter >= int(round(STOPPING_RELEASE_HYSTERESIS / DT_CTRL))
 
+  @staticmethod
+  def _apply_moving_stop_target_follow(output_accel, a_target, should_stop, CS, starpilot_toggles):
+    follow_min_speed = max(1.5, starpilot_toggles.vEgoStopping + 1.0)
+    if not should_stop or CS.brakePressed or CS.vEgo <= follow_min_speed:
+      return output_accel
+    if a_target >= output_accel - MOVING_STOP_FOLLOW_MIN_GAP:
+      return output_accel
+
+    follow_step = interp(CS.vEgo, [follow_min_speed, 3.0, 6.0, 10.0], [0.02, 0.03, 0.05, 0.07])
+    return max(float(a_target), output_accel - float(follow_step))
+
   def _get_pedal_long_freeze(self, a_target, error, v_ego, accel_limits):
     volt_test_tune_handoff = self.is_volt and testing_ground.use_2
 
@@ -228,7 +242,7 @@ class LongControl:
       return
     if a_target >= -0.05 or error >= -0.25:
       return
-    if CS.vEgo <= 8.0 or CS.aEgo <= 0.15:
+    if CS.vEgo <= NEGATIVE_TARGET_CREEP_GUARD_SPEED and a_target > -NEGATIVE_TARGET_CREEP_GUARD_DECEL:
       return
 
     # If the planner has already crossed into decel but the car is still
@@ -260,12 +274,12 @@ class LongControl:
       return output_accel
     if a_target >= -0.10 or error >= -0.35:
       return output_accel
-    if CS.vEgo <= 8.0 or CS.aEgo <= 0.15:
+    if CS.vEgo <= NEGATIVE_TARGET_CREEP_GUARD_SPEED and a_target > -NEGATIVE_TARGET_CREEP_GUARD_DECEL:
       return output_accel
 
     # Once the planner is asking for real decel, don't keep feeding positive
     # drive torque while we're still accelerating away from the target.
-    positive_cap = interp(a_target, [-0.6, -0.1], [0.0, 0.05])
+    positive_cap = interp(a_target, [-1.5, -0.6, -0.1], [0.0, 0.0, 0.05])
     return min(output_accel, float(positive_cap))
 
   def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles):
@@ -287,6 +301,7 @@ class LongControl:
       if output_accel > starpilot_toggles.stopAccel:
         output_accel = min(output_accel, 0.0)
         output_accel -= starpilot_toggles.stoppingDecelRate * DT_CTRL
+      output_accel = self._apply_moving_stop_target_follow(output_accel, a_target, should_stop, CS, starpilot_toggles)
       self.reset(preserve_stop_release=True)
 
     elif self.long_control_state == LongCtrlState.starting:

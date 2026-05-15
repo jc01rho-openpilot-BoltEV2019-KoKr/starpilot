@@ -183,9 +183,9 @@ class TestHyundaiFingerprint:
     toggles = get_test_toggles()
     CP = CarInterface.get_params(CAR.KIA_NIRO_PHEV_2022, gen_empty_fingerprint(), [], True, False, False, toggles)
 
-    assert CP.stopAccel == pytest.approx(-1.5)
+    assert CP.stopAccel == pytest.approx(-1.4)
     assert CP.vEgoStopping == pytest.approx(0.7)
-    assert CP.stoppingDecelRate == pytest.approx(0.55)
+    assert CP.stoppingDecelRate == pytest.approx(0.5)
 
   def test_kia_forte_no_scc_fw_match(self):
     car_fw = [
@@ -390,19 +390,29 @@ class TestHyundaiFingerprint:
     assert state.jerk_upper == pytest.approx(0.42)
     assert state.actual_accel == pytest.approx(-0.099)
 
-  def test_ioniq_6_longitudinal_tuning_helper_caps_late_low_speed_stop_brake(self):
+  def test_ioniq_6_longitudinal_tuning_helper_caps_final_low_speed_stop_brake(self):
     state = Ioniq6LongitudinalTuningState(actual_accel=-2.82, accel_last=-2.82,
                                           long_control_state_last=LongCtrlState.pid)
 
-    state = update_ioniq_6_longitudinal_tuning(state, accel_cmd=-2.82, v_ego=2.5, a_ego=-2.4,
+    state = update_ioniq_6_longitudinal_tuning(state, accel_cmd=-2.82, v_ego=1.8, a_ego=-2.4,
                                                long_control_state=LongCtrlState.stopping, long_active=True)
     assert state.stopping
-    assert state.desired_accel == pytest.approx(-1.175)
+    assert state.desired_accel == pytest.approx(-0.8375)
 
     for _ in range(10):
-      state = update_ioniq_6_longitudinal_tuning(state, accel_cmd=-2.82, v_ego=2.5, a_ego=-2.4,
+      state = update_ioniq_6_longitudinal_tuning(state, accel_cmd=-2.82, v_ego=1.8, a_ego=-2.4,
                                                  long_control_state=LongCtrlState.stopping, long_active=True)
     assert state.actual_accel == pytest.approx(-2.49)
+
+  def test_ioniq_6_longitudinal_tuning_helper_keeps_full_stop_authority_above_final_band(self):
+    state = Ioniq6LongitudinalTuningState(actual_accel=-1.8, accel_last=-1.8,
+                                          long_control_state_last=LongCtrlState.pid)
+
+    state = update_ioniq_6_longitudinal_tuning(state, accel_cmd=-2.82, v_ego=3.8, a_ego=-1.8,
+                                               long_control_state=LongCtrlState.stopping, long_active=True)
+    assert state.stopping
+    assert state.desired_accel == pytest.approx(-2.82)
+    assert state.actual_accel < -1.8
 
   def test_genesis_g90_longitudinal_tuning_softens_final_stop_hold(self):
     state = GenesisG90LongitudinalTuningState()
