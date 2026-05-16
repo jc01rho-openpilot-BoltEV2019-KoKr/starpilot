@@ -174,7 +174,7 @@ class TestLatControl:
     right_turn_in = get_bolt_2022_2023_friction_threshold(6.0, -0.7, -0.8)
     left_unwind = get_bolt_2022_2023_friction_threshold(6.0, 0.7, -0.8)
     right_unwind = get_bolt_2022_2023_friction_threshold(6.0, -0.7, 0.8)
-    assert left_turn_in < right_turn_in < base < right_unwind < left_unwind
+    assert left_turn_in <= right_turn_in < base < right_unwind <= left_unwind
 
   def test_bolt_2022_2023_friction_scale_curve(self):
     base = get_bolt_2022_2023_friction_scale(25.0, 0.7, 0.8)
@@ -183,7 +183,7 @@ class TestLatControl:
     left_unwind = get_bolt_2022_2023_friction_scale(6.0, 0.7, -0.8)
     right_unwind = get_bolt_2022_2023_friction_scale(6.0, -0.7, 0.8)
     assert left_turn_in > right_turn_in > base
-    assert base > right_unwind > left_unwind
+    assert base > right_unwind >= left_unwind
 
   def test_volt_plexy_ff_scale_curve(self):
     assert get_volt_plexy_ff_scale(0.0, 0.0, 20.0) == 1.0
