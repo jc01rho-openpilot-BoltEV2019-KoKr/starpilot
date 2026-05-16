@@ -840,6 +840,65 @@ def test_acc_mode_close_moving_vision_lead_keeps_negative_output_while_should_st
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_close_near_standstill_vision_lead_keeps_meaningful_brake_floor(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.017)
+
+  sm = make_sm(
+    0.017,
+    desired_accel=-0.06,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=2.83, v_lead=0.09, a_lead=0.10, radar=False, model_prob=0.9999),
+  )
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["starpilotPlan"].vCruise = 10.0
+  sm["modelV2"].action.shouldStop = True
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert planner.output_should_stop
+  assert planner.output_a_target <= -0.20
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_close_opening_vision_lead_does_not_drop_to_zero_after_stop_release(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=1.49)
+  toggles = make_toggles(model_version)
+
+  sm_stop = make_sm(
+    1.488,
+    desired_accel=-1.64,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=3.433, v_lead=1.469, a_lead=0.58, radar=False, model_prob=0.9996),
+  )
+  sm_stop["controlsState"].longControlState = LongCtrlState.stopping
+  sm_stop["starpilotPlan"].vCruise = 10.0
+  sm_stop["modelV2"].action.shouldStop = True
+  planner.update(sm_stop, toggles)
+
+  sm_release = make_sm(
+    1.420,
+    desired_accel=0.0,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=3.568, v_lead=1.679, a_lead=0.66, radar=False, model_prob=0.9994),
+  )
+  sm_release["controlsState"].longControlState = LongCtrlState.pid
+  sm_release["starpilotPlan"].vCruise = 10.0
+  sm_release["modelV2"].action.shouldStop = False
+  planner.update(sm_release, toggles)
+
+  assert not planner.output_should_stop
+  assert planner.output_a_target <= -0.18
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
 def test_acc_mode_tracked_vision_model_brake_floor_prevents_positive_output_on_slower_lead(model_version):
   v_ego = 19.1
 

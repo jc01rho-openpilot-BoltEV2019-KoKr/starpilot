@@ -132,10 +132,18 @@ VISION_LOW_SPEED_STOP_BUFFER_MIN_BRAKE = 1.25
 VISION_LOW_SPEED_STOP_BUFFER_BRAKE_GAIN = 0.25
 VISION_CLOSE_STOP_HOLD_MAX_EGO_SPEED = 0.75
 VISION_CLOSE_STOP_HOLD_MAX_LEAD_SPEED = 0.8
-VISION_CLOSE_STOP_HOLD_MAX_DISTANCE = 2.8
+VISION_CLOSE_STOP_HOLD_MAX_DISTANCE = 3.5
 VISION_CLOSE_STOP_HOLD_MIN_MODEL_PROB = 0.95
-VISION_CLOSE_STOP_HOLD_MIN_BRAKE = 0.12
-VISION_CLOSE_STOP_HOLD_MAX_BRAKE = 0.28
+VISION_CLOSE_STOP_HOLD_MIN_BRAKE = 0.20
+VISION_CLOSE_STOP_HOLD_MAX_BRAKE = 0.36
+VISION_CLOSE_RELEASE_HOLD_MAX_EGO_SPEED = 2.5
+VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_SPEED = 3.5
+VISION_CLOSE_RELEASE_HOLD_MAX_DISTANCE = 4.2
+VISION_CLOSE_RELEASE_HOLD_MIN_MODEL_PROB = 0.98
+VISION_CLOSE_RELEASE_HOLD_MIN_LEAD_DELTA = -0.1
+VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_DELTA = 1.5
+VISION_CLOSE_RELEASE_HOLD_MIN_BRAKE = 0.18
+VISION_CLOSE_RELEASE_HOLD_MAX_BRAKE = 0.40
 MANUAL_STOP_RESUME_OVERRIDE_TIME = 3.0
 MANUAL_STOP_RESUME_OVERRIDE_MAX_SPEED = 2.0
 MANUAL_STOP_RESUME_OVERRIDE_MIN_ACCEL = 0.2
@@ -754,6 +762,35 @@ class LongitudinalPlanner:
     speed_factor = float(np.clip(float(v_ego) / max(VISION_CLOSE_STOP_HOLD_MAX_EGO_SPEED, 0.1), 0.0, 1.0))
     hold_brake = VISION_CLOSE_STOP_HOLD_MIN_BRAKE + 0.08 * distance_factor + 0.08 * speed_factor
     hold_brake = float(np.clip(hold_brake, VISION_CLOSE_STOP_HOLD_MIN_BRAKE, VISION_CLOSE_STOP_HOLD_MAX_BRAKE))
+    return max(accel_min, -hold_brake)
+
+  def get_vision_close_release_hold_cap(self, lead, v_ego, accel_min, should_stop):
+    if should_stop or lead is None or not lead.status or bool(getattr(lead, "radar", False)):
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 0.0))
+    if lead_prob < VISION_CLOSE_RELEASE_HOLD_MIN_MODEL_PROB:
+      return None
+
+    lead_speed = max(float(lead.vLead), 0.0)
+    lead_delta = lead_speed - float(v_ego)
+    if (
+      float(v_ego) > VISION_CLOSE_RELEASE_HOLD_MAX_EGO_SPEED or
+      lead_speed > VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_SPEED or
+      float(lead.dRel) > VISION_CLOSE_RELEASE_HOLD_MAX_DISTANCE or
+      lead_delta < VISION_CLOSE_RELEASE_HOLD_MIN_LEAD_DELTA or
+      lead_delta > VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_DELTA
+    ):
+      return None
+
+    distance_factor = float(np.clip((VISION_CLOSE_RELEASE_HOLD_MAX_DISTANCE - float(lead.dRel)) /
+                                    max(VISION_CLOSE_RELEASE_HOLD_MAX_DISTANCE - 2.8, 0.1), 0.0, 1.0))
+    speed_factor = float(np.clip(float(v_ego) / max(VISION_CLOSE_RELEASE_HOLD_MAX_EGO_SPEED, 0.1), 0.0, 1.0))
+    delta_factor = float(np.clip((VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_DELTA - lead_delta) /
+                                 max(VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_DELTA - VISION_CLOSE_RELEASE_HOLD_MIN_LEAD_DELTA, 0.1),
+                                 0.0, 1.0))
+    hold_brake = VISION_CLOSE_RELEASE_HOLD_MIN_BRAKE + 0.12 * distance_factor + 0.06 * speed_factor + 0.04 * delta_factor
+    hold_brake = float(np.clip(hold_brake, VISION_CLOSE_RELEASE_HOLD_MIN_BRAKE, VISION_CLOSE_RELEASE_HOLD_MAX_BRAKE))
     return max(accel_min, -hold_brake)
 
   def _update_manual_stop_resume_override(self, sm):
@@ -1618,6 +1655,17 @@ class LongitudinalPlanner:
         self.a_desired = min(self.a_desired, close_stop_hold_cap)
         output_a_target = min(output_a_target, close_stop_hold_cap)
 
+    close_release_hold_cap = None
+    if lead_control_active and not output_should_stop:
+      close_release_hold_caps = [
+        cap for cap in (
+          self.get_vision_close_release_hold_cap(self.lead_one, scene_v_ego, vision_cap_accel_min, output_should_stop),
+          self.get_vision_close_release_hold_cap(self.lead_two, scene_v_ego, vision_cap_accel_min, output_should_stop),
+        ) if cap is not None
+      ]
+      if close_release_hold_caps:
+        close_release_hold_cap = min(close_release_hold_caps)
+
     if lead_one_active:
       lead_catchup_accel_cap = self.get_lead_catchup_accel_cap(self.lead_one, scene_v_ego, effective_t_follow)
       if lead_catchup_accel_cap is not None:
@@ -1687,6 +1735,10 @@ class LongitudinalPlanner:
 
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))
+
+    if close_release_hold_cap is not None:
+      self.a_desired = min(self.a_desired, close_release_hold_cap)
+      output_a_target = min(output_a_target, close_release_hold_cap)
 
     force_stop_handoff = bool(
       getattr(sm['starpilotPlan'], 'forcingStop', False) and
