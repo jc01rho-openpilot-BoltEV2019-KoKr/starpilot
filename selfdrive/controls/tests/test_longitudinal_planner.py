@@ -863,6 +863,29 @@ def test_acc_mode_close_near_standstill_vision_lead_keeps_meaningful_brake_floor
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_close_near_standstill_moving_lead_keeps_brake_floor_while_should_stop(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.034)
+
+  sm = make_sm(
+    0.034,
+    desired_accel=0.0,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=3.93, v_lead=1.61, a_lead=2.18, radar=False, model_prob=1.0),
+  )
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["starpilotPlan"].vCruise = 10.0
+  sm["modelV2"].action.shouldStop = True
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert planner.output_should_stop
+  assert planner.output_a_target <= -0.20
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
 def test_acc_mode_close_opening_vision_lead_does_not_drop_to_zero_after_stop_release(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=1.49)
@@ -894,7 +917,41 @@ def test_acc_mode_close_opening_vision_lead_does_not_drop_to_zero_after_stop_rel
   sm_release["modelV2"].action.shouldStop = False
   planner.update(sm_release, toggles)
 
-  assert not planner.output_should_stop
+  assert planner.output_a_target <= -0.18
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_close_near_standstill_departing_lead_keeps_small_brake_after_stop_release(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.034)
+  toggles = make_toggles(model_version)
+
+  sm_stop = make_sm(
+    0.034,
+    desired_accel=0.0,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=3.93, v_lead=1.61, a_lead=2.18, radar=False, model_prob=1.0),
+  )
+  sm_stop["controlsState"].longControlState = LongCtrlState.stopping
+  sm_stop["starpilotPlan"].vCruise = 10.0
+  sm_stop["modelV2"].action.shouldStop = True
+  planner.update(sm_stop, toggles)
+
+  sm_release = make_sm(
+    0.449,
+    desired_accel=0.0,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=4.02, v_lead=2.45, a_lead=2.26, radar=False, model_prob=1.0),
+  )
+  sm_release["controlsState"].longControlState = LongCtrlState.pid
+  sm_release["starpilotPlan"].vCruise = 10.0
+  sm_release["modelV2"].action.shouldStop = False
+  planner.update(sm_release, toggles)
+
   assert planner.output_a_target <= -0.18
 
 

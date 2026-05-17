@@ -136,6 +136,17 @@ VISION_CLOSE_STOP_HOLD_MAX_DISTANCE = 3.5
 VISION_CLOSE_STOP_HOLD_MIN_MODEL_PROB = 0.95
 VISION_CLOSE_STOP_HOLD_MIN_BRAKE = 0.20
 VISION_CLOSE_STOP_HOLD_MAX_BRAKE = 0.36
+VISION_CLOSE_SETTLE_MAX_EGO_SPEED = 0.75
+VISION_CLOSE_SETTLE_MAX_LEAD_SPEED = 2.75
+VISION_CLOSE_SETTLE_MAX_DISTANCE = 4.2
+VISION_CLOSE_SETTLE_MAX_LEAD_DELTA = 2.6
+VISION_CLOSE_SETTLE_MIN_BRAKE = 0.16
+VISION_CLOSE_SETTLE_MAX_BRAKE = 0.30
+VISION_CLOSE_FINAL_GUARD_MAX_EGO_SPEED = 0.5
+VISION_CLOSE_FINAL_GUARD_MAX_LEAD_SPEED = 2.75
+VISION_CLOSE_FINAL_GUARD_MAX_DISTANCE = 4.5
+VISION_CLOSE_FINAL_GUARD_MIN_BRAKE = 0.18
+VISION_CLOSE_FINAL_GUARD_MAX_BRAKE = 0.28
 VISION_CLOSE_RELEASE_HOLD_MAX_EGO_SPEED = 2.5
 VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_SPEED = 3.5
 VISION_CLOSE_RELEASE_HOLD_MAX_DISTANCE = 4.2
@@ -750,17 +761,27 @@ class LongitudinalPlanner:
       return None
 
     lead_speed = max(float(lead.vLead), 0.0)
+    near_standstill_settle = bool(
+      float(v_ego) <= VISION_CLOSE_SETTLE_MAX_EGO_SPEED and
+      lead_speed <= VISION_CLOSE_SETTLE_MAX_LEAD_SPEED and
+      float(lead.dRel) <= VISION_CLOSE_SETTLE_MAX_DISTANCE
+    )
+    max_lead_speed = VISION_CLOSE_SETTLE_MAX_LEAD_SPEED if near_standstill_settle else VISION_CLOSE_STOP_HOLD_MAX_LEAD_SPEED
+    max_distance = VISION_CLOSE_SETTLE_MAX_DISTANCE if near_standstill_settle else VISION_CLOSE_STOP_HOLD_MAX_DISTANCE
     if (
       float(v_ego) > VISION_CLOSE_STOP_HOLD_MAX_EGO_SPEED or
-      lead_speed > VISION_CLOSE_STOP_HOLD_MAX_LEAD_SPEED or
-      float(lead.dRel) > VISION_CLOSE_STOP_HOLD_MAX_DISTANCE
+      lead_speed > max_lead_speed or
+      float(lead.dRel) > max_distance
     ):
       return None
 
-    distance_factor = float(np.clip((VISION_CLOSE_STOP_HOLD_MAX_DISTANCE - float(lead.dRel)) /
-                                    max(VISION_CLOSE_STOP_HOLD_MAX_DISTANCE - 1.8, 0.1), 0.0, 1.0))
+    distance_factor = float(np.clip((max_distance - float(lead.dRel)) /
+                                    max(max_distance - 1.8, 0.1), 0.0, 1.0))
     speed_factor = float(np.clip(float(v_ego) / max(VISION_CLOSE_STOP_HOLD_MAX_EGO_SPEED, 0.1), 0.0, 1.0))
     hold_brake = VISION_CLOSE_STOP_HOLD_MIN_BRAKE + 0.08 * distance_factor + 0.08 * speed_factor
+    if near_standstill_settle:
+      settle_brake = VISION_CLOSE_SETTLE_MIN_BRAKE + 0.10 * distance_factor + 0.04 * speed_factor
+      hold_brake = max(hold_brake, settle_brake)
     hold_brake = float(np.clip(hold_brake, VISION_CLOSE_STOP_HOLD_MIN_BRAKE, VISION_CLOSE_STOP_HOLD_MAX_BRAKE))
     return max(accel_min, -hold_brake)
 
@@ -774,23 +795,84 @@ class LongitudinalPlanner:
 
     lead_speed = max(float(lead.vLead), 0.0)
     lead_delta = lead_speed - float(v_ego)
+    near_standstill_settle = bool(
+      float(v_ego) <= VISION_CLOSE_SETTLE_MAX_EGO_SPEED and
+      lead_speed <= VISION_CLOSE_SETTLE_MAX_LEAD_SPEED and
+      float(lead.dRel) <= VISION_CLOSE_SETTLE_MAX_DISTANCE and
+      lead_delta <= VISION_CLOSE_SETTLE_MAX_LEAD_DELTA
+    )
+    max_lead_speed = VISION_CLOSE_SETTLE_MAX_LEAD_SPEED if near_standstill_settle else VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_SPEED
+    max_distance = VISION_CLOSE_SETTLE_MAX_DISTANCE if near_standstill_settle else VISION_CLOSE_RELEASE_HOLD_MAX_DISTANCE
+    max_lead_delta = VISION_CLOSE_SETTLE_MAX_LEAD_DELTA if near_standstill_settle else VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_DELTA
     if (
       float(v_ego) > VISION_CLOSE_RELEASE_HOLD_MAX_EGO_SPEED or
-      lead_speed > VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_SPEED or
-      float(lead.dRel) > VISION_CLOSE_RELEASE_HOLD_MAX_DISTANCE or
+      lead_speed > max_lead_speed or
+      float(lead.dRel) > max_distance or
       lead_delta < VISION_CLOSE_RELEASE_HOLD_MIN_LEAD_DELTA or
-      lead_delta > VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_DELTA
+      lead_delta > max_lead_delta
     ):
       return None
 
-    distance_factor = float(np.clip((VISION_CLOSE_RELEASE_HOLD_MAX_DISTANCE - float(lead.dRel)) /
-                                    max(VISION_CLOSE_RELEASE_HOLD_MAX_DISTANCE - 2.8, 0.1), 0.0, 1.0))
+    distance_factor = float(np.clip((max_distance - float(lead.dRel)) /
+                                    max(max_distance - 2.8, 0.1), 0.0, 1.0))
     speed_factor = float(np.clip(float(v_ego) / max(VISION_CLOSE_RELEASE_HOLD_MAX_EGO_SPEED, 0.1), 0.0, 1.0))
-    delta_factor = float(np.clip((VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_DELTA - lead_delta) /
-                                 max(VISION_CLOSE_RELEASE_HOLD_MAX_LEAD_DELTA - VISION_CLOSE_RELEASE_HOLD_MIN_LEAD_DELTA, 0.1),
+    delta_factor = float(np.clip((max_lead_delta - lead_delta) /
+                                 max(max_lead_delta - VISION_CLOSE_RELEASE_HOLD_MIN_LEAD_DELTA, 0.1),
                                  0.0, 1.0))
     hold_brake = VISION_CLOSE_RELEASE_HOLD_MIN_BRAKE + 0.12 * distance_factor + 0.06 * speed_factor + 0.04 * delta_factor
+    if near_standstill_settle:
+      settle_brake = VISION_CLOSE_SETTLE_MIN_BRAKE + 0.08 * distance_factor + 0.02 * delta_factor
+      hold_brake = max(hold_brake, settle_brake)
     hold_brake = float(np.clip(hold_brake, VISION_CLOSE_RELEASE_HOLD_MIN_BRAKE, VISION_CLOSE_RELEASE_HOLD_MAX_BRAKE))
+    return max(accel_min, -hold_brake)
+
+  def get_vision_close_settle_cap(self, lead, v_ego, accel_min, stop_guard_active):
+    if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 0.0))
+    if lead_prob < VISION_CLOSE_STOP_HOLD_MIN_MODEL_PROB:
+      return None
+
+    lead_speed = max(float(lead.vLead), 0.0)
+    lead_delta = lead_speed - float(v_ego)
+    if (
+      float(v_ego) > VISION_CLOSE_SETTLE_MAX_EGO_SPEED or
+      lead_speed > VISION_CLOSE_SETTLE_MAX_LEAD_SPEED or
+      float(lead.dRel) > VISION_CLOSE_SETTLE_MAX_DISTANCE or
+      lead_delta > VISION_CLOSE_SETTLE_MAX_LEAD_DELTA
+    ):
+      return None
+
+    if not stop_guard_active and lead_delta < 0.0:
+      return None
+
+    distance_factor = float(np.clip((VISION_CLOSE_SETTLE_MAX_DISTANCE - float(lead.dRel)) /
+                                    max(VISION_CLOSE_SETTLE_MAX_DISTANCE - 2.8, 0.1), 0.0, 1.0))
+    delta_factor = float(np.clip((VISION_CLOSE_SETTLE_MAX_LEAD_DELTA - lead_delta) /
+                                 max(VISION_CLOSE_SETTLE_MAX_LEAD_DELTA, 0.1), 0.0, 1.0))
+    hold_brake = VISION_CLOSE_SETTLE_MIN_BRAKE + 0.10 * distance_factor + 0.04 * delta_factor
+    hold_brake = float(np.clip(hold_brake, VISION_CLOSE_SETTLE_MIN_BRAKE, VISION_CLOSE_SETTLE_MAX_BRAKE))
+    return max(accel_min, -hold_brake)
+
+  def get_vision_close_final_guard_cap(self, lead, v_ego, accel_min):
+    if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 0.0))
+    lead_speed = max(float(lead.vLead), 0.0)
+    if (
+      lead_prob < VISION_CLOSE_STOP_HOLD_MIN_MODEL_PROB or
+      float(v_ego) > VISION_CLOSE_FINAL_GUARD_MAX_EGO_SPEED or
+      lead_speed > VISION_CLOSE_FINAL_GUARD_MAX_LEAD_SPEED or
+      float(lead.dRel) > VISION_CLOSE_FINAL_GUARD_MAX_DISTANCE
+    ):
+      return None
+
+    distance_factor = float(np.clip((VISION_CLOSE_FINAL_GUARD_MAX_DISTANCE - float(lead.dRel)) /
+                                    max(VISION_CLOSE_FINAL_GUARD_MAX_DISTANCE - 2.8, 0.1), 0.0, 1.0))
+    hold_brake = VISION_CLOSE_FINAL_GUARD_MIN_BRAKE + 0.10 * distance_factor
+    hold_brake = float(np.clip(hold_brake, VISION_CLOSE_FINAL_GUARD_MIN_BRAKE, VISION_CLOSE_FINAL_GUARD_MAX_BRAKE))
     return max(accel_min, -hold_brake)
 
   def _update_manual_stop_resume_override(self, sm):
@@ -1643,28 +1725,56 @@ class LongitudinalPlanner:
       float(sm['carState'].vEgo) <= LEAD_DEPART_ACCEL_HOLD_MAX_EGO_SPEED
     )
 
-    if lead_control_active and output_should_stop:
+    close_stop_active = bool(output_should_stop or vision_low_speed_stop_active)
+
+    close_stop_hold_cap = None
+    if lead_control_active and close_stop_active:
       close_stop_hold_caps = [
         cap for cap in (
-          self.get_vision_close_stop_hold_cap(self.lead_one, scene_v_ego, output_accel_min, output_should_stop),
-          self.get_vision_close_stop_hold_cap(self.lead_two, scene_v_ego, output_accel_min, output_should_stop),
+          self.get_vision_close_stop_hold_cap(self.lead_one, v_ego, output_accel_min, close_stop_active),
+          self.get_vision_close_stop_hold_cap(self.lead_two, v_ego, output_accel_min, close_stop_active),
         ) if cap is not None
       ]
       if close_stop_hold_caps:
         close_stop_hold_cap = min(close_stop_hold_caps)
-        self.a_desired = min(self.a_desired, close_stop_hold_cap)
-        output_a_target = min(output_a_target, close_stop_hold_cap)
 
     close_release_hold_cap = None
-    if lead_control_active and not output_should_stop:
+    if lead_control_active and not close_stop_active:
       close_release_hold_caps = [
         cap for cap in (
-          self.get_vision_close_release_hold_cap(self.lead_one, scene_v_ego, vision_cap_accel_min, output_should_stop),
-          self.get_vision_close_release_hold_cap(self.lead_two, scene_v_ego, vision_cap_accel_min, output_should_stop),
+          self.get_vision_close_release_hold_cap(self.lead_one, v_ego, vision_cap_accel_min, close_stop_active),
+          self.get_vision_close_release_hold_cap(self.lead_two, v_ego, vision_cap_accel_min, close_stop_active),
         ) if cap is not None
       ]
       if close_release_hold_caps:
         close_release_hold_cap = min(close_release_hold_caps)
+
+    close_settle_guard_active = bool(
+      output_should_stop or
+      vision_low_speed_stop_active or
+      sm['controlsState'].longControlState == LongCtrlState.stopping
+    )
+    close_settle_cap = None
+    if lead_control_active:
+      close_settle_caps = [
+        cap for cap in (
+          self.get_vision_close_settle_cap(self.lead_one, v_ego, output_accel_min, close_settle_guard_active),
+          self.get_vision_close_settle_cap(self.lead_two, v_ego, output_accel_min, close_settle_guard_active),
+        ) if cap is not None
+      ]
+      if close_settle_caps:
+        close_settle_cap = min(close_settle_caps)
+
+    close_final_guard_cap = None
+    if lead_control_active:
+      close_final_guard_caps = [
+        cap for cap in (
+          self.get_vision_close_final_guard_cap(self.lead_one, v_ego, output_accel_min),
+          self.get_vision_close_final_guard_cap(self.lead_two, v_ego, output_accel_min),
+        ) if cap is not None
+      ]
+      if close_final_guard_caps:
+        close_final_guard_cap = min(close_final_guard_caps)
 
     if lead_one_active:
       lead_catchup_accel_cap = self.get_lead_catchup_accel_cap(self.lead_one, scene_v_ego, effective_t_follow)
@@ -1735,6 +1845,18 @@ class LongitudinalPlanner:
 
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))
+
+    if close_stop_hold_cap is not None:
+      self.a_desired = min(self.a_desired, close_stop_hold_cap)
+      output_a_target = min(output_a_target, close_stop_hold_cap)
+
+    if close_settle_cap is not None:
+      self.a_desired = min(self.a_desired, close_settle_cap)
+      output_a_target = min(output_a_target, close_settle_cap)
+
+    if close_final_guard_cap is not None:
+      self.a_desired = min(self.a_desired, close_final_guard_cap)
+      output_a_target = min(output_a_target, close_final_guard_cap)
 
     if close_release_hold_cap is not None:
       self.a_desired = min(self.a_desired, close_release_hold_cap)
