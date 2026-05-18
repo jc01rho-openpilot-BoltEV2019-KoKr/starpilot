@@ -146,12 +146,6 @@ class CarInterface(CarInterfaceBase):
       if hyundai_cancel_button_enables_cruise(candidate):
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANCEL_BTN_ENABLE.value
 
-      if candidate == CAR.KIA_FORTE:
-        has_scc_fw = any(fw.ecu == Ecu.fwdRadar for fw in car_fw)
-        has_scc_can = any(addr in fingerprint[bus] for bus in (0, 2) for addr in (0x420, 0x421))
-        if not (has_scc_fw or has_scc_can):
-          ret.flags |= HyundaiFlags.NON_SCC.value
-
     # Common lateral control setup
 
     ret.centerToFront = ret.wheelbase * 0.4

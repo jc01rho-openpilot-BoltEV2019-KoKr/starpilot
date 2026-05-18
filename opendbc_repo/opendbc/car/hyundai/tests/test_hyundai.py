@@ -51,6 +51,18 @@ NO_DATES_PLATFORMS = {
 }
 
 CANFD_EXPECTED_ECUS = {Ecu.fwdCamera, Ecu.fwdRadar}
+HYUNDAI_NON_SCC_CARS = (
+  CAR.HYUNDAI_BAYON_1ST_GEN_NON_SCC,
+  CAR.HYUNDAI_ELANTRA_2022_NON_SCC,
+  CAR.HYUNDAI_KONA_NON_SCC,
+  CAR.HYUNDAI_KONA_EV_NON_SCC,
+  CAR.KIA_CEED_PHEV_2022_NON_SCC,
+  CAR.KIA_FORTE_2019_NON_SCC,
+  CAR.KIA_FORTE_2021_NON_SCC,
+  CAR.KIA_SELTOS_2023_NON_SCC,
+  CAR.GENESIS_G70_2021_NON_SCC,
+)
+HYUNDAI_NON_SCC_FW_CARS = tuple(car_model for car_model in HYUNDAI_NON_SCC_CARS if car_model in FW_VERSIONS)
 
 
 def get_test_toggles() -> SimpleNamespace:
@@ -76,17 +88,11 @@ class TestHyundaiFingerprint:
       CP = CarInterface.get_params(CAR.HYUNDAI_SONATA, fingerprint, [], False, False, False, None)
       assert CP.radarUnavailable != radar
 
-    forte_no_scc = CarInterface.get_params(CAR.KIA_FORTE, gen_empty_fingerprint(), [], True, False, False, None)
-    assert bool(forte_no_scc.flags & HyundaiFlags.NON_SCC)
-    assert not forte_no_scc.alphaLongitudinalAvailable
-    assert forte_no_scc.pcmCruise
-
-    forte_with_scc = gen_empty_fingerprint()
-    forte_with_scc[0][0x420] = 8
-    forte_with_scc[0][0x421] = 8
-    CP = CarInterface.get_params(CAR.KIA_FORTE, forte_with_scc, [], True, False, False, None)
-    assert not bool(CP.flags & HyundaiFlags.NON_SCC)
-    assert CP.alphaLongitudinalAvailable
+    for candidate in HYUNDAI_NON_SCC_CARS:
+      CP = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], True, False, False, None)
+      assert bool(CP.flags & HyundaiFlags.NON_SCC)
+      assert not CP.alphaLongitudinalAvailable
+      assert CP.pcmCruise
 
     CP = CarInterface.get_params(CAR.KIA_SPORTAGE_HEV_2026, gen_empty_fingerprint(), [], False, False, False, None)
     assert CP.steerControlType == CarParams.SteerControlType.angle
@@ -103,6 +109,40 @@ class TestHyundaiFingerprint:
     assert DBC[palisade_2023.carFingerprint][Bus.pt] == "hyundai_palisade_2023_generated"
     assert palisade_2023.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CAN_CANFD_BLENDED
     assert palisade_2023.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANCEL_BTN_ENABLE
+
+  def test_non_scc_flag_quirks(self):
+    forte_2019 = CarInterface.get_params(CAR.KIA_FORTE_2019_NON_SCC, gen_empty_fingerprint(), [], True, False, False, None)
+    assert forte_2019.flags & HyundaiFlags.NON_SCC_NO_FCA
+    assert not (forte_2019.flags & HyundaiFlags.NON_SCC_RADAR_FCA)
+
+    forte_2021 = CarInterface.get_params(CAR.KIA_FORTE_2021_NON_SCC, gen_empty_fingerprint(), [], True, False, False, None)
+    assert not (forte_2021.flags & HyundaiFlags.NON_SCC_NO_FCA)
+    assert not (forte_2021.flags & HyundaiFlags.NON_SCC_RADAR_FCA)
+
+    g70_2021 = CarInterface.get_params(CAR.GENESIS_G70_2021_NON_SCC, gen_empty_fingerprint(), [], True, False, False, None)
+    assert g70_2021.flags & HyundaiFlags.NON_SCC_RADAR_FCA
+
+  def test_hyundai_redneck_cruise_availability(self, monkeypatch):
+    class FakeParams:
+      def __init__(self, *args, **kwargs):
+        pass
+
+      @staticmethod
+      def get_bool(key):
+        return key == "RedneckCruise"
+
+    toggles = get_test_toggles()
+    monkeypatch.setattr("opendbc.car.interfaces.Params", FakeParams)
+
+    non_scc_cp = CarInterface.get_params(CAR.KIA_FORTE_2021_NON_SCC, gen_empty_fingerprint(), [], True, False, False, toggles)
+    non_scc_fpcp = CarInterface.get_starpilot_params(CAR.KIA_FORTE_2021_NON_SCC, gen_empty_fingerprint(), [], non_scc_cp, toggles)
+    assert non_scc_fpcp.redneckCruiseAvailable
+    assert not non_scc_fpcp.pcmCruiseSpeed
+
+    canfd_alt_buttons_cp = CarInterface.get_params(CAR.KIA_EV6, gen_empty_fingerprint(), [], False, False, False, toggles)
+    canfd_alt_buttons_fpcp = CarInterface.get_starpilot_params(CAR.KIA_EV6, gen_empty_fingerprint(), [], canfd_alt_buttons_cp, toggles)
+    assert canfd_alt_buttons_cp.flags & HyundaiFlags.CANFD_ALT_BUTTONS
+    assert not canfd_alt_buttons_fpcp.redneckCruiseAvailable
 
   def test_palisade_2023_pause_resume_button_maps_to_enable(self):
     toggles = get_test_toggles()
@@ -187,35 +227,43 @@ class TestHyundaiFingerprint:
     assert CP.vEgoStopping == pytest.approx(0.7)
     assert CP.stoppingDecelRate == pytest.approx(0.5)
 
-  def test_kia_forte_no_scc_fw_match(self):
+  @pytest.mark.parametrize("candidate", HYUNDAI_NON_SCC_FW_CARS)
+  def test_non_scc_fw_exact_matches(self, candidate):
     car_fw = [
       CarParams.CarFw(
-        ecu=Ecu.eps,
-        fwVersion=b'\xf1\x00BD  MDPS C 1.00 1.07 56310/M6300 4BDDC107',
-        address=0x7d4,
-        subAddress=0,
+        ecu=ecu,
+        fwVersion=fw_versions[0],
+        address=address,
+        subAddress=0 if sub_address is None else sub_address,
         brand="hyundai",
-      ),
-      CarParams.CarFw(
-        ecu=Ecu.fwdCamera,
-        fwVersion=b'\xf1\x00BD  LKAS AT USA LHD 1.00 1.02 95740-M6000 J31',
-        address=0x7c4,
-        subAddress=0,
-        brand="hyundai",
-      ),
+      )
+      for (ecu, address, sub_address), fw_versions in FW_VERSIONS[candidate].items()
     ]
 
-    exact, matches = match_fw_to_car(car_fw, "3KPF34AD2LE154148", allow_exact=True, allow_fuzzy=False, log=False)
+    exact, matches = match_fw_to_car(car_fw, "", allow_exact=True, allow_fuzzy=False, log=False)
     assert exact
-    assert matches == {CAR.KIA_FORTE}
+    assert matches == {candidate}
 
-  def test_kia_forte_no_scc_fca_does_not_require_scc12(self):
+  def test_kona_ev_non_scc_has_no_dedicated_fw_coverage(self):
+    assert CAR.HYUNDAI_KONA_EV_NON_SCC not in FW_VERSIONS
+
+  def test_kia_forte_2019_non_scc_does_not_require_fca11_or_scc12(self):
     toggles = get_test_toggles()
-    fingerprint = gen_empty_fingerprint()
-    fingerprint[0][0x38D] = 8
+    CP = CarInterface.get_params(CAR.KIA_FORTE_2019_NON_SCC, gen_empty_fingerprint(), [], True, False, False, toggles)
+    FPCP = CarInterface.get_starpilot_params(CAR.KIA_FORTE_2019_NON_SCC, gen_empty_fingerprint(), [], CP, toggles)
 
-    CP = CarInterface.get_params(CAR.KIA_FORTE, fingerprint, [], True, False, False, toggles)
-    FPCP = CarInterface.get_starpilot_params(CAR.KIA_FORTE, fingerprint, [], CP, toggles)
+    car_state = CarState(CP, FPCP)
+    can_parsers = car_state.get_can_parsers(CP)
+
+    car_state.update(can_parsers, toggles)
+    pt_states = {state.name for state in can_parsers[Bus.pt].message_states.values()}
+    assert "FCA11" not in pt_states
+    assert "SCC12" not in pt_states
+
+  def test_kia_forte_2021_non_scc_uses_fca11_without_scc12(self):
+    toggles = get_test_toggles()
+    CP = CarInterface.get_params(CAR.KIA_FORTE_2021_NON_SCC, gen_empty_fingerprint(), [], True, False, False, toggles)
+    FPCP = CarInterface.get_starpilot_params(CAR.KIA_FORTE_2021_NON_SCC, gen_empty_fingerprint(), [], CP, toggles)
 
     car_state = CarState(CP, FPCP)
     can_parsers = car_state.get_can_parsers(CP)
@@ -237,7 +285,10 @@ class TestHyundaiFingerprint:
           if state.ignore_alive:
             continue
           values = {}
-          if state.name == "LVR12":
+          if state.name == "EMS16":
+            values["CRUISE_LAMP_M"] = 1
+            values["CRUISE_LAMP_S"] = 1
+          elif state.name == "LVR12":
             values["CF_Lvr_CruiseSet"] = 30
           required_msgs.append(packer.make_can_msg(state.name, parser.bus, values))
         parser.update([(t, required_msgs)])

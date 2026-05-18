@@ -21,6 +21,7 @@ from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.common.constants import CV
 from openpilot.selfdrive.car.cruise import VCruiseHelper, IMPERIAL_INCREMENT, V_CRUISE_MAX, V_CRUISE_MIN
+from openpilot.selfdrive.car.redneck_cruise import RedneckCruise
 from openpilot.selfdrive.car.car_specific import MockCarState
 
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles, update_starpilot_toggles
@@ -164,6 +165,7 @@ class Car:
 
     self.mock_carstate = MockCarState()
     self.v_cruise_helper = VCruiseHelper(self.CP)
+    self.redneck_cruise = RedneckCruise(self.CP, self.FPCP) if self.CP.brand == "hyundai" else None
 
     self.is_metric = self.params.get_bool("IsMetric")
     self.safe_mode = self.params.get_bool("SafeMode")
@@ -339,6 +341,7 @@ class Car:
     if self.sm.all_alive(['carControl']):
       # send car controls over can
       now_nanos = self.can_log_mono_time if REPLAY else int(time.monotonic() * 1e9)
+      self._update_redneck_cruise(CS, CC)
       self._update_openpilot_lead_state(CC)
       self.last_actuators_output, can_sends = self.CI.apply(CC, now_nanos, self.starpilot_toggles)
       self.pm.send('sendcan', can_list_to_can_capnp(can_sends, msgtype='sendcan', valid=CS.canValid))
@@ -364,6 +367,14 @@ class Car:
     self.CI.CS.openpilot_lead_visible = lead_visible
     self.CI.CS.openpilot_lead_distance = lead_distance
     self.CI.CS.openpilot_lead_rel_speed = lead_rel_speed
+
+  def _update_redneck_cruise(self, CS: car.CarState, CC: car.CarControl) -> None:
+    if self.redneck_cruise is None:
+      return
+
+    send_button, v_target = self.redneck_cruise.run(CS, CC, self.sm['starpilotPlan'].vCruise, self.is_metric)
+    self.CI.CS.redneck_send_button = send_button
+    self.CI.CS.redneck_v_target = v_target
 
   def step(self):
     CS, RD, FPCS = self.state_update()

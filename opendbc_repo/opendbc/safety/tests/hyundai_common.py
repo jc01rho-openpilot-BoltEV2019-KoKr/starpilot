@@ -23,8 +23,8 @@ class HyundaiButtonBase:
 
   def test_button_sends(self):
     """
-      Only RES and CANCEL buttons are allowed
-      - RES allowed while controls allowed
+      Only RES/SET and CANCEL buttons are allowed
+      - RES/SET allowed while controls allowed
       - CANCEL allowed while cruise is enabled
     """
     self.safety.set_controls_allowed(0)
@@ -33,7 +33,7 @@ class HyundaiButtonBase:
 
     self.safety.set_controls_allowed(1)
     self.assertTrue(self._tx(self._button_msg(Buttons.RESUME, bus=self.BUTTONS_TX_BUS)))
-    self.assertFalse(self._tx(self._button_msg(Buttons.SET, bus=self.BUTTONS_TX_BUS)))
+    self.assertTrue(self._tx(self._button_msg(Buttons.SET, bus=self.BUTTONS_TX_BUS)))
 
     for enabled in (True, False):
       self._rx(self._pcm_status_msg(enabled))
@@ -95,6 +95,7 @@ class HyundaiButtonBase:
 
 class HyundaiLongitudinalBase(common.LongitudinalAccelSafetyTest):
   MAX_ACCEL = 3.5
+  CANCEL_BUTTON_ENABLE = False
 
   DISABLED_ECU_UDS_MSG: tuple[int, int]
   DISABLED_ECU_ACTUATION_MSG: tuple[int, int]
@@ -127,6 +128,9 @@ class HyundaiLongitudinalBase(common.LongitudinalAccelSafetyTest):
   def _accel_msg(self, accel, aeb_req=False, aeb_decel=0):
     raise NotImplementedError
 
+  def _tx_acc_state_msg(self, main_on):
+    raise NotImplementedError
+
   def test_set_resume_buttons(self):
     """
       SET and RESUME enter controls allowed on their falling edge.
@@ -141,8 +145,9 @@ class HyundaiLongitudinalBase(common.LongitudinalAccelSafetyTest):
 
         # should enter controls allowed on falling edge and not transitioning to cancel
         should_enable = btn_cur != btn_prev and \
-                        btn_cur != Buttons.CANCEL and \
-                        btn_prev in (Buttons.RESUME, Buttons.SET)
+                        (btn_prev in (Buttons.RESUME, Buttons.SET) or (self.CANCEL_BUTTON_ENABLE and btn_prev == Buttons.CANCEL))
+        if (btn_cur == Buttons.CANCEL) and not self.CANCEL_BUTTON_ENABLE:
+          should_enable = False
 
         self._rx(self._button_msg(btn_cur))
         self.assertEqual(should_enable, self.safety.get_controls_allowed())
@@ -150,7 +155,34 @@ class HyundaiLongitudinalBase(common.LongitudinalAccelSafetyTest):
   def test_cancel_button(self):
     self.safety.set_controls_allowed(1)
     self._rx(self._button_msg(Buttons.CANCEL))
-    self.assertFalse(self.safety.get_controls_allowed())
+    self.assertEqual(self.CANCEL_BUTTON_ENABLE, self.safety.get_controls_allowed())
+
+  def test_acc_main_sync_mismatch_counter(self):
+    try:
+      tx_acc_state_msg = self._tx_acc_state_msg(False)
+    except NotImplementedError as err:
+      raise unittest.SkipTest("ACC main TX state message not implemented") from err
+
+    self._rx(self._button_msg(Buttons.NONE, main_button=0))
+    self._rx(self._button_msg(Buttons.NONE, main_button=1))
+    self._rx(self._button_msg(Buttons.NONE, main_button=0))
+    self.assertTrue(self.safety.get_acc_main_on())
+    self.assertEqual(0, self.safety.get_acc_main_on_mismatches())
+
+    self._tx(tx_acc_state_msg)
+    self.assertTrue(self.safety.get_acc_main_on())
+    self.assertEqual(1, self.safety.get_acc_main_on_mismatches())
+
+    self._tx(tx_acc_state_msg)
+    self.assertTrue(self.safety.get_acc_main_on())
+    self.assertEqual(2, self.safety.get_acc_main_on_mismatches())
+
+    self._tx(tx_acc_state_msg)
+    self.assertFalse(self.safety.get_acc_main_on())
+    self.assertEqual(3, self.safety.get_acc_main_on_mismatches())
+
+    self._tx(tx_acc_state_msg)
+    self.assertEqual(0, self.safety.get_acc_main_on_mismatches())
 
   def test_tester_present_allowed(self, ecu_disable: bool = True):
     """

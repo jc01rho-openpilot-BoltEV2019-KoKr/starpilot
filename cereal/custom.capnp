@@ -59,6 +59,8 @@ struct StarPilotCarParams @0xaedffd8f31e7b55d {
   isHDA2 @4 :Bool;
   openpilotLongitudinalControlDisabled @5 :Bool;
   safetyConfigs @6 :List(SafetyConfig);
+  pcmCruiseSpeed @7 :Bool = true;
+  redneckCruiseAvailable @8 :Bool;
 
   struct SafetyConfig {
     safetyParam @0 :UInt16;

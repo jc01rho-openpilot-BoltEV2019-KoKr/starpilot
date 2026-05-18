@@ -57,6 +57,10 @@ IONIQ_6_STOP_RELEASE_JERK_BP = [0.0, 0.15, 0.5]
 IONIQ_6_STOP_RELEASE_JERK_V = [3.6 * IONIQ_6_RESPONSE_MULTIPLIER,
                                4.2 * IONIQ_6_RESPONSE_MULTIPLIER,
                                4.8 * IONIQ_6_RESPONSE_MULTIPLIER]
+REDNECK_BUTTON_COPIES = 2
+REDNECK_BUTTON_COPIES_TIME = 7
+REDNECK_BUTTON_COPIES_TIME_IMPERIAL = [REDNECK_BUTTON_COPIES_TIME + 3, 70]
+REDNECK_BUTTON_COPIES_TIME_METRIC = [REDNECK_BUTTON_COPIES_TIME, 40]
 
 
 @dataclass
@@ -229,6 +233,7 @@ class CarController(CarControllerBase):
     self.apply_angle_last = 0.0
     self.car_fingerprint = CP.carFingerprint
     self.last_button_frame = 0
+    self.redneck_button_frame = 0
     self.ecu_disable_failed = False
     self._ecu_disable_checked = False
     self._params = Params()
@@ -276,6 +281,45 @@ class CarController(CarControllerBase):
       return True, CANFD_FALLBACK_LEAD_DISTANCE, 0.0
 
     return False, 0.0, 0.0
+
+  @staticmethod
+  def _get_redneck_button(CS):
+    return {
+      1: Buttons.RES_ACCEL,
+      2: Buttons.SET_DECEL,
+    }.get(getattr(CS, "redneck_send_button", 0), Buttons.NONE)
+
+  def _create_can_redneck_button_messages(self, CS):
+    send_button = self._get_redneck_button(CS)
+    if send_button == Buttons.NONE or (self.frame - self.last_button_frame) * DT_CTRL <= 0.1:
+      return []
+
+    copies_xp = REDNECK_BUTTON_COPIES_TIME_METRIC if CS.is_metric else REDNECK_BUTTON_COPIES_TIME_IMPERIAL
+    copies = int(np.interp(REDNECK_BUTTON_COPIES_TIME, copies_xp, [1, REDNECK_BUTTON_COPIES]))
+    can_sends = [hyundaican.create_clu11(self.packer, self.frame, CS.clu11, send_button, self.CP)] * copies
+
+    if (self.frame - self.last_button_frame) * DT_CTRL >= 0.15:
+      self.last_button_frame = self.frame
+
+    return can_sends
+
+  def _create_canfd_redneck_button_messages(self, CS):
+    send_button = self._get_redneck_button(CS)
+    if send_button == Buttons.NONE or self.CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS or \
+        (self.frame - self.last_button_frame) * DT_CTRL <= 0.2:
+      return []
+
+    self.redneck_button_frame += 1
+    button_counter_offset = [1, 1, 0, None][self.redneck_button_frame % 4]
+    if button_counter_offset is None:
+      return []
+
+    can_sends = [
+      hyundaicanfd.create_buttons(self.packer, self.CP, self.CAN, (CS.buttons_counter + button_counter_offset) % 0xF, send_button)
+      for _ in range(20)
+    ]
+    self.last_button_frame = self.frame
+    return can_sends
 
   def update(self, CC, CS, now_nanos, starpilot_toggles):
     actuators = CC.actuators
@@ -443,6 +487,8 @@ class CarController(CarControllerBase):
           can_sends.extend([hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.RES_ACCEL, self.CP)] * 25)
           if (self.frame - self.last_button_frame) * DT_CTRL >= 0.15:
             self.last_button_frame = self.frame
+      else:
+        can_sends.extend(self._create_can_redneck_button_messages(CS))
 
     if self.long_active_ecu and can_canfd_blended:
       can_sends.extend(hyundaican.create_radar_aux_messages(self.packer, self.CAN, self.frame))
@@ -591,5 +637,7 @@ class CarController(CarControllerBase):
             for _ in range(20):
               can_sends.append(hyundaicanfd.create_buttons(self.packer, self.CP, self.CAN, CS.buttons_counter + 1, Buttons.RES_ACCEL))
             self.last_button_frame = self.frame
+        else:
+          can_sends.extend(self._create_canfd_redneck_button_messages(CS))
 
     return can_sends

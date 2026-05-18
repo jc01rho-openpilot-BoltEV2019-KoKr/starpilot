@@ -531,6 +531,7 @@ class StarPilotVariables:
     toggle.has_sdsu = toggle.car_make == "toyota" and bool(FPCP.flags & ToyotaStarPilotFlags.SMART_DSU.value)
     has_sng = CP.autoResumeSng
     toggle.has_zss = toggle.car_make == "toyota" and bool(FPCP.flags & ToyotaStarPilotFlags.ZSS.value)
+    toggle.redneck_cruise_available = bool(FPCP.redneckCruiseAvailable)
     is_angle_car = CP.steerControlType == car.CarParams.SteerControlType.angle
     latAccelFactor = CP.lateralTuning.torque.latAccelFactor
     if not math.isfinite(latAccelFactor):
@@ -541,6 +542,12 @@ class StarPilotVariables:
     )
     longitudinalActuatorDelay = CP.longitudinalActuatorDelay
     toggle.openpilot_longitudinal = CP.openpilotLongitudinalControl and not toggle.disable_openpilot_long
+    if not toggle.redneck_cruise_available or toggle.openpilot_longitudinal:
+      self.params.put_bool("RedneckCruise", False)
+    toggle.redneck_cruise = self.get_value(
+      "RedneckCruise",
+      condition=toggle.redneck_cruise_available and not toggle.openpilot_longitudinal,
+    )
     pcm_cruise = CP.pcmCruise
     prohibited_main_aol = not toggle.openpilot_longitudinal and toggle.car_make == "hyundai" and bool(CP.flags & HyundaiFlags.CANFD or CP.flags & HyundaiFlags.HAS_LDA_BUTTON)
     startAccel = CP.startAccel

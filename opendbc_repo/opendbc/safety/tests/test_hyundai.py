@@ -103,6 +103,11 @@ class TestHyundaiSafety(HyundaiButtonBase, common.CarSafetyTest, common.DriverTo
     self.__class__.cnt_cruise += 1
     return self.packer.make_can_msg_safety("SCC12", self.SCC_BUS, values, fix_checksum=checksum)
 
+  def _acc_state_msg(self, main_on):
+    dat = bytearray(8)
+    dat[0] = int(main_on)
+    return libsafety_py.make_CANPacket(0x420, self.SCC_BUS, bytes(dat))
+
   def _torque_driver_msg(self, torque):
     values = {"CR_Mdps_StrColTq": torque}
     return self.packer.make_can_msg_safety("MDPS12", 0, values)
@@ -110,6 +115,16 @@ class TestHyundaiSafety(HyundaiButtonBase, common.CarSafetyTest, common.DriverTo
   def _torque_cmd_msg(self, torque, steer_req=1):
     values = {"CR_Lkas_StrToqReq": torque, "CF_Lkas_ActToi": steer_req}
     return self.packer.make_can_msg_safety("LKAS11", 0, values)
+
+  def test_pcm_main_cruise_state_availability(self):
+    if self.safety.get_current_safety_param() & HyundaiSafetyFlags.LONG:
+      raise unittest.SkipTest("Longitudinal mode does not learn ACC main state from SCC11 RX")
+    if self.safety.get_current_safety_mode() == CarParams.SafetyModel.hyundaiLegacy:
+      raise unittest.SkipTest("Legacy Hyundai safety does not track ACC main state from SCC11 RX")
+
+    for should_turn_acc_main_on in (True, False):
+      self._rx(self._acc_state_msg(should_turn_acc_main_on))
+      self.assertEqual(should_turn_acc_main_on, self.safety.get_acc_main_on())
 
 
 class TestHyundaiSafetyAltLimits(TestHyundaiSafety):
@@ -154,11 +169,35 @@ class TestHyundaiSafetyNonScc(TestHyundaiSafety):
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, HyundaiSafetyFlags.NON_SCC)
     self.safety.init_tests()
 
-  def _pcm_status_msg(self, enable):
-    values = {"CF_Lvr_CruiseSet": 30 if enable else 0}
-    return self.packer.make_can_msg_safety("LVR12", 0, values)
+  def _user_gas_msg(self, gas):
+    dat = bytearray(8)
+    cruise_active = self.safety.get_controls_allowed() or self.safety.get_cruise_engaged_prev()
+    acc_main_on = self.safety.get_acc_main_on() or cruise_active
+    dat[3] |= int(acc_main_on) << 1
+    dat[3] |= int(cruise_active) << 2
+    dat[7] = ((self.cnt_gas % 4) << 4) | (0x40 if gas else 0x00)
+    self.__class__.cnt_gas += 1
+    _, dat, bus = checksum((0x260, dat, 0))
+    return libsafety_py.make_CANPacket(0x260, bus, bytes(dat))
 
-  def test_non_scc_uses_lvr12_rx_checks(self):
+  def _acc_state_msg(self, main_on):
+    dat = bytearray(8)
+    dat[3] |= int(main_on) << 1
+    dat[7] |= (self.cnt_cruise % 4) << 4
+    self.__class__.cnt_cruise += 1
+    _, dat, bus = checksum((0x260, dat, 0))
+    return libsafety_py.make_CANPacket(0x260, bus, bytes(dat))
+
+  def _pcm_status_msg(self, enable):
+    dat = bytearray(8)
+    dat[3] |= int(enable) << 1
+    dat[3] |= int(enable) << 2
+    dat[7] |= (self.cnt_cruise % 4) << 4
+    self.__class__.cnt_cruise += 1
+    _, dat, bus = checksum((0x260, dat, 0))
+    return libsafety_py.make_CANPacket(0x260, bus, bytes(dat))
+
+  def test_non_scc_uses_live_acc_state_rx_checks(self):
     self._rx(self._user_gas_msg(False))
     self._rx(self._torque_driver_msg(0))
     self._rx(self._speed_msg(0))
@@ -186,6 +225,11 @@ class TestHyundaiCanCanfdBlendedSafety(TestHyundaiSafety):
     values = {"ACCMode": enable, "COUNTER": self.cnt_cruise % 16}
     self.__class__.cnt_cruise += 1
     return self.packer.make_can_msg_panda("SCC12", 0, values)
+
+  def _acc_state_msg(self, main_on):
+    dat = bytearray(8)
+    dat[3] = int(main_on) << 3
+    return libsafety_py.make_CANPacket(0x420, 0, bytes(dat))
 
 
 class TestHyundaiSafetyFCEV(TestHyundaiSafety):
@@ -257,6 +301,11 @@ class TestHyundaiLongitudinalSafety(HyundaiLongitudinalBase, TestHyundaiSafety):
     }
     return self.packer.make_can_msg_safety("SCC12", self.SCC_BUS, values)
 
+  def _tx_acc_state_msg(self, main_on):
+    dat = bytearray(8)
+    dat[0] = int(main_on)
+    return libsafety_py.make_CANPacket(0x420, 0, bytes(dat))
+
   def _fca11_msg(self, idx=0, vsm_aeb_req=False, fca_aeb_req=False, aeb_decel=0):
     values = {
       "CR_FCA_Alive": idx % 0xF,
@@ -287,6 +336,7 @@ class TestHyundaiCanCanfdBlendedLongitudinalSafety(HyundaiLongitudinalBase, Test
 
   DISABLED_ECU_UDS_MSG = (0x7D0, 0)
   DISABLED_ECU_ACTUATION_MSG = (0x420, 0)
+  CANCEL_BUTTON_ENABLE = True
 
   def setUp(self):
     self.packer = CANPackerSafety("hyundai_palisade_2023_generated")
@@ -301,6 +351,11 @@ class TestHyundaiCanCanfdBlendedLongitudinalSafety(HyundaiLongitudinalBase, Test
       "aReqValue": accel,
     }
     return self.packer.make_can_msg_panda("SCC11", 0, values)
+
+  def _tx_acc_state_msg(self, main_on):
+    dat = bytearray(8)
+    dat[3] = int(main_on) << 3
+    return libsafety_py.make_CANPacket(0x420, 0, bytes(dat))
 
   def test_no_aeb_fca11(self):
     pass
@@ -335,6 +390,11 @@ class TestHyundaiLongitudinalSafetyCameraSCC(HyundaiLongitudinalBase, TestHyunda
       "CR_VSM_DecCmd": aeb_decel,
     }
     return self.packer.make_can_msg_safety("SCC12", self.SCC_BUS, values)
+
+  def _tx_acc_state_msg(self, main_on):
+    dat = bytearray(8)
+    dat[0] = int(main_on)
+    return libsafety_py.make_CANPacket(0x420, self.SCC_BUS, bytes(dat))
 
   def test_no_aeb_scc12(self):
     self.assertTrue(self._tx(self._accel_msg(0)))

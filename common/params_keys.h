@@ -329,6 +329,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"IncreasedStoppedDistanceRain", {PERSISTENT, FLOAT, "0.0", "0.0", 2}},
     {"IncreasedStoppedDistanceRainStorm", {PERSISTENT, FLOAT, "0.0", "0.0", 2}},
     {"IncreasedStoppedDistanceSnow", {PERSISTENT, FLOAT, "0.0", "0.0", 2}},
+    {"RedneckCruise", {PERSISTENT, BOOL, "0", "0", 1}},
     {"IncreaseFollowingLowVisibility", {PERSISTENT, FLOAT, "0.0", "0.0", 2}},
     {"IncreaseFollowingRain", {PERSISTENT, FLOAT, "0.0", "0.0", 2}},
     {"IncreaseFollowingRainStorm", {PERSISTENT, FLOAT, "0.0", "0.0", 2}},

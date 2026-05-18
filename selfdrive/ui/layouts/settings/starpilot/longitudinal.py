@@ -582,6 +582,12 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                    get_value=lambda: f"{self._params.get_int('ForceStopDistanceOffset'):+d} ft",
                    on_click=lambda: self._show_slider("ForceStopDistanceOffset", -20, 20, unit=" ft"),
                    visible=lambda: self._params.get_bool("QOLLongitudinal") and self._params.get_bool("ForceStops")),
+        SettingRow("RedneckCruise", "toggle", tr_noop("Redneck Cruise"),
+                   subtitle=tr_noop("On supported Hyundai stock-long cars, use RES/SET button spam to match the cluster set speed to StarPilot's target."),
+                   get_state=lambda: self._params.get_bool("RedneckCruise"),
+                   set_state=lambda s: self._params.put_bool("RedneckCruise", s),
+                   visible=lambda: starpilot_state.car_state.redneckCruiseAvailable and
+                   (not starpilot_state.car_state.hasOpenpilotLongitudinal or self._params.get_bool("DisableOpenpilotLongitudinal"))),
       ], tab_key="daily", column_pair="daily"),
       SettingSection(tr_noop("Standstill & Gears"), [
         SettingRow("ForceStandstill", "toggle", tr_noop("Force Standstill"),

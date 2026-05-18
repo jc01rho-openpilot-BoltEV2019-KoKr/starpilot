@@ -36,6 +36,7 @@ class StarPilotCarState:
     hasZSS: bool = False
     canUsePedal: bool = False
     canUseSDSU: bool = False
+    redneckCruiseAvailable: bool = False
     
     # ========== Device/Car State ==========
     isFrogsGoMoo: bool = False
@@ -190,6 +191,7 @@ class StarPilotState:
                 FPCP = messaging.log_from_bytes(fpcp_bytes, custom.StarPilotCarParams)
                 self.car_state.canUsePedal = FPCP.canUsePedal
                 self.car_state.canUseSDSU = FPCP.canUseSDSU
+                self.car_state.redneckCruiseAvailable = FPCP.redneckCruiseAvailable
                 self.car_state.openpilotLongitudinalControlDisabled = FPCP.openpilotLongitudinalControlDisabled
             except Exception:
                 pass
