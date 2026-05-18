@@ -10,6 +10,7 @@ from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
 import openpilot.selfdrive.controls.lib.longitudinal_planner as longitudinal_planner_module
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
+from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, get_coast_accel, get_vehicle_min_accel
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import soften_far_radar_lead_accel, should_trigger_planner_fcw
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
@@ -80,6 +81,7 @@ def make_sm(v_ego: float, desired_accel: float, min_accel: float, *, experimenta
       leadTwo=lead_two if lead_two is not None else make_lead(status=False),
     ),
     "selfdriveState": SimpleNamespace(enabled=True, experimentalMode=experimental_mode, personality=0),
+    "starpilotCarState": SimpleNamespace(accelPressed=False),
     "starpilotPlan": SimpleNamespace(
       vCruise=v_ego + 5.0,
       minAcceleration=min_accel,
@@ -91,6 +93,8 @@ def make_sm(v_ego: float, desired_accel: float, min_accel: float, *, experimenta
       speedJerk=5.0,
       dangerFactor=1.0,
       tFollow=1.45,
+      forcingStop=False,
+      redLight=False,
       forcingStopLength=2,
     ),
   }
@@ -802,6 +806,243 @@ def test_acc_mode_low_speed_vision_stop_buffer_stays_latched_when_closure_soften
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_close_moving_vision_lead_keeps_negative_output_while_should_stop(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.242)
+  toggles = make_toggles(model_version)
+
+  stop_sequence = [
+    (0.242, 2.062, 0.284, -0.081),
+    (0.221, 1.963, 0.338, -0.076),
+    (0.194, 2.100, 0.451, -0.076),
+    (0.180, 2.001, 0.447, -0.066),
+    (0.166, 1.964, 0.451, -0.066),
+    (0.151, 2.075, 0.451, -0.060),
+  ]
+
+  outputs = []
+  for v_ego, d_rel, v_lead, desired_accel in stop_sequence:
+    sm = make_sm(
+      v_ego,
+      desired_accel=desired_accel,
+      min_accel=-0.5,
+      experimental_mode=False,
+      tracking_lead=True,
+      lead_one=make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=0.0, radar=False, model_prob=1.0),
+    )
+    sm["controlsState"].longControlState = LongCtrlState.stopping
+    sm["starpilotPlan"].vCruise = 10.0
+
+    planner.update(sm, toggles)
+    outputs.append(planner.output_a_target)
+
+  assert all(output <= -0.02 for output in outputs[2:])
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_close_near_standstill_vision_lead_keeps_meaningful_brake_floor(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.017)
+
+  sm = make_sm(
+    0.017,
+    desired_accel=-0.06,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=2.83, v_lead=0.09, a_lead=0.10, radar=False, model_prob=0.9999),
+  )
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["starpilotPlan"].vCruise = 10.0
+  sm["modelV2"].action.shouldStop = True
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert planner.output_should_stop
+  assert planner.output_a_target <= -0.20
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_close_near_standstill_moving_lead_keeps_brake_floor_while_should_stop(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.034)
+
+  sm = make_sm(
+    0.034,
+    desired_accel=0.0,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=3.93, v_lead=1.61, a_lead=2.18, radar=False, model_prob=1.0),
+  )
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["starpilotPlan"].vCruise = 10.0
+  sm["modelV2"].action.shouldStop = True
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert planner.output_should_stop
+  assert planner.output_a_target <= -0.20
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_close_opening_vision_lead_does_not_drop_to_zero_after_stop_release(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=1.49)
+  toggles = make_toggles(model_version)
+
+  sm_stop = make_sm(
+    1.488,
+    desired_accel=-1.64,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=3.433, v_lead=1.469, a_lead=0.58, radar=False, model_prob=0.9996),
+  )
+  sm_stop["controlsState"].longControlState = LongCtrlState.stopping
+  sm_stop["starpilotPlan"].vCruise = 10.0
+  sm_stop["modelV2"].action.shouldStop = True
+  planner.update(sm_stop, toggles)
+
+  sm_release = make_sm(
+    1.420,
+    desired_accel=0.0,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=3.568, v_lead=1.679, a_lead=0.66, radar=False, model_prob=0.9994),
+  )
+  sm_release["controlsState"].longControlState = LongCtrlState.pid
+  sm_release["starpilotPlan"].vCruise = 10.0
+  sm_release["modelV2"].action.shouldStop = False
+  planner.update(sm_release, toggles)
+
+  assert planner.output_a_target <= -0.18
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_close_near_standstill_departing_lead_keeps_small_brake_after_stop_release(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.034)
+  toggles = make_toggles(model_version)
+
+  sm_stop = make_sm(
+    0.034,
+    desired_accel=0.0,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=3.93, v_lead=1.61, a_lead=2.18, radar=False, model_prob=1.0),
+  )
+  sm_stop["controlsState"].longControlState = LongCtrlState.stopping
+  sm_stop["starpilotPlan"].vCruise = 10.0
+  sm_stop["modelV2"].action.shouldStop = True
+  planner.update(sm_stop, toggles)
+
+  sm_release = make_sm(
+    0.449,
+    desired_accel=0.0,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=4.02, v_lead=2.45, a_lead=2.26, radar=False, model_prob=1.0),
+  )
+  sm_release["controlsState"].longControlState = LongCtrlState.pid
+  sm_release["starpilotPlan"].vCruise = 10.0
+  sm_release["modelV2"].action.shouldStop = False
+  planner.update(sm_release, toggles)
+
+  assert planner.output_a_target <= -0.18
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_acc_mode_tracked_vision_model_brake_floor_prevents_positive_output_on_slower_lead(model_version):
+  v_ego = 19.1
+
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(
+    v_ego,
+    desired_accel=-1.18,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=36.5, v_lead=17.2, a_lead=-0.53, radar=False, model_prob=0.993),
+  )
+
+  for _ in range(8):
+    planner.update(sm, make_toggles(model_version))
+
+  assert planner.mode == "acc"
+  assert planner.output_a_target <= -0.35
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_tracked_vision_model_brake_cap_relaxes_mild_model_brake_slam_window(model_version):
+  v_ego = 20.56
+
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=48.0, v_lead=19.07, a_lead=-0.30, radar=False, model_prob=0.999)
+
+  cap = planner.get_tracked_vision_model_brake_cap(lead, v_ego, 1.45, -0.35)
+
+  assert cap is not None
+  assert cap > -1.2
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_tracked_vision_model_brake_cap_does_not_relax_strong_model_brake(model_version):
+  v_ego = 20.56
+
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=38.1, v_lead=19.07, a_lead=-0.30, radar=False, model_prob=0.999)
+
+  cap = planner.get_tracked_vision_model_brake_cap(lead, v_ego, 1.45, -1.2)
+
+  assert cap is None
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_manual_resume_override_clears_no_lead_model_stop_at_standstill(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+  sm = make_sm(0.0, desired_accel=0.0, min_accel=-0.5)
+  sm["carState"].standstill = True
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["modelV2"].action.shouldStop = True
+  sm["starpilotPlan"].forcingStop = True
+  sm["starpilotCarState"] = SimpleNamespace(accelPressed=True)
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert not planner.output_should_stop
+  assert planner.output_a_target >= 0.2
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_manual_resume_override_does_not_clear_stopped_lead_stop(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+  sm = make_sm(
+    0.0,
+    desired_accel=0.0,
+    min_accel=-0.5,
+    lead_one=make_lead(status=True, d_rel=4.0, v_lead=0.0, radar=False, model_prob=0.99),
+  )
+  sm["carState"].standstill = True
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["modelV2"].action.shouldStop = True
+  sm["starpilotPlan"].forcingStop = True
+  sm["starpilotCarState"] = SimpleNamespace(accelPressed=True)
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert planner.output_should_stop
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
 def test_standstill_moving_lead_does_not_force_resume_while_should_stop(model_version):
   v_ego = 0.0
 
@@ -820,6 +1061,108 @@ def test_standstill_moving_lead_does_not_force_resume_while_should_stop(model_ve
   sm["starpilotPlan"].vCruise = 10.0
 
   planner.update(sm, make_toggles(model_version))
+
+  assert planner.output_should_stop
+  assert planner.output_a_target < 0.1
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_standstill_moving_lead_applies_resume_floor_once_stop_clears(model_version):
+  v_ego = 0.0
+
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.1,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=15.0, v_lead=2.2, a_lead=0.4, radar=False, model_prob=0.99),
+  )
+  sm["carState"].standstill = True
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["modelV2"].action.shouldStop = False
+  sm["starpilotPlan"].vCruise = 10.0
+
+  for _ in range(12):
+    planner.update(sm, make_toggles(model_version))
+
+  assert not planner.output_should_stop
+  assert planner.output_a_target >= 0.2
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_standstill_moving_lead_holds_depart_accel_floor_after_stop_release(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+  toggles = make_toggles(model_version)
+
+  sequence = [
+    (0.0, True, 15.0, 2.2, 0.10),
+    (0.0, True, 15.2, 2.4, 0.12),
+    (0.0, True, 15.5, 2.6, 0.15),
+    (0.10, False, 15.8, 2.8, 0.20),
+    (0.25, False, 16.2, 3.0, 0.25),
+    (0.45, False, 16.8, 3.2, 0.30),
+  ]
+
+  outputs = []
+  for v_ego, standstill, d_rel, v_lead, desired_accel in sequence:
+    sm = make_sm(
+      v_ego,
+      desired_accel=desired_accel,
+      min_accel=-0.5,
+      experimental_mode=False,
+      tracking_lead=True,
+      lead_one=make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=0.0, radar=False, model_prob=0.99),
+    )
+    sm["carState"].standstill = standstill
+    sm["controlsState"].longControlState = LongCtrlState.starting if standstill else LongCtrlState.pid
+    sm["starpilotPlan"].vCruise = 10.0
+    sm["modelV2"].action.shouldStop = False
+
+    planner.update(sm, toggles)
+    outputs.append(planner.output_a_target)
+
+  assert outputs[2] >= 0.25
+  assert outputs[3] >= 0.25
+  assert outputs[4] >= 0.25
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_standstill_moving_lead_depart_accel_hold_cancels_if_lead_brakes(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+  toggles = make_toggles(model_version)
+
+  sm_release = make_sm(
+    0.0,
+    desired_accel=0.45,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=4.8, v_lead=1.0, a_lead=0.0, radar=False, model_prob=0.99),
+  )
+  sm_release["carState"].standstill = True
+  sm_release["controlsState"].longControlState = LongCtrlState.starting
+  sm_release["starpilotPlan"].vCruise = 10.0
+  sm_release["modelV2"].action.shouldStop = False
+  planner.update(sm_release, toggles)
+
+  sm_brake = make_sm(
+    0.18,
+    desired_accel=0.18,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=3.9, v_lead=0.1, a_lead=-0.4, radar=False, model_prob=0.99),
+  )
+  sm_brake["controlsState"].longControlState = LongCtrlState.pid
+  sm_brake["starpilotPlan"].vCruise = 10.0
+  sm_brake["modelV2"].action.shouldStop = True
+
+  planner.update(sm_brake, toggles)
 
   assert planner.output_should_stop
   assert planner.output_a_target < 0.1
@@ -941,6 +1284,96 @@ def test_modeld_action_uses_direct_action_head_for_v14(monkeypatch):
   assert action.desiredCurvature == pytest.approx(0.12)
   assert action.desiredAcceleration < -0.2
   assert not action.shouldStop
+
+
+def test_publish_force_stop_handoff_sets_should_stop_when_vcruise_zero():
+  class FakePM:
+    def __init__(self):
+      self.sent = {}
+
+    def send(self, name, msg):
+      self.sent[name] = msg
+
+  class FakeSM(dict):
+    def all_checks(self, service_list=None):
+      return True
+
+    logMonoTime = {"modelV2": int(1e9)}
+
+  v_ego = 5.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  planner.output_a_target = -0.5
+  planner.output_should_stop = False
+  planner.v_desired_trajectory = np.zeros(CONTROL_N)
+  planner.a_desired_trajectory = np.zeros(CONTROL_N)
+  planner.j_desired_trajectory = np.zeros(CONTROL_N)
+  planner.fcw = False
+  planner.mpc.source = "cruise"
+  planner.mpc.solve_time = 0.0
+  pm = FakePM()
+
+  sm = FakeSM(make_sm(v_ego, desired_accel=0.0, min_accel=-1.0, experimental_mode=False))
+  sm["starpilotPlan"].forcingStop = True
+  sm["starpilotPlan"].forcingStopLength = 5.0
+  sm["starpilotPlan"].vCruise = 0.0
+
+  planner.publish(sm, pm)
+
+  assert pm.sent["longitudinalPlan"].longitudinalPlan.shouldStop
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+def test_force_stop_handoff_sets_output_should_stop_before_zero_vcruise(model_version):
+  v_ego = 1.25
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(v_ego, desired_accel=-0.35, min_accel=-1.0, experimental_mode=False)
+  sm["starpilotPlan"].forcingStop = True
+  sm["starpilotPlan"].forcingStopLength = 6.5
+  sm["starpilotPlan"].vCruise = 0.4
+  sm["modelV2"].action.shouldStop = False
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert planner.output_should_stop
+
+
+def test_publish_force_stop_handoff_sets_should_stop_when_vcruise_low():
+  class FakePM:
+    def __init__(self):
+      self.sent = {}
+
+    def send(self, name, msg):
+      self.sent[name] = msg
+
+  class FakeSM(dict):
+    def all_checks(self, service_list=None):
+      return True
+
+    logMonoTime = {"modelV2": int(1e9)}
+
+  v_ego = 1.25
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  planner.output_a_target = -0.35
+  planner.output_should_stop = False
+  planner.v_desired_trajectory = np.zeros(CONTROL_N)
+  planner.a_desired_trajectory = np.zeros(CONTROL_N)
+  planner.j_desired_trajectory = np.zeros(CONTROL_N)
+  planner.fcw = False
+  planner.mpc.source = "cruise"
+  planner.mpc.solve_time = 0.0
+  pm = FakePM()
+
+  sm = FakeSM(make_sm(v_ego, desired_accel=0.0, min_accel=-1.0, experimental_mode=False))
+  sm["starpilotPlan"].forcingStop = True
+  sm["starpilotPlan"].forcingStopLength = 6.5
+  sm["starpilotPlan"].vCruise = 0.4
+
+  planner.publish(sm, pm)
+
+  assert pm.sent["longitudinalPlan"].longitudinalPlan.shouldStop
 
 
 def test_allow_throttle_hysteresis_filters_gas_prob_chatter():

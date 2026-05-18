@@ -115,3 +115,21 @@ def test_force_stop_stays_committed_while_model_still_sees_stop():
   assert result == pytest.approx(0.0)
   assert vcruise.force_stop_timer >= 0.5
   assert vcruise.forcing_stop
+
+
+def test_force_stop_stays_committed_while_moving_even_if_scene_opens():
+  planner, vcruise = make_vcruise(red_light=False, raw_model_stopped=False, forcing_stop=True)
+
+  result = vcruise.update(
+    controls_enabled=True,
+    now=0.0,
+    time_validated=True,
+    v_cruise=20.0,
+    v_ego=1.5,
+    sm=make_sm(standstill=False),
+    starpilot_toggles=make_toggles(),
+  )
+
+  assert result == pytest.approx(0.0)
+  assert vcruise.force_stop_timer >= 0.5
+  assert vcruise.forcing_stop

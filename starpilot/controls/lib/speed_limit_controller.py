@@ -99,15 +99,6 @@ class SpeedLimitController:
     offset_map = OFFSET_MAP_METRIC if self.starpilot_toggles.is_metric else OFFSET_MAP_IMPERIAL
     return next((getattr(self.starpilot_toggles, offset) for low, high, offset in offset_map if low < self.target < high), 0)
 
-  def _read_next_map_speed_limit(self):
-    next_map_speed_limit = self.starpilot_planner.params_memory.get("NextMapSpeedLimit") or {}
-    if isinstance(next_map_speed_limit, (bytes, str)):
-      try:
-        next_map_speed_limit = json.loads(next_map_speed_limit)
-      except (TypeError, ValueError):
-        next_map_speed_limit = {}
-    return next_map_speed_limit if isinstance(next_map_speed_limit, dict) else {}
-
   @property
   def override_mode_enabled(self):
     if self.starpilot_toggles is None:
@@ -409,34 +400,15 @@ class SpeedLimitController:
   def update_map_speed_limit(self, v_ego, sm):
     next_speed_limit_distance = sm["mapdOut"].nextSpeedLimitDistance
 
-    if self.starpilot_toggles.speed_limit_filler:
-      next_map_speed_limit = self._read_next_map_speed_limit()
-      filler_map_speed_limit = self.starpilot_planner.params_memory.get_float("MapSpeedLimit")
-      filler_next_speed_limit = next_map_speed_limit.get("speedlimit", 0)
-
-      if filler_map_speed_limit > 0 or filler_next_speed_limit > 0:
-        self.map_speed_limit = filler_map_speed_limit
-        self.next_speed_limit = filler_next_speed_limit
-        next_speed_limit_distance = next_map_speed_limit.get("distance", 0)
-
-        next_latitude = next_map_speed_limit.get("latitude")
-        next_longitude = next_map_speed_limit.get("longitude")
-        if self.starpilot_planner.gps_valid and next_latitude is not None and next_longitude is not None:
-          current_latitude = self.starpilot_planner.gps_position.get("latitude")
-          current_longitude = self.starpilot_planner.gps_position.get("longitude")
-          next_speed_limit_distance = calculate_distance_to_point(current_latitude, current_longitude, next_latitude, next_longitude)
-      else:
-        self.map_speed_limit = 0
-        self.next_speed_limit = 0
+    way_sel = sm["mapdOut"].waySelectionType
+    if way_sel in (custom.WaySelectionType.current,
+                   custom.WaySelectionType.predicted,
+                   custom.WaySelectionType.extended):
+      self.map_speed_limit = sm["mapdOut"].speedLimit
+      self.next_speed_limit = sm["mapdOut"].nextSpeedLimit
     else:
-      way_sel = sm["mapdOut"].waySelectionType
-      if way_sel in (custom.WaySelectionType.current,
-                     custom.WaySelectionType.predicted,
-                     custom.WaySelectionType.extended):
-        self.map_speed_limit = sm["mapdOut"].speedLimit
-        self.next_speed_limit = sm["mapdOut"].nextSpeedLimit
-      else:
-        self.next_speed_limit = 0
+      self.map_speed_limit = 0
+      self.next_speed_limit = 0
 
     if self.next_speed_limit > 0:
       if self.map_speed_limit < self.next_speed_limit:

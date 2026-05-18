@@ -299,4 +299,7 @@ def update_openpilot(thread_manager, params):
     if not update_available():
       break
 
+  while params.get_bool("IsOnroad") or thread_manager.is_thread_alive("lock_doors"):
+    time.sleep(60)
+
   HARDWARE.reboot()
