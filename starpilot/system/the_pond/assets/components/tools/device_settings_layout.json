@@ -1087,6 +1087,14 @@
         "parent_key": "QOLLongitudinal"
       },
       {
+        "key": "RedneckCruise",
+        "label": "Redneck Cruise",
+        "description": "On supported Hyundai stock-long cars, use RES/SET button presses to match the cluster set speed to StarPilot's target.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLLongitudinal"
+      },
+      {
         "key": "ReverseCruise",
         "label": "Reverse Cruise Increase",
         "description": "Reverse the cruise control button behavior so a short press increases the set speed by 5 instead of 1.",
