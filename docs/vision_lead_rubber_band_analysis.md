@@ -49,7 +49,7 @@ if 0.45 <= uncertainty < 0.60:
 | ---------------- | -------------------------------------------------------------------------------------- |
 | **안전성 위험도**    | **Low/Minimal** — MPC 비용 함수의 jerk 페널티 증가. 급제동 시 panic bypass가 우회하여 안전 보장 |
 | **Panic Bypass** | 간섭 없음 — slope-based bypass는 독립적으로 작동                                           |
-| **효과**             | Medium — 노이즈로 인한 급가감속 명령 억제, 90→70→90 진폭 축소 예상                           |
+| **효과**             | Small~Medium — uncertainty 0.45~0.60 범위 의존적. 이 범위 도달 빈도에 따라 효과 가변적. 정량적 검증 필요 |
 | **엣지 케이스**      | 컷인/급정거 시에도 panic bypass가 filter_time_factor=0.0으로 설정 → 빠른 반응 유지               |
 
 **Council 결과**: ✅ **Go** (가장 안전한 개선안)
@@ -145,7 +145,7 @@ VISION_LEAD_APPROACH_MAX_DECEL = 0.30  # 0.55 → 0.30
 VISION_LEAD_APPROACH_TRIGGER_TIME = 3.5  # 4.5 → 3.5
 ```
 
-**안전성**: Medium — MPC가 독립적으로 처리하므로 영향 제한적. 하지만 실제 위험 상황에서 감속이 약해질 수 있음.
+**안전성**: **High (No-Go)** — Approach Cap 약화는 안전성 저하가 명확함. MPC가 독립적으로 처리하더라도, `VISION_LEAD_APPROACH_MAX_DECEL`을 0.30으로 낮추면 실제 위험 상황(급정거, 컷인)에서 감속이 불충분해질 가능성이 높음. Council 평가: No-Go로 재분류 권장.
 
 ### 3. Lead Filter 강화 (코드 수정)
 
@@ -176,3 +176,35 @@ LEAD_FILTER_TIME_HIGH = 2.5   # 1.8 → 2.5
 | gamma (lower-coding) | —                                             | ⏱️ Timed out |
 
 **Consensus**: Mod 1만 Go, 나머지는 No-Go (1명 응답, 보수적 평가)
+
+---
+
+## Council Re-Evaluation (2nd Round)
+
+**Date**: 2026-05-19
+**Councillor**: beta (gemini-pro) — ✅ Complete | alpha (opus) — ⏱️ Timed out | gamma — ⏱️ Timed out
+
+### Key Findings
+
+1. **Mod 1 효과 재평가**: "Medium" → **"Small~Medium"** — uncertainty 0.45~0.60 범위 의존적. 이 범위를 벗어나면 효과 0.
+2. **Alternative 2 재분류**: "Medium" → **"High/No-Go"** — Approach Cap 약화는 안전성 저하가 명확.
+3. **Mod 1 단독 부족**: Mod 1만으로는 20 km/h 진동 억제가 불충분할 가능성 높음. **Alternative 3 (Lead Filter 강화) 병행 필수.**
+4. **누락 분석 발견**:
+   - `dist_factor`가 이미 `acceleration_jerk`/`danger_jerk`에 적용 중 → Mod 1과 중복/상호작용 분석 필요
+   - `a_change_cost = acceleration_jerk` → Mod 1이 a_change_cost에도 간접 영향
+   - MPC solver feasibility: jerk 비용 1.5배 증가 시 infeasible solution 가능성
+   - 야간 uncertainty 분포에 대한 실증 데이터 부재
+
+### Recommended Application Strategy
+
+| Phase | Action | Code Change | Safety Risk |
+|-------|--------|-------------|-------------|
+| **Phase 1** | Custom Personalities UI 설정 (Smoothness 180, Safety Gap 150) | 없음 | Minimal |
+| **Phase 2** | Mod 1 + Alternative 3 병행 (`LEAD_FILTER_TIME_HIGH = 2.2`) | 있음 | Low |
+| **Phase 3** | 실차 로그 분석 → uncertainty 분포 확인 → threshold/scale 재조정 | 있음 | Low |
+
+### Remaining Uncertainties
+
+- uncertainty가 0.45~0.60 범위에 실제로 얼마나 자주 도달하는지 실차 데이터 부재
+- Mod 1 단독으로 20 km/h 진동을 충분히 억제할 수 있는지 정량적 검증 필요
+- 야간 vs 주간 uncertainty 분포 차이 미분석
