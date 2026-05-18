@@ -49,25 +49,25 @@ SPEED_BREAKPOINTS = [0, 35, 55, 70]  # 4 ranges: 0-35, 35-55, 55-70, 70+
 
 # RESPONSIVENESS TO LEAD CARS (Lower = More responsive, Higher = More stable)
 # [City Emergency, Urban Hwy, Rural Hwy, High Speed]
-X_EGO_OBSTACLE_COSTS = [3.0, 3.0, 2.5, 2.0]  # Less aggressive at low speeds, closer to original
+X_EGO_OBSTACLE_COSTS = [3.0, 3.0, 2.5, 1.5]  # High speed: 2.0 → 1.5 for less aggressive response to vision noise
 
 # JERK CONTROL (Lower = More jerky/responsive, Higher = Smoother/conservative)
 # [City Emergency, Urban Hwy, Rural Hwy, High Speed]
-J_EGO_COSTS = [5.0, 4.75, 4.5, 4.0]  # Reverted to original 5.0 at low speeds
+J_EGO_COSTS = [5.0, 4.75, 4.5, 6.5]  # High speed: 4.0 → 6.5 for smoother highway (vision-only stability)
 
 # ACCELERATION CHANGE PENALTIES (Lower = More responsive, Higher = Smoother)
 # [City Emergency, Urban Hwy, Rural Hwy, High Speed]
-A_CHANGE_COSTS = [200, 195, 180, 170]  # Reverted to original 200 at low speeds
+A_CHANGE_COSTS = [200, 195, 180, 220]  # High speed: 170 → 220 for smoother highway (vision-only stability)
 
 # SMOOTHING FILTERS - Speed-adaptive for optimal responsiveness
 # Lower = More responsive, Higher = Smoother
 LEAD_FILTER_TIME_LOW = 0.8   # Under 40 mph: Fast response for city emergency braking
-LEAD_FILTER_TIME_HIGH = 1.2  # Over 40 mph: Faster response to prevent highway gaps
+LEAD_FILTER_TIME_HIGH = 1.8  # Over 40 mph: Smoother filtering for vision-only highway stability (was 1.2)
 SPEED_FILTER_THRESHOLD = 40 * CV.MPH_TO_MS  # 40 mph threshold
 
 # DISTANCE ADAPTATION STRENGTH (How much penalties increase when close to lead)
 # [City, Urban Hwy, Rural Hwy, High Speed]
-DIST_ADAPTS = [0.04, 0.06, 0.06, 0.05]  # Balanced across speeds
+DIST_ADAPTS = [0.04, 0.06, 0.06, 0.08]  # High speed: 0.05 → 0.08 for stronger distance-based penalty scaling
 
 # ===== END TUNING PARAMETERS =====
 
