@@ -264,6 +264,32 @@ def test_update_releases_stopping_with_cruise_standstill_latched():
   assert output_accel > 0.0
 
 
+def test_stopping_state_follows_stronger_moving_stop_target():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.stopping
+  lc.last_output_accel = -1.40
+  CS = car.CarState.new_message(vEgo=4.0, aEgo=-1.2, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=-3.5,
+    should_stop=True,
+    accel_limits=(-3.5, 2.0),
+    starpilot_toggles=make_toggles(stopAccel=-0.5, stoppingDecelRate=0.8, vEgoStopping=0.5),
+  )
+
+  assert lc.long_control_state == LongCtrlState.stopping
+  assert output_accel < -1.43
+
+
 def test_volt_testing_ground_handoff_freezes_integrator(monkeypatch):
   CP = car.CarParams.new_message()
   CP.brand = "gm"
@@ -327,6 +353,44 @@ def test_negative_target_unwinds_positive_accel_command_after_sign_flip():
 
   assert lc.long_control_state == LongCtrlState.pid
   assert output_accel <= 0.01
+
+
+def test_negative_target_unwinds_positive_accel_command_at_low_speed():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.pid
+  lc.last_output_accel = 0.9
+  lc.pid.i = 0.9
+  CS = car.CarState.new_message(vEgo=1.3, aEgo=0.35, brakePressed=False, gasPressed=False)
+  CS.cruiseState.standstill = False
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=-1.2,
+    should_stop=False,
+    accel_limits=(-3.0, 2.0),
+    starpilot_toggles=make_toggles(),
+  )
+
+  assert lc.long_control_state == LongCtrlState.pid
+  assert output_accel <= 0.01
+
+
+def test_negative_target_creep_guard_keeps_mild_crawl_request():
+  capped = LongControl._cap_positive_output_on_negative_target(
+    output_accel=0.18,
+    a_target=-0.2,
+    error=-0.5,
+    CS=car.CarState.new_message(vEgo=0.2, aEgo=0.0),
+  )
+
+  assert capped == pytest.approx(0.18)
 
 
 def test_pedal_long_brake_bias_adds_small_negative_nudge_for_strong_decel_request():
