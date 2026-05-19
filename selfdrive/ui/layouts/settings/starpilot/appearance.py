@@ -15,7 +15,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     AetherSliderDialog,
     panel_style_from_color,
 )
-from openpilot.selfdrive.ui.layouts.settings.starpilot.longitudinal import (
+from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     SettingRow,
     SettingSection,
     AetherSettingsView,

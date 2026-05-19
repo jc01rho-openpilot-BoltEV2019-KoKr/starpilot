@@ -323,6 +323,8 @@ class _SettingsPage(StarPilotPanel):
       self._sub_panels[self._current_sub_panel].render(rect)
     elif self._manager_view is not None:
       self._manager_view.render(rect)
+    else:
+      super()._render(rect)
 
   def show_event(self):
     super().show_event()
