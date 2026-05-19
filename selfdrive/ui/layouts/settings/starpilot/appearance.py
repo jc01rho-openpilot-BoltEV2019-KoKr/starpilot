@@ -1,9 +1,6 @@
 from __future__ import annotations
 import re
-from pathlib import Path
 
-from openpilot.system.hardware import HARDWARE
-from openpilot.system.hardware.hw import Paths
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.system.ui.widgets import DialogResult
@@ -23,59 +20,33 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
 
 PANEL_STYLE = panel_style_from_color("#8B5CF6")
 
-# ── Theme paths & config (preserved from themes.py) ──
-
-if HARDWARE.get_device_type() == "pc":
-    THEME_SAVE_PATH = Path(Paths.comma_home()) / "starpilot" / "data" / "themes"
-else:
-    THEME_SAVE_PATH = Path("/data/themes")
-
 THEME_KEY_CONFIG = {
     "BootLogo": {
         "default": "starpilot",
-        "kind": "files",
-        "path": THEME_SAVE_PATH / "bootlogos",
         "extra": [],
     },
     "ColorScheme": {
         "default": "stock",
-        "kind": "themes",
-        "path": THEME_SAVE_PATH / "theme_packs",
-        "subfolder": "colors",
         "extra": [("stock", "Stock")],
     },
     "DistanceIconPack": {
         "default": "stock",
-        "kind": "themes",
-        "path": THEME_SAVE_PATH / "theme_packs",
-        "subfolder": "distance_icons",
         "extra": [("stock", "Stock")],
     },
     "IconPack": {
         "default": "stock",
-        "kind": "themes",
-        "path": THEME_SAVE_PATH / "theme_packs",
-        "subfolder": "icons",
         "extra": [("stock", "Stock")],
     },
     "SignalAnimation": {
         "default": "stock",
-        "kind": "themes",
-        "path": THEME_SAVE_PATH / "theme_packs",
-        "subfolder": "signals",
         "extra": [("none", "None")],
     },
     "SoundPack": {
         "default": "stock",
-        "kind": "themes",
-        "path": THEME_SAVE_PATH / "theme_packs",
-        "subfolder": "sounds",
         "extra": [("stock", "Stock")],
     },
     "WheelIcon": {
         "default": "stock",
-        "kind": "files",
-        "path": THEME_SAVE_PATH / "steering_wheels",
         "extra": [("none", "None"), ("stock", "Stock")],
     },
 }
@@ -89,7 +60,7 @@ def _theme_display_name(value: str) -> str:
         return "Stock"
     if value.lower() == "stock":
         return "Stock"
-    if lowered == "none":
+    if value.lower() == "none":
         return "None"
     base, creator = (value.split("~", 1) + [""])[:2] if "~" in value else (value, "")
     user_created_suffixes = ("-user_created", "_user_created", "-user-created", "_user-created")
@@ -157,33 +128,10 @@ class StarPilotAppearancePersonalizeLayout(_SettingsPage):
             panel_style=PANEL_STYLE,
         )
 
-    def _get_downloaded_slugs(self, key: str) -> list[str]:
-        config = THEME_KEY_CONFIG[key]
-        path = config["path"]
-        if not path.exists():
-            return []
-        slugs = set()
-        if config["kind"] == "files":
-            for entry in path.iterdir():
-                if entry.is_file():
-                    slugs.add(entry.stem)
-        else:
-            subfolder = config["subfolder"]
-            for entry in path.iterdir():
-                if entry.is_dir() and (entry / subfolder).exists():
-                    slugs.add(entry.name)
-        return sorted(slugs, key=str.casefold)
-
     def _build_theme_options(self, key: str) -> tuple[list[str], dict[str, str], str]:
         config = THEME_KEY_CONFIG[key]
+        options_map = {display: slug for slug, display in config["extra"]}
         current_slug = self._params.get(key, encoding='utf-8') or config["default"]
-        options_map = {}
-        for slug in self._get_downloaded_slugs(key):
-            display = _theme_display_name(slug)
-            if display not in options_map:
-                options_map[display] = slug
-        for slug, display in config["extra"]:
-            options_map[display] = slug
         current_display = _theme_display_name(current_slug)
         if current_display not in options_map:
             options_map[current_display] = current_slug
