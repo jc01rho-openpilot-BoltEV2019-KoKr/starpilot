@@ -149,7 +149,7 @@ class StarPilotLateralLayout(_SettingsPage):
         SettingRow("AlwaysOnLateral", "toggle", tr_noop("Always On Lateral"),
                    subtitle=tr_noop("Keep lateral control active even without openpilot engaged."),
                    get_state=lambda: self._params.get_bool("AlwaysOnLateral"),
-                   set_state=lambda s: _confirm_reboot_toggle(self._params, "AlwaysOnLateral", s)),
+                   set_state=lambda s: _confirm_reboot_toggle(self._params, "AlwaysOnLateral", s) if s else self._params.put_bool("AlwaysOnLateral", False)),
         SettingRow("AlwaysOnLateralLKAS", "toggle", tr_noop("Enable With LKAS"),
                    subtitle="",
                    get_state=lambda: self._params.get_bool("AlwaysOnLateralLKAS"),

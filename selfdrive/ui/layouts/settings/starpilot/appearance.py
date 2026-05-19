@@ -30,22 +30,6 @@ if HARDWARE.get_device_type() == "pc":
 else:
     THEME_SAVE_PATH = Path("/data/themes")
 
-HOLIDAY_THEME_NAMES = {
-    "new_years": "New Year's",
-    "valentines_day": "Valentine's Day",
-    "st_patricks_day": "St. Patrick's Day",
-    "world_frog_day": "World Frog Day",
-    "april_fools": "April Fools",
-    "easter_week": "Easter",
-    "may_the_fourth": "May the Fourth",
-    "cinco_de_mayo": "Cinco de Mayo",
-    "stitch_day": "Stitch Day",
-    "fourth_of_july": "Fourth of July",
-    "halloween_week": "Halloween",
-    "thanksgiving_week": "Thanksgiving",
-    "christmas_week": "Christmas",
-}
-
 THEME_KEY_CONFIG = {
     "BootLogo": {
         "default": "starpilot",
@@ -58,41 +42,41 @@ THEME_KEY_CONFIG = {
         "kind": "themes",
         "path": THEME_SAVE_PATH / "theme_packs",
         "subfolder": "colors",
-        "extra": [("stock", "Stock"), *HOLIDAY_THEME_NAMES.items()],
+        "extra": [("stock", "Stock")],
     },
     "DistanceIconPack": {
         "default": "stock",
         "kind": "themes",
         "path": THEME_SAVE_PATH / "theme_packs",
         "subfolder": "distance_icons",
-        "extra": [("stock", "Stock"), *HOLIDAY_THEME_NAMES.items()],
+        "extra": [("stock", "Stock")],
     },
     "IconPack": {
         "default": "stock",
         "kind": "themes",
         "path": THEME_SAVE_PATH / "theme_packs",
         "subfolder": "icons",
-        "extra": [("stock", "Stock"), *HOLIDAY_THEME_NAMES.items()],
+        "extra": [("stock", "Stock")],
     },
     "SignalAnimation": {
         "default": "stock",
         "kind": "themes",
         "path": THEME_SAVE_PATH / "theme_packs",
         "subfolder": "signals",
-        "extra": [("none", "None"), *HOLIDAY_THEME_NAMES.items()],
+        "extra": [("none", "None")],
     },
     "SoundPack": {
         "default": "stock",
         "kind": "themes",
         "path": THEME_SAVE_PATH / "theme_packs",
         "subfolder": "sounds",
-        "extra": [("stock", "Stock"), *HOLIDAY_THEME_NAMES.items()],
+        "extra": [("stock", "Stock")],
     },
     "WheelIcon": {
         "default": "stock",
         "kind": "files",
         "path": THEME_SAVE_PATH / "steering_wheels",
-        "extra": [("none", "None"), ("stock", "Stock"), *HOLIDAY_THEME_NAMES.items()],
+        "extra": [("none", "None"), ("stock", "Stock")],
     },
 }
 
@@ -103,10 +87,7 @@ CAMERA_VIEWS = ["Auto", "Driver", "Standard", "Wide"]
 def _theme_display_name(value: str) -> str:
     if not value:
         return "Stock"
-    lowered = value.lower()
-    if lowered in HOLIDAY_THEME_NAMES:
-        return HOLIDAY_THEME_NAMES[lowered]
-    if lowered == "stock":
+    if value.lower() == "stock":
         return "Stock"
     if lowered == "none":
         return "None"
@@ -456,18 +437,10 @@ class StarPilotAppearanceLayout(_SettingsPage):
 
             # ═══ Tab 5: Theme — customization ═══
             SettingSection(tr_noop("Customization"), [
-                SettingRow("CustomThemes", "toggle", tr_noop("Custom Themes"),
-                           subtitle=tr_noop("Enable custom theme assets on the driving screen."),
-                           get_state=lambda: self._params.get_bool("CustomThemes"),
-                           set_state=lambda s: self._params.put_bool("CustomThemes", s)),
                 SettingRow("Personalize", "value", tr_noop("Personalize openpilot"),
                            subtitle=tr_noop("Choose boot logo, color scheme, icons, sounds, and more."),
                            get_value=lambda: tr_noop("Customize"),
                            navigate_to="personalize"),
-                SettingRow("HolidayThemes", "toggle", tr_noop("Holiday Themes"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("HolidayThemes"),
-                           set_state=lambda s: self._params.put_bool("HolidayThemes", s)),
                 SettingRow("RainbowPath", "toggle", tr_noop("Rainbow Path"),
                            subtitle="",
                            get_state=lambda: self._params.get_bool("RainbowPath"),
@@ -475,14 +448,6 @@ class StarPilotAppearanceLayout(_SettingsPage):
             ], tab_key="theme", column_pair="theme"),
 
             SettingSection(tr_noop("Options"), [
-                SettingRow("RandomEvents", "toggle", tr_noop("Random Events"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("RandomEvents"),
-                           set_state=lambda s: self._params.put_bool("RandomEvents", s)),
-                SettingRow("RandomThemes", "toggle", tr_noop("Random Themes"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("RandomThemes"),
-                           set_state=lambda s: self._params.put_bool("RandomThemes", s)),
                 SettingRow("StartupAlert", "value", tr_noop("Startup Alert"),
                            subtitle="",
                            get_value=self._get_startup_alert_display,
