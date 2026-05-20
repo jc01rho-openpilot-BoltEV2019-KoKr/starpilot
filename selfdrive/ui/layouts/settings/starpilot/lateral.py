@@ -174,6 +174,11 @@ class StarPilotLateralLayout(_SettingsPage):
                    get_state=lambda: self._params.get_bool("PauseLateralOnSignal"),
                    set_state=lambda s: self._params.put_bool("PauseLateralOnSignal", s),
                    visible=lambda: self._params.get_bool("QOLLateral") and self._params.get_int("PauseLateralSpeed") > 0),
+        SettingRow("LateralResumeDelay", "value", tr_noop("Lateral Resume Delay"),
+                   subtitle=tr_noop("Delay before steering resumes after the turn signal turns off. Set to 0 to disable."),
+                   get_value=lambda: "Off" if self._params.get_float("LateralResumeDelay") == 0 else f"{self._params.get_float('LateralResumeDelay'):.1f}s",
+                   on_click=lambda: self._show_slider("LateralResumeDelay", 0.0, 5.0, step=0.1, unit=" s", value_type="float"),
+                   visible=lambda: self._params.get_bool("QOLLateral") and self._params.get_int("PauseLateralSpeed") > 0 and self._params.get_bool("PauseLateralOnSignal")),
       ], tab_key="steering"),
 
       # ── Lane tab ──

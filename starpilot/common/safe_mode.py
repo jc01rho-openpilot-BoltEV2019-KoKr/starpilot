@@ -44,6 +44,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "QOLLateral",
   "PauseLateralSpeed",
   "PauseLateralOnSignal",
+  "LateralResumeDelay",
   "LongitudinalTune",
   "AdvancedLongitudinalTune",
   "EVTuning",

@@ -234,6 +234,25 @@
         "max": 99.0,
         "step": 1.0,
         "parent_key": "QOLLateral"
+      },
+      {
+        "key": "PauseLateralOnSignal",
+        "label": "Turn Signal Only",
+        "description": "Only pause steering when the turn signal is active.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLLateral"
+      },
+      {
+        "key": "LateralResumeDelay",
+        "label": "Lateral Resume Delay",
+        "description": "Delay before steering resumes after the turn signal turns off. Only applies when vehicle speed dropped below half the pause speed during the signal. Set to 0 to disable.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 5.0,
+        "step": 0.1,
+        "parent_key": "PauseLateralOnSignal"
       }
     ]
   },
