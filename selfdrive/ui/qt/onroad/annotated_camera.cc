@@ -158,8 +158,9 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
       }
       wide_cam_requested = wide_cam_requested && sm["selfdriveState"].getSelfdriveState().getExperimentalMode() && starpilot_toggles.value("camera_view").toInt() == 0;
     }
-    CameraWidget::setStreamType(starpilot_toggles.value("camera_view").toInt() == 1 ? VISION_STREAM_DRIVER :
-                                starpilot_toggles.value("camera_view").toInt() == 3 || wide_cam_requested ? VISION_STREAM_WIDE_ROAD :
+    int camera_view = starpilot_toggles.value("camera_view").toInt();
+    CameraWidget::setStreamType(camera_view == 1 ? VISION_STREAM_DRIVER :
+                                ((camera_view == 3 && has_wide_cam) || wide_cam_requested) ? VISION_STREAM_WIDE_ROAD :
                                 VISION_STREAM_ROAD);
     CameraWidget::setFrameId(sm["modelV2"].getModelV2().getFrameId());
 

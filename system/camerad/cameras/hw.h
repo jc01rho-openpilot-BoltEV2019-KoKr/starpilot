@@ -27,6 +27,19 @@ struct CameraConfig {
   SpectraOutputType output_type;
 };
 
+inline bool camera_enabled_at_runtime(int camera_num) {
+  switch (camera_num) {
+    case 0:
+      return getenv("DISABLE_WIDE_ROAD") == nullptr;
+    case 1:
+      return getenv("DISABLE_ROAD") == nullptr;
+    case 2:
+      return getenv("DISABLE_DRIVER") == nullptr;
+    default:
+      return true;
+  }
+}
+
 // NOTE: to be able to disable road and wide road, we still have to configure the sensor over i2c
 // If you don't do this, the strobe GPIO is an output (even in reset it seems!)
 const CameraConfig WIDE_ROAD_CAMERA_CONFIG = {

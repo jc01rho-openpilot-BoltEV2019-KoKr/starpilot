@@ -235,16 +235,7 @@ void SpectraMaster::init() {
 SpectraCamera::SpectraCamera(SpectraMaster *master, const CameraConfig &config)
   : m(master),
     cc(config) {
-  // Runtime check for disable environment variables (must happen after main() sets them)
-  bool should_disable = false;
-  if (config.camera_num == 0 && getenv("DISABLE_WIDE_ROAD")) {
-    should_disable = true;
-  } else if (config.camera_num == 1 && getenv("DISABLE_ROAD")) {
-    should_disable = true;
-  } else if (config.camera_num == 2 && getenv("DISABLE_DRIVER")) {
-    should_disable = true;
-  }
-  enabled = !should_disable;
+  enabled = camera_enabled_at_runtime(config.camera_num);
 
   ife_buf_depth = VIPC_BUFFER_COUNT;
   assert(ife_buf_depth < MAX_IFE_BUFS);
@@ -1483,7 +1474,7 @@ bool SpectraCamera::syncFirstFrame(int camera_id, uint64_t request_id, uint64_t 
 
   // Ensure all cameras are up
   int enabled_camera_count = std::count_if(std::begin(ALL_CAMERA_CONFIGS), std::end(ALL_CAMERA_CONFIGS),
-                                           [](const auto &config) { return config.enabled; });
+                                           [](const auto &config) { return camera_enabled_at_runtime(config.camera_num); });
   bool all_cams_up = camera_sync_data.size() == enabled_camera_count;
 
   // Wait until the timestamps line up
