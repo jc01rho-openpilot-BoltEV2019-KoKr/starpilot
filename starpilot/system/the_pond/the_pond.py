@@ -4330,14 +4330,14 @@ def setup(app):
     if f"{model_key}.thneed" in on_disk_files:
       return True
 
-    if model_version in ("v8", "v9", "v10", "v11", "v12", "v13", "v14"):
+    if model_version in ("v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15"):
       required_files = {
         f"{model_key}_driving_policy_tinygrad.pkl",
         f"{model_key}_driving_vision_tinygrad.pkl",
         f"{model_key}_driving_policy_metadata.pkl",
         f"{model_key}_driving_vision_metadata.pkl",
       }
-      if model_version in ("v12", "v13", "v14"):
+      if model_version in ("v12", "v13", "v14", "v15"):
         required_files |= {
           f"{model_key}_driving_off_policy_tinygrad.pkl",
           f"{model_key}_driving_off_policy_metadata.pkl",

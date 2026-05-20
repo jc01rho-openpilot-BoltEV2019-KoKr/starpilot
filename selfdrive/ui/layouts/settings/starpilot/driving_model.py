@@ -691,7 +691,7 @@ class StarPilotDrivingModelLayout(_SettingsPage):
       f"{key}_driving_vision_metadata.pkl",
     ]
 
-    if version in {"v12", "v13", "v14"}:
+    if version in {"v12", "v13", "v14", "v15"}:
       files.extend(
         [
           f"{key}_driving_off_policy_tinygrad.pkl",
