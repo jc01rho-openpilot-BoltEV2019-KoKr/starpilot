@@ -347,31 +347,38 @@ class CarController(CarControllerBase):
         a_ego_future = a_ego_blended + j_ego * future_t
 
         if CC.longActive:
-          # constantly slowly unwind integral to recover from large temporary errors
-          unwind_rate = ACCEL_PID_UNWIND
-          if self.CP.carFingerprint == CAR.TOYOTA_PRIUS and pcm_accel_cmd * self.long_pid.i < 0.0:
-            unwind_rate *= PRIUS_INTEGRAL_MISMATCH_UNWIND
-          self.long_pid.i -= unwind_rate * float(np.sign(self.long_pid.i))
+          if self.CP.enableGasInterceptorDEPRECATED:
+            # Pedal/SDSU Toyotas have shown better behavior when we trust the planner
+            # target directly instead of letting the Toyota longitudinal PID swing it
+            # around. Keep the shared rate limits above, but bypass the extra
+            # correction layer that causes rev/release oscillation.
+            self.long_pid.reset()
+          else:
+            # constantly slowly unwind integral to recover from large temporary errors
+            unwind_rate = ACCEL_PID_UNWIND
+            if self.CP.carFingerprint == CAR.TOYOTA_PRIUS and pcm_accel_cmd * self.long_pid.i < 0.0:
+              unwind_rate *= PRIUS_INTEGRAL_MISMATCH_UNWIND
+            self.long_pid.i -= unwind_rate * float(np.sign(self.long_pid.i))
 
-          error_future = pcm_accel_cmd - a_ego_future
+            error_future = pcm_accel_cmd - a_ego_future
 
-          if not stopping:
-            # Toyota's PCM slowly responds to changes in pitch. On change, we amplify our
-            # acceleration request to compensate for the undershoot and following overshoot
-            pitch_compensation = float(np.clip(math.sin(self.pitch_hp.x) * ACCELERATION_DUE_TO_GRAVITY,
-                                               -MAX_PITCH_COMPENSATION, MAX_PITCH_COMPENSATION))
-            pcm_accel_cmd += pitch_compensation
+            if not stopping:
+              # Toyota's PCM slowly responds to changes in pitch. On change, we amplify our
+              # acceleration request to compensate for the undershoot and following overshoot
+              pitch_compensation = float(np.clip(math.sin(self.pitch_hp.x) * ACCELERATION_DUE_TO_GRAVITY,
+                                                 -MAX_PITCH_COMPENSATION, MAX_PITCH_COMPENSATION))
+              pcm_accel_cmd += pitch_compensation
 
-          feedforward = pcm_accel_cmd
-          if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
-            # Keep Prius positive handoffs softer than the stock tune, while restoring some launch authority.
-            if feedforward > 0.0:
-              feedforward *= PRIUS_POSITIVE_FEEDFORWARD_SCALE
+            feedforward = pcm_accel_cmd
+            if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
+              # Keep Prius positive handoffs softer than the stock tune, while restoring some launch authority.
+              if feedforward > 0.0:
+                feedforward *= PRIUS_POSITIVE_FEEDFORWARD_SCALE
 
-          pcm_accel_cmd = self.long_pid.update(error_future,
-                                               speed=CS.out.vEgo,
-                                               feedforward=feedforward,
-                                               freeze_integrator=actuators.longControlState != LongCtrlState.pid)
+            pcm_accel_cmd = self.long_pid.update(error_future,
+                                                 speed=CS.out.vEgo,
+                                                 feedforward=feedforward,
+                                                 freeze_integrator=actuators.longControlState != LongCtrlState.pid)
         else:
           self.long_pid.reset()
 
