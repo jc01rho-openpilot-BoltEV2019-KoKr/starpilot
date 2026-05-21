@@ -5,7 +5,7 @@ from enum import IntEnum
 
 import pyray as rl
 
-from openpilot.common.params import Params
+from openpilot.common.params import Params, UnknownKeyName
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import DialogResult, Widget
@@ -45,27 +45,42 @@ class StarPilotParamsProxy:
         self._params_memory.put_bool("StarPilotTogglesUpdated", True)
 
     def put(self, key, value):
-        result = self._params.put(key, value)
+        try:
+            result = self._params.put(key, value)
+        except UnknownKeyName:
+            return None
         self._mark_updated()
         return result
 
     def put_bool(self, key, value):
-        result = self._params.put_bool(key, value)
+        try:
+            result = self._params.put_bool(key, value)
+        except UnknownKeyName:
+            return None
         self._mark_updated()
         return result
 
     def put_int(self, key, value):
-        result = self._params.put_int(key, value)
+        try:
+            result = self._params.put_int(key, value)
+        except UnknownKeyName:
+            return None
         self._mark_updated()
         return result
 
     def put_float(self, key, value):
-        result = self._params.put_float(key, value)
+        try:
+            result = self._params.put_float(key, value)
+        except UnknownKeyName:
+            return None
         self._mark_updated()
         return result
 
     def remove(self, key):
-        result = self._params.remove(key)
+        try:
+            result = self._params.remove(key)
+        except UnknownKeyName:
+            return None
         self._mark_updated()
         return result
 

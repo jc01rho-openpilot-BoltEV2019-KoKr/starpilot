@@ -12,6 +12,7 @@ from openpilot.selfdrive.ui.lib.starpilot_visuals import lead_indicator_enabled
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.shader_polygon import draw_polygon, Gradient
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
 
 CLIP_MARGIN = 500
@@ -562,7 +563,7 @@ class ModelRenderer(Widget):
 
     max_text_width = 0.0
     for line in text_lines:
-      sz = rl.measure_text_ex(font, line, font_size, 0)
+      sz = measure_text_cached(font, line, font_size)
       if sz.x > max_text_width:
         max_text_width = sz.x
 
@@ -593,7 +594,7 @@ class ModelRenderer(Widget):
       self._lead_text_rects.append(text_rect)
 
     for i, line in enumerate(text_lines):
-      sz = rl.measure_text_ex(font, line, font_size, 0)
+      sz = measure_text_cached(font, line, font_size)
       line_x = centerX - sz.x / 2
       line_y = startY + (i * line_height)
       _draw_text_with_outline(line, line_x, line_y, font, font_size)

@@ -13,6 +13,7 @@ from openpilot.selfdrive.ui.onroad.starpilot.slc_speed_limit import (
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.lib.starpilot_status import get_screen_edge_color
 from openpilot.system.ui.lib.application import MousePos, gui_app, FontWeight
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 
 
 class StarPilotOnroadView(AugmentedRoadView):
@@ -117,7 +118,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     if not road_name:
       return
 
-    text_size = rl.measure_text_ex(self._font_bold, road_name, 52, 0)
+    text_size = measure_text_cached(self._font_bold, road_name, 52)
     pad_x, pad_y = 28, 18
     box_w = int(text_size.x + pad_x * 2)
     box_h = int(text_size.y + pad_y * 2)
@@ -162,8 +163,8 @@ class StarPilotOnroadView(AugmentedRoadView):
     seconds = duration % 60
     minute_text = f"{minutes} minute{'s' if minutes != 1 else ''}"
     second_text = f"{seconds} second{'s' if seconds != 1 else ''}"
-    minute_size = rl.measure_text_ex(self._font_bold, minute_text, 176, 0)
-    second_size = rl.measure_text_ex(self._font_medium, second_text, 66, 0)
+    minute_size = measure_text_cached(self._font_bold, minute_text, 176)
+    second_size = measure_text_cached(self._font_medium, second_text, 66)
 
     from openpilot.selfdrive.ui.lib.starpilot_status import ENGAGED_COLOR, EXPERIMENTAL_COLOR, TRAFFIC_COLOR
     import numpy as np
@@ -298,12 +299,12 @@ class StarPilotOnroadView(AugmentedRoadView):
     x = self._content_rect.x + self._content_rect.width - 30
     y = self._content_rect.y + 40
     for i, line in enumerate(text_lines):
-      sz = rl.measure_text_ex(font, line, font_size, 0)
+      sz = measure_text_cached(font, line, font_size)
       draw_text_with_outline(line, x - sz.x, y + i * line_height, rl.WHITE)
 
     # 2. Render bottom-center detailed FPS tracker string (min/max/avg)
     fps_str = f"FPS: {round(fps)} | Min: {round(self._min_fps)} | Max: {round(self._max_fps)} | Avg: {round(self._avg_fps)}"
-    sz = rl.measure_text_ex(font, fps_str, font_size, 0)
+    sz = measure_text_cached(font, fps_str, font_size)
     bx = self._content_rect.x + (self._content_rect.width - sz.x) / 2
     by = self._content_rect.y + self._content_rect.height - sz.y - 10
     draw_text_with_outline(fps_str, bx, by, rl.WHITE)

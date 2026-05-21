@@ -1,5 +1,6 @@
 import pyray as rl
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 
 def render_stopping_point(renderer, font):
   params = ui_state.params
@@ -36,7 +37,7 @@ def render_stopping_point(renderer, font):
 
   # Draw "STOP" text centered in octagon
   font_size = 18
-  lbl_sz = rl.measure_text_ex(font, "STOP", font_size, 0)
+  lbl_sz = measure_text_cached(font, "STOP", font_size)
   rl.draw_text_ex(
     font, "STOP",
     rl.Vector2(int(cx - lbl_sz.x / 2), int(cy - radius - lbl_sz.y / 2)),
@@ -51,7 +52,7 @@ def render_stopping_point(renderer, font):
     else:
       dist_text = f"{int(round(stopping_distance * 3.28084))} ft"
 
-    text_sz = rl.measure_text_ex(font, dist_text, 24, 0)
+    text_sz = measure_text_cached(font, dist_text, 24)
     tx = cx - text_sz.x / 2
     ty = cy - radius * 2 - text_sz.y - 5
 

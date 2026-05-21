@@ -2,6 +2,7 @@ import pyray as rl
 import math
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 
 def render_csc_force_stop(content_rect: rl.Rectangle, font_bold):
   plan = ui_state.sm["starpilotPlan"] if ui_state.sm.valid.get("starpilotPlan", False) else None
@@ -65,7 +66,7 @@ def render_csc_force_stop(content_rect: rl.Rectangle, font_bold):
 
     dist_val = int(round(forcing_stop_length * distance_conversion))
     text = f"{dist_val} {dist_unit}"
-    text_sz = rl.measure_text_ex(font_bold, text, 40, 0)
+    text_sz = measure_text_cached(font_bold, text, 40)
     rl.draw_text_ex(font_bold, text, rl.Vector2(int(csc_x + 20), int(badge_rect.y + (100 - text_sz.y) / 2)), 40, 0, rl.WHITE)
 
   else:
@@ -121,5 +122,5 @@ def render_csc_force_stop(content_rect: rl.Rectangle, font_bold):
 
     csc_speed_val = int(round(min(v_ego, csc_speed) * speed_conversion))
     text = f"{csc_speed_val} {speed_unit}"
-    text_sz = rl.measure_text_ex(font_bold, text, 40, 0)
+    text_sz = measure_text_cached(font_bold, text, 40)
     rl.draw_text_ex(font_bold, text, rl.Vector2(int(csc_x + 20), int(badge_rect.y + (100 - text_sz.y) / 2)), 40, 0, rl.WHITE)

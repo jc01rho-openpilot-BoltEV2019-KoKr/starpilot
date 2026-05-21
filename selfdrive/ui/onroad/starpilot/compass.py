@@ -1,5 +1,6 @@
 import pyray as rl
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 
 def render_compass(rect: rl.Rectangle, font):
   if not ui_state.params.get_bool("Compass"):
@@ -47,7 +48,7 @@ def render_compass(rect: rl.Rectangle, font):
         notch_width = 3
         lbl = labels.get(norm_deg, "")
         if lbl:
-          lbl_sz = rl.measure_text_ex(font, lbl, 22, 0)
+          lbl_sz = measure_text_cached(font, lbl, 22)
           rl.draw_text_ex(font, lbl, rl.Vector2(int(x - lbl_sz.x / 2), int(rect.y + 12)), 22, 0, rl.WHITE)
       elif norm_deg % 15 == 0:
         notch_height = 15

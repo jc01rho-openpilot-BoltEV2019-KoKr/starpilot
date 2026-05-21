@@ -1,6 +1,7 @@
 import pyray as rl
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.lib.starpilot_status import CEM_OVERRIDE_COLOR, EXPERIMENTAL_COLOR
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 
 def render_cem_status(rect: rl.Rectangle, font):
   if not ui_state.params.get_bool("ShowCEMStatus"):
@@ -41,7 +42,7 @@ def render_cem_status(rect: rl.Rectangle, font):
 
   # Draw text label centered inside the badge
   font_size = 20
-  text_sz = rl.measure_text_ex(font, label, font_size, 0)
+  text_sz = measure_text_cached(font, label, font_size)
   pos_x = rect.x + (rect.width - text_sz.x) / 2
   pos_y = rect.y + (rect.height - text_sz.y) / 2
   rl.draw_text_ex(font, label, rl.Vector2(int(pos_x), int(pos_y)), font_size, 0, rl.WHITE)

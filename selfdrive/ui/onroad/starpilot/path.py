@@ -10,6 +10,7 @@ from openpilot.selfdrive.ui.lib.starpilot_theme import get_param_color, get_them
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.shader_polygon import draw_polygon, Gradient
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 
 _METRICS_FONT_SIZE = 45
 _STOCK_LINE_GREEN = rl.Color(0, 255, 0, 241)
@@ -88,8 +89,9 @@ def render_adjacent_paths(renderer) -> None:
       right = verts[mid_index + (len(verts) - mid_index) // 2]
 
       text = f"{lane_width * distance_conversion:.2f}{unit}"
-      text_width = rl.measure_text_ex(font, text, _METRICS_FONT_SIZE, 0).x
-      text_height = rl.measure_text_ex(font, text, _METRICS_FONT_SIZE, 0).y
+      text_sz = measure_text_cached(font, text, _METRICS_FONT_SIZE)
+      text_width = text_sz.x
+      text_height = text_sz.y
 
       text_x = (left[0] + right[0]) / 2.0 - text_width / 2.0
       text_y = (left[1] + right[1]) / 2.0 - text_height / 2.0 + text_height * 0.75
