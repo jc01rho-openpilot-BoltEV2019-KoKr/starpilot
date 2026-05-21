@@ -54,6 +54,7 @@ CANFD_EXPECTED_ECUS = {Ecu.fwdCamera, Ecu.fwdRadar}
 HYUNDAI_NON_SCC_CARS = (
   CAR.HYUNDAI_BAYON_1ST_GEN_NON_SCC,
   CAR.HYUNDAI_ELANTRA_2022_NON_SCC,
+  CAR.HYUNDAI_ELANTRA_HEV_2022_NON_SCC,
   CAR.HYUNDAI_KONA_NON_SCC,
   CAR.HYUNDAI_KONA_EV_NON_SCC,
   CAR.KIA_CEED_PHEV_2022_NON_SCC,
@@ -121,6 +122,9 @@ class TestHyundaiFingerprint:
     assert palisade_2023.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANCEL_BTN_ENABLE
 
   def test_non_scc_flag_quirks(self):
+    elantra_hev = CarInterface.get_params(CAR.HYUNDAI_ELANTRA_HEV_2022_NON_SCC, gen_empty_fingerprint(), [], True, False, False, None)
+    assert elantra_hev.flags & HyundaiFlags.HYBRID
+
     forte_2019 = CarInterface.get_params(CAR.KIA_FORTE_2019_NON_SCC, gen_empty_fingerprint(), [], True, False, False, None)
     assert forte_2019.flags & HyundaiFlags.NON_SCC_NO_FCA
     assert not (forte_2019.flags & HyundaiFlags.NON_SCC_RADAR_FCA)

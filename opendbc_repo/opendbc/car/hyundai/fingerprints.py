@@ -1395,6 +1395,17 @@ FW_VERSIONS = {
       b'\xf1\x00T02601BL  T02900A1  WCN7T20XXX900NS4\xf7\xccz\xf6',
     ],
   },
+  CAR.HYUNDAI_ELANTRA_HEV_2022_NON_SCC: {
+    (Ecu.eps, 0x7d4, None): [
+      b'\xf1\x00CN7 MDPS C 1.00 1.02 56310/BY050 4CNHC102',
+    ],
+    (Ecu.fwdCamera, 0x7c4, None): [
+      b'\xf1\x00CN7HMFC  AT USA LHD 1.00 1.04 99210-AA000 210205',
+    ],
+    (Ecu.transmission, 0x7e1, None): [
+      b'\xf1\x006U3L0_C2\x00\x006U3K3051\x00\x00HCN0G16NS0\x00\x00\x00\x00',
+    ],
+  },
   CAR.HYUNDAI_BAYON_1ST_GEN_NON_SCC: {
     (Ecu.fwdCamera, 0x7c4, None): [
       b'\xf1\x00BC3 LKA  AT EUR LHD 1.00 1.01 99211-Q0100 261',
