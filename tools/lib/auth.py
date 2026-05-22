@@ -23,19 +23,26 @@ Examples::
 
 import argparse
 import os
-import sys
 import pprint
+import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlencode
 
+from openpilot.common.params import Params
 from openpilot.tools.lib.api import APIError, CommaApi, UnauthorizedError
 from openpilot.tools.lib.auth_config import set_token, get_token
 
-from openpilot.starpilot.common.starpilot_utilities import use_konik_server
 
-API_HOST = os.getenv('API_HOST', f"https://api.{'konik' if use_konik_server() else 'comma'}.ai")
+def _use_konik_server():
+  try:
+    return Params().get_bool("UseKonikServer")
+  except Exception:
+    return False
+
+
+API_HOST = os.getenv('API_HOST', f"https://api.{'konik.ai' if _use_konik_server() else 'comma.ai'}")
 PORT = 3000
 
 

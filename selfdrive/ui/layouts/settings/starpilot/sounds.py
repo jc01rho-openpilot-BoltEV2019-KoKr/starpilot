@@ -8,16 +8,20 @@ from openpilot.common.basedir import BASEDIR
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH
 from openpilot.system.ui.lib.application import gui_app, MouseEvent, MousePos
 from openpilot.system.ui.lib.multilang import tr, tr_noop
+from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
 from openpilot.system.ui.widgets import Widget
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
-from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPanel
+from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   AetherAdjustorRow,
   AetherListColors,
+  AetherScrollbar,
   panel_style_from_color,
   _point_hits,
+  draw_list_scroll_fades,
+  draw_section_header,
   draw_settings_panel_header,
   draw_toggle_pill,
   init_list_panel,
@@ -37,8 +41,22 @@ class SoundsManagerView(Widget):
     self._was_interacting: dict[str, bool] = {}
     self._toggle_rects: dict[str, rl.Rectangle] = {}
     self._active_adjustor_key: str | None = None
+    self._can_click = True
+
+    self._scroll_panel = GuiScrollPanel2(horizontal=False)
+    self._scrollbar = AetherScrollbar()
+    self._content_height = 0.0
+    self._scroll_offset = 0.0
+    self._scroll_rect = rl.Rectangle(0, 0, 0, 0)
 
     self._init_adjustors()
+    self._forward_touch_valid()
+
+  def _forward_touch_valid(self):
+    for adjustor in self._adjustor_rows.values():
+      adjustor.set_touch_valid_callback(
+        lambda: self._scroll_panel.is_touch_valid() or adjustor.is_interacting
+      )
 
   def _set_active_adjustor(self, key: str, active: bool):
     if active:
@@ -100,6 +118,7 @@ class SoundsManagerView(Widget):
 
   def _handle_mouse_press(self, mouse_pos: MousePos):
     self._pressed_target = self._target_at(mouse_pos)
+    self._can_click = True
     for adjustor in self._adjustor_rows.values():
       adjustor._handle_mouse_press(mouse_pos)
 
@@ -107,18 +126,22 @@ class SoundsManagerView(Widget):
     for adjustor in self._adjustor_rows.values():
       adjustor._handle_mouse_release(mouse_pos)
 
-    target = self._target_at(mouse_pos)
-    if self._pressed_target is not None and self._pressed_target == target:
+    target = self._target_at(mouse_pos) if self._scroll_panel.is_touch_valid() else None
+    if self._pressed_target is not None and self._pressed_target == target and self._can_click:
       self._activate_target(target)
     self._pressed_target = None
+    self._can_click = True
 
   def _handle_mouse_event(self, mouse_event: MouseEvent):
+    if not self._scroll_panel.is_touch_valid():
+      self._can_click = False
+      return
     for adjustor in self._adjustor_rows.values():
       adjustor._handle_mouse_event(mouse_event)
 
   def _target_at(self, mouse_pos: MousePos) -> str | None:
     for key, rect in self._toggle_rects.items():
-      if _point_hits(mouse_pos, rect, pad_x=6, pad_y=6):
+      if _point_hits(mouse_pos, rect, self._scroll_rect, pad_x=6, pad_y=0):
         return f"toggle:{key}"
     return None
 
@@ -130,25 +153,43 @@ class SoundsManagerView(Widget):
         current = self._controller._params.get_bool(key)
         self._controller._params.put_bool(key, not current)
 
+  def show_event(self):
+    super().show_event()
+    self._pressed_target = None
+    self._can_click = True
+
+  def hide_event(self):
+    super().hide_event()
+    self._pressed_target = None
+    self._can_click = True
+
   def _render(self, rect: rl.Rectangle):
     self.set_rect(rect)
     self._toggle_rects.clear()
 
-    frame, _scroll_rect, _content_width = init_list_panel(rect, PANEL_STYLE)
+    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE)
+    self._scroll_rect = scroll_rect
 
     self._draw_header(frame.header)
 
-    metrics = AETHER_LIST_METRICS
-    actual_header_height = 100
-    content_y = frame.header.y + actual_header_height
-    content_h = (frame.shell.y + frame.shell.height) - content_y - metrics.panel_padding_bottom
+    self._content_height = self._measure_content_height(content_width)
 
-    col_width = (frame.scroll.width - SECTION_GAP) / 2
-    col_left = rl.Rectangle(frame.scroll.x, content_y, col_width, content_h)
-    col_right = rl.Rectangle(frame.scroll.x + col_width + SECTION_GAP, content_y, col_width, content_h)
+    self._scroll_panel.set_enabled(self.is_visible)
+    self._scroll_offset = self._scroll_panel.update(
+      scroll_rect, max(self._content_height, scroll_rect.height)
+    )
 
-    self._draw_volume_column(col_left)
-    self._draw_utility_column(col_right)
+    rl.begin_scissor_mode(
+      int(scroll_rect.x), int(scroll_rect.y),
+      int(scroll_rect.width), int(scroll_rect.height)
+    )
+    self._draw_scroll_content(scroll_rect, content_width)
+    rl.end_scissor_mode()
+
+    if self._content_height > scroll_rect.height:
+      self._scrollbar.render(scroll_rect, self._content_height, self._scroll_offset)
+    draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset,
+                           AetherListColors.PANEL_BG)
 
     for key in self._controller.VOLUME_KEYS:
       adjustor = self._adjustor_rows[key]
@@ -160,8 +201,37 @@ class SoundsManagerView(Widget):
         self._controller._test_sound(key)
       self._was_interacting[key] = is_interacting
 
+  def _measure_content_height(self, content_width: float) -> float:
+    col_width = (content_width - SECTION_GAP) / 2
+    left_h = 0.0
+    for key in self._controller.VOLUME_KEYS:
+      left_h += self._adjustor_rows[key].measure_height(col_width)
+    right_h = self._adjustor_rows[self._controller.COOLDOWN_KEY].measure_height(col_width)
+    right_h += AETHER_LIST_METRICS.utility_row_height * len(self._controller.CUSTOM_ALERTS_KEYS)
+    return max(left_h, right_h)
+
   def _draw_header(self, rect: rl.Rectangle):
     draw_settings_panel_header(rect, tr("Sounds & Alerts"), tr("Manage system volumes and custom alert toggles."), subtitle_size=24)
+
+  def _draw_scroll_content(self, rect: rl.Rectangle, content_width: float):
+    y = rect.y + self._scroll_offset
+    col_width = (content_width - SECTION_GAP) / 2
+
+    draw_section_header(
+      rl.Rectangle(rect.x, y, col_width, AETHER_LIST_METRICS.section_header_height),
+      tr("Volume"), style=PANEL_STYLE
+    )
+    draw_section_header(
+      rl.Rectangle(rect.x + col_width + SECTION_GAP, y, col_width, AETHER_LIST_METRICS.section_header_height),
+      tr("Alerts"), style=PANEL_STYLE
+    )
+    y += AETHER_LIST_METRICS.section_header_height + AETHER_LIST_METRICS.section_header_gap
+
+    col_left = rl.Rectangle(rect.x, y, col_width, self._content_height)
+    col_right = rl.Rectangle(rect.x + col_width + SECTION_GAP, y, col_width, self._content_height)
+
+    self._draw_volume_column(col_left)
+    self._draw_utility_column(col_right)
 
   def _draw_volume_column(self, rect: rl.Rectangle):
     current_y = rect.y
@@ -170,7 +240,7 @@ class SoundsManagerView(Widget):
       row_h = adjustor.measure_height(rect.width)
       row_rect = rl.Rectangle(rect.x, current_y, rect.width, row_h)
       adjustor.set_is_last(True)
-      adjustor.set_parent_rect(rect)
+      adjustor.set_parent_rect(self._scroll_rect)
       adjustor.render(row_rect)
       current_y += row_h
 
@@ -181,7 +251,7 @@ class SoundsManagerView(Widget):
     adjustor = self._adjustor_rows[cd_key]
     row_h = adjustor.measure_height(rect.width)
     adjustor.set_is_last(True)
-    adjustor.set_parent_rect(rect)
+    adjustor.set_parent_rect(self._scroll_rect)
     adjustor.render(rl.Rectangle(rect.x, current_y, rect.width, row_h))
     current_y += row_h
 
@@ -198,7 +268,7 @@ class SoundsManagerView(Widget):
     is_enabled = info.get("is_enabled", lambda: True)()
 
     mouse_pos = gui_app.last_mouse_event.pos
-    hovered = _point_hits(mouse_pos, padded_rect, pad_x=6, pad_y=6)
+    hovered = _point_hits(mouse_pos, padded_rect, self._scroll_rect, pad_x=6, pad_y=0)
     pressed = self._pressed_target == f"toggle:{key}"
 
     status_str = tr("ON") if current_val else tr("OFF")
@@ -209,7 +279,7 @@ class SoundsManagerView(Widget):
     self._toggle_rects[key] = padded_rect
 
 
-class StarPilotSoundsLayout(StarPilotPanel):
+class StarPilotSoundsLayout(_SettingsPage):
   COOLDOWN_KEY = "SwitchbackModeCooldown"
   VOLUME_KEYS = [
     "BelowSteerSpeedVolume",
@@ -268,15 +338,6 @@ class StarPilotSoundsLayout(StarPilotPanel):
     }
 
     self._manager_view = SoundsManagerView(self)
-
-  def _render(self, rect: rl.Rectangle):
-    self._manager_view.render(rect)
-
-  def show_event(self):
-    super().show_event()
-
-  def hide_event(self):
-    super().hide_event()
 
   @classmethod
   def _init_sound_player(cls):

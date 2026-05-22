@@ -26,6 +26,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPag
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   AetherAdjustorRow,
+  AetherInteractiveMixin,
   AetherScrollbar,
   AetherSegmentedControl,
   AetherListColors,
@@ -36,10 +37,10 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_list_scroll_fades,
   draw_section_header,
   draw_selection_list_row,
-  draw_settings_list_row,
+  draw_standard_toggle_row,
   draw_settings_panel_header,
   draw_soft_card,
-  draw_tab_card,
+  draw_tab_bar,
 )
 from openpilot.starpilot.common.connect_server import prepare_konik_server_switch
 
@@ -85,11 +86,11 @@ FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
 PANEL_STYLE = panel_style_from_color("#D946EF")
 
 
-class SystemSettingsManagerView(Widget):
+class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
   HEADER_SUBTITLE_HEIGHT = 24
   HEADER_SUMMARY_GAP = 12
   HEADER_CARD_HEIGHT = 108
-  TAB_HEIGHT = 56
+  TAB_HEIGHT = 68
   TAB_GAP = 10
   TAB_BOTTOM_GAP = 18
   COLUMN_GAP = 22
@@ -105,9 +106,6 @@ class SystemSettingsManagerView(Widget):
     self._content_height = 0.0
     self._scroll_offset = 0.0
     self._ensure_visible_key: str | None = None
-    self._interactive_rects: dict[str, rl.Rectangle] = {}
-    self._pressed_target: str | None = None
-    self._can_click = True
     self._active_tab_key = "basics"
     self._active_adjustor_key: str | None = None
     self._adjustor_rows: dict[str, AetherAdjustorRow] = {}
@@ -371,11 +369,6 @@ class SystemSettingsManagerView(Widget):
   def _column_width(self, width: float) -> float:
     return (width - self.COLUMN_GAP) / 2 if self._uses_two_columns(width) else width
 
-  def _interactive_state(self, target_id: str, rect: rl.Rectangle, *, pad_y: float = 0) -> tuple[bool, bool]:
-    self._interactive_rects[target_id] = rect
-    hovered = _point_hits(gui_app.last_mouse_event.pos, rect, self._scroll_rect, pad_x=6, pad_y=pad_y)
-    return hovered, self._pressed_target == target_id
-
   def _lookup_toggle(self, toggle_id: str):
     return next((toggle for toggle in self._toggle_defs if toggle["id"] == toggle_id), None)
 
@@ -440,30 +433,6 @@ class SystemSettingsManagerView(Widget):
   def hide_event(self):
     super().hide_event()
     self._clear_ephemeral_state()
-
-  def _handle_mouse_press(self, mouse_pos: MousePos):
-    self._pressed_target = self._target_at(mouse_pos)
-    self._can_click = True
-
-  def _handle_mouse_event(self, mouse_event: MouseEvent):
-    if not self._scroll_panel.is_touch_valid():
-      self._can_click = False
-      return
-    if self._pressed_target is not None and self._target_at(mouse_event.pos) != self._pressed_target:
-      self._pressed_target = None
-
-  def _handle_mouse_release(self, mouse_pos: MousePos):
-    target = self._target_at(mouse_pos) if self._scroll_panel.is_touch_valid() else None
-    if self._pressed_target is not None and self._pressed_target == target and self._can_click:
-      self._activate_target(target)
-    self._pressed_target = None
-    self._can_click = True
-
-  def _target_at(self, mouse_pos: MousePos) -> str | None:
-    for target_id, rect in self._interactive_rects.items():
-      if _point_hits(mouse_pos, rect, self._scroll_rect, pad_x=6, pad_y=0):
-        return target_id
-    return None
 
   def _activate_target(self, target_id: str | None):
     if not target_id:
@@ -608,26 +577,10 @@ class SystemSettingsManagerView(Widget):
       self._draw_care_tab(y, rect.x, width)
 
   def _draw_tabs(self, rect: rl.Rectangle):
-    if not self._tab_defs:
-      return
-    available_w = max(1.0, rect.width)
-    tab_w = (available_w - self.TAB_GAP * max(0, len(self._tab_defs) - 1)) / max(1, len(self._tab_defs))
-    for index, tab in enumerate(self._tab_defs):
-      tab_rect = rl.Rectangle(rect.x + index * (tab_w + self.TAB_GAP), rect.y, tab_w, self.TAB_HEIGHT)
-      target_id = f"tab:{tab['id']}"
-      hovered, pressed = self._interactive_state(target_id, tab_rect, pad_y=4)
-      draw_tab_card(
-        tab_rect,
-        tab["title"],
-        self._tab_subtitle(tab["id"]),
-        current=self._active_tab_key == tab["id"],
-        hovered=hovered,
-        pressed=pressed,
-        title_size=26,
-        subtitle_size=17,
-        show_underline=True,
-        style=PANEL_STYLE,
-      )
+    draw_tab_bar(
+      rect, self._tab_defs, self._active_tab_key, self._interactive_state,
+      subtitle_fn=self._tab_subtitle, style=PANEL_STYLE,
+    )
 
   def _draw_basics_tab(self, y: float, x: float, width: float):
     if self._uses_two_columns(width):
@@ -706,19 +659,10 @@ class SystemSettingsManagerView(Widget):
     hovered, pressed = self._interactive_state(target_id, rect)
     is_enabled = toggle_def.get("is_enabled", lambda: True)()
     subtitle = toggle_def.get("disabled_label", "") if not is_enabled and toggle_def.get("disabled_label") else toggle_def["subtitle"]
-    draw_settings_list_row(
-      rect,
-      title=toggle_def["title"],
-      subtitle=subtitle,
-      toggle_value=toggle_def["get"](),
-      enabled=is_enabled,
-      hovered=hovered,
-      pressed=pressed,
-      is_last=is_last,
-      show_chevron=False,
-      title_size=34,
-      subtitle_size=22,
-      style=PANEL_STYLE,
+    draw_standard_toggle_row(
+      rect, toggle_def["title"], subtitle, toggle_def["get"](),
+      enabled=is_enabled, hovered=hovered, pressed=pressed,
+      is_last=is_last, style=PANEL_STYLE,
     )
 
   def _draw_backups_section(self, y: float, x: float, width: float) -> float:
@@ -776,11 +720,11 @@ class SystemSettingsManagerView(Widget):
     y += support_rect.height + 12
 
     danger_title_rect = rl.Rectangle(x, y, width, 22)
-    gui_label(danger_title_rect, tr("Danger Zone"), 20, AetherListColors.DANGER, FontWeight.MEDIUM)
+    gui_label(danger_title_rect, tr("Danger Zone"), 20, PANEL_STYLE.danger_text, FontWeight.MEDIUM)
     y += 30
 
     danger_rect = rl.Rectangle(x, y, width, self._section_height(len(self._danger_rows), ROW_HEIGHT))
-    draw_list_group_shell(danger_rect, fill=rl.Color(173, 78, 90, 10), border=rl.Color(173, 78, 90, 30), style=PANEL_STYLE)
+    draw_list_group_shell(danger_rect, fill=PANEL_STYLE.danger_fill, border=PANEL_STYLE.danger_border, style=PANEL_STYLE)
     for index, row in enumerate(self._danger_rows):
       row_rect = rl.Rectangle(danger_rect.x, danger_rect.y + index * ROW_HEIGHT, danger_rect.width, ROW_HEIGHT)
       self._draw_action_row(row_rect, row, is_last=index == len(self._danger_rows) - 1, danger=True)
@@ -788,9 +732,9 @@ class SystemSettingsManagerView(Widget):
   def _draw_action_row(self, rect: rl.Rectangle, row: dict, is_last: bool, *, danger: bool = False):
     target_id = f"action:{row['id']}"
     hovered, pressed = self._interactive_state(target_id, rect)
-    action_fill = rl.Color(173, 78, 90, 22) if danger else rl.Color(255, 255, 255, 8)
-    action_border = rl.Color(173, 78, 90, 48) if danger else rl.Color(255, 255, 255, 24)
-    action_text_color = AetherListColors.HEADER if not danger else rl.Color(244, 214, 219, 255)
+    action_fill = PANEL_STYLE.danger_fill if danger else rl.Color(255, 255, 255, 8)
+    action_border = PANEL_STYLE.danger_border if danger else rl.Color(255, 255, 255, 24)
+    action_text_color = AetherListColors.HEADER if not danger else PANEL_STYLE.danger_text
     draw_selection_list_row(
       rect,
       title=row["title"],
@@ -810,8 +754,8 @@ class SystemSettingsManagerView(Widget):
       action_fill=action_fill,
       action_border=action_border,
       action_text_color=action_text_color,
-      title_color=AetherListColors.HEADER if not danger else rl.Color(249, 229, 233, 255),
-      subtitle_color=AetherListColors.SUBTEXT if not danger else rl.Color(203, 171, 178, 255),
+      title_color=AetherListColors.HEADER if not danger else PANEL_STYLE.danger_text,
+      subtitle_color=AetherListColors.SUBTEXT if not danger else PANEL_STYLE.danger_text,
     )
 
 class StarPilotSystemLayout(_SettingsPage):

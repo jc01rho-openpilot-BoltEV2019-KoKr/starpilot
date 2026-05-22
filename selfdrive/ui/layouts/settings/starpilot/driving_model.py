@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Callable
 import json
 import math
@@ -34,6 +34,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPag
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   AetherButton,
+  AetherInteractiveMixin,
   AetherChip,
   AetherListColors,
   AetherScrollbar,
@@ -70,6 +71,7 @@ ROW_RADIUS = AETHER_LIST_METRICS.row_radius
 ACTION_WIDTH = AETHER_LIST_METRICS.action_width
 BUTTON_HEIGHT = AETHER_LIST_METRICS.header_button_height
 FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
+DRIVING_MODEL_METRICS = replace(AETHER_LIST_METRICS, header_height=210)
 CONFIRM_TIMEOUT_SECONDS = 3.0
 TRANSITION_SECONDS = 0.24
 PANEL_STYLE = panel_style_from_color("#3B82F6")
@@ -98,7 +100,7 @@ def _ease(current: float, target: float, tau: float = 0.085) -> float:
   return current + (target - current) * (1 - math.exp(-dt / tau))
 
 
-class DrivingModelManagerView(Widget):
+class DrivingModelManagerView(AetherInteractiveMixin, Widget):
   def __init__(self, controller: "StarPilotDrivingModelLayout"):
     super().__init__()
     self._controller = controller
@@ -106,9 +108,6 @@ class DrivingModelManagerView(Widget):
     self._scrollbar = AetherScrollbar()
     self._content_height = 0.0
     self._scroll_offset = 0.0
-    self._pressed_target: str | None = None
-    self._can_click = True
-    self._interactive_rects: dict[str, rl.Rectangle] = {}
     self._confirm_key: str | None = None
     self._confirm_until = 0.0
     self._transition_starts: dict[str, tuple[float, float]] = {}
@@ -194,24 +193,6 @@ class DrivingModelManagerView(Widget):
       if time.monotonic() - started_at >= TRANSITION_SECONDS:
         self._transition_starts.pop(key, None)
 
-  def _handle_mouse_press(self, mouse_pos: MousePos):
-    self._pressed_target = self._target_at(mouse_pos)
-    self._can_click = True
-
-  def _handle_mouse_event(self, mouse_event: MouseEvent):
-    if not self._scroll_panel.is_touch_valid():
-      self._can_click = False
-      return
-    if self._pressed_target is not None and self._target_at(mouse_event.pos) != self._pressed_target:
-      self._pressed_target = None
-
-  def _handle_mouse_release(self, mouse_pos: MousePos):
-    target = self._target_at(mouse_pos) if self._scroll_panel.is_touch_valid() else None
-    if self._pressed_target is not None and self._pressed_target == target and self._can_click:
-      self._activate_target(target)
-    self._pressed_target = None
-    self._can_click = True
-
   def _target_at(self, mouse_pos: MousePos) -> str | None:
     for prefix in ("menu:", "action:", "utility:", "row:"):
       for target_id, rect in self._interactive_rects.items():
@@ -280,7 +261,7 @@ class DrivingModelManagerView(Widget):
     self.set_rect(rect)
     self._interactive_rects.clear()
 
-    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE)
+    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE, metrics=DRIVING_MODEL_METRICS)
     self._shell_rect = frame.shell
     self._scroll_rect = scroll_rect
 
@@ -710,7 +691,7 @@ class StarPilotDrivingModelLayout(_SettingsPage):
       f"{key}_driving_vision_metadata.pkl",
     ]
 
-    if version in {"v12", "v13", "v14"}:
+    if version in {"v12", "v13", "v14", "v15"}:
       files.extend(
         [
           f"{key}_driving_off_policy_tinygrad.pkl",
@@ -992,25 +973,24 @@ class StarPilotDrivingModelLayout(_SettingsPage):
         ]
       )
 
-    if self._params.get_int("TuningLevel") == 3:
-      rows.extend(
-        [
-          {
-            "id": "recovery_power",
-            "title": tr("Recovery Power"),
-            "subtitle": tr("How assertively the model recenters after disturbances."),
-            "type": "value",
-            "value": f"{self._params.get_float('RecoveryPower'):.1f}x",
-          },
-          {
-            "id": "stop_distance",
-            "title": tr("Stop Distance"),
-            "subtitle": tr("Preferred gap held at a complete stop."),
-            "type": "value",
-            "value": f"{self._params.get_float('StopDistance'):.1f}m",
-          },
-        ]
-      )
+    rows.extend(
+      [
+        {
+          "id": "recovery_power",
+          "title": tr("Recovery Power"),
+          "subtitle": tr("How assertively the model recenters after disturbances."),
+          "type": "value",
+          "value": f"{self._params.get_float('RecoveryPower'):.1f}x",
+        },
+        {
+          "id": "stop_distance",
+          "title": tr("Stop Distance"),
+          "subtitle": tr("Preferred gap held at a complete stop."),
+          "type": "value",
+          "value": f"{self._params.get_float('StopDistance'):.1f}m",
+        },
+      ]
+    )
 
     return rows
 

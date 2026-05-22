@@ -111,7 +111,7 @@ def make_toggles(model_version: str = "v11"):
   )
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_experimental_mlsim_uses_vehicle_min_accel_floor(model_version):
   v_ego = 18.0
   desired_accel = -1.0
@@ -132,7 +132,7 @@ def test_experimental_mlsim_uses_vehicle_min_accel_floor(model_version):
   assert planner.output_a_target < comfort_min_accel
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_uses_close_raw_lead_when_tracking_lead_is_debounced(model_version):
   v_ego = 5.0
 
@@ -157,7 +157,7 @@ def test_acc_mode_uses_close_raw_lead_when_tracking_lead_is_debounced(model_vers
   )
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_matches_no_lead_baseline_for_far_vision_only_lead_without_tracking(model_version):
   v_ego = 29.0
 
@@ -352,7 +352,7 @@ def test_vision_slow_stopped_lead_cap_ignores_far_high_speed_stop_candidate():
   assert planner.get_vision_slow_stopped_lead_cap(lead, v_ego, -1.0, 1.45) is None
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_dynamic_t_follow_increases_modestly_for_closing_lead(model_version):
   v_ego = 21.535
 
@@ -376,7 +376,7 @@ def test_dynamic_t_follow_increases_modestly_for_closing_lead(model_version):
   assert planner.effective_t_follow < sm["starpilotPlan"].tFollow + 0.45
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_dynamic_t_follow_stays_near_base_for_far_highway_lead(model_version):
   v_ego = 29.26
 
@@ -398,7 +398,7 @@ def test_dynamic_t_follow_stays_near_base_for_far_highway_lead(model_version):
   assert planner.effective_t_follow == pytest.approx(sm["starpilotPlan"].tFollow, abs=0.02)
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_dynamic_t_follow_releases_toward_base_after_lead_opens(model_version):
   v_ego = 21.535
 
@@ -426,7 +426,7 @@ def test_dynamic_t_follow_releases_toward_base_after_lead_opens(model_version):
   assert planner.effective_t_follow == pytest.approx(sm["starpilotPlan"].tFollow, abs=0.02)
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_vision_lead_approach_cap_smooths_before_close_brake(model_version):
   approach_v_ego = 21.535
   close_v_ego = 21.435
@@ -468,7 +468,7 @@ def test_acc_mode_vision_lead_approach_cap_smooths_before_close_brake(model_vers
   assert planner_close.output_a_target < approach_outputs[0] - 0.8
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_tracked_vision_far_mild_closure_does_not_bypass_persistence(model_version):
   v_ego = 37.45
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
@@ -482,7 +482,7 @@ def test_tracked_vision_far_mild_closure_does_not_bypass_persistence(model_versi
   assert not planner.tracked_vision_lead_approach_needs_immediate_brake(lead, v_ego, approach_cap)
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_tracked_vision_close_or_braking_lead_bypasses_persistence(model_version):
   v_ego = 19.50
 
@@ -503,7 +503,7 @@ def test_acc_mode_tracked_vision_close_or_braking_lead_bypasses_persistence(mode
   assert planner.output_a_target < -1.3
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_pretracking_vision_slow_lead_blocks_positive_catchup(model_version):
   v_ego = 23.23
 
@@ -538,7 +538,7 @@ def test_acc_mode_pretracking_vision_slow_lead_blocks_positive_catchup(model_ver
   assert planner_with_lead.output_a_target < -0.2
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_pretracking_vision_far_slower_lead_starts_braking_before_tracking(model_version):
   v_ego = 21.48
 
@@ -579,7 +579,7 @@ def test_acc_mode_pretracking_vision_far_slower_lead_starts_braking_before_track
   assert lead_outputs[-1] < no_lead_outputs[-1] - 0.15
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_pretracking_vision_far_slower_lead_can_still_brake_immediately(model_version):
   v_ego = 21.48
 
@@ -601,7 +601,7 @@ def test_acc_mode_pretracking_vision_far_slower_lead_can_still_brake_immediately
   assert planner.output_a_target < -0.45
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_pretracking_closer_braking_vision_lead_bypasses_far_lead_persistence(model_version):
   v_ego = 17.46
 
@@ -623,7 +623,7 @@ def test_acc_mode_pretracking_closer_braking_vision_lead_bypasses_far_lead_persi
   assert planner.output_a_target < -0.35
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_pretracking_flappy_far_lead_requires_persistence(model_version):
   v_ego = 26.09
 
@@ -672,7 +672,7 @@ def test_acc_mode_pretracking_flappy_far_lead_requires_persistence(model_version
   assert min(flappy_outputs) > min(no_lead_outputs) - 0.12
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_pretracking_near_stopped_vision_lead_does_not_relax_when_confidence_is_midrange(model_version):
   v_ego = 20.35
 
@@ -706,7 +706,7 @@ def test_acc_mode_pretracking_near_stopped_vision_lead_does_not_relax_when_confi
   assert planner_with_lead.output_a_target < -0.45
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_tracked_pace_matched_lead_caps_positive_catchup(model_version):
   v_ego = 28.7
 
@@ -740,7 +740,7 @@ def test_acc_mode_tracked_pace_matched_lead_caps_positive_catchup(model_version)
   assert planner_with_lead.output_a_target < 0.08
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_low_speed_vision_stop_buffer_sets_should_stop_before_tiny_gap(model_version):
   v_ego = 3.8
 
@@ -763,7 +763,7 @@ def test_acc_mode_low_speed_vision_stop_buffer_sets_should_stop_before_tiny_gap(
   assert planner.output_a_target < -1.0
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_low_speed_vision_stop_buffer_brakes_harder_for_close_slow_vision_lead(model_version):
   v_ego = 6.2
 
@@ -786,7 +786,7 @@ def test_acc_mode_low_speed_vision_stop_buffer_brakes_harder_for_close_slow_visi
   assert planner.output_a_target <= -2.7
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_low_speed_vision_stop_buffer_stays_latched_when_closure_softens_near_stop(model_version, monkeypatch):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=0.55)
@@ -805,7 +805,7 @@ def test_acc_mode_low_speed_vision_stop_buffer_stays_latched_when_closure_soften
   assert cap_held <= -1.25
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_close_moving_vision_lead_keeps_negative_output_while_should_stop(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=0.242)
@@ -839,7 +839,7 @@ def test_acc_mode_close_moving_vision_lead_keeps_negative_output_while_should_st
   assert all(output <= -0.02 for output in outputs[2:])
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_close_near_standstill_vision_lead_keeps_meaningful_brake_floor(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=0.017)
@@ -862,7 +862,7 @@ def test_acc_mode_close_near_standstill_vision_lead_keeps_meaningful_brake_floor
   assert planner.output_a_target <= -0.20
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_close_near_standstill_moving_lead_keeps_brake_floor_while_should_stop(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=0.034)
@@ -885,7 +885,7 @@ def test_acc_mode_close_near_standstill_moving_lead_keeps_brake_floor_while_shou
   assert planner.output_a_target <= -0.20
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_close_opening_vision_lead_does_not_drop_to_zero_after_stop_release(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=1.49)
@@ -920,7 +920,7 @@ def test_acc_mode_close_opening_vision_lead_does_not_drop_to_zero_after_stop_rel
   assert planner.output_a_target <= -0.18
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_close_near_standstill_departing_lead_keeps_small_brake_after_stop_release(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=0.034)
@@ -955,7 +955,7 @@ def test_acc_mode_close_near_standstill_departing_lead_keeps_small_brake_after_s
   assert planner.output_a_target <= -0.18
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_tracked_vision_model_brake_floor_prevents_positive_output_on_slower_lead(model_version):
   v_ego = 19.1
 
@@ -977,7 +977,7 @@ def test_acc_mode_tracked_vision_model_brake_floor_prevents_positive_output_on_s
   assert planner.output_a_target <= -0.35
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_tracked_vision_model_brake_cap_relaxes_mild_model_brake_slam_window(model_version):
   v_ego = 20.56
 
@@ -991,7 +991,7 @@ def test_tracked_vision_model_brake_cap_relaxes_mild_model_brake_slam_window(mod
   assert cap > -1.2
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_tracked_vision_model_brake_cap_does_not_relax_strong_model_brake(model_version):
   v_ego = 20.56
 
@@ -1004,7 +1004,7 @@ def test_tracked_vision_model_brake_cap_does_not_relax_strong_model_brake(model_
   assert cap is None
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_manual_resume_override_clears_no_lead_model_stop_at_standstill(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=0.0)
@@ -1021,7 +1021,7 @@ def test_manual_resume_override_clears_no_lead_model_stop_at_standstill(model_ve
   assert planner.output_a_target >= 0.2
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_manual_resume_override_does_not_clear_stopped_lead_stop(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=0.0)
@@ -1042,7 +1042,7 @@ def test_manual_resume_override_does_not_clear_stopped_lead_stop(model_version):
   assert planner.output_should_stop
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_standstill_moving_lead_does_not_force_resume_while_should_stop(model_version):
   v_ego = 0.0
 
@@ -1066,7 +1066,7 @@ def test_standstill_moving_lead_does_not_force_resume_while_should_stop(model_ve
   assert planner.output_a_target < 0.1
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_standstill_moving_lead_applies_resume_floor_once_stop_clears(model_version):
   v_ego = 0.0
 
@@ -1092,7 +1092,7 @@ def test_standstill_moving_lead_applies_resume_floor_once_stop_clears(model_vers
   assert planner.output_a_target >= 0.2
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_standstill_moving_lead_holds_depart_accel_floor_after_stop_release(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=0.0)
@@ -1130,7 +1130,7 @@ def test_standstill_moving_lead_holds_depart_accel_floor_after_stop_release(mode
   assert outputs[4] >= 0.25
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_standstill_moving_lead_depart_accel_hold_cancels_if_lead_brakes(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=0.0)
@@ -1168,7 +1168,7 @@ def test_standstill_moving_lead_depart_accel_hold_cancels_if_lead_brakes(model_v
   assert planner.output_a_target < 0.1
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_damps_far_radar_mild_lead_brake_more_than_close_brake(model_version):
   far_v_ego = 29.26
   far_v_cruise = 32.22
@@ -1244,6 +1244,7 @@ def test_modeld_action_passes_tomb_raider_longitudinal_params(monkeypatch):
     mlsim=True,
     is_v9=True,
     is_v14=False,
+    is_v15=False,
     starpilot_toggles=toggles,
   )
 
@@ -1278,10 +1279,43 @@ def test_modeld_action_uses_direct_action_head_for_v14(monkeypatch):
     mlsim=True,
     is_v9=False,
     is_v14=True,
+    is_v15=False,
     starpilot_toggles=toggles,
   )
 
   assert action.desiredCurvature == pytest.approx(0.12)
+  assert action.desiredAcceleration < -0.2
+  assert not action.shouldStop
+
+
+def test_modeld_action_uses_current_action_head_scaling_for_v15(monkeypatch):
+  monkeypatch.setenv("DEBUG", "0")
+  fake_commonmodel = types.ModuleType("openpilot.selfdrive.modeld.models.commonmodel_pyx")
+  fake_commonmodel.DrivingModelFrame = object
+  fake_commonmodel.CLContext = object
+  monkeypatch.setitem(sys.modules, fake_commonmodel.__name__, fake_commonmodel)
+
+  from openpilot.selfdrive.modeld import modeld
+
+  prev_action = log.ModelDataV2.Action.new_message()
+  prev_action.desiredCurvature = 0.05
+  prev_action.desiredAcceleration = -0.2
+  toggles = SimpleNamespace(vEgoStopping=0.42)
+
+  action = modeld.get_action_from_model(
+    {"action": np.array([[12.0, -0.8]], dtype=np.float32)},
+    prev_action,
+    lat_action_t=0.2,
+    long_action_t=0.73,
+    v_ego=5.0,
+    mlsim=True,
+    is_v9=False,
+    is_v14=False,
+    is_v15=True,
+    starpilot_toggles=toggles,
+  )
+
+  assert action.desiredCurvature == pytest.approx(0.48)
   assert action.desiredAcceleration < -0.2
   assert not action.shouldStop
 
@@ -1323,7 +1357,7 @@ def test_publish_force_stop_handoff_sets_should_stop_when_vcruise_zero():
   assert pm.sent["longitudinalPlan"].longitudinalPlan.shouldStop
 
 
-@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14"])
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_force_stop_handoff_sets_output_should_stop_before_zero_vcruise(model_version):
   v_ego = 1.25
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)

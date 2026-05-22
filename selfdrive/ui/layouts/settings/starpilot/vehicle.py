@@ -13,6 +13,7 @@ from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
+  AetherInteractiveMixin,
   AetherListColors,
   AetherScrollbar,
   AetherSliderDialog,
@@ -26,7 +27,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_settings_list_row,
   draw_settings_panel_header,
   draw_soft_card,
-  draw_tab_card,
+  draw_tab_bar,
   init_list_panel,
 )
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
@@ -69,11 +70,11 @@ FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
 PANEL_STYLE = panel_style_from_color("#64748B")
 
 
-class VehicleSettingsManagerView(Widget):
+class VehicleSettingsManagerView(AetherInteractiveMixin, Widget):
   HEADER_SUBTITLE_HEIGHT = 24
   HEADER_SUMMARY_GAP = 12
   HEADER_CARD_HEIGHT = 108
-  TAB_HEIGHT = 56
+  TAB_HEIGHT = 68
   TAB_GAP = 10
   TAB_BOTTOM_GAP = 18
   TWO_COLUMN_BREAKPOINT = 1180
@@ -86,9 +87,6 @@ class VehicleSettingsManagerView(Widget):
     self._scrollbar = AetherScrollbar()
     self._content_height = 0.0
     self._scroll_offset = 0.0
-    self._interactive_rects: dict[str, rl.Rectangle] = {}
-    self._pressed_target: str | None = None
-    self._can_click = True
     self._active_tab_key = "identity"
     self._shell_rect = rl.Rectangle(0, 0, 0, 0)
     self._scroll_rect = rl.Rectangle(0, 0, 0, 0)
@@ -116,48 +114,7 @@ class VehicleSettingsManagerView(Widget):
   def _stacked_section_height(self, sections: list[float]) -> float:
     if not sections:
       return 0.0
-    return max(0.0, sum(sections) - SECTION_GAP)
-
-  def _interactive_state(self, target_id: str, rect: rl.Rectangle, *, pad_y: float = 0) -> tuple[bool, bool]:
-    self._interactive_rects[target_id] = rect
-    hovered = _point_hits(gui_app.last_mouse_event.pos, rect, self._scroll_rect, pad_x=6, pad_y=pad_y)
-    return hovered, self._pressed_target == target_id
-
-  def _clear_state(self):
-    self._pressed_target = None
-    self._can_click = True
-
-  def show_event(self):
-    super().show_event()
-    self._clear_state()
-
-  def hide_event(self):
-    super().hide_event()
-    self._clear_state()
-
-  def _handle_mouse_press(self, mouse_pos: MousePos):
-    self._pressed_target = self._target_at(mouse_pos)
-    self._can_click = True
-
-  def _handle_mouse_event(self, mouse_event: MouseEvent):
-    if not self._scroll_panel.is_touch_valid():
-      self._can_click = False
-      return
-    if self._pressed_target is not None and self._target_at(mouse_event.pos) != self._pressed_target:
-      self._pressed_target = None
-
-  def _handle_mouse_release(self, mouse_pos: MousePos):
-    target = self._target_at(mouse_pos) if self._scroll_panel.is_touch_valid() else None
-    if self._pressed_target is not None and self._pressed_target == target and self._can_click:
-      self._activate_target(target)
-    self._pressed_target = None
-    self._can_click = True
-
-  def _target_at(self, mouse_pos: MousePos) -> str | None:
-    for target_id, rect in self._interactive_rects.items():
-      if _point_hits(mouse_pos, rect, self._scroll_rect, pad_x=6, pad_y=0):
-        return target_id
-    return None
+    return sum(sections) + SECTION_GAP * (len(sections) - 1)
 
   def _activate_target(self, target_id: str | None):
     if not target_id:
@@ -316,26 +273,10 @@ class VehicleSettingsManagerView(Widget):
       self._draw_controls_tab(y, rect.x, width)
 
   def _draw_tabs(self, rect: rl.Rectangle):
-    if not self._tab_defs:
-      return
-    available_w = max(1.0, rect.width)
-    tab_w = (available_w - self.TAB_GAP * max(0, len(self._tab_defs) - 1)) / max(1, len(self._tab_defs))
-    for index, tab in enumerate(self._tab_defs):
-      tab_rect = rl.Rectangle(rect.x + index * (tab_w + self.TAB_GAP), rect.y, tab_w, self.TAB_HEIGHT)
-      target_id = f"tab:{tab['id']}"
-      hovered, pressed = self._interactive_state(target_id, tab_rect, pad_y=4)
-      draw_tab_card(
-        tab_rect,
-        tab["title"],
-        self._tab_subtitle(tab["id"]),
-        current=self._active_tab_key == tab["id"],
-        hovered=hovered,
-        pressed=pressed,
-        title_size=26,
-        subtitle_size=17,
-        show_underline=True,
-        style=PANEL_STYLE,
-      )
+    draw_tab_bar(
+      rect, self._tab_defs, self._active_tab_key, self._interactive_state,
+      subtitle_fn=self._tab_subtitle, style=PANEL_STYLE,
+    )
 
   def _draw_identity_tab(self, y: float, x: float, width: float):
     rows = [
@@ -441,9 +382,6 @@ class VehicleSettingsManagerView(Widget):
     if cs.isGM and cs.isVolt and not cs.hasSNG:
       rows.append({"target_id": "toggle:VoltSNG", "type": "toggle",
                     "title": tr("Volt SNG Hack"), "get_state": lambda: self._controller._params.get_bool("VoltSNG")})
-    if cs.isHKG and cs.isHKGCanFd:
-      rows.append({"target_id": "toggle:TacoTuneHacks", "type": "toggle",
-                    "title": tr("Taco Bell Torque Hack"), "get_state": lambda: self._controller._params.get_bool("TacoTuneHacks")})
     if cs.isSubaru:
       rows.append({"target_id": "toggle:SubaruSNG", "type": "toggle",
                     "title": tr("Stop and Go"), "get_state": lambda: self._controller._params.get_bool("SubaruSNG")})

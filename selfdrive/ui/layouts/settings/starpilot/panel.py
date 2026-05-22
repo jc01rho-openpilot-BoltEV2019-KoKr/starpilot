@@ -21,14 +21,13 @@ class StarPilotPanelType(IntEnum):
     LONGITUDINAL = 3
     LATERAL = 4
     MAPS = 5
-    DATA = 6
-    DEVICE = 7
-    UTILITIES = 8
-    VISUALS = 9
-    THEMES = 10
-    VEHICLE = 11
-    WHEEL = 12
-    SYSTEM = 13
+    DEVICE = 6
+    UTILITIES = 7
+    VISUALS = 8
+    THEMES = 9
+    VEHICLE = 10
+    WHEEL = 11
+    SYSTEM = 12
 
 
 @dataclass
@@ -323,6 +322,8 @@ class _SettingsPage(StarPilotPanel):
       self._sub_panels[self._current_sub_panel].render(rect)
     elif self._manager_view is not None:
       self._manager_view.render(rect)
+    else:
+      super()._render(rect)
 
   def show_event(self):
     super().show_event()

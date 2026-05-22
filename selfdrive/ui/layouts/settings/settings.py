@@ -14,7 +14,6 @@ from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.lib.wifi_manager import WifiManager
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.network import NetworkUI
-from openpilot.common.params import Params
 
 # Constants
 SIDEBAR_WIDTH = 500
@@ -52,7 +51,6 @@ class PanelInfo:
 class SettingsLayout(Widget):
   def __init__(self):
     super().__init__()
-    self._params = Params()
     self._current_panel = PanelType.STARPILOT
 
     # Panel depth tracking for hierarchical back navigation
@@ -142,15 +140,10 @@ class SettingsLayout(Widget):
     # Store back button rect for click detection
     self._back_btn_rect = back_btn_rect
 
-    # Get tuning level to control Developer panel visibility
-    tuning_level_str = self._params.get("TuningLevel", return_default=True, default="1")
-    tuning_level = int(tuning_level_str) if tuning_level_str else 1
-
     # Navigation buttons
     y = rect.y + 300
     for panel_type, panel_info in self._panels.items():
-      # Hide Developer panel unless tuning level >= 3
-      if panel_type == PanelType.DEVELOPER and tuning_level < 3:
+      if panel_type == PanelType.FIREHOSE:
         continue
 
       button_rect = rl.Rectangle(rect.x + 50, y, rect.width - 150, NAV_BTN_HEIGHT)

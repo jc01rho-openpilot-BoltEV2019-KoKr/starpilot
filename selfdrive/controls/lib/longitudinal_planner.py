@@ -429,7 +429,7 @@ class LongitudinalPlanner:
 
   @property
   def mlsim(self):
-    return self.generation in ("v8", "v10", "v11", "v12", "v13", "v14")
+    return self.generation in ("v8", "v10", "v11", "v12", "v13", "v14", "v15")
 
   def get_mpc_mode(self) -> str:
     if not self.mlsim:
@@ -783,7 +783,8 @@ class LongitudinalPlanner:
       settle_brake = VISION_CLOSE_SETTLE_MIN_BRAKE + 0.10 * distance_factor + 0.04 * speed_factor
       hold_brake = max(hold_brake, settle_brake)
     hold_brake = float(np.clip(hold_brake, VISION_CLOSE_STOP_HOLD_MIN_BRAKE, VISION_CLOSE_STOP_HOLD_MAX_BRAKE))
-    return max(accel_min, -hold_brake)
+    brake_floor = -hold_brake
+    return brake_floor if accel_min >= 0.0 else max(accel_min, brake_floor)
 
   def get_vision_close_release_hold_cap(self, lead, v_ego, accel_min, should_stop):
     if should_stop or lead is None or not lead.status or bool(getattr(lead, "radar", False)):
@@ -824,7 +825,8 @@ class LongitudinalPlanner:
       settle_brake = VISION_CLOSE_SETTLE_MIN_BRAKE + 0.08 * distance_factor + 0.02 * delta_factor
       hold_brake = max(hold_brake, settle_brake)
     hold_brake = float(np.clip(hold_brake, VISION_CLOSE_RELEASE_HOLD_MIN_BRAKE, VISION_CLOSE_RELEASE_HOLD_MAX_BRAKE))
-    return max(accel_min, -hold_brake)
+    brake_floor = -hold_brake
+    return brake_floor if accel_min >= 0.0 else max(accel_min, brake_floor)
 
   def get_vision_close_settle_cap(self, lead, v_ego, accel_min, stop_guard_active):
     if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
@@ -853,7 +855,8 @@ class LongitudinalPlanner:
                                  max(VISION_CLOSE_SETTLE_MAX_LEAD_DELTA, 0.1), 0.0, 1.0))
     hold_brake = VISION_CLOSE_SETTLE_MIN_BRAKE + 0.10 * distance_factor + 0.04 * delta_factor
     hold_brake = float(np.clip(hold_brake, VISION_CLOSE_SETTLE_MIN_BRAKE, VISION_CLOSE_SETTLE_MAX_BRAKE))
-    return max(accel_min, -hold_brake)
+    brake_floor = -hold_brake
+    return brake_floor if accel_min >= 0.0 else max(accel_min, brake_floor)
 
   def get_vision_close_final_guard_cap(self, lead, v_ego, accel_min):
     if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
@@ -873,7 +876,8 @@ class LongitudinalPlanner:
                                     max(VISION_CLOSE_FINAL_GUARD_MAX_DISTANCE - 2.8, 0.1), 0.0, 1.0))
     hold_brake = VISION_CLOSE_FINAL_GUARD_MIN_BRAKE + 0.10 * distance_factor
     hold_brake = float(np.clip(hold_brake, VISION_CLOSE_FINAL_GUARD_MIN_BRAKE, VISION_CLOSE_FINAL_GUARD_MAX_BRAKE))
-    return max(accel_min, -hold_brake)
+    brake_floor = -hold_brake
+    return brake_floor if accel_min >= 0.0 else max(accel_min, brake_floor)
 
   def _update_manual_stop_resume_override(self, sm):
     now_t = time.monotonic()

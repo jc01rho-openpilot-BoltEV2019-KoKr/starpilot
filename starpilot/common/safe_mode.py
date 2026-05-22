@@ -173,7 +173,6 @@ SAFE_MODE_MANAGED_KEYS = (
   "GMPedalLongitudinal",
   "GMDashSpoofOffsets",
   "LongPitch",
-  "TacoTuneHacks",
 )
 
 SAFE_MODE_FIXED_VALUES = {

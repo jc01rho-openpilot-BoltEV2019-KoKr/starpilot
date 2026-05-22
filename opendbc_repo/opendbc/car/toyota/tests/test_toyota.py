@@ -174,9 +174,15 @@ class TestToyotaCarController:
   @staticmethod
   def _make_controller(*, standstill_req=False, last_standstill=False):
     controller = CarController.__new__(CarController)
-    controller.CP = SimpleNamespace(carFingerprint=CAR.TOYOTA_PRIUS)
+    controller.CP = SimpleNamespace(
+      carFingerprint=CAR.TOYOTA_PRIUS,
+      enableGasInterceptorDEPRECATED=False,
+      openpilotLongitudinalControl=True,
+      minEnableSpeed=-1.0,
+    )
     controller.standstill_req = standstill_req
     controller.last_standstill = last_standstill
+    controller.accel = 0.0
     return controller
 
   @staticmethod
@@ -253,3 +259,40 @@ class TestToyotaCarController:
     )
 
     assert controller.standstill_req is False
+
+  def test_interceptor_stop_and_go_holds_small_launch_at_standstill(self):
+    controller = self._make_controller()
+    controller.CP.enableGasInterceptorDEPRECATED = True
+    controller.accel = 0.3
+
+    gas_cmd = controller._compute_interceptor_gas_cmd(
+      SimpleNamespace(longActive=True),
+      SimpleNamespace(out=SimpleNamespace(standstill=True, vEgo=0.0)),
+    )
+
+    assert gas_cmd == 0.12
+
+  def test_interceptor_non_stop_and_go_scales_with_accel_request(self):
+    controller = self._make_controller()
+    controller.CP.enableGasInterceptorDEPRECATED = True
+    controller.CP.carFingerprint = CAR.TOYOTA_AVALON_2019
+    controller.CP.minEnableSpeed = 8.5
+    controller.accel = 0.8
+
+    gas_cmd = controller._compute_interceptor_gas_cmd(
+      SimpleNamespace(longActive=True),
+      SimpleNamespace(out=SimpleNamespace(standstill=False, vEgo=8.0)),
+    )
+
+    assert 0.0 < gas_cmd <= 0.5
+
+  def test_interceptor_disabled_returns_zero(self):
+    controller = self._make_controller()
+    controller.accel = 1.0
+
+    gas_cmd = controller._compute_interceptor_gas_cmd(
+      SimpleNamespace(longActive=True),
+      SimpleNamespace(out=SimpleNamespace(standstill=False, vEgo=8.0)),
+    )
+
+    assert gas_cmd == 0.0

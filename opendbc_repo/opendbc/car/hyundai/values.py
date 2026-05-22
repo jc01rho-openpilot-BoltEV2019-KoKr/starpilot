@@ -6,7 +6,7 @@ from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, CarSpecs, DbcDict, Pla
 from opendbc.car.lateral import AngleSteeringLimits, ISO_LATERAL_ACCEL, ISO_LATERAL_JERK
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.structs import CarParams
-from opendbc.car.docs_definitions import CarHarness, CarDocs, CarParts
+from opendbc.car.docs_definitions import CarHarness, CarDocs, CarParts, SupportType
 from opendbc.car.fw_query_definitions import FwQueryConfig, Request, p16
 
 Ecu = CarParams.Ecu
@@ -79,6 +79,7 @@ class CarControllerParams:
     # If the max stock LKAS request is <384, add your car to this list.
     elif CP.carFingerprint in (CAR.GENESIS_G80, CAR.HYUNDAI_ELANTRA, CAR.HYUNDAI_ELANTRA_GT_I30, CAR.HYUNDAI_IONIQ,
                                CAR.HYUNDAI_IONIQ_EV_LTD, CAR.HYUNDAI_SANTA_FE_PHEV_2022, CAR.HYUNDAI_SONATA_LF, CAR.KIA_FORTE, CAR.KIA_NIRO_PHEV,
+                               CAR.KIA_FORTE_2019_NON_SCC, CAR.KIA_FORTE_2021_NON_SCC,
                                CAR.KIA_OPTIMA_H, CAR.KIA_OPTIMA_H_G4_FL, CAR.KIA_SORENTO):
       self.STEER_MAX = 255
 
@@ -198,10 +199,21 @@ class HyundaiFlags(IntFlag):
   # Palisade/Telluride 2023+ uses CAN routing with CAN-FD-style checksums.
   CAN_CANFD_BLENDED = 2 ** 29
 
+  # Non-SCC platforms do not all share the same FCA source or availability.
+  NON_SCC_NO_FCA = 2 ** 30
+  NON_SCC_RADAR_FCA = 2 ** 31
+
 
 @dataclass
 class HyundaiCarDocs(CarDocs):
   package: str = "Smart Cruise Control (SCC)"
+
+
+@dataclass
+class HyundaiNonSccCarDocs(CarDocs):
+  package: str = "No Smart Cruise Control (Non-SCC)"
+  support_type: SupportType = SupportType.COMMUNITY
+  support_link: str = "community"
 
 
 @dataclass
@@ -225,6 +237,17 @@ class HyundaiCanFDPlatformConfig(PlatformConfig):
 
   def init(self):
     self.flags |= HyundaiFlags.CANFD
+
+
+@dataclass
+class HyundaiNonSccPlatformConfig(PlatformConfig):
+  dbc_dict: DbcDict = field(default_factory=lambda: {Bus.pt: "hyundai_kia_generic"})
+
+  def init(self):
+    self.flags |= HyundaiFlags.NON_SCC
+
+    if self.flags & HyundaiFlags.MIN_STEER_32_MPH:
+      self.specs = self.specs.override(minSteerSpeed=32 * CV.MPH_TO_MS)
 
 
 class CAR(Platforms):
@@ -430,7 +453,7 @@ class CAR(Platforms):
   HYUNDAI_IONIQ_6 = HyundaiCanFDPlatformConfig(
     [HyundaiCarDocs("Hyundai Ioniq 6 (with HDA II) 2023-24", "Highway Driving Assist II", car_parts=CarParts.common([CarHarness.hyundai_p]))],
     HYUNDAI_IONIQ_5.specs,
-    flags=HyundaiFlags.EV | HyundaiFlags.CANFD_LKA_STEERING | HyundaiFlags.CANFD_LKA_STEERING_ALT | HyundaiFlags.CANFD_NO_RADAR_DISABLE,
+    flags=HyundaiFlags.EV | HyundaiFlags.CANFD_NO_RADAR_DISABLE,
   )
   HYUNDAI_TUCSON_4TH_GEN = HyundaiCanFDPlatformConfig(
     [
@@ -676,6 +699,52 @@ class CAR(Platforms):
     flags=HyundaiFlags.RADAR_SCC,
   )
 
+  # Hyundai non-SCC extensions
+  HYUNDAI_BAYON_1ST_GEN_NON_SCC = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Hyundai Bayon Non-SCC 2021", car_parts=CarParts.common([CarHarness.hyundai_n]))],
+    CarSpecs(mass=1150, wheelbase=2.58, steerRatio=13.27 * 1.15),
+    flags=HyundaiFlags.CHECKSUM_CRC8,
+  )
+  HYUNDAI_ELANTRA_2022_NON_SCC = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Hyundai Elantra Non-SCC 2022", car_parts=CarParts.common([CarHarness.hyundai_k]))],
+    HYUNDAI_ELANTRA_2021.specs,
+    flags=HyundaiFlags.CHECKSUM_CRC8,
+  )
+  HYUNDAI_KONA_NON_SCC = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Hyundai Kona Non-SCC 2019", car_parts=CarParts.common([CarHarness.hyundai_b]))],
+    HYUNDAI_KONA.specs,
+    flags=HyundaiFlags.ALT_LIMITS,
+  )
+  HYUNDAI_KONA_EV_NON_SCC = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Hyundai Kona Electric Non-SCC 2019", car_parts=CarParts.common([CarHarness.hyundai_g]))],
+    HYUNDAI_KONA_EV.specs,
+    flags=HyundaiFlags.EV | HyundaiFlags.ALT_LIMITS,
+  )
+  KIA_CEED_PHEV_2022_NON_SCC = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Kia Ceed Plug-in Hybrid Non-SCC 2022", car_parts=CarParts.common([CarHarness.hyundai_i]))],
+    CarSpecs(mass=1650, wheelbase=2.65, steerRatio=13.75, tireStiffnessFactor=0.5),
+    flags=HyundaiFlags.HYBRID,
+  )
+  KIA_FORTE_2019_NON_SCC = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Kia Forte Non-SCC 2019", car_parts=CarParts.common([CarHarness.hyundai_g]))],
+    KIA_FORTE.specs,
+    flags=HyundaiFlags.NON_SCC_NO_FCA,
+  )
+  KIA_FORTE_2021_NON_SCC = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Kia Forte Non-SCC 2021", car_parts=CarParts.common([CarHarness.hyundai_g]))],
+    KIA_FORTE.specs,
+  )
+  KIA_SELTOS_2023_NON_SCC = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Kia Seltos Non-SCC 2023-24", car_parts=CarParts.common([CarHarness.hyundai_l]))],
+    KIA_SELTOS.specs,
+    flags=HyundaiFlags.CHECKSUM_CRC8,
+  )
+  GENESIS_G70_2021_NON_SCC = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Genesis G70 Non-SCC 2021", car_parts=CarParts.common([CarHarness.hyundai_f]))],
+    GENESIS_G70_2020.specs,
+    flags=HyundaiFlags.CHECKSUM_CRC8 | HyundaiFlags.NON_SCC_RADAR_FCA,
+  )
+
 
 class Buttons:
   NONE = 0
@@ -848,8 +917,6 @@ FW_QUERY_CONFIG = FwQueryConfig(
   # We lose these ECUs without the comma power on these cars.
   # Note that we still attempt to match with them when they are present
   non_essential_ecus={
-    # Some Forte trims are lateral-only and omit the SCC radar entirely.
-    Ecu.fwdRadar: [CAR.KIA_FORTE],
     Ecu.abs: [CAR.HYUNDAI_PALISADE, CAR.HYUNDAI_SONATA, CAR.HYUNDAI_SANTA_FE_2022, CAR.KIA_K5_2021, CAR.HYUNDAI_ELANTRA_2021,
               CAR.HYUNDAI_SANTA_FE, CAR.HYUNDAI_KONA_EV_2022, CAR.HYUNDAI_KONA_EV, CAR.HYUNDAI_CUSTIN_1ST_GEN, CAR.KIA_SORENTO,
               CAR.KIA_CEED, CAR.KIA_SELTOS],
@@ -890,6 +957,8 @@ HYBRID_CAR = CAR.with_flags(HyundaiFlags.HYBRID)
 EV_CAR = CAR.with_flags(HyundaiFlags.EV)
 
 LEGACY_SAFETY_MODE_CAR = CAR.with_flags(HyundaiFlags.LEGACY)
+
+NON_SCC_CAR = CAR.with_flags(HyundaiFlags.NON_SCC)
 
 # TODO: another PR with (HyundaiFlags.LEGACY | HyundaiFlags.UNSUPPORTED_LONGITUDINAL | HyundaiFlags.CAMERA_SCC |
 #       HyundaiFlags.CANFD_RADAR_SCC | HyundaiFlags.CANFD_NO_RADAR_DISABLE | )

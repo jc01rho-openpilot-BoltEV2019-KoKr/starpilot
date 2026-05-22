@@ -210,7 +210,9 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
     {"Offset7", tr("Speed Offset (75–99 mph)"), tr("<b>How much to offset posted speed-limits</b> between 75 and 99 mph."), ""},
     {"SLCVisuals", tr("Visual Settings"), tr("<b>Visual \"Speed Limit Controller\" changes</b> to fine-tune how the driving screen looks."), ""},
     {"ShowSLCOffset", tr("Show Speed Limit Offset"), tr("<b>Show the current offset from the posted limit</b> on the driving screen."), ""},
-    {"SpeedLimitSources", tr("Show Speed Limit Sources"), tr("<b>Display the speed-limit sources and their current values</b> on the driving screen."), ""}
+    {"SpeedLimitSources", tr("Show Speed Limit Sources"), tr("<b>Display the speed-limit sources and their current values</b> on the driving screen."), ""},
+    {"SLCAbbreviatedSources", tr("Show Abbreviated Icon Sources"), tr("<b>Render the speed-limit sources as compact text labels</b> (e.g. \"Dash-45\", \"MapD-30\") without icons."), ""},
+    {"SLCActiveSourcesOnly", tr("Only Show Sources With Speed Limits"), tr("<b>Hide source rows that have no current speed limit reading</b>. Works with both abbreviated and full display."), ""}
   };
 
   for (const auto &[param, title, desc, icon] : longitudinalToggles) {

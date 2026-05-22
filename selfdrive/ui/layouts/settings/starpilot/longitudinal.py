@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Callable
 
 import pyray as rl
@@ -18,6 +18,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPan
 
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
+  AetherInteractiveMixin,
   AetherListColors,
   AetherScrollbar,
   AetherSliderDialog,
@@ -29,7 +30,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_selection_list_row,
   draw_settings_list_row,
   draw_settings_panel_header,
-  draw_tab_card,
+  draw_tab_bar,
   init_list_panel,
 )
 
@@ -43,6 +44,7 @@ from openpilot.starpilot.common.experimental_state import sync_persist_experimen
 
 
 PANEL_STYLE = panel_style_from_color("#3B82F6")
+COMPACT_PANEL_METRICS = replace(AETHER_LIST_METRICS, header_height=96)  # noqa: re-exported
 SECTION_GAP = AETHER_LIST_METRICS.section_gap
 SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height
 SECTION_HEADER_GAP = AETHER_LIST_METRICS.section_header_gap
@@ -62,349 +64,10 @@ DECELERATION_PROFILE_OPTIONS = [
 ]
 
 
-@dataclass
-class SettingRow:
-  id: str
-  type: str
-  title: str
-  subtitle: str = ""
-  visible: Callable[[], bool] | None = None
-  enabled: Callable[[], bool] | None = None
-  disabled_label: str = ""
-  get_state: Callable[[], bool] | None = None
-  set_state: Callable[[bool], None] | None = None
-  get_value: Callable[[], str] | None = None
-  on_click: Callable[[], object] | None = None
-  action_text: str = ""
-  action_danger: bool = False
-  navigate_to: str = ""
-
-
-@dataclass
-class SettingSection:
-  title: str
-  rows: list[SettingRow]
-  visible: Callable[[], bool] | None = None
-  tab_key: str = ""
-  column_pair: str = ""
-  row_height: int = ROW_HEIGHT
-
-
-class AetherSettingsView(Widget):
-  """Reusable list-panel manager for toggle/value/action settings pages."""
-
-  TAB_HEIGHT = 56
-  TAB_GAP = 10
-  TAB_BOTTOM_GAP = 18
-  COLUMN_GAP = 22
-
-  def __init__(self, controller: StarPilotPanel, sections: list[SettingSection],
-               *, header_title: str = "", header_subtitle: str = "",
-               tab_defs: list[dict] | None = None,
-               panel_style=None, fade_height: float = AETHER_LIST_METRICS.fade_height):
-    super().__init__()
-    self._panel_style = panel_style or PANEL_STYLE
-    self._fade_height = fade_height
-    self._controller = controller
-    self._sections = sections
-    self._header_title = header_title
-    self._header_subtitle = header_subtitle
-    self._has_header = bool(header_title)
-    self._tab_defs = tab_defs
-    self._active_tab_key = tab_defs[0]["id"] if tab_defs else ""
-    self._scroll_panel = GuiScrollPanel2(horizontal=False)
-    self._scrollbar = AetherScrollbar()
-    self._content_height = 0.0
-    self._scroll_offset = 0.0
-    self._interactive_rects: dict[str, rl.Rectangle] = {}
-    self._pressed_target: str | None = None
-    self._can_click = True
-    self._scroll_rect = rl.Rectangle(0, 0, 0, 0)
-
-  def _interactive_state(self, target_id: str, rect: rl.Rectangle, *, pad_y: int = 0) -> tuple[bool, bool]:
-    self._interactive_rects[target_id] = rect
-    hovered = _point_hits(gui_app.last_mouse_event.pos, rect, self._scroll_rect, pad_x=6, pad_y=pad_y)
-    return hovered, self._pressed_target == target_id
-
-  def _target_at(self, mouse_pos: MousePos) -> str | None:
-    for tid, r in self._interactive_rects.items():
-      if _point_hits(mouse_pos, r, self._scroll_rect, pad_x=6, pad_y=0):
-        return tid
-    return None
-
-  def _find_row(self, target_id: str) -> SettingRow | None:
-    for section in self._active_sections():
-      for row in section.rows:
-        if f"{row.type}:{row.id}" == target_id:
-          return row
-    return None
-
-  def _activate_target(self, target_id: str | None):
-    if not target_id:
-      return
-    if target_id.startswith("tab:") and self._tab_defs:
-      self._active_tab_key = target_id[4:]
-      return
-    row = self._find_row(target_id)
-    if row is None:
-      return
-    if row.navigate_to:
-      self._controller._navigate_to(row.navigate_to)
-    elif row.on_click:
-      row.on_click()
-    elif row.type == "toggle" and row.set_state and row.get_state:
-      row.set_state(not row.get_state())
-
-  def _handle_mouse_press(self, pos: MousePos):
-    self._pressed_target = self._target_at(pos)
-    self._can_click = True
-
-  def _handle_mouse_event(self, ev: MouseEvent):
-    if not self._scroll_panel.is_touch_valid():
-      self._can_click = False
-      return
-    if self._pressed_target and self._target_at(ev.pos) != self._pressed_target:
-      self._pressed_target = None
-
-  def _handle_mouse_release(self, pos: MousePos):
-    target = self._target_at(pos) if self._scroll_panel.is_touch_valid() else None
-    if self._pressed_target and self._pressed_target == target and self._can_click:
-      self._activate_target(target)
-    self._pressed_target = None
-    self._can_click = True
-
-  def show_event(self):
-    super().show_event()
-    self._pressed_target = None
-    self._can_click = True
-
-  def hide_event(self):
-    super().hide_event()
-    self._pressed_target = None
-    self._can_click = True
-
-  def _render(self, rect: rl.Rectangle):
-    self.set_rect(rect)
-    self._interactive_rects.clear()
-
-    frame, scroll_rect, content_width = init_list_panel(rect, self._panel_style)
-    self._scroll_rect = scroll_rect
-
-    if self._has_header:
-      self._draw_header(frame.header)
-
-    self._content_height = self._measure_content_height(content_width)
-    self._scroll_panel.set_enabled(self.is_visible)
-    self._scroll_offset = self._scroll_panel.update(
-      self._scroll_rect, max(self._content_height, self._scroll_rect.height))
-
-    rl.begin_scissor_mode(int(self._scroll_rect.x), int(self._scroll_rect.y),
-                           int(self._scroll_rect.width), int(self._scroll_rect.height))
-    self._draw_scroll_content(self._scroll_rect, content_width)
-    rl.end_scissor_mode()
-
-    if self._content_height > self._scroll_rect.height:
-      self._scrollbar.render(self._scroll_rect, self._content_height, self._scroll_offset)
-
-    draw_list_scroll_fades(self._scroll_rect, self._content_height, self._scroll_offset,
-                            AetherListColors.PANEL_BG, fade_height=self._fade_height)
-
-  def _draw_header(self, rect: rl.Rectangle):
-    title = tr(self._header_title) if self._header_title else ""
-    subtitle = tr(self._header_subtitle) if self._header_subtitle else ""
-    draw_settings_panel_header(rect, title, subtitle)
-
-  def _active_sections(self) -> list[SettingSection]:
-    if self._tab_defs and self._active_tab_key:
-      return [s for s in self._sections if s.tab_key == self._active_tab_key]
-    return self._sections
-
-  def _visible_rows(self, section: SettingSection) -> list[SettingRow]:
-    if section.visible is not None and not section.visible():
-      return []
-    return [row for row in section.rows if row.visible is None or row.visible()]
-
-  def _measure_content_height(self, width: float) -> float:
-    total = 0.0
-    if self._tab_defs:
-      total += self.TAB_HEIGHT + self.TAB_BOTTOM_GAP
-    active = self._active_sections()
-    i = 0
-    while i < len(active):
-      section = active[i]
-      visible_rows = self._visible_rows(section)
-      if not visible_rows:
-        i += 1
-        continue
-      row_h = len(visible_rows) * section.row_height
-      if section.column_pair and i + 1 < len(active) and active[i + 1].column_pair == section.column_pair:
-        right_rows = self._visible_rows(active[i + 1])
-        row_h = max(row_h, len(right_rows) * active[i + 1].row_height)
-        i += 2
-      else:
-        i += 1
-      total += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP if section.title else 0.0
-      total += row_h
-      total += SECTION_GAP
-    return max(0.0, total - SECTION_GAP) if total > 0 else 0.0
-
-  def _draw_tabs(self, y: float, x: float, width: float) -> float:
-    if not self._tab_defs:
-      return y
-    n = len(self._tab_defs)
-    tab_w = (width - self.TAB_GAP * max(0, n - 1)) / max(1, n)
-    for i, tab in enumerate(self._tab_defs):
-      tab_rect = rl.Rectangle(x + i * (tab_w + self.TAB_GAP), y, tab_w, self.TAB_HEIGHT)
-      target_id = f"tab:{tab['id']}"
-      hovered, pressed = self._interactive_state(target_id, tab_rect, pad_y=4)
-      draw_tab_card(
-        tab_rect,
-        tab["title"],
-        tab.get("subtitle", ""),
-        current=self._active_tab_key == tab["id"],
-        hovered=hovered,
-        pressed=pressed,
-        title_size=26,
-        subtitle_size=17,
-        show_underline=True,
-        style=self._panel_style,
-      )
-    return y + self.TAB_HEIGHT + self.TAB_BOTTOM_GAP
-
-  def _has_subsequent_visible(self, start_idx: int, sections: list[SettingSection]) -> bool:
-    for j in range(start_idx, len(sections)):
-      if self._visible_rows(sections[j]):
-        return True
-    return False
-
-  def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
-    y = rect.y + self._scroll_offset
-    if self._tab_defs:
-      y = self._draw_tabs(y, rect.x, width)
-    active = self._active_sections()
-    i = 0
-    while i < len(active):
-      section = active[i]
-      visible_rows = self._visible_rows(section)
-      if not visible_rows:
-        i += 1
-        continue
-      if section.column_pair and i + 1 < len(active) and active[i + 1].column_pair == section.column_pair:
-        right_section = active[i + 1]
-        right_rows = self._visible_rows(right_section)
-        col_w = (width - self.COLUMN_GAP) / 2
-        section_h = len(visible_rows) * section.row_height
-        right_h = len(right_rows) * right_section.row_height
-        group_h = max(section_h, right_h)
-
-        draw_section_header(
-          rl.Rectangle(rect.x, y, col_w, SECTION_HEADER_HEIGHT),
-          tr(section.title), style=self._panel_style,
-        )
-        draw_section_header(
-          rl.Rectangle(rect.x + col_w + self.COLUMN_GAP, y, col_w, SECTION_HEADER_HEIGHT),
-          tr(right_section.title), style=self._panel_style,
-        )
-        y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-
-        left_group = rl.Rectangle(rect.x, y, col_w, section_h)
-        right_group = rl.Rectangle(rect.x + col_w + self.COLUMN_GAP, y, col_w, right_h)
-        draw_list_group_shell(left_group, style=self._panel_style)
-        draw_list_group_shell(right_group, style=self._panel_style)
-
-        for j, row in enumerate(visible_rows):
-          self._draw_row(rl.Rectangle(rect.x, y + j * section.row_height, col_w, section.row_height), row, is_last=(j == len(visible_rows) - 1))
-        for j, row in enumerate(right_rows):
-          self._draw_row(rl.Rectangle(rect.x + col_w + self.COLUMN_GAP, y + j * right_section.row_height, col_w, right_section.row_height), row, is_last=(j == len(right_rows) - 1))
-
-        y += group_h
-        if self._has_subsequent_visible(i + 2, active):
-          y += SECTION_GAP
-        i += 2
-      else:
-        y = self._draw_section(y, rect.x, width, section, visible_rows)
-        if self._has_subsequent_visible(i + 1, active):
-          y += SECTION_GAP
-        i += 1
-
-  def _draw_section(self, y: float, x: float, width: float,
-                    section: SettingSection, rows: list[SettingRow]) -> float:
-    if section.title:
-      draw_section_header(
-        rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT),
-        tr(section.title),
-        style=self._panel_style,
-      )
-      y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-
-    group_rect = rl.Rectangle(x, y, width, len(rows) * section.row_height)
-    draw_list_group_shell(group_rect, style=self._panel_style)
-
-    for i, row in enumerate(rows):
-      row_rect = rl.Rectangle(x, y + i * section.row_height, width, section.row_height)
-      self._draw_row(row_rect, row, is_last=(i == len(rows) - 1))
-
-    return y + group_rect.height
-
-  def _draw_row(self, rect: rl.Rectangle, row: SettingRow, is_last: bool):
-    target_id = f"{row.type}:{row.id}"
-    hovered, pressed = self._interactive_state(target_id, rect)
-
-    enabled = row.enabled() if row.enabled is not None else True
-    subtitle = row.disabled_label if not enabled and row.disabled_label else row.subtitle
-
-    if row.type == "toggle":
-      toggle_value = row.get_state() if row.get_state else False
-      draw_settings_list_row(
-        rect,
-        title=tr(row.title),
-        subtitle=tr(subtitle),
-        toggle_value=toggle_value,
-        enabled=enabled,
-        hovered=hovered,
-        pressed=pressed,
-        is_last=is_last,
-        show_chevron=False,
-        title_size=34, subtitle_size=22,
-        style=self._panel_style,
-      )
-    elif row.type == "value":
-      value_text = row.get_value() if row.get_value else ""
-      draw_settings_list_row(
-        rect,
-        title=tr(row.title),
-        subtitle=tr(subtitle),
-        value=value_text,
-        enabled=enabled,
-        hovered=hovered,
-        pressed=pressed,
-        is_last=is_last,
-        show_chevron=row.on_click is not None,
-        title_size=34, subtitle_size=22, value_size=28,
-        style=self._panel_style,
-      )
-    elif row.type == "action":
-      action_fill = AetherListColors.DANGER_SOFT if row.action_danger else self._panel_style.current_fill
-      action_border = (rl.Color(AetherListColors.DANGER.r, AetherListColors.DANGER.g,
-                                AetherListColors.DANGER.b, 70)
-                       if row.action_danger else self._panel_style.current_border)
-      action_text_color = AetherListColors.DANGER if row.action_danger else AetherListColors.HEADER
-      draw_selection_list_row(
-        rect,
-        title=tr(row.title),
-        subtitle=tr(subtitle),
-        action_text=tr(row.action_text),
-        hovered=hovered,
-        pressed=pressed,
-        is_last=is_last,
-        action_pill=True,
-        title_size=34, subtitle_size=22,
-        action_pill_height=44, action_text_size=18,
-        action_text_color=action_text_color,
-        action_fill=action_fill,
-        action_border=action_border,
-        row_separator=self._panel_style.divider_color,
-      )
+# Backward-compat re-exports (these symbols now live in aethergrid.py)
+from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
+  SettingRow, SettingSection, AetherSettingsView,
+)
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -379,7 +379,7 @@ setup_sysroot_from_agnos() {
     -v "${HOST_CACHE_DIR}:/work/.cache" \
     -w /work \
     "${IMAGE_NAME}" \
-    python3 tools/laptop_device_build/extract_sysroot_from_agnos.py \
+    /usr/bin/python3 tools/laptop_device_build/extract_sysroot_from_agnos.py \
       --manifest "${manifest}" \
       --output-dir /opt/tici-sysroot \
       --cache-dir /work/.cache/agnos
