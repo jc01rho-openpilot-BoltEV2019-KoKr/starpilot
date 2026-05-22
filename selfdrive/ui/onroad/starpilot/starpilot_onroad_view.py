@@ -3,7 +3,7 @@ import time
 from msgq.visionipc import VisionStreamType
 from openpilot.common.params import Params
 from openpilot.selfdrive.ui.onroad.augmented_road_view import AugmentedRoadView
-from openpilot.selfdrive.ui.onroad.starpilot.curve_speed_border import render_glow, render_filament
+from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import render_behind, render_overlay
 from openpilot.selfdrive.ui.onroad.starpilot.path import render_adjacent_paths, render_blind_spot_path, render_path_edges
 from openpilot.selfdrive.ui.onroad.starpilot.personality_button import PersonalityButton, BTN_SIZE
 from openpilot.selfdrive.ui.onroad.starpilot.slc_speed_limit import (
@@ -11,7 +11,10 @@ from openpilot.selfdrive.ui.onroad.starpilot.slc_speed_limit import (
   SET_SPEED_WIDTH_IMP, SET_SPEED_WIDTH_MET, SET_SPEED_HEIGHT, SIGN_MARGIN,
 )
 from openpilot.selfdrive.ui.ui_state import ui_state
-from openpilot.selfdrive.ui.lib.starpilot_status import get_screen_edge_color
+from openpilot.selfdrive.ui.lib.starpilot_status import (
+    get_screen_edge_color, CEM_OVERRIDE_COLOR, ENGAGED_COLOR,
+    EXPERIMENTAL_COLOR, TRAFFIC_COLOR,
+)
 from openpilot.system.ui.lib.application import MousePos, gui_app, FontWeight
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 
@@ -25,9 +28,13 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._font_bold = gui_app.font(FontWeight.BOLD)
     self._font_medium = gui_app.font(FontWeight.MEDIUM)
     self._standstill_started_at = 0.0
+    self._smoothed_steer = 0.0
 
   def _render(self, rect: rl.Rectangle):
     self._position_personality_button()
+    border_width = self._get_border_width()
+    border_color = get_screen_edge_color(ui_state)
+    rl.draw_rectangle_rounded(rect, 0.12, 10, border_color)
     super()._render(rect)
 
     if not ui_state.started:
@@ -166,7 +173,6 @@ class StarPilotOnroadView(AugmentedRoadView):
     minute_size = measure_text_cached(self._font_bold, minute_text, 176)
     second_size = measure_text_cached(self._font_medium, second_text, 66)
 
-    from openpilot.selfdrive.ui.lib.starpilot_status import ENGAGED_COLOR, EXPERIMENTAL_COLOR, TRAFFIC_COLOR
     import numpy as np
 
     def blend_colors(start: rl.Color, end: rl.Color, transition: float) -> rl.Color:
@@ -207,21 +213,14 @@ class StarPilotOnroadView(AugmentedRoadView):
 
   def _draw_border(self, rect: rl.Rectangle):
     border_width = self._get_border_width()
-    rl.draw_rectangle_lines_ex(rect, border_width, rl.BLACK)
+    rl.draw_rectangle_rounded_lines_ex(rect, 0.12, 10, border_width, rl.BLACK)
     border_rect = rl.Rectangle(rect.x + border_width, rect.y + border_width,
                                 rect.width - 2 * border_width, rect.height - 2 * border_width)
 
-    # Layer 3: Amber glow (behind standard border)
-    render_glow(border_rect, border_width)
+    render_behind(border_rect, border_width)
 
-    # Layer 4: Standard border
-    border_color = get_screen_edge_color(ui_state)
-    rl.draw_rectangle_rounded_lines_ex(border_rect, 0.12, 10, border_width, border_color)
+    render_overlay(border_rect, border_width)
 
-    # Layer 5: Amber filament (on top of standard border)
-    render_filament(border_rect, border_width)
-
-    # Layer 6: Turn Signal, Blind Spot, and Steering Torque Borders (Phase 6)
     self._render_border_effects(rect)
 
   def _handle_mouse_press(self, mouse_pos: MousePos):
@@ -330,8 +329,6 @@ class StarPilotOnroadView(AugmentedRoadView):
       interval = 250 if show_blindspot and (left_blindspot or right_blindspot) else 500
       flicker_active = (int(rl.get_time() * 1000) % (interval * 2)) < interval
 
-      from openpilot.selfdrive.ui.lib.starpilot_status import TRAFFIC_COLOR, CEM_OVERRIDE_COLOR
-
       def get_half_border_color(blindspot, turn_signal):
         if turn_signal and show_signal:
           if blindspot:
@@ -363,9 +360,6 @@ class StarPilotOnroadView(AugmentedRoadView):
       torque = -car_control.actuators.torque
       abs_torque = abs(torque)
 
-      if not hasattr(self, "_smoothed_steer"):
-        self._smoothed_steer = 0.0
-
       self._smoothed_steer = 0.25 * abs_torque + 0.75 * self._smoothed_steer
       if abs(self._smoothed_steer - abs_torque) < 0.01:
         self._smoothed_steer = abs_torque
@@ -373,8 +367,6 @@ class StarPilotOnroadView(AugmentedRoadView):
       visible_height = int(rect.height * self._smoothed_steer)
       x_pos = int(rect.x) if torque < 0 else int(rect.x + rect.width - border_width)
       y_pos = int(rect.y + rect.height - visible_height)
-
-      from openpilot.selfdrive.ui.lib.starpilot_status import TRAFFIC_COLOR, EXPERIMENTAL_COLOR, CEM_OVERRIDE_COLOR, ENGAGED_COLOR
 
       if self._smoothed_steer < 0.25:
         t = self._smoothed_steer / 0.25
