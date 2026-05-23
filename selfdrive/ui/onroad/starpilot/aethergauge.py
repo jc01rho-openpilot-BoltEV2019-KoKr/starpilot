@@ -13,6 +13,8 @@ class AetherGaugeData:
   label: str = ""
   animation: str = "none" # e.g. "down_arrows"
   color: rl.Color = rl.WHITE
+  indicator_type: str = "none" # e.g. "road_curve"
+  indicator_value: float = 0.0 # value used by indicator (e.g. curvature)
 
 class AetherGaugeSource:
   def is_active(self) -> bool:
@@ -50,7 +52,9 @@ class CurveSpeedSource(AetherGaugeSource):
       unit=speed_unit,
       label="CURVE",
       animation="down_arrows",
-      color=color
+      color=color,
+      indicator_type="road_curve",
+      indicator_value=state['curvature']
     )
 
 class AetherGauge:
@@ -63,73 +67,150 @@ class AetherGauge:
         return source.get_gauge_data()
     return None
 
-  def render(self, rect: rl.Rectangle, font_bold: rl.Font, font_medium: rl.Font):
+  def render(self, rect: rl.Rectangle, font_bold: rl.Font, font_medium: rl.Font, current_speed: float):
     data = self.get_active_data()
     if not data:
       return
 
     cx = rect.x + rect.width / 2
-    cy = rect.y + 340
+    # Vertical center of travel speed text is exactly at rect.y + 180 (matching hud_renderer.py)
+    cy_speed = rect.y + 180
 
-    if data.animation == "down_arrows":
-      self._render_down_arrows(cx, cy, data.color)
-      text_y = cy + 50
-    else:
-      text_y = cy
+    speed_text = str(round(current_speed))
+    speed_text_size = measure_text_cached(font_bold, speed_text, 176)
 
-    self._render_text(cx, text_y, data, font_bold, font_medium)
+    # Position the curving road widget to the left of the speed text, center-aligned vertically
+    icon_cx = cx - speed_text_size.x / 2 - 70.0
 
-  def _render_down_arrows(self, cx: float, cy: float, color: rl.Color):
-    progress = (rl.get_time() * 1.5) % 1.0
-    spacing = 16.0
-    chevron_w = 20.0
-    chevron_h = 10.0
+    if data.indicator_type == "road_curve":
+      self._render_unified_road(icon_cx, cy_speed, data, font_bold, font_medium)
+
+  def _render_unified_road(self, icx: float, icy: float, data: AetherGaugeData, font_bold: rl.Font, font_medium: rl.Font):
+    # Dimensions of the road projection
+    half_size = 40.0
+    bottom = icy + half_size
+    top = icy - half_size
+    
+    # Non-linear curvature offset
+    abs_curv = abs(data.indicator_value)
+    sign = math.copysign(1.0, data.indicator_value) if data.indicator_value != 0.0 else 1.0
+    curve_offset = max(-half_size, min(half_size, sign * (abs_curv ** 0.5) * 300.0))
+    
+    # 3D perspective widths
+    w_bottom = 28.0
+    w_top = 14.0
     thickness = 4.0
+    
+    # Generate points along the road path
+    num_segments = 16
+    points_left = []
+    points_right = []
+    
+    for i in range(num_segments + 1):
+      t = i / num_segments
+      # Center path quadratic bend
+      offset = curve_offset * (t ** 2)
+      cx_t = icx + offset
+      y_t = bottom - t * 80.0
+      
+      # Perspective width interpolation
+      w_t = w_bottom - t * (w_bottom - w_top)
+      
+      points_left.append(rl.Vector2(int(cx_t - w_t), int(y_t)))
+      points_right.append(rl.Vector2(int(cx_t + w_t), int(y_t)))
 
+    # A. Draw glowing road surface fill (glowing HUD look)
+    fill_color = rl.Color(data.color.r, data.color.g, data.color.b, 35)
+    for i in range(num_segments):
+      rl.draw_triangle(points_left[i], points_right[i], points_left[i+1], fill_color)
+      rl.draw_triangle(points_right[i], points_right[i+1], points_left[i+1], fill_color)
+
+    # B. Draw left and right road boundaries
+    shadow_color = rl.Color(0, 0, 0, 100)
+    for i in range(num_segments):
+      # Shadow lines
+      rl.draw_line_ex(rl.Vector2(points_left[i].x, points_left[i].y + 2), rl.Vector2(points_left[i+1].x, points_left[i+1].y + 2), thickness, shadow_color)
+      rl.draw_line_ex(rl.Vector2(points_right[i].x, points_right[i].y + 2), rl.Vector2(points_right[i+1].x, points_right[i+1].y + 2), thickness, shadow_color)
+      
+      # Main boundaries
+      rl.draw_line_ex(points_left[i], points_left[i+1], thickness, data.color)
+      rl.draw_line_ex(points_right[i], points_right[i+1], thickness, data.color)
+
+    # C. Draw animating chevrons flowing down the road center path
+    progress = (rl.get_time() * 1.2) % 1.0
     for i in range(3):
-      y_off = (i + progress) * spacing
-      y = cy + y_off
+      # Chevron fraction t (flowing down from 1.0 to 0.0)
+      t = 1.0 - ((i + progress) / 3.0)
+      
+      # Calculate local tangent vector for rotation
+      t_next = min(1.0, t + 0.05)
+      cx_t = icx + curve_offset * (t ** 2)
+      cy_t = bottom - t * 80.0
+      
+      cx_next = icx + curve_offset * (t_next ** 2)
+      cy_next = bottom - t_next * 80.0
+      
+      dx = cx_next - cx_t
+      dy = cy_next - cy_t
+      len_v = math.sqrt(dx**2 + dy**2)
+      if len_v > 0.001:
+        dir_up_x = dx / len_v
+        dir_up_y = dy / len_v
+      else:
+        dir_up_x = 0.0
+        dir_up_y = -1.0
+        
+      dir_right_x = -dir_up_y
+      dir_right_y = dir_up_x
+      
+      # Perspective scaling of chevrons
+      chevron_w = 14.0 - t * 6.0
+      chevron_h = chevron_w * 0.6
+      chevron_thick = max(2.0, 4.0 - t * 2.0)
+      
+      # Vertices
+      lx = cx_t - dir_right_x * chevron_w + dir_up_x * chevron_h
+      ly = cy_t - dir_right_y * chevron_w + dir_up_y * chevron_h
+      rx = cx_t + dir_right_x * chevron_w + dir_up_x * chevron_h
+      ry = cy_t + dir_right_y * chevron_w + dir_up_y * chevron_h
+      
+      # Alpha envelope fading in at horizon, bright in middle, fading out at bottom
+      alpha_factor = math.sin(t * math.pi)
+      alpha = int(data.color.a * alpha_factor)
+      chev_color = rl.Color(data.color.r, data.color.g, data.color.b, alpha)
+      chev_shadow = rl.Color(0, 0, 0, int(alpha * 0.5))
+      
+      # Draw chevron with shadow
+      rl.draw_line_ex(rl.Vector2(int(lx), int(ly + 1.5)), rl.Vector2(int(cx_t), int(cy_t + 1.5)), chevron_thick, chev_shadow)
+      rl.draw_line_ex(rl.Vector2(int(rx), int(ry + 1.5)), rl.Vector2(int(cx_t), int(cy_t + 1.5)), chevron_thick, chev_shadow)
+      
+      rl.draw_line_ex(rl.Vector2(int(lx), int(ly)), rl.Vector2(int(cx_t), int(cy_t)), chevron_thick, chev_color)
+      rl.draw_line_ex(rl.Vector2(int(rx), int(ry)), rl.Vector2(int(cx_t), int(cy_t)), chevron_thick, chev_color)
 
-      dist_normalized = (i + progress) / 3.0
-      alpha_factor = math.sin(dist_normalized * math.pi)
-      alpha = int(color.a * alpha_factor)
+    # D. Draw clean floating target speed directly below the road base
+    self._draw_mini_cradle(icx, bottom + 25, data.text, data.unit, data.color, font_bold, font_medium)
 
-      chevron_color = rl.Color(color.r, color.g, color.b, alpha)
-
-      # Drop shadow (black with half of chevron's alpha)
-      shadow_color = rl.Color(0, 0, 0, int(alpha * 0.5))
-      rl.draw_line_ex(rl.Vector2(int(cx - chevron_w), int(y - chevron_h + 2)), rl.Vector2(int(cx), int(y + 2)), thickness, shadow_color)
-      rl.draw_line_ex(rl.Vector2(int(cx + chevron_w), int(y - chevron_h + 2)), rl.Vector2(int(cx), int(y + 2)), thickness, shadow_color)
-
-      # Main chevron lines
-      rl.draw_line_ex(rl.Vector2(int(cx - chevron_w), int(y - chevron_h)), rl.Vector2(int(cx), int(y)), thickness, chevron_color)
-      rl.draw_line_ex(rl.Vector2(int(cx + chevron_w), int(y - chevron_h)), rl.Vector2(int(cx), int(y)), thickness, chevron_color)
-
-  def _render_text(self, cx: float, cy: float, data: AetherGaugeData, font_bold: rl.Font, font_medium: rl.Font):
-    speed_text = data.text
-    unit_text = data.unit
-
-    speed_size = measure_text_cached(font_bold, speed_text, 48)
-    unit_size = measure_text_cached(font_medium, unit_text, 24)
-
+  def _draw_mini_cradle(self, cx: float, cy: float, target_speed: str, unit: str, color: rl.Color, font_bold: rl.Font, font_medium: rl.Font):
+    val_size = measure_text_cached(font_bold, target_speed, 48)
+    unit_size = measure_text_cached(font_medium, unit, 24)
+    
     gap = 6
-    total_w = speed_size.x + gap + unit_size.x
+    total_w = val_size.x + gap + unit_size.x
     start_x = cx - total_w / 2
-
-    # Draw outline for speed
-    speed_pos = rl.Vector2(int(start_x), int(cy))
-    rl.draw_text_ex(font_bold, speed_text, rl.Vector2(speed_pos.x - 1, speed_pos.y - 1), 48, 0, rl.BLACK)
-    rl.draw_text_ex(font_bold, speed_text, rl.Vector2(speed_pos.x + 1, speed_pos.y - 1), 48, 0, rl.BLACK)
-    rl.draw_text_ex(font_bold, speed_text, rl.Vector2(speed_pos.x - 1, speed_pos.y + 1), 48, 0, rl.BLACK)
-    rl.draw_text_ex(font_bold, speed_text, rl.Vector2(speed_pos.x + 1, speed_pos.y + 1), 48, 0, rl.BLACK)
-    rl.draw_text_ex(font_bold, speed_text, speed_pos, 48, 0, rl.WHITE)
-
-    # Draw outline for unit
-    unit_y = cy + (speed_size.y - unit_size.y) - 2
-    unit_pos = rl.Vector2(int(start_x + speed_size.x + gap), int(unit_y))
-
-    rl.draw_text_ex(font_medium, unit_text, rl.Vector2(unit_pos.x - 1, unit_pos.y - 1), 24, 0, rl.BLACK)
-    rl.draw_text_ex(font_medium, unit_text, rl.Vector2(unit_pos.x + 1, unit_pos.y - 1), 24, 0, rl.BLACK)
-    rl.draw_text_ex(font_medium, unit_text, rl.Vector2(unit_pos.x - 1, unit_pos.y + 1), 24, 0, rl.BLACK)
-    rl.draw_text_ex(font_medium, unit_text, rl.Vector2(unit_pos.x + 1, unit_pos.y + 1), 24, 0, rl.BLACK)
-    rl.draw_text_ex(font_medium, unit_text, unit_pos, 24, 0, data.color)
+    
+    # Speed numbers
+    val_pos = rl.Vector2(int(start_x), int(cy - val_size.y / 2))
+    rl.draw_text_ex(font_bold, target_speed, rl.Vector2(val_pos.x - 1, val_pos.y - 1), 48, 0, rl.BLACK)
+    rl.draw_text_ex(font_bold, target_speed, rl.Vector2(val_pos.x + 1, val_pos.y - 1), 48, 0, rl.BLACK)
+    rl.draw_text_ex(font_bold, target_speed, rl.Vector2(val_pos.x - 1, val_pos.y + 1), 48, 0, rl.BLACK)
+    rl.draw_text_ex(font_bold, target_speed, rl.Vector2(val_pos.x + 1, val_pos.y + 1), 48, 0, rl.BLACK)
+    rl.draw_text_ex(font_bold, target_speed, val_pos, 48, 0, color)
+    
+    # Unit text
+    unit_y = cy + (val_size.y - unit_size.y) / 2 - 2
+    unit_pos = rl.Vector2(int(start_x + val_size.x + gap), int(unit_y))
+    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x - 1, unit_pos.y - 1), 24, 0, rl.BLACK)
+    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x + 1, unit_pos.y - 1), 24, 0, rl.BLACK)
+    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x - 1, unit_pos.y + 1), 24, 0, rl.BLACK)
+    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x + 1, unit_pos.y + 1), 24, 0, rl.BLACK)
+    rl.draw_text_ex(font_medium, unit, unit_pos, 24, 0, rl.Color(255, 255, 255, 200))

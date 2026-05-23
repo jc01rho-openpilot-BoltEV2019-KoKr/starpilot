@@ -62,7 +62,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._render_road_name()
     self._render_standstill_timer()
     self._render_developer_metrics()
-    self._aethergauge.render(self._content_rect, self._font_bold, self._font_medium)
+    self._aethergauge.render(self._content_rect, self._font_bold, self._font_medium, current_speed=self._hud_renderer.speed)
     self._render_bottom_row_widgets()
     self._render_pedals()
 
