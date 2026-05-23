@@ -83,7 +83,7 @@ class AetherGauge:
     icon_cx = cx - speed_text_size.x / 2 - 70.0
 
     if data.indicator_type == "road_curve":
-      self._render_unified_road(icon_cx, cy_speed, data, font_bold, font_medium)
+      self._render_unified_road(icon_cx, cy_speed - 39.5, data, font_bold, font_medium)
 
   def _render_unified_road(self, icx: float, icy: float, data: AetherGaugeData, font_bold: rl.Font, font_medium: rl.Font):
     # Dimensions of the road projection
@@ -188,29 +188,25 @@ class AetherGauge:
       rl.draw_line_ex(rl.Vector2(int(rx), int(ry)), rl.Vector2(int(cx_t), int(cy_t)), chevron_thick, chev_color)
 
     # D. Draw clean floating target speed directly below the road base
-    self._draw_mini_cradle(icx, bottom + 25, data.text, data.unit, data.color, font_bold, font_medium)
+    self._draw_mini_cradle(icx, bottom, data.text, data.unit, data.color, font_bold, font_medium)
 
-  def _draw_mini_cradle(self, cx: float, cy: float, target_speed: str, unit: str, color: rl.Color, font_bold: rl.Font, font_medium: rl.Font):
+  def _draw_mini_cradle(self, cx: float, bottom: float, target_speed: str, unit: str, color: rl.Color, font_bold: rl.Font, font_medium: rl.Font):
+    # Digits (centered at cx, top at bottom + 12)
     val_size = measure_text_cached(font_bold, target_speed, 48)
-    unit_size = measure_text_cached(font_medium, unit, 24)
+    val_pos = rl.Vector2(int(cx - val_size.x / 2), int(bottom + 12))
     
-    gap = 6
-    total_w = val_size.x + gap + unit_size.x
-    start_x = cx - total_w / 2
-    
-    # Speed numbers
-    val_pos = rl.Vector2(int(start_x), int(cy - val_size.y / 2))
     rl.draw_text_ex(font_bold, target_speed, rl.Vector2(val_pos.x - 1, val_pos.y - 1), 48, 0, rl.BLACK)
     rl.draw_text_ex(font_bold, target_speed, rl.Vector2(val_pos.x + 1, val_pos.y - 1), 48, 0, rl.BLACK)
     rl.draw_text_ex(font_bold, target_speed, rl.Vector2(val_pos.x - 1, val_pos.y + 1), 48, 0, rl.BLACK)
     rl.draw_text_ex(font_bold, target_speed, rl.Vector2(val_pos.x + 1, val_pos.y + 1), 48, 0, rl.BLACK)
     rl.draw_text_ex(font_bold, target_speed, val_pos, 48, 0, color)
     
-    # Unit text
-    unit_y = cy + (val_size.y - unit_size.y) / 2 - 2
-    unit_pos = rl.Vector2(int(start_x + val_size.x + gap), int(unit_y))
-    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x - 1, unit_pos.y - 1), 24, 0, rl.BLACK)
-    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x + 1, unit_pos.y - 1), 24, 0, rl.BLACK)
-    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x - 1, unit_pos.y + 1), 24, 0, rl.BLACK)
-    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x + 1, unit_pos.y + 1), 24, 0, rl.BLACK)
-    rl.draw_text_ex(font_medium, unit, unit_pos, 24, 0, rl.Color(255, 255, 255, 200))
+    # Unit (centered at cx, top at bottom + 12 + val_size.y * 0.8)
+    unit_size = measure_text_cached(font_medium, unit, 20)
+    unit_pos = rl.Vector2(int(cx - unit_size.x / 2), int(bottom + 12 + val_size.y * 0.8))
+    
+    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x - 1, unit_pos.y - 1), 20, 0, rl.BLACK)
+    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x + 1, unit_pos.y - 1), 20, 0, rl.BLACK)
+    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x - 1, unit_pos.y + 1), 20, 0, rl.BLACK)
+    rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x + 1, unit_pos.y + 1), 20, 0, rl.BLACK)
+    rl.draw_text_ex(font_medium, unit, unit_pos, 20, 0, rl.Color(255, 255, 255, 200))
