@@ -1,6 +1,17 @@
+import math
 import pyray as rl
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.text_measure import measure_text_cached
+
+
+def _draw_poly_outline(cx: float, cy: float, sides: int, radius: float, rotation: float, thickness: float, color: rl.Color):
+  """Draw a clean polygon outline as connected line segments."""
+  for i in range(sides):
+    a1 = math.radians(rotation + i * 360.0 / sides)
+    a2 = math.radians(rotation + ((i + 1) % sides) * 360.0 / sides)
+    p1 = rl.Vector2(int(cx + radius * math.cos(a1)), int(cy + radius * math.sin(a1)))
+    p2 = rl.Vector2(int(cx + radius * math.cos(a2)), int(cy + radius * math.sin(a2)))
+    rl.draw_line_ex(p1, p2, thickness, color)
 
 def render_stopping_point(renderer, font):
   params = ui_state.params
@@ -30,10 +41,10 @@ def render_stopping_point(renderer, font):
 
   # Draw programmatic stop sign (octagon)
   radius = 35.0
-  # Draw white outer octagon
-  rl.draw_poly(rl.Vector2(int(cx), int(cy - radius)), 8, radius, 22.5, rl.WHITE)
-  # Draw red inner octagon
-  rl.draw_poly(rl.Vector2(int(cx), int(cy - radius)), 8, radius - 4, 22.5, rl.Color(196, 30, 58, 255))
+  # Draw red octagon body
+  rl.draw_poly(rl.Vector2(int(cx), int(cy - radius)), 8, radius, 22.5, rl.Color(196, 30, 58, 255))
+  # Draw clean thin white outline (instead of a chunky filled white border)
+  _draw_poly_outline(cx, cy - radius, 8, radius, 22.5, 1.5, rl.Color(255, 255, 255, 200))
 
   # Draw "STOP" text centered in octagon
   font_size = 18
