@@ -18,7 +18,6 @@ from openpilot.selfdrive.ui.mici.onroad.starpilot_status import (
   TRAFFIC_COLOR,
   get_border_color,
 )
-from openpilot.selfdrive.ui.lib.starpilot_mode_banner import ModeTransitionBanner
 from openpilot.selfdrive.ui.mici.onroad.cameraview import CameraView
 from openpilot.selfdrive.ui.lib.starpilot_visuals import get_border_width
 from openpilot.system.ui.lib.application import FontWeight, gui_app, MousePos, MouseEvent
@@ -372,7 +371,6 @@ class AugmentedRoadView(CameraView):
     self._alert_renderer = AlertRenderer()
     self._driver_state_renderer = DriverStateRenderer()
     self._confidence_ball = ConfidenceBall()
-    self._mode_transition_banner = ModeTransitionBanner()
     self._min_steer_speed_banner = MinSteerSpeedBanner()
     self._standstill_timer = StandstillTimerOverlay()
     self._offroad_label = UnifiedLabel("start the car to\nuse openpilot", 54, FontWeight.DISPLAY,
@@ -488,14 +486,11 @@ class AugmentedRoadView(CameraView):
     self._hud_renderer.set_can_draw_top_icons((not in_reverse) and (not is_driver_stream) and (alert_to_render is None))
     self._hud_renderer.set_wheel_critical_icon((not in_reverse) and (not is_driver_stream) and alert_to_render is not None and not not_animating_out and
                                                alert_to_render.visual_alert == car.CarControl.HUDControl.VisualAlert.steerRequired)
-    self._mode_transition_banner.update()
     # TODO: have alert renderer draw offroad mici label below
     if ui_state.started:
       self._alert_renderer.render(self._content_rect)
     if not in_reverse and not is_driver_stream:
       self._hud_renderer.render_foreground()
-    if (not in_reverse) and (not is_driver_stream) and alert_to_render is None:
-      self._mode_transition_banner.render(self._content_rect)
     rendered_standstill_timer = False
     if not in_reverse and not is_driver_stream:
       rendered_standstill_timer = self._standstill_timer.render(self._content_rect, in_reverse)
