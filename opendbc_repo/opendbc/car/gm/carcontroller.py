@@ -92,6 +92,29 @@ def get_acc_dashboard_fcw_alert(hud_alert, CS):
   return 0
 
 
+def get_acc_dashboard_status_values(enabled, target_speed_kph, hud_control, CS):
+  if enabled:
+    return {
+      "ACCCruiseState": 0,
+      "ACCLeadCar": int(hud_control.leadVisible) & 0x1,
+      "ACCResumeButton": 0,
+      "ACCSpeedSetpoint": target_speed_kph,
+      "ACCGapLevel": int(hud_control.leadDistanceBars) & 0x3,
+      "ACCCmdActive": 1,
+    }
+
+  # Replay the stock camera dashboard context when openpilot long is enabled
+  # but openpilot itself is not actively driving the ACC cluster state.
+  return {
+    "ACCCruiseState": int(getattr(CS, "stock_acc_cruise_state", 0)) & 0x7,
+    "ACCLeadCar": int(getattr(CS, "stock_acc_lead_car", 0)) & 0x1,
+    "ACCResumeButton": int(getattr(CS, "stock_acc_resume_button", 0)) & 0x1,
+    "ACCSpeedSetpoint": float(getattr(CS, "stock_acc_speed_setpoint_kph", 0.0)),
+    "ACCGapLevel": int(getattr(CS, "stock_acc_gap_level", 0)) & 0x3,
+    "ACCCmdActive": int(getattr(CS, "stock_acc_cmd_active", 0)) & 0x1,
+  }
+
+
 ECM_CRUISE_SPOOF_CARS = {
   CAR.CHEVROLET_BOLT_CC_2017,
   CAR.CHEVROLET_BOLT_CC_2018_2021,
@@ -703,9 +726,10 @@ class CarController(CarControllerBase):
             CS.auto_hold_engaged = False
 
         if should_send_acc_dashboard_status(self.CP, dash_speed_spoof_active):
+          acc_dashboard_status = get_acc_dashboard_status_values(CC.enabled, hud_v_cruise * CV.MS_TO_KPH, hud_control, CS)
           fcw_alert = get_acc_dashboard_fcw_alert(hud_alert, CS)
-          can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, CC.enabled,
-                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, fcw_alert))
+          can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN,
+                                                              acc_dashboard_status, fcw_alert))
 
       # Radar needs to know current speed and yaw rate (50hz),
       # and that ADAS is alive (10hz)

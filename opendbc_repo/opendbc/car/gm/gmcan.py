@@ -209,17 +209,18 @@ def create_friction_brake_command(packer, bus, apply_brake, idx, enabled, near_s
   return packer.make_can_msg("EBCMFrictionBrakeCmd", bus, values)
 
 
-def create_acc_dashboard_command(packer, bus, enabled, target_speed_kph, hud_control, fcw_alert):
-  target_speed = min(target_speed_kph, 255)
+def create_acc_dashboard_command(packer, bus, status_values, fcw_alert):
+  target_speed = min(max(float(status_values.get("ACCSpeedSetpoint", 0.0)), 0.0), 255.0)
 
   values = {
     "ACCAlwaysOne": 1,
-    "ACCResumeButton": 0,
+    "ACCCruiseState": int(status_values.get("ACCCruiseState", 0)) & 0x7,
+    "ACCResumeButton": int(status_values.get("ACCResumeButton", 0)) & 0x1,
     "ACCSpeedSetpoint": target_speed,
-    "ACCGapLevel": hud_control.leadDistanceBars * enabled,  # 3 "far", 0 "inactive"
-    "ACCCmdActive": enabled,
+    "ACCGapLevel": int(status_values.get("ACCGapLevel", 0)) & 0x3,
+    "ACCCmdActive": int(status_values.get("ACCCmdActive", 0)) & 0x1,
     "ACCAlwaysOne2": 1,
-    "ACCLeadCar": hud_control.leadVisible,
+    "ACCLeadCar": int(status_values.get("ACCLeadCar", 0)) & 0x1,
     "FCWAlert": int(fcw_alert) & 0x3,
   }
 
