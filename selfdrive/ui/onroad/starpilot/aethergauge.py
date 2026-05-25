@@ -220,30 +220,38 @@ class AetherGauge:
         return source.get_gauge_data()
     return None
 
-  def _get_model_offset(self, t: float, model) -> float:
-    if not model:
-      return 0.0
+  def _get_x_from_t(self, t: float) -> float:
+    x_min = 3.0
+    x_max = 60.0
+    denom = max(1e-6, 1.0 - t * (1.0 - x_min / x_max))
+    return x_min / denom
+
+  def _get_t_from_x(self, x: float) -> float:
+    x_min = 3.0
+    x_max = 60.0
+    x_clamped = max(x_min, min(x_max, x))
+    return (1.0 - x_min / x_clamped) / (1.0 - x_min / x_max)
+
+
+  def _get_perspective_offset(self, t: float, data: AetherGaugeData) -> float:
+    curvature = 0.0
+    if data:
+      if data.indicator_type == "road_curve":
+        curvature = data.indicator_value
+      elif "starpilotPlan" in ui_state.sm.valid and ui_state.sm.valid["starpilotPlan"]:
+        curvature = ui_state.sm["starpilotPlan"].roadCurvature
     
-    # Map t (0.0 to 1.0) to distance x (0.0 to 50.0 meters)
-    x_target = t * 50.0
+    # Convert curvature C to Y-offset at 60 meters: Y = 0.5 * C * 60^2 = 1800 * C
+    path_y_far = 1800.0 * curvature
     
-    xs = model.position.x
-    ys = model.position.y
-    n = len(xs)
-    if n < 2:
-      return 0.0
-      
-    if x_target <= xs[0]:
-      return ys[0]
-    if x_target >= xs[n-1]:
-      return ys[n-1]
-      
-    for i in range(n - 1):
-      if xs[i] <= x_target <= xs[i+1]:
-        seg_t = (x_target - xs[i]) / (xs[i+1] - xs[i])
-        return ys[i] + seg_t * (ys[i+1] - ys[i])
-        
-    return 0.0
+    # Apply tanh compression to limit max offset while exaggerating small curves
+    gain = 0.35
+    max_offset = 26.0
+    # Match sign convention so right curves curve right, left curves curve left
+    max_offset_top = math.tanh(path_y_far * gain) * max_offset
+    
+    # Smooth quadratic-based curvature profile (t^1.8) distributed evenly across the height
+    return max_offset_top * (t ** 1.8)
 
   def render(self, rect: rl.Rectangle, font_bold: rl.Font, font_medium: rl.Font, current_speed: float):
     data = self.get_active_data()
@@ -312,9 +320,9 @@ class AetherGauge:
     # Model path lookup
     model = ui_state.sm["modelV2"] if ui_state.sm.valid.get("modelV2", False) else None
     
-    # 3D perspective widths
-    w_bottom = 28.0
-    w_top = 10.0
+    # 3D perspective widths (milder narrowing for small 2D widget to keep lane boundaries parallel)
+    w_bottom = 22.0
+    w_top = 14.0
     thickness = 4.0
     
     # Generate points along the road path
@@ -325,13 +333,7 @@ class AetherGauge:
     for i in range(num_segments + 1):
       t = i / num_segments
       if data.indicator_type in ("road_curve", "lead", "stop_light", "force_stop") and model:
-        path_y = self._get_model_offset(t, model)
-        abs_y = abs(path_y)
-        # Invert sign because in openpilot y is positive-left, but on screen x is positive-right.
-        sign = -math.copysign(1.0, path_y) if path_y != 0.0 else 1.0
-        # Apply perspective-based shaping factor (t * sqrt(t)) to start straight and bend progressively
-        offset = sign * (abs_y ** 0.6) * 10.0 * t * math.sqrt(t)
-        offset = max(-half_size, min(half_size, offset))
+        offset = self._get_perspective_offset(t, data)
       else:
         offset = 0.0
       
@@ -364,17 +366,12 @@ class AetherGauge:
       rl.draw_line_ex(points_left[i], points_left[i+1], thickness, left_color)
       rl.draw_line_ex(points_right[i], points_right[i+1], thickness, right_color)
 
-    # B2. Draw red stop line/bar on the road if approaching a stop light or stop sign
     if data.indicator_type in ("stop_light", "force_stop"):
-      t_line = max(0.0, min(1.0, data.indicator_value / 60.0))
+      t_line = max(0.0, min(1.0, self._get_t_from_x(data.indicator_value)))
       w_line = w_bottom - t_line * (w_bottom - w_top)
       
       if model:
-        path_y = self._get_model_offset(t_line, model)
-        abs_y = abs(path_y)
-        sign = -math.copysign(1.0, path_y) if path_y != 0.0 else 1.0
-        offset_line = sign * (abs_y ** 0.6) * 10.0 * t_line * math.sqrt(t_line)
-        offset_line = max(-half_size, min(half_size, offset_line))
+        offset_line = self._get_perspective_offset(t_line, data)
       else:
         offset_line = 0.0
         
@@ -392,18 +389,12 @@ class AetherGauge:
 
     # C. Draw animating overlays based on active indicator mode
     if data.indicator_type == "lead":
-      # Render lead car outline in perspective
       lead_dist = data.indicator_value
-      # Fix mathematically inverted depth representation
-      t_lead = max(0.15, min(0.85, lead_dist / 80.0))
+      t_lead = max(0.15, min(0.85, self._get_t_from_x(lead_dist)))
       
       # Model curvature offset for lead car center
       if model:
-        path_y = self._get_model_offset(t_lead, model)
-        abs_y = abs(path_y)
-        sign = -math.copysign(1.0, path_y) if path_y != 0.0 else 1.0
-        offset_lead = sign * (abs_y ** 0.6) * 10.0 * t_lead * math.sqrt(t_lead)
-        offset_lead = max(-half_size, min(half_size, offset_lead))
+        offset_lead = self._get_perspective_offset(t_lead, data)
       else:
         offset_lead = 0.0
         
@@ -471,11 +462,7 @@ class AetherGauge:
         t = t_lead * (1.0 - ((i + progress) / num_chevs) % 1.0)
         
         if model:
-          path_y = self._get_model_offset(t, model)
-          abs_y = abs(path_y)
-          sign = -math.copysign(1.0, path_y) if path_y != 0.0 else 1.0
-          offset_t = sign * (abs_y ** 0.6) * 10.0 * t * math.sqrt(t)
-          offset_t = max(-half_size, min(half_size, offset_t))
+          offset_t = self._get_perspective_offset(t, data)
         else:
           offset_t = 0.0
           
@@ -519,19 +506,11 @@ class AetherGauge:
         # Calculate local tangent vector for rotation using model path
         t_next = min(1.0, t + 0.05)
         if model:
-          y_t = self._get_model_offset(t, model)
-          abs_yt = abs(y_t)
-          sign_t = -math.copysign(1.0, y_t) if y_t != 0.0 else 1.0
-          cx_t = icx + sign_t * (abs_yt ** 0.6) * 10.0 * t * math.sqrt(t)
+          offset_t = self._get_perspective_offset(t, data)
+          cx_t = icx + offset_t
           
-          y_next = self._get_model_offset(t_next, model)
-          abs_ynext = abs(y_next)
-          sign_next = -math.copysign(1.0, y_next) if y_next != 0.0 else 1.0
-          cx_next = icx + sign_next * (abs_ynext ** 0.6) * 10.0 * t_next * math.sqrt(t_next)
-          
-          # Clamp both
-          cx_t = max(icx - half_size, min(icx + half_size, cx_t))
-          cx_next = max(icx - half_size, min(icx + half_size, cx_next))
+          offset_next = self._get_perspective_offset(t_next, data)
+          cx_next = icx + offset_next
         else:
           cx_t = icx
           cx_next = icx
@@ -582,16 +561,11 @@ class AetherGauge:
 
     # E. Draw overhead traffic light if stop_light
     if data.indicator_type == "stop_light":
-      t_light = max(0.0, min(1.0, data.indicator_value / 60.0))
+      t_light = max(0.0, min(1.0, self._get_t_from_x(data.indicator_value)))
       s_light = 1.0 - t_light
       
       if model:
-        path_y = self._get_model_offset(t_light, model)
-        abs_y = abs(path_y)
-        # Invert path_y sign because in openpilot y is positive-left, but on screen x is positive-right.
-        sign = -math.copysign(1.0, path_y) if path_y != 0.0 else 1.0
-        offset_light = sign * (abs_y ** 0.6) * 10.0 * t_light * math.sqrt(t_light)
-        offset_light = max(-half_size, min(half_size, offset_light))
+        offset_light = self._get_perspective_offset(t_light, data)
       else:
         offset_light = 0.0
         
@@ -635,7 +609,7 @@ class AetherGauge:
 
     # G. Draw approaching stop sign if force_stop
     if data.indicator_type == "force_stop":
-      self._draw_approaching_stop_sign(icx, icy, bottom, data.indicator_value, model, font_bold)
+      self._draw_approaching_stop_sign(icx, icy, bottom, data.indicator_value, data, font_bold)
 
     # D. Draw clean floating target speed directly below the road base
     self._draw_mini_cradle(icx, bottom, data.text, data.unit, data.color, font_bold, font_medium)
@@ -661,7 +635,7 @@ class AetherGauge:
     rl.draw_text_ex(font_medium, unit, rl.Vector2(unit_pos.x + 1, unit_pos.y + 1), 20, 0, rl.BLACK)
     rl.draw_text_ex(font_medium, unit, unit_pos, 20, 0, rl.Color(255, 255, 255, 200))
 
-  def _draw_approaching_stop_sign(self, cx: float, icy: float, bottom: float, distance: float, model, font_bold: rl.Font):
+  def _draw_approaching_stop_sign(self, cx: float, icy: float, bottom: float, distance: float, data: AetherGaugeData, font_bold: rl.Font):
     # Normalized progress: d_max = 60.0 meters
     d_max = 60.0
     raw_s = max(0.0, min(1.0, (d_max - distance) / d_max))
@@ -673,14 +647,11 @@ class AetherGauge:
     s = self._stop_smooth_s
     
     # 3D perspective depth coordinate, derived from smoothed s for consistency
-    t_stop = 1.0 - s
+    distance_smoothed = d_max - s * d_max
+    t_stop_gauge = self._get_t_from_x(distance_smoothed)
     
-    if model:
-      path_y = self._get_model_offset(t_stop, model)
-      abs_y = abs(path_y)
-      sign = -math.copysign(1.0, path_y) if path_y != 0.0 else 1.0
-      offset_stop = sign * (abs_y ** 0.6) * 10.0 * t_stop * math.sqrt(t_stop)
-      offset_stop = max(-40.0, min(40.0, offset_stop))
+    if data:
+      offset_stop = self._get_perspective_offset(t_stop_gauge, data)
     else:
       offset_stop = 0.0
       
