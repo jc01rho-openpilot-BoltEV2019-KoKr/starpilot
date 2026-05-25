@@ -280,7 +280,12 @@ void SpectraCamera::camera_open(VisionIpcServer *v, cl_device_id device_id, cl_c
     return;
   }
 
-  if (!enabled) return;
+  if (!enabled) {
+    // Disabled or failed cameras still run through sensor setup, but they
+    // should not keep an idle session around for the rest of camerad's life.
+    camera_close();
+    return;
+  }
 
   buf.out_img_width = sensor->frame_width / sensor->out_scale;
   buf.out_img_height = (sensor->hdr_offset > 0 ? (sensor->frame_height - sensor->hdr_offset) / 2 : sensor->frame_height) / sensor->out_scale;
