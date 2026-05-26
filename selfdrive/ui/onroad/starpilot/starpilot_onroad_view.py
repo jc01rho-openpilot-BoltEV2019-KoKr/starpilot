@@ -72,6 +72,11 @@ class StarPilotOnroadView(AugmentedRoadView):
     if not mr._path.projected_points.size:
       return
 
+    rl.begin_scissor_mode(
+      int(self._content_rect.x), int(self._content_rect.y),
+      int(self._content_rect.width), int(self._content_rect.height),
+    )
+
     # Path edges (always rendered if track_edge_vertices exist)
     if mr._track_edge_vertices.size >= 4:
       render_path_edges(mr)
@@ -88,6 +93,8 @@ class StarPilotOnroadView(AugmentedRoadView):
     # Render stopping point atop the path
     from openpilot.selfdrive.ui.onroad.starpilot.stopping_point import render_stopping_point
     render_stopping_point(mr, self._font_bold)
+
+    rl.end_scissor_mode()
 
   def _position_personality_button(self):
     dm = self.driver_state_renderer
