@@ -149,7 +149,7 @@ class TestHyundaiFingerprint:
     fingerprint[1][MRR35_RADAR_START_ADDR] = 24
     CP = CarInterface.get_params(CAR.HYUNDAI_IONIQ_6, fingerprint, [], True, False, False, None)
     assert CP.openpilotLongitudinalControl
-    assert not CP.radarUnavailable
+    assert CP.radarUnavailable
 
     for candidate in HYUNDAI_NON_SCC_CARS:
       CP = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], True, False, False, None)
