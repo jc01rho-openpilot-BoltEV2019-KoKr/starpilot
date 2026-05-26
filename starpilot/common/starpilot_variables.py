@@ -16,7 +16,7 @@ from cereal import car, custom, log
 from opendbc.car import gen_empty_fingerprint
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.gm.values import CAR as GM_CAR, EV_CAR as GM_EV_CAR, GMFlags
-from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, EV_CAR as HYUNDAI_EV_CAR, HyundaiFlags
+from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, EV_CAR as HYUNDAI_EV_CAR, HyundaiFlags, HyundaiStarPilotSafetyFlags
 from opendbc.car.interfaces import TORQUE_SUBSTITUTE_PATH, CarInterfaceBase, GearShifter
 from opendbc.car.mock.values import CAR as MOCK
 from opendbc.car.subaru.values import SubaruFlags
@@ -536,10 +536,15 @@ class StarPilotVariables:
     latAccelFactor = CP.lateralTuning.torque.latAccelFactor
     if not math.isfinite(latAccelFactor):
       latAccelFactor = 0.0
-    toggle.lkas_allowed_for_aol = (
-      (toggle.car_make == "hyundai" and bool(CP.flags & HyundaiFlags.CANFD or CP.flags & HyundaiFlags.HAS_LDA_BUTTON)) or
-      toggle.car_make == "honda"
+    hyundai_has_lda_button = (
+      toggle.car_make == "hyundai" and
+      len(FPCP.safetyConfigs) > 0 and
+      bool(FPCP.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON.value)
     )
+    hyundai_can_use_lkas_for_aol = toggle.car_make == "hyundai" and (
+      bool(CP.flags & HyundaiFlags.CANFD) or hyundai_has_lda_button
+    )
+    toggle.lkas_allowed_for_aol = hyundai_can_use_lkas_for_aol or toggle.car_make == "honda"
     longitudinalActuatorDelay = CP.longitudinalActuatorDelay
     toggle.openpilot_longitudinal = CP.openpilotLongitudinalControl and not toggle.disable_openpilot_long
     if not toggle.redneck_cruise_available or toggle.openpilot_longitudinal:
@@ -549,7 +554,7 @@ class StarPilotVariables:
       condition=toggle.redneck_cruise_available and not toggle.openpilot_longitudinal,
     )
     pcm_cruise = CP.pcmCruise
-    prohibited_main_aol = not toggle.openpilot_longitudinal and toggle.car_make == "hyundai" and bool(CP.flags & HyundaiFlags.CANFD or CP.flags & HyundaiFlags.HAS_LDA_BUTTON)
+    prohibited_main_aol = not toggle.openpilot_longitudinal and hyundai_can_use_lkas_for_aol
     startAccel = CP.startAccel
     stopAccel = CP.stopAccel
     steerActuatorDelay = CP.steerActuatorDelay

@@ -163,7 +163,7 @@ class StarPilotState:
             cp_flags = self._safe_get(CP, "flags", 0)
             self.car_state.hasModeStarButtons = car_make == "hyundai" and bool(cp_flags & HyundaiFlags.CANFD)
             self.car_state.lkasAllowedForAOL = (
-                (car_make == "hyundai" and bool(cp_flags & (HyundaiFlags.CANFD | HyundaiFlags.HAS_LDA_BUTTON))) or
+                (car_make == "hyundai" and (bool(cp_flags & HyundaiFlags.CANFD) or starpilot_toggles.get("lkas_allowed_for_aol", False))) or
                 car_make == "honda"
             )
             self.car_state.longitudinalActuatorDelay = float(self._safe_get(CP, "longitudinalActuatorDelay", self.car_state.longitudinalActuatorDelay))
