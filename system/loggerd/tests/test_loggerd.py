@@ -97,12 +97,12 @@ class TestLoggerd:
 
     return sent_msgs
 
-  def _publish_camera_and_audio_messages(self, num_segs=1, segment_length=5):
+  def _publish_camera_and_audio_messages(self, num_segs=1, segment_length=5, streams=None):
     # Use small frame sizes for testing (width, height, size, stride, uv_offset)
     # NV12 format: size = stride * height * 1.5, uv_offset = stride * height
     w, h = 320, 240
     frame_spec = (w, h, w * h * 3 // 2, w, w * h)
-    streams = [
+    streams = streams or [
       (VisionStreamType.VISION_STREAM_ROAD, frame_spec, "roadCameraState"),
       (VisionStreamType.VISION_STREAM_DRIVER, frame_spec, "driverCameraState"),
       (VisionStreamType.VISION_STREAM_WIDE_ROAD, frame_spec, "wideRoadCameraState"),
@@ -203,6 +203,30 @@ class TestLoggerd:
       logged = {f.name for f in p.iterdir() if f.is_file()}
       diff = logged ^ expected_files
       assert len(diff) == 0, f"didn't get all expected files. seg={n} {route_path=}, {diff=}\n{logged=} {expected_files=}"
+
+  @pytest.mark.xdist_group("camera_encoder_tests")
+  def test_rotation_without_wide_camera(self):
+    Params().put("RecordFront", True)
+
+    w, h = 320, 240
+    frame_spec = (w, h, w * h * 3 // 2, w, w * h)
+    streams = [
+      (VisionStreamType.VISION_STREAM_ROAD, frame_spec, "roadCameraState"),
+      (VisionStreamType.VISION_STREAM_DRIVER, frame_spec, "driverCameraState"),
+    ]
+    expected_files = {"rlog.zst", "qlog.zst", "qcamera.ts", "fcamera.hevc", "dcamera.hevc"}
+
+    num_segs = random.randint(2, 3)
+    length = random.randint(4, 5)
+
+    self._publish_camera_and_audio_messages(num_segs=num_segs, segment_length=length, streams=streams)
+
+    route_path = str(self._get_latest_log_dir()).rsplit("--", 1)[0]
+    for n in range(num_segs):
+      p = Path(f"{route_path}--{n}")
+      logged = {f.name for f in p.iterdir() if f.is_file()}
+      diff = logged ^ expected_files
+      assert len(diff) == 0, f"unexpected files without wide camera. seg={n} {route_path=}, {diff=}\n{logged=} {expected_files=}"
 
   def test_bootlog(self):
     # generate bootlog with fake launch log
