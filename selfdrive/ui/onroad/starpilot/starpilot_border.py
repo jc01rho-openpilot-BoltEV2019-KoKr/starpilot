@@ -7,6 +7,10 @@ import pyray as rl
 from openpilot.selfdrive.ui import UI_BORDER_SIZE
 
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.selfdrive.ui.lib.starpilot_status import (
+  CEM_OVERRIDE_COLOR, ENGAGED_COLOR, EXPERIMENTAL_COLOR, TRAFFIC_COLOR
+)
+
 
 
 class BorderLayer(Enum):
@@ -159,6 +163,88 @@ def _render_csc_glow(border_rect: rl.Rectangle, border_width: float = UI_BORDER_
   rl.draw_rectangle_gradient_v(gx, gy + gh - span, gw, span, fade_rgba, glow_rgba)
   rl.draw_rectangle_gradient_h(gx, gy, span, gh, glow_rgba, fade_rgba)
   rl.draw_rectangle_gradient_h(gx + gw - span, gy, span, gh, fade_rgba, glow_rgba)
+
+
+_smoothed_steer = 0.0
+
+
+def render_background_effects(rect: rl.Rectangle, border_width: float):
+  global _smoothed_steer
+  sm = ui_state.sm
+
+  # 1. Turn Signal and Blind Spot indicators
+  car_state = sm["carState"] if sm.valid.get("carState", False) else None
+  if car_state:
+    show_signal = ui_state.params.get_bool("SignalMetrics")
+    show_blindspot = ui_state.params.get_bool("BlindSpotMetrics")
+    if show_signal or show_blindspot:
+      left_blindspot = car_state.leftBlindspot
+      right_blindspot = car_state.rightBlindspot
+      left_blinker = car_state.leftBlinker
+      right_blinker = car_state.rightBlinker
+
+      if (show_signal and (left_blinker or right_blinker)) or (show_blindspot and (left_blindspot or right_blindspot)):
+        interval = 250 if show_blindspot and (left_blindspot or right_blindspot) else 500
+        flicker_active = (int(rl.get_time() * 1000) % (interval * 2)) < interval
+
+        def get_half_border_color(blindspot, turn_signal):
+          if turn_signal and show_signal:
+            if blindspot:
+              return TRAFFIC_COLOR if flicker_active else CEM_OVERRIDE_COLOR
+            else:
+              return CEM_OVERRIDE_COLOR if flicker_active else rl.Color(0, 0, 0, 0)
+          elif blindspot and show_blindspot:
+            return TRAFFIC_COLOR
+          else:
+            return rl.Color(0, 0, 0, 0)
+
+        left_color = get_half_border_color(left_blindspot, left_blinker)
+        right_color = get_half_border_color(right_blindspot, right_blinker)
+
+        # Draw left side borders
+        if left_color.a > 0:
+          rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width // 2), int(rect.height))
+          rl.draw_rectangle_rounded(rect, 0.12, 10, left_color)
+          rl.end_scissor_mode()
+
+        # Draw right side borders
+        if right_color.a > 0:
+          rl.begin_scissor_mode(int(rect.x + rect.width // 2), int(rect.y), int(rect.width // 2), int(rect.height))
+          rl.draw_rectangle_rounded(rect, 0.12, 10, right_color)
+          rl.end_scissor_mode()
+
+  # 2. Steering Torque Border
+  car_control = sm["carControl"] if sm.valid.get("carControl", False) else None
+  if car_control:
+    show_steering = ui_state.params.get_bool("ShowSteering")
+    if show_steering:
+      torque = -car_control.actuators.torque
+      abs_torque = abs(torque)
+
+      _smoothed_steer = 0.25 * abs_torque + 0.75 * _smoothed_steer
+      if abs(_smoothed_steer - abs_torque) < 0.01:
+        _smoothed_steer = abs_torque
+
+      visible_height = int(rect.height * _smoothed_steer)
+      if visible_height > 0:
+        if _smoothed_steer < 0.25:
+          t = _smoothed_steer / 0.25
+          col = rl.color_alpha_blend(ENGAGED_COLOR, CEM_OVERRIDE_COLOR, rl.Color(255, 255, 255, int(t * 255)))
+        elif _smoothed_steer < 0.5:
+          t = (_smoothed_steer - 0.25) / 0.25
+          col = rl.color_alpha_blend(CEM_OVERRIDE_COLOR, EXPERIMENTAL_COLOR, rl.Color(255, 255, 255, int(t * 255)))
+        else:
+          t = min(1.0, (_smoothed_steer - 0.5) / 0.5)
+          col = rl.color_alpha_blend(EXPERIMENTAL_COLOR, TRAFFIC_COLOR, rl.Color(255, 255, 255, int(t * 255)))
+
+        y_pos = int(rect.y + rect.height - visible_height)
+        if torque < 0:
+          rl.begin_scissor_mode(int(rect.x), y_pos, int(border_width), int(visible_height))
+        else:
+          rl.begin_scissor_mode(int(rect.x + rect.width - border_width), y_pos, int(border_width), int(visible_height))
+
+        rl.draw_rectangle_rounded(rect, 0.12, 10, col)
+        rl.end_scissor_mode()
 
 
 _effects: list[BorderEffect] = [

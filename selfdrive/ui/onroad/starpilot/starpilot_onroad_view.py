@@ -3,7 +3,7 @@ import time
 from msgq.visionipc import VisionStreamType
 from openpilot.common.params import Params
 from openpilot.selfdrive.ui.onroad.augmented_road_view import AugmentedRoadView
-from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import render_behind, render_overlay
+from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import render_behind, render_overlay, render_background_effects
 from openpilot.selfdrive.ui.onroad.starpilot.path import render_adjacent_paths, render_blind_spot_path, render_path_edges
 from openpilot.selfdrive.ui.onroad.starpilot.personality_button import PersonalityButton, BTN_SIZE
 from openpilot.selfdrive.ui.onroad.starpilot.slc_speed_limit import (
@@ -29,7 +29,6 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._font_bold = gui_app.font(FontWeight.BOLD)
     self._font_medium = gui_app.font(FontWeight.MEDIUM)
     self._standstill_started_at = 0.0
-    self._smoothed_steer = 0.0
     self._aethergauge = AetherGauge()
 
   def _render(self, rect: rl.Rectangle):
@@ -37,6 +36,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     border_width = self._get_border_width()
     border_color = get_screen_edge_color(ui_state)
     rl.draw_rectangle_rounded(rect, 0.12, 10, border_color)
+    render_background_effects(rect, border_width)
     super()._render(rect)
 
     if not ui_state.started:
@@ -222,8 +222,6 @@ class StarPilotOnroadView(AugmentedRoadView):
 
     render_overlay(border_rect, border_width)
 
-    self._render_border_effects(rect)
-
   def _handle_mouse_press(self, mouse_pos: MousePos):
     border_width = self._get_border_width()
     content_rect = rl.Rectangle(
@@ -309,77 +307,6 @@ class StarPilotOnroadView(AugmentedRoadView):
     by = self._content_rect.y + self._content_rect.height - sz.y - 10
     draw_text_with_outline(fps_str, bx, by, rl.WHITE)
 
-  def _render_border_effects(self, rect: rl.Rectangle):
-    car_state = ui_state.sm["carState"] if ui_state.sm.valid.get("carState", False) else None
-    car_control = ui_state.sm["carControl"] if ui_state.sm.valid.get("carControl", False) else None
-    if not car_state:
-      return
-
-    show_steering = self._params.get_bool("ShowSteering")
-    show_signal = self._params.get_bool("SignalMetrics")
-    show_blindspot = self._params.get_bool("BlindSpotMetrics")
-    border_width = self._get_border_width()
-
-    # 1. Turn Signal and Blind Spot warning borders
-    left_blindspot = car_state.leftBlindspot
-    right_blindspot = car_state.rightBlindspot
-    left_blinker = car_state.leftBlinker
-    right_blinker = car_state.rightBlinker
-
-    if (show_signal and (left_blinker or right_blinker)) or (show_blindspot and (left_blindspot or right_blindspot)):
-      interval = 250 if show_blindspot and (left_blindspot or right_blindspot) else 500
-      flicker_active = (int(rl.get_time() * 1000) % (interval * 2)) < interval
-
-      def get_half_border_color(blindspot, turn_signal):
-        if turn_signal and show_signal:
-          if blindspot:
-            return TRAFFIC_COLOR if flicker_active else CEM_OVERRIDE_COLOR
-          else:
-            return CEM_OVERRIDE_COLOR if flicker_active else rl.Color(0, 0, 0, 0)
-        elif blindspot and show_blindspot:
-          return TRAFFIC_COLOR
-        else:
-          return rl.Color(0, 0, 0, 0)
-
-      left_color = get_half_border_color(left_blindspot, left_blinker)
-      right_color = get_half_border_color(right_blindspot, right_blinker)
-
-      # Draw left side borders
-      if left_color.a > 0:
-        rl.draw_rectangle(int(rect.x), int(rect.y), int(border_width), int(rect.height), left_color)
-        rl.draw_rectangle(int(rect.x), int(rect.y), int(rect.width // 2), int(border_width), left_color)
-        rl.draw_rectangle(int(rect.x), int(rect.y + rect.height - border_width), int(rect.width // 2), int(border_width), left_color)
-
-      # Draw right side borders
-      if right_color.a > 0:
-        rl.draw_rectangle(int(rect.x + rect.width - border_width), int(rect.y), int(border_width), int(rect.height), right_color)
-        rl.draw_rectangle(int(rect.x + rect.width // 2), int(rect.y), int(rect.width // 2), int(border_width), right_color)
-        rl.draw_rectangle(int(rect.x + rect.width // 2), int(rect.y + rect.height - border_width), int(rect.width // 2), int(border_width), right_color)
-
-    # 2. Steering Torque Border
-    if show_steering and car_control:
-      torque = -car_control.actuators.torque
-      abs_torque = abs(torque)
-
-      self._smoothed_steer = 0.25 * abs_torque + 0.75 * self._smoothed_steer
-      if abs(self._smoothed_steer - abs_torque) < 0.01:
-        self._smoothed_steer = abs_torque
-
-      visible_height = int(rect.height * self._smoothed_steer)
-      x_pos = int(rect.x) if torque < 0 else int(rect.x + rect.width - border_width)
-      y_pos = int(rect.y + rect.height - visible_height)
-
-      if self._smoothed_steer < 0.25:
-        t = self._smoothed_steer / 0.25
-        col = rl.color_alpha_blend(ENGAGED_COLOR, CEM_OVERRIDE_COLOR, rl.Color(255, 255, 255, int(t * 255)))
-      elif self._smoothed_steer < 0.5:
-        t = (self._smoothed_steer - 0.25) / 0.25
-        col = rl.color_alpha_blend(CEM_OVERRIDE_COLOR, EXPERIMENTAL_COLOR, rl.Color(255, 255, 255, int(t * 255)))
-      else:
-        t = min(1.0, (self._smoothed_steer - 0.5) / 0.5)
-        col = rl.color_alpha_blend(EXPERIMENTAL_COLOR, TRAFFIC_COLOR, rl.Color(255, 255, 255, int(t * 255)))
-
-      rl.draw_rectangle(int(x_pos), int(y_pos), int(border_width), int(visible_height), col)
 
   def _render_bottom_row_widgets(self):
     # Hide if alerts are active
