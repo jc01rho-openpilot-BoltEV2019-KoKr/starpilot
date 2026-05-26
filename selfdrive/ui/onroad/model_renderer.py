@@ -225,20 +225,21 @@ class ModelRenderer(Widget):
       else:
         path_width *= 0.50
 
-    max_distance = np.clip(path_x_array[-1], MIN_DRAW_DISTANCE, MAX_DRAW_DISTANCE)
-    max_idx = self._get_path_length_idx(self._lane_lines[0].raw_points[:, 0], max_distance)
+    unclipped_max_distance = np.clip(path_x_array[-1], MIN_DRAW_DISTANCE, MAX_DRAW_DISTANCE)
+    unclipped_max_idx = self._get_path_length_idx(self._lane_lines[0].raw_points[:, 0], unclipped_max_distance)
 
     # Update lane lines using raw points
     for i, lane_line in enumerate(self._lane_lines):
       lane_line.projected_points = self._map_line_to_polygon(
-        lane_line.raw_points, lane_line_width_m * self._lane_line_probs[i], 0.0, max_idx, max_distance
+        lane_line.raw_points, lane_line_width_m * self._lane_line_probs[i], 0.0, unclipped_max_idx, unclipped_max_distance
       )
 
     # Update road edges using raw points
     for road_edge in self._road_edges:
-      road_edge.projected_points = self._map_line_to_polygon(road_edge.raw_points, road_edge_width_m, 0.0, max_idx, max_distance)
+      road_edge.projected_points = self._map_line_to_polygon(road_edge.raw_points, road_edge_width_m, 0.0, unclipped_max_idx, unclipped_max_distance)
 
     # Update path using raw points
+    max_distance = unclipped_max_distance
     if lead and lead.status:
       lead_d = lead.dRel * 2.0
       max_distance = np.clip(lead_d - min(lead_d * 0.35, 10.0), 0.0, max_distance)
@@ -254,7 +255,7 @@ class ModelRenderer(Widget):
     )
 
     # Compute adjacent path vertices
-    self._update_adjacent_paths(max_idx, max_distance)
+    self._update_adjacent_paths(unclipped_max_idx, unclipped_max_distance)
 
     self._update_experimental_gradient()
 
@@ -646,81 +647,34 @@ class ModelRenderer(Widget):
       return
 
     # Left adjacent: average of lane_lines[0] and lane_lines[1]
-    self._adjacent_path_vertices[0] = self._map_averaged_line_to_polygon(
+    self._adjacent_path_vertices[0] = self._get_adjacent_path_polygon(
       self._lane_lines[0].raw_points, self._lane_lines[1].raw_points,
-      lane_width_left / 2.0, 0.0, max_idx, max_distance
+      lane_width_left / 2.0, max_idx, max_distance
     )
 
     # Right adjacent: average of lane_lines[2] and lane_lines[3]
-    self._adjacent_path_vertices[1] = self._map_averaged_line_to_polygon(
+    self._adjacent_path_vertices[1] = self._get_adjacent_path_polygon(
       self._lane_lines[2].raw_points, self._lane_lines[3].raw_points,
-      lane_width_right / 2.0, 0.0, max_idx, max_distance
+      lane_width_right / 2.0, max_idx, max_distance
     )
 
-  def _map_averaged_line_to_polygon(self, line1: np.ndarray, line2: np.ndarray, y_off: float, z_off: float, max_idx: int, max_distance: float) -> np.ndarray:
-    """Convert averaged 3D line pair to 2D polygon for adjacent path rendering.
-
-    Averages the Y coordinates of two lane lines, uses X from line1, Z from line1.
-    Then projects to screen space like _map_line_to_polygon.
-    Grounds the path to the bottom of the screen.
-    """
+  def _get_adjacent_path_polygon(self, line1: np.ndarray, line2: np.ndarray, y_off: float, max_idx: int, max_distance: float) -> np.ndarray:
     if line1.shape[0] == 0 or line2.shape[0] == 0:
       return np.empty((0, 2), dtype=np.float32)
 
     # Use the shorter of the two lines
-    min_len = min(line1.shape[0], line2.shape[0], max_idx + 1)
+    min_len = min(line1.shape[0], line2.shape[0])
     if min_len == 0:
       return np.empty((0, 2), dtype=np.float32)
 
-    # Average Y, use X from line1, Z from line1
-    avg_x = line1[:min_len, 0]
-    avg_y = (line1[:min_len, 1] + line2[:min_len, 1]) / 2.0
-    avg_z = line1[:min_len, 2]
+    # Average Y, use X and Z from line1
+    avg_line = np.empty((min_len, 3), dtype=np.float32)
+    avg_line[:, 0] = line1[:min_len, 0]
+    avg_line[:, 1] = (line1[:min_len, 1] + line2[:min_len, 1]) / 2.0
+    avg_line[:, 2] = line1[:min_len, 2]
 
-    # Filter non-negative x
-    valid = avg_x >= 0
-    if not np.any(valid):
-      return np.empty((0, 2), dtype=np.float32)
-
-    points = np.column_stack([avg_x[valid], avg_y[valid], avg_z[valid]])
-    N = points.shape[0]
-
-    # Generate left and right 3D points
-    offsets = np.array([[0, -y_off, z_off], [0, y_off, z_off]], dtype=np.float32)
-    points_3d = points[None, :, :] + offsets[:, None, :]
-    points_3d = points_3d.reshape(2 * N, 3)
-
-    # Transform
-    proj = self._car_space_transform @ points_3d.T
-    proj = proj.reshape(3, 2, N)
-    left_proj = proj[:, 0, :]
-    right_proj = proj[:, 1, :]
-
-    # Filter valid z
-    valid_proj = (np.abs(left_proj[2]) >= 1e-6) & (np.abs(right_proj[2]) >= 1e-6)
-    if not np.any(valid_proj):
-      return np.empty((0, 2), dtype=np.float32)
-
-    left_screen = left_proj[:2, valid_proj] / left_proj[2, valid_proj][None, :]
-    right_screen = right_proj[:2, valid_proj] / right_proj[2, valid_proj][None, :]
-
-    # Clip region filter
-    clip = self._clip_region
-    x_min, x_max = clip.x, clip.x + clip.width
-    y_min, y_max = clip.y, clip.y + clip.height
-
-    left_in_clip = (left_screen[0] >= x_min) & (left_screen[0] <= x_max) & (left_screen[1] >= y_min) & (left_screen[1] <= y_max)
-    right_in_clip = (right_screen[0] >= x_min) & (right_screen[0] <= x_max) & (right_screen[1] >= y_min) & (right_screen[1] <= y_max)
-    both_in_clip = left_in_clip & right_in_clip
-
-    if not np.any(both_in_clip):
-      return np.empty((0, 2), dtype=np.float32)
-
-    left_screen = left_screen[:, both_in_clip]
-    right_screen = right_screen[:, both_in_clip]
-
-    # No inversion check for adjacent paths (allow_invert=True equivalent)
-    polygon = np.vstack((left_screen.T, right_screen[:, ::-1].T)).astype(np.float32)
+    # Map the averaged line to a polygon using the standard path mapper
+    polygon = self._map_line_to_polygon(avg_line, y_off, 0.0, max_idx, max_distance, allow_invert=True)
 
     # Ground to bottom of screen
     if polygon.shape[0] >= 4:

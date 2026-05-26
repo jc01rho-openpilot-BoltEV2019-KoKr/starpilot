@@ -4,7 +4,7 @@ from msgq.visionipc import VisionStreamType
 from openpilot.common.params import Params
 from openpilot.selfdrive.ui.onroad.augmented_road_view import AugmentedRoadView
 from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import render_behind, render_overlay, render_background_effects
-from openpilot.selfdrive.ui.onroad.starpilot.path import render_adjacent_paths, render_blind_spot_path, render_path_edges
+from openpilot.selfdrive.ui.onroad.starpilot.path import render_adjacent_lanes, render_path_edges
 from openpilot.selfdrive.ui.onroad.starpilot.personality_button import PersonalityButton, BTN_SIZE
 from openpilot.selfdrive.ui.onroad.starpilot.slc_speed_limit import (
   render_speed_limit, handle_slc_click, SET_SPEED_X_OFFSET, SET_SPEED_Y_OFFSET,
@@ -81,14 +81,8 @@ class StarPilotOnroadView(AugmentedRoadView):
     if mr._track_edge_vertices.size >= 4:
       render_path_edges(mr)
 
-    # Adjacent paths or blind spot path (mutually exclusive, matching Qt behavior)
-    adjacent_enabled = self._params.get_bool("AdjacentPath")
-    blind_spot_enabled = self._params.get_bool("BlindSpotPath")
-
-    if adjacent_enabled and mr._adjacent_path_vertices[0].size >= 4:
-      render_adjacent_paths(mr)
-    elif blind_spot_enabled and mr._adjacent_path_vertices[0].size >= 4:
-      render_blind_spot_path(mr)
+    # Render adjacent lanes (incorporates both adjacent path and blind spot warnings)
+    render_adjacent_lanes(mr)
 
     # Render stopping point atop the path
     from openpilot.selfdrive.ui.onroad.starpilot.stopping_point import render_stopping_point
