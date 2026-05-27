@@ -11,7 +11,11 @@ from openpilot.starpilot.assets.model_manager import (
   CANCEL_DOWNLOAD_PARAM,
   DOWNLOAD_PROGRESS_PARAM,
   ModelManager,
-  TINYGRAD_VERSIONS,
+)
+from openpilot.starpilot.common.model_versions import (
+  is_tinygrad_model_version,
+  uses_combined_driving_artifacts,
+  uses_split_off_policy_artifacts,
 )
 from openpilot.starpilot.common.starpilot_variables import MODELS_PATH
 from openpilot.selfdrive.ui.mici.widgets.button import BigButton
@@ -715,8 +719,11 @@ class DrivingModelBigButton(BigButton):
     return False
 
   def _required_files_for_version(self, key: str, version: str) -> list[str]:
-    if version not in TINYGRAD_VERSIONS:
+    if not is_tinygrad_model_version(version):
       return []
+
+    if uses_combined_driving_artifacts(version):
+      return [f"{key}_driving_tinygrad.pkl"]
 
     files = [
       f"{key}_driving_policy_tinygrad.pkl",
@@ -725,7 +732,7 @@ class DrivingModelBigButton(BigButton):
       f"{key}_driving_vision_metadata.pkl",
     ]
 
-    if version in {"v12", "v13", "v14", "v15"}:
+    if uses_split_off_policy_artifacts(version):
       files.extend([
         f"{key}_driving_off_policy_tinygrad.pkl",
         f"{key}_driving_off_policy_metadata.pkl",

@@ -17,10 +17,14 @@ from openpilot.starpilot.assets.model_manager import (
   MODEL_DOWNLOAD_ALL_PARAM,
   MODEL_DOWNLOAD_PARAM,
   ModelManager,
-  TINYGRAD_VERSIONS,
   canonical_model_key,
   is_builtin_model_key,
   model_key_aliases,
+)
+from openpilot.starpilot.common.model_versions import (
+  is_tinygrad_model_version,
+  uses_combined_driving_artifacts,
+  uses_split_off_policy_artifacts,
 )
 from openpilot.starpilot.common.starpilot_variables import MODELS_PATH, update_starpilot_toggles
 from openpilot.system.ui.lib.application import FontWeight, MouseEvent, MousePos, gui_app
@@ -674,7 +678,7 @@ class StarPilotDrivingModelLayout(_SettingsPage):
     if f"{model_key}.thneed" in files:
       return True
 
-    if version in TINYGRAD_VERSIONS:
+    if is_tinygrad_model_version(version):
       required_files = set(self._required_files_for_version(model_key, version))
       return required_files.issubset(files)
 
@@ -684,6 +688,9 @@ class StarPilotDrivingModelLayout(_SettingsPage):
     return any(file.startswith(f"{model_key}.") or file.startswith(f"{model_key}_") for file in files)
 
   def _required_files_for_version(self, key: str, version: str) -> list[str]:
+    if uses_combined_driving_artifacts(version):
+      return [f"{key}_driving_tinygrad.pkl"]
+
     files = [
       f"{key}_driving_policy_tinygrad.pkl",
       f"{key}_driving_vision_tinygrad.pkl",
@@ -691,7 +698,7 @@ class StarPilotDrivingModelLayout(_SettingsPage):
       f"{key}_driving_vision_metadata.pkl",
     ]
 
-    if version in {"v12", "v13", "v14", "v15"}:
+    if uses_split_off_policy_artifacts(version):
       files.extend(
         [
           f"{key}_driving_off_policy_tinygrad.pkl",

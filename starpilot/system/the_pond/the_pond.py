@@ -60,6 +60,11 @@ from openpilot.starpilot.common.maps_catalog import (
   schedule_label,
   schedule_param_value,
 )
+from openpilot.starpilot.common.model_versions import (
+  is_tinygrad_model_version,
+  uses_combined_driving_artifacts,
+  uses_split_off_policy_artifacts,
+)
 from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state
 from openpilot.starpilot.common.starpilot_utilities import delete_file, get_lock_status, run_cmd
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH, ERROR_LOGS_PATH, EXCLUDED_KEYS, LEGACY_STARPILOT_PARAM_RENAMES, MAPS_PATH, MODELS_PATH, RESOURCES_REPO, SCREEN_RECORDINGS_PATH, STOCK_THEME_PATH, THEME_SAVE_PATH,\
@@ -4330,14 +4335,17 @@ def setup(app):
     if f"{model_key}.thneed" in on_disk_files:
       return True
 
-    if model_version in ("v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15"):
+    if is_tinygrad_model_version(model_version):
+      if uses_combined_driving_artifacts(model_version):
+        return f"{model_key}_driving_tinygrad.pkl" in on_disk_files
+
       required_files = {
         f"{model_key}_driving_policy_tinygrad.pkl",
         f"{model_key}_driving_vision_tinygrad.pkl",
         f"{model_key}_driving_policy_metadata.pkl",
         f"{model_key}_driving_vision_metadata.pkl",
       }
-      if model_version in ("v12", "v13", "v14", "v15"):
+      if uses_split_off_policy_artifacts(model_version):
         required_files |= {
           f"{model_key}_driving_off_policy_tinygrad.pkl",
           f"{model_key}_driving_off_policy_metadata.pkl",

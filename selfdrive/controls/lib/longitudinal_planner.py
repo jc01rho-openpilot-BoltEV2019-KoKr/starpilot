@@ -8,6 +8,7 @@ from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
+from openpilot.starpilot.common.model_versions import is_tinygrad_model_version
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import desired_follow_distance
@@ -434,7 +435,7 @@ class LongitudinalPlanner:
 
   @property
   def mlsim(self):
-    return self.generation in ("v8", "v10", "v11", "v12", "v13", "v14", "v15")
+    return is_tinygrad_model_version(self.generation)
 
   def get_mpc_mode(self) -> str:
     if not self.mlsim:

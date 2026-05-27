@@ -1,0 +1,447 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+import pickle
+import time
+from pathlib import Path
+
+from openpilot.system.hardware import TICI
+
+os.environ["DEV"] = "QCOM" if TICI else "LLVM"
+
+import cereal.messaging as messaging
+import numpy as np
+from cereal import car, log
+from msgq.visionipc import VisionBuf, VisionIpcClient, VisionStreamType
+from opendbc.car.car_helpers import get_demo_car_params
+from setproctitle import setproctitle
+from tinygrad.device import Device
+from tinygrad.tensor import Tensor
+
+from openpilot.common.file_chunker import read_file_chunked
+from openpilot.common.filter_simple import FirstOrderFilter
+from openpilot.common.params import Params
+from openpilot.common.realtime import DT_MDL, config_realtime_process
+from openpilot.common.swaglog import cloudlog
+from openpilot.common.transformations.camera import DEVICE_CAMERAS
+from openpilot.common.transformations.model import get_warp_matrix
+from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
+from openpilot.selfdrive.controls.lib.drive_helpers import smooth_value
+from openpilot.selfdrive.modeld.compile_modeld import POLICY_INPUTS, WARP_INPUTS, make_input_queues
+from openpilot.selfdrive.modeld.constants import ModelConstants
+from openpilot.selfdrive.modeld.fill_model_msg import PublishState, fill_model_msg, fill_pose_msg
+from openpilot.selfdrive.modeld.parse_model_outputs import Parser
+from openpilot.starpilot.assets.model_manager import ModelManager
+from openpilot.starpilot.common.model_versions import uses_combined_driving_artifacts
+from openpilot.starpilot.common.starpilot_variables import MODELS_PATH, get_starpilot_toggles, params_memory
+from openpilot.system import sentry
+from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
+
+
+PROCESS_NAME = "selfdrive.modeld.modeld"
+SEND_RAW_PRED = os.getenv("SEND_RAW_PRED")
+
+BUILTIN_MODEL_KEY = "sc2"
+BUILTIN_MODEL_ALIASES = {BUILTIN_MODEL_KEY, "sc"}
+
+LAT_SMOOTH_SECONDS = 0.0
+LONG_SMOOTH_SECONDS = 0.3
+MIN_LAT_CONTROL_SPEED = 0.3
+
+
+def _get_param_str(params: Params, key: str, default: str = "") -> str:
+  try:
+    value = params.get(key)
+  except Exception:
+    return default
+  if value is None:
+    return default
+  if isinstance(value, bytes):
+    try:
+      return value.decode("utf-8")
+    except Exception:
+      return default
+  if isinstance(value, (dict, list)):
+    return default
+  return str(value)
+
+
+def _get_default_param_str(params: Params, key: str) -> str:
+  try:
+    value = params.get_default_value(key)
+  except Exception:
+    return ""
+  if value is None:
+    return ""
+  if isinstance(value, bytes):
+    try:
+      return value.decode("utf-8")
+    except Exception:
+      return ""
+  return str(value)
+
+
+def _resolve_mirrored_param(params: Params, primary_key: str, secondary_key: str) -> str:
+  primary_val = _get_param_str(params, primary_key).strip()
+  secondary_val = _get_param_str(params, secondary_key).strip()
+  if primary_val == secondary_val:
+    return secondary_val or primary_val
+
+  primary_default = _get_default_param_str(params, primary_key).strip()
+  secondary_default = _get_default_param_str(params, secondary_key).strip()
+  primary_non_default = bool(primary_val) and primary_val != primary_default
+  secondary_non_default = bool(secondary_val) and secondary_val != secondary_default
+
+  if secondary_non_default:
+    return secondary_val
+  if primary_non_default:
+    return primary_val
+  return secondary_val or primary_val
+
+
+def _canonical_model_id(model_id: str) -> str:
+  key = (model_id or "").strip().lower()
+  return BUILTIN_MODEL_KEY if key in BUILTIN_MODEL_ALIASES else key
+
+
+def _combined_model_path(model_id: str, use_builtin_model: bool) -> Path:
+  if use_builtin_model:
+    return Path(__file__).parent / "models" / "driving_tinygrad.pkl"
+  return MODELS_PATH / f"{model_id}_driving_tinygrad.pkl"
+
+
+def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action, v_ego: float) -> log.ModelDataV2.Action:
+  desired_curv_unscaled, desired_accel = model_output["action"][0]
+  desired_curvature = float(desired_curv_unscaled) / max(1.0, v_ego) ** 2
+  should_stop = (v_ego < 0.3 and desired_accel < 0.1)
+
+  desired_accel = smooth_value(float(desired_accel), prev_action.desiredAcceleration, LONG_SMOOTH_SECONDS)
+  if v_ego > MIN_LAT_CONTROL_SPEED:
+    desired_curvature = smooth_value(desired_curvature, prev_action.desiredCurvature, LAT_SMOOTH_SECONDS)
+  else:
+    desired_curvature = prev_action.desiredCurvature
+
+  return log.ModelDataV2.Action(
+    desiredCurvature=float(desired_curvature),
+    desiredAcceleration=float(desired_accel),
+    shouldStop=bool(should_stop),
+  )
+
+
+class FrameMeta:
+  frame_id: int = 0
+  timestamp_sof: int = 0
+  timestamp_eof: int = 0
+
+  def __init__(self, vipc=None):
+    if vipc is not None:
+      self.frame_id, self.timestamp_sof, self.timestamp_eof = vipc.frame_id, vipc.timestamp_sof, vipc.timestamp_eof
+
+
+class ModelState:
+  prev_desire: np.ndarray
+
+  def __init__(self, cam_w: int, cam_h: int):
+    params = Params()
+    model_id_raw = _resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY
+    self.model_id = _canonical_model_id(model_id_raw)
+    self.model_version = _resolve_mirrored_param(params, "ModelVersion", "DrivingModelVersion")
+    if not uses_combined_driving_artifacts(self.model_version):
+      raise ValueError(f"Combined runtime requested for non-combined version {self.model_version!r}")
+
+    use_builtin_model = self.model_id == BUILTIN_MODEL_KEY
+    model_path = _combined_model_path(self.model_id, use_builtin_model)
+    if not model_path.is_file():
+      if use_builtin_model:
+        raise FileNotFoundError(
+          f"Missing builtin combined model artifact: {model_path}. "
+          "Rebuild/deploy the combined builtin model before selecting this version."
+        )
+
+      cloudlog.error(f"Missing combined model artifact {model_path}, downloading {self.model_id}...")
+      ModelManager(params, params_memory).download_model(self.model_id)
+      if not model_path.is_file():
+        raise FileNotFoundError(model_path)
+
+    jits = pickle.loads(read_file_chunked(model_path))
+
+    vision_metadata = jits["metadata"]["vision"]
+    off_policy_metadata = jits["metadata"]["off_policy"]
+    on_policy_metadata = jits["metadata"]["on_policy"]
+
+    self.vision_input_shapes = vision_metadata["input_shapes"]
+    self.vision_input_names = list(self.vision_input_shapes.keys())
+    self.vision_output_slices = vision_metadata["output_slices"]
+    self.off_policy_output_slices = off_policy_metadata["output_slices"]
+    self.policy_input_shapes = on_policy_metadata["input_shapes"]
+    self.policy_output_slices = on_policy_metadata["output_slices"]
+    self.desire_key = next(key for key in self.policy_input_shapes if key.startswith("desire"))
+
+    self.frame_skip = ModelConstants.MODEL_RUN_FREQ // ModelConstants.MODEL_CONTEXT_FREQ
+    self.dev = Device.DEFAULT
+    self.input_queues, self.npy = make_input_queues(self.vision_input_shapes, self.policy_input_shapes, self.frame_skip, device=self.dev)
+    self.full_frames: dict[str, Tensor] = {}
+    self._blob_cache: dict[tuple[str, int], Tensor] = {}
+    self.parser = Parser()
+    self.frame_buf_params = {key: get_nv12_info(cam_w, cam_h) for key in ("img", "big_img")}
+    self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
+
+    camera_jit = jits[(cam_w, cam_h)]
+    self.split_warp_layout = "run_policy" in jits and not isinstance(camera_jit, dict)
+    if self.split_warp_layout:
+      self.run_policy = jits["run_policy"]
+      self.warp_enqueue = camera_jit
+    else:
+      self.run_policy = camera_jit["run_policy"]
+      self.warp_enqueue = camera_jit["warp_enqueue"]
+
+  def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
+    return {key: model_outputs[np.newaxis, value] for key, value in output_slices.items()}
+
+  def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray], inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
+    for key in bufs.keys():
+      ptr = np.frombuffer(bufs[key].data, dtype=np.uint8).ctypes.data
+      yuv_size = self.frame_buf_params[key][3]
+      cache_key = (key, ptr)
+      if cache_key not in self._blob_cache:
+        self._blob_cache[cache_key] = Tensor.from_blob(ptr, (yuv_size,), dtype="uint8", device=self.dev)
+      self.full_frames[key] = self._blob_cache[cache_key]
+
+    inputs[self.desire_key][0] = 0
+    self.npy["desire"][:] = np.where(inputs[self.desire_key] - self.prev_desire > 0.99, inputs[self.desire_key], 0)
+    self.prev_desire[:] = inputs[self.desire_key]
+    self.npy["traffic_convention"][:] = inputs["traffic_convention"]
+    if "action_t" in self.npy:
+      self.npy["action_t"][:] = inputs["action_t"]
+    self.npy["tfm"][:, :] = transforms["img"][:, :]
+    self.npy["big_tfm"][:, :] = transforms["big_img"][:, :]
+
+    if self.split_warp_layout:
+      img, big_img = self.warp_enqueue(
+        **{key: self.input_queues[key] for key in WARP_INPUTS},
+        frame=self.full_frames["img"],
+        big_frame=self.full_frames["big_img"],
+      )
+      if prepare_only:
+        return None
+      policy_inputs = {key: self.input_queues[key] for key in POLICY_INPUTS if key in self.input_queues}
+      vision_output, policy_output, off_policy_output = self.run_policy(**policy_inputs, img=img, big_img=big_img)
+    else:
+      if prepare_only:
+        self.warp_enqueue(**self.input_queues, frame=self.full_frames["img"], big_frame=self.full_frames["big_img"])
+        return None
+      vision_output, policy_output, off_policy_output = self.run_policy(
+        **self.input_queues,
+        frame=self.full_frames["img"],
+        big_frame=self.full_frames["big_img"],
+      )
+
+    vision_output = vision_output.numpy().flatten()
+    policy_output = policy_output.numpy().flatten()
+    off_policy_output = off_policy_output.numpy().flatten()
+
+    vision_outputs_dict = self.parser.parse_vision_outputs(self.slice_outputs(vision_output, self.vision_output_slices))
+    off_policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(off_policy_output, self.off_policy_output_slices))
+    policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(policy_output, self.policy_output_slices))
+    combined_outputs_dict = {**vision_outputs_dict, **off_policy_outputs_dict, **policy_outputs_dict}
+
+    if SEND_RAW_PRED:
+      combined_outputs_dict["raw_pred"] = np.concatenate([vision_output.copy(), policy_output.copy(), off_policy_output.copy()])
+    return combined_outputs_dict
+
+
+def main(demo=False):
+  cloudlog.warning("modeld init")
+
+  sentry.set_tag("daemon", PROCESS_NAME)
+  cloudlog.bind(daemon=PROCESS_NAME)
+  setproctitle(PROCESS_NAME)
+  config_realtime_process(7, 54)
+
+  while True:
+    available_streams = VisionIpcClient.available_streams("camerad", block=False)
+    if available_streams:
+      use_extra_client = VisionStreamType.VISION_STREAM_WIDE_ROAD in available_streams and VisionStreamType.VISION_STREAM_ROAD in available_streams
+      main_wide_camera = VisionStreamType.VISION_STREAM_ROAD not in available_streams
+      break
+    time.sleep(0.1)
+
+  vipc_client_main_stream = VisionStreamType.VISION_STREAM_WIDE_ROAD if main_wide_camera else VisionStreamType.VISION_STREAM_ROAD
+  vipc_client_main = VisionIpcClient("camerad", vipc_client_main_stream, True)
+  vipc_client_extra = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_WIDE_ROAD, False)
+  cloudlog.warning(f"vision stream set up, main_wide_camera: {main_wide_camera}, use_extra_client: {use_extra_client}")
+
+  while not vipc_client_main.connect(False):
+    time.sleep(0.1)
+  while use_extra_client and not vipc_client_extra.connect(False):
+    time.sleep(0.1)
+
+  cloudlog.warning(f"connected main cam with buffer size: {vipc_client_main.buffer_len} ({vipc_client_main.width} x {vipc_client_main.height})")
+  if use_extra_client:
+    cloudlog.warning(f"connected extra cam with buffer size: {vipc_client_extra.buffer_len} ({vipc_client_extra.width} x {vipc_client_extra.height})")
+
+  start_time = time.monotonic()
+  cloudlog.warning("loading combined model")
+  model = ModelState(vipc_client_main.width, vipc_client_main.height)
+  cloudlog.warning(f"combined model loaded in {time.monotonic() - start_time:.1f}s, modeld starting")
+
+  pm = messaging.PubMaster(["modelV2", "drivingModelData", "cameraOdometry", "starpilotModelV2"])
+  sm = messaging.SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay", "starpilotPlan"])
+
+  publish_state = PublishState()
+  params = Params()
+
+  frame_dropped_filter = FirstOrderFilter(0.0, 10.0, 1.0 / ModelConstants.MODEL_RUN_FREQ)
+  last_vipc_frame_id = 0
+  run_count = 0
+
+  model_transform_main = np.zeros((3, 3), dtype=np.float32)
+  model_transform_extra = np.zeros((3, 3), dtype=np.float32)
+  live_calib_seen = False
+  buf_main, buf_extra = None, None
+  meta_main = FrameMeta()
+  meta_extra = FrameMeta()
+
+  if demo:
+    CP = get_demo_car_params()
+  else:
+    CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
+  cloudlog.info("modeld got CarParams: %s", CP.brand)
+
+  long_delay = CP.longitudinalActuatorDelay + LONG_SMOOTH_SECONDS
+  prev_action = log.ModelDataV2.Action()
+  desire_helper = DesireHelper()
+  starpilot_toggles = get_starpilot_toggles(sm)
+
+  while True:
+    while meta_main.timestamp_sof < meta_extra.timestamp_sof + 25000000:
+      buf_main = vipc_client_main.recv()
+      meta_main = FrameMeta(vipc_client_main)
+      if buf_main is None:
+        break
+
+    if buf_main is None:
+      cloudlog.debug("vipc_client_main no frame")
+      continue
+
+    if use_extra_client:
+      while True:
+        buf_extra = vipc_client_extra.recv()
+        meta_extra = FrameMeta(vipc_client_extra)
+        if buf_extra is None or meta_main.timestamp_sof < meta_extra.timestamp_sof + 25000000:
+          break
+
+      if buf_extra is None:
+        cloudlog.debug("vipc_client_extra no frame")
+        continue
+
+      if abs(meta_main.timestamp_sof - meta_extra.timestamp_sof) > 10000000:
+        cloudlog.error(
+          f"frames out of sync! main: {meta_main.frame_id} ({meta_main.timestamp_sof / 1e9:.5f}), "
+          f"extra: {meta_extra.frame_id} ({meta_extra.timestamp_sof / 1e9:.5f})"
+        )
+    else:
+      buf_extra = buf_main
+      meta_extra = meta_main
+
+    sm.update(0)
+    desire = desire_helper.desire
+    is_rhd = sm["driverMonitoringState"].isRHD
+    frame_id = sm["roadCameraState"].frameId
+    v_ego = max(sm["carState"].vEgo, 0.0)
+    lat_delay = sm["liveDelay"].lateralDelay + LAT_SMOOTH_SECONDS
+
+    if sm.updated["liveCalibration"] and sm.seen["roadCameraState"] and sm.seen["deviceState"]:
+      device_from_calib_euler = np.array(sm["liveCalibration"].rpyCalib, dtype=np.float32)
+      dc = DEVICE_CAMERAS[(str(sm["deviceState"].deviceType), str(sm["roadCameraState"].sensor))]
+      model_transform_main = get_warp_matrix(
+        device_from_calib_euler,
+        dc.ecam.intrinsics if main_wide_camera else dc.fcam.intrinsics,
+        False,
+      ).astype(np.float32)
+      model_transform_extra = get_warp_matrix(device_from_calib_euler, dc.ecam.intrinsics, True).astype(np.float32)
+      live_calib_seen = True
+
+    traffic_convention = np.zeros(2, dtype=np.float32)
+    traffic_convention[int(is_rhd)] = 1
+
+    vec_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
+    if 0 <= desire < ModelConstants.DESIRE_LEN:
+      vec_desire[desire] = 1
+
+    vipc_dropped_frames = max(0, meta_main.frame_id - last_vipc_frame_id - 1)
+    frames_dropped = frame_dropped_filter.update(min(vipc_dropped_frames, 10))
+    if run_count < 10:
+      frame_dropped_filter.x = 0.0
+      frames_dropped = 0.0
+    run_count += 1
+
+    frame_drop_ratio = frames_dropped / (1 + frames_dropped)
+    prepare_only = vipc_dropped_frames > 0
+    if prepare_only:
+      cloudlog.error(f"skipping model eval. Dropped {vipc_dropped_frames} frames")
+
+    bufs = {name: buf_extra if "big" in name else buf_main for name in model.vision_input_names}
+    transforms = {name: model_transform_extra if "big" in name else model_transform_main for name in model.vision_input_names}
+
+    frame_delay = DT_MDL
+    action_delay = DT_MDL / 2
+    lat_action_t = lat_delay + frame_delay + action_delay
+    long_action_t = long_delay + frame_delay + action_delay
+
+    inputs: dict[str, np.ndarray] = {
+      model.desire_key: vec_desire,
+      "traffic_convention": traffic_convention,
+    }
+    if "action_t" in model.npy:
+      inputs["action_t"] = np.array([lat_action_t, long_action_t], dtype=np.float32)
+
+    start = time.perf_counter()
+    model_output = model.run(bufs, transforms, inputs, prepare_only)
+    end = time.perf_counter()
+    model_execution_time = end - start
+
+    if model_output is not None:
+      modelv2_send = messaging.new_message("modelV2")
+      starpilot_modelv2_send = messaging.new_message("starpilotModelV2")
+      drivingdata_send = messaging.new_message("drivingModelData")
+      posenet_send = messaging.new_message("cameraOdometry")
+
+      action = get_action_from_model(model_output, prev_action, v_ego)
+      prev_action = action
+      fill_model_msg(
+        drivingdata_send,
+        modelv2_send,
+        model_output,
+        action,
+        publish_state,
+        meta_main.frame_id,
+        meta_extra.frame_id,
+        frame_id,
+        frame_drop_ratio,
+        meta_main.timestamp_eof,
+        model_execution_time,
+        live_calib_seen,
+      )
+
+      desire_state = modelv2_send.modelV2.meta.desireState
+      l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
+      r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
+      lane_change_prob = l_lane_change_prob + r_lane_change_prob
+      desire_helper.update(sm["carState"], sm["carControl"].latActive, lane_change_prob, sm["starpilotPlan"], starpilot_toggles)
+      modelv2_send.modelV2.meta.laneChangeState = desire_helper.lane_change_state
+      modelv2_send.modelV2.meta.laneChangeDirection = desire_helper.lane_change_direction
+      starpilot_modelv2_send.starpilotModelV2.turnDirection = desire_helper.turn_direction
+      drivingdata_send.drivingModelData.meta.laneChangeState = desire_helper.lane_change_state
+      drivingdata_send.drivingModelData.meta.laneChangeDirection = desire_helper.lane_change_direction
+
+      fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, live_calib_seen)
+      pm.send("modelV2", modelv2_send)
+      pm.send("starpilotModelV2", starpilot_modelv2_send)
+      pm.send("drivingModelData", drivingdata_send)
+      pm.send("cameraOdometry", posenet_send)
+
+    last_vipc_frame_id = meta_main.frame_id
+    if sm.updated["starpilotPlan"]:
+      starpilot_toggles = get_starpilot_toggles(sm)
