@@ -22,12 +22,13 @@ class RadarTrackConfig:
   msg_count: int
   radar_type: str
   bus: int = 1
+  frequency: int = 50
 
 
 RADAR_TRACK_CONFIGS = {
   HYUNDAI_MANDO_FRONT_RADAR_DBC: RadarTrackConfig(RADAR_START_ADDR, RADAR_MSG_COUNT, "mando"),
   HYUNDAI_MRR30_RADAR_DBC: RadarTrackConfig(MRR30_RADAR_START_ADDR, MRR30_RADAR_MSG_COUNT, "mrr30"),
-  HYUNDAI_MRR35_RADAR_DBC: RadarTrackConfig(MRR35_RADAR_START_ADDR, MRR35_RADAR_MSG_COUNT, "mrr35", bus=0),
+  HYUNDAI_MRR35_RADAR_DBC: RadarTrackConfig(MRR35_RADAR_START_ADDR, MRR35_RADAR_MSG_COUNT, "mrr35", bus=0, frequency=20),
 }
 
 # POC for parsing corner radars: https://github.com/commaai/openpilot/pull/24221/
@@ -42,7 +43,7 @@ def get_radar_can_parser(CP, radar_config):
   if radar_config is None:
     return None
 
-  messages = [(f"RADAR_TRACK_{addr:x}", 50) for addr in range(radar_config.start_addr, radar_config.start_addr + radar_config.msg_count)]
+  messages = [(f"RADAR_TRACK_{addr:x}", radar_config.frequency) for addr in range(radar_config.start_addr, radar_config.start_addr + radar_config.msg_count)]
   return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, radar_config.bus)
 
 

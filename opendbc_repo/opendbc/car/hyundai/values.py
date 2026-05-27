@@ -491,6 +491,7 @@ class CAR(Platforms):
     ],
     CarSpecs(mass=1948, wheelbase=2.97, steerRatio=14.26, tireStiffnessFactor=0.65),
     flags=HyundaiFlags.EV,
+    radar_dbc=HYUNDAI_MRR30_RADAR_DBC,
   )
   HYUNDAI_IONIQ_5_PE = HyundaiCanFDPlatformConfig(
     [
@@ -1105,9 +1106,10 @@ CAN_GEARS = {
 CANFD_CAR = CAR.with_flags(HyundaiFlags.CANFD)
 CANFD_RADAR_SCC_CAR = CAR.with_flags(HyundaiFlags.RADAR_SCC)  # TODO: merge with UNSUPPORTED_LONGITUDINAL_CAR
 
-# Cars with CANFD_NO_RADAR_DISABLE that now work with SecurityAccess handshake
-CANFD_SECURITYACCESS_CAR = {CAR.HYUNDAI_IONIQ_6, CAR.HYUNDAI_KONA_EV_2ND_GEN}
+# CAN-FD cars with ADAS ECUs that work with the communication-control path.
+CANFD_SECURITYACCESS_CAR = {CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_IONIQ_6, CAR.HYUNDAI_KONA_EV_2ND_GEN}
 CANFD_UNSUPPORTED_LONGITUDINAL_CAR = CAR.with_flags(HyundaiFlags.CANFD_NO_RADAR_DISABLE) - CANFD_SECURITYACCESS_CAR  # TODO: merge with UNSUPPORTED_LONGITUDINAL_CAR
+CANFD_RADAR_LIVE_LONGITUDINAL_CAR = {CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_IONIQ_6}
 
 CAMERA_SCC_CAR = CAR.with_flags(HyundaiFlags.CAMERA_SCC)
 

@@ -306,7 +306,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
     HYUNDAI_CANFD_SCC_CONTROL_COMMON_TX_MSGS(1, true)
     HYUNDAI_CANFD_BLINDSPOT_DASH_TX_MSGS(1)
     {0x51,  0, 32, .check_relay = false},  // ADRV_0x51
-    {0x100, 0, 24, .check_relay = false},  // Ioniq 6: ACCELERATOR_BRAKE_ALT radar heartbeat spoof
+    {0x100, 0, 24, .check_relay = false},  // Ioniq 5/6: ACCELERATOR_BRAKE_ALT radar heartbeat spoof
     {0x730, 1,  8, .check_relay = false},  // tester present for ADAS ECU disable
     {0x160, 1, 16, .check_relay = false},  // ADRV_0x160
     {0x1EA, 1, 32, .check_relay = false},  // ADRV_0x1ea

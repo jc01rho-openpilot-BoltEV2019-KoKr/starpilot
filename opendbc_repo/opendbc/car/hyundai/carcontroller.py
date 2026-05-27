@@ -7,7 +7,7 @@ from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_steer_an
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR
+from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CANFD_RADAR_LIVE_LONGITUDINAL_CAR
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.common.params import Params
@@ -583,10 +583,10 @@ class CarController(CarControllerBase):
     if self.long_active_ecu:
       if lka_steering:
         can_sends.extend(hyundaicanfd.create_adrv_messages(self.packer, self.CAN, self.frame))
-        # Ioniq 6: front radar treats ADAS_DRV's 0x100 broadcast as its host heartbeat
-        # and stops publishing object tracks when it disappears. Spoof it at 100 Hz on
+        # Ioniq 5/6: front radar treats ADAS_DRV's 0x100 broadcast as its host heartbeat
+        # and stops publishing object tracks when it disappears. Spoof it periodically on
         # PT bus so the radar keeps tracking.
-        if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and self.frame % 4 == 0:
+        if self.CP.carFingerprint in CANFD_RADAR_LIVE_LONGITUDINAL_CAR and self.frame % 4 == 0:
           can_sends.append(hyundaicanfd.create_accelerator_brake_alt_spoof(0, self.frame // 4, CS.out.brakePressed, CS.out.gasPressed))
       elif not ccnc_non_hda2:
         can_sends.extend(hyundaicanfd.create_fca_warning_light(self.packer, self.CAN, self.frame))

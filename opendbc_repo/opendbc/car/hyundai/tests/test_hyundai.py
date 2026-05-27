@@ -127,16 +127,19 @@ class TestHyundaiFingerprint:
       assert CP.radarUnavailable != radar
 
     for candidate, radar_addr in (
+      (CAR.HYUNDAI_IONIQ_5, MRR30_RADAR_START_ADDR),
       (CAR.HYUNDAI_IONIQ_5_N, MRR30_RADAR_START_ADDR),
       (CAR.KIA_EV6_2025, MRR30_RADAR_START_ADDR),
       (CAR.HYUNDAI_KONA_EV_2ND_GEN, MRR35_RADAR_START_ADDR),
+      (CAR.HYUNDAI_IONIQ_6, MRR35_RADAR_START_ADDR),
       (CAR.HYUNDAI_IONIQ_9, MRR35_RADAR_START_ADDR),
     ):
-      assert get_radar_track_config(candidate).start_addr == radar_addr
+      radar_config = get_radar_track_config(candidate)
+      assert radar_config.start_addr == radar_addr
       for radar in (True, False):
         fingerprint = gen_empty_fingerprint()
         if radar:
-          fingerprint[1][radar_addr] = 8
+          fingerprint[radar_config.bus][radar_addr] = 8
         CP = CarInterface.get_params(candidate, fingerprint, [], False, False, False, None)
         assert CP.radarUnavailable != radar
 
@@ -151,9 +154,19 @@ class TestHyundaiFingerprint:
     assert CP.openpilotLongitudinalControl
     assert CP.radarUnavailable
 
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[get_radar_track_config(CAR.HYUNDAI_IONIQ_6).bus][MRR35_RADAR_START_ADDR] = 24
     CP = CarInterface.get_params(CAR.HYUNDAI_IONIQ_6, fingerprint, [], True, False, False, None)
     assert CP.openpilotLongitudinalControl
-    assert CP.radarUnavailable
+    assert not CP.radarUnavailable
+    assert get_radar_track_config(CAR.HYUNDAI_IONIQ_6).frequency == 20
+
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[CanBus(None, fingerprint).CAM][0x50] = 32
+    fingerprint[get_radar_track_config(CAR.HYUNDAI_IONIQ_5).bus][MRR30_RADAR_START_ADDR] = 32
+    CP = CarInterface.get_params(CAR.HYUNDAI_IONIQ_5, fingerprint, [], True, False, False, None)
+    assert CP.openpilotLongitudinalControl
+    assert not CP.radarUnavailable
 
     for candidate in HYUNDAI_NON_SCC_CARS:
       CP = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], True, False, False, None)

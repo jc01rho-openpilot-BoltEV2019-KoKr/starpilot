@@ -4,6 +4,7 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import HyundaiFlags, CAR, CarControllerParams, \
                                                    CANFD_UNSUPPORTED_LONGITUDINAL_CAR, \
                                                    CANFD_SECURITYACCESS_CAR, \
+                                                   CANFD_RADAR_LIVE_LONGITUDINAL_CAR, \
                                                    UNSUPPORTED_LONGITUDINAL_CAR, HyundaiSafetyFlags, \
                                                    hyundai_cancel_button_enables_cruise
 from opendbc.car.hyundai.radar_interface import get_radar_track_config
@@ -177,7 +178,7 @@ class CarInterface(CarInterfaceBase):
     if ret.flags & HyundaiFlags.NON_SCC:
       ret.alphaLongitudinalAvailable = False
     ret.openpilotLongitudinalControl = alpha_long and ret.alphaLongitudinalAvailable
-    if ret.openpilotLongitudinalControl and not (candidate == CAR.HYUNDAI_IONIQ_6 and radar_tracks_available):
+    if ret.openpilotLongitudinalControl and not (candidate in CANFD_RADAR_LIVE_LONGITUDINAL_CAR and radar_tracks_available):
       ret.radarUnavailable = True
     ret.pcmCruise = not ret.openpilotLongitudinalControl
     apply_platform_longitudinal_params(ret)
@@ -229,7 +230,7 @@ class CarInterface(CarInterfaceBase):
     params = Params()
 
     if communication_control is None:
-      if CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
+      if CP.carFingerprint in CANFD_RADAR_LIVE_LONGITUDINAL_CAR:
         # Don't use 0x80 suppress bit so we can read the ECU response.
         # Use ENABLE_RX_DISABLE_TX (0x01) so the ECU can still receive from rear radars for BSM
         # while blocking SCC TX.

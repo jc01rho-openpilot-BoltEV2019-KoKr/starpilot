@@ -704,7 +704,7 @@ def hkg_can_fd_checksum(address: int, sig, d: bytearray) -> int:
   return crc
 
 
-# Ioniq 6 / HKG LKA-steering: ADAS_DRV broadcasts ACCELERATOR_BRAKE_ALT (0x100) at 100 Hz on bus 0.
+# Ioniq 5/6 / HKG LKA-steering: ADAS_DRV broadcasts ACCELERATOR_BRAKE_ALT (0x100) on bus 0.
 # The front radar uses this as its "host alive" heartbeat. When we disable ADAS_DRV the
 # radar stops publishing real object tracks. Spoof this message ourselves with valid CRC
 # and current pedal state so the radar keeps tracking.
