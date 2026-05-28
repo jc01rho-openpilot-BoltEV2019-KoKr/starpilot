@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -95,34 +96,37 @@ class NavigationCardRenderer(Widget):
     return self._icons[icon_name]
 
   def _update_state(self) -> None:
-    sm = ui_state.sm
     self._enabled = ui_state.params.get_bool("NavigationUI")
     self._valid = False
 
     if not self._enabled:
       return
-    if sm.recv_frame["navInstruction"] < ui_state.started_frame:
-      return
-    if not sm.valid.get("navInstruction", False):
-      return
 
-    nav_instruction = sm["navInstruction"]
-    if nav_instruction.maneuverPrimaryText == "":
-      return
-
-    self._distance = _format_distance(float(nav_instruction.maneuverDistance), ui_state.is_metric)
-    self._primary_text = nav_instruction.maneuverPrimaryText
-    self._secondary_text = nav_instruction.maneuverSecondaryText
-    self._maneuver_type = nav_instruction.maneuverType or "turn"
-    self._modifier = nav_instruction.maneuverModifier or "straight"
-
-    maneuvers = nav_instruction.allManeuvers
-    if len(maneuvers) > 1:
-      self._has_next = True
-      self._next_maneuver_type = maneuvers[1].type or "turn"
-      self._next_modifier = maneuvers[1].modifier or "straight"
+    raw_state = ui_state.params_memory.get("NavInstructionState") or {}
+    if isinstance(raw_state, str):
+      try:
+        nav_state = json.loads(raw_state) if raw_state else {}
+      except json.JSONDecodeError:
+        return
+    elif isinstance(raw_state, dict):
+      nav_state = raw_state
     else:
-      self._has_next = False
+      return
+
+    if not nav_state.get("valid", False):
+      return
+
+    if str(nav_state.get("maneuverPrimaryText") or "") == "":
+      return
+
+    self._distance = _format_distance(float(nav_state.get("maneuverDistance", 0.0) or 0.0), ui_state.is_metric)
+    self._primary_text = str(nav_state.get("maneuverPrimaryText") or "")
+    self._secondary_text = str(nav_state.get("maneuverSecondaryText") or "")
+    self._maneuver_type = str(nav_state.get("maneuverType") or "turn")
+    self._modifier = str(nav_state.get("maneuverModifier") or "straight")
+    self._next_maneuver_type = str(nav_state.get("nextManeuverType") or "turn")
+    self._next_modifier = str(nav_state.get("nextManeuverModifier") or "straight")
+    self._has_next = bool(nav_state.get("nextManeuverType") or nav_state.get("nextManeuverModifier"))
 
     self._valid = True
 

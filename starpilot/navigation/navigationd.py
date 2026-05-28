@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+import json
 import threading
 from math import isfinite
 from time import monotonic
 
 import cereal.messaging as messaging
-from openpilot.common.gps import get_gps_location_service
 from openpilot.common.params import Params
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
@@ -16,6 +16,7 @@ from openpilot.starpilot.navigation.route_engine import Coordinate, MapboxRouteE
 NAVIGATIOND_HZ = 1
 REROUTE_TRIGGER_SECONDS = 3.0
 ARRIVAL_CLEAR_SECONDS = 5.0
+LOCATION_STATE_STALE_SECONDS = 2.5
 
 
 class Navigationd:
@@ -23,9 +24,7 @@ class Navigationd:
     self.params = Params()
     self.params_memory = Params(memory=True)
     self.route_engine = route_engine or MapboxRouteEngine()
-    self.gps_location_service = get_gps_location_service(self.params)
 
-    self.sm = messaging.SubMaster([self.gps_location_service, "carState"])
     self.pm = messaging.PubMaster(["navInstruction", "navRoute"])
     self.rk = Ratekeeper(NAVIGATIOND_HZ)
 
@@ -124,24 +123,35 @@ class Navigationd:
       return None
     return started_at if started_at is not None else now
 
-  def _update_location(self) -> bool:
-    if self.sm.recv_frame[self.gps_location_service] <= 0:
-      return False
+  def _update_location(self) -> tuple[bool, float]:
+    raw_state = self.params_memory.get("LastGPSPosition", encoding="utf-8") or ""
+    if not raw_state:
+      return False, 0.0
 
-    gps = self.sm[self.gps_location_service]
-    if gps is None or not gps.hasFix:
-      return False
+    try:
+      gps_state = json.loads(raw_state)
+    except json.JSONDecodeError:
+      return False, 0.0
 
-    latitude = float(gps.latitude)
-    longitude = float(gps.longitude)
+    if not isinstance(gps_state, dict) or not gps_state.get("hasFix", False):
+      return False, 0.0
+
+    latitude = float(gps_state.get("latitude", 0.0) or 0.0)
+    longitude = float(gps_state.get("longitude", 0.0) or 0.0)
     if not isfinite(latitude) or not isfinite(longitude) or (abs(latitude) < 1e-6 and abs(longitude) < 1e-6):
-      return False
+      return False, 0.0
+
+    updated_at = float(gps_state.get("updatedAtMonotonic", 0.0) or 0.0)
+    if updated_at > 0.0 and (monotonic() - updated_at) > LOCATION_STATE_STALE_SECONDS:
+      return False, 0.0
 
     self._last_position = Coordinate(latitude, longitude)
 
-    bearing = float(gps.bearingDeg)
+    bearing = float(gps_state.get("bearing", 0.0) or 0.0)
     self._last_bearing = bearing if isfinite(bearing) else None
-    return True
+
+    speed = float(gps_state.get("speed", 0.0) or 0.0)
+    return True, max(speed, 0.0)
 
   def _maybe_update_route(self, current_destination: dict[str, object] | None) -> tuple[NavigationRoute | None, dict[str, object] | None, int]:
     route, active_destination, route_generation = self._snapshot_route()
@@ -240,17 +250,19 @@ class Navigationd:
         self._last_nav_state = None
       return
 
-    modifier = progress.current_step.modifier or ""
-    if progress.current_step.banner_instructions:
-      try:
-        payload = route.build_instruction_payload(progress, use_vienna_sign=self.params.get_bool("UseVienna"))
-        modifier = str(payload.get("maneuverModifier") or modifier)
-      except Exception:
-        pass
+    payload = route.build_instruction_payload(progress, use_vienna_sign=self.params.get_bool("UseVienna"))
+    all_maneuvers = payload.get("allManeuvers") or []
+    next_maneuver = all_maneuvers[1] if len(all_maneuvers) > 1 and isinstance(all_maneuvers[1], dict) else {}
 
     state = {
       "valid": True,
-      "maneuverModifier": modifier,
+      "maneuverModifier": str(payload.get("maneuverModifier") or ""),
+      "maneuverType": str(payload.get("maneuverType") or ""),
+      "maneuverPrimaryText": str(payload.get("maneuverPrimaryText") or ""),
+      "maneuverSecondaryText": str(payload.get("maneuverSecondaryText") or ""),
+      "maneuverDistance": float(payload.get("maneuverDistance") or 0.0),
+      "nextManeuverType": str(next_maneuver.get("type") or ""),
+      "nextManeuverModifier": str(next_maneuver.get("modifier") or ""),
     }
     if state != self._last_nav_state:
       self.params_memory.put_nonblocking("NavInstructionState", state)
@@ -276,13 +288,10 @@ class Navigationd:
     cloudlog.warning("navigationd init")
 
     while True:
-      self.sm.update(0)
-
-      location_valid = self._update_location()
+      location_valid, v_ego = self._update_location()
       current_destination = parse_destination_json(self.params.get("NavDestination", encoding="utf-8"))
       route, active_destination, _ = self._maybe_update_route(current_destination)
 
-      v_ego = float(max(self.sm["carState"].vEgo, 0.0))
       progress, route_state = self._build_progress(route, location_valid, v_ego)
       self._maybe_recompute(route, current_destination or active_destination, progress, route_state)
       updated_route, active_destination, _ = self._snapshot_route()

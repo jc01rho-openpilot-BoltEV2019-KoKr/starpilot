@@ -125,7 +125,6 @@ class SelfdriveD:
     self.last_functional_fan_frame = 0
     self.events_prev = []
     self.logged_comm_issue = None
-    self.logged_locationd_issue = None
     self.not_running_prev = None
     self.experimental_mode = False
     self.safe_mode = self.params.get_bool("SafeMode")
@@ -171,22 +170,6 @@ class SelfdriveD:
     self.has_menu = self.CP.brand == "gm" and not (self.CP.flags & GMFlags.NO_CAMERA.value)
 
     self.FPCP = messaging.log_from_bytes(self.params.get("StarPilotCarParams", block=True), custom.StarPilotCarParams)
-
-  def _service_diagnostics(self, services: list[str]) -> dict[str, dict[str, object]]:
-    diagnostics: dict[str, dict[str, object]] = {}
-    for service in services:
-      if service not in self.sm.services:
-        continue
-
-      recv_age_ms = round(max(0.0, (self.sm.frame - self.sm.recv_frame[service]) * DT_CTRL * 1000.0), 1)
-      diagnostics[service] = {
-        "valid": self.sm.valid[service],
-        "alive": self.sm.alive[service],
-        "freq_ok": self.sm.freq_ok[service],
-        "recv_age_ms": recv_age_ms,
-      }
-
-    return diagnostics
 
   def update_events(self, CS):
     """Compute onroadEvents from carState"""
@@ -450,22 +433,7 @@ class SelfdriveD:
         'not_freq_ok': [s for s, freq_ok in self.sm.freq_ok.items() if not freq_ok],
       }
       if logs != self.logged_comm_issue:
-        interesting_services = sorted(set(
-          logs['invalid'] +
-          logs['not_alive'] +
-          logs['not_freq_ok'] +
-          ['liveCalibration', 'livePose', 'liveParameters', 'radarState', 'driverAssistance', 'longitudinalPlan']
-        ))
-        cloudlog.event(
-          "commIssue",
-          error=True,
-          **logs,
-          service_diagnostics=self._service_diagnostics(interesting_services),
-          nav_destination_active=self.params.get("NavDestination") is not None,
-          navigation_ui=self.params.get_bool("NavigationUI"),
-          can_timeout=CS.canTimeout,
-          can_valid=CS.canValid,
-        )
+        cloudlog.event("commIssue", error=True, **logs)
         self.logged_comm_issue = logs
     else:
       self.logged_comm_issue = None
@@ -475,18 +443,6 @@ class SelfdriveD:
         self.events.add(EventName.posenetInvalid)
       if not self.sm['livePose'].inputsOK:
         self.events.add(EventName.locationdTemporaryError)
-        locationd_issue = {
-          "inputs_ok": self.sm['livePose'].inputsOK,
-          "posenet_ok": self.sm['livePose'].posenetOK,
-          "live_pose_valid": self.sm.valid['livePose'],
-          "live_calibration_valid": self.sm.valid['liveCalibration'],
-          "live_parameters_valid": self.sm.valid['liveParameters'],
-        }
-        if locationd_issue != self.logged_locationd_issue:
-          cloudlog.event("locationdTemporaryError", error=True, **locationd_issue)
-          self.logged_locationd_issue = locationd_issue
-      else:
-        self.logged_locationd_issue = None
       if not self.sm['liveParameters'].valid and cal_status == log.LiveCalibrationData.Status.calibrated and not TESTING_CLOSET and (not SIMULATION or REPLAY):
         self.events.add(EventName.paramsdTemporaryError)
 

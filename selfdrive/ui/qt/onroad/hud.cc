@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <cmath>
 
 #include "selfdrive/ui/qt/util.h"
@@ -54,29 +56,38 @@ void HudRenderer::updateState(const UIState &s) {
   nav_next_maneuver_type.clear();
   nav_next_modifier.clear();
 
-  if (!navigation_enabled || sm.rcv_frame("navInstruction") < s.scene.started_frame ||
-      !sm.alive("navInstruction") || !sm.valid("navInstruction")) {
+  if (!navigation_enabled) {
     return;
   }
 
-  const auto &nav = sm["navInstruction"].getNavInstruction();
-  nav_primary_text = QString::fromUtf8(nav.getManeuverPrimaryText().cStr()).trimmed();
+  const std::string nav_state_raw = params_memory.get("NavInstructionState");
+  if (nav_state_raw.empty()) {
+    return;
+  }
+
+  const QJsonDocument nav_state_doc = QJsonDocument::fromJson(QByteArray::fromStdString(nav_state_raw));
+  if (!nav_state_doc.isObject()) {
+    return;
+  }
+
+  const QJsonObject nav = nav_state_doc.object();
+  if (!nav.value("valid").toBool(false)) {
+    return;
+  }
+
+  nav_primary_text = nav.value("maneuverPrimaryText").toString().trimmed();
   if (nav_primary_text.isEmpty()) {
     return;
   }
 
   navigation_valid = true;
-  nav_secondary_text = QString::fromUtf8(nav.getManeuverSecondaryText().cStr()).trimmed();
-  nav_distance = formatNavDistance(nav.getManeuverDistance());
-  nav_maneuver_type = QString::fromUtf8(nav.getManeuverType().cStr()).trimmed();
-  nav_modifier = QString::fromUtf8(nav.getManeuverModifier().cStr()).trimmed();
-
-  const auto maneuvers = nav.getAllManeuvers();
-  if (maneuvers.size() > 1) {
-    navigation_has_next = true;
-    nav_next_maneuver_type = QString::fromUtf8(maneuvers[1].getType().cStr()).trimmed();
-    nav_next_modifier = QString::fromUtf8(maneuvers[1].getModifier().cStr()).trimmed();
-  }
+  nav_secondary_text = nav.value("maneuverSecondaryText").toString().trimmed();
+  nav_distance = formatNavDistance(static_cast<float>(nav.value("maneuverDistance").toDouble(0.0)));
+  nav_maneuver_type = nav.value("maneuverType").toString().trimmed();
+  nav_modifier = nav.value("maneuverModifier").toString().trimmed();
+  nav_next_maneuver_type = nav.value("nextManeuverType").toString().trimmed();
+  nav_next_modifier = nav.value("nextManeuverModifier").toString().trimmed();
+  navigation_has_next = !nav_next_maneuver_type.isEmpty() || !nav_next_modifier.isEmpty();
 }
 
 void HudRenderer::draw(QPainter &p, const QRect &surface_rect) {

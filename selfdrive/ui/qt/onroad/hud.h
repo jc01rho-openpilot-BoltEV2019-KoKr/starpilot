@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonObject>
 #include <QPainter>
 #include <QPixmap>
 #include "selfdrive/ui/ui.h"
@@ -48,4 +49,5 @@ private:
   QString nav_next_modifier;
   QHash<QString, QPixmap> nav_icon_cache;
   Params params;
+  Params params_memory{"", true};
 };

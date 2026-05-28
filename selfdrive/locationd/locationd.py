@@ -283,8 +283,6 @@ def main():
   filter_initialized = False
   critcal_services = ["accelerometer", "gyroscope", "cameraOdometry"]
   observation_input_invalid = defaultdict(int)
-  last_inputs_diagnostics = None
-
   input_invalid_limit = {s: round(INPUT_INVALID_LIMIT * (SERVICE_LIST[s].frequency / 20.)) for s in critcal_services}
   input_invalid_threshold = {s: input_invalid_limit[s] - 0.5 for s in critcal_services}
   input_invalid_decay = {s: calculate_invalid_input_decay(input_invalid_limit[s], INPUT_INVALID_RECOVERY, SERVICE_LIST[s].frequency) for s in critcal_services}
@@ -335,31 +333,6 @@ def main():
       critical_service_inputs_valid = all(observation_input_invalid[s] < input_invalid_threshold[s] for s in critcal_services)
       inputs_valid = sm.all_valid() and critical_service_inputs_valid
       sensors_valid = sensor_all_checks(acc_msgs, gyro_msgs, sensor_valid, sensor_recv_time, sensor_alive, SIMULATION)
-
-      invalid_services = [s for s, valid in sm.valid.items() if not valid]
-      over_threshold = {
-        s: round(float(observation_input_invalid[s]), 3)
-        for s in critcal_services
-        if observation_input_invalid[s] >= input_invalid_threshold[s]
-      }
-      inputs_diagnostics = {
-        "inputs_valid": inputs_valid,
-        "sensors_valid": sensors_valid,
-        "filter_initialized": filter_initialized,
-        "invalid_services": invalid_services,
-        "over_threshold": over_threshold,
-      }
-      if not inputs_valid and inputs_diagnostics != last_inputs_diagnostics:
-        cloudlog.event(
-          "locationdInputsInvalid",
-          error=True,
-          **inputs_diagnostics,
-          observation_input_invalid={s: round(float(observation_input_invalid[s]), 3) for s in critcal_services},
-          observation_input_thresholds={s: float(input_invalid_threshold[s]) for s in critcal_services},
-        )
-      elif inputs_valid and last_inputs_diagnostics is not None:
-        cloudlog.event("locationdInputsRecovered", **inputs_diagnostics)
-      last_inputs_diagnostics = None if inputs_valid else inputs_diagnostics
 
       msg = estimator.get_msg(sensors_valid, inputs_valid, filter_initialized)
       pm.send("livePose", msg)

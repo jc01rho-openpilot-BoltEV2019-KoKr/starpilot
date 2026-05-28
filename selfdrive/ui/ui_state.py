@@ -54,7 +54,6 @@ class UIState:
         "longitudinalPlan",
         "gpsLocationExternal",
         "mapdOut",
-        "navInstruction",
         "carOutput",
         "carControl",
         "liveParameters",
