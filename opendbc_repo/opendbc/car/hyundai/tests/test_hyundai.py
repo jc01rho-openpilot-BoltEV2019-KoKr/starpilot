@@ -120,12 +120,20 @@ class TestHyundaiFingerprint:
         assert bool(CP.flags & HyundaiFlags.CANFD_LKA_STEERING) == lka_steering
 
     # radar available
-    for radar in (True, False):
-      fingerprint = gen_empty_fingerprint()
-      if radar:
-        fingerprint[1][RADAR_START_ADDR] = 8
-      CP = CarInterface.get_params(CAR.HYUNDAI_SONATA, fingerprint, [], False, False, False, None)
-      assert CP.radarUnavailable != radar
+    for candidate in (CAR.HYUNDAI_SONATA, CAR.GENESIS_G90):
+      assert get_radar_track_config(candidate).start_addr == RADAR_START_ADDR
+      for radar in (True, False):
+        fingerprint = gen_empty_fingerprint()
+        if radar:
+          fingerprint[1][RADAR_START_ADDR] = 8
+        CP = CarInterface.get_params(candidate, fingerprint, [], False, False, False, None)
+        assert CP.radarUnavailable != radar
+
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[1][RADAR_START_ADDR] = 8
+    CP = CarInterface.get_params(CAR.GENESIS_G90, fingerprint, [], True, False, False, None)
+    assert CP.openpilotLongitudinalControl
+    assert not CP.radarUnavailable
 
     for candidate, radar_addr in (
       (CAR.HYUNDAI_IONIQ_5, MRR30_RADAR_START_ADDR),

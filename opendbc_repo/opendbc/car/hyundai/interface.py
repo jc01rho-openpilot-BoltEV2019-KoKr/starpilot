@@ -5,6 +5,7 @@ from opendbc.car.hyundai.values import HyundaiFlags, CAR, CarControllerParams, \
                                                    CANFD_UNSUPPORTED_LONGITUDINAL_CAR, \
                                                    CANFD_SECURITYACCESS_CAR, \
                                                    CANFD_RADAR_LIVE_LONGITUDINAL_CAR, \
+                                                   RADAR_LIVE_LONGITUDINAL_CAR, \
                                                    UNSUPPORTED_LONGITUDINAL_CAR, HyundaiSafetyFlags, \
                                                    HyundaiStarPilotSafetyFlags, \
                                                    hyundai_cancel_button_enables_cruise
@@ -181,7 +182,7 @@ class CarInterface(CarInterfaceBase):
     if ret.flags & HyundaiFlags.NON_SCC:
       ret.alphaLongitudinalAvailable = False
     ret.openpilotLongitudinalControl = alpha_long and ret.alphaLongitudinalAvailable
-    if ret.openpilotLongitudinalControl and not (candidate in CANFD_RADAR_LIVE_LONGITUDINAL_CAR and radar_tracks_available):
+    if ret.openpilotLongitudinalControl and not (candidate in RADAR_LIVE_LONGITUDINAL_CAR and radar_tracks_available):
       ret.radarUnavailable = True
     ret.pcmCruise = not ret.openpilotLongitudinalControl
     apply_platform_longitudinal_params(ret)
