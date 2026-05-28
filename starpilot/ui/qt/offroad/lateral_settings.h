@@ -24,7 +24,7 @@ private:
 
   std::map<QString, AbstractControl*> toggles;
 
-  QSet<QString> advancedLateralTuneKeys = {"ForceAutoTune", "ForceAutoTuneOff", "ForceTorqueController", "SteerDelay", "SteerFriction", "SteerLatAccel", "SteerKP", "SteerRatio"};
+  QSet<QString> advancedLateralTuneKeys = {"ForceAutoTune", "ForceAutoTuneOff", "ForceTorqueController", "SteerDelay", "SteerFriction", "SteerLatAccel", "SteerKP", "SteerOffset", "SteerRatio"};
   QSet<QString> aolKeys = {"AlwaysOnLateralLKAS", "PauseAOLOnBrake"};
   QSet<QString> laneChangeKeys = {"LaneChangeSmoothing", "LaneChangeTime", "LaneDetectionWidth", "MinimumLaneChangeSpeed", "NudgelessLaneChange", "OneLaneChange"};
   QSet<QString> lateralTuneKeys = {"NNFF", "NNFFLite", "TurnDesires"};
@@ -36,6 +36,7 @@ private:
   StarPilotParamValueButtonControl *steerFrictionToggle;
   StarPilotParamValueButtonControl *steerLatAccelToggle;
   StarPilotParamValueButtonControl *steerKPToggle;
+  StarPilotParamValueButtonControl *steerOffsetToggle;
   StarPilotParamValueButtonControl *steerRatioToggle;
 
   StarPilotSettingsWindow *parent;
