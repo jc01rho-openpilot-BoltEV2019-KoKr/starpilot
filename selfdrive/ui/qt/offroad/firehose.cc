@@ -82,7 +82,7 @@ FirehosePanel::FirehosePanel(SettingsWindow *parent) : QWidget((QWidget*)parent)
   // Set up the API request for firehose stats
   const QString dongle_id = QString::fromStdString(Params().get("DongleId"));
   firehose_stats = new RequestRepeater(this, CommaApi::BASE_URL + "/v1/devices/" + dongle_id + "/firehose_stats",
-                                       "ApiCache_FirehoseStats", 30, true);
+                                       "ApiCache_FirehoseStats", 30, false);
   QObject::connect(firehose_stats, &RequestRepeater::requestDone, [=](const QString &response, bool success) {
     if (success) {
       QJsonDocument doc = QJsonDocument::fromJson(response.toUtf8());

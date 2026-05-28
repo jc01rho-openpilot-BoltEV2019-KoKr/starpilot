@@ -63,6 +63,15 @@ class RadarInterface(RadarInterfaceBase):
     self.ioniq_6_radar_probe_updates = 0
     self.rcp = get_radar_can_parser(CP, self.radar_config)
 
+    # Precompute (addr, "RADAR_TRACK_xxx") pairs once. _update runs on the
+    # CAN-driven card loop (core 4, shared with controlsd/selfdrived), so avoid
+    # rebuilding 32 f-strings per radar frame.
+    self.track_addrs: list[tuple[int, str]] = []
+    if self.radar_config is not None:
+      self.track_addrs = [(addr, f"RADAR_TRACK_{addr:x}")
+                          for addr in range(self.radar_config.start_addr,
+                                            self.radar_config.start_addr + self.radar_config.msg_count)]
+
   def update(self, can_strings):
     if self.ioniq_6_radar_probe and self.rcp is not None and not self.ioniq_6_radar_probe_logged:
       vls = self.rcp.update(can_strings)
@@ -104,10 +113,13 @@ class RadarInterface(RadarInterfaceBase):
     if self.radar_config is None:
       return ret
 
-    for addr in range(self.radar_config.start_addr, self.radar_config.start_addr + self.radar_config.msg_count):
-      msg = self.rcp.vl[f"RADAR_TRACK_{addr:x}"]
+    radar_type = self.radar_config.radar_type
+    vl = self.rcp.vl
 
-      if self.radar_config.radar_type == "mrr30":
+    for addr, track_name in self.track_addrs:
+      msg = vl[track_name]
+
+      if radar_type == "mrr30":
         for i in ("1", "2"):
           track_key = addr * 2 + int(i) - 1
           if track_key not in self.pts:
@@ -128,23 +140,31 @@ class RadarInterface(RadarInterfaceBase):
             del self.pts[track_key]
         continue
 
+      if radar_type == "mrr35":
+        # Most of the 32 channels are empty each frame. Only allocate a point
+        # when the channel is valid; drop it otherwise. Avoids the per-frame
+        # alloc-then-delete churn on the ~27 idle channels.
+        if msg["STATE"] in (3, 4):
+          pt = self.pts.get(addr)
+          if pt is None:
+            pt = structs.RadarData.RadarPoint()
+            pt.trackId = self.track_id
+            self.track_id += 1
+            self.pts[addr] = pt
+          pt.measured = True
+          pt.dRel = msg["LONG_DIST"]
+          pt.yRel = msg["LAT_DIST"]
+          pt.vRel = msg["REL_SPEED"]
+          pt.aRel = msg["REL_ACCEL"]
+          pt.yvRel = float("nan")
+        elif addr in self.pts:
+          del self.pts[addr]
+        continue
+
       if addr not in self.pts:
         self.pts[addr] = structs.RadarData.RadarPoint()
         self.pts[addr].trackId = self.track_id
         self.track_id += 1
-
-      if self.radar_config.radar_type == "mrr35":
-        valid = msg["STATE"] in (3, 4)
-        if valid:
-          self.pts[addr].measured = True
-          self.pts[addr].dRel = msg["LONG_DIST"]
-          self.pts[addr].yRel = msg["LAT_DIST"]
-          self.pts[addr].vRel = msg["REL_SPEED"]
-          self.pts[addr].aRel = msg["REL_ACCEL"]
-          self.pts[addr].yvRel = float("nan")
-        else:
-          del self.pts[addr]
-        continue
 
       valid = msg['STATE'] in (3, 4)
       if valid:
