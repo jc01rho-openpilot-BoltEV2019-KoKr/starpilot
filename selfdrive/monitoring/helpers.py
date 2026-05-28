@@ -57,7 +57,7 @@ class DRIVER_MONITOR_SETTINGS:
     self._YAW_MIN_OFFSET = -0.0246
 
     self._DCAM_UNCERTAIN_ALERT_THRESHOLD = 0.1
-    self._DCAM_UNCERTAIN_RESET_COUNT = int(20  / self._DT_DMON)
+    self._DCAM_UNCERTAIN_RESET_COUNT = int(2  / self._DT_DMON)
     self._POSESTD_THRESHOLD = 0.3
     self._HI_STD_FALLBACK_TIME = int(10  / self._DT_DMON)  # fall back to wheel touch if model is uncertain for 10s
     self._DISTRACTED_FILTER_TS = 0.25  # 0.6Hz

@@ -1,4 +1,5 @@
 import os, sys, pickle, time, re
+from pathlib import Path
 import numpy as np
 if "FLOAT16" not in os.environ: os.environ["FLOAT16"] = "1"
 if "IMAGE" not in os.environ: os.environ["IMAGE"] = "2"
@@ -131,7 +132,8 @@ def bench(run, inputs):
       run(**inputs).numpy()
 
 if __name__ == "__main__":
-  onnx_file = fetch(OPENPILOT_MODEL)
+  local_onnx = Path(OPENPILOT_MODEL).expanduser()
+  onnx_file = str(local_onnx if local_onnx.exists() else fetch(OPENPILOT_MODEL))
   inputs, outputs = compile(onnx_file)
 
   with open(OUTPUT, "rb") as f: pickle_loaded = pickle.load(f)
