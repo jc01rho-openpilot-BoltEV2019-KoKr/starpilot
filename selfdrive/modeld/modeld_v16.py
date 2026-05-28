@@ -8,6 +8,7 @@ from pathlib import Path
 
 from openpilot.system.hardware import TICI
 
+os.environ["GMMU"] = "0"  # noop on qcom, improves load path when a USB GPU is present
 os.environ["DEV"] = "QCOM" if TICI else "LLVM"
 
 import cereal.messaging as messaging
@@ -16,7 +17,6 @@ from cereal import car, log
 from msgq.visionipc import VisionBuf, VisionIpcClient, VisionStreamType
 from opendbc.car.car_helpers import get_demo_car_params
 from setproctitle import setproctitle
-from tinygrad.device import Device
 from tinygrad.tensor import Tensor
 
 from openpilot.common.file_chunker import read_file_chunked
@@ -31,6 +31,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import smooth_value
 from openpilot.selfdrive.modeld.compile_modeld import POLICY_INPUTS, WARP_INPUTS, make_input_queues
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.modeld.fill_model_msg import PublishState, fill_model_msg, fill_pose_msg
+from openpilot.selfdrive.modeld.helpers import get_tg_input_devices
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.starpilot.assets.model_manager import ModelManager
 from openpilot.starpilot.common.model_versions import uses_combined_driving_artifacts
@@ -142,7 +143,7 @@ class FrameMeta:
 class ModelState:
   prev_desire: np.ndarray
 
-  def __init__(self, cam_w: int, cam_h: int):
+  def __init__(self, cam_w: int, cam_h: int, usbgpu: bool):
     params = Params()
     model_id_raw = _resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY
     self.model_id = _canonical_model_id(model_id_raw)
@@ -176,11 +177,16 @@ class ModelState:
     self.off_policy_output_slices = off_policy_metadata["output_slices"]
     self.policy_input_shapes = on_policy_metadata["input_shapes"]
     self.policy_output_slices = on_policy_metadata["output_slices"]
-    self.desire_key = next(key for key in self.policy_input_shapes if key.startswith("desire"))
+    self.desire_key = "desire_pulse" if "desire_pulse" in self.policy_input_shapes else next(
+      key for key in self.policy_input_shapes if key.startswith("desire")
+    )
 
     self.frame_skip = ModelConstants.MODEL_RUN_FREQ // ModelConstants.MODEL_CONTEXT_FREQ
-    self.dev = Device.DEFAULT
-    self.input_queues, self.npy = make_input_queues(self.vision_input_shapes, self.policy_input_shapes, self.frame_skip, device=self.dev)
+    input_devices = get_tg_input_devices(PROCESS_NAME, usbgpu)
+    self.WARP_DEV, self.QUEUE_DEV = input_devices["WARP_DEV"], input_devices["QUEUE_DEV"]
+    self.input_queues, self.npy = make_input_queues(
+      self.vision_input_shapes, self.policy_input_shapes, self.frame_skip, device=self.QUEUE_DEV
+    )
     self.full_frames: dict[str, Tensor] = {}
     self._blob_cache: dict[tuple[str, int], Tensor] = {}
     self.parser = Parser()
@@ -205,7 +211,7 @@ class ModelState:
       yuv_size = self.frame_buf_params[key][3]
       cache_key = (key, ptr)
       if cache_key not in self._blob_cache:
-        self._blob_cache[cache_key] = Tensor.from_blob(ptr, (yuv_size,), dtype="uint8", device=self.dev)
+        self._blob_cache[cache_key] = Tensor.from_blob(ptr, (yuv_size,), dtype="uint8", device=self.WARP_DEV)
       self.full_frames[key] = self._blob_cache[cache_key]
 
     inputs[self.desire_key][0] = 0
@@ -242,7 +248,7 @@ class ModelState:
     off_policy_output = off_policy_output.numpy().flatten()
 
     vision_outputs_dict = self.parser.parse_vision_outputs(self.slice_outputs(vision_output, self.vision_output_slices))
-    off_policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(off_policy_output, self.off_policy_output_slices))
+    off_policy_outputs_dict = self.parser.parse_off_policy_outputs(self.slice_outputs(off_policy_output, self.off_policy_output_slices))
     policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(policy_output, self.policy_output_slices))
     combined_outputs_dict = {**vision_outputs_dict, **off_policy_outputs_dict, **policy_outputs_dict}
 
@@ -258,6 +264,10 @@ def main(demo=False):
   cloudlog.bind(daemon=PROCESS_NAME)
   setproctitle(PROCESS_NAME)
   config_realtime_process(7, 54)
+
+  # Combined downloaded models currently ship one runtime artifact, so stay on the default
+  # queue profile until a separate USBGPU artifact path exists for custom models.
+  usbgpu = False
 
   while True:
     available_streams = VisionIpcClient.available_streams("camerad", block=False)
@@ -283,7 +293,7 @@ def main(demo=False):
 
   start_time = time.monotonic()
   cloudlog.warning("loading combined model")
-  model = ModelState(vipc_client_main.width, vipc_client_main.height)
+  model = ModelState(vipc_client_main.width, vipc_client_main.height, usbgpu)
   cloudlog.warning(f"combined model loaded in {time.monotonic() - start_time:.1f}s, modeld starting")
 
   pm = messaging.PubMaster(["modelV2", "drivingModelData", "cameraOdometry", "starpilotModelV2"])
