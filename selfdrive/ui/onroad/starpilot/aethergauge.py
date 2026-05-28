@@ -259,7 +259,7 @@ class AetherGauge:
     # === TEST CYCLE OVERRIDE ===
     # Set to True to cycle all Aethergauge visual effects for testing.
     # Set to False to run off live data.
-    TEST_CYCLE = False
+    TEST_CYCLE = True
     if TEST_CYCLE:
       now_time = rl.get_time()
       if now_time > 3.0:
