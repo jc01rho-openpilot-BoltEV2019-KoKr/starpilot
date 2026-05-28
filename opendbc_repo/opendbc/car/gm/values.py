@@ -233,7 +233,7 @@ class CAR(Platforms):
   )
   CHEVROLET_VOLT = GMASCMPlatformConfig(
     [GMCarDocs("Chevrolet Volt 2017-18", min_enable_speed=0, video="https://youtu.be/QeMCN_4TFfQ")],
-    GMCarSpecs(mass=1607, wheelbase=2.69, steerRatio=15.7, centerToFrontRatio=0.45, tireStiffnessFactor=0.469, minEnableSpeed=-1),
+    GMCarSpecs(mass=1607, wheelbase=2.69, steerRatio=15.7, centerToFrontRatio=0.45, tireStiffnessFactor=1.0, minEnableSpeed=-1), #tire stiffness factor hasn't been updated since 2018 and every other gm is on 1.0
     dbc_dict={
       Bus.pt: "gm_global_a_powertrain_volt",
       Bus.radar: "gm_global_a_object",

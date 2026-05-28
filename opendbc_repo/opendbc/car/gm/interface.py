@@ -58,6 +58,10 @@ NON_LINEAR_TORQUE_PARAMS = {
     "left": [3.8, 0.81, 0.24, 0.0465122],
     "right": [3.8, 0.81, 0.24, 0.0465122],
   },
+  CAR.CHEVROLET_VOLT: {
+    "left": [1.5, 1.0, 0.155, 0.0],
+    "right": [1.5, 1.0, 0.155, 0.0],
+  },
 }
 
 PEDAL_MSG = 0x201
