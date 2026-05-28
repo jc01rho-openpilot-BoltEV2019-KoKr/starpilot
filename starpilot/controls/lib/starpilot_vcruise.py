@@ -127,7 +127,12 @@ class StarPilotVCruise:
 
   @staticmethod
   def _get_nav_long_min_target_speed(sm):
-    car_params = sm.get("carParams")
+    car_params = None
+    try:
+      car_params = sm["carParams"]
+    except Exception:
+      if hasattr(sm, "get"):
+        car_params = sm.get("carParams")
     return max(float(getattr(car_params, "minSteerSpeed", 0.0) or 0.0), 0.0)
 
   def _get_nav_turn_control_target(self, v_cruise, sm, starpilot_toggles):
