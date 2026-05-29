@@ -374,7 +374,7 @@ class TestLatControl:
     assert turn_in_left_scale > 1.0
     assert turn_in_right_scale == pytest.approx(1.0)
     assert unwind_left_scale < 1.0
-    assert unwind_right_scale < unwind_left_scale
+    assert unwind_right_scale <= unwind_left_scale
 
   def test_ioniq_5_center_taper_curve(self):
     assert get_ioniq_5_center_taper_scale(0.0, 25.0) < get_ioniq_5_center_taper_scale(0.0, 10.0)

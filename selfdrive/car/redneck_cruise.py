@@ -23,6 +23,23 @@ CRUISE_BUTTON_TIMERS = {
 }
 
 
+def select_redneck_target_speed(v_cruise_kph: float, speed_cluster_ms: float,
+                                starpilot_target_speed_ms: float, plan_speeds_ms: list[float],
+                                lookahead_points: int) -> float:
+  target_speed_ms = float(speed_cluster_ms)
+  if v_cruise_kph > 0:
+    target_speed_ms = float(v_cruise_kph) * CV.KPH_TO_MS
+  elif starpilot_target_speed_ms > 0:
+    target_speed_ms = float(starpilot_target_speed_ms)
+
+  if len(plan_speeds_ms) > 0:
+    decrease_target_speed_ms = min(plan_speeds_ms[:lookahead_points])
+    if decrease_target_speed_ms < min(target_speed_ms, float(speed_cluster_ms)):
+      return decrease_target_speed_ms
+
+  return target_speed_ms
+
+
 def get_minimum_set_speed(is_metric: bool) -> int:
   return 30 if is_metric else 20
 

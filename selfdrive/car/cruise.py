@@ -53,6 +53,15 @@ class VCruiseHelper:
   def _get_cruise_delta_interval(interval: float | None) -> float:
     return interval if isinstance(interval, (int, float)) and interval > 0 else 1.0
 
+  def _get_cruise_delta_intervals(self, starpilot_toggles: SimpleNamespace) -> tuple[float, float]:
+    short_interval = self._get_cruise_delta_interval(getattr(starpilot_toggles, "cruise_increase", None))
+    long_interval = self._get_cruise_delta_interval(getattr(starpilot_toggles, "cruise_increase_long", None))
+
+    if getattr(starpilot_toggles, "reverse_cruise_increase", False):
+      return long_interval, short_interval
+
+    return short_interval, long_interval
+
   @property
   def v_cruise_initialized(self):
     return self.v_cruise_kph != V_CRUISE_UNSET
@@ -119,8 +128,8 @@ class VCruiseHelper:
     if not self.button_change_states[button_type]["enabled"]:
       return
 
-    delta_interval = starpilot_toggles.cruise_increase_long if long_press else starpilot_toggles.cruise_increase
-    v_cruise_delta_interval = self._get_cruise_delta_interval(delta_interval)
+    short_interval, long_interval = self._get_cruise_delta_intervals(starpilot_toggles)
+    v_cruise_delta_interval = long_interval if long_press else short_interval
     v_cruise_delta = v_cruise_delta * v_cruise_delta_interval
     if v_cruise_delta_interval % 5 == 0 and self.v_cruise_kph % v_cruise_delta != 0:  # partial interval
       self.v_cruise_kph = CRUISE_NEAREST_FUNC[button_type](self.v_cruise_kph / v_cruise_delta) * v_cruise_delta

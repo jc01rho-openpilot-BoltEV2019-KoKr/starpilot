@@ -11,6 +11,7 @@ from openpilot.selfdrive.car.redneck_cruise import (
   SEND_BUTTON_DECREASE,
   SEND_BUTTON_INCREASE,
   SEND_BUTTON_NONE,
+  select_redneck_target_speed,
 )
 
 
@@ -107,6 +108,26 @@ class TestRedneckCruise(unittest.TestCase):
     send_button, v_target = self._run_until_active(target_mph=25.0, speed_cluster_mph=20.0)
     self.assertEqual(SEND_BUTTON_NONE, send_button)
     self.assertEqual(0, v_target)
+
+  def test_target_speed_returns_internal_max_when_plan_only_wants_to_speed_back_up(self):
+    target_speed = select_redneck_target_speed(
+      120.0,
+      77.0 * CV.MPH_TO_MS,
+      0.0,
+      [78.3 * CV.MPH_TO_MS, 78.2 * CV.MPH_TO_MS, 78.1 * CV.MPH_TO_MS],
+      10,
+    )
+    self.assertAlmostEqual(120.0 * CV.KPH_TO_MS, target_speed)
+
+  def test_target_speed_returns_plan_minimum_when_slowing_down(self):
+    target_speed = select_redneck_target_speed(
+      120.0,
+      75.0 * CV.MPH_TO_MS,
+      0.0,
+      [74.0 * CV.MPH_TO_MS, 72.0 * CV.MPH_TO_MS, 71.0 * CV.MPH_TO_MS],
+      10,
+    )
+    self.assertAlmostEqual(71.0 * CV.MPH_TO_MS, target_speed)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.common.constants import CV
 from openpilot.selfdrive.car.cruise import VCruiseHelper, IMPERIAL_INCREMENT, V_CRUISE_MAX, V_CRUISE_MIN
-from openpilot.selfdrive.car.redneck_cruise import RedneckCruise, SEND_BUTTON_DECREASE, SEND_BUTTON_INCREASE
+from openpilot.selfdrive.car.redneck_cruise import RedneckCruise, SEND_BUTTON_DECREASE, SEND_BUTTON_INCREASE, select_redneck_target_speed
 from openpilot.selfdrive.car.car_specific import MockCarState
 
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles, update_starpilot_toggles
@@ -397,23 +397,21 @@ class Car:
     self.CI.CS.redneck_v_target = v_target
 
   def _get_redneck_target_speed(self, CS: car.CarState) -> float:
-    fallback_target_speed = float(CS.cruiseState.speedCluster)
-
+    starpilot_target_speed = 0.0
     if self.sm.seen['starpilotPlan'] and self.sm.valid['starpilotPlan']:
       starpilot_target_speed = float(self.sm['starpilotPlan'].vCruise)
-      if starpilot_target_speed > 0.0:
-        fallback_target_speed = starpilot_target_speed
 
+    plan_speeds = []
     if self.sm.seen['longitudinalPlan'] and self.sm.valid['longitudinalPlan']:
       plan_speeds = [float(speed) for speed in self.sm['longitudinalPlan'].speeds if math.isfinite(float(speed))]
-      if len(plan_speeds) > 0:
-        target_speed = plan_speeds[0]
-        decrease_target_speed = min(plan_speeds[:REDNECK_DECREASE_LOOKAHEAD_POINTS])
-        if decrease_target_speed < min(target_speed, float(CS.cruiseState.speedCluster)):
-          return decrease_target_speed
-        return target_speed
 
-    return fallback_target_speed
+    return select_redneck_target_speed(
+      float(getattr(CS, "vCruise", 0.0)),
+      float(CS.cruiseState.speedCluster),
+      starpilot_target_speed,
+      plan_speeds,
+      REDNECK_DECREASE_LOOKAHEAD_POINTS,
+    )
 
   def _advance_redneck_button_feedback_filter(self) -> None:
     if self.redneck_cruise is None:
