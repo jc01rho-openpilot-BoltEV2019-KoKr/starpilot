@@ -1,8 +1,7 @@
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 import math
-import numpy as np
 import pyray as rl
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -122,6 +121,11 @@ def _get_perspective_offset(t: float, data: 'AetherGaugeData | None') -> float:
   max_offset_top = math.tanh(path_y_far * PERSPECTIVE_GAIN) * PERSPECTIVE_MAX_OFFSET
   return max_offset_top * (t ** PERSPECTIVE_EXPONENT)
 
+def _draw_text_with_shadow(font: rl.Font, text: str, pos: rl.Vector2, size: int, color: rl.Color):
+  for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+    rl.draw_text_ex(font, text, rl.Vector2(pos.x + dx, pos.y + dy), size, 0, rl.BLACK)
+  rl.draw_text_ex(font, text, pos, size, 0, color)
+
 
 # --- Data model ---
 
@@ -145,17 +149,7 @@ class AetherGaugeData:
   is_numeric: bool = False
 
 
-# --- Source base class ---
-
-class AetherGaugeSource(ABC):
-  @abstractmethod
-  def is_active(self) -> bool: ...
-
-  @abstractmethod
-  def get_gauge_data(self) -> AetherGaugeData: ...
-
-
-# --- Shared curve speed gauge builder ---
+# --- Source functions (replaces class-based sources) ---
 
 def _build_curve_gauge_data(curvature: float, target_speed: float, v_cruise: float) -> AetherGaugeData:
   v_ego = _get_val("carState", "vEgo", 0.0)
@@ -174,192 +168,163 @@ def _build_curve_gauge_data(curvature: float, target_speed: float, v_cruise: flo
   )
 
 
-# --- Force stop source ---
+# --- Force stop ---
 
-class ForceStopSource(AetherGaugeSource):
-  def is_active(self) -> bool:
-    return _get_val("starpilotPlan", "forcingStop", False)
+def _is_force_stop() -> bool:
+  return _get_val("starpilotPlan", "forcingStop", False)
 
-  def get_gauge_data(self) -> AetherGaugeData:
-    v_ego = _get_val("carState", "vEgo", 0.0)
-    forcing_stop_distance = _get_val("starpilotPlan", "forcingStopLength", 0.0)
-
-    return AetherGaugeData(
-      text=_time_to_stop(forcing_stop_distance, v_ego),
-      unit="s",
-      color=COLOR_FORCE_STOP,
-      indicator_type=IndicatorType.FORCE_STOP,
-      indicator_value=forcing_stop_distance,
-      is_numeric=True,
-    )
-
-
-# --- Curve speed source (CSC active) ---
-
-class CurveSpeedSource(AetherGaugeSource):
-  def is_active(self) -> bool:
-    state = _csc_state()
-    return state is not None and state['active']
-
-  def get_gauge_data(self) -> AetherGaugeData:
-    state = _csc_state()
-    if state is None:
-      return AetherGaugeData(text="")
-
-    csc_speed = _get_val("starpilotPlan", "cscSpeed", 0.0)
-    v_cruise = _get_val("starpilotPlan", "vCruise", 0.0)
-    return _build_curve_gauge_data(state['curvature'], csc_speed, v_cruise)
+def _force_stop_data() -> AetherGaugeData:
+  v_ego = _get_val("carState", "vEgo", 0.0)
+  dist = _get_val("starpilotPlan", "forcingStopLength", 0.0)
+  return AetherGaugeData(
+    text=_time_to_stop(dist, v_ego), unit="s", color=COLOR_FORCE_STOP,
+    indicator_type=IndicatorType.FORCE_STOP, indicator_value=dist, is_numeric=True,
+  )
 
 
 # --- CEM: Stop light / stop sign ---
 
-class CEMStopLightSource(AetherGaugeSource):
-  def is_active(self) -> bool:
-    return ui_state.conditional_status == CEM_STATUS_STOP_LIGHT and _sm_valid("starpilotPlan")
+def _is_stop_light() -> bool:
+  return ui_state.conditional_status == CEM_STATUS_STOP_LIGHT and _sm_valid("starpilotPlan")
 
-  def get_gauge_data(self) -> AetherGaugeData:
-    stopping_distance = 0.0
-    if _sm_valid("modelV2"):
-      model = ui_state.sm["modelV2"]
-      if len(model.position.x) > 0:
-        stopping_distance = model.position.x[min(32, len(model.position.x) - 1)]
+def _stop_light_data() -> AetherGaugeData:
+  dist = 0.0
+  if _sm_valid("modelV2"):
+    model = ui_state.sm["modelV2"]
+    if len(model.position.x) > 0:
+      dist = model.position.x[min(32, len(model.position.x) - 1)]
+  if dist == 0.0:
+    dist = _get_val("starpilotPlan", "forcingStopLength", 0.0)
+  v_ego = _get_val("carState", "vEgo", 0.0)
+  return AetherGaugeData(
+    text=_time_to_stop(dist, v_ego), unit="s", color=COLOR_FORCE_STOP,
+    indicator_type=IndicatorType.STOP_LIGHT, indicator_value=dist,
+    indicator_extra="red", is_numeric=True,
+  )
 
-    if stopping_distance == 0.0:
-      stopping_distance = _get_val("starpilotPlan", "forcingStopLength", 0.0)
 
-    v_ego = _get_val("carState", "vEgo", 0.0)
+# --- Curve speed source (CSC active) ---
 
-    return AetherGaugeData(
-      text=_time_to_stop(stopping_distance, v_ego),
-      unit="s",
-      color=COLOR_FORCE_STOP,
-      indicator_type=IndicatorType.STOP_LIGHT,
-      indicator_value=stopping_distance,
-      indicator_extra="red",
-      is_numeric=True,
-    )
+def _is_curve_speed() -> bool:
+  state = _csc_state()
+  return state is not None and state['active']
+
+def _curve_speed_data() -> AetherGaugeData:
+  state = _csc_state()
+  if state is None:
+    return AetherGaugeData(text="")
+  csc_speed = _get_val("starpilotPlan", "cscSpeed", 0.0)
+  v_cruise = _get_val("starpilotPlan", "vCruise", 0.0)
+  return _build_curve_gauge_data(state['curvature'], csc_speed, v_cruise)
 
 
 # --- CEM: Curvature (non-CSC) ---
 
-class CEMCurvatureSource(AetherGaugeSource):
-  def is_active(self) -> bool:
-    return ui_state.conditional_status == CEM_STATUS_CURVE and _sm_valid("starpilotPlan")
+def _is_curvature() -> bool:
+  return ui_state.conditional_status == CEM_STATUS_CURVE and _sm_valid("starpilotPlan")
 
-  def get_gauge_data(self) -> AetherGaugeData:
-    csc_speed = _get_val("starpilotPlan", "cscSpeed", 0.0)
-    v_ego = _get_val("carState", "vEgo", 0.0)
-    v_cruise = _get_val("starpilotPlan", "vCruise", v_ego)
-    target_speed = csc_speed if csc_speed > 0.1 else v_cruise
-    road_curvature = _get_val("starpilotPlan", "roadCurvature", 0.0)
-    return _build_curve_gauge_data(road_curvature, target_speed, v_cruise)
+def _curvature_data() -> AetherGaugeData:
+  csc_speed = _get_val("starpilotPlan", "cscSpeed", 0.0)
+  v_ego = _get_val("carState", "vEgo", 0.0)
+  v_cruise = _get_val("starpilotPlan", "vCruise", v_ego)
+  target_speed = csc_speed if csc_speed > 0.1 else v_cruise
+  road_curvature = _get_val("starpilotPlan", "roadCurvature", 0.0)
+  return _build_curve_gauge_data(road_curvature, target_speed, v_cruise)
 
 
 # --- CEM: Lead vehicle (graphic only, no numeric) ---
 
-class CEMLeadSource(AetherGaugeSource):
-  def is_active(self) -> bool:
-    return (ui_state.conditional_status == CEM_STATUS_LEAD
-            and _sm_valid("radarState")
-            and ui_state.sm["radarState"].leadOne.status)
+def _is_lead() -> bool:
+  return (ui_state.conditional_status == CEM_STATUS_LEAD
+          and _sm_valid("radarState")
+          and ui_state.sm["radarState"].leadOne.status)
 
-  def get_gauge_data(self) -> AetherGaugeData:
-    lead = ui_state.sm["radarState"].leadOne
-    lead_speed = lead.vLead
-    lead_dist = lead.dRel
-
-    is_stopped = lead_speed < LEAD_STOPPED_SPEED_THRESHOLD
-    return AetherGaugeData(
-      text="STOPPED" if is_stopped else "SLOW",
-      color=COLOR_LEAD_STOPPED if is_stopped else COLOR_LEAD_SLOWER,
-      indicator_type=IndicatorType.LEAD,
-      indicator_value=lead_dist,
-      indicator_extra="stopped" if is_stopped else "slower",
-    )
+def _lead_data() -> AetherGaugeData:
+  lead = ui_state.sm["radarState"].leadOne
+  is_stopped = lead.vLead < LEAD_STOPPED_SPEED_THRESHOLD
+  return AetherGaugeData(
+    text="STOPPED" if is_stopped else "SLOW",
+    color=COLOR_LEAD_STOPPED if is_stopped else COLOR_LEAD_SLOWER,
+    indicator_type=IndicatorType.LEAD, indicator_value=lead.dRel,
+    indicator_extra="stopped" if is_stopped else "slower",
+  )
 
 
-# --- Test cycle source (debug only) ---
+# --- Test cycle source (debug only, module-level state) ---
 
-@dataclass
-class _TestCycleState:
-  indicator_type: IndicatorType
-  text: str
-  color: rl.Color
-  base_indicator_value: float
-  indicator_extra: str
-  reduction_text: str
+_TEST_STATES = [
+  (IndicatorType.ROAD_CURVE, "45", rl.Color(0, 255, 100, 255), 0.005, "", "-20"),
+  (IndicatorType.STOP_LIGHT, "", COLOR_FORCE_STOP, 35.0, "red", ""),
+  (IndicatorType.LEAD, "", COLOR_LEAD_SLOWER, 25.0, "slower", ""),
+  (IndicatorType.LEAD, "", COLOR_LEAD_SLOWER, 15.0, "stopped", ""),
+  (IndicatorType.FORCE_STOP, "", COLOR_FORCE_STOP, 12.0, "", ""),
+]
+_TEST_CYCLE_SEC = 6.0
 
+def _test_cycle_active() -> bool:
+  return rl.get_time() > 3.0
 
-class TestCycleSource(AetherGaugeSource):
-  def __init__(self):
-    self._states = [
-      _TestCycleState(IndicatorType.ROAD_CURVE, "45", rl.Color(0, 255, 100, 255), 0.005, "", "-20"),
-      _TestCycleState(IndicatorType.STOP_LIGHT, "", COLOR_FORCE_STOP, 35.0, "red", ""),
-      _TestCycleState(IndicatorType.LEAD, "", COLOR_LEAD_SLOWER, 25.0, "slower", ""),
-      _TestCycleState(IndicatorType.LEAD, "", COLOR_LEAD_SLOWER, 15.0, "stopped", ""),
-      _TestCycleState(IndicatorType.FORCE_STOP, "", COLOR_FORCE_STOP, 12.0, "", ""),
-    ]
-    self._cycle_sec = 6.0
+def _test_cycle_data() -> AetherGaugeData:
+  now = rl.get_time()
+  elapsed = (now - 3.0) % _TEST_CYCLE_SEC
+  idx = int((now - 3.0) / _TEST_CYCLE_SEC) % len(_TEST_STATES)
+  ind_type, text, color, base_val, extra, reduction = _TEST_STATES[idx]
+  anim_t = elapsed / max(0.001, _TEST_CYCLE_SEC - 0.5)
 
-  def is_active(self) -> bool:
-    return rl.get_time() > 3.0
+  if ind_type in (IndicatorType.STOP_LIGHT, IndicatorType.FORCE_STOP):
+    ind_val = max(5.0, 60.0 - anim_t * 55.0)
+    text = f"{max(0.0, (_TEST_CYCLE_SEC - 0.5) - elapsed):.1f}"
+    return AetherGaugeData(text=text, unit="s", color=color,
+      indicator_type=ind_type, indicator_value=ind_val,
+      indicator_extra=extra, reduction_text=reduction, is_numeric=True)
 
-  def get_gauge_data(self) -> AetherGaugeData:
-    now = rl.get_time()
-    elapsed = (now - 3.0) % self._cycle_sec
-    cycle_idx = int((now - 3.0) / self._cycle_sec) % len(self._states)
-    state = self._states[cycle_idx]
-    anim_t = elapsed / max(0.001, self._cycle_sec - 0.5)
+  if ind_type == IndicatorType.LEAD:
+    ind_val = max(3.0, 60.0 - anim_t * 57.0)
+    is_stopped = extra == "stopped"
+    text = "STOPPED" if is_stopped else "SLOW"
+    color = COLOR_LEAD_STOPPED if is_stopped else COLOR_LEAD_SLOWER
+    return AetherGaugeData(text=text, color=color,
+      indicator_type=ind_type, indicator_value=ind_val,
+      indicator_extra=extra, reduction_text=reduction)
 
-    if state.indicator_type in (IndicatorType.STOP_LIGHT, IndicatorType.FORCE_STOP):
-      ind_val = max(5.0, 60.0 - anim_t * 55.0)
-      text = f"{max(0.0, (self._cycle_sec - 0.5) - elapsed):.1f}"
-      return AetherGaugeData(text=text, unit="s", color=state.color,
-        indicator_type=state.indicator_type, indicator_value=ind_val,
-        indicator_extra=state.indicator_extra, reduction_text=state.reduction_text, is_numeric=True)
-
-    if state.indicator_type == IndicatorType.LEAD:
-      ind_val = max(3.0, 60.0 - anim_t * 57.0)
-      is_stopped = state.indicator_extra == "stopped"
-      text = "STOPPED" if is_stopped else "SLOW"
-      color = COLOR_LEAD_STOPPED if is_stopped else COLOR_LEAD_SLOWER
-      return AetherGaugeData(text=text, color=color,
-        indicator_type=state.indicator_type, indicator_value=ind_val,
-        indicator_extra=state.indicator_extra, reduction_text=state.reduction_text)
-
-    return AetherGaugeData(text=state.text, unit=_speed_unit(), color=state.color,
-      indicator_type=state.indicator_type, indicator_value=state.base_indicator_value,
-      indicator_extra=state.indicator_extra, reduction_text=state.reduction_text, is_numeric=True)
+  return AetherGaugeData(text=text, unit=_speed_unit(), color=color,
+    indicator_type=ind_type, indicator_value=base_val,
+    indicator_extra=extra, reduction_text=reduction, is_numeric=True)
 
 
 # --- Main widget ---
 
 class AetherGauge:
   def __init__(self):
-    self._sources: list[AetherGaugeSource] = [
-      ForceStopSource(),
-      CEMStopLightSource(),
-      CurveSpeedSource(),
-      CEMCurvatureSource(),
-      CEMLeadSource(),
+    self._sources = [
+      (_is_force_stop, _force_stop_data),
+      (_is_stop_light, _stop_light_data),
+      (_is_curve_speed, _curve_speed_data),
+      (_is_curvature, _curvature_data),
+      (_is_lead, _lead_data),
     ]
     if TEST_CYCLE:
-      self._sources.insert(0, TestCycleSource())
+      self._sources.insert(0, (_test_cycle_active, _test_cycle_data))
     self._stop_smooth_s = 0.0
 
   def get_active_data(self) -> AetherGaugeData | None:
-    for source in self._sources:
-      if source.is_active():
-        return source.get_gauge_data()
+    for is_active, get_data in self._sources:
+      if is_active():
+        return get_data()
     return None
 
-  def render(self, rect: rl.Rectangle, font_bold: rl.Font, font_medium: rl.Font, current_speed: float):
+  def render(self, rect: rl.Rectangle, font_bold: rl.Font, font_medium: rl.Font, current_speed: float,
+             dock_rect: Optional[rl.Rectangle] = None):
     data = self.get_active_data()
     if not data:
       return
 
-    cx = rect.x + rect.width / 2
-    cy_speed = rect.y + 180 * SCALE
+    if dock_rect:
+      cx = dock_rect.x + dock_rect.width / 2
+      cy_speed = dock_rect.y + dock_rect.height * 0.75
+    else:
+      cx = rect.x + rect.width / 2
+      cy_speed = rect.y + 180 * SCALE
 
     speed_text = str(round(current_speed))
     speed_text_size = measure_text_cached(font_bold, speed_text, int(176 * SCALE))
@@ -368,20 +333,18 @@ class AetherGauge:
     if data.indicator_type in (IndicatorType.ROAD_CURVE, IndicatorType.FORCE_STOP, IndicatorType.LEAD, IndicatorType.STOP_LIGHT):
       self._render_unified_road(rect, icon_cx, cy_speed - 39.5 * SCALE, data, font_bold, font_medium)
 
-  def _render_unified_road(self, rect: rl.Rectangle, icx: float, icy: float, data: AetherGaugeData, font_bold: rl.Font, font_medium: rl.Font):
+  def _render_unified_road(self, rect, icx, icy, data, font_bold, font_medium):
     bottom = icy + ROAD_HALF_SIZE
 
-    smoothed_s = 0.0
     if data.indicator_type == IndicatorType.FORCE_STOP:
       raw_s = max(0.0, min(1.0, (STOP_DISTANCE_MAX - data.indicator_value) / STOP_DISTANCE_MAX))
       if abs(raw_s - self._stop_smooth_s) > STOP_SNAP_THRESHOLD:
         self._stop_smooth_s = raw_s
       else:
         self._stop_smooth_s += (raw_s - self._stop_smooth_s) * STOP_LERP_RATE
-      smoothed_s = self._stop_smooth_s
-      distance_to_use = STOP_DISTANCE_MAX - smoothed_s * STOP_DISTANCE_MAX
+      distance = STOP_DISTANCE_MAX - self._stop_smooth_s * STOP_DISTANCE_MAX
     else:
-      distance_to_use = data.indicator_value
+      distance = data.indicator_value
 
     points_left = []
     points_right = []
@@ -405,24 +368,26 @@ class AetherGauge:
       rl.draw_line_ex(points_left[i], points_left[i+1], ROAD_THICKNESS, data.color)
       rl.draw_line_ex(points_right[i], points_right[i+1], ROAD_THICKNESS, data.color)
 
-    if data.indicator_type in (IndicatorType.STOP_LIGHT, IndicatorType.FORCE_STOP):
-      self._draw_stop_line(icx, bottom, distance_to_use, data)
+    it = data.indicator_type
 
-    if data.indicator_type == IndicatorType.LEAD:
+    if it in (IndicatorType.STOP_LIGHT, IndicatorType.FORCE_STOP):
+      self._draw_stop_line(icx, bottom, distance, data)
+
+    if it == IndicatorType.LEAD:
       self._draw_lead_car(icx, bottom, data)
 
-    if data.indicator_type in (IndicatorType.ROAD_CURVE, IndicatorType.FORCE_STOP, IndicatorType.STOP_LIGHT):
-      self._draw_standard_chevrons(icx, bottom, distance_to_use, data)
+    if it in (IndicatorType.ROAD_CURVE, IndicatorType.FORCE_STOP, IndicatorType.STOP_LIGHT):
+      self._draw_standard_chevrons(icx, bottom, distance, data)
 
-    if data.indicator_type == IndicatorType.STOP_LIGHT:
-      self._draw_traffic_light(icx, icy, distance_to_use, data)
+    if it == IndicatorType.STOP_LIGHT:
+      self._draw_traffic_light(icx, icy, distance, data)
 
-    if data.indicator_type == IndicatorType.FORCE_STOP:
-      self._draw_approaching_stop_sign(icx, icy, bottom, distance_to_use, data, font_bold)
+    if it == IndicatorType.FORCE_STOP:
+      self._draw_approaching_stop_sign(icx, icy, bottom, distance, data, font_bold)
 
     self._draw_mini_cradle(icx, bottom, data, font_bold, font_medium)
 
-  def _draw_stop_line(self, icx: float, bottom: float, distance: float, data: AetherGaugeData):
+  def _draw_stop_line(self, icx, bottom, distance, data):
     t, cx_line, cy_line = _road_xy(distance, icx, bottom, data)
     w_line = ROAD_W_BOTTOM - t * (ROAD_W_BOTTOM - ROAD_W_TOP)
 
@@ -435,13 +400,13 @@ class AetherGauge:
     rl.draw_line_ex(p_left, p_right, max(3.0 * SCALE, 7.0 * SCALE * fade), _with_alpha(COLOR_STOP_LINE_GLOW, glow_a))
     rl.draw_line_ex(p_left, p_right, max(1.5 * SCALE, 3.5 * SCALE * fade), COLOR_STOP_LINE_CORE)
 
-  def _draw_lead_car(self, icx: float, bottom: float, data: AetherGaugeData):
+  def _draw_lead_car(self, icx, bottom, data):
     t_lead, cx_lead, cy_lead = _road_xy(data.indicator_value, icx, bottom, data)
     t_lead = max(0.15, min(0.85, t_lead))
 
     car_scale = 0.45 + (1.0 - t_lead) * 0.55
-    W_car = 30.0 * SCALE * car_scale
-    H_car = 18.0 * SCALE * car_scale
+    W = 30.0 * SCALE * car_scale
+    H = 18.0 * SCALE * car_scale
 
     is_stopped = data.indicator_extra == "stopped"
     is_slower = data.indicator_extra == "slower"
@@ -453,66 +418,50 @@ class AetherGauge:
     else:
       border_color = data.color
 
-    self._draw_lead_car_body(cx_lead, cy_lead, W_car, H_car, border_color)
-    self._draw_lead_tail_lights(cx_lead, cy_lead, W_car, H_car, is_stopped, is_slower, border_color)
-    self._draw_lead_wheels(cx_lead, cy_lead, W_car, H_car)
-    self._draw_lead_following_chevrons(icx, bottom, t_lead, data)
+    # Car body: cabin and main body
+    for rect_args, corner_r, fill in [
+      ((cx_lead - W * 0.3, cy_lead - H, W * 0.6, H * 0.45), 0.5, rl.Color(15, 15, 15, 240)),
+      ((cx_lead - W / 2, cy_lead - H * 0.65, W, H * 0.55), 0.3, rl.Color(20, 20, 20, 240)),
+    ]:
+      r = rl.Rectangle(*rect_args)
+      rl.draw_rectangle_rounded(r, corner_r, 4, fill)
+      rl.draw_rectangle_rounded_lines_ex(r, corner_r, 4, 1.5, border_color)
 
-  def _draw_lead_car_body(self, cx: float, cy: float, w: float, h: float, border_color: rl.Color):
-    rect_cabin = rl.Rectangle(cx - w * 0.3, cy - h, w * 0.6, h * 0.45)
-    rl.draw_rectangle_rounded(rect_cabin, 0.5, 4, rl.Color(15, 15, 15, 240))
-    rl.draw_rectangle_rounded_lines_ex(rect_cabin, 0.5, 4, 1.5, border_color)
+    # Tail lights with glow
+    tl_w = W * 0.15
+    tl_h = H * 0.12
+    tl_y = int(cy_lead - H * 0.55)
+    glow_y = int(cy_lead - H * 0.5)
+    for tl_x, glow_x in [(int(cx_lead - W * 0.45), int(cx_lead - W * 0.38)),
+                          (int(cx_lead + W * 0.3), int(cx_lead + W * 0.38))]:
+      if is_stopped:
+        pulse = _pulse(8.0)
+        r_glow = int(W * 0.08 * (1.0 + 0.4 * pulse))
+        rl.draw_circle(glow_x, glow_y, r_glow, rl.Color(255, 30, 60, int(150 + 105 * pulse)))
+        c_tl = rl.Color(255, 220, 220, 255)
+      elif is_slower:
+        pulse = _pulse(3.0)
+        r_glow = int(W * 0.06 * (1.0 + 0.2 * pulse))
+        rl.draw_circle(glow_x, glow_y, r_glow, rl.Color(255, 140, 30, int(100 + 80 * pulse)))
+        c_tl = rl.Color(255, 160, 60, int(180 + 75 * pulse))
+      else:
+        c_tl = COLOR_FORCE_STOP
+      rl.draw_rectangle(tl_x, tl_y, int(tl_w), int(tl_h), c_tl)
 
-    rect_body = rl.Rectangle(cx - w / 2, cy - h * 0.65, w, h * 0.55)
-    rl.draw_rectangle_rounded(rect_body, 0.3, 4, rl.Color(20, 20, 20, 240))
-    rl.draw_rectangle_rounded_lines_ex(rect_body, 0.3, 4, 1.5, border_color)
+    # Wheels
+    wheel_y = int(cy_lead - H * 0.1)
+    wheel_w = int(W * 0.12)
+    wheel_h = int(H * 0.1)
+    wheel_c = rl.Color(10, 10, 10, 255)
+    rl.draw_rectangle(int(cx_lead - W * 0.4), wheel_y, wheel_w, wheel_h, wheel_c)
+    rl.draw_rectangle(int(cx_lead + W * 0.28), wheel_y, wheel_w, wheel_h, wheel_c)
 
-  def _draw_lead_tail_lights(self, cx: float, cy: float, w: float, h: float,
-                              is_stopped: bool, is_slower: bool, border_color: rl.Color):
-    tl_w = w * 0.15
-    tl_h = h * 0.12
-    tl_x_left = int(cx - w * 0.45)
-    tl_x_right = int(cx + w * 0.3)
-    tl_y = int(cy - h * 0.55)
-    glow_x = int(cx - w * 0.38)
-    glow_xr = int(cx + w * 0.38)
-    glow_y = int(cy - h * 0.5)
-
-    if is_stopped:
-      pulse = _pulse(8.0)
-      r_glow = int(w * 0.08 * (1.0 + 0.4 * pulse))
-      c_glow = rl.Color(255, 30, 60, int(150 + 105 * pulse))
-      rl.draw_circle(glow_x, glow_y, r_glow, c_glow)
-      rl.draw_circle(glow_xr, glow_y, r_glow, c_glow)
-      c_tl = rl.Color(255, 220, 220, 255)
-    elif is_slower:
-      pulse = _pulse(3.0)
-      r_glow = int(w * 0.06 * (1.0 + 0.2 * pulse))
-      c_glow = rl.Color(255, 140, 30, int(100 + 80 * pulse))
-      rl.draw_circle(glow_x, glow_y, r_glow, c_glow)
-      rl.draw_circle(glow_xr, glow_y, r_glow, c_glow)
-      c_tl = rl.Color(255, 160, 60, int(180 + 75 * pulse))
-    else:
-      c_tl = COLOR_FORCE_STOP
-
-    rl.draw_rectangle(tl_x_left, tl_y, int(tl_w), int(tl_h), c_tl)
-    rl.draw_rectangle(tl_x_right, tl_y, int(tl_w), int(tl_h), c_tl)
-
-  def _draw_lead_wheels(self, cx: float, cy: float, w: float, h: float):
-    wheel_y = int(cy - h * 0.1)
-    wheel_w = int(w * 0.12)
-    wheel_h = int(h * 0.1)
-    wheel_color = rl.Color(10, 10, 10, 255)
-    rl.draw_rectangle(int(cx - w * 0.4), wheel_y, wheel_w, wheel_h, wheel_color)
-    rl.draw_rectangle(int(cx + w * 0.28), wheel_y, wheel_w, wheel_h, wheel_color)
-
-  def _draw_lead_following_chevrons(self, icx: float, bottom: float, t_lead: float, data: AetherGaugeData):
+    # Following chevrons (from lead car back toward viewer)
     progress = (rl.get_time() * 1.5) % 1.0
     for i in range(2):
       t = t_lead * (1.0 - ((i + progress) / 2) % 1.0)
 
-      offset_t = _get_perspective_offset(t, data)
-      cx_t = icx + offset_t
+      cx_t = icx + _get_perspective_offset(t, data)
       cy_t = bottom - t * ROAD_HEIGHT
 
       chevron_w = 12.0 * SCALE - t * 5.0 * SCALE
@@ -526,7 +475,7 @@ class AetherGauge:
       rl.draw_line_ex(rl.Vector2(lx, cy_t + chevron_w * 0.5), rl.Vector2(cx_t, cy_t), chevron_thick, c_color)
       rl.draw_line_ex(rl.Vector2(rx, cy_t + chevron_w * 0.5), rl.Vector2(cx_t, cy_t), chevron_thick, c_color)
 
-  def _draw_standard_chevrons(self, icx: float, bottom: float, distance: float, data: AetherGaugeData):
+  def _draw_standard_chevrons(self, icx, bottom, distance, data):
     is_stop = data.indicator_type in (IndicatorType.FORCE_STOP, IndicatorType.STOP_LIGHT)
     progress = (rl.get_time() * 1.2) % 1.0
     t_stop = max(0.05, min(1.0, distance / STOP_DISTANCE_MAX)) if is_stop else 1.0
@@ -571,7 +520,7 @@ class AetherGauge:
       rl.draw_line_ex(rl.Vector2(lx, ly), rl.Vector2(cx_t, cy_t), chevron_thick, chev_color)
       rl.draw_line_ex(rl.Vector2(rx, ry), rl.Vector2(cx_t, cy_t), chevron_thick, chev_color)
 
-  def _draw_traffic_light(self, icx: float, icy: float, distance: float, data: AetherGaugeData):
+  def _draw_traffic_light(self, icx, icy, distance, data):
     t_light, cx_light, cy_road = _road_xy(distance, icx, icy + ROAD_HALF_SIZE, data)
     s_light = 1.0 - t_light
 
@@ -586,27 +535,22 @@ class AetherGauge:
     rl.draw_rectangle_rounded_lines_ex(rect_housing, 0.2, 4, 1.0, rl.Color(80, 80, 80, 255))
 
     r_bulb = 2.2 * SCALE * scale_light
-    y_red = cy_light - 7.5 * SCALE * scale_light
-    y_yellow = cy_light
-    y_green = cy_light + 7.5 * SCALE * scale_light
-
     active_light = data.indicator_extra if data.indicator_extra in ("red", "yellow", "green") else "red"
 
-    if active_light == "red":
-      glow_pulse = _pulse(5.0)
-      rl.draw_circle_v(rl.Vector2(cx_light, y_red), r_bulb + 3.0 * SCALE * glow_pulse, rl.Color(255, 30, 60, 45))
-      rl.draw_circle_v(rl.Vector2(cx_light, y_red), r_bulb + 6.0 * SCALE * glow_pulse, rl.Color(255, 30, 60, 15))
+    bulbs = [
+      (cy_light - 7.5 * SCALE * scale_light, "red", rl.Color(255, 30, 60, 255), rl.Color(50, 10, 15, 255)),
+      (cy_light, "yellow", rl.Color(255, 200, 0, 255), rl.Color(50, 40, 0, 255)),
+      (cy_light + 7.5 * SCALE * scale_light, "green", rl.Color(0, 255, 100, 255), rl.Color(0, 40, 15, 255)),
+    ]
+    for y, name, active_c, inactive_c in bulbs:
+      if name == "red" and active_light == "red":
+        glow_pulse = _pulse(5.0)
+        rl.draw_circle_v(rl.Vector2(cx_light, y), r_bulb + 3.0 * SCALE * glow_pulse, rl.Color(255, 30, 60, 45))
+        rl.draw_circle_v(rl.Vector2(cx_light, y), r_bulb + 6.0 * SCALE * glow_pulse, rl.Color(255, 30, 60, 15))
+      c = active_c if active_light == name else inactive_c
+      rl.draw_circle_v(rl.Vector2(cx_light, y), r_bulb, c)
 
-    c_red = rl.Color(255, 30, 60, 255) if active_light == "red" else rl.Color(50, 10, 15, 255)
-    c_yellow = rl.Color(255, 200, 0, 255) if active_light == "yellow" else rl.Color(50, 40, 0, 255)
-    c_green = rl.Color(0, 255, 100, 255) if active_light == "green" else rl.Color(0, 40, 15, 255)
-
-    rl.draw_circle_v(rl.Vector2(cx_light, y_red), r_bulb, c_red)
-    rl.draw_circle_v(rl.Vector2(cx_light, y_yellow), r_bulb, c_yellow)
-    rl.draw_circle_v(rl.Vector2(cx_light, y_green), r_bulb, c_green)
-
-  def _draw_approaching_stop_sign(self, cx: float, icy: float, bottom: float,
-                                  smoothed_distance: float, data: AetherGaugeData, font_bold: rl.Font):
+  def _draw_approaching_stop_sign(self, cx, icy, bottom, smoothed_distance, data, font_bold):
     t_stop_gauge = _get_t_from_x(smoothed_distance)
     smoothed_s = max(0.0, min(1.0, 1.0 - (smoothed_distance / STOP_DISTANCE_MAX)))
 
@@ -636,36 +580,27 @@ class AetherGauge:
 
     stop_font_size = max(4, int(r_sign * 0.7))
     stop_txt_size = measure_text_cached(font_bold, "STOP", stop_font_size)
-    stop_pos = rl.Vector2(cx_stop - stop_txt_size.x / 2, y_sign - stop_txt_size.y / 2)
-    rl.draw_text_ex(font_bold, "STOP", stop_pos, stop_font_size, 0, rl.WHITE)
+    rl.draw_text_ex(font_bold, "STOP", rl.Vector2(cx_stop - stop_txt_size.x / 2, y_sign - stop_txt_size.y / 2), stop_font_size, 0, rl.WHITE)
 
-  def _draw_mini_cradle(self, cx: float, bottom: float, data: AetherGaugeData, font_bold: rl.Font, font_medium: rl.Font):
+  def _draw_mini_cradle(self, cx, bottom, data, font_bold, font_medium):
     if not data.text:
       return
 
     if data.is_numeric:
       val_size = measure_text_cached(font_bold, data.text, int(48 * SCALE))
       val_pos = rl.Vector2(int(cx - val_size.x / 2), int(bottom + 12 * SCALE))
-      self._draw_text_with_shadow(font_bold, data.text, val_pos, int(48 * SCALE), data.color)
+      _draw_text_with_shadow(font_bold, data.text, val_pos, int(48 * SCALE), data.color)
 
       if data.reduction_text:
         red_size = measure_text_cached(font_medium, data.reduction_text, int(20 * SCALE))
-        red_x = cx + val_size.x / 2 + 8 * SCALE
-        red_y = bottom + 12 * SCALE + val_size.y / 2 - red_size.y / 2
-        red_pos = rl.Vector2(int(red_x), int(red_y))
-        self._draw_text_with_shadow(font_medium, data.reduction_text, red_pos, int(20 * SCALE), rl.Color(255, 255, 255, 160))
+        red_pos = rl.Vector2(int(cx + val_size.x / 2 + 8 * SCALE), int(bottom + 12 * SCALE + val_size.y / 2 - red_size.y / 2))
+        _draw_text_with_shadow(font_medium, data.reduction_text, red_pos, int(20 * SCALE), rl.Color(255, 255, 255, 160))
 
       if data.unit:
-        unit_y = bottom + 12 * SCALE + val_size.y + 4 * SCALE
         unit_size = measure_text_cached(font_medium, data.unit, int(16 * SCALE))
-        unit_pos = rl.Vector2(int(cx - unit_size.x / 2), int(unit_y))
-        self._draw_text_with_shadow(font_medium, data.unit, unit_pos, int(16 * SCALE), rl.Color(255, 255, 255, 160))
+        unit_pos = rl.Vector2(int(cx - unit_size.x / 2), int(bottom + 12 * SCALE + val_size.y + 4 * SCALE))
+        _draw_text_with_shadow(font_medium, data.unit, unit_pos, int(16 * SCALE), rl.Color(255, 255, 255, 160))
     else:
       val_size = measure_text_cached(font_bold, data.text, int(24 * SCALE))
       val_pos = rl.Vector2(int(cx - val_size.x / 2), int(bottom + 16 * SCALE))
-      self._draw_text_with_shadow(font_bold, data.text, val_pos, int(24 * SCALE), data.color)
-
-  def _draw_text_with_shadow(self, font: rl.Font, text: str, pos: rl.Vector2, size: int, color: rl.Color):
-    for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
-      rl.draw_text_ex(font, text, rl.Vector2(pos.x + dx, pos.y + dy), size, 0, rl.BLACK)
-      rl.draw_text_ex(font, text, pos, size, 0, color)
+      _draw_text_with_shadow(font_bold, data.text, val_pos, int(24 * SCALE), data.color)

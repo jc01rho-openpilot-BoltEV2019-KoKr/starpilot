@@ -1,3 +1,4 @@
+import math
 import pyray as rl
 import time
 from msgq.visionipc import VisionStreamType
@@ -13,7 +14,7 @@ from openpilot.selfdrive.ui.onroad.starpilot.slc_speed_limit import (
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.onroad.starpilot.aethergauge import AetherGauge
 from openpilot.selfdrive.ui.lib.starpilot_status import (
-    get_screen_edge_color, CEM_OVERRIDE_COLOR, ENGAGED_COLOR,
+    get_screen_edge_color, ENGAGED_COLOR,
     EXPERIMENTAL_COLOR, TRAFFIC_COLOR,
 )
 from openpilot.system.ui.lib.application import MousePos, gui_app, FontWeight
@@ -57,12 +58,58 @@ class StarPilotOnroadView(AugmentedRoadView):
   def _render_overlays(self):
     self._position_personality_button()
     self._personality_button.render()
-    self._render_road_name()
     self._render_standstill_timer()
     self._render_developer_metrics()
-    self._aethergauge.render(self._content_rect, self._font_bold, self._font_medium, current_speed=self._hud_renderer.speed)
     self._render_bottom_row_widgets()
     self._render_pedals()
+
+  def _render_bottom_dock_gradient(self, rect, border_width, border_color):
+    has_road_name = (self._params.get_bool("RoadNameUI")
+                     and ui_state.sm.valid.get("mapdOut", False)
+                     and getattr(ui_state.sm["mapdOut"], "roadName", ""))
+    has_gauge = self._aethergauge.get_active_data() is not None
+
+    if not has_road_name and not has_gauge:
+      return
+
+    dock_w = 850
+    dock_h = 150
+    dock_x = rect.x + (rect.width - dock_w) / 2
+    dock_y = rect.y + rect.height - dock_h
+
+    cx = dock_x + dock_w / 2
+    bottom = dock_y + dock_h
+    a = dock_w / 2
+    border_t = border_width / dock_h
+
+    for i in range(dock_h):
+      t = i / dock_h
+      y = bottom - i
+      half_w = a * math.sqrt(max(0.0, 1.0 - t * t))
+      if t < 0.05:
+        half_w += border_width * (1.0 - t / 0.05)
+      if t <= border_t:
+        alpha = 255
+      else:
+        t_fade = (t - border_t) / (1.0 - border_t)
+        alpha = int(255 * (1.0 - t_fade))
+      rl.draw_rectangle(int(cx - half_w), int(y), int(half_w * 2), 1,
+                        rl.Color(border_color.r, border_color.g, border_color.b, alpha))
+
+    if has_road_name:
+      road_name = getattr(ui_state.sm["mapdOut"], "roadName", "")
+      text_size = measure_text_cached(self._font_bold, road_name, 28)
+      rx = dock_x + (dock_w - text_size.x) / 2
+      ry = dock_y + dock_h * 0.2
+      pos = rl.Vector2(rx, ry)
+      for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+        rl.draw_text_ex(self._font_bold, road_name, rl.Vector2(pos.x + dx, pos.y + dy), 28, 0, rl.BLACK)
+      rl.draw_text_ex(self._font_bold, road_name, pos, 28, 0, rl.WHITE)
+
+    if has_gauge:
+      gauge_rect = rl.Rectangle(dock_x + dock_w * 0.1, dock_y + dock_h * 0.35, dock_w * 0.8, dock_h * 0.65)
+      self._aethergauge.render(self._content_rect, self._font_bold, self._font_medium,
+                               current_speed=self._hud_renderer.speed, dock_rect=gauge_rect)
 
   def _render_path_features(self, rect: rl.Rectangle):
     """Render path-related features (adjacent paths, blind spot, path edges)."""
@@ -115,35 +162,6 @@ class StarPilotOnroadView(AugmentedRoadView):
 
     self._personality_button.set_visible(
       lambda: ui_state.started and ui_state.has_longitudinal_control
-    )
-
-  def _render_road_name(self):
-    if not self._params.get_bool("RoadNameUI"):
-      return
-    if not ui_state.sm.valid.get("mapdOut", False):
-      return
-
-    road_name = getattr(ui_state.sm["mapdOut"], "roadName", "")
-    if not road_name:
-      return
-
-    text_size = measure_text_cached(self._font_bold, road_name, 52)
-    pad_x, pad_y = 28, 18
-    box_w = int(text_size.x + pad_x * 2)
-    box_h = int(text_size.y + pad_y * 2)
-    x = int(self._content_rect.x + (self._content_rect.width - box_w) / 2)
-    y = int(self._content_rect.y + self._content_rect.height - box_h - 22)
-
-    rect = rl.Rectangle(x, y, box_w, box_h)
-    rl.draw_rectangle_rounded(rect, 0.35, 10, rl.Color(0, 0, 0, 166))
-    rl.draw_rectangle_rounded_lines_ex(rect, 0.35, 10, 3, rl.Color(255, 255, 255, 50))
-    rl.draw_text_ex(
-      self._font_bold,
-      road_name,
-      rl.Vector2(x + (box_w - text_size.x) / 2, y + (box_h - text_size.y) / 2),
-      52,
-      0,
-      rl.WHITE,
     )
 
   def _render_standstill_timer(self):
@@ -215,6 +233,8 @@ class StarPilotOnroadView(AugmentedRoadView):
 
   def _draw_border(self, rect: rl.Rectangle):
     border_width = self._get_border_width()
+    border_color = get_screen_edge_color(ui_state)
+    self._render_bottom_dock_gradient(rect, border_width, border_color)
     rl.draw_rectangle_rounded_lines_ex(rect, 0.12, 10, border_width, rl.BLACK)
     border_rect = rl.Rectangle(rect.x + border_width, rect.y + border_width,
                                 rect.width - 2 * border_width, rect.height - 2 * border_width)
