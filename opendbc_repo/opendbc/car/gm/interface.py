@@ -110,8 +110,8 @@ class CarInterface(CarInterfaceBase):
   CarController = CarController
   RadarInterface = RadarInterface
 
-  def __init__(self, CP, FPCP, CarController, CarState):
-    super().__init__(CP, FPCP, CarController, CarState)
+  def __init__(self, CP, FPCP):
+    super().__init__(CP, FPCP)
     self.steer_offset = 0.0
 
   def update(self, can_packets, starpilot_toggles):
