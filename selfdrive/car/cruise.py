@@ -32,7 +32,7 @@ CRUISE_INTERVAL_SIGN = {
 
 
 class VCruiseHelper:
-  def __init__(self, CP):
+  def __init__(self, CP, FPCP=None):
     self.CP = CP
     self.v_cruise_kph = V_CRUISE_UNSET
     self.v_cruise_cluster_kph = V_CRUISE_UNSET
@@ -41,6 +41,7 @@ class VCruiseHelper:
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
 
     self.gm_cc_only = self.CP.carFingerprint in CC_ONLY_CAR and self.CP.flags & GMFlags.CC_LONG.value
+    self.redneck_non_pcm = bool(FPCP is not None and not getattr(FPCP, "pcmCruiseSpeed", True))
 
   def _get_short_press_delta(self, is_metric, starpilot_toggles: SimpleNamespace) -> float:
     base_delta = 1. if is_metric else IMPERIAL_INCREMENT
@@ -58,7 +59,7 @@ class VCruiseHelper:
     self.v_cruise_kph_last = self.v_cruise_kph
 
     if CS.cruiseState.available:
-      if self.gm_cc_only or not self.CP.pcmCruise:
+      if self.gm_cc_only or self.redneck_non_pcm or not self.CP.pcmCruise:
         # if stock cruise is completely disabled, then we can use our own set speed logic
         self._update_v_cruise_non_pcm(CS, enabled, is_metric, speed_limit_changed, starpilot_toggles)
         self.v_cruise_cluster_kph = self.v_cruise_kph
@@ -145,7 +146,7 @@ class VCruiseHelper:
   def initialize_v_cruise(self, CS, experimental_mode: bool, resume_prev_button: bool,
                           starpilot_toggles: SimpleNamespace, desired_speed_limit: float = 0.0) -> None:
     # initializing is handled by the PCM
-    if self.CP.pcmCruise and not self.gm_cc_only:
+    if self.CP.pcmCruise and not (self.gm_cc_only or self.redneck_non_pcm):
       return
 
     engage_floor_kph = max(V_CRUISE_MIN, 7.0 * CV.MPH_TO_KPH)
@@ -158,6 +159,8 @@ class VCruiseHelper:
       # the custom cruise-button interval.
       initialized_speed_limit_kph = round(desired_speed_limit * CV.MS_TO_KPH, 1)
       self.v_cruise_kph = float(np.clip(initialized_speed_limit_kph, V_CRUISE_MIN, V_CRUISE_MAX))
+    elif self.redneck_non_pcm and CS.cruiseState.speedCluster > 0:
+      self.v_cruise_kph = float(np.clip(CS.cruiseState.speedCluster * CV.MS_TO_KPH, V_CRUISE_MIN, V_CRUISE_MAX))
     else:
       self.v_cruise_kph = int(round(np.clip(CS.vEgo * CV.MS_TO_KPH, engage_floor_kph, V_CRUISE_MAX)))
 

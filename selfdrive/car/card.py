@@ -22,7 +22,7 @@ from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.common.constants import CV
 from openpilot.selfdrive.car.cruise import VCruiseHelper, IMPERIAL_INCREMENT, V_CRUISE_MAX, V_CRUISE_MIN
-from openpilot.selfdrive.car.redneck_cruise import RedneckCruise
+from openpilot.selfdrive.car.redneck_cruise import RedneckCruise, SEND_BUTTON_DECREASE, SEND_BUTTON_INCREASE
 from openpilot.selfdrive.car.car_specific import MockCarState
 
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles, update_starpilot_toggles
@@ -30,6 +30,8 @@ from openpilot.starpilot.controls.starpilot_card import StarPilotCard
 
 REPLAY = "REPLAY" in os.environ
 OPENPILOT_LEAD_MIN_DISTANCE = 0.1
+REDNECK_DECREASE_LOOKAHEAD_POINTS = 10
+REDNECK_AUTO_BUTTON_FILTER_FRAMES = int(0.3 / DT_CTRL)
 
 EventName = log.OnroadEvent.EventName
 
@@ -165,8 +167,12 @@ class Car:
     self.params.put_nonblocking("CarParamsPersistent", cp_bytes)
 
     self.mock_carstate = MockCarState()
-    self.v_cruise_helper = VCruiseHelper(self.CP)
+    self.v_cruise_helper = VCruiseHelper(self.CP, self.FPCP)
     self.redneck_cruise = RedneckCruise(self.CP, self.FPCP) if self.CP.brand == "hyundai" else None
+    self.redneck_button_event_filter_frames = {
+      int(ButtonType.accelCruise): 0,
+      int(ButtonType.decelCruise): 0,
+    }
 
     self.is_metric = self.params.get_bool("IsMetric")
     self.safe_mode = self.params.get_bool("SafeMode")
@@ -209,6 +215,8 @@ class Car:
     CS, FPCS = self.CI.update(can_list, self.starpilot_toggles)
     if self.CP.brand == 'mock':
       CS, FPCS = self.mock_carstate.update(CS, FPCS)
+
+    self._filter_redneck_button_events(CS)
 
     # Update radar tracks from CAN
     RD: structs.RadarDataT | None = self.RI.update(can_list)
@@ -345,6 +353,7 @@ class Car:
       self._update_redneck_cruise(CS, CC)
       self._update_openpilot_lead_state(CC)
       self.last_actuators_output, can_sends = self.CI.apply(CC, now_nanos, self.starpilot_toggles)
+      self._record_redneck_button_feedback_filter()
       self.pm.send('sendcan', can_list_to_can_capnp(can_sends, msgtype='sendcan', valid=CS.canValid))
 
       self.CC_prev = CC
@@ -373,19 +382,59 @@ class Car:
     if self.redneck_cruise is None:
       return
 
-    send_button, v_target = self.redneck_cruise.run(CS, CC, self._get_redneck_target_speed(), self.is_metric)
+    send_button, v_target = self.redneck_cruise.run(CS, CC, self._get_redneck_target_speed(CS), self.is_metric)
     self.CI.CS.redneck_send_button = send_button
     self.CI.CS.redneck_v_target = v_target
 
-  def _get_redneck_target_speed(self) -> float:
-    if self.sm.seen['longitudinalPlan'] and self.sm.valid['longitudinalPlan']:
-      speeds = self.sm['longitudinalPlan'].speeds
-      if len(speeds) > 0:
-        target_speed = float(speeds[0])
-        if math.isfinite(target_speed):
-          return target_speed
+  def _get_redneck_target_speed(self, CS: car.CarState) -> float:
+    fallback_target_speed = float(CS.cruiseState.speedCluster)
 
-    return float(self.sm['starpilotPlan'].vCruise)
+    if self.sm.seen['starpilotPlan'] and self.sm.valid['starpilotPlan']:
+      starpilot_target_speed = float(self.sm['starpilotPlan'].vCruise)
+      if starpilot_target_speed > 0.0:
+        fallback_target_speed = starpilot_target_speed
+
+    if self.sm.seen['longitudinalPlan'] and self.sm.valid['longitudinalPlan']:
+      plan_speeds = [float(speed) for speed in self.sm['longitudinalPlan'].speeds if math.isfinite(float(speed))]
+      if len(plan_speeds) > 0:
+        target_speed = plan_speeds[0]
+        decrease_target_speed = min(plan_speeds[:REDNECK_DECREASE_LOOKAHEAD_POINTS])
+        if decrease_target_speed < min(target_speed, float(CS.cruiseState.speedCluster)):
+          return decrease_target_speed
+        return target_speed
+
+    return fallback_target_speed
+
+  def _filter_redneck_button_events(self, CS: car.CarState) -> None:
+    if self.redneck_cruise is None:
+      return
+
+    for button_type in self.redneck_button_event_filter_frames:
+      self.redneck_button_event_filter_frames[button_type] = max(0, self.redneck_button_event_filter_frames[button_type] - 1)
+
+    if len(CS.buttonEvents) == 0:
+      return
+
+    filtered_button_events = []
+    for event in CS.buttonEvents:
+      button_type = event.type.raw if hasattr(event.type, "raw") else int(event.type)
+      if self.redneck_button_event_filter_frames.get(button_type, 0) > 0:
+        continue
+      filtered_button_events.append(event)
+
+    CS.buttonEvents = filtered_button_events
+
+  def _record_redneck_button_feedback_filter(self) -> None:
+    if self.redneck_cruise is None:
+      return
+
+    sent_button = int(getattr(self.CI.CS, "redneck_last_sent_button", 0) or 0)
+    if sent_button == SEND_BUTTON_INCREASE:
+      self.redneck_button_event_filter_frames[int(ButtonType.accelCruise)] = REDNECK_AUTO_BUTTON_FILTER_FRAMES
+    elif sent_button == SEND_BUTTON_DECREASE:
+      self.redneck_button_event_filter_frames[int(ButtonType.decelCruise)] = REDNECK_AUTO_BUTTON_FILTER_FRAMES
+
+    self.CI.CS.redneck_last_sent_button = 0
 
   def step(self):
     CS, RD, FPCS = self.state_update()

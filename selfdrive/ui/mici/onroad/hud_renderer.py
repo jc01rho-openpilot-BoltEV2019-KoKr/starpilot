@@ -260,6 +260,9 @@ class HudRenderer(Widget):
     self._draw_steering_wheel(self._rect)
     self._draw_speed_limit_prompt(self._rect)
 
+  def user_interacting(self) -> bool:
+    return self._navigation_card.is_pressed
+
   def _render(self, rect: rl.Rectangle) -> None:
     """Render HUD elements to the screen."""
     self.prepare(rect)

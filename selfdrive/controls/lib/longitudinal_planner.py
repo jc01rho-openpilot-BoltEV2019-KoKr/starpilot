@@ -1086,16 +1086,14 @@ class LongitudinalPlanner:
       return self.lead_two
     return None
 
-  def get_follow_control_lead(self, lead_control_active, v_ego, t_follow):
-    matched_follow_lead = self.get_matched_follow_control_lead(v_ego, t_follow)
-    if matched_follow_lead is not None:
-      return matched_follow_lead
+  def get_follow_control_lead(self, lead_control_active, v_ego, t_follow, *, allow_optional_far_lead_logic=True):
+    if allow_optional_far_lead_logic:
+      matched_follow_lead = self.get_matched_follow_control_lead(v_ego, t_follow)
+      if matched_follow_lead is not None:
+        return matched_follow_lead
 
     if not lead_control_active:
       return None
-
-    if self.mpc.source == 'lead1' and self.lead_is_matched_follow_window(self.lead_two, v_ego, t_follow):
-      return self.lead_two
 
     if self.lead_one.status:
       return self.lead_one
@@ -1560,9 +1558,11 @@ class LongitudinalPlanner:
     dec_mpc_mode = self.get_mpc_mode()
     if not self.mlsim:
       self.mpc.mode = dec_mpc_mode
+    optional_far_lead_comfort = getattr(starpilot_toggles, "coast_up_to_leads", True)
     self.mpc.update(sm['radarState'], v_cruise, x, v, a, j,
                     sm['starpilotPlan'].dangerFactor, effective_t_follow,
-                    personality=personality, tracking_lead=lead_control_active)
+                    personality=personality, tracking_lead=lead_control_active,
+                    optional_far_lead_comfort=optional_far_lead_comfort)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
@@ -1831,7 +1831,12 @@ class LongitudinalPlanner:
     if vision_brake_cap_active:
       output_accel_min = min(output_accel_min, vision_cap_accel_min)
 
-    follow_control_lead = self.get_follow_control_lead(lead_control_active, scene_v_ego, effective_t_follow)
+    follow_control_lead = self.get_follow_control_lead(
+      lead_control_active,
+      scene_v_ego,
+      effective_t_follow,
+      allow_optional_far_lead_logic=optional_far_lead_comfort,
+    )
     if follow_control_lead is not None and not panic_bypass:
       if not output_should_stop and not vision_low_speed_stop_active:
         tracked_vision_model_brake_floor = self.get_tracked_vision_model_brake_floor(
@@ -1845,10 +1850,11 @@ class LongitudinalPlanner:
           self.a_desired = min(self.a_desired, tracked_vision_model_brake_floor)
           output_a_target = min(output_a_target, tracked_vision_model_brake_floor)
 
-      matched_follow_brake_cap = self.get_matched_follow_brake_cap(follow_control_lead, scene_v_ego, effective_t_follow)
-      if matched_follow_brake_cap is not None:
-        self.a_desired = max(self.a_desired, matched_follow_brake_cap)
-        output_a_target = max(output_a_target, matched_follow_brake_cap)
+      if optional_far_lead_comfort:
+        matched_follow_brake_cap = self.get_matched_follow_brake_cap(follow_control_lead, scene_v_ego, effective_t_follow)
+        if matched_follow_brake_cap is not None:
+          self.a_desired = max(self.a_desired, matched_follow_brake_cap)
+          output_a_target = max(output_a_target, matched_follow_brake_cap)
 
       if not close_lead_caps and not output_should_stop and not vision_low_speed_stop_active:
         low_speed_transition_brake_cap = self.get_low_speed_follow_transition_brake_cap(
@@ -1863,7 +1869,7 @@ class LongitudinalPlanner:
           output_a_target = max(output_a_target, low_speed_transition_brake_cap)
 
     comfort_lead = self.lead_two if self.mpc.source == 'lead1' and self.lead_two.status else self.lead_one
-    if comfort_lead is not None and not panic_bypass:
+    if optional_far_lead_comfort and comfort_lead is not None and not panic_bypass:
       far_lead_brake_cap = self.get_far_lead_brake_cap(comfort_lead, scene_v_ego, effective_t_follow)
       if far_lead_brake_cap is not None:
         self.a_desired = max(self.a_desired, far_lead_brake_cap)

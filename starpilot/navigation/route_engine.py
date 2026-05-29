@@ -20,7 +20,7 @@ SPEED_CONVERSIONS = {
 }
 
 OFF_ROUTE_SPEED_BREAKPOINTS = [0.0, 5.0, 10.0, 20.0, 40.0]
-OFF_ROUTE_DISTANCE_BREAKPOINTS = [100.0, 125.0, 150.0, 200.0, 250.0]
+OFF_ROUTE_DISTANCE_BREAKPOINTS = [40.0, 50.0, 60.0, 80.0, 100.0]
 UPCOMING_TURN_SPEED_BREAKPOINTS = [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0]
 UPCOMING_TURN_DISTANCE_BREAKPOINTS = [20.0, 25.0, 30.0, 45.0, 60.0, 75.0, 90.0, 105.0, 120.0]
 UTURN_MODIFIER = "uturn"
@@ -79,6 +79,7 @@ class RouteStep:
 @dataclass(frozen=True)
 class RouteProgress:
   closest_index: int
+  closest_segment_index: int
   distance_from_route: float
   current_step: RouteStep
   next_step: RouteStep | None
@@ -112,23 +113,24 @@ def minimum_distance(a: Coordinate, b: Coordinate, p: Coordinate) -> float:
   projection = a + ab * t
   return projection.distance_to(p)
 
+def project_onto_segment(a: Coordinate, b: Coordinate, p: Coordinate) -> tuple[float, float]:
+  lat_scale = EARTH_MEAN_RADIUS * math.pi / 180.0
+  ref_lat = math.radians((a.latitude + b.latitude + p.latitude) / 3.0)
+  lon_scale = lat_scale * math.cos(ref_lat)
 
-def distance_along_geometry(geometry: list[Coordinate], position: Coordinate) -> float:
-  if len(geometry) <= 2:
-    return geometry[0].distance_to(position)
+  ab_x = (b.longitude - a.longitude) * lon_scale
+  ab_y = (b.latitude - a.latitude) * lat_scale
+  ap_x = (p.longitude - a.longitude) * lon_scale
+  ap_y = (p.latitude - a.latitude) * lat_scale
 
-  total_distance = 0.0
-  closest_total_distance = 0.0
-  closest_distance = 1e9
+  segment_length_sq = ab_x * ab_x + ab_y * ab_y
+  if segment_length_sq <= 1e-6:
+    return 0.0, math.hypot(ap_x, ap_y)
 
-  for index in range(len(geometry) - 1):
-    segment_distance = minimum_distance(geometry[index], geometry[index + 1], position)
-    if segment_distance < closest_distance:
-      closest_distance = segment_distance
-      closest_total_distance = total_distance + geometry[index].distance_to(position)
-    total_distance += geometry[index].distance_to(geometry[index + 1])
-
-  return closest_total_distance
+  t = float(np.clip((ap_x * ab_x + ap_y * ab_y) / segment_length_sq, 0.0, 1.0))
+  proj_x = ab_x * t
+  proj_y = ab_y * t
+  return t, math.hypot(ap_x - proj_x, ap_y - proj_y)
 
 
 def string_to_direction(direction: str) -> str:
@@ -207,6 +209,7 @@ def parse_banner_instructions(banners: Any, distance_to_maneuver: float = 0.0) -
 @dataclass
 class NavigationRoute:
   geometry: list[Coordinate]
+  geometry_cumulative_distances: list[float]
   bearings: list[float]
   steps: list[RouteStep]
   total_distance: float
@@ -243,38 +246,54 @@ class NavigationRoute:
         instruction=str(step.get("instruction", "")),
       ))
 
-    bearings = [bearing_between_two_points(geometry[index], geometry[index + 2]) for index in range(len(geometry) - 2)]
+    bearings = [bearing_between_two_points(geometry[index], geometry[index + 1]) for index in range(len(geometry) - 1)]
     return cls(
       geometry=geometry,
+      geometry_cumulative_distances=cumulative_distances,
       bearings=bearings,
       steps=steps,
       total_distance=float(route_data.get("totalDistance", 0.0)),
       total_duration=float(route_data.get("totalDuration", 0.0)),
     )
 
-  def route_bearing_misaligned(self, closest_index: int, current_bearing: float | None, v_ego: float) -> bool:
-    if current_bearing is None or v_ego < 5.0 or closest_index <= 0 or closest_index >= len(self.geometry) - 1:
-      return False
-    if closest_index - 1 >= len(self.bearings):
+  def route_bearing_misaligned(self, closest_segment_index: int, current_bearing: float | None, v_ego: float) -> bool:
+    if current_bearing is None or v_ego < 2.5 or closest_segment_index < 0 or closest_segment_index >= len(self.bearings):
       return False
 
-    route_bearing = self.bearings[closest_index - 1]
+    route_bearing = self.bearings[closest_segment_index]
     normalized_bearing = (current_bearing + 360.0) % 360.0
     bearing_difference = abs(normalized_bearing - route_bearing)
-    return min(bearing_difference, 360.0 - bearing_difference) > 110.0
+    return min(bearing_difference, 360.0 - bearing_difference) > 75.0
 
   def get_progress(self, position: Coordinate) -> RouteProgress | None:
     if not self.geometry or not self.steps:
       return None
+    if len(self.geometry) == 1:
+      closest_index = 0
+      closest_segment_index = 0
+      min_distance = position.distance_to(self.geometry[0])
+      closest_cumulative = 0.0
+    else:
+      best_segment_index = 0
+      best_distance = float("inf")
+      best_t = 0.0
 
-    closest_index, min_distance = min(
-      ((idx, position.distance_to(coord)) for idx, coord in enumerate(self.geometry)),
-      key=lambda item: item[1],
-    )
-    closest_cumulative = distance_along_geometry(self.geometry, position)
+      for index in range(len(self.geometry) - 1):
+        t, segment_distance = project_onto_segment(self.geometry[index], self.geometry[index + 1], position)
+        if segment_distance < best_distance:
+          best_distance = segment_distance
+          best_segment_index = index
+          best_t = t
+
+      closest_segment_index = best_segment_index
+      segment_start = self.geometry_cumulative_distances[closest_segment_index]
+      segment_end = self.geometry_cumulative_distances[closest_segment_index + 1]
+      closest_cumulative = segment_start + (segment_end - segment_start) * best_t
+      min_distance = best_distance
+      closest_index = min(closest_segment_index + (1 if best_t >= 0.5 else 0), len(self.geometry) - 1)
 
     current_step_index = max(
-      (idx for idx, step in enumerate(self.steps) if step.cumulative_distance <= closest_cumulative),
+      (idx for idx, step in enumerate(self.steps) if step.cumulative_distance <= (closest_cumulative + 1e-3)),
       default=-1,
     )
     current_step = self.steps[current_step_index if current_step_index >= 0 else 0]
@@ -303,6 +322,7 @@ class NavigationRoute:
 
     return RouteProgress(
       closest_index=closest_index,
+      closest_segment_index=closest_segment_index,
       distance_from_route=min_distance,
       current_step=current_step,
       next_step=next_step,
@@ -328,10 +348,13 @@ class NavigationRoute:
     return progress.distance_from_route > distance_threshold
 
   def arrived(self, progress: RouteProgress, v_ego: float) -> bool:
-    if v_ego >= 1.0 or not progress.all_maneuvers:
+    if v_ego >= 2.0 or not progress.all_maneuvers:
       return False
     current = progress.all_maneuvers[0]
-    return current["type"] == "arrive" or progress.current_step.instruction.startswith("Your destination")
+    destination_step = current["type"] == "arrive" or progress.current_step.maneuver == "arrive" or progress.current_step.instruction.startswith("Your destination")
+    if not destination_step and progress.next_step is not None:
+      destination_step = progress.next_step.maneuver == "arrive" and progress.distance_to_end_of_step <= max(15.0, v_ego * 8.0)
+    return destination_step and progress.distance_remaining <= 40.0
 
   def build_instruction_payload(self, progress: RouteProgress, *, use_vienna_sign: bool = False) -> dict[str, Any]:
     parsed = parse_banner_instructions(progress.current_step.banner_instructions, progress.distance_to_end_of_step) or {}

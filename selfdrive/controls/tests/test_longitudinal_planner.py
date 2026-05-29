@@ -1702,6 +1702,19 @@ def test_follow_control_lead_prefers_active_lead1_for_matched_follow():
   assert follow_lead is planner.lead_two
 
 
+def test_follow_control_lead_disables_optional_matched_follow_override():
+  v_ego = 23.3
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  planner.lead_one = make_lead(status=True, d_rel=80.0, v_lead=20.0, radar=False, model_prob=0.6)
+  planner.lead_two = make_lead(status=True, d_rel=49.9, v_lead=21.9, radar=False, model_prob=0.98)
+  planner.mpc.source = "lead1"
+
+  follow_lead = planner.get_follow_control_lead(True, v_ego, 1.45, allow_optional_far_lead_logic=False)
+
+  assert follow_lead is planner.lead_one
+
+
 def test_follow_control_lead_keeps_matched_follow_lead_without_tracking_latch():
   v_ego = 27.5
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
@@ -1711,6 +1724,17 @@ def test_follow_control_lead_keeps_matched_follow_lead_without_tracking_latch():
   follow_lead = planner.get_follow_control_lead(False, v_ego, 1.45)
 
   assert follow_lead is planner.lead_one
+
+
+def test_follow_control_lead_requires_real_lead_control_when_optional_logic_disabled():
+  v_ego = 27.5
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  planner.lead_one = make_lead(status=True, d_rel=61.99, v_lead=27.63, radar=False, model_prob=0.99)
+
+  follow_lead = planner.get_follow_control_lead(False, v_ego, 1.45, allow_optional_far_lead_logic=False)
+
+  assert follow_lead is None
 
 
 def test_far_lead_soft_brake_cap_limits_high_confidence_distant_vision_lead():

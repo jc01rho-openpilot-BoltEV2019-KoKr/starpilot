@@ -1,10 +1,23 @@
+from types import SimpleNamespace
+
 import cereal.messaging as messaging
 
 from opendbc.car.toyota.values import CAR as TOYOTA
 from openpilot.selfdrive.test.process_replay import replay_process_with_name
+from openpilot.selfdrive.controls.radard import g90_low_speed_radar_lead_sane, g90_radar_lead_lateral_sane
 
 
 class TestLeads:
+  def test_g90_radar_filters_side_tracks(self):
+    side_track = SimpleNamespace(dRel=13.0, yRel=-10.38, cnt=10)
+    centered_track = SimpleNamespace(dRel=10.8, yRel=-0.21, cnt=5)
+    far_low_speed_track = SimpleNamespace(dRel=15.5, yRel=0.58, cnt=5)
+
+    assert not g90_radar_lead_lateral_sane(side_track)
+    assert g90_radar_lead_lateral_sane(centered_track)
+    assert g90_low_speed_radar_lead_sane(centered_track, 2.0)
+    assert not g90_low_speed_radar_lead_sane(far_low_speed_track, 3.5)
+
   def test_radar_fault(self):
     # if there's no radar-related can traffic, radard should either not respond or respond with an error
     # this is tightly coupled with underlying car radar_interface implementation, but it's a good sanity check

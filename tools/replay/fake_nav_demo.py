@@ -5,6 +5,7 @@ import time
 from itertools import cycle
 
 from cereal import log, messaging
+from openpilot.common.params import Params, UnknownKeyName
 
 
 ROUTE_COORDS = [
@@ -108,6 +109,20 @@ SCENARIOS = [
 ]
 
 
+def build_nav_state(params_memory: Params, scenario: dict) -> None:
+  params_memory.put_nonblocking("NavInstructionState", {
+    "valid": True,
+    "maneuverModifier": str(scenario["modifier"]),
+    "maneuverType": str(scenario["type"]),
+    "maneuverPrimaryText": str(scenario["primary"]),
+    "maneuverSecondaryText": str(scenario["secondary"]),
+    "maneuverDistance": float(scenario["distance"]),
+    "nextManeuverType": str(scenario["next_type"]),
+    "nextManeuverModifier": str(scenario["next_modifier"]),
+    "nextManeuverDistance": float(scenario["distance"] + 220.0),
+  })
+
+
 def build_instruction(pm: messaging.PubMaster, scenario: dict) -> None:
   msg = messaging.new_message("navInstruction")
   msg.valid = True
@@ -146,22 +161,35 @@ def main() -> None:
   args = parser.parse_args()
 
   pm = messaging.PubMaster(["navInstruction", "navRoute"])
+  params_memory = Params(memory=True)
+  try:
+    params_memory.put_bool("NavInstructionCollapsed", False)
+  except UnknownKeyName:
+    pass
 
   scenario_cycle = cycle(SCENARIOS)
   current = next(scenario_cycle)
   next_switch = time.monotonic() + args.hold_seconds
   print(f"showing: {current['type']} / {current['modifier']} -> {current['next_type']} / {current['next_modifier']}", flush=True)
 
-  while True:
-    now = time.monotonic()
-    if now >= next_switch:
-      current = next(scenario_cycle)
-      next_switch = now + args.hold_seconds
-      print(f"showing: {current['type']} / {current['modifier']} -> {current['next_type']} / {current['next_modifier']}", flush=True)
+  try:
+    while True:
+      now = time.monotonic()
+      if now >= next_switch:
+        current = next(scenario_cycle)
+        next_switch = now + args.hold_seconds
+        print(f"showing: {current['type']} / {current['modifier']} -> {current['next_type']} / {current['next_modifier']}", flush=True)
 
-    build_instruction(pm, current)
-    build_route(pm)
-    time.sleep(args.publish_interval)
+      build_nav_state(params_memory, current)
+      build_instruction(pm, current)
+      build_route(pm)
+      time.sleep(args.publish_interval)
+  finally:
+    params_memory.remove("NavInstructionState")
+    try:
+      params_memory.remove("NavInstructionCollapsed")
+    except UnknownKeyName:
+      pass
 
 
 if __name__ == "__main__":

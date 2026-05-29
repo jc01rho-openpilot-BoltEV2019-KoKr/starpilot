@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pyray as rl
 
+from openpilot.common.params import UnknownKeyName
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -71,6 +72,31 @@ class NavigationCardRenderer(Widget):
     self._has_next = False
     self._next_maneuver_type = "turn"
     self._next_modifier = "straight"
+    self._collapsed = False
+    self._collapsed_fallback = False
+    self._collapsed_param_supported: bool | None = None
+    self._interactive_rect = rl.Rectangle(0, 0, 0, 0)
+    self._click_delay = 0.15
+
+    self.set_click_callback(self._toggle_collapsed)
+
+  @property
+  def _hit_rect(self) -> rl.Rectangle:
+    if self._interactive_rect.width > 0 and self._interactive_rect.height > 0:
+      return self._interactive_rect
+    return rl.Rectangle(-1, -1, 0, 0)
+
+  def _toggle_collapsed(self) -> None:
+    if not self._valid:
+      return
+    new_state = not self._collapsed
+    try:
+      ui_state.params_memory.put_bool("NavInstructionCollapsed", new_state)
+      self._collapsed_param_supported = True
+    except UnknownKeyName:
+      self._collapsed_param_supported = False
+      self._collapsed_fallback = new_state
+      self._collapsed = new_state
 
   def _icon_filename(self, maneuver_type: str, modifier: str) -> str:
     normalized_type = _normalize_maneuver_type(maneuver_type)
@@ -98,6 +124,7 @@ class NavigationCardRenderer(Widget):
   def _update_state(self) -> None:
     self._enabled = ui_state.params.get_bool("NavigationUI")
     self._valid = False
+    self._interactive_rect = rl.Rectangle(0, 0, 0, 0)
 
     if not self._enabled:
       return
@@ -127,6 +154,10 @@ class NavigationCardRenderer(Widget):
     self._next_maneuver_type = str(nav_state.get("nextManeuverType") or "turn")
     self._next_modifier = str(nav_state.get("nextManeuverModifier") or "straight")
     self._has_next = bool(nav_state.get("nextManeuverType") or nav_state.get("nextManeuverModifier"))
+    if self._collapsed_param_supported is False:
+      self._collapsed = self._collapsed_fallback
+    else:
+      self._collapsed = ui_state.params_memory.get_bool("NavInstructionCollapsed")
 
     self._valid = True
 
@@ -220,6 +251,7 @@ class NavigationCardRenderer(Widget):
     distance_font_size = 48 if container_height == 225 else 40
 
     container = rl.Rectangle(container_x, container_y, container_width, container_height)
+    self._interactive_rect = container
     rl.draw_rectangle_rounded(container, border_radius / container_height, 10, rl.Color(0, 0, 0, 192))
 
     icon_x = container_x + icon_padding
@@ -284,6 +316,29 @@ class NavigationCardRenderer(Widget):
       rl.WHITE,
     )
 
+  def _render_collapsed_default(self, rect: rl.Rectangle) -> None:
+    chip_size = 94
+    chip_x = int(rect.x + rect.width - chip_size - 32)
+    chip_y = int(rect.y + 82)
+    chip_rect = rl.Rectangle(chip_x, chip_y, chip_size, chip_size)
+    self._interactive_rect = chip_rect
+
+    rl.draw_rectangle_rounded(chip_rect, 0.34, 10, rl.Color(7, 11, 18, 228))
+    rl.draw_rectangle_rounded_lines_ex(chip_rect, 0.34, 10, 2, rl.Color(255, 255, 255, 40))
+
+    icon = self._get_icon(self._maneuver_type, self._modifier)
+    icon_size = 58
+    icon_x = chip_x + (chip_size - icon_size) / 2
+    icon_y = chip_y + (chip_size - icon_size) / 2
+    rl.draw_texture_pro(
+      icon,
+      rl.Rectangle(0, 0, icon.width, icon.height),
+      rl.Rectangle(icon_x, icon_y, icon_size, icon_size),
+      rl.Vector2(0, 0),
+      0,
+      rl.WHITE,
+    )
+
   def _render_mici(self, rect: rl.Rectangle) -> None:
     left_safe = 96
     right_margin = 12
@@ -293,6 +348,7 @@ class NavigationCardRenderer(Widget):
     container_x = int(rect.x + left_safe)
     container_y = int(rect.y + 16)
     container = rl.Rectangle(container_x, container_y, container_width, container_height)
+    self._interactive_rect = container
     rl.draw_rectangle_rounded(container, 0.2, 10, rl.Color(7, 11, 18, 228))
     rl.draw_rectangle_rounded_lines_ex(container, 0.2, 10, 2, rl.Color(255, 255, 255, 34))
 
@@ -378,9 +434,39 @@ class NavigationCardRenderer(Widget):
       rl.WHITE,
     )
 
+  def _render_collapsed_mici(self, rect: rl.Rectangle) -> None:
+    chip_size = 72
+    right_reserved = 160
+    chip_x = int(rect.x + rect.width - chip_size - right_reserved)
+    chip_y = int(rect.y + 18)
+    chip_rect = rl.Rectangle(chip_x, chip_y, chip_size, chip_size)
+    self._interactive_rect = chip_rect
+
+    rl.draw_rectangle_rounded(chip_rect, 0.34, 10, rl.Color(7, 11, 18, 232))
+    rl.draw_rectangle_rounded_lines_ex(chip_rect, 0.34, 10, 2, rl.Color(255, 255, 255, 40))
+
+    icon = self._get_icon(self._maneuver_type, self._modifier)
+    icon_size = 44
+    icon_x = chip_x + (chip_size - icon_size) / 2
+    icon_y = chip_y + (chip_size - icon_size) / 2
+    rl.draw_texture_pro(
+      icon,
+      rl.Rectangle(0, 0, icon.width, icon.height),
+      rl.Rectangle(icon_x, icon_y, icon_size, icon_size),
+      rl.Vector2(0, 0),
+      0,
+      rl.WHITE,
+    )
+
   def _render(self, rect: rl.Rectangle) -> None:
     self._update_state()
     if not self._valid:
+      return
+    if self._collapsed:
+      if self._layout_variant == "mici":
+        self._render_collapsed_mici(rect)
+      else:
+        self._render_collapsed_default(rect)
       return
     if self._layout_variant == "mici":
       self._render_mici(rect)

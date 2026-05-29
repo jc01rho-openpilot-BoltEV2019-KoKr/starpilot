@@ -128,7 +128,7 @@ class HudRenderer(Widget):
     self._exp_button.render(rl.Rectangle(button_x, button_y, UI_CONFIG.button_size, UI_CONFIG.button_size))
 
   def user_interacting(self) -> bool:
-    return self._exp_button.is_pressed
+    return self._exp_button.is_pressed or self._navigation_card.is_pressed
 
   def _draw_set_speed(self, rect: rl.Rectangle) -> None:
     """Draw the MAX speed indicator box."""

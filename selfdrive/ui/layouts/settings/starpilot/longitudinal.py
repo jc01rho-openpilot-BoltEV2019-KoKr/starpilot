@@ -357,7 +357,7 @@ class StarPilotLongitudinalTuneLayout(_SettingsPage):
                    set_state=lambda s: self._params.put_bool("HumanAcceleration", s),
                    visible=self._longitudinal_enabled),
         SettingRow("CoastUpToLeads", "toggle", tr_noop("Coast Up To Leads"),
-                   subtitle=tr_noop("Briefly coast toward far leads before applying normal throttle again."),
+                   subtitle=tr_noop("Keep optional far-lead comfort logic on. Recommended unless your car shows lead-follow stutter or springy gas/brake behavior."),
                    get_state=lambda: self._params.get_bool("CoastUpToLeads"),
                    set_state=lambda s: self._params.put_bool("CoastUpToLeads", s),
                    visible=self._longitudinal_enabled),

@@ -113,6 +113,11 @@ void OnroadWindow::paintEvent(QPaintEvent *event) {
 }
 
 void OnroadWindow::mousePressEvent(QMouseEvent* mouseEvent) {
+  if (nvg->handleHudTap(mouseEvent->pos())) {
+    mouseEvent->accept();
+    return;
+  }
+
   starpilot_nvg->mousePressEvent(mouseEvent);
 
   if (mouseEvent->isAccepted()) {

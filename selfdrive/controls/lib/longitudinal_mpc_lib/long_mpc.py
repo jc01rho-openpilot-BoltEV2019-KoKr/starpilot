@@ -590,7 +590,8 @@ class LongitudinalMpc:
     self.max_a = max_a
 
   def update(self, radarstate, v_cruise, x, v, a, j, danger_factor, t_follow,
-             personality=log.LongitudinalPersonality.standard, tracking_lead=True):
+             personality=log.LongitudinalPersonality.standard, tracking_lead=True,
+             optional_far_lead_comfort=True):
     v_ego = self.x0[1]
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
@@ -622,11 +623,12 @@ class LongitudinalMpc:
                                  v_upper)
       cruise_obstacle = np.cumsum(T_DIFFS * v_cruise_clipped) + get_safe_obstacle_distance(v_cruise_clipped, t_follow)
       prev_source = self.source
-      if prev_source == 'lead0':
-        cruise_obstacle += self.get_radarless_matched_follow_cruise_hysteresis(lead_one, v_ego, t_follow)
-      elif prev_source == 'lead1':
-        cruise_obstacle += self.get_radarless_matched_follow_cruise_hysteresis(lead_two, v_ego, t_follow)
-      if tracking_lead and lead_one.status:
+      if optional_far_lead_comfort:
+        if prev_source == 'lead0':
+          cruise_obstacle += self.get_radarless_matched_follow_cruise_hysteresis(lead_one, v_ego, t_follow)
+        elif prev_source == 'lead1':
+          cruise_obstacle += self.get_radarless_matched_follow_cruise_hysteresis(lead_two, v_ego, t_follow)
+      if optional_far_lead_comfort and tracking_lead and lead_one.status:
         desired_gap = desired_follow_distance(v_ego, lead_one.vLead, t_follow)
         closing_speed = max(0.0, v_ego - lead_one.vLead)
         cruise_obstacle += get_tracked_lead_catchup_bias(v_ego, lead_one.dRel, desired_gap, closing_speed, v_cruise=v_cruise)

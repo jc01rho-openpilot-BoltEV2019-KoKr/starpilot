@@ -297,6 +297,7 @@ class CarController(CarControllerBase):
     copies_xp = REDNECK_BUTTON_COPIES_TIME_METRIC if CS.is_metric else REDNECK_BUTTON_COPIES_TIME_IMPERIAL
     copies = int(np.interp(REDNECK_BUTTON_COPIES_TIME, copies_xp, [1, REDNECK_BUTTON_COPIES]))
     can_sends = [hyundaican.create_clu11(self.packer, self.frame, CS.clu11, send_button, self.CP)] * copies
+    CS.redneck_last_sent_button = getattr(CS, "redneck_send_button", 0)
 
     if (self.frame - self.last_button_frame) * DT_CTRL >= 0.15:
       self.last_button_frame = self.frame
@@ -318,6 +319,7 @@ class CarController(CarControllerBase):
       hyundaicanfd.create_buttons(self.packer, self.CP, self.CAN, (CS.buttons_counter + button_counter_offset) % 0xF, send_button)
       for _ in range(20)
     ]
+    CS.redneck_last_sent_button = getattr(CS, "redneck_send_button", 0)
     self.last_button_frame = self.frame
     return can_sends
 
@@ -376,6 +378,7 @@ class CarController(CarControllerBase):
     accel = accel_cmd
     stopping = actuators.longControlState == LongCtrlState.stopping
     set_speed_in_units = hud_control.setSpeed * (CV.MS_TO_KPH if CS.is_metric else CV.MS_TO_MPH)
+    CS.redneck_last_sent_button = 0
 
     can_sends = []
 

@@ -40,6 +40,9 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_genesis_g90_friction_scale,
   get_genesis_g90_friction_threshold,
   get_elantra_non_scc_ff_scale,
+  get_palisade_ff_scale,
+  get_palisade_friction_scale,
+  get_palisade_friction_threshold,
   get_ioniq_5_ff_scale,
   get_ioniq_5_friction_scale,
   get_ioniq_5_friction_threshold,
@@ -305,6 +308,39 @@ class TestLatControl:
     assert left_turn_in > right_turn_in > base
     assert base > left_unwind > right_unwind
 
+  def test_palisade_ff_scale_curve(self):
+    assert get_palisade_ff_scale(0.0, 0.0, 20.0) == 1.0
+    steady_left = get_palisade_ff_scale(0.6, 0.0, 8.0)
+    steady_right = get_palisade_ff_scale(-0.6, 0.0, 8.0)
+    turn_in_left = get_palisade_ff_scale(0.6, 0.8, 8.0)
+    turn_in_right = get_palisade_ff_scale(-0.6, -0.8, 8.0)
+    unwind_left = get_palisade_ff_scale(0.6, -0.8, 8.0)
+    unwind_right = get_palisade_ff_scale(-0.6, 0.8, 8.0)
+    assert steady_left > 1.0
+    assert steady_right > 1.0
+    assert turn_in_left > steady_left
+    assert turn_in_right > steady_right
+    assert unwind_left < steady_left
+    assert unwind_right < steady_right
+    assert unwind_right < unwind_left
+
+  def test_palisade_friction_threshold_curve(self):
+    base = get_friction_threshold(6.0)
+    left_turn_in = get_palisade_friction_threshold(6.0, 0.7, 0.8)
+    right_turn_in = get_palisade_friction_threshold(6.0, -0.7, -0.8)
+    left_unwind = get_palisade_friction_threshold(6.0, 0.7, -0.8)
+    right_unwind = get_palisade_friction_threshold(6.0, -0.7, 0.8)
+    assert left_turn_in < right_turn_in < base < left_unwind < right_unwind
+
+  def test_palisade_friction_scale_curve(self):
+    base = get_palisade_friction_scale(25.0, 0.7, 0.8)
+    left_turn_in = get_palisade_friction_scale(6.0, 0.7, 0.8)
+    right_turn_in = get_palisade_friction_scale(6.0, -0.7, -0.8)
+    left_unwind = get_palisade_friction_scale(6.0, 0.7, -0.8)
+    right_unwind = get_palisade_friction_scale(6.0, -0.7, 0.8)
+    assert left_turn_in > right_turn_in > base
+    assert base > left_unwind > right_unwind
+
   def test_ioniq_5_ff_scale_curve(self):
     assert get_ioniq_5_ff_scale(0.0, 0.0, 20.0) == 1.0
     steady_left = get_ioniq_5_ff_scale(0.7, 0.0, 12.0)
@@ -490,6 +526,16 @@ class TestLatControl:
     _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
 
     assert lac_log.active
+
+  def test_palisade_default_update_path(self):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_PALISADE_2023)
+    CarInterface = interfaces[HYUNDAI.HYUNDAI_PALISADE_2023]
+    CP = CarInterface.get_non_essential_params(HYUNDAI.HYUNDAI_PALISADE_2023)
+
+    _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert lac_log.active
+    assert controller.torque_params.latAccelFactor == pytest.approx(CP.lateralTuning.torque.latAccelFactor * 0.98)
 
   def test_ioniq_5_default_update_path(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_IONIQ_5)

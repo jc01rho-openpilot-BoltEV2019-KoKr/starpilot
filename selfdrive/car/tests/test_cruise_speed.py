@@ -304,3 +304,43 @@ class TestVCruiseHelper:
     )
 
     assert self.v_cruise_helper.v_cruise_kph == pytest.approx(initial_v_cruise_kph + IMPERIAL_INCREMENT)
+
+
+class TestVCruiseHelperRedneck:
+  def setup_method(self):
+    self.CP = car.CarParams(pcmCruise=True)
+    self.FPCP = SimpleNamespace(pcmCruiseSpeed=False)
+    self.v_cruise_helper = VCruiseHelper(self.CP, self.FPCP)
+    self.starpilot_toggles = SimpleNamespace(
+      cruise_increase=1,
+      cruise_increase_long=5,
+      is_metric=False,
+      set_speed_limit=False,
+    )
+
+  def test_initialize_v_cruise_uses_cluster_speed(self):
+    cs = car.CarState(
+      vEgo=55 * CV.MPH_TO_MS,
+      cruiseState={"speedCluster": 62 * CV.MPH_TO_MS},
+    )
+    self.v_cruise_helper.initialize_v_cruise(cs, experimental_mode=False, resume_prev_button=False,
+                                             starpilot_toggles=self.starpilot_toggles)
+    assert self.v_cruise_helper.v_cruise_kph == pytest.approx(62 * CV.MPH_TO_KPH)
+    assert self.v_cruise_helper.v_cruise_cluster_kph == pytest.approx(62 * CV.MPH_TO_KPH)
+
+  def test_update_v_cruise_does_not_follow_stock_pcm_speed(self):
+    cs = car.CarState(
+      vEgo=55 * CV.MPH_TO_MS,
+      cruiseState={"speedCluster": 62 * CV.MPH_TO_MS},
+    )
+    self.v_cruise_helper.initialize_v_cruise(cs, experimental_mode=False, resume_prev_button=False,
+                                             starpilot_toggles=self.starpilot_toggles)
+
+    update_cs = car.CarState(
+      cruiseState={"available": True, "speed": 50 * CV.MPH_TO_MS, "speedCluster": 50 * CV.MPH_TO_MS},
+    )
+    self.v_cruise_helper.update_v_cruise(update_cs, enabled=True, is_metric=False,
+                                         speed_limit_changed=False, starpilot_toggles=self.starpilot_toggles)
+
+    assert self.v_cruise_helper.v_cruise_kph == pytest.approx(62 * CV.MPH_TO_KPH)
+    assert self.v_cruise_helper.v_cruise_cluster_kph == pytest.approx(62 * CV.MPH_TO_KPH)

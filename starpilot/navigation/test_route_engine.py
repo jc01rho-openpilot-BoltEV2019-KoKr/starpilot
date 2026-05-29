@@ -90,8 +90,27 @@ def test_route_off_route_and_arrival_detection():
   assert misaligned_progress is not None
   assert arrive_progress is not None
   assert route.off_route_distance_exceeded(off_route_progress, 10.0)
-  assert route.route_bearing_misaligned(misaligned_progress.closest_index, 270.0, 10.0)
+  assert route.route_bearing_misaligned(misaligned_progress.closest_segment_index, 270.0, 10.0)
   assert route.arrived(arrive_progress, 0.5)
+
+
+def test_route_progress_projects_onto_segments_for_destination_step():
+  route = make_route()
+  progress = route.get_progress(Coordinate(0.00098, 0.0020))
+
+  assert progress is not None
+  assert progress.next_step is not None
+  assert progress.next_step.maneuver == "arrive"
+  assert progress.distance_remaining <= 5.0
+  assert route.arrived(progress, 0.5)
+
+
+def test_route_bearing_misaligned_catches_ninety_degree_wrong_turn():
+  route = make_route()
+  progress = route.get_progress(Coordinate(0.0, 0.0015))
+
+  assert progress is not None
+  assert route.route_bearing_misaligned(progress.closest_segment_index, 0.0, 6.0)
 
 
 def test_lane_payload_uses_capnp_enum_names():

@@ -27,6 +27,10 @@ AnnotatedCameraWidget::AnnotatedCameraWidget(VisionStreamType type, QWidget *par
   screen_recorder->setVisible(false);
 }
 
+bool AnnotatedCameraWidget::handleHudTap(const QPoint &pos) {
+  return hud.handleNavigationTap(pos);
+}
+
 void AnnotatedCameraWidget::updateState(const UIState &s, const StarPilotUIState &fs) {
   // update engageability/experimental mode button
   experimental_btn->updateState(s, fs);

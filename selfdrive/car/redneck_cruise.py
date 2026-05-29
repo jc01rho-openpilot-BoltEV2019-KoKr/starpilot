@@ -10,7 +10,8 @@ SEND_BUTTON_INCREASE = 1
 SEND_BUTTON_DECREASE = 2
 
 HYST_GAP = 0.0
-INACTIVE_TIMER = 0.4
+INCREASE_INACTIVE_TIMER = 0.4
+DECREASE_INACTIVE_TIMER = 0.1
 
 CRUISE_BUTTON_TIMERS = {
   int(ButtonType.decelCruise): 0,
@@ -80,32 +81,53 @@ class RedneckCruise:
     button_pressed = any(timer > 0 for timer in self.cruise_button_timers.values())
     self.is_ready = CC.enabled and not CC.cruiseControl.override and not CC.cruiseControl.cancel and not CC.cruiseControl.resume and not button_pressed
 
-  def _update_state_machine(self) -> int:
-    self.pre_active_timer = max(0, self.pre_active_timer - 1)
+  def _desired_state(self) -> str:
+    if self.v_target > self.v_cruise_cluster:
+      return "increasing"
+    if self.v_target < self.v_cruise_cluster and self.v_cruise_cluster > self.v_cruise_min:
+      return "decreasing"
+    return "holding"
 
-    if self.state != "inactive":
-      if not self.is_ready:
-        self.state = "inactive"
-      elif self.state == "preActive":
+  @staticmethod
+  def _get_pre_active_frames(state: str) -> int:
+    timer = DECREASE_INACTIVE_TIMER if state == "decreasing" else INCREASE_INACTIVE_TIMER
+    return int(timer / DT_CTRL)
+
+  def _arm_pre_active(self, desired_state: str) -> None:
+    if desired_state == "holding":
+      self.state = "holding"
+      self.pre_active_timer = 0
+      return
+
+    self.state = "preActive"
+    self.pre_active_timer = self._get_pre_active_frames(desired_state)
+
+  def _update_state_machine(self) -> int:
+    desired_state = self._desired_state()
+
+    if not self.is_ready:
+      self.state = "inactive"
+      self.pre_active_timer = 0
+    elif self.state == "inactive":
+      if not self.is_ready_prev:
+        self._arm_pre_active(desired_state)
+    elif self.state == "preActive":
+      if desired_state == "holding":
+        self.state = "holding"
+        self.pre_active_timer = 0
+      else:
+        desired_frames = self._get_pre_active_frames(desired_state)
+        self.pre_active_timer = max(0, min(self.pre_active_timer, desired_frames) - 1)
         if self.pre_active_timer <= 0:
-          if self.v_target == self.v_cruise_cluster:
-            self.state = "holding"
-          elif self.v_target > self.v_cruise_cluster:
-            self.state = "increasing"
-          elif self.v_target < self.v_cruise_cluster and self.v_cruise_cluster > self.v_cruise_min:
-            self.state = "decreasing"
-      elif self.state == "holding":
-        if self.v_target != self.v_cruise_cluster:
-          self.state = "preActive"
-      elif self.state == "increasing":
-        if self.v_target <= self.v_cruise_cluster:
-          self.state = "holding"
-      elif self.state == "decreasing":
-        if self.v_target >= self.v_cruise_cluster or self.v_cruise_cluster <= self.v_cruise_min:
-          self.state = "holding"
-    elif self.is_ready and not self.is_ready_prev:
-      self.pre_active_timer = int(INACTIVE_TIMER / DT_CTRL)
-      self.state = "preActive"
+          self.state = desired_state
+    elif self.state == "holding":
+      if desired_state != "holding":
+        self._arm_pre_active(desired_state)
+    elif self.state != desired_state:
+      if desired_state == "holding":
+        self.state = "holding"
+      else:
+        self._arm_pre_active(desired_state)
 
     return self._send_button_for_state(self.state)
 

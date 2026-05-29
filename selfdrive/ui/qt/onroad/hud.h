@@ -15,6 +15,7 @@ public:
   HudRenderer();
   void updateState(const UIState &s);
   void draw(QPainter &p, const QRect &surface_rect);
+  bool handleNavigationTap(const QPoint &pos);
 
   StarPilotAnnotatedCameraWidget *starpilot_nvg;
 
@@ -39,6 +40,7 @@ private:
   bool navigation_enabled = false;
   bool navigation_valid = false;
   bool navigation_has_next = false;
+  bool navigation_collapsed = false;
   int status = STATUS_DISENGAGED;
   QString nav_distance;
   QString nav_primary_text;
@@ -47,6 +49,7 @@ private:
   QString nav_modifier;
   QString nav_next_maneuver_type;
   QString nav_next_modifier;
+  QRect nav_hit_rect;
   QHash<QString, QPixmap> nav_icon_cache;
   Params params;
   Params params_memory{"", true};

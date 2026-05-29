@@ -113,6 +113,10 @@ VOLT_STANDARD_CARS = (
 GENESIS_G90_CARS = (
   HYUNDAI_CAR.GENESIS_G90,
 )
+PALISADE_CARS = (
+  HYUNDAI_CAR.HYUNDAI_PALISADE,
+  HYUNDAI_CAR.HYUNDAI_PALISADE_2023,
+)
 IONIQ_5_CARS = (
   HYUNDAI_CAR.HYUNDAI_IONIQ_5,
 )
@@ -299,6 +303,31 @@ KIA_FORTE_CENTER_TAPER_LAT = 0.16
 KIA_FORTE_CENTER_TAPER_LAT_WIDTH = 0.03
 KIA_FORTE_CENTER_TAPER_SPEED = 24.0
 KIA_FORTE_CENTER_TAPER_SPEED_WIDTH = 2.5
+
+PALISADE_BASE_LAT_ACCEL_FACTOR_MULT = 0.98
+PALISADE_FF_GAIN_LEFT = 0.14
+PALISADE_FF_GAIN_RIGHT = 0.12
+PALISADE_FF_ONSET = 0.08
+PALISADE_FF_ONSET_WIDTH = 0.04
+PALISADE_FF_CUTOFF = 1.25
+PALISADE_FF_CUTOFF_WIDTH = 0.36
+PALISADE_TRANSITION_SPEED = 9.0
+PALISADE_PHASE_SCALE = 0.11
+PALISADE_TURN_IN_BOOST_LEFT = 0.34
+PALISADE_TURN_IN_BOOST_RIGHT = 0.24
+PALISADE_UNWIND_TAPER_LEFT = 0.18
+PALISADE_UNWIND_TAPER_RIGHT = 0.30
+PALISADE_FRICTION_MULT = 1.02
+PALISADE_FRICTION_LAT_RISE = 0.20
+PALISADE_FRICTION_JERK_RISE = 0.24
+PALISADE_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.18
+PALISADE_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.14
+PALISADE_UNWIND_THRESHOLD_INCREASE_LEFT = 0.14
+PALISADE_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.22
+PALISADE_TURN_IN_FRICTION_BOOST_LEFT = 0.08
+PALISADE_TURN_IN_FRICTION_BOOST_RIGHT = 0.06
+PALISADE_UNWIND_FRICTION_REDUCTION_LEFT = 0.12
+PALISADE_UNWIND_FRICTION_REDUCTION_RIGHT = 0.20
 
 GENESIS_G90_LATERAL_TESTING_GROUND_ID = testing_ground.id_4
 GENESIS_G90_FF_GAIN_LEFT = 0.32
@@ -1077,6 +1106,74 @@ def get_kia_forte_center_taper_scale(desired_lateral_accel: float, v_ego: float)
   return 1.0 - reduction
 
 
+def _palisade_sigmoid(x: float) -> float:
+  return _sigmoid(x)
+
+
+def _palisade_low_speed_factor(v_ego: float) -> float:
+  return 1.0 / (1.0 + (max(v_ego, 0.0) / PALISADE_TRANSITION_SPEED) ** 2)
+
+
+def _palisade_transition_phase(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  return math.tanh((desired_lateral_accel * desired_lateral_jerk) / PALISADE_PHASE_SCALE)
+
+
+def _palisade_side_value(desired_lateral_accel: float, left_value: float, right_value: float) -> float:
+  return left_value if desired_lateral_accel >= 0.0 else right_value
+
+
+def _palisade_transition_envelope(v_ego: float, desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  lat_factor = 1.0 - math.exp(-abs(desired_lateral_accel) / PALISADE_FRICTION_LAT_RISE)
+  jerk_factor = 1.0 - math.exp(-abs(desired_lateral_jerk) / PALISADE_FRICTION_JERK_RISE)
+  return _palisade_low_speed_factor(v_ego) * lat_factor * jerk_factor
+
+
+def get_palisade_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  if desired_lateral_accel == 0.0:
+    return 1.0
+
+  gain = _palisade_side_value(desired_lateral_accel, PALISADE_FF_GAIN_LEFT, PALISADE_FF_GAIN_RIGHT)
+  abs_lateral_accel = abs(desired_lateral_accel)
+  onset = _palisade_sigmoid((abs_lateral_accel - PALISADE_FF_ONSET) / PALISADE_FF_ONSET_WIDTH)
+  cutoff = _palisade_sigmoid((PALISADE_FF_CUTOFF - abs_lateral_accel) / PALISADE_FF_CUTOFF_WIDTH)
+  extra_scale = gain * onset * cutoff
+  phase = _palisade_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  low_speed_factor = _palisade_low_speed_factor(v_ego)
+  turn_in_boost = 1.0 + (_palisade_side_value(desired_lateral_accel, PALISADE_TURN_IN_BOOST_LEFT, PALISADE_TURN_IN_BOOST_RIGHT) *
+                          turn_in_weight * (0.35 + 0.65 * low_speed_factor))
+  unwind_taper = 1.0 - (_palisade_side_value(desired_lateral_accel, PALISADE_UNWIND_TAPER_LEFT, PALISADE_UNWIND_TAPER_RIGHT) *
+                         unwind_weight * (0.35 + 0.65 * low_speed_factor))
+  return 1.0 + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
+
+
+def get_palisade_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
+  base_threshold = get_friction_threshold(v_ego)
+  transition_envelope = _palisade_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
+  phase = _palisade_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  threshold_scale = 1.0 - (_palisade_side_value(desired_lateral_accel, PALISADE_TURN_IN_THRESHOLD_REDUCTION_LEFT, PALISADE_TURN_IN_THRESHOLD_REDUCTION_RIGHT) *
+                           transition_envelope * turn_in_weight)
+  threshold_scale += (_palisade_side_value(desired_lateral_accel, PALISADE_UNWIND_THRESHOLD_INCREASE_LEFT, PALISADE_UNWIND_THRESHOLD_INCREASE_RIGHT) *
+                      transition_envelope * unwind_weight)
+  return base_threshold * min(max(threshold_scale, 0.84), 1.14)
+
+
+def get_palisade_friction_scale(v_ego: float, desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  transition_envelope = _palisade_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
+  phase = _palisade_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  friction_scale = PALISADE_FRICTION_MULT
+  friction_scale += (_palisade_side_value(desired_lateral_accel, PALISADE_TURN_IN_FRICTION_BOOST_LEFT, PALISADE_TURN_IN_FRICTION_BOOST_RIGHT) *
+                     transition_envelope * turn_in_weight)
+  friction_scale -= (_palisade_side_value(desired_lateral_accel, PALISADE_UNWIND_FRICTION_REDUCTION_LEFT, PALISADE_UNWIND_FRICTION_REDUCTION_RIGHT) *
+                     transition_envelope * unwind_weight)
+  return min(max(friction_scale, 0.92), 1.12)
+
+
 def genesis_g90_lateral_testing_ground_active() -> bool:
   return testing_ground.use(GENESIS_G90_LATERAL_TESTING_GROUND_ID)
 
@@ -1577,6 +1674,7 @@ class LatControlTorque(LatControl):
     self.is_bolt_2017 = CP.carFingerprint in BOLT_2017_CARS
     self.is_volt_standard = CP.carFingerprint in VOLT_STANDARD_CARS
     self.is_genesis_g90 = CP.carFingerprint in GENESIS_G90_CARS
+    self.is_palisade = CP.carFingerprint in PALISADE_CARS
     self.is_ioniq_5 = CP.carFingerprint in IONIQ_5_CARS
     self.is_ioniq_ev_old = CP.carFingerprint in IONIQ_EV_OLD_CARS
     self.is_ioniq_6 = CP.carFingerprint in IONIQ_6_CARS
@@ -1593,6 +1691,8 @@ class LatControlTorque(LatControl):
     self.torque_ff_scale_neg = 1.0
     self.torque_deadzone_boost = float(getattr(self.torque_params, "kfDEPRECATED", 0.0))
     self.torque_ki_mult = 1.0
+    if self.is_palisade:
+      self.torque_params.latAccelFactor *= PALISADE_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_5:
       self.torque_params.latAccelFactor *= IONIQ_5_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_ev_old:
@@ -1620,6 +1720,8 @@ class LatControlTorque(LatControl):
         self.pid._k_i = [self.pid._k_i[0], [k * self.torque_ki_mult for k in self.pid._k_i[1]]]
 
   def update_live_torque_params(self, latAccelFactor, latAccelOffset, friction):
+    if self.is_palisade:
+      latAccelFactor *= PALISADE_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_5:
       latAccelFactor *= IONIQ_5_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_ev_old:
@@ -1703,6 +1805,7 @@ class LatControlTorque(LatControl):
       bolt_2018_2021_tuned_path_active = self.is_bolt_2018_2021
       volt_standard_test_active = self.is_volt_standard and volt_standard_lateral_testing_ground_active()
       genesis_g90_test_active = self.is_genesis_g90 and genesis_g90_lateral_testing_ground_active()
+      palisade_active = self.is_palisade
       ioniq_5_active = self.is_ioniq_5
       ioniq_ev_old_active = self.is_ioniq_ev_old
       ioniq_6_active = self.is_ioniq_6
@@ -1739,6 +1842,10 @@ class LatControlTorque(LatControl):
         ff *= get_genesis_g90_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         friction_threshold = get_genesis_g90_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = get_genesis_g90_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
+      elif palisade_active:
+        ff *= get_palisade_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+        friction_threshold = get_palisade_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
+        friction_scale = get_palisade_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
       elif ioniq_5_active:
         ff *= get_ioniq_5_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * ioniq_5_center_taper
         friction_threshold = get_ioniq_5_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)

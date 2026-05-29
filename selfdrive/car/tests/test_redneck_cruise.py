@@ -5,7 +5,8 @@ from cereal import car
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.car.redneck_cruise import (
-  INACTIVE_TIMER,
+  DECREASE_INACTIVE_TIMER,
+  INCREASE_INACTIVE_TIMER,
   RedneckCruise,
   SEND_BUTTON_DECREASE,
   SEND_BUTTON_INCREASE,
@@ -40,7 +41,7 @@ class TestRedneckCruise(unittest.TestCase):
     return SimpleNamespace(type=button_type, pressed=pressed)
 
   def _run_until_active(self, target_mph, speed_cluster_mph=20.0, button_events=None, override=False, cancel=False, resume=False):
-    frames = int(INACTIVE_TIMER / DT_CTRL) + 2
+    frames = int(max(INCREASE_INACTIVE_TIMER, DECREASE_INACTIVE_TIMER) / DT_CTRL) + 2
     send_button = SEND_BUTTON_NONE
     v_target = 0
     for _ in range(frames):
@@ -53,6 +54,19 @@ class TestRedneckCruise(unittest.TestCase):
       button_events = None
     return send_button, v_target
 
+  def _frames_until_button(self, target_mph, speed_cluster_mph):
+    frames = int(INCREASE_INACTIVE_TIMER / DT_CTRL) + 4
+    for frame in range(frames):
+      send_button, _ = self.redneck.run(
+        self._new_state(speed_cluster_mph=speed_cluster_mph),
+        self._new_control(),
+        target_mph * CV.MPH_TO_MS,
+        is_metric=False,
+      )
+      if send_button != SEND_BUTTON_NONE:
+        return frame
+    return None
+
   def test_increases_cluster_speed_toward_target(self):
     send_button, v_target = self._run_until_active(target_mph=25.0, speed_cluster_mph=20.0)
     self.assertEqual(SEND_BUTTON_INCREASE, send_button)
@@ -62,6 +76,15 @@ class TestRedneckCruise(unittest.TestCase):
     send_button, v_target = self._run_until_active(target_mph=20.0, speed_cluster_mph=25.0)
     self.assertEqual(SEND_BUTTON_DECREASE, send_button)
     self.assertEqual(20, v_target)
+
+  def test_decrease_activates_faster_than_increase(self):
+    decrease_frame = self._frames_until_button(target_mph=20.0, speed_cluster_mph=25.0)
+    self.redneck = RedneckCruise(self.CP, self.FPCP)
+    increase_frame = self._frames_until_button(target_mph=25.0, speed_cluster_mph=20.0)
+
+    self.assertIsNotNone(decrease_frame)
+    self.assertIsNotNone(increase_frame)
+    self.assertLess(decrease_frame, increase_frame)
 
   def test_suppresses_output_during_manual_cruise_button_use(self):
     button_event = self._button_event(ButtonType.accelCruise, True)

@@ -12,6 +12,15 @@ constexpr int SET_SPEED_NA = 255;
 
 HudRenderer::HudRenderer() {}
 
+bool HudRenderer::handleNavigationTap(const QPoint &pos) {
+  if (!navigation_valid || !nav_hit_rect.contains(pos)) {
+    return false;
+  }
+
+  params_memory.putBool("NavInstructionCollapsed", !navigation_collapsed);
+  return true;
+}
+
 void HudRenderer::updateState(const UIState &s) {
   is_metric = s.scene.is_metric;
   status = s.status;
@@ -48,6 +57,8 @@ void HudRenderer::updateState(const UIState &s) {
   navigation_enabled = params.getBool("NavigationUI");
   navigation_valid = false;
   navigation_has_next = false;
+  navigation_collapsed = false;
+  nav_hit_rect = QRect();
   nav_primary_text.clear();
   nav_secondary_text.clear();
   nav_distance.clear();
@@ -88,6 +99,7 @@ void HudRenderer::updateState(const UIState &s) {
   nav_next_maneuver_type = nav.value("nextManeuverType").toString().trimmed();
   nav_next_modifier = nav.value("nextManeuverModifier").toString().trimmed();
   navigation_has_next = !nav_next_maneuver_type.isEmpty() || !nav_next_modifier.isEmpty();
+  navigation_collapsed = params_memory.getBool("NavInstructionCollapsed");
 }
 
 void HudRenderer::draw(QPainter &p, const QRect &surface_rect) {
@@ -273,6 +285,27 @@ QStringList HudRenderer::wrapNavigationText(int max_width, int font_size, const 
 }
 
 void HudRenderer::drawNavigationCard(QPainter &p, const QRect &surface_rect) {
+  if (navigation_collapsed) {
+    const int chip_size = 94;
+    const int chip_x = surface_rect.right() - chip_size - 32;
+    const int chip_y = surface_rect.width() >= 1200 ? 232 : 204;
+    nav_hit_rect = QRect(chip_x, chip_y, chip_size, chip_size);
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(7, 11, 18, 228));
+    p.drawRoundedRect(nav_hit_rect, 28, 28);
+    p.setPen(QPen(QColor(255, 255, 255, 40), 2));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(nav_hit_rect, 28, 28);
+
+    const int icon_size = 58;
+    const QPixmap icon = getNavigationIcon(nav_maneuver_type, nav_modifier, icon_size);
+    const int icon_x = chip_x + (chip_size - icon_size) / 2;
+    const int icon_y = chip_y + (chip_size - icon_size) / 2;
+    p.drawPixmap(icon_x, icon_y, icon);
+    return;
+  }
+
   const int container_width = std::clamp(surface_rect.width() - 120, 760, 1080);
   const int container_height = surface_rect.width() >= 1200 ? 238 : 206;
   const int container_x = (surface_rect.width() - container_width) / 2;
@@ -291,6 +324,7 @@ void HudRenderer::drawNavigationCard(QPainter &p, const QRect &surface_rect) {
   const int secondary_gap = container_height == 238 ? 10 : 8;
 
   QRect container(container_x, container_y, container_width, container_height);
+  nav_hit_rect = container;
   p.setPen(Qt::NoPen);
   p.setBrush(QColor(0, 0, 0, 180));
   p.drawRoundedRect(container, border_radius, border_radius);

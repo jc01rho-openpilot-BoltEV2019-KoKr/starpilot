@@ -1000,7 +1000,7 @@
       {
         "key": "CoastUpToLeads",
         "label": "Coast Up To Leads",
-        "description": "Allow openpilot to briefly coast toward far leads before resuming normal throttle. Disable this if your vehicle shows gas/brake alternation while approaching distant traffic.",
+        "description": "Keep the optional far-lead comfort logic enabled, including gentle coasting and matched-follow smoothing for distant leads. Recommended unless your car shows lead-follow stutter or springy gas/brake behavior.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LongitudinalTune"

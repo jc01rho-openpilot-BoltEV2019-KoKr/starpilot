@@ -14,7 +14,7 @@ from openpilot.starpilot.navigation.destination_store import parse_destination_j
 from openpilot.starpilot.navigation.route_engine import Coordinate, MapboxRouteEngine, NavigationRoute, RouteProgress
 
 NAVIGATIOND_HZ = 1
-REROUTE_TRIGGER_SECONDS = 3.0
+REROUTE_TRIGGER_SECONDS = 2.0
 ARRIVAL_CLEAR_SECONDS = 5.0
 LOCATION_STATE_STALE_SECONDS = 2.5
 
@@ -71,6 +71,7 @@ class Navigationd:
     self._bearing_misaligned_started_at = None
     self._arrival_started_at = None
     self._publish_nav_state(None, None, False)
+    self.params_memory.remove("NavInstructionCollapsed")
 
     if remove_destination:
       self.params.remove("NavDestination")
@@ -180,7 +181,7 @@ class Navigationd:
 
     now = monotonic()
     off_route = route.off_route_distance_exceeded(progress, v_ego)
-    misaligned = route.route_bearing_misaligned(progress.closest_index, self._last_bearing, v_ego)
+    misaligned = route.route_bearing_misaligned(progress.closest_segment_index, self._last_bearing, v_ego)
     arrived = route.arrived(progress, v_ego)
 
     self._off_route_started_at = self._bump_timer(self._off_route_started_at, off_route and not arrived, now)
