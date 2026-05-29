@@ -93,6 +93,52 @@ def test_nav_desires_turn_right_waits_until_turn_is_close():
   assert helper.desire == log.Desire.none
 
 
+def test_nav_desires_off_ramp_lane_guidance_becomes_keep_right():
+  helper = DesireHelper()
+  helper.nav_desires_allowed = True
+  helper._update_nav_params = lambda: None
+  helper._nav_instruction_state = {
+    "valid": True,
+    "maneuverType": "off ramp",
+    "maneuverModifier": "right",
+    "activeLaneDirection": "slightRight",
+    "maneuverDistance": 120.0,
+  }
+
+  helper.update(
+    make_car_state(vEgo=22.5),
+    True,
+    0.0,
+    make_plan(laneWidthRight=4.2),
+    make_toggles(nudgeless=True),
+  )
+
+  assert helper.desire == log.Desire.keepRight
+
+
+def test_nav_desires_off_ramp_lane_guidance_waits_until_split_is_close():
+  helper = DesireHelper()
+  helper.nav_desires_allowed = True
+  helper._update_nav_params = lambda: None
+  helper._nav_instruction_state = {
+    "valid": True,
+    "maneuverType": "off ramp",
+    "maneuverModifier": "right",
+    "activeLaneDirection": "slightRight",
+    "maneuverDistance": 300.0,
+  }
+
+  helper.update(
+    make_car_state(vEgo=22.5),
+    True,
+    0.0,
+    make_plan(laneWidthRight=4.2),
+    make_toggles(nudgeless=True),
+  )
+
+  assert helper.desire == log.Desire.none
+
+
 def test_nav_desires_do_not_override_lane_change_state_machine():
   helper = DesireHelper()
   helper.nav_desires_allowed = True

@@ -254,11 +254,22 @@ class Navigationd:
     payload = route.build_instruction_payload(progress, use_vienna_sign=self.params.get_bool("UseVienna"))
     all_maneuvers = payload.get("allManeuvers") or []
     next_maneuver = all_maneuvers[1] if len(all_maneuvers) > 1 and isinstance(all_maneuvers[1], dict) else {}
+    active_lane_direction = ""
+    for lane in payload.get("lanes") or []:
+      if not isinstance(lane, dict) or not bool(lane.get("active", False)):
+        continue
+      candidate = str(lane.get("activeDirection") or "")
+      if (not candidate or candidate == "none") and len(lane.get("directions") or []) == 1:
+        candidate = str((lane.get("directions") or [""])[0] or "")
+      if candidate and candidate != "none":
+        active_lane_direction = candidate
+        break
 
     state = {
       "valid": True,
       "maneuverModifier": str(payload.get("maneuverModifier") or ""),
       "maneuverType": str(payload.get("maneuverType") or ""),
+      "activeLaneDirection": active_lane_direction,
       "maneuverPrimaryText": str(payload.get("maneuverPrimaryText") or ""),
       "maneuverSecondaryText": str(payload.get("maneuverSecondaryText") or ""),
       "maneuverDistance": float(payload.get("maneuverDistance") or 0.0),

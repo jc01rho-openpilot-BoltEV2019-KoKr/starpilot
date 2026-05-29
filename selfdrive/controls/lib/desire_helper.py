@@ -14,6 +14,8 @@ LANE_CHANGE_SPEED_MIN = 20 * CV.MPH_TO_MS
 LANE_CHANGE_TIME_MAX = 10.
 NAV_TURN_DISTANCE_SPEED_BREAKPOINTS = [0.0, 5.0, 10.0]
 NAV_TURN_DISTANCE_BREAKPOINTS = [20.0, 25.0, 30.0]
+NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS = [0.0, 15.0, 30.0]
+NAV_KEEP_DISTANCE_BREAKPOINTS = [25.0, 90.0, 160.0]
 
 DESIRES = {
   LaneChangeDirection.none: {
@@ -116,16 +118,38 @@ class DesireHelper:
 
     return distance <= float(np.interp(carstate.vEgo, NAV_TURN_DISTANCE_SPEED_BREAKPOINTS, NAV_TURN_DISTANCE_BREAKPOINTS))
 
+  @staticmethod
+  def _nav_keep_is_imminent(carstate, maneuver_distance):
+    try:
+      distance = float(maneuver_distance)
+    except (TypeError, ValueError):
+      return False
+
+    return distance <= float(np.interp(carstate.vEgo, NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS, NAV_KEEP_DISTANCE_BREAKPOINTS))
+
+  @staticmethod
+  def _nav_effective_modifier(nav_instruction_state, carstate, maneuver_distance):
+    modifier = str(nav_instruction_state.get("maneuverModifier", ""))
+    maneuver_type = str(nav_instruction_state.get("maneuverType", ""))
+    active_lane_direction = str(nav_instruction_state.get("activeLaneDirection", ""))
+
+    if modifier in ("left", "right") and maneuver_type in ("off ramp", "fork") and DesireHelper._nav_keep_is_imminent(carstate, maneuver_distance):
+      if active_lane_direction in ("slightLeft", "left"):
+        return "slightLeft"
+      if active_lane_direction in ("slightRight", "right"):
+        return "slightRight"
+
+    return modifier
+
   def _navigation_desire(self, carstate, lateral_active, starpilotPlan, starpilot_toggles):
     self._update_nav_params()
     if not self.nav_desires_allowed or not lateral_active or not bool(self._nav_instruction_state.get("valid", False)):
       return log.Desire.none
 
-    modifier = str(self._nav_instruction_state.get("maneuverModifier", ""))
+    maneuver_distance = self._nav_instruction_state.get("maneuverDistance", 0.0)
+    modifier = self._nav_effective_modifier(self._nav_instruction_state, carstate, maneuver_distance)
     if modifier == "":
       return log.Desire.none
-
-    maneuver_distance = self._nav_instruction_state.get("maneuverDistance", 0.0)
 
     if modifier == "slightLeft":
       lane_change_direction = LaneChangeDirection.left
