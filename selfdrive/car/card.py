@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import copy
 import math
 import os
 import time
@@ -75,6 +74,14 @@ class Car:
   CP: car.CarParams
 
   FPCP: custom.StarPilotCarParams
+
+  class _ButtonEventFilteredCarState:
+    def __init__(self, car_state: car.CarState, button_events):
+      self._car_state = car_state
+      self.buttonEvents = button_events
+
+    def __getattr__(self, name: str):
+      return getattr(self._car_state, name)
 
   def __init__(self, CI=None, RI=None) -> None:
     self.can_sock = messaging.sub_sock('can', timeout=20)
@@ -223,11 +230,7 @@ class Car:
     self.sm.update(0)
 
     self._advance_redneck_button_feedback_filter()
-    original_button_events = CS.buttonEvents
-    filtered_button_events = self._get_filtered_redneck_button_events(CS)
-    using_filtered_button_events = filtered_button_events is not original_button_events
-    if using_filtered_button_events:
-      CS.buttonEvents = filtered_button_events
+    filtered_CS = self._get_button_event_filtered_state(CS)
 
     can_rcv_valid = len(can_strs) > 0
 
@@ -244,7 +247,7 @@ class Car:
     )
     if not preap_software_cruise:
       self.v_cruise_helper.update_v_cruise(
-        CS,
+        filtered_CS,
         self.sm['carControl'].enabled,
         self.is_metric,
         self.sm['starpilotPlan'].speedLimitChanged,
@@ -280,13 +283,10 @@ class Car:
     CS.vCruise = float(self.v_cruise_helper.v_cruise_kph)
     CS.vCruiseCluster = float(self.v_cruise_helper.v_cruise_cluster_kph)
 
-    if any(be.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for be in CS.buttonEvents):
+    if any(be.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for be in filtered_CS.buttonEvents):
       self.resume_prev_button = True
-    elif any(be.type in (ButtonType.decelCruise, ButtonType.setCruise) for be in CS.buttonEvents):
+    elif any(be.type in (ButtonType.decelCruise, ButtonType.setCruise) for be in filtered_CS.buttonEvents):
       self.resume_prev_button = False
-
-    if using_filtered_button_events:
-      CS.buttonEvents = original_button_events
 
     FPCS = self.starpilot_card.update(CS, FPCS, self.sm, self.starpilot_toggles)
 
@@ -391,14 +391,8 @@ class Car:
     if self.redneck_cruise is None:
       return
 
-    original_button_events = CS.buttonEvents
-    filtered_button_events = self._get_filtered_redneck_button_events(CS)
-    using_filtered_button_events = filtered_button_events is not original_button_events
-    if using_filtered_button_events:
-      CS = copy.copy(CS)
-      CS.buttonEvents = filtered_button_events
-
-    send_button, v_target = self.redneck_cruise.run(CS, CC, self._get_redneck_target_speed(CS), self.is_metric)
+    filtered_CS = self._get_button_event_filtered_state(CS)
+    send_button, v_target = self.redneck_cruise.run(filtered_CS, CC, self._get_redneck_target_speed(CS), self.is_metric)
     self.CI.CS.redneck_send_button = send_button
     self.CI.CS.redneck_v_target = v_target
 
@@ -445,6 +439,12 @@ class Car:
       filtered_button_events.append(event)
 
     return filtered_button_events if filtered_any else CS.buttonEvents
+
+  def _get_button_event_filtered_state(self, CS: car.CarState):
+    filtered_button_events = self._get_filtered_redneck_button_events(CS)
+    if filtered_button_events is CS.buttonEvents:
+      return CS
+    return self._ButtonEventFilteredCarState(CS, filtered_button_events)
 
   def _record_redneck_button_feedback_filter(self) -> None:
     if self.redneck_cruise is None:
