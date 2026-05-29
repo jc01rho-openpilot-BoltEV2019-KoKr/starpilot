@@ -262,7 +262,7 @@ class TestAethergridContracts(unittest.TestCase):
 
   def test_hub_tile_preserves_status_progress_api(self):
     mod = _import_aethergrid()
-    tile = mod.HubTile("Driving Controls", "Desc", "", bg_color="#3B82F6", get_status=lambda: "Download 50%")
+    tile = mod.HubTile("Driving Controls", "Desc", bg_color="#3B82F6", get_status=lambda: "Download 50%")
 
     self.assertEqual(tile.get_status(), "Download 50%")
 

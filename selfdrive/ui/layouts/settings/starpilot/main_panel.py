@@ -197,9 +197,8 @@ class StarPilotLayout(Widget):
         tile = HubTile(
           title=tr(cat["title"]),
           desc=tr(cat.get("desc", "")),
-          icon_path=cat["icon"],
+          icon_key=cat["icon"],
           on_click=on_click,
-          starpilot_icon=True,
           bg_color=cat.get("color")
         )
         self._main_grid.add_tile(tile)
@@ -216,9 +215,8 @@ class StarPilotLayout(Widget):
         tile = HubTile(
           title=tr(label),
           desc="",
-          icon_path=cat["icon"],
+          icon_key=cat["icon"],
           on_click=on_btn_click,
-          starpilot_icon=True,
           bg_color=cat.get("color")
         )
         self._main_grid.add_tile(tile)

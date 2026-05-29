@@ -10,7 +10,7 @@ from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget, DialogResult
 from openpilot.system.ui.widgets.label import gui_label
-from openpilot.selfdrive.ui.layouts.settings.starpilot.asset_loader import starpilot_texture
+
 from openpilot.selfdrive.ui.layouts.settings.starpilot.scribble import draw_custom_icon
 
 
@@ -2442,9 +2442,8 @@ class HubTile(AetherTile):
     self,
     title: str | Callable[[], str],
     desc: str | Callable[[], str],
-    icon_path: str,
+    icon_key: str | None = None,
     on_click: Callable | None = None,
-    starpilot_icon: bool = False,
     bg_color: rl.Color | str | None = None,
     get_status: Callable[[], str] | None = None,
   ):
@@ -2455,17 +2454,8 @@ class HubTile(AetherTile):
     self.get_status = get_status
     self.title = title
     self.desc = desc
-    self.custom_icon_key = None
-    if icon_path:
-      if icon_path in ["sound", "steering", "navigate", "system", "display", "vehicle"]:
-        self.custom_icon_key = icon_path
-        self._icon = None
-      elif starpilot_icon:
-        self._icon = starpilot_texture(icon_path, 100, 100)
-      else:
-        self._icon = gui_app.texture(icon_path, 100, 100)
-    else:
-      self._icon = None
+    self.custom_icon_key = icon_key if icon_key in ("sound", "steering", "navigate", "system", "display", "vehicle") else None
+    self._icon = None
     self._font_title = gui_app.font(FontWeight.BOLD)
     self._font_desc = gui_app.font(FontWeight.NORMAL)
 

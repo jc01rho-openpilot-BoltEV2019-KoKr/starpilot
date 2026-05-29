@@ -126,9 +126,8 @@ class StarPilotPanel(Widget):
             return HubTile(
                 title=tr(cat["title"]),
                 desc=tr(cat.get("desc", "")),
-                icon_path=cat.get("icon"),
+                icon_key=cat.get("icon"),
                 on_click=on_click,
-                starpilot_icon=cat.get("starpilot_icon", True),
                 bg_color=cat.get("color"),
                 get_status=cat.get("get_status"),
             )
