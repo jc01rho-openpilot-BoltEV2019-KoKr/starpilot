@@ -394,6 +394,7 @@ void StarPilotSettingsWindow::updateVariables() {
     // Keep Qt stock-sync aligned with selfdrive/controls/lib/latcontrol_torque.py::KP.
     steerKp = 0.6f;
     steerRatio = CP.getSteerRatio();
+    steerOffset = 0.0f;
     stopAccel = CP.getStopAccel();
     stoppingDecelRate = CP.getStoppingDecelRate();
     vEgoStarting = CP.getVEgoStarting();

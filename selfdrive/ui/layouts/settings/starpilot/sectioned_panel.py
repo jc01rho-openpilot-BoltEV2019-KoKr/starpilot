@@ -9,7 +9,9 @@ from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
 
-from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import SPACING, TileGrid, AetherScrollbar
+from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
+  SPACING, TileGrid, AetherScrollbar, AetherListColors, draw_list_scroll_fades,
+)
 
 
 @dataclass(frozen=True)
@@ -19,7 +21,7 @@ class TileSection:
 
 
 class SectionedTileLayout(Widget):
-  def __init__(self, section_gap: int = SPACING.section_gap, title_height: int = 32, title_gap: int = SPACING.sm,
+  def __init__(self, section_gap: int = 28, title_height: int = 34, title_gap: int = 12,
                min_row_height: int = 150, max_row_height: int = 280, top_padding: int = 0,
                horizontal_padding: int = SPACING.xl, max_content_width: int | None = 1440):
     super().__init__()
@@ -169,3 +171,5 @@ class SectionedTileLayout(Widget):
 
     if self._content_height > content_rect.height:
       self._scrollbar.render(content_rect, self._content_height, self._scroll_offset)
+    draw_list_scroll_fades(content_rect, self._content_height, self._scroll_offset,
+                           AetherListColors.PANEL_BG)

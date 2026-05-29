@@ -37,6 +37,7 @@ StarPilotLateralPanel::StarPilotLateralPanel(StarPilotSettingsWindow *parent, bo
     {"SteerKP", parent->steerKp != 0 ? QString(tr("Kp Factor (Default: %1)")).arg(QString::number(parent->steerKp, 'f', 2)) : tr("Kp Factor"), tr("<b>How strongly openpilot corrects lane position.</b> Higher is tighter but twitchier; lower is smoother but slower. Auto-learned by default."), ""},
     {"SteerLatAccel", parent->latAccelFactor != 0 ? QString(tr("Lateral Acceleration (Default: %1)")).arg(QString::number(parent->latAccelFactor, 'f', 2)) : tr("Lateral Acceleration"), tr("<b>Maps steering torque to turning response.</b> Increase for sharper turns; decrease for gentler steering. Auto-learned by default."), ""},
     {"SteerRatio", parent->steerRatio != 0 ? QString(tr("Steer Ratio (Default: %1)")).arg(QString::number(parent->steerRatio, 'f', 2)) : tr("Steer Ratio"), tr("<b>The relationship between steering wheel rotation and road wheel angle.</b> Increase if steering feels too quick or twitchy; decrease if it feels too slow or weak. Auto-learned by default."), ""},
+    {"SteerOffset", tr("Steer Offset"), tr("<b>Offsets steering torque to help compensate for alignment or tire issues.</b> More negative pulls the car right; more positive pulls it left. Most users should not need to touch this."), ""},
     {"ForceAutoTune", tr("Force Auto-Tune On"), tr("<b>Force-enable openpilot's live auto-tuning for \"Friction\" and \"Lateral Acceleration\".</b>"), ""},
     {"ForceAutoTuneOff", tr("Force Auto-Tune Off"), tr("<b>Force-disable openpilot's live auto-tuning for \"Friction\" and \"Lateral Acceleration\" and use the set value instead.</b>"), ""},
     {"ForceTorqueController", tr("Force Torque Controller"), tr("<b>Use torque-based steering control instead of angle-based control for smoother lane keeping, especially in curves.</b>"), ""},
@@ -86,6 +87,9 @@ StarPilotLateralPanel::StarPilotLateralPanel(StarPilotSettingsWindow *parent, bo
     } else if (param == "SteerRatio") {
       std::vector<QString> steerRatioButton{"Reset"};
       lateralToggle = new StarPilotParamValueButtonControl(param, title, desc, icon, parent->steerRatio * 0.5, parent->steerRatio * 1.5, QString(), std::map<float, QString>(), 0.01, false, {}, steerRatioButton, false, false);
+    } else if (param == "SteerOffset") {
+      std::vector<QString> steerOffsetButton{"Reset"};
+      lateralToggle = new StarPilotParamValueButtonControl(param, title, desc, icon, -0.2, 0.2, QString(), std::map<float, QString>(), 0.005, false, {}, steerOffsetButton, false, false);
 
     } else if (param == "AlwaysOnLateral") {
       StarPilotManageControl *aolToggle = new StarPilotManageControl(param, title, desc, icon);
@@ -232,6 +236,14 @@ StarPilotLateralPanel::StarPilotLateralPanel(StarPilotSettingsWindow *parent, bo
     if (StarPilotConfirmationDialog::yesorno(tr("Reset <b>Steer Ratio</b> to its default value?"), this)) {
       params.putFloat("SteerRatio", parent->steerRatio);
       steerRatioToggle->refresh();
+    }
+  });
+
+  steerOffsetToggle = static_cast<StarPilotParamValueButtonControl*>(toggles["SteerOffset"]);
+  QObject::connect(steerOffsetToggle, &StarPilotParamValueButtonControl::buttonClicked, [parent, this]() {
+    if (StarPilotConfirmationDialog::yesorno(tr("Reset <b>Steer Offset</b> to its default value?"), this)) {
+      params.putFloat("SteerOffset", parent->steerOffset);
+      steerOffsetToggle->refresh();
     }
   });
 
@@ -406,6 +418,12 @@ void StarPilotLateralPanel::updateToggles() {
         setVisible &= parent->latAccelFactor != 0;
         setVisible &= parent->hasAutoTune ? forcingAutoTuneOff : !forcingAutoTune;
         setVisible &= parent->isTorqueCar || forcingTorqueController || usingNNFF;
+        setVisible &= !usingNNFF;
+      }
+
+      else if (key == "SteerOffset") {
+        setVisible &= parent->isGM;
+        setVisible &= parent->isTorqueCar || forcingTorqueController;
         setVisible &= !usingNNFF;
       }
 

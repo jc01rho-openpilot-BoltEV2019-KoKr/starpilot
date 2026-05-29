@@ -93,6 +93,10 @@ class TestHyundaiCanfdBase(HyundaiButtonBase, common.CarSafetyTest, common.Drive
     values = {"ACCMode": 1 if enable else 0}
     return self.packer.make_can_msg_safety("SCC_CONTROL", self.SCC_BUS, values)
 
+  def _acc_state_msg(self, main_on):
+    values = {"MainMode_ACC": int(main_on), "ACCMode": 0}
+    return self.packer.make_can_msg_safety("SCC_CONTROL", self.SCC_BUS, values)
+
   def _button_msg(self, buttons, main_button=0, bus=None):
     if bus is None:
       bus = self.PT_BUS
@@ -122,6 +126,14 @@ class TestHyundaiCanfdBase(HyundaiButtonBase, common.CarSafetyTest, common.Drive
 
     self._aol_state = toggle_on
     return None  # avoid duplicate message in harness
+
+  def test_pcm_main_cruise_state_availability(self):
+    if self.safety.get_current_safety_param() & HyundaiSafetyFlags.LONG:
+      raise unittest.SkipTest("Longitudinal mode does not learn ACC main state from SCC_CONTROL RX")
+
+    for should_turn_acc_main_on in (True, False):
+      self._rx(self._acc_state_msg(should_turn_acc_main_on))
+      self.assertEqual(should_turn_acc_main_on, self.safety.get_acc_main_on())
 
 
 class TestHyundaiCanfdLFASteeringBase(TestHyundaiCanfdBase):
@@ -495,6 +507,10 @@ class TestHyundaiCanfdLKASteeringLongEV(HyundaiLongitudinalBase, TestHyundaiCanf
     }
     return self.packer.make_can_msg_safety("SCC_CONTROL", 1, values)
 
+  def _tx_acc_state_msg(self, main_on):
+    values = {"MainMode_ACC": int(main_on), "ACCMode": 0}
+    return self.packer.make_can_msg_safety("SCC_CONTROL", 1, values)
+
 
 # Tests longitudinal for ICE, hybrid, EV cars with LFA steering
 class TestHyundaiCanfdLFASteeringLongBase(HyundaiLongitudinalBase, TestHyundaiCanfdLFASteeringBase):
@@ -524,6 +540,10 @@ class TestHyundaiCanfdLFASteeringLongBase(HyundaiLongitudinalBase, TestHyundaiCa
       "aReqRaw": accel,
       "aReqValue": accel,
     }
+    return self.packer.make_can_msg_safety("SCC_CONTROL", 0, values)
+
+  def _tx_acc_state_msg(self, main_on):
+    values = {"MainMode_ACC": int(main_on), "ACCMode": 0}
     return self.packer.make_can_msg_safety("SCC_CONTROL", 0, values)
 
   def test_tester_present_allowed(self, ecu_disable: bool = True):

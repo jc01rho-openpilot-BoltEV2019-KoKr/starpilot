@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from opendbc.car import Bus, make_tester_present_msg, rate_limit, structs, ACCELERATION_DUE_TO_GRAVITY, DT_CTRL
+from opendbc.car import Bus, create_gas_interceptor_command, make_tester_present_msg, rate_limit, structs, ACCELERATION_DUE_TO_GRAVITY, DT_CTRL
 from opendbc.car.lateral import apply_meas_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance
 from opendbc.car.can_definitions import CanData
 from opendbc.car.carlog import carlog
@@ -9,7 +9,7 @@ from opendbc.car.common.pid import PIDController
 from opendbc.car.secoc import add_mac, build_sync_mac
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.toyota import toyotacan
-from opendbc.car.toyota.values import CAR, NO_STOP_TIMER_CAR, TSS2_CAR, \
+from opendbc.car.toyota.values import CAR, MIN_ACC_SPEED, NO_STOP_TIMER_CAR, PEDAL_TRANSITION, TSS2_CAR, \
                                         CarControllerParams, ToyotaFlags, \
                                         UNSUPPORTED_DSU_CAR
 from opendbc.can import CANPacker
@@ -120,6 +120,25 @@ class CarController(CarControllerBase):
     self.secoc_prev_reset_counter = 0
 
     self.doors_locked = False
+
+  def _compute_interceptor_gas_cmd(self, CC, CS):
+    if not (self.CP.enableGasInterceptorDEPRECATED and self.CP.openpilotLongitudinalControl and CC.longActive):
+      return 0.0
+
+    if self.CP.minEnableSpeed < 0.0:
+      return 0.12 if CS.out.standstill and self.accel > 0.0 else 0.0
+
+    max_interceptor_gas = 0.5
+    if self.CP.carFingerprint == CAR.TOYOTA_RAV4:
+      pedal_scale = float(np.interp(CS.out.vEgo, [0.0, MIN_ACC_SPEED, MIN_ACC_SPEED + PEDAL_TRANSITION], [0.15, 0.3, 0.0]))
+    elif self.CP.carFingerprint == CAR.TOYOTA_COROLLA:
+      pedal_scale = float(np.interp(CS.out.vEgo, [0.0, MIN_ACC_SPEED, MIN_ACC_SPEED + PEDAL_TRANSITION], [0.3, 0.4, 0.0]))
+    else:
+      pedal_scale = float(np.interp(CS.out.vEgo, [0.0, MIN_ACC_SPEED, MIN_ACC_SPEED + PEDAL_TRANSITION], [0.4, 0.5, 0.0]))
+
+    pedal_offset = float(np.interp(CS.out.vEgo, [0.0, 2.3, MIN_ACC_SPEED + PEDAL_TRANSITION], [-0.4, 0.0, 0.2]))
+    pedal_command = pedal_scale * (self.accel + pedal_offset)
+    return float(np.clip(pedal_command, 0.0, max_interceptor_gas))
 
   def _update_standstill_request(self, CC, CS, actuators, starpilot_toggles):
     # Older TSS-P platforms need a standstill latch pulse, then an explicit release to move again.
@@ -239,11 +258,16 @@ class CarController(CarControllerBase):
     # *** gas and brake ***
 
     self._update_standstill_request(CC, CS, actuators, starpilot_toggles)
+    interceptor_gas_cmd = self._compute_interceptor_gas_cmd(CC, CS)
 
     # handle UI messages
     fcw_alert = hud_control.visualAlert == VisualAlert.fcw
     steer_alert = hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw)
     lead = hud_control.leadVisible or CS.out.vEgo < 12.  # at low speed we always assume the lead is present so ACC can be engaged
+
+    if self.frame % 2 == 0 and self.CP.enableGasInterceptorDEPRECATED and self.CP.openpilotLongitudinalControl:
+      # Send an explicit zero when off so the interceptor does not rescale around a stale command.
+      can_sends.append(create_gas_interceptor_command(self.packer, interceptor_gas_cmd, self.frame // 2))
 
     if self.CP.openpilotLongitudinalControl:
       if self.frame % 3 == 0:

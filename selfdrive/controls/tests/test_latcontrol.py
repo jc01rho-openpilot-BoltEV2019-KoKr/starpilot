@@ -50,6 +50,8 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_ioniq_6_ff_scale,
   get_ioniq_6_friction_scale,
   get_ioniq_6_friction_threshold,
+  get_kia_forte_center_taper_scale,
+  get_kia_forte_ff_scale,
   get_kia_ev6_ff_scale,
   get_kia_ev6_friction_scale,
   get_kia_ev6_friction_threshold,
@@ -235,6 +237,26 @@ class TestLatControl:
     assert get_sonata_hybrid_center_taper_scale(0.0, 3.0) < get_sonata_hybrid_center_taper_scale(0.0, 10.0)
     assert get_sonata_hybrid_center_taper_scale(0.0, 30.0) < get_sonata_hybrid_center_taper_scale(0.20, 30.0) <= 1.0
 
+  def test_kia_forte_ff_scale_curve(self):
+    assert get_kia_forte_ff_scale(0.0, 0.0, 20.0) == 1.0
+    steady_left = get_kia_forte_ff_scale(0.45, 0.0, 25.0)
+    steady_right = get_kia_forte_ff_scale(-0.45, 0.0, 25.0)
+    turn_in_left = get_kia_forte_ff_scale(0.45, 0.7, 10.0)
+    turn_in_right = get_kia_forte_ff_scale(-0.45, -0.7, 10.0)
+    unwind_left = get_kia_forte_ff_scale(0.45, -0.7, 10.0)
+    unwind_right = get_kia_forte_ff_scale(-0.45, 0.7, 10.0)
+    assert steady_left < 1.0
+    assert steady_right < steady_left
+    assert turn_in_left > steady_left
+    assert turn_in_right == pytest.approx(steady_right)
+    assert unwind_left < steady_left
+    assert unwind_right < steady_right
+    assert unwind_right > unwind_left
+
+  def test_kia_forte_center_taper_curve(self):
+    assert get_kia_forte_center_taper_scale(0.0, 30.0) < get_kia_forte_center_taper_scale(0.0, 15.0)
+    assert get_kia_forte_center_taper_scale(0.0, 30.0) < get_kia_forte_center_taper_scale(0.20, 30.0) <= 1.0
+
   def test_genesis_g90_ff_scale_curve(self):
     assert get_genesis_g90_ff_scale(0.0, 0.0, 20.0) == 1.0
     assert get_genesis_g90_ff_scale(0.5, 0.0, 20.0) > get_genesis_g90_ff_scale(-0.5, 0.0, 20.0)
@@ -327,6 +349,9 @@ class TestLatControl:
     assert get_ioniq_6_directional_taper_scale(-1.2, 0.40) > get_ioniq_6_directional_taper_scale(-1.2, 0.7)
     assert get_ioniq_6_directional_taper_scale(1.2, -0.25) > get_ioniq_6_directional_taper_scale(1.2, -0.7)
     assert get_ioniq_6_directional_taper_scale(1.2, -0.40) > get_ioniq_6_directional_taper_scale(1.2, -0.7)
+    assert get_ioniq_6_directional_taper_scale(-1.2, -0.40, 8.0) > get_ioniq_6_directional_taper_scale(-1.2, -0.40, 25.0)
+    assert get_ioniq_6_directional_taper_scale(1.2, 0.40, 8.0) > get_ioniq_6_directional_taper_scale(1.2, 0.40, 25.0)
+    assert get_ioniq_6_directional_taper_scale(-1.2, 0.7, 8.0) == pytest.approx(get_ioniq_6_directional_taper_scale(-1.2, 0.7, 25.0), abs=0.02)
 
   def test_ioniq_6_output_taper_curve(self):
     assert get_ioniq_6_output_taper_scale(0.0, 0.0, 25.0) < get_ioniq_6_output_taper_scale(0.0, 0.0, 8.0) <= 1.0
@@ -459,6 +484,16 @@ class TestLatControl:
 
     assert lac_log.active
     assert controller.torque_params.latAccelFactor == pytest.approx(3.0 * 1.22)
+
+  def test_kia_forte_default_update_path(self):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_FORTE)
+    CarInterface = interfaces[HYUNDAI.KIA_FORTE]
+    CP = CarInterface.get_non_essential_params(HYUNDAI.KIA_FORTE)
+
+    _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert lac_log.active
+    assert controller.torque_params.latAccelFactor == pytest.approx(CP.lateralTuning.torque.latAccelFactor * 1.08)
 
   def test_ioniq_6_update_path_does_not_post_taper_output(self, monkeypatch):
     base_controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_IONIQ_6)

@@ -58,6 +58,9 @@ extern bool hyundai_cancel_button_enable;
 bool hyundai_cancel_button_enable = false;
 
 static uint8_t hyundai_last_button_interaction;  // button messages since the user pressed an enable button
+static bool acc_main_on_prev;
+static bool acc_main_on_tx;
+static uint32_t acc_main_on_mismatches;
 
 void hyundai_common_init(uint16_t param) {
   const uint16_t HYUNDAI_PARAM_EV_GAS = 1;
@@ -89,6 +92,9 @@ void hyundai_common_init(uint16_t param) {
   hyundai_cancel_button_enable = GET_FLAG(param, HYUNDAI_PARAM_CANCEL_BTN_ENABLE);
 
   hyundai_last_button_interaction = HYUNDAI_PREV_BUTTON_SAMPLES;
+  acc_main_on_prev = false;
+  acc_main_on_tx = false;
+  acc_main_on_mismatches = 0U;
 
 #ifdef ALLOW_DEBUG
   const uint16_t HYUNDAI_PARAM_LONGITUDINAL = 4;
@@ -177,6 +183,31 @@ uint32_t hyundai_common_canfd_compute_checksum(const CANPacket_t *msg) {
   }
 
   return crc;
+}
+
+void hyundai_common_reset_acc_main_on_mismatches(void) {
+  if (acc_main_on && !acc_main_on_prev) {
+    acc_main_on_mismatches = 0U;
+  }
+
+  acc_main_on_prev = acc_main_on;
+}
+
+void hyundai_common_acc_main_on_sync(void) {
+  if (acc_main_on && !acc_main_on_tx) {
+    acc_main_on_mismatches += 1U;
+
+    if (acc_main_on_mismatches >= 3U) {
+      acc_main_on = false;
+      lkas_on = false;
+    }
+  } else {
+    acc_main_on_mismatches = 0U;
+  }
+}
+
+uint32_t get_acc_main_on_mismatches(void) {
+  return acc_main_on_mismatches;
 }
 
 void hyundai_lkas_button_check(const bool lkas_button) {

@@ -531,6 +531,7 @@ class StarPilotVariables:
     toggle.has_sdsu = toggle.car_make == "toyota" and bool(FPCP.flags & ToyotaStarPilotFlags.SMART_DSU.value)
     has_sng = CP.autoResumeSng
     toggle.has_zss = toggle.car_make == "toyota" and bool(FPCP.flags & ToyotaStarPilotFlags.ZSS.value)
+    toggle.redneck_cruise_available = bool(FPCP.redneckCruiseAvailable)
     is_angle_car = CP.steerControlType == car.CarParams.SteerControlType.angle
     latAccelFactor = CP.lateralTuning.torque.latAccelFactor
     if not math.isfinite(latAccelFactor):
@@ -541,6 +542,12 @@ class StarPilotVariables:
     )
     longitudinalActuatorDelay = CP.longitudinalActuatorDelay
     toggle.openpilot_longitudinal = CP.openpilotLongitudinalControl and not toggle.disable_openpilot_long
+    if not toggle.redneck_cruise_available or toggle.openpilot_longitudinal:
+      self.params.put_bool("RedneckCruise", False)
+    toggle.redneck_cruise = self.get_value(
+      "RedneckCruise",
+      condition=toggle.redneck_cruise_available and not toggle.openpilot_longitudinal,
+    )
     pcm_cruise = CP.pcmCruise
     prohibited_main_aol = not toggle.openpilot_longitudinal and toggle.car_make == "hyundai" and bool(CP.flags & HyundaiFlags.CANFD or CP.flags & HyundaiFlags.HAS_LDA_BUTTON)
     startAccel = CP.startAccel
@@ -611,6 +618,7 @@ class StarPilotVariables:
     toggle.use_custom_latAccelFactor = bool(round(toggle.latAccelFactor, 2) != round(latAccelFactor, 2)) and is_torque_car and not toggle.force_auto_tune or toggle.force_auto_tune_off
     toggle.steerRatio = self.get_value("SteerRatio", cast=float, condition=advanced_lateral_tuning, default=steerRatio, min=steerRatio * 0.5, max=steerRatio * 1.5)
     toggle.use_custom_steerRatio = bool(round(toggle.steerRatio, 2) != round(steerRatio, 2)) and not toggle.force_auto_tune or toggle.force_auto_tune_off
+    toggle.steer_offset = self.get_value("SteerOffset", cast=float, condition=advanced_lateral_tuning and toggle.car_make == "gm" and is_torque_car, default=0.0, min=-0.2, max=0.2)
 
     advanced_longitudinal_tuning = toggle.openpilot_longitudinal and self.get_value("AdvancedLongitudinalTune")
     ev_vehicle = default_ev_tuning_enabled(CP)
@@ -1062,7 +1070,7 @@ class StarPilotVariables:
     if isinstance(toggle.model_version, bytes):
       toggle.model_version = toggle.model_version.decode("utf-8", "ignore")
     toggle.classic_model = toggle.model_version in {"v1", "v2", "v3", "v4"}
-    toggle.tinygrad_model = toggle.model_version in {"v8", "v9", "v10", "v11", "v12", "v13", "v14"}
+    toggle.tinygrad_model = toggle.model_version in {"v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15"}
     toggle.tomb_raider = toggle.model == "space-lab"
 
     toggle.model_ui = self.get_value("ModelUI")
@@ -1162,6 +1170,8 @@ class StarPilotVariables:
     toggle.speed_limit_priority_highest = toggle.speed_limit_priority1 == "Highest"
     toggle.speed_limit_priority_lowest = toggle.speed_limit_priority1 == "Lowest"
     toggle.speed_limit_sources = self.get_value("SpeedLimitSources", condition=speed_limit_display) or toggle.debug_mode
+    toggle.slc_abbreviated_sources = self.get_value("SLCAbbreviatedSources", condition=speed_limit_display)
+    toggle.slc_active_sources_only = self.get_value("SLCActiveSourcesOnly", condition=speed_limit_display)
 
     toggle.speed_limit_filler = self.get_value("SpeedLimitFiller")
     toggle.vision_speed_limit_detection = self.get_value("VisionSpeedLimitDetection")

@@ -1,9 +1,17 @@
 import os
 import requests
 
-from openpilot.starpilot.common.starpilot_utilities import use_konik_server
+from openpilot.common.params import Params
 
-API_HOST = os.getenv('API_HOST', f"https://api.{'konik.ai' if use_konik_server() else 'commadotai.com'}")
+
+def _use_konik_server():
+  try:
+    return Params().get_bool("UseKonikServer")
+  except Exception:
+    return False
+
+
+API_HOST = os.getenv('API_HOST', f"https://api.{'konik.ai' if _use_konik_server() else 'commadotai.com'}")
 
 # TODO: this should be merged into common.api
 

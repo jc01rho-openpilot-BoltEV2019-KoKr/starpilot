@@ -27,6 +27,14 @@ IONIQ_6_BLINDSPOT_LEFT_MASK = 0x10
 CANFD_CAMERA_LEAD_MIN_DISTANCE = 0.1
 
 
+def get_non_scc_cruise_signals(CP) -> tuple[str, str, str, str, str]:
+  if CP.flags & HyundaiFlags.EV:
+    return "LABEL11", "CC_React", "CC_ACT", "E_EMS11", "Cruise_Limit_Target"
+  if CP.flags & HyundaiFlags.HYBRID:
+    return "E_CRUISE_CONTROL", "CRUISE_LAMP_M", "CRUISE_LAMP_S", "ELECT_GEAR", "SLC_SET_SPEED"
+  return "EMS16", "CRUISE_LAMP_M", "CRUISE_LAMP_S", "LVR12", "CF_Lvr_CruiseSet"
+
+
 def calculate_canfd_speed_limit(CP, FPCP, cp, cp_cam, speed_factor):
   if not (FPCP.flags & HyundaiStarPilotFlags.SPEED_LIMIT_AVAILABLE):
     return 0.0
@@ -71,6 +79,8 @@ class CarState(CarStateBase):
     self.custom_button = 0
     self.cancel_button_enable_in_progress = False
     self.cruise_buttons_msg = {}
+    self.redneck_send_button = Buttons.NONE
+    self.redneck_v_target = 0
 
     self.gear_msg_canfd = "ACCELERATOR" if CP.flags & HyundaiFlags.EV else \
                           "GEAR_ALT" if CP.flags & HyundaiFlags.CANFD_ALT_GEARS else \
@@ -214,18 +224,12 @@ class CarState(CarStateBase):
       ret.cruiseState.standstill = False
       ret.cruiseState.nonAdaptive = False
     elif no_scc:
-      cruise_set_speed = cp.vl["LVR12"]["CF_Lvr_CruiseSet"]
-      cruise_has_set_speed = 0 < cruise_set_speed < 255
-      # Some regular-cruise Forte trims never assert ACC_REQ even when stock cruise is engaged.
-      cruise_enabled = cp.vl["TCS13"]["ACC_REQ"] == 1 or cruise_has_set_speed
-
-      # Regular-cruise Forte trims don't publish SCC11/SCC12; use the stock cruise request and set speed.
-      ret.cruiseState.available = cruise_enabled or cp.vl["TCS13"]["ACCEnable"] == 0
-      ret.cruiseState.enabled = cruise_enabled
+      cruise_msg, cruise_available_sig, cruise_enabled_sig, cruise_speed_msg, cruise_speed_sig = get_non_scc_cruise_signals(self.CP)
+      ret.cruiseState.available = cp.vl[cruise_msg][cruise_available_sig] != 0
+      ret.cruiseState.enabled = cp.vl[cruise_msg][cruise_enabled_sig] != 0
       ret.cruiseState.standstill = False
       ret.cruiseState.nonAdaptive = False
-      if cruise_has_set_speed:
-        ret.cruiseState.speed = cruise_set_speed * speed_conv
+      ret.cruiseState.speed = cp.vl[cruise_speed_msg][cruise_speed_sig] * speed_conv
     else:
       scc_msg = "SCC12" if self.CP.flags & HyundaiFlags.CAN_CANFD_BLENDED else "SCC11"
       ret.cruiseState.available = cp_cruise.vl[scc_msg]["MainMode_ACC"] == 1
@@ -273,14 +277,21 @@ class CarState(CarStateBase):
 
     if (not self.CP.openpilotLongitudinalControl or self.CP.flags & HyundaiFlags.CAMERA_SCC) and \
         not (self.CP.flags & HyundaiFlags.CAN_CANFD_BLENDED):
-      aeb_src = "FCA11" if self.CP.flags & HyundaiFlags.USE_FCA.value else "SCC12"
-      aeb_sig = "FCA_CmdAct" if self.CP.flags & HyundaiFlags.USE_FCA.value else "AEB_CmdAct"
-      aeb_warning = cp_cruise.vl[aeb_src]["CF_VSM_Warn"] != 0
-      # Regular-cruise Forte trims don't publish SCC12; avoid poisoning parser validity on no-SCC cars.
-      scc_warning = False if no_scc else cp_cruise.vl["SCC12"]["TakeOverReq"] == 1
-      aeb_braking = cp_cruise.vl[aeb_src]["CF_VSM_DecCmdAct"] != 0 or cp_cruise.vl[aeb_src][aeb_sig] != 0
-      ret.stockFcw = (aeb_warning or scc_warning) and not aeb_braking
-      ret.stockAeb = aeb_warning and aeb_braking
+      if no_scc:
+        if not (self.CP.flags & HyundaiFlags.NON_SCC_NO_FCA):
+          cp_fca = cp if self.CP.flags & HyundaiFlags.NON_SCC_RADAR_FCA else cp_cam
+          aeb_warning = cp_fca.vl["FCA11"]["CF_VSM_Warn"] != 0
+          aeb_braking = cp_fca.vl["FCA11"]["CF_VSM_DecCmdAct"] != 0 or cp_fca.vl["FCA11"]["FCA_CmdAct"] != 0
+          ret.stockFcw = aeb_warning and not aeb_braking
+          ret.stockAeb = aeb_warning and aeb_braking
+      else:
+        aeb_src = "FCA11" if self.CP.flags & HyundaiFlags.USE_FCA.value else "SCC12"
+        aeb_sig = "FCA_CmdAct" if self.CP.flags & HyundaiFlags.USE_FCA.value else "AEB_CmdAct"
+        aeb_warning = cp_cruise.vl[aeb_src]["CF_VSM_Warn"] != 0
+        scc_warning = cp_cruise.vl["SCC12"]["TakeOverReq"] == 1
+        aeb_braking = cp_cruise.vl[aeb_src]["CF_VSM_DecCmdAct"] != 0 or cp_cruise.vl[aeb_src][aeb_sig] != 0
+        ret.stockFcw = (aeb_warning or scc_warning) and not aeb_braking
+        ret.stockAeb = aeb_warning and aeb_braking
 
     if self.CP.enableBsm:
       ret.leftBlindspot = cp.vl["LCA11"]["CF_Lca_IndLeft"] != 0
@@ -496,8 +507,8 @@ class CarState(CarStateBase):
       return self.get_can_parsers_canfd(CP)
 
     msgs = []
-    if CP.flags & HyundaiFlags.NON_SCC and CP.flags & HyundaiFlags.USE_FCA.value:
-      msgs.append(("FCA11", 0))  # no-SCC Forte trims can stop publishing FCA11; don't let it poison canValid
+    if CP.flags & HyundaiFlags.NON_SCC and not (CP.flags & HyundaiFlags.NON_SCC_NO_FCA):
+      msgs.append(("FCA11", 0))  # Non-SCC trims can stop publishing FCA11; don't let it poison canValid
 
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, 0),

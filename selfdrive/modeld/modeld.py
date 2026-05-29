@@ -100,10 +100,13 @@ def _canonical_model_id(model_id: str) -> str:
 
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
                           lat_action_t: float, long_action_t: float, v_ego: float, mlsim: bool,
-                          is_v9: bool, is_v14: bool, starpilot_toggles) -> log.ModelDataV2.Action:
-    if is_v14:
+                          is_v9: bool, is_v14: bool, is_v15: bool, starpilot_toggles) -> log.ModelDataV2.Action:
+    if is_v14 or is_v15:
       desired_curv_unscaled, desired_accel = model_output['action'][0]
-      desired_curvature = float(desired_curv_unscaled) / 100.0
+      if is_v15:
+        desired_curvature = float(desired_curv_unscaled) / max(1.0, v_ego) ** 2
+      else:
+        desired_curvature = float(desired_curv_unscaled) / 100.0
       should_stop = (v_ego < 0.3 and desired_accel < 0.1)
 
       desired_accel = smooth_value(float(desired_accel), prev_action.desiredAcceleration, LONG_SMOOTH_SECONDS)
@@ -304,8 +307,9 @@ class ModelState:
     self.is_v12 = (self.policy_generation == "v12")
     self.is_v13 = (self.policy_generation == "v13")
     self.is_v14 = (self.policy_generation == "v14")
+    self.is_v15 = (self.policy_generation == "v15")
     self.is_v9 = (self.policy_generation == "v9")
-    self.mlsim = (self.policy_generation in ("v8", "v10", "v11", "v12", "v13", "v14"))
+    self.mlsim = (self.policy_generation in ("v8", "v10", "v11", "v12", "v13", "v14", "v15"))
     self.policy_has_plan = 'plan' in self.policy_output_slices
 
     self.frames = {name: DrivingModelFrame(context, ModelConstants.TEMPORAL_SKIP) for name in self.vision_input_names}
@@ -330,7 +334,7 @@ class ModelState:
     self.off_policy_output: np.ndarray | None = None
 
     off_policy_metadata = None
-    if self.policy_generation in ("v12", "v13", "v14") or OFF_POLICY_METADATA_PATH.is_file() or OFF_POLICY_PKL_PATH.is_file():
+    if self.policy_generation in ("v12", "v13", "v14", "v15") or OFF_POLICY_METADATA_PATH.is_file() or OFF_POLICY_PKL_PATH.is_file():
       resolved_off_policy_meta = ensure_artifact(OFF_POLICY_METADATA_PATH, "driving_off_policy_metadata.pkl", optional=True)
       if resolved_off_policy_meta is not None:
         with open(resolved_off_policy_meta, 'rb') as f:
@@ -449,14 +453,14 @@ class ModelState:
       self.full_prev_desired_curv[0,-1,:] = policy_outputs_dict['desired_curvature'][0, :]
 
       if self.prev_desired_curv_key is not None:
-        # v9/v10/v11/v12/v13/v14 models expect zeros for prev_desired_curv(s); others use history
-        if self.is_v9 or self.is_v10 or self.is_v11 or self.is_v12 or self.is_v13 or self.is_v14:
+        # v9/v10/v11/v12/v13/v14/v15 models expect zeros for prev_desired_curv(s); others use history
+        if self.is_v9 or self.is_v10 or self.is_v11 or self.is_v12 or self.is_v13 or self.is_v14 or self.is_v15:
           self.numpy_inputs[self.prev_desired_curv_key][:] = 0 * self.full_prev_desired_curv[0, self.temporal_idxs]
         else:
           self.numpy_inputs[self.prev_desired_curv_key][:] = self.full_prev_desired_curv[0, self.temporal_idxs]
 
       if self.off_policy_enabled and self.off_policy_prev_desired_curv_key is not None:
-        if self.is_v9 or self.is_v12 or self.is_v13 or self.is_v14:
+        if self.is_v9 or self.is_v12 or self.is_v13 or self.is_v14 or self.is_v15:
           self.off_policy_numpy_inputs[self.off_policy_prev_desired_curv_key][:] = 0 * self.full_prev_desired_curv[0, self.temporal_idxs]
         else:
           self.off_policy_numpy_inputs[self.off_policy_prev_desired_curv_key][:] = self.full_prev_desired_curv[0, self.temporal_idxs]
@@ -659,7 +663,7 @@ def main(demo=False):
         model_output, prev_action,
         lat_action_t,
         long_action_t,
-        v_ego, model.mlsim, model.is_v9, model.is_v14, starpilot_toggles,
+        v_ego, model.mlsim, model.is_v9, model.is_v14, model.is_v15, starpilot_toggles,
       )
       prev_action = action
       fill_model_msg(drivingdata_send, modelv2_send, model_output, action,

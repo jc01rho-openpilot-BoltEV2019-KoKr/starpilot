@@ -8,8 +8,8 @@ from openpilot.system.ui.widgets import DialogResult
 from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
 
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
-from openpilot.selfdrive.ui.layouts.settings.starpilot.longitudinal import (
-  SettingRow, SettingSection, AetherSettingsView,
+from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
+  SettingRow, SettingSection, AetherSettingsView, COMPACT_PANEL_METRICS,
 )
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
@@ -118,6 +118,7 @@ class StarPilotAdvancedLateralLayout(_SettingsPage):
       header_title=tr_noop("Advanced Lateral Tuning"),
       header_subtitle=tr_noop("Adjust steering response, torque controller behavior, and auto-tuning controls."),
       panel_style=PANEL_STYLE,
+      metrics=COMPACT_PANEL_METRICS,
     )
 
 
@@ -148,7 +149,7 @@ class StarPilotLateralLayout(_SettingsPage):
         SettingRow("AlwaysOnLateral", "toggle", tr_noop("Always On Lateral"),
                    subtitle=tr_noop("Keep lateral control active even without openpilot engaged."),
                    get_state=lambda: self._params.get_bool("AlwaysOnLateral"),
-                   set_state=lambda s: _confirm_reboot_toggle(self._params, "AlwaysOnLateral", s)),
+                   set_state=lambda s: _confirm_reboot_toggle(self._params, "AlwaysOnLateral", s) if s else self._params.put_bool("AlwaysOnLateral", False)),
         SettingRow("AlwaysOnLateralLKAS", "toggle", tr_noop("Enable With LKAS"),
                    subtitle="",
                    get_state=lambda: self._params.get_bool("AlwaysOnLateralLKAS"),
@@ -255,6 +256,7 @@ class StarPilotLateralLayout(_SettingsPage):
       header_subtitle=tr_noop("Fine-tune lateral control, lane changes, and steering behavior."),
       tab_defs=tab_defs,
       panel_style=PANEL_STYLE,
+      metrics=COMPACT_PANEL_METRICS,
     )
 
   def _show_modal_pace_selector(self):

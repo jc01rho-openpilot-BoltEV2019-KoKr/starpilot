@@ -152,8 +152,11 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
       int cruise_status = ((msg->data[8] >> 4) & 0x7U);
       bool cruise_engaged = (cruise_status == 1) || (cruise_status == 2);
       hyundai_common_cruise_state_check(cruise_engaged);
+      acc_main_on = GET_BIT(msg, 66U);
     }
   }
+
+  hyundai_common_reset_acc_main_on_mismatches();
 }
 
 static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
@@ -234,8 +237,9 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
     int button = msg->data[2] & 0x7U;
     bool is_cancel = (button == HYUNDAI_BTN_CANCEL);
     bool is_resume = (button == HYUNDAI_BTN_RESUME);
+    bool is_set = (button == HYUNDAI_BTN_SET);
 
-    bool allowed = (is_cancel && cruise_engaged_prev) || (is_resume && controls_allowed);
+    bool allowed = (is_cancel && cruise_engaged_prev) || ((is_resume || is_set) && controls_allowed);
     if (!allowed) {
       tx = false;
     }
@@ -273,6 +277,9 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
     if (violation) {
       tx = false;
     }
+
+    acc_main_on_tx = GET_BIT(msg, 66U);
+    hyundai_common_acc_main_on_sync();
   }
 
   return tx;

@@ -36,7 +36,7 @@ class StarPilotCarState:
     hasZSS: bool = False
     canUsePedal: bool = False
     canUseSDSU: bool = False
-    
+
     # ========== Device/Car State ==========
     isFrogsGoMoo: bool = False
     hasPCMCruise: bool = False

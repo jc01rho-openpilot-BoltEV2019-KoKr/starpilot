@@ -200,6 +200,7 @@ class CarInterfaceBase(ABC):
   @classmethod
   def get_starpilot_params(cls, candidate: str, fingerprint: dict[int, dict[int, int]], car_fw: list[structs.CarParams.CarFw], CP: structs.CarParams, starpilot_toggles: SimpleNamespace):
     fp_ret = custom.StarPilotCarParams.new_message()
+    fp_ret.pcmCruiseSpeed = True
 
     platform = PLATFORMS[candidate]
 
@@ -228,6 +229,11 @@ class CarInterfaceBase(ABC):
           fp_ret.isHDA2 = hda2
           if 0x1FA in fingerprint[CAN.ECAN]:
             fp_ret.flags |= HyundaiStarPilotFlags.SPEED_LIMIT_AVAILABLE.value
+
+        fp_ret.redneckCruiseAvailable = not bool(CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS)
+        if fp_ret.redneckCruiseAvailable and Params(return_defaults=True).get_bool("RedneckCruise") and \
+            not CP.openpilotLongitudinalControl:
+          fp_ret.pcmCruiseSpeed = False
 
         if CP.flags & HyundaiFlags.HAS_LDA_BUTTON:
           fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON.value
