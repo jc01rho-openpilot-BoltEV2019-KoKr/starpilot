@@ -927,9 +927,10 @@ CANCEL_BUTTON_ENABLE_CARS = frozenset({
 })
 
 
-ALT_BUS_LDA_BUTTON_CARS = frozenset({
-  CAR.GENESIS_G90,
-})
+# No classic HKG platforms are currently opted into the synthetic alt-bus LKAS
+# button path. The G90 regression is mitigated by falling back to the standard
+# Hyundai LKAS button handling until a route-proven alt-bus implementation is ready.
+ALT_BUS_LDA_BUTTON_CARS = frozenset()
 
 
 def hyundai_cancel_button_enables_cruise(car_fingerprint) -> bool:
