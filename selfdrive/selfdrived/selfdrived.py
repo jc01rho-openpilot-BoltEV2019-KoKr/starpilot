@@ -721,7 +721,12 @@ class SelfdriveD:
 
 
 def main():
-  config_realtime_process(4, Priority.CTRL_HIGH)
+  # Run on core 5 (plannerd/radard, ~50% peak, FIFO prio 51) instead of sharing
+  # the saturated core 4 with card+controlsd. Core 4 at 100% was starving
+  # selfdrived's 100 Hz loop and firing selfdrivedLagging. selfdrived's higher
+  # FIFO prio (53 > 51) lets it preempt the 20 Hz planner/radar when needed.
+  # (Core 6 = camerad, core 7 = modeld are both timing-critical — avoid.)
+  config_realtime_process(5, Priority.CTRL_HIGH)
   s = SelfdriveD()
   s.run()
 

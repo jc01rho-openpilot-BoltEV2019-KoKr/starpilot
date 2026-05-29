@@ -31,15 +31,6 @@ void waylandAwareMessageHandler(QtMsgType type, const QMessageLogContext &contex
 int main(int argc, char *argv[]) {
   setpriority(PRIO_PROCESS, 0, -20);
 
-  // Pin the UI to the little cores (0-3). The realtime control loop
-  // (card/controlsd/selfdrived) runs SCHED_FIFO on core 4; without this pin the
-  // kernel can schedule the UI there, and a UI stall/restart spike preempts
-  // selfdrived, starving its 100 Hz loop and firing the "System Lagging" alert.
-  // Set before any threads spawn so children inherit the affinity.
-  if (!Hardware::PC()) {
-    util::set_core_affinity({0, 1, 2, 3});
-  }
-
   qInstallMessageHandler(waylandAwareMessageHandler);
   initApp(argc, argv);
 
@@ -55,5 +46,17 @@ int main(int argc, char *argv[]) {
   MainWindow w;
   setMainWindow(&w);
   a.installEventFilter(&w);
+
+  // Pin the UI to the little cores (0-3) AFTER startup. The realtime control
+  // loop (card/controlsd) runs SCHED_FIFO on core 4; this keeps the steady-state
+  // UI off it so a UI stall can't preempt the control loop. Deliberately done
+  // after MainWindow init so startup — and crucially restart recovery — can use
+  // all cores; pinning before init starved the restarting UI on the contended
+  // little cores and stretched recovery from ~30s to minutes. The per-second
+  // reaffine in UIState::update keeps it pinned thereafter.
+  if (!Hardware::PC()) {
+    util::set_core_affinity({0, 1, 2, 3});
+  }
+
   return a.exec();
 }
