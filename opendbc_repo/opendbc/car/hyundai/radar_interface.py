@@ -6,13 +6,15 @@ from opendbc.can.dbc import DBC as DBCReader
 from opendbc.can.parser import get_raw_value
 from opendbc.car import Bus, structs
 from opendbc.car.interfaces import RadarInterfaceBase
-from opendbc.car.hyundai.values import CAR, DBC, HYUNDAI_MANDO_FRONT_RADAR_DBC, HYUNDAI_MRR30_RADAR_DBC, \
-                                       HYUNDAI_MRR35_RADAR_DBC
+from opendbc.car.hyundai.values import CAR, DBC, HYUNDAI_MANDO_FRONT_RADAR_DBC, HYUNDAI_MRREVO14F_RADAR_DBC, \
+                                       HYUNDAI_MRR30_RADAR_DBC, HYUNDAI_MRR35_RADAR_DBC
 from openpilot.common.swaglog import cloudlog
 
 RADAR_START_ADDR = 0x500
 RADAR_MSG_COUNT = 32
 G90_RADAR_MSG_COUNT = 64
+MRREVO14F_RADAR_START_ADDR = 0x602
+MRREVO14F_RADAR_MSG_COUNT = 16
 MRR30_RADAR_START_ADDR = 0x210
 MRR30_RADAR_MSG_COUNT = 16
 MRR35_RADAR_START_ADDR = 0x3A5
@@ -35,7 +37,8 @@ class RadarTrackConfig:
 
 RADAR_TRACK_CONFIGS = {
   HYUNDAI_MANDO_FRONT_RADAR_DBC: RadarTrackConfig(RADAR_START_ADDR, RADAR_MSG_COUNT, "mando"),
-  HYUNDAI_MRR30_RADAR_DBC: RadarTrackConfig(MRR30_RADAR_START_ADDR, MRR30_RADAR_MSG_COUNT, "mrr30"),
+  HYUNDAI_MRREVO14F_RADAR_DBC: RadarTrackConfig(MRREVO14F_RADAR_START_ADDR, MRREVO14F_RADAR_MSG_COUNT, "mrrevo14f"),
+  HYUNDAI_MRR30_RADAR_DBC: RadarTrackConfig(MRR30_RADAR_START_ADDR, MRR30_RADAR_MSG_COUNT, "mrr30", bus=0),
   HYUNDAI_MRR35_RADAR_DBC: RadarTrackConfig(MRR35_RADAR_START_ADDR, MRR35_RADAR_MSG_COUNT, "mrr35", bus=0, frequency=20),
 }
 
@@ -197,6 +200,27 @@ class RadarInterface(RadarInterfaceBase):
             pt.aRel = float("nan")
             pt.yvRel = float("nan")
           else:
+            del self.pts[track_key]
+        continue
+
+      if radar_type == "mrrevo14f":
+        for i in ("1", "2"):
+          track_key = addr * 2 + int(i) - 1
+          valid = msg[f"{i}_DISTANCE"] != 255.75
+          if valid:
+            pt = self.pts.get(track_key)
+            if pt is None:
+              pt = structs.RadarData.RadarPoint()
+              pt.trackId = self.track_id
+              self.track_id += 1
+              self.pts[track_key] = pt
+            pt.measured = True
+            pt.dRel = msg[f"{i}_DISTANCE"]
+            pt.yRel = msg[f"{i}_LATERAL"]
+            pt.vRel = msg[f"{i}_SPEED"]
+            pt.aRel = float("nan")
+            pt.yvRel = float("nan")
+          elif track_key in self.pts:
             del self.pts[track_key]
         continue
 

@@ -14,7 +14,8 @@ from opendbc.car.hyundai.carstate import CarState, decode_canfd_camera_lead, dec
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai import hyundaican, hyundaicanfd
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.radar_interface import MRR30_RADAR_START_ADDR, MRR35_RADAR_START_ADDR, RADAR_START_ADDR, get_radar_track_config
+from opendbc.car.hyundai.radar_interface import MRREVO14F_RADAR_START_ADDR, MRR30_RADAR_START_ADDR, MRR35_RADAR_START_ADDR, \
+                                             RADAR_START_ADDR, get_radar_track_config
 from opendbc.car.hyundai.values import CAMERA_SCC_CAR, CANFD_CAR, CAN_GEARS, CAR, CHECKSUM, DATE_FW_ECUS, \
                                          HYBRID_CAR, EV_CAR, FW_QUERY_CONFIG, LEGACY_SAFETY_MODE_CAR, CANFD_FUZZY_WHITELIST, \
                                          UNSUPPORTED_LONGITUDINAL_CAR, PLATFORM_CODE_ECUS, HYUNDAI_VERSION_REQUEST_LONG, \
@@ -120,7 +121,22 @@ class TestHyundaiFingerprint:
         assert bool(CP.flags & HyundaiFlags.CANFD_LKA_STEERING) == lka_steering
 
     # radar available
-    for candidate in (CAR.HYUNDAI_SONATA, CAR.HYUNDAI_SONATA_HYBRID, CAR.GENESIS_G90):
+    for candidate in (
+      CAR.HYUNDAI_IONIQ,
+      CAR.HYUNDAI_IONIQ_EV_LTD,
+      CAR.HYUNDAI_SANTA_FE,
+      CAR.HYUNDAI_SANTA_FE_2022,
+      CAR.HYUNDAI_SANTA_FE_HEV_2022,
+      CAR.HYUNDAI_SANTA_FE_PHEV_2022,
+      CAR.HYUNDAI_SONATA,
+      CAR.HYUNDAI_SONATA_HYBRID,
+      CAR.KIA_K5_HEV_2020,
+      CAR.KIA_NIRO_EV,
+      CAR.KIA_NIRO_PHEV,
+      CAR.KIA_NIRO_PHEV_2022,
+      CAR.GENESIS_G70_2020,
+      CAR.GENESIS_G90,
+    ):
       assert get_radar_track_config(candidate).start_addr == RADAR_START_ADDR
       for radar in (True, False):
         fingerprint = gen_empty_fingerprint()
@@ -141,9 +157,12 @@ class TestHyundaiFingerprint:
       assert not CP.radarUnavailable
 
     for candidate, radar_addr in (
+      (CAR.HYUNDAI_KONA_EV_2022, MRREVO14F_RADAR_START_ADDR),
       (CAR.HYUNDAI_IONIQ_5, MRR30_RADAR_START_ADDR),
       (CAR.HYUNDAI_IONIQ_5_N, MRR30_RADAR_START_ADDR),
+      (CAR.KIA_EV6, MRR30_RADAR_START_ADDR),
       (CAR.KIA_EV6_2025, MRR30_RADAR_START_ADDR),
+      (CAR.GENESIS_GV60_EV_1ST_GEN, MRR30_RADAR_START_ADDR),
       (CAR.HYUNDAI_KONA_EV_2ND_GEN, MRR35_RADAR_START_ADDR),
       (CAR.HYUNDAI_IONIQ_6, MRR35_RADAR_START_ADDR),
       (CAR.HYUNDAI_IONIQ_9, MRR35_RADAR_START_ADDR),
@@ -157,6 +176,8 @@ class TestHyundaiFingerprint:
         CP = CarInterface.get_params(candidate, fingerprint, [], False, False, False, None)
         assert CP.radarUnavailable != radar
 
+    assert get_radar_track_config(CAR.HYUNDAI_KONA_EV_2022).bus == 1
+    assert get_radar_track_config(CAR.HYUNDAI_IONIQ_5).bus == 0
     assert get_radar_track_config(CAR.HYUNDAI_IONIQ_6).start_addr == MRR35_RADAR_START_ADDR
     fingerprint = gen_empty_fingerprint()
     fingerprint[1][MRR35_RADAR_START_ADDR] = 24
