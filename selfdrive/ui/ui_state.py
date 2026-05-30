@@ -164,9 +164,11 @@ class UIState:
       self.light_sensor = -1
 
     # Trust hardwared's filtered started state; raw ignition can flap on Toyota.
+    force_onroad = self.params.get_bool("ForceOnroad")
+    force_offroad = self.params.get_bool("ForceOffroad")
     started = self.sm["deviceState"].started
-    started |= self.params.get_bool("ForceOnroad")
-    started &= not self.params.get_bool("ForceOffroad")
+    started |= force_onroad
+    started &= not force_offroad
     self.started = started
 
     # Update recording audio state
@@ -197,8 +199,8 @@ class UIState:
         except Exception as e:
           cloudlog.warning(f"Error parsing starpilot_toggles: {e}")
 
-    self.starpilot_toggles["force_offroad"] = self.params.get_bool("ForceOffroad")
-    self.starpilot_toggles["force_onroad"] = self.params.get_bool("ForceOnroad")
+    self.starpilot_toggles["force_offroad"] = force_offroad
+    self.starpilot_toggles["force_onroad"] = force_onroad
 
   def _update_status(self) -> None:
     if self.started and self.sm.updated["selfdriveState"]:
