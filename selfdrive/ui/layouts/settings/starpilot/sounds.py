@@ -292,8 +292,6 @@ class StarPilotSoundsLayout(_SettingsPage):
     "WarningImmediateVolume",
   ]
   CUSTOM_ALERTS_KEYS = [
-    "GoatScream",
-    "GoatScreamCriticalAlerts",
     "GreenLightAlert",
     "LeadDepartingAlert",
     "LoudBlindspotAlert",
@@ -319,8 +317,6 @@ class StarPilotSoundsLayout(_SettingsPage):
     self._init_sound_player()
 
     self.ALERT_INFO = {
-      "GoatScream": {"title": tr_noop("Goat Scream")},
-      "GoatScreamCriticalAlerts": {"title": tr_noop("Goat Critical")},
       "GreenLightAlert": {"title": tr_noop("Green Light")},
       "LeadDepartingAlert": {"title": tr_noop("Lead Departure")},
       "LoudBlindspotAlert": {
