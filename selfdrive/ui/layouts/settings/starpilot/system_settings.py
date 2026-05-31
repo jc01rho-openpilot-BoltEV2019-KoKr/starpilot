@@ -106,9 +106,7 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
     self._scrollbar = AetherScrollbar()
     self._content_height = 0.0
     self._scroll_offset = 0.0
-    self._ensure_visible_key: str | None = None
     self._active_tab_key = "basics"
-    self._active_adjustor_key: str | None = None
     self._adjustor_rows: dict[str, AetherAdjustorRow] = {}
     self._display_slider_keys = ["ScreenBrightness", "ScreenBrightnessOnroad", "ScreenTimeout", "ScreenTimeoutOnroad"]
     self._power_slider_keys = ["DeviceShutdown", "LowVoltageShutdown"]
@@ -454,8 +452,6 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
   def _clear_ephemeral_state(self):
     self._pressed_target = None
     self._can_click = True
-    self._active_adjustor_key = None
-    self._ensure_visible_key = None
     for adjustor in self._adjustor_rows.values():
       adjustor.reset_interaction()
 
@@ -474,7 +470,6 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
     prefix, _, value = target_id.partition(":")
     if prefix == "tab":
       self._active_tab_key = value
-      self._active_adjustor_key = None
       for adjustor in self._adjustor_rows.values():
         adjustor.reset_interaction()
       return
@@ -663,16 +658,6 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
     adjustor.set_is_last(is_last)
     row_h = adjustor.measure_height(rect.width)
     row_rect = rl.Rectangle(rect.x, rect.y, rect.width, row_h)
-    if self._ensure_visible_key == key:
-      padding = 12.0
-      min_offset = min(0.0, self._scroll_rect.y + padding - row_rect.y)
-      max_offset = min(0.0, self._scroll_rect.y + self._scroll_rect.height - padding - (row_rect.y + row_rect.height))
-      current_offset = self._scroll_panel.get_offset()
-      if current_offset < max_offset:
-        self._scroll_panel.set_offset(max_offset)
-      elif current_offset > min_offset:
-        self._scroll_panel.set_offset(min_offset)
-      self._ensure_visible_key = None
     adjustor.set_parent_rect(self._scroll_rect)
     adjustor.render(row_rect)
     return rect.y + row_h
