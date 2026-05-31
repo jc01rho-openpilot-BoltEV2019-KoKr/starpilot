@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 import math
 import pyray as rl
 from openpilot.common.constants import CV
@@ -313,18 +312,13 @@ class AetherGauge:
         return get_data()
     return None
 
-  def render(self, rect: rl.Rectangle, font_bold: rl.Font, font_medium: rl.Font, current_speed: float,
-             dock_rect: Optional[rl.Rectangle] = None):
+  def render(self, rect: rl.Rectangle, font_bold: rl.Font, font_medium: rl.Font, current_speed: float):
     data = self.get_active_data()
     if not data:
       return
 
-    if dock_rect:
-      cx = dock_rect.x + dock_rect.width / 2
-      cy_speed = dock_rect.y + dock_rect.height * 0.75
-    else:
-      cx = rect.x + rect.width / 2
-      cy_speed = rect.y + 180 * SCALE
+    cx = rect.x + rect.width / 2
+    cy_speed = rect.y + 180 * SCALE
 
     speed_text = str(round(current_speed))
     speed_text_size = measure_text_cached(font_bold, speed_text, int(176 * SCALE))
