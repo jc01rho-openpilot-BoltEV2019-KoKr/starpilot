@@ -3061,91 +3061,288 @@ class AetherSliderDialog(Widget):
     step: float,
     current_val: float,
     on_close: Callable,
+    presets: list[float] | None = None,
     unit: str = "",
     labels: dict[float, str] | None = None,
     color: rl.Color | str = "#F57371",
+    on_change: Callable[[float], None] | None = None,
   ):
     super().__init__()
     self.title, self._user_callback = title, on_close
+    self._on_change = on_change
     self._color = hex_to_color(color) if isinstance(color, str) else color
     self._font_title, self._font_btn = gui_app.font(FontWeight.BOLD), gui_app.font(FontWeight.BOLD)
-    self._slider = AetherSlider(min_val, max_val, step, current_val, self._on_slider_change, unit, labels, self._color)
-    self._current_val, self._is_pressed_ok, self._is_pressed_cancel = current_val, False, False
-    self._ok_offset: float = 0.0
-    self._cancel_offset: float = 0.0
-    self._ok_target: float = 0.0
-    self._cancel_target: float = 0.0
+    self._font_value = gui_app.font(FontWeight.BOLD)
+    self._current_val = current_val
+    self.min_val = min_val
+    self.max_val = max_val
+    self.step = step
+    self._presets = presets or []
+    self._unit = unit
+    self._labels = labels or {}
+    self._preset_rects: list[tuple[float, rl.Rectangle]] = []
+    self._pressed_zone: str | None = None
+    self._is_pressed_ok = False
+    self._is_pressed_cancel = False
+    self._ok_offset = 0.0
+    self._cancel_offset = 0.0
+    self._ok_target = 0.0
+    self._cancel_target = 0.0
+    self._is_dragging = False
+    self._val_on_press = current_val
 
-  def _on_slider_change(self, val):
-    self._current_val = val
+    self._ok_rect = rl.Rectangle(0, 0, 0, 0)
+    self._cancel_rect = rl.Rectangle(0, 0, 0, 0)
+    self._minus_rect = rl.Rectangle(0, 0, 0, 0)
+    self._plus_rect = rl.Rectangle(0, 0, 0, 0)
+    self._track_rect = rl.Rectangle(0, 0, 0, 0)
+    self._thumb_rect = rl.Rectangle(0, 0, 0, 0)
+
+  def _value_fraction(self, value: float) -> float:
+    val_range = self.max_val - self.min_val
+    if val_range == 0:
+      return 0.0
+    return max(0.0, min(1.0, (value - self.min_val) / val_range))
+
+  def _clamp_and_snap(self, val: float) -> float:
+    if self.step <= 0:
+      return max(self.min_val, min(self.max_val, val))
+    snapped = round((val - self.min_val) / self.step) * self.step + self.min_val
+    return max(self.min_val, min(self.max_val, snapped))
+
+  def _update_val_from_mouse(self, mouse_pos: MousePos) -> None:
+    if self._track_rect.width <= 0:
+      return
+    rel_x = max(0.0, min(1.0, (mouse_pos.x - self._track_rect.x) / self._track_rect.width))
+    val = self.min_val + rel_x * (self.max_val - self.min_val)
+    self._current_val = self._clamp_and_snap(val)
+
+  def formatted_value(self) -> str:
+    return format_adjustor_value(self._current_val, step=self.step, unit=self._unit, labels=self._labels)
 
   def _handle_mouse_press(self, mouse_pos: MousePos):
-    self._slider._handle_mouse_press(mouse_pos)
+    self._val_on_press = self._current_val
     if rl.check_collision_point_rec(mouse_pos, self._ok_rect):
       self._is_pressed_ok = True
       self._ok_target = 1.0
+      return
     if rl.check_collision_point_rec(mouse_pos, self._cancel_rect):
       self._is_pressed_cancel = True
       self._cancel_target = 1.0
+      return
+
+    for value, preset_rect in self._preset_rects:
+      if rl.check_collision_point_rec(mouse_pos, preset_rect):
+        self._pressed_zone = f"preset:{value}"
+        return
+
+    if rl.check_collision_point_rec(mouse_pos, self._minus_rect):
+      self._pressed_zone = "minus"
+      return
+    if rl.check_collision_point_rec(mouse_pos, self._plus_rect):
+      self._pressed_zone = "plus"
+      return
+
+    hit_track = _inflate_rect(self._track_rect, 0, 24)
+    if rl.check_collision_point_rec(mouse_pos, hit_track):
+      self._is_dragging = True
+      self._update_val_from_mouse(mouse_pos)
+      return
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
-    self._slider._handle_mouse_release(mouse_pos)
+    is_ok = self._is_pressed_ok
+    is_cancel = self._is_pressed_cancel
+
     if self._is_pressed_ok:
       self._ok_target = 0.0
       if rl.check_collision_point_rec(mouse_pos, self._ok_rect):
         gui_app.pop_widget()
         self._user_callback(DialogResult.CONFIRM, self._current_val)
       self._is_pressed_ok = False
-    if self._is_pressed_cancel:
+    elif self._is_pressed_cancel:
       self._cancel_target = 0.0
       if rl.check_collision_point_rec(mouse_pos, self._cancel_rect):
         gui_app.pop_widget()
         self._user_callback(DialogResult.CANCEL, self._current_val)
       self._is_pressed_cancel = False
+    elif self._pressed_zone:
+      if self._pressed_zone.startswith("preset:"):
+        try:
+          preset_value = float(self._pressed_zone.split(":", 1)[1])
+        except ValueError:
+          preset_value = None
+        if preset_value is not None:
+          for value, preset_rect in self._preset_rects:
+            if value == preset_value and rl.check_collision_point_rec(mouse_pos, preset_rect):
+              self._current_val = preset_value
+              break
+      elif self._pressed_zone == "minus":
+        if rl.check_collision_point_rec(mouse_pos, self._minus_rect):
+          self._current_val = self._clamp_and_snap(self._current_val - self.step)
+      elif self._pressed_zone == "plus":
+        if rl.check_collision_point_rec(mouse_pos, self._plus_rect):
+          self._current_val = self._clamp_and_snap(self._current_val + self.step)
+      self._pressed_zone = None
+
+    if self._is_dragging:
+      self._is_dragging = False
+
+    if not is_ok and not is_cancel:
+      if self._current_val != self._val_on_press and self._on_change:
+        self._on_change(self._current_val)
+
+  def _handle_mouse_event(self, mouse_event):
+    if self._is_dragging:
+      self._update_val_from_mouse(mouse_event.pos)
+
+  def _render_preset_chip(self, rect: rl.Rectangle, text: str, *, current: bool, pressed: bool):
+    fill = rl.Color(255, 255, 255, 5)
+    border = rl.Color(255, 255, 255, 14)
+    text_color = AetherListColors.SUBTEXT
+    if current:
+      fill = _mix_colors(rl.Color(18, 22, 28, 255), self._color, 0.22, alpha=255)
+      border = _with_alpha(self._color, 72)
+      text_color = AetherListColors.HEADER
+    elif pressed:
+      fill = rl.Color(255, 255, 255, 10)
+      border = rl.Color(255, 255, 255, 22)
+
+    _draw_rounded_fill(rect, fill, radius_px=16)
+    _draw_rounded_stroke(rect, border, radius_px=16)
+    _draw_text_fit_common(
+      gui_app.font(FontWeight.MEDIUM),
+      text,
+      rl.Vector2(rect.x + 10, rect.y + (rect.height - 18) / 2),
+      max(1.0, rect.width - 20),
+      18,
+      align_center=True,
+      color=text_color,
+    )
 
   def _render(self, rect: rl.Rectangle):
     dt = rl.get_frame_time()
     self._ok_offset += (self._ok_target - self._ok_offset) * (1 - math.exp(-dt / PLATE_TAU))
     self._cancel_offset += (self._cancel_target - self._cancel_offset) * (1 - math.exp(-dt / PLATE_TAU))
     rl.draw_rectangle(0, 0, gui_app.width, gui_app.height, rl.Color(0, 0, 0, 160))
-    dialog_margin = SPACING.xxl
-    dialog_w = min(1000, max(640, rect.width - dialog_margin * 2))
-    dialog_h = min(500, max(360, rect.height - dialog_margin * 2))
-    button_height = min(80, max(64, int(dialog_h * 0.16)))
-    button_width = min(350, max(180, int((dialog_w - SPACING.lg * 3) / 2)))
+
+    has_presets = len(self._presets) > 0
+    dialog_w = 880
+    dialog_h = 500 if has_presets else 440
+    button_height = 72
+    button_width = 320
+
     dx, dy = rect.x + (rect.width - dialog_w) / 2, rect.y + (rect.height - dialog_h) / 2
-    self._ok_rect = rl.Rectangle(dx + dialog_w - button_width - SPACING.lg, dy + dialog_h - button_height - SPACING.lg, button_width, button_height)
-    self._cancel_rect = rl.Rectangle(dx + SPACING.lg, dy + dialog_h - button_height - SPACING.lg, button_width, button_height)
+    self._ok_rect = rl.Rectangle(dx + dialog_w - button_width - 48, dy + dialog_h - button_height - 36, button_width, button_height)
+    self._cancel_rect = rl.Rectangle(dx + 48, dy + dialog_h - button_height - 36, button_width, button_height)
+
     d_rect = _snap_rect(rl.Rectangle(dx, dy, dialog_w, dialog_h))
-    _draw_rounded_fill(d_rect, rl.Color(13, 16, 22, 255), radius_px=24)
-    _draw_rounded_stroke(d_rect, rl.Color(255, 255, 255, 24), radius_px=24)
-    rl.draw_rectangle_rec(rl.Rectangle(d_rect.x, d_rect.y, d_rect.width, 2), _with_alpha(self._color, 40))
-    title_size = max(30, min(50, int(dialog_w * 0.05)))
+    _draw_rounded_fill(d_rect, rl.Color(10, 12, 16, 255), radius_px=24)
+    _draw_rounded_stroke(d_rect, rl.Color(255, 255, 255, 16), radius_px=24)
+    rl.draw_rectangle_rec(rl.Rectangle(d_rect.x, d_rect.y, d_rect.width, 3), self._color)
+
+    title_size = 28
     ts = measure_text_cached(self._font_title, self.title, title_size)
-    rl.draw_text_ex(self._font_title, self.title, rl.Vector2(round(dx + (dialog_w - ts.x) / 2), round(dy + SPACING.xxl)), title_size, 0, rl.WHITE)
-    slider_y = dy + max(120, int(dialog_h * 0.38))
-    slider_h = min(100, max(72, int(dialog_h * 0.22)))
-    slider_rect = rl.Rectangle(dx + SPACING.xxl, slider_y, dialog_w - (SPACING.xxl * 2), slider_h)
-    self._slider.render(slider_rect)
+    rl.draw_text_ex(self._font_title, self.title, rl.Vector2(round(dx + (dialog_w - ts.x) / 2), round(dy + 32)), title_size, 0, rl.WHITE)
+
+    # Large value display below title
+    val_str = self.formatted_value()
+    val_size = 48
+    vts = measure_text_cached(self._font_value, val_str, val_size)
+    rl.draw_text_ex(self._font_value, val_str, rl.Vector2(round(dx + (dialog_w - vts.x) / 2), round(dy + 80)), val_size, 0, self._color)
+
+    # Render presets below the value display (if any)
+    presets_y = dy + 154
+    self._preset_rects.clear()
+    if has_presets:
+      chip_h = 52.0
+      chip_gap = 16.0
+      chip_w = max(68.0, (dialog_w - 48 * 2 - chip_gap * (len(self._presets) - 1)) / max(1, len(self._presets)))
+      for index, val in enumerate(self._presets):
+        chip_x = dx + 48 + index * (chip_w + chip_gap)
+        chip_rect = _snap_rect(rl.Rectangle(chip_x, presets_y, chip_w, chip_h))
+        self._preset_rects.append((val, chip_rect))
+        formatted_label = format_adjustor_value(val, step=self.step, unit=self._unit, labels=self._labels)
+        self._render_preset_chip(
+          chip_rect,
+          formatted_label,
+          current=abs(self._current_val - val) <= 0.5 * self.step,
+          pressed=self._pressed_zone == f"preset:{val}",
+        )
+      slider_y = dy + 254
+    else:
+      slider_y = dy + 180
+
+    # Slider
+    btn_size = 54
+    self._minus_rect = _snap_rect(rl.Rectangle(dx + 48, slider_y - btn_size / 2, btn_size, btn_size))
+    self._plus_rect = _snap_rect(rl.Rectangle(dx + dialog_w - 48 - btn_size, slider_y - btn_size / 2, btn_size, btn_size))
+
+    # Draw minus button
+    minus_pressed = self._pressed_zone == "minus"
+    _draw_rounded_fill(self._minus_rect, rl.Color(255, 255, 255, 14 if minus_pressed else 8), radius_px=27)
+    _draw_rounded_stroke(self._minus_rect, rl.Color(255, 255, 255, 28 if minus_pressed else 18), radius_px=27)
+    mts = measure_text_cached(self._font_btn, "-", 24)
+    rl.draw_text_ex(self._font_btn, "-", rl.Vector2(round(self._minus_rect.x + (btn_size - mts.x) / 2), round(self._minus_rect.y + (btn_size - mts.y) / 2)), 24, 0, rl.WHITE)
+
+    # Draw plus button
+    plus_pressed = self._pressed_zone == "plus"
+    _draw_rounded_fill(self._plus_rect, rl.Color(255, 255, 255, 14 if plus_pressed else 8), radius_px=27)
+    _draw_rounded_stroke(self._plus_rect, rl.Color(255, 255, 255, 28 if plus_pressed else 18), radius_px=27)
+    pts = measure_text_cached(self._font_btn, "+", 24)
+    rl.draw_text_ex(self._font_btn, "+", rl.Vector2(round(self._plus_rect.x + (btn_size - pts.x) / 2), round(self._plus_rect.y + (btn_size - pts.y) / 2)), 24, 0, rl.WHITE)
+
+    # Draw track
+    track_x = self._minus_rect.x + btn_size + 24
+    track_w = self._plus_rect.x - 24 - track_x
+    track_h = 6
+    track_y = slider_y - track_h / 2
+    self._track_rect = _snap_rect(rl.Rectangle(track_x, track_y, track_w, track_h))
+
+    _draw_rounded_fill(self._track_rect, rl.Color(255, 255, 255, 14), radius_px=3)
+    _draw_rounded_stroke(self._track_rect, rl.Color(255, 255, 255, 8), radius_px=3)
+
+    # Draw ticks at preset values (or custom ticks if no presets)
+    ticks_to_draw = self._presets
+    if not has_presets:
+      ticks_to_draw = [self.min_val, (self.min_val + self.max_val) / 2, self.max_val]
+
+    for val in ticks_to_draw:
+      frac = self._value_fraction(val)
+      tick_x = track_x + frac * track_w
+      rl.draw_rectangle_rec(rl.Rectangle(tick_x - 1, track_y - 5, 2, 16), rl.Color(255, 255, 255, 28))
+
+    # Draw active fill
+    fill_frac = self._value_fraction(self._current_val)
+    fill_w = fill_frac * track_w
+    if fill_w > 0:
+      fill_rect = _snap_rect(rl.Rectangle(track_x, track_y, fill_w, track_h))
+      _draw_rounded_fill(fill_rect, self._color, radius_px=3)
+
+    # Draw thumb
+    thumb_w = 16
+    thumb_h = 36
+    thumb_x = track_x + fill_frac * track_w
+    self._thumb_rect = _snap_rect(rl.Rectangle(thumb_x - thumb_w / 2, slider_y - thumb_h / 2, thumb_w, thumb_h))
+    _draw_rounded_fill(self._thumb_rect, rl.WHITE, radius_px=8)
+    _draw_rounded_stroke(self._thumb_rect, rl.Color(20, 22, 28, 46), radius_px=8)
+
+    # Cancel Button
     c_face_x = self._cancel_rect.x
     c_face_y = self._cancel_rect.y + min(1.0, GEOMETRY_OFFSET * self._cancel_offset * 0.1)
     c_face = _snap_rect(rl.Rectangle(c_face_x, c_face_y, button_width, button_height))
-    _draw_rounded_fill(c_face, rl.Color(34, 38, 48, 255), radius_px=16)
-    _draw_rounded_stroke(c_face, rl.Color(255, 255, 255, 24), radius_px=16)
-    rl.draw_rectangle_rec(rl.Rectangle(c_face.x, c_face.y, c_face.width, 1), rl.Color(255, 255, 255, 12))
-    button_text_size = max(24, min(35, int(button_height * 0.42)))
-    cts = measure_text_cached(self._font_btn, tr("CANCEL"), button_text_size)
-    cancel_text_pos = rl.Vector2(c_face_x + (button_width - cts.x) / 2, c_face_y + (button_height - cts.y) / 2)
-    rl.draw_text_ex(self._font_btn, tr("CANCEL"), rl.Vector2(round(cancel_text_pos.x), round(cancel_text_pos.y)), button_text_size, 0, rl.WHITE)
+    _draw_rounded_fill(c_face, rl.Color(34, 38, 48, 255), radius_px=18)
+    _draw_rounded_stroke(c_face, rl.Color(255, 255, 255, 20), radius_px=18)
+    cts = measure_text_cached(self._font_btn, tr("CANCEL"), 24)
+    rl.draw_text_ex(self._font_btn, tr("CANCEL"), rl.Vector2(round(c_face_x + (button_width - cts.x) / 2), round(c_face_y + (button_height - cts.y) / 2)), 24, 0, rl.WHITE)
+
+    # OK Button
     o_face_x = self._ok_rect.x
     o_face_y = self._ok_rect.y + min(1.0, GEOMETRY_OFFSET * self._ok_offset * 0.1)
     o_face = _snap_rect(rl.Rectangle(o_face_x, o_face_y, button_width, button_height))
-    _draw_rounded_fill(o_face, _mix_colors(rl.Color(34, 38, 48, 255), self._color, 0.40), radius_px=16)
-    _draw_rounded_stroke(o_face, _with_alpha(self._color, 130), radius_px=16)
-    rl.draw_rectangle_rec(rl.Rectangle(o_face.x, o_face.y, o_face.width, 1), rl.Color(255, 255, 255, 18))
-    ots = measure_text_cached(self._font_btn, tr("OK"), button_text_size)
-    ok_text_pos = rl.Vector2(o_face_x + (button_width - ots.x) / 2, o_face_y + (button_height - ots.y) / 2)
-    rl.draw_text_ex(self._font_btn, tr("OK"), rl.Vector2(round(ok_text_pos.x), round(ok_text_pos.y)), button_text_size, 0, rl.WHITE)
+    _draw_rounded_fill(o_face, self._color, radius_px=18)
+    _draw_rounded_stroke(o_face, _with_alpha(self._color, 150), radius_px=18)
+    ots = measure_text_cached(self._font_btn, tr("OK"), 24)
+    rl.draw_text_ex(self._font_btn, tr("OK"), rl.Vector2(round(o_face_x + (button_width - ots.x) / 2), round(o_face_y + (button_height - ots.y) / 2)), 24, 0, rl.WHITE)
     return DialogResult.NO_ACTION
 
 

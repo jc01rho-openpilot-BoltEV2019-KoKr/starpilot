@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import replace
+import math
 import subprocess
 from pathlib import Path
 
@@ -10,7 +11,8 @@ from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MouseEvent, MousePos
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
-from openpilot.system.ui.widgets import Widget
+from openpilot.system.ui.widgets import Widget, DialogResult
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets.label import gui_label
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
@@ -31,6 +33,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_section_header,
   draw_settings_panel_header,
   init_list_panel,
+  AetherSliderDialog,
 )
 
 PANEL_STYLE = panel_style_from_color("#E63956")
@@ -58,8 +61,6 @@ class SoundsManagerView(Widget):
     self._controller = controller
     self._pressed_target: str | None = None
     self._adjustor_rows: dict[str, AetherAdjustorRow] = {}
-    self._was_interacting: dict[str, bool] = {}
-    self._active_adjustor_key: str | None = None
     self._can_click = True
     self._reset_rect = rl.Rectangle(0, 0, 0, 0)
 
@@ -75,10 +76,6 @@ class SoundsManagerView(Widget):
     self._forward_touch_valid()
 
   def _forward_touch_valid(self):
-    for adjustor in self._adjustor_rows.values():
-      adjustor.set_touch_valid_callback(
-        lambda: self._scroll_panel.is_touch_valid() or adjustor.is_interacting
-      )
     self._toggle_grid.set_touch_valid_callback(
       lambda: self._scroll_panel.is_touch_valid()
     )
@@ -113,24 +110,18 @@ class SoundsManagerView(Widget):
     for key in self._controller.VOLUME_KEYS:
       info = self._controller.VOLUME_INFO[key]
 
-      def on_change(v, k=key, min_v=info["min"]):
-        new_v = int(v)
-        if new_v != 101 and new_v < min_v:
-          new_v = min_v
-        self._controller._params.put_int(k, new_v)
-
       adjustor = AetherAdjustorRow(
         tr(info["title"]),
         tr(info["subtitle"]),
         0.0, 101.0, 1.0,
         get_value=lambda k=key: float(self._controller._params.get_int(k, return_default=True, default=100)),
-        on_change=on_change,
+        on_change=lambda _v: None,
         on_commit=None,
         unit="%",
         labels={0.0: tr("Muted"), 101.0: tr("Auto")},
         presets=[0, 25, 50, 75, 101],
-        is_active=lambda k=key: self._active_adjustor_key == k,
-        set_active=lambda active, k=key: self._set_active_adjustor(k, active),
+        is_active=lambda: False,
+        set_active=lambda active, k=key: self._show_volume_slider(k) if active else None,
         style=PANEL_STYLE,
         color=PANEL_STYLE.accent,
       )
@@ -138,8 +129,9 @@ class SoundsManagerView(Widget):
 
     cd_key = self._controller.COOLDOWN_KEY
     cd_info = self._controller.COOLDOWN_INFO
-    def on_cd_commit(v):
-      self._controller._params.put_int(cd_key, int(v))
+    def on_cd_close(res, val):
+      if res == DialogResult.CONFIRM:
+        self._controller._params.put_int(cd_key, int(val))
 
     cd_adjustor = AetherAdjustorRow(
       tr(cd_info["title"]),
@@ -147,16 +139,68 @@ class SoundsManagerView(Widget):
       0.0, float(cd_info["max"]), 1.0,
       get_value=lambda: float(self._controller._params.get_int(cd_key, return_default=True, default=0)),
       on_change=lambda _v: None,
-      on_commit=on_cd_commit,
+      on_commit=None,
       unit=" " + tr("min"),
       labels={0.0: tr("Off"), 1.0: tr("1 min")},
       presets=[0, 1, 5, 10, 20, 30],
-      is_active=lambda: self._active_adjustor_key == cd_key,
-      set_active=lambda active: self._set_active_adjustor(cd_key, active),
+      is_active=lambda: False,
+      set_active=lambda active: gui_app.push_widget(
+        AetherSliderDialog(
+          title=tr(cd_info["title"]),
+          min_val=0.0,
+          max_val=float(cd_info["max"]),
+          step=1.0,
+          current_val=float(self._controller._params.get_int(cd_key, return_default=True, default=0)),
+          on_close=on_cd_close,
+          presets=[0.0, 1.0, 5.0, 10.0, 20.0, 30.0],
+          unit=" " + tr("min"),
+          labels={0.0: tr("Off"), 1.0: tr("1 min")},
+          color=PANEL_STYLE.accent,
+        )
+      ) if active else None,
       style=PANEL_STYLE,
       color=PANEL_STYLE.accent,
     )
     self._adjustor_rows[cd_key] = cd_adjustor
+
+  def _show_volume_slider(self, key: str):
+    info = self._controller.VOLUME_INFO[key]
+    min_v = info["min"]
+    original_val = self._controller._params.get_int(key, return_default=True, default=100)
+
+    def on_close(res, val):
+      if res == DialogResult.CONFIRM:
+        new_v = int(val)
+        if new_v != 101 and new_v < min_v:
+          new_v = min_v
+        self._controller._params.put_int(key, new_v)
+      else:
+        self._controller._params.put_int(key, original_val)
+
+    def on_change(val):
+      new_v = int(val)
+      if new_v != 101 and new_v < min_v:
+        new_v = min_v
+      self._controller._params.put_int(key, new_v)
+      self._controller._test_sound(key)
+
+    current_val = float(original_val)
+    dialog_title = tr(info["title"])
+    gui_app.push_widget(
+      AetherSliderDialog(
+        title=dialog_title,
+        min_val=0.0,
+        max_val=101.0,
+        step=1.0,
+        current_val=current_val,
+        on_close=on_close,
+        presets=[0.0, 25.0, 50.0, 75.0, 101.0],
+        unit="%",
+        labels={0.0: tr("Muted"), 101.0: tr("Auto")},
+        color=PANEL_STYLE.accent,
+        on_change=on_change,
+      )
+    )
 
   def _handle_mouse_press(self, mouse_pos: MousePos):
     self._pressed_target = self._target_at(mouse_pos)
@@ -229,16 +273,6 @@ class SoundsManagerView(Widget):
       self._scrollbar.render(scroll_rect, self._content_height, self._scroll_offset)
     draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset,
                            AetherListColors.PANEL_BG)
-
-    for key in self._controller.VOLUME_KEYS:
-      adjustor = self._adjustor_rows[key]
-      is_interacting = adjustor.is_interacting
-      if self._was_interacting.get(key, False) and not is_interacting:
-        self._controller._test_sound(key)
-      if adjustor._preset_applied:
-        adjustor._preset_applied = False
-        self._controller._test_sound(key)
-      self._was_interacting[key] = is_interacting
 
   def _measure_content_height(self, content_width: float) -> float:
     col_width = (content_width - SECTION_GAP) / 2
