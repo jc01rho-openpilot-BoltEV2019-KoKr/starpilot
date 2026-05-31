@@ -114,7 +114,7 @@ class SoundsManagerView(Widget):
         tr(info["title"]),
         tr(info["subtitle"]),
         0.0, 101.0, 1.0,
-        get_value=lambda k=key: float(self._controller._params.get_int(k, return_default=True, default=100)),
+        get_value=lambda k=key: float(self._controller._params.get_int(k, return_default=True, default=101)),
         on_change=lambda _v: None,
         on_commit=None,
         unit="%",
@@ -166,7 +166,7 @@ class SoundsManagerView(Widget):
   def _show_volume_slider(self, key: str):
     info = self._controller.VOLUME_INFO[key]
     min_v = info["min"]
-    original_val = self._controller._params.get_int(key, return_default=True, default=100)
+    original_val = self._controller._params.get_int(key, return_default=True, default=101)
 
     def on_close(res, val):
       if res == DialogResult.CONFIRM:
@@ -229,7 +229,7 @@ class SoundsManagerView(Widget):
     self._toggle_grid._handle_mouse_event(mouse_event)
 
   def _target_at(self, mouse_pos: MousePos) -> str | None:
-    if _point_hits(mouse_pos, self._reset_rect, self._scroll_rect, pad_x=6, pad_y=0):
+    if _point_hits(mouse_pos, self._reset_rect, None, pad_x=6, pad_y=0):
       return "action:restore_defaults"
     return None
 
@@ -301,7 +301,7 @@ class SoundsManagerView(Widget):
     btn_y = rect.y + (rect.height - btn_h) / 2
     self._reset_rect = rl.Rectangle(btn_x, btn_y, btn_w, btn_h)
 
-    hovered = _point_hits(gui_app.last_mouse_event.pos, self._reset_rect, self._scroll_rect, pad_x=6, pad_y=0)
+    hovered = _point_hits(gui_app.last_mouse_event.pos, self._reset_rect, None, pad_x=6, pad_y=0)
     pressed = self._pressed_target == "action:restore_defaults"
     draw_action_pill(
       self._reset_rect, tr("Reset All"),
@@ -458,8 +458,7 @@ class StarPilotSoundsLayout(_SettingsPage):
 
   def _restore_defaults(self):
     for key in self.VOLUME_KEYS:
-      default = 25 if "Warning" in key else 100
-      self._params.put_int(key, default)
+      self._params.put_int(key, 101)
     self._params.put_int(self.COOLDOWN_KEY, 0)
     for key in self.CUSTOM_ALERTS_KEYS:
       self._params.put_bool(key, False)
