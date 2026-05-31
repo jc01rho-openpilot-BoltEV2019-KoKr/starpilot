@@ -2358,6 +2358,12 @@ class AetherTile(Widget):
     desc_size: int = 18,
     custom_icon_key: str | None = None,
   ):
+    # Parameters for custom vector icons: base 100x100 layout footprint,
+    # 25% scale increase, and 60x60 canvas size defined in scribble.py coordinates.
+    custom_icon_base_size = 100.0
+    custom_icon_scale_mult = 1.25
+    custom_icon_canvas_size = 60.0
+
     content_pad = SPACING.tile_content
     max_w = face.width - (content_pad * 2)
     scale = max(0.82, min(1.12, min(face.width / 360.0, face.height / 205.0)))
@@ -2368,7 +2374,7 @@ class AetherTile(Widget):
     has_icon = (icon is not None) or (custom_icon_key is not None)
     icon_scale = min(0.80, max(0.56, scale * 0.72)) if has_icon else 0.0
     if custom_icon_key:
-      icon_height = 100.0 * icon_scale
+      icon_height = custom_icon_base_size * custom_icon_scale_mult * icon_scale
     elif icon:
       icon_height = icon.height * icon_scale
     else:
@@ -2385,9 +2391,10 @@ class AetherTile(Widget):
     )
 
     if custom_icon_key:
-      icon_width = 100.0 * icon_scale
+      icon_width = custom_icon_base_size * custom_icon_scale_mult * icon_scale
       icon_x = face.x + (face.width - icon_width) / 2
-      self._draw_custom_icon(custom_icon_key, icon_x, layout["top"], icon_scale * 1.6667, rl.WHITE)
+      s = icon_scale * (custom_icon_base_size / custom_icon_canvas_size) * custom_icon_scale_mult
+      self._draw_custom_icon(custom_icon_key, icon_x, layout["top"], s, rl.WHITE)
     elif icon:
       icon_width = icon.width * icon_scale
       icon_x = face.x + (face.width - icon_width) / 2
