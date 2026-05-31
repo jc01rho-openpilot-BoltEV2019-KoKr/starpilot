@@ -381,7 +381,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"MapSpeedLimit", {CLEAR_ON_MANAGER_START, FLOAT, "0.0", "0.0"}},
     {"NavDesiresAllowed", {PERSISTENT, BOOL, "1", "0", 2}},
     {"NavLongitudinalAllowed", {PERSISTENT, BOOL, "1", "0", 2}},
-    {"NavDestination", {PERSISTENT, STRING, "", ""}},
+    {"NavDestination", {PERSISTENT | CLEAR_ON_MANAGER_START, STRING, "", ""}},
     {"NavInstructionCollapsed", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL, "0", "0"}},
     {"NavInstructionState", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, JSON, "{}", "{}"}},
     {"NextMapSpeedLimit", {CLEAR_ON_MANAGER_START, JSON, "{}", "{}"}},
