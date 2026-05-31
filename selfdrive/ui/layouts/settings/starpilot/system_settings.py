@@ -21,7 +21,7 @@ from openpilot.system.ui.widgets.keyboard import Keyboard
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 from openpilot.system.ui.widgets.label import gui_label
 
-from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.selfdrive.ui.ui_state import device, ui_state
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
@@ -154,8 +154,8 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
         "step": 5,
         "live": False,
         "presets": [5, 15, 30, 60],
-        "get": lambda: float(self._controller._params.get_int("ScreenTimeout")),
-        "set": lambda v: self._controller._params.put_int("ScreenTimeout", int(v)),
+        "get": lambda: float(self._controller._params.get_int("ScreenTimeout", return_default=True)),
+        "set": lambda v: self._set_timeout("ScreenTimeout", v),
       },
       "ScreenTimeoutOnroad": {
         "title": tr("Onroad Screen Timeout"),
@@ -167,8 +167,8 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
         "step": 5,
         "live": False,
         "presets": [5, 15, 30, 60],
-        "get": lambda: float(self._controller._params.get_int("ScreenTimeoutOnroad")),
-        "set": lambda v: self._controller._params.put_int("ScreenTimeoutOnroad", int(v)),
+        "get": lambda: float(self._controller._params.get_int("ScreenTimeoutOnroad", return_default=True)),
+        "set": lambda v: self._set_timeout("ScreenTimeoutOnroad", v),
       },
       "DeviceShutdown": {
         "title": tr("Shutdown Delay"),
@@ -408,6 +408,10 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
     elif self._active_adjustor_key == key:
       self._active_adjustor_key = None
       self._ensure_visible_key = None
+
+  def _set_timeout(self, key: str, value: float):
+    self._controller._params.put_int(key, int(value))
+    device.reset_interactive_timeout()
 
   def _get_drive_mode_index(self):
     state = self._controller._get_force_drive_state()
