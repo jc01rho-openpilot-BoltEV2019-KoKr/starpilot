@@ -227,7 +227,7 @@ class AetherListMetrics:
   toggle_right_inset: int = 34
   adjustor_row_height: int = 94
   adjustor_row_active_height: int = 154
-  adjustor_preset_height: int = 30
+  adjustor_preset_height: int = 44
   adjustor_preset_gap: int = 10
   adjustor_scrubber_height: int = 52
   adjustor_value_pill_height: int = 36
@@ -1150,7 +1150,7 @@ class AetherInlineRangeControl(Widget):
       return
 
     self._pending_drag = True
-    self._started_on_thumb = rl.check_collision_point_rec(mouse_pos, _inflate_rect(self._thumb_rect, 8, 8))
+    self._started_on_thumb = rl.check_collision_point_rec(mouse_pos, _inflate_rect(self._thumb_rect, 12, 12))
     self._press_start = rl.Vector2(mouse_pos.x, mouse_pos.y)
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
@@ -1269,7 +1269,7 @@ class AetherInlineRangeControl(Widget):
       fill_rect = _snap_rect(rl.Rectangle(self._track_rect.x, self._track_rect.y, fill_w, self._track_rect.height))
       rl.draw_rectangle_rounded(fill_rect, 1.0, 12, _with_alpha(self._color, 220))
 
-    thumb_w = 18 + self._thumb_focus * 4
+    thumb_w = 22 + self._thumb_focus * 4
     thumb_h = 28 + self._thumb_focus * 4
     thumb_center_x = self._track_rect.x + fill_frac * self._track_rect.width
     thumb_center_y = rect.y + rect.height / 2
@@ -1534,7 +1534,7 @@ class AetherAdjustorRow(Widget):
     self._preset_rects.clear()
 
     if self._presets:
-      chip_gap = 8.0
+      chip_gap = 12.0
       chip_h = float(AETHER_LIST_METRICS.adjustor_preset_height)
       chip_w = max(68.0, (rect.width - 48 - chip_gap * (len(self._presets) - 1)) / max(1, len(self._presets)))
       chip_x = content_left
@@ -2346,7 +2346,7 @@ class AetherTile(Widget):
     self,
     face: rl.Rectangle,
     *,
-    icon: rl.Texture2D | None,
+    icon: rl.Texture2D | None = None,
     title: str,
     primary: str,
     desc: str,
@@ -3477,9 +3477,9 @@ class TileGrid(Widget):
         tile_idx += 1
 
 
-def draw_toggle_pill(rect: rl.Rectangle, is_on: bool, is_enabled: bool, title: str, status_str: str, hovered: bool, pressed: bool, style: PanelStyle = DEFAULT_PANEL_STYLE):
+def draw_toggle_pill(rect: rl.Rectangle, is_on: bool, is_enabled: bool, title: str, status_str: str, hovered: bool, pressed: bool, style: PanelStyle = DEFAULT_PANEL_STYLE, *, subtitle: str = ""):
   rect = _snap_rect(rect)
-  bg_color = rl.Color(28, 32, 40, 170 if not is_enabled else 255)
+  bg_color = rl.Color(28, 32, 40, 200 if not is_enabled else 255)
   accent = style.accent if is_on and is_enabled else rl.Color(255, 255, 255, 52 if is_enabled else 20)
   _draw_rounded_fill(rect, bg_color, radius_px=18)
   _draw_rounded_stroke(rect, _with_alpha(accent, 92 if is_on and is_enabled else accent.a), radius_px=18)
@@ -3494,9 +3494,17 @@ def draw_toggle_pill(rect: rl.Rectangle, is_on: bool, is_enabled: bool, title: s
   font = gui_app.font(FontWeight.BOLD)
   title_size = max(16, min(22, int(rect.height * 0.26)))
   status_size = max(18, min(24, int(rect.height * 0.32)))
-  title_y = rect.y + (rect.height - title_size) / 2
-  rl.draw_text_ex(font, title, rl.Vector2(round(rect.x + 24), round(title_y)), title_size, 0, AetherListColors.SUBTEXT if is_enabled else AetherListColors.MUTED)
-  
+
+  if subtitle:
+    title_y = rect.y + (rect.height - title_size - 18) / 2
+    rl.draw_text_ex(font, title, rl.Vector2(round(rect.x + 24), round(title_y)), title_size, 0, AetherListColors.SUBTEXT if is_enabled else AetherListColors.MUTED)
+    sub_font = gui_app.font(FontWeight.NORMAL)
+    sub_size = max(12, min(16, int(rect.height * 0.18)))
+    rl.draw_text_ex(sub_font, subtitle, rl.Vector2(round(rect.x + 24), round(title_y + title_size + 2)), sub_size, 0, AetherListColors.MUTED)
+  else:
+    title_y = rect.y + (rect.height - title_size) / 2
+    rl.draw_text_ex(font, title, rl.Vector2(round(rect.x + 24), round(title_y)), title_size, 0, AetherListColors.SUBTEXT if is_enabled else AetherListColors.MUTED)
+
   ts = measure_text_cached(font, status_str, status_size)
   status_x = rect.x + rect.width - ts.x - 24
   rl.draw_text_ex(font, status_str, rl.Vector2(round(status_x), round(rect.y + (rect.height - ts.y) / 2)), status_size, 0, AetherListColors.HEADER if is_enabled else AetherListColors.MUTED)
