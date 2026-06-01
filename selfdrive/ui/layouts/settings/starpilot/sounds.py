@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import replace
-import math
 import subprocess
 from pathlib import Path
 
@@ -12,7 +11,6 @@ from openpilot.system.ui.lib.application import gui_app, FontWeight, MouseEvent,
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
 from openpilot.system.ui.widgets import Widget, DialogResult
-from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets.label import gui_label
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
@@ -42,7 +40,7 @@ SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height
 SECTION_HEADER_GAP = AETHER_LIST_METRICS.section_header_gap
 
 GROUP_HEADER_HEIGHT = 20
-GROUP_HEADER_GAP = 4
+GROUP_HEADER_GAP = 2
 GROUP_HAIRLINE_COLOR = rl.Color(255, 255, 255, 10)
 GROUP_HEADER_COLOR = rl.Color(255, 255, 255, 90)
 
@@ -56,7 +54,7 @@ SOUNDS_PANEL_METRICS = replace(
 
 
 class SoundsManagerView(Widget):
-  def __init__(self, controller: "StarPilotSoundsLayout"):
+  def __init__(self, controller: StarPilotSoundsLayout):
     super().__init__()
     self._controller = controller
     self._pressed_target: str | None = None
@@ -282,18 +280,21 @@ class SoundsManagerView(Widget):
     left_h += GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP
     left_h += GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP
     left_h += GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP
-    left_column_total_h = left_h + 24
+    left_column_total_h = left_h + 16
 
     cd_h = self._adjustor_rows[self._controller.COOLDOWN_KEY].measure_height(col_width)
-    
+
     tile_rows = self._toggle_grid.get_row_count(len(self._toggle_grid.tiles), available_width=col_width)
     tile_gaps = self._toggle_grid.get_internal_gap_height(len(self._toggle_grid.tiles), available_width=col_width)
     tiles_content_h = tile_rows * 130 + tile_gaps
-    
-    right_column_total_h = cd_h + SECTION_GAP + (GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP) + (tiles_content_h + 24)
+
+    self._tile_grid_h = max(tiles_content_h, left_column_total_h - cd_h - SECTION_GAP - (GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP) - 16.0)
+
+    right_column_total_h = cd_h + SECTION_GAP + (GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP) + (self._tile_grid_h + 16.0)
 
     section_overhead = SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-    return section_overhead + max(left_column_total_h, right_column_total_h) + 12.0
+    min_h = self._scroll_rect.height if self._scroll_rect else 0.0
+    return max(min_h, section_overhead + max(left_column_total_h, right_column_total_h))
 
   def _draw_header(self, rect: rl.Rectangle):
     draw_settings_panel_header(rect, tr("Sounds & Alerts"), tr("Manage system volumes and custom alert toggles."), subtitle_size=24)
@@ -349,11 +350,11 @@ class SoundsManagerView(Widget):
 
     total_h = sum(GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP + sum(self._adjustor_rows[k].measure_height(width) for k in keys) for _, keys in groups)
     draw_list_group_shell(
-      rl.Rectangle(x, y, width, total_h + 24),
+      rl.Rectangle(x, y, width, total_h + 16),
       style=PANEL_STYLE
     )
 
-    current_y = y + 12
+    current_y = y + 8
     for label, keys in groups:
       current_y = self._draw_group_header(x + 24, current_y, width - 48, label)
       for key in keys:
@@ -371,9 +372,9 @@ class SoundsManagerView(Widget):
     cd_key = self._controller.COOLDOWN_KEY
     adjustor = self._adjustor_rows[cd_key]
     row_h = adjustor.measure_height(width)
-    
+
     draw_list_group_shell(rl.Rectangle(x, current_y, width, row_h), style=PANEL_STYLE)
-    
+
     adjustor.set_is_last(True)
     adjustor.set_parent_rect(self._scroll_rect)
     adjustor.render(rl.Rectangle(x, current_y, width, row_h))
@@ -381,14 +382,10 @@ class SoundsManagerView(Widget):
 
     current_y = self._draw_group_header(x + 24, current_y, width - 48, tr("CUSTOM ALERTS"))
 
-    tile_rows = self._toggle_grid.get_row_count(len(self._toggle_grid.tiles), available_width=width)
-    tile_gaps = self._toggle_grid.get_internal_gap_height(len(self._toggle_grid.tiles), available_width=width)
-    tiles_content_h = tile_rows * 130 + tile_gaps
-
-    draw_list_group_shell(rl.Rectangle(x, current_y, width, tiles_content_h + 24), style=PANEL_STYLE)
+    draw_list_group_shell(rl.Rectangle(x, current_y, width, self._tile_grid_h + 16), style=PANEL_STYLE)
 
     self._toggle_grid.set_parent_rect(self._scroll_rect)
-    self._toggle_grid.render(rl.Rectangle(x + 12, current_y + 12, width - 24, tiles_content_h))
+    self._toggle_grid.render(rl.Rectangle(x + 12, current_y + 8, width - 24, self._tile_grid_h))
 
 
 class StarPilotSoundsLayout(_SettingsPage):
