@@ -3212,9 +3212,9 @@ class AetherSliderDialog(Widget):
     _draw_text_fit_common(
       gui_app.font(FontWeight.MEDIUM),
       text,
-      rl.Vector2(rect.x + 10, rect.y + (rect.height - 18) / 2),
+      rl.Vector2(rect.x + 10, rect.y + (rect.height - 24) / 2),
       max(1.0, rect.width - 20),
-      18,
+      24,
       align_center=True,
       color=text_color,
     )
@@ -3226,39 +3226,39 @@ class AetherSliderDialog(Widget):
     rl.draw_rectangle(0, 0, gui_app.width, gui_app.height, rl.Color(0, 0, 0, 160))
 
     has_presets = len(self._presets) > 0
-    dialog_w = 880
-    dialog_h = 500 if has_presets else 440
-    button_height = 72
-    button_width = 320
+    dialog_w = 1200
+    dialog_h = 720 if has_presets else 580
+    button_height = 96
+    button_width = 440
 
     dx, dy = rect.x + (rect.width - dialog_w) / 2, rect.y + (rect.height - dialog_h) / 2
-    self._ok_rect = rl.Rectangle(dx + dialog_w - button_width - 48, dy + dialog_h - button_height - 36, button_width, button_height)
-    self._cancel_rect = rl.Rectangle(dx + 48, dy + dialog_h - button_height - 36, button_width, button_height)
+    self._ok_rect = rl.Rectangle(dx + dialog_w - button_width - 64, dy + dialog_h - button_height - 48, button_width, button_height)
+    self._cancel_rect = rl.Rectangle(dx + 64, dy + dialog_h - button_height - 48, button_width, button_height)
 
     d_rect = _snap_rect(rl.Rectangle(dx, dy, dialog_w, dialog_h))
     _draw_rounded_fill(d_rect, rl.Color(10, 12, 16, 255), radius_px=24)
     _draw_rounded_stroke(d_rect, rl.Color(255, 255, 255, 16), radius_px=24)
     rl.draw_rectangle_rec(rl.Rectangle(d_rect.x, d_rect.y, d_rect.width, 3), self._color)
 
-    title_size = 28
+    title_size = 36
     ts = measure_text_cached(self._font_title, self.title, title_size)
-    rl.draw_text_ex(self._font_title, self.title, rl.Vector2(round(dx + (dialog_w - ts.x) / 2), round(dy + 32)), title_size, 0, rl.WHITE)
+    rl.draw_text_ex(self._font_title, self.title, rl.Vector2(round(dx + (dialog_w - ts.x) / 2), round(dy + 48)), title_size, 0, rl.WHITE)
 
     # Large value display below title
     val_str = self.formatted_value()
-    val_size = 48
+    val_size = 72
     vts = measure_text_cached(self._font_value, val_str, val_size)
-    rl.draw_text_ex(self._font_value, val_str, rl.Vector2(round(dx + (dialog_w - vts.x) / 2), round(dy + 80)), val_size, 0, self._color)
+    rl.draw_text_ex(self._font_value, val_str, rl.Vector2(round(dx + (dialog_w - vts.x) / 2), round(dy + 120)), val_size, 0, self._color)
 
     # Render presets below the value display (if any)
-    presets_y = dy + 154
+    presets_y = dy + 230
     self._preset_rects.clear()
     if has_presets:
-      chip_h = 52.0
-      chip_gap = 16.0
-      chip_w = max(68.0, (dialog_w - 48 * 2 - chip_gap * (len(self._presets) - 1)) / max(1, len(self._presets)))
+      chip_h = 68.0
+      chip_gap = 20.0
+      chip_w = max(90.0, (dialog_w - 64 * 2 - chip_gap * (len(self._presets) - 1)) / max(1, len(self._presets)))
       for index, val in enumerate(self._presets):
-        chip_x = dx + 48 + index * (chip_w + chip_gap)
+        chip_x = dx + 64 + index * (chip_w + chip_gap)
         chip_rect = _snap_rect(rl.Rectangle(chip_x, presets_y, chip_w, chip_h))
         self._preset_rects.append((val, chip_rect))
         formatted_label = format_adjustor_value(val, step=self.step, unit=self._unit, labels=self._labels)
@@ -3268,38 +3268,38 @@ class AetherSliderDialog(Widget):
           current=abs(self._current_val - val) <= 0.5 * self.step,
           pressed=self._pressed_zone == f"preset:{val}",
         )
-      slider_y = dy + 254
+      slider_y = dy + 390
     else:
-      slider_y = dy + 180
+      slider_y = dy + 270
 
     # Slider
-    btn_size = 54
-    self._minus_rect = _snap_rect(rl.Rectangle(dx + 48, slider_y - btn_size / 2, btn_size, btn_size))
-    self._plus_rect = _snap_rect(rl.Rectangle(dx + dialog_w - 48 - btn_size, slider_y - btn_size / 2, btn_size, btn_size))
+    btn_size = 80
+    self._minus_rect = _snap_rect(rl.Rectangle(dx + 64, slider_y - btn_size / 2, btn_size, btn_size))
+    self._plus_rect = _snap_rect(rl.Rectangle(dx + dialog_w - 64 - btn_size, slider_y - btn_size / 2, btn_size, btn_size))
 
     # Draw minus button
     minus_pressed = self._pressed_zone == "minus"
-    _draw_rounded_fill(self._minus_rect, rl.Color(255, 255, 255, 14 if minus_pressed else 8), radius_px=27)
-    _draw_rounded_stroke(self._minus_rect, rl.Color(255, 255, 255, 28 if minus_pressed else 18), radius_px=27)
-    mts = measure_text_cached(self._font_btn, "-", 24)
-    rl.draw_text_ex(self._font_btn, "-", rl.Vector2(round(self._minus_rect.x + (btn_size - mts.x) / 2), round(self._minus_rect.y + (btn_size - mts.y) / 2)), 24, 0, rl.WHITE)
+    _draw_rounded_fill(self._minus_rect, rl.Color(255, 255, 255, 14 if minus_pressed else 8), radius_px=40)
+    _draw_rounded_stroke(self._minus_rect, rl.Color(255, 255, 255, 28 if minus_pressed else 18), radius_px=40)
+    mts = measure_text_cached(self._font_btn, "-", 32)
+    rl.draw_text_ex(self._font_btn, "-", rl.Vector2(round(self._minus_rect.x + (btn_size - mts.x) / 2), round(self._minus_rect.y + (btn_size - mts.y) / 2)), 32, 0, rl.WHITE)
 
     # Draw plus button
     plus_pressed = self._pressed_zone == "plus"
-    _draw_rounded_fill(self._plus_rect, rl.Color(255, 255, 255, 14 if plus_pressed else 8), radius_px=27)
-    _draw_rounded_stroke(self._plus_rect, rl.Color(255, 255, 255, 28 if plus_pressed else 18), radius_px=27)
-    pts = measure_text_cached(self._font_btn, "+", 24)
-    rl.draw_text_ex(self._font_btn, "+", rl.Vector2(round(self._plus_rect.x + (btn_size - pts.x) / 2), round(self._plus_rect.y + (btn_size - pts.y) / 2)), 24, 0, rl.WHITE)
+    _draw_rounded_fill(self._plus_rect, rl.Color(255, 255, 255, 14 if plus_pressed else 8), radius_px=40)
+    _draw_rounded_stroke(self._plus_rect, rl.Color(255, 255, 255, 28 if plus_pressed else 18), radius_px=40)
+    pts = measure_text_cached(self._font_btn, "+", 32)
+    rl.draw_text_ex(self._font_btn, "+", rl.Vector2(round(self._plus_rect.x + (btn_size - pts.x) / 2), round(self._plus_rect.y + (btn_size - pts.y) / 2)), 32, 0, rl.WHITE)
 
     # Draw track
-    track_x = self._minus_rect.x + btn_size + 24
-    track_w = self._plus_rect.x - 24 - track_x
-    track_h = 6
+    track_x = self._minus_rect.x + btn_size + 36
+    track_w = self._plus_rect.x - 36 - track_x
+    track_h = 10
     track_y = slider_y - track_h / 2
     self._track_rect = _snap_rect(rl.Rectangle(track_x, track_y, track_w, track_h))
 
-    _draw_rounded_fill(self._track_rect, rl.Color(255, 255, 255, 14), radius_px=3)
-    _draw_rounded_stroke(self._track_rect, rl.Color(255, 255, 255, 8), radius_px=3)
+    _draw_rounded_fill(self._track_rect, rl.Color(255, 255, 255, 14), radius_px=5)
+    _draw_rounded_stroke(self._track_rect, rl.Color(255, 255, 255, 8), radius_px=5)
 
     # Draw ticks at preset values (or custom ticks if no presets)
     ticks_to_draw = self._presets
@@ -3309,40 +3309,40 @@ class AetherSliderDialog(Widget):
     for val in ticks_to_draw:
       frac = self._value_fraction(val)
       tick_x = track_x + frac * track_w
-      rl.draw_rectangle_rec(rl.Rectangle(tick_x - 1, track_y - 5, 2, 16), rl.Color(255, 255, 255, 28))
+      rl.draw_rectangle_rec(rl.Rectangle(tick_x - 1, track_y - 7, 2, 24), rl.Color(255, 255, 255, 28))
 
     # Draw active fill
     fill_frac = self._value_fraction(self._current_val)
     fill_w = fill_frac * track_w
     if fill_w > 0:
       fill_rect = _snap_rect(rl.Rectangle(track_x, track_y, fill_w, track_h))
-      _draw_rounded_fill(fill_rect, self._color, radius_px=3)
+      _draw_rounded_fill(fill_rect, self._color, radius_px=5)
 
     # Draw thumb
-    thumb_w = 16
-    thumb_h = 36
+    thumb_w = 24
+    thumb_h = 48
     thumb_x = track_x + fill_frac * track_w
     self._thumb_rect = _snap_rect(rl.Rectangle(thumb_x - thumb_w / 2, slider_y - thumb_h / 2, thumb_w, thumb_h))
-    _draw_rounded_fill(self._thumb_rect, rl.WHITE, radius_px=8)
-    _draw_rounded_stroke(self._thumb_rect, rl.Color(20, 22, 28, 46), radius_px=8)
+    _draw_rounded_fill(self._thumb_rect, rl.WHITE, radius_px=12)
+    _draw_rounded_stroke(self._thumb_rect, rl.Color(20, 22, 28, 46), radius_px=12)
 
     # Cancel Button
     c_face_x = self._cancel_rect.x
     c_face_y = self._cancel_rect.y + min(1.0, GEOMETRY_OFFSET * self._cancel_offset * 0.1)
     c_face = _snap_rect(rl.Rectangle(c_face_x, c_face_y, button_width, button_height))
-    _draw_rounded_fill(c_face, rl.Color(34, 38, 48, 255), radius_px=18)
-    _draw_rounded_stroke(c_face, rl.Color(255, 255, 255, 20), radius_px=18)
-    cts = measure_text_cached(self._font_btn, tr("CANCEL"), 24)
-    rl.draw_text_ex(self._font_btn, tr("CANCEL"), rl.Vector2(round(c_face_x + (button_width - cts.x) / 2), round(c_face_y + (button_height - cts.y) / 2)), 24, 0, rl.WHITE)
+    _draw_rounded_fill(c_face, rl.Color(34, 38, 48, 255), radius_px=24)
+    _draw_rounded_stroke(c_face, rl.Color(255, 255, 255, 20), radius_px=24)
+    cts = measure_text_cached(self._font_btn, tr("CANCEL"), 28)
+    rl.draw_text_ex(self._font_btn, tr("CANCEL"), rl.Vector2(round(c_face_x + (button_width - cts.x) / 2), round(c_face_y + (button_height - cts.y) / 2)), 28, 0, rl.WHITE)
 
     # OK Button
     o_face_x = self._ok_rect.x
     o_face_y = self._ok_rect.y + min(1.0, GEOMETRY_OFFSET * self._ok_offset * 0.1)
     o_face = _snap_rect(rl.Rectangle(o_face_x, o_face_y, button_width, button_height))
-    _draw_rounded_fill(o_face, self._color, radius_px=18)
-    _draw_rounded_stroke(o_face, _with_alpha(self._color, 150), radius_px=18)
-    ots = measure_text_cached(self._font_btn, tr("OK"), 24)
-    rl.draw_text_ex(self._font_btn, tr("OK"), rl.Vector2(round(o_face_x + (button_width - ots.x) / 2), round(o_face_y + (button_height - ots.y) / 2)), 24, 0, rl.WHITE)
+    _draw_rounded_fill(o_face, self._color, radius_px=24)
+    _draw_rounded_stroke(o_face, _with_alpha(self._color, 150), radius_px=24)
+    ots = measure_text_cached(self._font_btn, tr("OK"), 28)
+    rl.draw_text_ex(self._font_btn, tr("OK"), rl.Vector2(round(o_face_x + (button_width - ots.x) / 2), round(o_face_y + (button_height - ots.y) / 2)), 28, 0, rl.WHITE)
     return DialogResult.NO_ACTION
 
 
