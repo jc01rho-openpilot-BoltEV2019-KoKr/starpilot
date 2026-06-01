@@ -218,3 +218,28 @@ def draw_custom_icon(key: str, x: float, y: float, s: float, color: rl.Color):
     # Window cutout details
     rl.draw_line_ex(rl.Vector2(x + 18.0 * s, y + 25.0 * s), rl.Vector2(x + 36.0 * s, y + 25.0 * s), 1.5 * s, color)
     rl.draw_line_ex(rl.Vector2(x + 36.0 * s, y + 25.0 * s), rl.Vector2(x + 34.0 * s, y + 20.0 * s), 1.5 * s, color)
+
+  elif key == "first_aid":
+    # First Aid Kit Symbol
+    x_c = x + 30.0 * s
+    y_c = y + 30.0 * s
+
+    # Handle on top of the kit
+    draw_ellipse_arc(x_c, y_c - 10.0 * s, 6.0 * s, 4.0 * s, 0.0, 180.0, 360.0, 2.5 * s)
+
+    # Box outline with rounded corners
+    draw_ellipse_arc(x_c - 15.0 * s, y_c - 7.0 * s, 3.0 * s, 3.0 * s, 0.0, 180.0, 270.0, 2.5 * s)
+    draw_ellipse_arc(x_c + 15.0 * s, y_c - 7.0 * s, 3.0 * s, 3.0 * s, 0.0, 270.0, 360.0, 2.5 * s)
+    draw_ellipse_arc(x_c + 15.0 * s, y_c + 12.0 * s, 3.0 * s, 3.0 * s, 0.0, 0.0, 90.0, 2.5 * s)
+    draw_ellipse_arc(x_c - 15.0 * s, y_c + 12.0 * s, 3.0 * s, 3.0 * s, 0.0, 90.0, 180.0, 2.5 * s)
+
+    # Connecting lines for the box outline
+    rl.draw_line_ex(rl.Vector2(x_c - 15.0 * s, y_c - 10.0 * s), rl.Vector2(x_c + 15.0 * s, y_c - 10.0 * s), 2.5 * s, color)
+    rl.draw_line_ex(rl.Vector2(x_c - 15.0 * s, y_c + 15.0 * s), rl.Vector2(x_c + 15.0 * s, y_c + 15.0 * s), 2.5 * s, color)
+    rl.draw_line_ex(rl.Vector2(x_c - 18.0 * s, y_c - 7.0 * s), rl.Vector2(x_c - 18.0 * s, y_c + 12.0 * s), 2.5 * s, color)
+    rl.draw_line_ex(rl.Vector2(x_c + 18.0 * s, y_c - 7.0 * s), rl.Vector2(x_c + 18.0 * s, y_c + 12.0 * s), 2.5 * s, color)
+
+    # Cross in the center (centered at y_c + 2.5)
+    rl.draw_line_ex(rl.Vector2(x_c, y_c - 4.0 * s), rl.Vector2(x_c, y_c + 9.0 * s), 3.5 * s, color)
+    rl.draw_line_ex(rl.Vector2(x_c - 6.5 * s, y_c + 2.5 * s), rl.Vector2(x_c + 6.5 * s, y_c + 2.5 * s), 3.5 * s, color)
+
