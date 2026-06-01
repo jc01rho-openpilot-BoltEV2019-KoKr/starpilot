@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import replace
 import json
 import os
 import re
@@ -94,6 +95,12 @@ SECTION_HEADER_GAP = AETHER_LIST_METRICS.section_header_gap
 ROW_HEIGHT = AETHER_LIST_METRICS.row_height
 FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
 PANEL_STYLE = panel_style_from_color("#D946EF")
+
+SYSTEM_PANEL_METRICS = replace(
+  AETHER_LIST_METRICS,
+  outer_margin_y=14,
+  panel_padding_bottom=14,
+)
 
 
 class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
@@ -454,7 +461,7 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
     self._interactive_rects.clear()
     self.set_rect(rect)
 
-    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE)
+    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE, metrics=SYSTEM_PANEL_METRICS)
     self._scroll_rect = scroll_rect
 
     self._drive_mode_control.set_parent_rect(frame.header)
@@ -504,33 +511,22 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
     icon_color = PANEL_STYLE.accent if (hovered or pressed) else AetherListColors.HEADER
     draw_custom_icon("first_aid", icon_x, icon_y, s, icon_color)
 
-    summary_y = rect.y + 48 + self.HEADER_SUBTITLE_HEIGHT + self.HEADER_SUMMARY_GAP
-    summary_rect = rl.Rectangle(rect.x, summary_y, rect.width, min(self.HEADER_CARD_HEIGHT, rect.y + rect.height - summary_y))
-    self._draw_summary_card(summary_rect)
+    content_width = rect.width - AETHER_LIST_METRICS.content_right_gutter
+    column_w = (content_width - self.COLUMN_GAP) / 2
+    summary_y = rect.y + 92
 
-  def _draw_summary_card(self, rect: rl.Rectangle):
-    draw_soft_card(rect, PANEL_STYLE.surface_fill, PANEL_STYLE.surface_border)
-    inset = 18
-
-    # Left Column: Huge Segmented Control
-    control_w = max(420.0, min(540.0, rect.width * 0.46))
-    control_x = rect.x + inset
-    control_h = 96.0
-    control_y = rect.y + (rect.height - control_h) / 2
-
-    control_rect = rl.Rectangle(control_x, control_y, control_w, control_h)
+    # Left Column: Auto/Onroad/Offroad
+    control_rect = rl.Rectangle(rect.x, summary_y, column_w, 108)
     self._drive_mode_control.render(control_rect)
 
-    # Right Column: Labels & Metrics
-    right_x = control_x + control_w + 32
-    right_w = rect.x + rect.width - inset - right_x
+    # Right Column: System Status Card
+    status_rect = rl.Rectangle(rect.x + column_w + self.COLUMN_GAP, summary_y, column_w, 108)
+    draw_soft_card(status_rect, rl.Color(255, 255, 255, 4), rl.Color(255, 255, 255, 14))
 
-    # Header Labels
-    header_y = rect.y + 12
-    gui_label(rl.Rectangle(right_x, header_y, right_w, 20),
+    header_y = status_rect.y + 12
+    gui_label(rl.Rectangle(status_rect.x + 20, header_y, status_rect.width - 40, 20),
               tr("System Status"), 16, AetherListColors.MUTED, FontWeight.SEMI_BOLD)
 
-    # Metrics
     metric_rows = [
       (tr("Storage"), self._controller.storage_summary()),
       (tr("System Backups"), self._controller.backup_count_text()),
@@ -538,33 +534,33 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
     ]
     metric_row_h = 16
     metric_row_gap = 4
-    metric_start_y = rect.y + 42
+    metric_start_y = status_rect.y + 40
 
     label_font = gui_app.font(FontWeight.MEDIUM)
+    label_w = 180.0
     for i, (label, value) in enumerate(metric_rows):
       row_y = metric_start_y + i * (metric_row_h + metric_row_gap)
-      label_w_metric = measure_text_cached(label_font, label, 16).x + 4
-      gui_label(rl.Rectangle(right_x, row_y, label_w_metric, metric_row_h + 2),
+      gui_label(rl.Rectangle(status_rect.x + 20, row_y, label_w, metric_row_h + 2),
                 label, 16, AetherListColors.MUTED, FontWeight.MEDIUM)
-      value_x = right_x + label_w_metric + 12
-      gui_label(rl.Rectangle(value_x, row_y, right_x + right_w - value_x, metric_row_h + 2),
+      value_x = status_rect.x + 20 + label_w
+      gui_label(rl.Rectangle(value_x, row_y, status_rect.x + status_rect.width - 20 - value_x, metric_row_h + 2),
                 value, 16, AetherListColors.HEADER, FontWeight.MEDIUM)
 
   def _measure_content_height(self, width: float) -> float:
     display_h = self._section_block_height(self._slider_section_height(self._display_slider_keys, width))
     power_h = self._section_block_height(self._slider_section_height(self._power_slider_keys, width))
+
+    tile_rows = self._connectivity_tile_grid.get_row_count(
+      len(self._connectivity_tile_grid.tiles), available_width=width)
+    tile_gaps = self._connectivity_tile_grid.get_internal_gap_height(
+      len(self._connectivity_tile_grid.tiles), available_width=width)
+    tiles_content_h = tile_rows * 130 + tile_gaps
+
     if self._uses_two_columns(width):
-      left_col = display_h + SECTION_GAP + power_h
-      self._basics_tile_grid_h = left_col
-      return left_col
+      min_h = self._scroll_rect.height if self._scroll_rect else 0.0
+      return max(min_h, display_h + SECTION_GAP + power_h)
     else:
-      tile_rows = self._connectivity_tile_grid.get_row_count(
-        len(self._connectivity_tile_grid.tiles), available_width=width)
-      tile_gaps = self._connectivity_tile_grid.get_internal_gap_height(
-        len(self._connectivity_tile_grid.tiles), available_width=width)
-      tiles_content_h = tile_rows * 96 + tile_gaps
-      connectivity_h = tiles_content_h
-      return self._stacked_section_height([display_h, power_h, connectivity_h])
+      return self._stacked_section_height([display_h, power_h, tiles_content_h + 24])
 
   def _section_block_height(self, content_height: float) -> float:
     return SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + content_height
@@ -583,10 +579,21 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
   def _draw_basics_tab(self, y: float, x: float, width: float):
     if self._uses_two_columns(width):
       column_w = self._column_width(width)
-      y2 = self._draw_slider_section(y, x, column_w, tr("Display"), self._display_slider_keys)
-      y2 += SECTION_GAP
-      self._draw_slider_section(y2, x, column_w, tr("Power"), self._power_slider_keys)
-      self._draw_connectivity_tiles_column(y, x + column_w + self.COLUMN_GAP, column_w)
+      display_container_h = self._slider_section_height(self._display_slider_keys, column_w)
+      power_container_h = self._slider_section_height(self._power_slider_keys, column_w)
+      header_overhead = (SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP) * 2
+
+      viewport_h = self._scroll_rect.height if self._scroll_rect else 0.0
+      needed_gap = viewport_h - (display_container_h + power_container_h + header_overhead)
+      section_gap = max(AETHER_LIST_METRICS.section_gap, needed_gap)
+
+      display_bottom = self._draw_slider_section(y, x, column_w, tr("Display"), self._display_slider_keys)
+      power_y = display_bottom + section_gap
+      power_bottom = self._draw_slider_section(power_y, x, column_w, tr("Power"), self._power_slider_keys)
+
+      container_top = y + SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
+      container_height = power_bottom - container_top
+      self._draw_connectivity_tiles_column(container_top, x + column_w + self.COLUMN_GAP, column_w, container_height)
       return
     y = self._draw_slider_section(y, x, width, tr("Display"), self._display_slider_keys)
     y += SECTION_GAP
@@ -594,21 +601,19 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
     y += SECTION_GAP
     self._draw_connectivity_tiles_section(y, x, width)
 
-  def _draw_connectivity_tiles_column(self, y: float, x: float, width: float):
-    tile_h = self._basics_tile_grid_h
-    shell_rect = rl.Rectangle(x - 12, y - 12, width + 24, tile_h + 24)
-    draw_list_group_shell(shell_rect, style=PANEL_STYLE)
+  def _draw_connectivity_tiles_column(self, y: float, x: float, width: float, height: float):
+    draw_list_group_shell(rl.Rectangle(x, y, width, height), style=PANEL_STYLE)
     self._connectivity_tile_grid.set_parent_rect(self._scroll_rect)
-    self._connectivity_tile_grid.render(rl.Rectangle(x, y, width, tile_h))
+    self._connectivity_tile_grid.render(rl.Rectangle(x + 12, y + 12, width - 24, height - 24))
 
   def _draw_connectivity_tiles_section(self, y: float, x: float, width: float):
     tile_rows = self._connectivity_tile_grid.get_row_count(len(self._connectivity_tile_grid.tiles), available_width=width)
     tile_gaps = self._connectivity_tile_grid.get_internal_gap_height(len(self._connectivity_tile_grid.tiles), available_width=width)
-    tile_h = tile_rows * 96 + tile_gaps
-    group_rect = rl.Rectangle(x, y, width, tile_h)
-    draw_list_group_shell(group_rect, style=PANEL_STYLE)
+    tiles_content_h = tile_rows * 130 + tile_gaps
+
+    draw_list_group_shell(rl.Rectangle(x, y, width, tiles_content_h + 24), style=PANEL_STYLE)
     self._connectivity_tile_grid.set_parent_rect(self._scroll_rect)
-    self._connectivity_tile_grid.render(rl.Rectangle(x, y, width, tile_h))
+    self._connectivity_tile_grid.render(rl.Rectangle(x + 12, y + 12, width - 24, tiles_content_h))
 
   def _draw_slider_section(self, y: float, x: float, width: float, title: str, keys: list[str]) -> float:
     draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), title, style=PANEL_STYLE)

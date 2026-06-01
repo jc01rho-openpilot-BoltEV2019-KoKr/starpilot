@@ -282,15 +282,18 @@ class SoundsManagerView(Widget):
     left_h += GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP
     left_h += GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP
     left_h += GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP
+    left_column_total_h = left_h + 24
 
     cd_h = self._adjustor_rows[self._controller.COOLDOWN_KEY].measure_height(col_width)
-    group_h = GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP
-    self._tile_grid_h = left_h - cd_h - group_h
-
-    right_h = cd_h + group_h + self._tile_grid_h
+    
+    tile_rows = self._toggle_grid.get_row_count(len(self._toggle_grid.tiles), available_width=col_width)
+    tile_gaps = self._toggle_grid.get_internal_gap_height(len(self._toggle_grid.tiles), available_width=col_width)
+    tiles_content_h = tile_rows * 130 + tile_gaps
+    
+    right_column_total_h = cd_h + SECTION_GAP + (GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP) + (tiles_content_h + 24)
 
     section_overhead = SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-    return section_overhead + max(left_h, right_h) + 12.0
+    return section_overhead + max(left_column_total_h, right_column_total_h) + 12.0
 
   def _draw_header(self, rect: rl.Rectangle):
     draw_settings_panel_header(rect, tr("Sounds & Alerts"), tr("Manage system volumes and custom alert toggles."), subtitle_size=24)
@@ -324,11 +327,8 @@ class SoundsManagerView(Widget):
     )
     y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
-    col_left = rl.Rectangle(rect.x, y, col_width, self._content_height)
-    col_right = rl.Rectangle(rect.x + col_width + SECTION_GAP, y, col_width, self._content_height)
-
-    self._draw_volume_column(col_left)
-    self._draw_utility_column(col_right)
+    self._draw_volume_column(y, rect.x, col_width)
+    self._draw_utility_column(y, rect.x + col_width + SECTION_GAP, col_width)
 
   def _draw_group_header(self, x: float, y: float, width: float, label: str) -> float:
     gui_label(rl.Rectangle(x, y, width, GROUP_HEADER_HEIGHT), label, 14, GROUP_HEADER_COLOR, FontWeight.MEDIUM)
@@ -336,7 +336,7 @@ class SoundsManagerView(Widget):
     rl.draw_line(int(x), int(y), int(x + width), int(y), GROUP_HAIRLINE_COLOR)
     return y + GROUP_HEADER_GAP
 
-  def _draw_volume_column(self, rect: rl.Rectangle):
+  def _draw_volume_column(self, y: float, x: float, width: float):
     safety_keys = ["WarningImmediateVolume", "WarningSoftVolume", "RefuseVolume", "PromptDistractedVolume"]
     system_keys = ["EngageVolume", "DisengageVolume"]
     info_keys = ["PromptVolume", "BelowSteerSpeedVolume"]
@@ -347,44 +347,48 @@ class SoundsManagerView(Widget):
       (tr("INFORMATIONAL"), info_keys),
     ]
 
-    total_h = sum(GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP + sum(self._adjustor_rows[k].measure_height(rect.width) for k in keys) for _, keys in groups)
+    total_h = sum(GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP + sum(self._adjustor_rows[k].measure_height(width) for k in keys) for _, keys in groups)
     draw_list_group_shell(
-      rl.Rectangle(rect.x - 12, rect.y - 12, rect.width + 24, total_h + 24),
+      rl.Rectangle(x, y, width, total_h + 24),
       style=PANEL_STYLE
     )
 
-    current_y = rect.y
+    current_y = y + 12
     for label, keys in groups:
-      current_y = self._draw_group_header(rect.x, current_y, rect.width, label)
+      current_y = self._draw_group_header(x + 24, current_y, width - 48, label)
       for key in keys:
         adjustor = self._adjustor_rows[key]
-        row_h = adjustor.measure_height(rect.width)
-        row_rect = rl.Rectangle(rect.x, current_y, rect.width, row_h)
+        row_h = adjustor.measure_height(width)
+        row_rect = rl.Rectangle(x, current_y, width, row_h)
         adjustor.set_is_last(True)
         adjustor.set_parent_rect(self._scroll_rect)
         adjustor.render(row_rect)
         current_y += row_h
 
-  def _draw_utility_column(self, rect: rl.Rectangle):
-    current_y = rect.y
+  def _draw_utility_column(self, y: float, x: float, width: float):
+    current_y = y
 
     cd_key = self._controller.COOLDOWN_KEY
     adjustor = self._adjustor_rows[cd_key]
-    row_h = adjustor.measure_height(rect.width)
+    row_h = adjustor.measure_height(width)
+    
+    draw_list_group_shell(rl.Rectangle(x, current_y, width, row_h), style=PANEL_STYLE)
+    
     adjustor.set_is_last(True)
     adjustor.set_parent_rect(self._scroll_rect)
-    adjustor.render(rl.Rectangle(rect.x, current_y, rect.width, row_h))
-    current_y += row_h
+    adjustor.render(rl.Rectangle(x, current_y, width, row_h))
+    current_y += row_h + SECTION_GAP
 
-    current_y = self._draw_group_header(rect.x, current_y, rect.width, tr("CUSTOM ALERTS"))
+    current_y = self._draw_group_header(x + 24, current_y, width - 48, tr("CUSTOM ALERTS"))
 
-    tile_grid_h = self._tile_grid_h
+    tile_rows = self._toggle_grid.get_row_count(len(self._toggle_grid.tiles), available_width=width)
+    tile_gaps = self._toggle_grid.get_internal_gap_height(len(self._toggle_grid.tiles), available_width=width)
+    tiles_content_h = tile_rows * 130 + tile_gaps
 
-    tile_grid_rect = rl.Rectangle(rect.x - 12, current_y - 12, rect.width + 24, tile_grid_h + 24)
-    draw_list_group_shell(tile_grid_rect, style=PANEL_STYLE)
+    draw_list_group_shell(rl.Rectangle(x, current_y, width, tiles_content_h + 24), style=PANEL_STYLE)
 
     self._toggle_grid.set_parent_rect(self._scroll_rect)
-    self._toggle_grid.render(rl.Rectangle(rect.x, current_y, rect.width, tile_grid_h))
+    self._toggle_grid.render(rl.Rectangle(x + 12, current_y + 12, width - 24, tiles_content_h))
 
 
 class StarPilotSoundsLayout(_SettingsPage):
