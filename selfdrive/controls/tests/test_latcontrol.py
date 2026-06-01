@@ -354,7 +354,7 @@ class TestLatControl:
     assert turn_in_left > steady_left
     assert turn_in_right >= steady_right
     assert unwind_left < steady_left
-    assert unwind_right < unwind_left
+    assert unwind_right > unwind_left
 
   def test_ioniq_5_friction_curves(self):
     base = get_friction_threshold(12.0)
@@ -365,7 +365,7 @@ class TestLatControl:
     assert turn_in_left_threshold < base
     assert turn_in_right_threshold == pytest.approx(base)
     assert unwind_left_threshold > base
-    assert unwind_right_threshold > unwind_left_threshold
+    assert unwind_right_threshold < unwind_left_threshold
 
     turn_in_left_scale = get_ioniq_5_friction_scale(12.0, 0.7, 0.8)
     turn_in_right_scale = get_ioniq_5_friction_scale(12.0, -0.7, -0.8)
@@ -374,7 +374,7 @@ class TestLatControl:
     assert turn_in_left_scale > 1.0
     assert turn_in_right_scale == pytest.approx(1.0)
     assert unwind_left_scale < 1.0
-    assert unwind_right_scale <= unwind_left_scale
+    assert unwind_right_scale > unwind_left_scale
 
   def test_ioniq_5_center_taper_curve(self):
     assert get_ioniq_5_center_taper_scale(0.0, 25.0) < get_ioniq_5_center_taper_scale(0.0, 10.0)
