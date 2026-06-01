@@ -3433,6 +3433,7 @@ class AetherSegmentedControl(Widget):
     on_change: Callable[[int], None],
     statuses: list[str | Callable[[], str] | None] | None = None,
     compact: bool = False,
+    style: PanelStyle | None = None,
   ):
     super().__init__()
     self._options = options
@@ -3442,6 +3443,7 @@ class AetherSegmentedControl(Widget):
     if len(self._statuses) < len(self._options):
       self._statuses += [""] * (len(self._options) - len(self._statuses))
     self._compact = compact
+    self._style = style
     self._font = gui_app.font(FontWeight.BOLD)
     self._font_status = gui_app.font(FontWeight.NORMAL)
     self._pressed_index = -1
@@ -3530,8 +3532,18 @@ class AetherSegmentedControl(Widget):
       face_rect = _snap_rect(rl.Rectangle(base_rect.x, base_rect.y + min(1.0, offset), base_rect.width, base_rect.height))
       is_active = i == current_index
 
-      fill = rl.Color(255, 255, 255, 12) if is_active else rl.Color(255, 255, 255, 3)
-      border = rl.Color(255, 255, 255, 30) if is_active else rl.Color(255, 255, 255, 8)
+      if self._style is not None:
+        accent = self._style.accent
+        fill = _mix_colors(rl.Color(18, 22, 28, 255), accent, 0.16, alpha=255) if is_active else rl.Color(255, 255, 255, 3)
+        border = _with_alpha(accent, 72) if is_active else rl.Color(255, 255, 255, 8)
+        title_color = accent if is_active else AetherListColors.SUBTEXT
+        status_color = _mix_colors(accent, AetherListColors.HEADER, 0.4) if is_active else AetherListColors.MUTED
+      else:
+        fill = rl.Color(255, 255, 255, 12) if is_active else rl.Color(255, 255, 255, 3)
+        border = rl.Color(255, 255, 255, 30) if is_active else rl.Color(255, 255, 255, 8)
+        title_color = AetherListColors.HEADER if is_active else AetherListColors.SUBTEXT
+        status_color = AetherListColors.MUTED
+
       _draw_rounded_fill(face_rect, fill, radius_px=16)
       _draw_rounded_stroke(face_rect, border, radius_px=16)
       rl.draw_rectangle_rec(rl.Rectangle(face_rect.x, face_rect.y, face_rect.width, 1), rl.Color(255, 255, 255, 18 if is_active else 10))
@@ -3540,7 +3552,6 @@ class AetherSegmentedControl(Widget):
       status = str(_resolve_value(self._statuses[i], ""))
       title_size = max(18, min(24, int(face_rect.height * (0.28 if has_status else 0.36))))
       status_size = max(14, min(17, int(face_rect.height * 0.22)))
-      title_color = AetherListColors.HEADER if is_active else AetherListColors.SUBTEXT
 
       if has_status:
         title_y = face_rect.y + max(9.0, min(14.0, face_rect.height * 0.18))
@@ -3561,7 +3572,7 @@ class AetherSegmentedControl(Widget):
           face_rect.width - 32,
           status_size,
           align_center=True,
-          color=AetherListColors.MUTED,
+          color=status_color,
         )
       else:
         _draw_text_fit_common(

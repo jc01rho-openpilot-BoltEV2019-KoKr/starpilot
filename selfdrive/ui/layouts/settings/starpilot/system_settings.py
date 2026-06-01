@@ -98,8 +98,8 @@ PANEL_STYLE = panel_style_from_color("#D946EF")
 
 class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
   HEADER_SUBTITLE_HEIGHT = 24
-  HEADER_SUMMARY_GAP = 12
-  HEADER_CARD_HEIGHT = 108
+  HEADER_SUMMARY_GAP = 6
+  HEADER_CARD_HEIGHT = 140
   TAB_HEIGHT = 68
   TAB_GAP = 10
   TAB_BOTTOM_GAP = 18
@@ -319,6 +319,7 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
         self._get_drive_mode_index,
         self._on_drive_mode_change,
         statuses=[tr("Default"), tr("Force on"), tr("Force off")],
+        style=PANEL_STYLE,
       )
     )
 
@@ -510,37 +511,44 @@ class SystemSettingsManagerView(AetherInteractiveMixin, Widget):
   def _draw_summary_card(self, rect: rl.Rectangle):
     draw_soft_card(rect, PANEL_STYLE.surface_fill, PANEL_STYLE.surface_border)
     inset = 18
-    left_x = rect.x + inset
-    left_w = rect.width * 0.40
-    gui_label(rl.Rectangle(left_x, rect.y + 9, left_w, 22), tr("Current Drive State"), 20, AetherListColors.MUTED, FontWeight.MEDIUM)
-    gui_label(rl.Rectangle(left_x, rect.y + 33, left_w, 28), self._controller._get_force_drive_state(), 24, AetherListColors.HEADER, FontWeight.MEDIUM)
 
-    control_w = max(300.0, min(420.0, rect.width * 0.34))
-    control_x = rect.x + rect.width - control_w - inset
+    # Left Column: Huge Segmented Control
+    control_w = max(420.0, min(540.0, rect.width * 0.46))
+    control_x = rect.x + inset
+    control_h = 96.0
+    control_y = rect.y + (rect.height - control_h) / 2
 
-    metric_col_x = left_x + left_w + 24
-    metric_col_w = control_x - 24 - metric_col_x
+    control_rect = rl.Rectangle(control_x, control_y, control_w, control_h)
+    self._drive_mode_control.render(control_rect)
+
+    # Right Column: Labels & Metrics
+    right_x = control_x + control_w + 32
+    right_w = rect.x + rect.width - inset - right_x
+
+    # Header Labels
+    header_y = rect.y + 12
+    gui_label(rl.Rectangle(right_x, header_y, right_w, 20),
+              tr("System Status"), 16, AetherListColors.MUTED, FontWeight.SEMI_BOLD)
+
+    # Metrics
     metric_rows = [
       (tr("Storage"), self._controller.storage_summary()),
       (tr("System Backups"), self._controller.backup_count_text()),
       (tr("Toggle Snapshots"), self._controller.toggle_backup_count_text()),
     ]
-    metric_row_h = 18
-    metric_row_gap = 6
-    metric_start_y = rect.y + 14
+    metric_row_h = 16
+    metric_row_gap = 4
+    metric_start_y = rect.y + 42
 
     label_font = gui_app.font(FontWeight.MEDIUM)
     for i, (label, value) in enumerate(metric_rows):
       row_y = metric_start_y + i * (metric_row_h + metric_row_gap)
-      label_w = measure_text_cached(label_font, label, 18).x + 4
-      gui_label(rl.Rectangle(metric_col_x, row_y, label_w, metric_row_h + 2),
-                label, 18, AetherListColors.MUTED, FontWeight.MEDIUM)
-      value_x = metric_col_x + label_w + 12
-      gui_label(rl.Rectangle(value_x, row_y, metric_col_x + metric_col_w - value_x, metric_row_h + 2),
-                value, 18, AetherListColors.HEADER, FontWeight.MEDIUM)
-
-    control_rect = rl.Rectangle(control_x, rect.y + 14, control_w, rect.height - 28)
-    self._drive_mode_control.render(control_rect)
+      label_w_metric = measure_text_cached(label_font, label, 16).x + 4
+      gui_label(rl.Rectangle(right_x, row_y, label_w_metric, metric_row_h + 2),
+                label, 16, AetherListColors.MUTED, FontWeight.MEDIUM)
+      value_x = right_x + label_w_metric + 12
+      gui_label(rl.Rectangle(value_x, row_y, right_x + right_w - value_x, metric_row_h + 2),
+                value, 16, AetherListColors.HEADER, FontWeight.MEDIUM)
 
   def _measure_content_height(self, width: float) -> float:
     display_h = self._section_block_height(self._slider_section_height(self._display_slider_keys, width))
