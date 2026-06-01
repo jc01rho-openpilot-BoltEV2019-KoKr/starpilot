@@ -14,7 +14,6 @@
 #include "selfdrive/ui/qt/request_repeater.h"
 #include "selfdrive/ui/qt/util.h"
 #include "selfdrive/ui/qt/qt_window.h"
-#include "selfdrive/ui/qt/widgets/wifi.h"
 
 using qrcodegen::QrCode;
 
@@ -232,10 +231,6 @@ SetupWidget::SetupWidget(QWidget* parent) : QFrame(parent) {
   QVBoxLayout *content_layout = new QVBoxLayout(content);
   content_layout->setContentsMargins(0, 0, 0, 0);
   content_layout->setSpacing(30);
-
-  WiFiPromptWidget *wifi_prompt = new WiFiPromptWidget;
-  QObject::connect(wifi_prompt, &WiFiPromptWidget::openSettings, this, &SetupWidget::openSettings);
-  content_layout->addWidget(wifi_prompt);
   content_layout->addStretch();
 
   mainLayout->addWidget(content);
