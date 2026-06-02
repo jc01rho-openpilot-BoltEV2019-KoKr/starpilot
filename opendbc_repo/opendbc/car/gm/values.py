@@ -279,6 +279,10 @@ class CAR(Platforms):
     [GMCarDocs("Buick LaCrosse 2017-19", "Driver Confidence Package 2")],
     GMCarSpecs(mass=1712, wheelbase=2.91, steerRatio=15.8, centerToFrontRatio=0.4),
   )
+  BUICK_LACROSSE_ASCM = GMPlatformConfig(
+    [GMCarDocs("Buick LaCrosse 2017-19 ASCM Harness")],
+    BUICK_LACROSSE.specs,
+  )
   BUICK_REGAL = GMASCMPlatformConfig(
     [GMCarDocs("Buick Regal Essence 2018")],
     GMCarSpecs(mass=1714, wheelbase=2.83, steerRatio=14.4, centerToFrontRatio=0.4),
@@ -572,7 +576,7 @@ CC_REGEN_PADDLE_CAR = {
 CAMERA_ACC_CAR.update(CC_ONLY_CAR)
 
 # ASCM-INT paths are only enabled when SASCM (0x2FF) is detected at runtime
-ASCM_INT = {CAR.CHEVROLET_VOLT_ASCM, CAR.GMC_ACADIA_ASCM, CAR.CHEVROLET_MALIBU_ASCM, CAR.CADILLAC_ESCALADE_ASCM}
+ASCM_INT = {CAR.CHEVROLET_VOLT_ASCM, CAR.GMC_ACADIA_ASCM, CAR.CHEVROLET_MALIBU_ASCM, CAR.CADILLAC_ESCALADE_ASCM, CAR.BUICK_LACROSSE_ASCM}
 
 STEER_THRESHOLD = 1.0
 
