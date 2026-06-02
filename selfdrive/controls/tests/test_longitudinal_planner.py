@@ -11,7 +11,7 @@ from opendbc.car.honda.values import CAR
 import openpilot.selfdrive.controls.lib.longitudinal_planner as longitudinal_planner_module
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
-from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, get_coast_accel, get_vehicle_min_accel
+from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, get_coast_accel, get_vehicle_min_accel, should_publish_planner_fcw
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import soften_far_radar_lead_accel, should_trigger_planner_fcw
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 
@@ -223,6 +223,22 @@ def test_planner_fcw_keeps_real_low_speed_closing_alerts():
     make_lead(status=True, d_rel=1.8, v_lead=0.0, a_lead=0.0, radar=False, model_prob=0.99),
     1.6,
   )
+
+
+def test_publish_planner_fcw_suppresses_crawl_speed_false_positive():
+  car_state = SimpleNamespace(vEgo=0.29, standstill=False)
+  radar_state = SimpleNamespace(
+    leadOne=make_lead(status=True, d_rel=7.55, v_lead=0.033, a_lead=0.0, radar=False, model_prob=0.99),
+  )
+  assert not should_publish_planner_fcw(3, car_state, radar_state)
+
+
+def test_publish_planner_fcw_keeps_real_current_close_closing_alert():
+  car_state = SimpleNamespace(vEgo=1.6, standstill=False)
+  radar_state = SimpleNamespace(
+    leadOne=make_lead(status=True, d_rel=1.8, v_lead=0.0, a_lead=0.0, radar=False, model_prob=0.99),
+  )
+  assert should_publish_planner_fcw(3, car_state, radar_state)
 
 
 def test_vision_lead_approach_cap_brakes_before_hard_cap():
