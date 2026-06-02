@@ -295,17 +295,14 @@ class StarPilotOnroadView(AugmentedRoadView):
     starpilot_car_state = ui_state.sm["starpilotCarState"] if ui_state.sm.valid.get("starpilotCarState", False) else None
     lateral_paused = starpilot_car_state.pauseLateral if starpilot_car_state else False
     longitudinal_paused = (starpilot_car_state.pauseLongitudinal or starpilot_car_state.forceCoast) if starpilot_car_state else False
-    show_cem_status = self._params.get_bool("ShowCEMStatus")
 
     # Build the list of active left-side (DM-adjacent) badges in order of priority:
-    # 1. Lateral Paused, 2. Longitudinal Paused, 3. CEM Status
+    # 1. Lateral Paused, 2. Longitudinal Paused
     active_badges = []
     if lateral_paused:
       active_badges.append("lateral_paused")
     if longitudinal_paused:
       active_badges.append("longitudinal_paused")
-    if show_cem_status:
-      active_badges.append("cem_status")
 
     # Dimensions
     badge_w = 120
@@ -333,9 +330,6 @@ class StarPilotOnroadView(AugmentedRoadView):
       elif badge == "longitudinal_paused":
         from openpilot.selfdrive.ui.onroad.starpilot.pause_indicators import render_longitudinal_paused
         render_longitudinal_paused(badge_rect)
-      elif badge == "cem_status":
-        from openpilot.selfdrive.ui.onroad.starpilot.cem_status import render_cem_status
-        render_cem_status(badge_rect, self._font_medium)
 
     # 2. Render Compass & Weather (on the opposite side of DM icon)
     # Dimensions

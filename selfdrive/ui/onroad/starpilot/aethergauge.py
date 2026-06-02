@@ -59,7 +59,7 @@ COLOR_STOP_LINE_GLOW = rl.Color(255, 30, 60, 255)
 COLOR_STOP_LINE_CORE = rl.Color(255, 200, 200, 255)
 
 # Set to True to force test-cycle mode (flip back to False before pushing)
-TEST_CYCLE = True
+TEST_CYCLE = False
 
 
 # --- Conversion helpers ---
@@ -170,7 +170,7 @@ def _build_curve_gauge_data(curvature: float, target_speed: float, v_cruise: flo
 # --- Force stop ---
 
 def _is_force_stop() -> bool:
-  return _get_val("starpilotPlan", "forcingStop", False)
+  return _get_val("starpilotPlan", "forcingStop", False) and not _get_val("starpilotPlan", "redLight", False)
 
 def _force_stop_data() -> AetherGaugeData:
   v_ego = _get_val("carState", "vEgo", 0.0)
@@ -184,7 +184,7 @@ def _force_stop_data() -> AetherGaugeData:
 # --- CEM: Stop light / stop sign ---
 
 def _is_stop_light() -> bool:
-  return ui_state.conditional_status == CEM_STATUS_STOP_LIGHT and _sm_valid("starpilotPlan")
+  return _get_val("starpilotPlan", "experimentalMode", False) and _get_val("starpilotPlan", "redLight", False)
 
 def _stop_light_data() -> AetherGaugeData:
   dist = 0.0
@@ -220,7 +220,7 @@ def _curve_speed_data() -> AetherGaugeData:
 # --- CEM: Curvature (non-CSC) ---
 
 def _is_curvature() -> bool:
-  return ui_state.conditional_status == CEM_STATUS_CURVE and _sm_valid("starpilotPlan")
+  return _get_val("starpilotPlan", "experimentalMode", False) and abs(_get_val("starpilotPlan", "roadCurvature", 0.0)) > 0.0012
 
 def _curvature_data() -> AetherGaugeData:
   csc_speed = _get_val("starpilotPlan", "cscSpeed", 0.0)
@@ -234,7 +234,8 @@ def _curvature_data() -> AetherGaugeData:
 # --- CEM: Lead vehicle (graphic only, no numeric) ---
 
 def _is_lead() -> bool:
-  return (ui_state.conditional_status == CEM_STATUS_LEAD
+  return (_get_val("starpilotPlan", "experimentalMode", False)
+          and _get_val("starpilotPlan", "trackingLead", False)
           and _sm_valid("radarState")
           and ui_state.sm["radarState"].leadOne.status)
 
@@ -247,6 +248,12 @@ def _lead_data() -> AetherGaugeData:
     indicator_type=IndicatorType.LEAD, indicator_value=lead.dRel,
     indicator_extra="stopped" if is_stopped else "slower",
   )
+
+
+
+
+
+
 
 
 # --- Test cycle source (debug only, module-level state) ---
