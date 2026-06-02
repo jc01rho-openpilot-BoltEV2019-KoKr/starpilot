@@ -61,6 +61,8 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_kia_ev6_ff_scale,
   get_kia_ev6_friction_scale,
   get_kia_ev6_friction_threshold,
+  get_sonata_center_taper_scale,
+  get_sonata_ff_scale,
   get_sonata_hybrid_center_taper_scale,
   get_sonata_hybrid_ff_scale,
   get_volt_standard_center_taper_scale,
@@ -243,6 +245,26 @@ class TestLatControl:
     assert get_sonata_hybrid_center_taper_scale(0.0, 3.0) < get_sonata_hybrid_center_taper_scale(0.0, 10.0)
     assert get_sonata_hybrid_center_taper_scale(0.0, 30.0) < get_sonata_hybrid_center_taper_scale(0.20, 30.0) <= 1.0
 
+  def test_sonata_ff_scale_curve(self):
+    assert get_sonata_ff_scale(0.0, 0.0, 20.0) == 1.0
+    steady_left = get_sonata_ff_scale(0.45, 0.0, 8.0)
+    steady_right = get_sonata_ff_scale(-0.45, 0.0, 8.0)
+    turn_in_left = get_sonata_ff_scale(0.45, 0.8, 8.0)
+    turn_in_right = get_sonata_ff_scale(-0.45, -0.8, 8.0)
+    unwind_left = get_sonata_ff_scale(0.45, -0.8, 8.0)
+    unwind_right = get_sonata_ff_scale(-0.45, 0.8, 8.0)
+    assert steady_left < 1.0
+    assert steady_right < steady_left
+    assert turn_in_left > steady_left
+    assert turn_in_right == pytest.approx(steady_right)
+    assert unwind_left < steady_left
+    assert unwind_right == pytest.approx(steady_right)
+
+  def test_sonata_center_taper_curve(self):
+    assert get_sonata_center_taper_scale(0.0, 30.0) < get_sonata_center_taper_scale(0.0, 15.0)
+    assert get_sonata_center_taper_scale(0.0, 3.0) < get_sonata_center_taper_scale(0.0, 10.0)
+    assert get_sonata_center_taper_scale(0.0, 30.0) < get_sonata_center_taper_scale(0.20, 30.0) <= 1.0
+
   def test_elantra_non_scc_ff_scale_curve(self):
     assert get_elantra_non_scc_ff_scale(0.0, 0.0, 20.0) == 1.0
     steady_left = get_elantra_non_scc_ff_scale(0.45, 0.0, 8.0)
@@ -352,9 +374,9 @@ class TestLatControl:
     assert steady_left < 1.0
     assert steady_right < steady_left
     assert turn_in_left > steady_left
-    assert turn_in_right >= steady_right
+    assert turn_in_right > steady_right
     assert unwind_left < steady_left
-    assert unwind_right > unwind_left
+    assert unwind_right < unwind_left
 
   def test_ioniq_5_friction_curves(self):
     base = get_friction_threshold(12.0)
@@ -363,18 +385,17 @@ class TestLatControl:
     unwind_left_threshold = get_ioniq_5_friction_threshold(12.0, 0.7, -0.8)
     unwind_right_threshold = get_ioniq_5_friction_threshold(12.0, -0.7, 0.8)
     assert turn_in_left_threshold < base
-    assert turn_in_right_threshold == pytest.approx(base)
+    assert turn_in_left_threshold < turn_in_right_threshold < base
     assert unwind_left_threshold > base
-    assert unwind_right_threshold < unwind_left_threshold
+    assert unwind_right_threshold > unwind_left_threshold
 
     turn_in_left_scale = get_ioniq_5_friction_scale(12.0, 0.7, 0.8)
     turn_in_right_scale = get_ioniq_5_friction_scale(12.0, -0.7, -0.8)
     unwind_left_scale = get_ioniq_5_friction_scale(12.0, 0.7, -0.8)
     unwind_right_scale = get_ioniq_5_friction_scale(12.0, -0.7, 0.8)
-    assert turn_in_left_scale > 1.0
-    assert turn_in_right_scale == pytest.approx(1.0)
+    assert turn_in_left_scale > turn_in_right_scale > 1.0
     assert unwind_left_scale < 1.0
-    assert unwind_right_scale > unwind_left_scale
+    assert unwind_right_scale <= unwind_left_scale
 
   def test_ioniq_5_center_taper_curve(self):
     assert get_ioniq_5_center_taper_scale(0.0, 25.0) < get_ioniq_5_center_taper_scale(0.0, 10.0)
@@ -536,6 +557,16 @@ class TestLatControl:
 
     assert lac_log.active
     assert controller.torque_params.latAccelFactor == pytest.approx(CP.lateralTuning.torque.latAccelFactor * 0.98)
+
+  def test_sonata_default_update_path(self):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_SONATA)
+    CarInterface = interfaces[HYUNDAI.HYUNDAI_SONATA]
+    CP = CarInterface.get_non_essential_params(HYUNDAI.HYUNDAI_SONATA)
+
+    _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert lac_log.active
+    assert controller.torque_params.latAccelFactor == pytest.approx(CP.lateralTuning.torque.latAccelFactor)
 
   def test_ioniq_5_default_update_path(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_IONIQ_5)

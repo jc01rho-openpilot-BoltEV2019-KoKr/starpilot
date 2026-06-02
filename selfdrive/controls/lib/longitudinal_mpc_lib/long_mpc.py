@@ -499,9 +499,9 @@ class LongitudinalMpc:
 
     # Adjust filter time constants for complex scenes
     if abs(filter_time_factor - getattr(self, 'prev_filter_time_factor', 1.0)) > 0.05:
+      new_filter_time = self.current_filter_time * filter_time_factor
       current_a = self.lead_a_filter.x if hasattr(self.lead_a_filter, 'x') else 0.0
       current_v = self.lead_v_filter.x if hasattr(self.lead_v_filter, 'x') else 0.0
-      new_filter_time = self.current_filter_time * filter_time_factor
       self.lead_a_filter = FirstOrderFilter(current_a, new_filter_time, self.dt)
       self.lead_v_filter = FirstOrderFilter(current_v, new_filter_time, self.dt)
       self.prev_filter_time_factor = filter_time_factor
@@ -640,7 +640,6 @@ class LongitudinalMpc:
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
     self.status = tracking_lead and (lead_one.status or lead_two.status)
-
     lead_xv_0 = self.process_lead(lead_one, tracking_lead, t_follow=t_follow)
     lead_xv_1 = self.process_lead(lead_two, tracking_lead, t_follow=t_follow)
 

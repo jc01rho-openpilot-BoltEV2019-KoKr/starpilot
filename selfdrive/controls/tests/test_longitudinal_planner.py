@@ -1826,3 +1826,77 @@ def test_near_duplicate_lead_source_hysteresis_skips_distinct_leads():
 
   assert lead_0_bias == 0.0
   assert lead_1_bias == 0.0
+
+
+def test_near_duplicate_lead_transition_target_damps_same_source_sign_flip():
+  v_ego = 25.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=44.6, v_lead=24.05, a_lead=-0.03, radar=False, model_prob=0.99)
+  lead_two = make_lead(status=True, d_rel=45.1, v_lead=24.0, a_lead=-0.04, radar=False, model_prob=0.99)
+  lead_one.vRel = -0.95
+  lead_two.vRel = -1.00
+  planner.lead_one = lead_one
+  planner.lead_two = lead_two
+
+  smoothed = planner.get_near_duplicate_lead_transition_target(
+    lead_two,
+    v_ego,
+    1.45,
+    prev_output_a_target=-1.10,
+    output_a_target=0.13,
+    current_source="lead1",
+    tracking_lead_active=True,
+  )
+
+  assert smoothed is not None
+  assert smoothed == pytest.approx(-0.92, abs=1e-6)
+
+
+def test_near_duplicate_lead_transition_target_damps_tracking_cruise_sign_flip():
+  v_ego = 25.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=44.6, v_lead=24.05, a_lead=-0.03, radar=False, model_prob=0.99)
+  lead_two = make_lead(status=True, d_rel=45.1, v_lead=24.0, a_lead=-0.04, radar=False, model_prob=0.99)
+  lead_one.vRel = -0.95
+  lead_two.vRel = -1.00
+  planner.lead_one = lead_one
+  planner.lead_two = lead_two
+
+  smoothed = planner.get_near_duplicate_lead_transition_target(
+    lead_two,
+    v_ego,
+    1.45,
+    prev_output_a_target=-1.10,
+    output_a_target=0.13,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert smoothed is not None
+  assert smoothed == pytest.approx(-0.92, abs=1e-6)
+
+
+def test_near_duplicate_lead_transition_target_skips_plain_cruise_without_tracking():
+  v_ego = 25.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=44.6, v_lead=24.05, a_lead=-0.03, radar=False, model_prob=0.99)
+  lead_two = make_lead(status=True, d_rel=45.1, v_lead=24.0, a_lead=-0.04, radar=False, model_prob=0.99)
+  lead_one.vRel = -0.95
+  lead_two.vRel = -1.00
+  planner.lead_one = lead_one
+  planner.lead_two = lead_two
+
+  smoothed = planner.get_near_duplicate_lead_transition_target(
+    lead_two,
+    v_ego,
+    1.45,
+    prev_output_a_target=-1.10,
+    output_a_target=0.13,
+    current_source="cruise",
+    tracking_lead_active=False,
+  )
+
+  assert smoothed is None

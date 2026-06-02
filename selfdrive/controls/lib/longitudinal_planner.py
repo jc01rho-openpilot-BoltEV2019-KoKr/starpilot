@@ -237,6 +237,17 @@ MATCHED_FOLLOW_TRANSITION_MAX_POSITIVE_STEP = 0.18
 MATCHED_FOLLOW_TRANSITION_MIN_NEGATIVE_STEP = 0.08
 MATCHED_FOLLOW_TRANSITION_MAX_NEGATIVE_STEP = 0.16
 MATCHED_FOLLOW_TRANSITION_SIGN_CROSS_STEP = 0.10
+NEAR_DUPLICATE_LEAD_TRANSITION_MIN_SPEED = 20.0
+NEAR_DUPLICATE_LEAD_TRANSITION_MIN_MODEL_PROB = 0.95
+NEAR_DUPLICATE_LEAD_TRANSITION_MAX_LEAD_BRAKE = 0.35
+NEAR_DUPLICATE_LEAD_TRANSITION_MAX_CLOSING_SPEED = 3.5
+NEAR_DUPLICATE_LEAD_TRANSITION_MIN_TTC = 8.0
+NEAR_DUPLICATE_LEAD_TRANSITION_MIN_HEADWAY_BELOW_TARGET = 0.45
+NEAR_DUPLICATE_LEAD_TRANSITION_MAX_HEADWAY_ABOVE_TARGET = 0.85
+NEAR_DUPLICATE_LEAD_TRANSITION_MIN_DELTA_A = 0.35
+NEAR_DUPLICATE_LEAD_TRANSITION_POSITIVE_STEP = 0.22
+NEAR_DUPLICATE_LEAD_TRANSITION_NEGATIVE_STEP = 0.32
+NEAR_DUPLICATE_LEAD_TRANSITION_SIGN_CROSS_STEP = 0.18
 TRACKED_VISION_MODEL_FLOOR_MIN_SPEED = 10.0
 TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_PROB = 0.95
 TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_DECEL = 0.80
@@ -1275,6 +1286,58 @@ class LongitudinalPlanner:
     smoothed_target = float(np.clip(output_a_target, lower, upper))
     return smoothed_target if abs(smoothed_target - float(output_a_target)) > 1e-6 else None
 
+  def get_near_duplicate_lead_transition_target(self, lead, v_ego, base_t_follow,
+                                                prev_output_a_target, output_a_target,
+                                                current_source, tracking_lead_active):
+    if lead is None or not lead.status:
+      return None
+    if current_source not in ("lead0", "lead1") and not tracking_lead_active:
+      return None
+    if not (self.lead_one.status and self.lead_two.status):
+      return None
+    if not self.mpc.leads_are_near_duplicates(self.lead_one, self.lead_two, v_ego):
+      return None
+    if float(v_ego) < NEAR_DUPLICATE_LEAD_TRANSITION_MIN_SPEED:
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 0.0))
+    if bool(getattr(lead, "radar", False)) or lead_prob < NEAR_DUPLICATE_LEAD_TRANSITION_MIN_MODEL_PROB:
+      return None
+
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    if lead_brake > NEAR_DUPLICATE_LEAD_TRANSITION_MAX_LEAD_BRAKE:
+      return None
+
+    relative_speed = float(v_ego) - float(lead.vLead)
+    closing_speed = max(0.0, relative_speed)
+    if closing_speed > NEAR_DUPLICATE_LEAD_TRANSITION_MAX_CLOSING_SPEED:
+      return None
+
+    ttc = float(lead.dRel) / max(closing_speed, 0.1) if closing_speed > 0.1 else float("inf")
+    if ttc < NEAR_DUPLICATE_LEAD_TRANSITION_MIN_TTC:
+      return None
+
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    if actual_headway < max(0.0, float(base_t_follow) - NEAR_DUPLICATE_LEAD_TRANSITION_MIN_HEADWAY_BELOW_TARGET):
+      return None
+    if actual_headway > float(base_t_follow) + NEAR_DUPLICATE_LEAD_TRANSITION_MAX_HEADWAY_ABOVE_TARGET:
+      return None
+
+    target_delta = float(output_a_target) - float(prev_output_a_target)
+    if abs(target_delta) < NEAR_DUPLICATE_LEAD_TRANSITION_MIN_DELTA_A:
+      return None
+
+    positive_step = NEAR_DUPLICATE_LEAD_TRANSITION_POSITIVE_STEP
+    negative_step = NEAR_DUPLICATE_LEAD_TRANSITION_NEGATIVE_STEP
+    if float(prev_output_a_target) * float(output_a_target) < 0.0:
+      positive_step = min(positive_step, NEAR_DUPLICATE_LEAD_TRANSITION_SIGN_CROSS_STEP)
+      negative_step = min(negative_step, NEAR_DUPLICATE_LEAD_TRANSITION_SIGN_CROSS_STEP)
+
+    lower = float(prev_output_a_target) - negative_step
+    upper = float(prev_output_a_target) + positive_step
+    smoothed_target = float(np.clip(output_a_target, lower, upper))
+    return smoothed_target if abs(smoothed_target - float(output_a_target)) > 1e-6 else None
+
   def get_tracked_vision_model_brake_floor(self, lead, v_ego, accel_min, t_follow, model_desired):
     if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
       return None
@@ -1989,6 +2052,23 @@ class LongitudinalPlanner:
         else:
           self.a_desired = max(self.a_desired, matched_follow_transition_target)
         output_a_target = matched_follow_transition_target
+
+    if optional_far_lead_comfort and comfort_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
+      near_duplicate_transition_target = self.get_near_duplicate_lead_transition_target(
+        comfort_lead,
+        scene_v_ego,
+        effective_t_follow,
+        prev_output_a_target,
+        output_a_target,
+        self.mpc.source,
+        bool(getattr(sm["starpilotPlan"], "trackingLead", False)),
+      )
+      if near_duplicate_transition_target is not None:
+        if near_duplicate_transition_target < output_a_target:
+          self.a_desired = min(self.a_desired, near_duplicate_transition_target)
+        else:
+          self.a_desired = max(self.a_desired, near_duplicate_transition_target)
+        output_a_target = near_duplicate_transition_target
 
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))

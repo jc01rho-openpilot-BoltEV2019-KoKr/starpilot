@@ -130,6 +130,9 @@ IONIQ_6_CARS = (
 SONATA_HYBRID_CARS = (
   HYUNDAI_CAR.HYUNDAI_SONATA_HYBRID,
 )
+SONATA_CARS = (
+  HYUNDAI_CAR.HYUNDAI_SONATA,
+)
 ELANTRA_NON_SCC_CARS = (
   HYUNDAI_CAR.HYUNDAI_ELANTRA_2022_NON_SCC,
   HYUNDAI_CAR.HYUNDAI_ELANTRA_HEV_2022_NON_SCC,
@@ -272,6 +275,29 @@ SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_LAT_WIDTH = 0.02
 SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_SPEED_MAX = 7.5
 SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_SPEED_WIDTH = 1.0
 
+SONATA_FF_REDUCTION_LEFT = 0.04
+SONATA_FF_REDUCTION_RIGHT = 0.26
+SONATA_FF_ONSET = 0.18
+SONATA_FF_ONSET_WIDTH = 0.08
+SONATA_FF_CUTOFF = 1.40
+SONATA_FF_CUTOFF_WIDTH = 0.42
+SONATA_TRANSITION_SPEED = 8.5
+SONATA_PHASE_SCALE = 0.12
+SONATA_TURN_IN_BOOST_LEFT = 0.18
+SONATA_TURN_IN_BOOST_RIGHT = 0.00
+SONATA_UNWIND_TAPER_LEFT = 0.28
+SONATA_UNWIND_TAPER_RIGHT = 0.00
+SONATA_CENTER_TAPER_MAX = 0.04
+SONATA_CENTER_TAPER_LAT = 0.15
+SONATA_CENTER_TAPER_LAT_WIDTH = 0.025
+SONATA_CENTER_TAPER_SPEED = 22.0
+SONATA_CENTER_TAPER_SPEED_WIDTH = 2.5
+SONATA_LOW_SPEED_CENTER_TAPER_MAX = 0.08
+SONATA_LOW_SPEED_CENTER_TAPER_LAT = 0.10
+SONATA_LOW_SPEED_CENTER_TAPER_LAT_WIDTH = 0.02
+SONATA_LOW_SPEED_CENTER_TAPER_SPEED_MAX = 7.0
+SONATA_LOW_SPEED_CENTER_TAPER_SPEED_WIDTH = 1.0
+
 ELANTRA_NON_SCC_FF_ADJUST_LEFT = 0.02
 ELANTRA_NON_SCC_FF_ADJUST_RIGHT = -0.02
 ELANTRA_NON_SCC_FF_ONSET = 0.14
@@ -359,26 +385,26 @@ IONIQ_5_FF_ONSET = 0.10
 IONIQ_5_FF_ONSET_WIDTH = 0.05
 IONIQ_5_FF_CUTOFF = 1.20
 IONIQ_5_FF_CUTOFF_WIDTH = 0.30
-IONIQ_5_TRANSITION_SPEED = 11.0
+IONIQ_5_TRANSITION_SPEED = 12.5
 IONIQ_5_PHASE_SCALE = 0.10
 IONIQ_5_FF_REDUCTION_LEFT = 0.12
 IONIQ_5_FF_REDUCTION_RIGHT = 0.22
-IONIQ_5_TURN_IN_BOOST_LEFT = 0.11
-IONIQ_5_TURN_IN_BOOST_RIGHT = 0.00
-IONIQ_5_UNWIND_TAPER_LEFT = 0.68
-IONIQ_5_UNWIND_TAPER_RIGHT = 0.64
+IONIQ_5_TURN_IN_BOOST_LEFT = 0.14
+IONIQ_5_TURN_IN_BOOST_RIGHT = 0.06
+IONIQ_5_UNWIND_TAPER_LEFT = 0.76
+IONIQ_5_UNWIND_TAPER_RIGHT = 0.86
 IONIQ_5_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.08
-IONIQ_5_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.00
-IONIQ_5_UNWIND_THRESHOLD_INCREASE_LEFT = 0.32
-IONIQ_5_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.24
+IONIQ_5_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.05
+IONIQ_5_UNWIND_THRESHOLD_INCREASE_LEFT = 0.36
+IONIQ_5_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.38
 IONIQ_5_TURN_IN_FRICTION_BOOST_LEFT = 0.04
-IONIQ_5_TURN_IN_FRICTION_BOOST_RIGHT = 0.00
-IONIQ_5_UNWIND_FRICTION_REDUCTION_LEFT = 0.30
-IONIQ_5_UNWIND_FRICTION_REDUCTION_RIGHT = 0.22
-IONIQ_5_CENTER_TAPER_MAX = 0.12
-IONIQ_5_CENTER_TAPER_LAT = 0.13
+IONIQ_5_TURN_IN_FRICTION_BOOST_RIGHT = 0.03
+IONIQ_5_UNWIND_FRICTION_REDUCTION_LEFT = 0.34
+IONIQ_5_UNWIND_FRICTION_REDUCTION_RIGHT = 0.34
+IONIQ_5_CENTER_TAPER_MAX = 0.14
+IONIQ_5_CENTER_TAPER_LAT = 0.12
 IONIQ_5_CENTER_TAPER_LAT_WIDTH = 0.03
-IONIQ_5_CENTER_TAPER_SPEED = 16.5
+IONIQ_5_CENTER_TAPER_SPEED = 16.0
 IONIQ_5_CENTER_TAPER_SPEED_WIDTH = 2.5
 
 IONIQ_EV_OLD_BASE_LAT_ACCEL_FACTOR_MULT = 1.16
@@ -1019,6 +1045,53 @@ def get_sonata_hybrid_center_taper_scale(desired_lateral_accel: float, v_ego: fl
   low_speed_center_weight = _sonata_hybrid_sigmoid((SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
                                                    SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_LAT_WIDTH)
   reduction += SONATA_HYBRID_LOW_SPEED_CENTER_TAPER_MAX * low_speed_weight * low_speed_center_weight
+  return 1.0 - reduction
+
+
+def _sonata_sigmoid(x: float) -> float:
+  return _sigmoid(x)
+
+
+def _sonata_low_speed_factor(v_ego: float) -> float:
+  return 1.0 / (1.0 + (max(v_ego, 0.0) / SONATA_TRANSITION_SPEED) ** 2)
+
+
+def _sonata_transition_phase(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  return math.tanh((desired_lateral_accel * desired_lateral_jerk) / SONATA_PHASE_SCALE)
+
+
+def _sonata_side_value(desired_lateral_accel: float, left_value: float, right_value: float) -> float:
+  return left_value if desired_lateral_accel >= 0.0 else right_value
+
+
+def get_sonata_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  if desired_lateral_accel == 0.0:
+    return 1.0
+
+  abs_lateral_accel = abs(desired_lateral_accel)
+  onset = _sonata_sigmoid((abs_lateral_accel - SONATA_FF_ONSET) / SONATA_FF_ONSET_WIDTH)
+  cutoff = _sonata_sigmoid((SONATA_FF_CUTOFF - abs_lateral_accel) / SONATA_FF_CUTOFF_WIDTH)
+  base_reduction = _sonata_side_value(desired_lateral_accel, SONATA_FF_REDUCTION_LEFT, SONATA_FF_REDUCTION_RIGHT) * onset * cutoff
+  phase = _sonata_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  low_speed_factor = _sonata_low_speed_factor(v_ego)
+  turn_in_boost = 1.0 + (_sonata_side_value(desired_lateral_accel, SONATA_TURN_IN_BOOST_LEFT, SONATA_TURN_IN_BOOST_RIGHT) *
+                         turn_in_weight * low_speed_factor)
+  unwind_taper = 1.0 - (_sonata_side_value(desired_lateral_accel, SONATA_UNWIND_TAPER_LEFT, SONATA_UNWIND_TAPER_RIGHT) *
+                        unwind_weight * (0.35 + 0.65 * low_speed_factor))
+  return (1.0 - base_reduction) * turn_in_boost * max(unwind_taper, 0.0)
+
+
+def get_sonata_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _sonata_sigmoid((v_ego - SONATA_CENTER_TAPER_SPEED) / SONATA_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _sonata_sigmoid((SONATA_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / SONATA_CENTER_TAPER_LAT_WIDTH)
+  reduction = SONATA_CENTER_TAPER_MAX * speed_weight * center_weight
+  low_speed_weight = _sonata_sigmoid((SONATA_LOW_SPEED_CENTER_TAPER_SPEED_MAX - v_ego) /
+                                     SONATA_LOW_SPEED_CENTER_TAPER_SPEED_WIDTH)
+  low_speed_center_weight = _sonata_sigmoid((SONATA_LOW_SPEED_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                                            SONATA_LOW_SPEED_CENTER_TAPER_LAT_WIDTH)
+  reduction += SONATA_LOW_SPEED_CENTER_TAPER_MAX * low_speed_weight * low_speed_center_weight
   return 1.0 - reduction
 
 
@@ -1678,6 +1751,7 @@ class LatControlTorque(LatControl):
     self.is_ioniq_5 = CP.carFingerprint in IONIQ_5_CARS
     self.is_ioniq_ev_old = CP.carFingerprint in IONIQ_EV_OLD_CARS
     self.is_ioniq_6 = CP.carFingerprint in IONIQ_6_CARS
+    self.is_sonata = CP.carFingerprint in SONATA_CARS
     self.is_sonata_hybrid = CP.carFingerprint in SONATA_HYBRID_CARS
     self.is_elantra_non_scc = CP.carFingerprint in ELANTRA_NON_SCC_CARS
     self.is_kia_forte = CP.carFingerprint in KIA_FORTE_CARS
@@ -1809,6 +1883,7 @@ class LatControlTorque(LatControl):
       ioniq_5_active = self.is_ioniq_5
       ioniq_ev_old_active = self.is_ioniq_ev_old
       ioniq_6_active = self.is_ioniq_6
+      sonata_active = self.is_sonata
       sonata_hybrid_active = self.is_sonata_hybrid
       elantra_non_scc_active = self.is_elantra_non_scc
       kia_forte_active = self.is_kia_forte
@@ -1818,6 +1893,7 @@ class LatControlTorque(LatControl):
       volt_standard_center_taper = get_volt_standard_center_taper_scale(setpoint, CS.vEgo) if volt_standard_test_active else 1.0
       ioniq_ev_old_center_taper = get_ioniq_ev_old_center_taper_scale(setpoint, CS.vEgo) if ioniq_ev_old_active else 1.0
       ioniq_6_center_taper = get_ioniq_6_center_taper_scale(setpoint, CS.vEgo) if ioniq_6_active else 1.0
+      sonata_center_taper = get_sonata_center_taper_scale(setpoint, CS.vEgo) if sonata_active else 1.0
       sonata_hybrid_center_taper = get_sonata_hybrid_center_taper_scale(setpoint, CS.vEgo) if sonata_hybrid_active else 1.0
       kia_forte_center_taper = get_kia_forte_center_taper_scale(setpoint, CS.vEgo) if kia_forte_active else 1.0
       kia_ev6_center_taper = get_kia_ev6_center_taper_scale(setpoint, CS.vEgo) if kia_ev6_test_active else 1.0
@@ -1859,6 +1935,8 @@ class LatControlTorque(LatControl):
         friction_threshold = get_ioniq_6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk) / max(ioniq_6_center_taper, 1e-3)
         friction_scale = get_ioniq_6_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = 1.0 + ((friction_scale - 1.0) * ioniq_6_center_taper)
+      elif sonata_active:
+        ff *= get_sonata_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * sonata_center_taper
       elif sonata_hybrid_active:
         ff *= get_sonata_hybrid_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * sonata_hybrid_center_taper
       elif elantra_non_scc_active:
