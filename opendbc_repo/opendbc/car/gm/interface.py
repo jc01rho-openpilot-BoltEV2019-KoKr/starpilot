@@ -659,7 +659,6 @@ class CarInterface(CarInterfaceBase):
 
     volt_stock_auto_hold_safety = (
       gm_auto_hold and
-      not ret.openpilotLongitudinalControl and
       candidate in {
         CAR.CHEVROLET_VOLT,
         CAR.CHEVROLET_VOLT_2019,
@@ -668,8 +667,10 @@ class CarInterface(CarInterfaceBase):
       }
     )
     if volt_stock_auto_hold_safety:
-      # Reuse the paddle-scheduler safety bit as a stock-Volt auto-hold marker on
-      # non-pedal paths. The scheduler logic remains inactive without pedal-long.
+      # Reuse the paddle-scheduler safety bit as a Volt auto-hold marker on
+      # non-pedal paths. Hold can run while OP longitudinal is configured but
+      # not currently active, so the bit must be present regardless of the
+      # current long-control mode.
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
 
     use_panda_3d1_sched = (
