@@ -1167,7 +1167,7 @@ class TestHyundaiFingerprint:
     assert parser.vl["FCA12"]["FCA_DrvSetState"] == 2
     assert parser.vl["FCA12"]["FCA_USM"] == 2
 
-  def test_angle_steering_uses_adas_cmd_with_send_lfa(self):
+  def test_angle_steering_uses_lfa_and_adas_cmd_with_send_lfa(self):
     fingerprint = gen_empty_fingerprint()
     cam_can = CanBus(None, fingerprint).CAM
     fingerprint[cam_can][0xCB] = 24
@@ -1180,6 +1180,7 @@ class TestHyundaiFingerprint:
     can_bus = CanBus(CP)
     msgs = hyundaicanfd.create_steering_messages(packer, CP, can_bus, True, True, 1.0, 12.3)
     assert [(packer.dbc.addr_to_msg[addr].name, bus) for addr, _, bus in msgs] == [
+      ("LFA", can_bus.ECAN),
       ("ADAS_CMD_35_10ms", can_bus.ECAN),
     ]
 

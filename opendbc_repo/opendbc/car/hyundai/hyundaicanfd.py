@@ -138,6 +138,9 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
   else:
     if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
       if CP.flags & HyundaiFlags.SEND_LFA:
+        # Some CAN-FD angle-steering trims still expect the stock-style LFA status/UI
+        # message to remain present even though angle actuation comes through ADAS_CMD.
+        ret.append(packer.make_can_msg("LFA", CAN.ECAN, lfa_values))
         ret.append(_create_angle_adas_cmd_msg(packer, CAN, apply_angle, lat_active, apply_torque))
       else:
         ret.append(_create_angle_lfa_msg(packer, CAN, lfa_values, apply_angle, lat_active, apply_torque))
