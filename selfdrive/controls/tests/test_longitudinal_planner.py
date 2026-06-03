@@ -17,7 +17,7 @@ from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 
 
 def make_lead(*, status: bool, d_rel: float = 200.0, v_lead: float = 0.0, a_lead: float = 0.0,
-              radar: bool = False, model_prob: float = 0.0):
+              radar: bool = False, model_prob: float = 0.0, y_rel: float = 0.0):
   lead = log.RadarState.LeadData.new_message()
   lead.status = status
   lead.dRel = d_rel
@@ -26,6 +26,7 @@ def make_lead(*, status: bool, d_rel: float = 200.0, v_lead: float = 0.0, a_lead
   lead.aLeadK = a_lead
   lead.vRel = 0.0
   lead.aRel = 0.0
+  lead.yRel = y_rel
   lead.modelProb = model_prob
   lead.radar = radar
   return lead
@@ -33,6 +34,7 @@ def make_lead(*, status: bool, d_rel: float = 200.0, v_lead: float = 0.0, a_lead
 
 def make_model(v_ego: float, desired_accel: float, gas_press_prob: float = 1.0, brake_press_prob: float = 0.0):
   model = log.ModelDataV2.new_message()
+  model.init('leadsV3', 3)
   t_idxs = ModelConstants.T_IDXS
 
   model.position.x = [float(v_ego * t) for t in t_idxs]
@@ -55,6 +57,15 @@ def make_model(v_ego: float, desired_accel: float, gas_press_prob: float = 1.0, 
   model.action.desiredAcceleration = desired_accel
   model.action.shouldStop = False
   return model
+
+
+def set_model_lead(model, idx: int, *, prob: float, x0: float, y0: float, v0: float, a0: float = 0.0):
+  lead = model.leadsV3[idx]
+  lead.prob = float(prob)
+  lead.x = [float(x0)]
+  lead.y = [float(y0)]
+  lead.v = [float(v0)]
+  lead.a = [float(a0)]
 
 
 def make_sm(v_ego: float, desired_accel: float, min_accel: float, *, experimental_mode: bool = True,
@@ -1233,7 +1244,7 @@ def test_standstill_moving_lead_depart_accel_hold_cancels_if_lead_brakes(model_v
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
-def test_standstill_radar_only_lead_does_not_trigger_depart_accel(model_version):
+def test_standstill_radar_depart_kept_when_radar_lead_is_centered(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=0.0)
 
@@ -1243,21 +1254,45 @@ def test_standstill_radar_only_lead_does_not_trigger_depart_accel(model_version)
     min_accel=-0.5,
     experimental_mode=False,
     tracking_lead=False,
-    lead_one=make_lead(status=True, d_rel=11.2, v_lead=0.63, a_lead=0.36, radar=True, model_prob=0.998),
+    lead_one=make_lead(status=True, d_rel=11.2, v_lead=0.63, a_lead=0.36, radar=True, model_prob=0.998, y_rel=0.2),
   )
   sm["carState"].standstill = True
   sm["controlsState"].longControlState = LongCtrlState.stopping
   sm["starpilotPlan"].vCruise = 10.0
   sm["modelV2"].action.shouldStop = False
+  set_model_lead(sm["modelV2"], 0, prob=0.999, x0=12.2, y0=0.03, v0=0.4)
 
   planner.update(sm, make_toggles(model_version))
 
-  assert planner.output_should_stop
-  assert planner.output_a_target <= 0.0
+  assert planner.output_a_target >= longitudinal_planner_module.STANDSTILL_LEAD_DEPART_MIN_ACCEL
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
-def test_low_speed_radar_only_lead_does_not_trigger_depart_accel_hold(model_version):
+def test_standstill_radar_depart_blocks_offcenter_radar_conflict(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+
+  sm = make_sm(
+    0.0,
+    desired_accel=0.45,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=False,
+    lead_one=make_lead(status=True, d_rel=11.2, v_lead=0.63, a_lead=0.36, radar=True, model_prob=0.998, y_rel=2.3),
+  )
+  sm["carState"].standstill = True
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["starpilotPlan"].vCruise = 10.0
+  sm["modelV2"].action.shouldStop = False
+  set_model_lead(sm["modelV2"], 0, prob=0.999, x0=12.2, y0=0.03, v0=0.4)
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert planner.output_a_target < longitudinal_planner_module.STANDSTILL_LEAD_DEPART_MIN_ACCEL
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
+def test_low_speed_radar_depart_hold_blocks_offcenter_radar_conflict(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=1.25)
 
@@ -1267,16 +1302,17 @@ def test_low_speed_radar_only_lead_does_not_trigger_depart_accel_hold(model_vers
     min_accel=-0.5,
     experimental_mode=False,
     tracking_lead=False,
-    lead_one=make_lead(status=True, d_rel=9.95, v_lead=0.43, a_lead=0.44, radar=True, model_prob=0.999),
+    lead_one=make_lead(status=True, d_rel=9.95, v_lead=0.43, a_lead=0.44, radar=True, model_prob=0.999, y_rel=2.2),
   )
   sm["carState"].standstill = False
   sm["controlsState"].longControlState = LongCtrlState.pid
   sm["starpilotPlan"].vCruise = 10.0
   sm["modelV2"].action.shouldStop = False
+  set_model_lead(sm["modelV2"], 0, prob=0.999, x0=11.4, y0=0.0, v0=0.2)
 
   planner.update(sm, make_toggles(model_version))
 
-  assert planner.output_a_target <= 0.0
+  assert planner.output_a_target < longitudinal_planner_module.STANDSTILL_LEAD_DEPART_MIN_ACCEL
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
