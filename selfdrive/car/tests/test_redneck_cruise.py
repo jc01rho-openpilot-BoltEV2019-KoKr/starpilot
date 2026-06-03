@@ -119,6 +119,17 @@ class TestRedneckCruise(unittest.TestCase):
     )
     self.assertAlmostEqual(120.0 * CV.KPH_TO_MS, target_speed)
 
+  def test_target_speed_ignores_plan_drift_during_free_cruise(self):
+    target_speed = select_redneck_target_speed(
+      104.4,
+      63.0 * CV.MPH_TO_MS,
+      0.0,
+      [62.55 * CV.MPH_TO_MS, 62.44 * CV.MPH_TO_MS, 62.36 * CV.MPH_TO_MS],
+      10,
+      allow_plan_decrease=False,
+    )
+    self.assertAlmostEqual(104.4 * CV.KPH_TO_MS, target_speed)
+
   def test_target_speed_returns_plan_minimum_when_slowing_down(self):
     target_speed = select_redneck_target_speed(
       120.0,
@@ -126,6 +137,7 @@ class TestRedneckCruise(unittest.TestCase):
       0.0,
       [74.0 * CV.MPH_TO_MS, 72.0 * CV.MPH_TO_MS, 71.0 * CV.MPH_TO_MS],
       10,
+      allow_plan_decrease=True,
     )
     self.assertAlmostEqual(71.0 * CV.MPH_TO_MS, target_speed)
 

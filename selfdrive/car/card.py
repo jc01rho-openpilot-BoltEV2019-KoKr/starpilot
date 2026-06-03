@@ -398,12 +398,16 @@ class Car:
 
   def _get_redneck_target_speed(self, CS: car.CarState) -> float:
     starpilot_target_speed = 0.0
+    allow_plan_decrease = False
     if self.sm.seen['starpilotPlan'] and self.sm.valid['starpilotPlan']:
       starpilot_target_speed = float(self.sm['starpilotPlan'].vCruise)
 
     plan_speeds = []
     if self.sm.seen['longitudinalPlan'] and self.sm.valid['longitudinalPlan']:
-      plan_speeds = [float(speed) for speed in self.sm['longitudinalPlan'].speeds if math.isfinite(float(speed))]
+      longitudinal_plan = self.sm['longitudinalPlan']
+      plan_speeds = [float(speed) for speed in longitudinal_plan.speeds if math.isfinite(float(speed))]
+      allow_plan_decrease = bool(longitudinal_plan.hasLead or longitudinal_plan.shouldStop or
+                                 str(longitudinal_plan.longitudinalPlanSource) != "cruise")
 
     return select_redneck_target_speed(
       float(getattr(CS, "vCruise", 0.0)),
@@ -411,6 +415,7 @@ class Car:
       starpilot_target_speed,
       plan_speeds,
       REDNECK_DECREASE_LOOKAHEAD_POINTS,
+      allow_plan_decrease=allow_plan_decrease,
     )
 
   def _advance_redneck_button_feedback_filter(self) -> None:
