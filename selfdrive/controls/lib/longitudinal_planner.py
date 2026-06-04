@@ -1978,7 +1978,8 @@ class LongitudinalPlanner:
       lead.dRel >= standstill_nudge_gap + STANDSTILL_LEAD_DEPART_MIN_GAP_MARGIN
       for lead in (self.lead_one, self.lead_two)
     )
-    depart_safety_veto = self.has_offcenter_radar_depart_conflict(sm)
+    depart_safety_veto = (not bool(getattr(starpilot_toggles, "radar_takeoffs", False))
+                          and self.has_offcenter_radar_depart_conflict(sm))
 
     if lead_control_active and sm['carState'].standstill and moving_leads and not depart_safety_veto:
       output_a_target = max(output_a_target, STANDSTILL_LEAD_NUDGE_ACCEL)

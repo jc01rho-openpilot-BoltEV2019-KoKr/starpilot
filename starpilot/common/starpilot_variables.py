@@ -1128,6 +1128,7 @@ class StarPilotVariables:
     toggle.force_stops = self.get_value("ForceStops", condition=quality_of_life_longitudinal)
     toggle.force_stop_distance_offset = self.get_value("ForceStopDistanceOffset", cast=int, condition=(quality_of_life_longitudinal and toggle.force_stops))
     toggle.force_standstill = self.get_value("ForceStandstill", condition=quality_of_life_longitudinal)
+    toggle.radar_takeoffs = self.get_value("RadarTakeoffs", condition=quality_of_life_longitudinal)
     toggle.increase_stopped_distance = self.get_value("IncreasedStoppedDistance", cast=float, condition=quality_of_life_longitudinal, conversion=distance_conversion)
     map_gears = self.get_value("MapGears", condition=quality_of_life_longitudinal)
     toggle.map_acceleration = self.get_value("MapAcceleration", condition=map_gears)

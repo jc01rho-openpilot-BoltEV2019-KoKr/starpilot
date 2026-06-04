@@ -240,6 +240,11 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                    get_value=lambda: f"{self._params.get_int('ForceStopDistanceOffset'):+d} ft",
                    on_click=lambda: self._show_slider("ForceStopDistanceOffset", -20, 20, unit=" ft"),
                    visible=lambda: self._params.get_bool("QOLLongitudinal") and self._params.get_bool("ForceStops")),
+        SettingRow("RadarTakeoffs", "toggle", tr_noop("Radar for Takeoffs"),
+                   subtitle=tr_noop("Turns on/off using radar data to track leads at standstill, making following/takeoffs more responsive once leads move."),
+                   get_state=lambda: self._params.get_bool("RadarTakeoffs"),
+                   set_state=lambda s: self._params.put_bool("RadarTakeoffs", s),
+                   visible=lambda: self._params.get_bool("QOLLongitudinal") and starpilot_state.car_state.hasRadar),
       ], tab_key="daily", column_pair="daily"),
       SettingSection(tr_noop("Standstill & Gears"), [
         SettingRow("ForceStandstill", "toggle", tr_noop("Force Standstill"),

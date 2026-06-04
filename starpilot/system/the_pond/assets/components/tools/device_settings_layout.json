@@ -1086,6 +1086,14 @@
         "parent_key": "QOLLongitudinal"
       },
       {
+        "key": "RadarTakeoffs",
+        "label": "Radar for Takeoffs",
+        "description": "Turns on/off using radar data to track leads at standstill, making following/takeoffs more responsive once leads move.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLLongitudinal"
+      },
+      {
         "key": "IncreasedStoppedDistance",
         "label": "Increase Stopped Distance by:",
         "description": "Add extra space when stopped behind vehicles. Increase for more room; decrease for shorter gaps.",

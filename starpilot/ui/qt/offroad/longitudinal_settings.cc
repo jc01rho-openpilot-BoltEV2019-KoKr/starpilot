@@ -159,6 +159,7 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
     {"ForceStops", tr("Force Stop at \"Detected\" Stop Lights/Signs"), tr("<b>Force openpilot to stop whenever the driving model \"detects\" a red light or stop sign.</b><br><br><i><b>Disclaimer</b>: openpilot does not explicitly detect traffic lights or stop signs. In \"Experimental Mode\", openpilot makes end-to-end driving decisions from camera input, which means it may stop even when there's no clear reason!</i>"), ""},
     {"ForceStopDistanceOffset", tr("Force Stop Distance Offset"), tr("<b>Tune where Force Stops bring the car to rest.</b> Positive values let the car roll further before stopping (longer stop, closer to the line). Negative values stop the car sooner (more buffer before the line)."), ""},
     {"ForceStandstill", tr("Force Standstill State"), tr("<b>Keep openpilot in the standstill state until you press the gas pedal or the Resume/+ cruise button.</b><br><br>This applies to any engaged stop, not just red lights or stop signs."), ""},
+    {"RadarTakeoffs", tr("Radar for Takeoffs"), tr("<b>Turns on/off using radar data to track leads at standstill</b>, making following/takeoffs more responsive once leads move."), ""},
     {"IncreasedStoppedDistance", tr("Increase Stopped Distance by:"), tr("<b>Add extra space when stopped behind vehicles.</b> Increase for more room; decrease for shorter gaps."), ""},
     {"MapGears", tr("Map Accel/Decel to Gears"), tr("<b>Map the Acceleration or Deceleration profiles to the vehicle's \"Eco\" and \"Sport\" gear modes.</b>"), ""},
     {"SetSpeedOffset", tr("Offset Set Speed by:"), tr("<b>Increase the set speed by the chosen offset.</b> For example, set +5 if you usually drive 5 over the limit."), ""},
@@ -997,6 +998,10 @@ void StarPilotLongitudinalPanel::updateToggles() {
       }
 
       else if (key == "HumanLaneChanges") {
+        setVisible &= parent->hasRadar;
+      }
+
+      else if (key == "RadarTakeoffs") {
         setVisible &= parent->hasRadar;
       }
 

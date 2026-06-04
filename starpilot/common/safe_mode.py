@@ -79,6 +79,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "QOLLongitudinal",
   "ForceStops",
   "ForceStandstill",
+  "RadarTakeoffs",
   "IncreasedStoppedDistance",
   "MapGears",
   "MapAcceleration",
