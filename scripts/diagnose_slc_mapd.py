@@ -28,12 +28,23 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import types
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 import requests
 
 # ── StarPilot / openpilot imports ──────────────────────────────────────────
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# smbus2 is a hardware I2C library only present on comma's tici device.
+# On PC it's never installed, and SMBus is never called (the TICI flag is
+# False). Stub it so the eager import chain in openpilot.system.hardware
+# succeeds without installing tici-only platform dependencies.
+_smbus2 = types.ModuleType('smbus2')
+_smbus2.SMBus = None
+sys.modules['smbus2'] = _smbus2
 
 from openpilot.common.constants import CV
 from openpilot.tools.lib.auth import login as oauth_login
