@@ -47,6 +47,23 @@ def make_random_images(keys, shape, device=None):
   return {k: Tensor.randint(shape, low=0, high=256, dtype='uint8', device=device).realize() for k in keys}
 
 
+def make_random_blob_images(keys, size, device=None):
+  keepalive: list[np.ndarray] = []
+
+  def _make_random_blob_images():
+    nonlocal keepalive
+    keepalive = []
+    tensors = {}
+    for key in keys:
+      frame_np = (32 * np.random.randn(size).astype(np.float32) + 128).clip(0, 255).astype(np.uint8)
+      keepalive.append(frame_np)
+      # Match runtime's Tensor.from_blob camera input ABI so TinyJit captures the same view shape.
+      tensors[key] = Tensor.from_blob(frame_np.ctypes.data, (size,), dtype='uint8', device=device).realize()
+    return tensors
+
+  return _make_random_blob_images
+
+
 def warp_perspective_tinygrad(src_flat, M_inv, dst_shape, src_shape, stride_pad, border_fill_val=None):
   w_dst, h_dst = dst_shape
   h_src, w_src = src_shape
@@ -319,7 +336,7 @@ if __name__ == "__main__":
 
   for cam_w, cam_h in args.camera_resolutions:
     nv12 = NV12Frame(cam_w, cam_h, *get_nv12_info(cam_w, cam_h))
-    make_random_warp_inputs = partial(make_random_images, keys=['frame', 'big_frame'], shape=nv12.size, device=WARP_DEV)
+    make_random_warp_inputs = make_random_blob_images(keys=['frame', 'big_frame'], size=nv12.size, device=WARP_DEV)
     warp_enqueue = TinyJit(make_warp(nv12, model_w, model_h, args.frame_skip), prune=True)
     make_warp_queues = partial(make_warp_input_queues, out['metadata']['vision']['input_shapes'], args.frame_skip)
     out[(cam_w,cam_h)] = compile_jit(warp_enqueue, make_random_warp_inputs, WARP_INPUTS, make_warp_queues)
