@@ -447,7 +447,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"QOLLateral", {PERSISTENT, BOOL, "1", "0", 1}},
     {"QOLLongitudinal", {PERSISTENT, BOOL, "1", "0", 1}},
     {"QOLVisuals", {PERSISTENT, BOOL, "1", "0", 0}},
-    {"RadarTakeoffs", {PERSISTENT, BOOL, "0", "0", 2}},
+    {"RadarTakeoffs", {PERSISTENT, BOOL, "1", "0", 2}},
     {"RadarTracksUI", {PERSISTENT, BOOL, "0", "0", 3}},
     {"RainbowPath", {PERSISTENT, BOOL, "0", "0", 1}},
     {"RandomEvents", {PERSISTENT, BOOL, "0", "0", 1}},
