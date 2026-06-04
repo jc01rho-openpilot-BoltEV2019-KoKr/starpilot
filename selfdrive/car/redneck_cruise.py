@@ -34,7 +34,7 @@ def select_redneck_target_speed(v_cruise_kph: float, speed_cluster_ms: float,
 
   if allow_plan_decrease and len(plan_speeds_ms) > 0:
     decrease_target_speed_ms = min(plan_speeds_ms[:lookahead_points])
-    if decrease_target_speed_ms < min(target_speed_ms, float(speed_cluster_ms)):
+    if decrease_target_speed_ms < target_speed_ms:
       return decrease_target_speed_ms
 
   return target_speed_ms

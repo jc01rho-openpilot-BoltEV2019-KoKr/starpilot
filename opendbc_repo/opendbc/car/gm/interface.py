@@ -609,6 +609,12 @@ class CarInterface(CarInterfaceBase):
       ret.startAccel = 1.15
       ret.vEgoStarting = max(ret.vEgoStarting, 0.35)
 
+    if ret.openpilotLongitudinalControl and candidate in (CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_SILVERADO_CC) and not ret.enableGasInterceptorDEPRECATED:
+      ret.longitudinalTuning.kpBP = [0.0, 5.0, 15.0, 35.0]
+      ret.longitudinalTuning.kpV = [0.02, 0.03, 0.028, 0.022]
+      ret.longitudinalTuning.kiBP = [0.0, 5.0, 15.0, 35.0]
+      ret.longitudinalTuning.kiV = [0.28, 0.26, 0.20, 0.16]
+
     elif candidate in CC_ONLY_CAR and not ret.enableGasInterceptorDEPRECATED:
       ret.flags |= GMFlags.CC_LONG.value
       ret.alphaLongitudinalAvailable = False

@@ -194,6 +194,17 @@ LOW_SPEED_FOLLOW_TRANSITION_PREV_ACCEL_MIN = 0.18
 LOW_SPEED_FOLLOW_TRANSITION_TARGET_BRAKE_MIN = -0.18
 LOW_SPEED_FOLLOW_TRANSITION_MAX_BRAKE = 0.14
 LOW_SPEED_FOLLOW_TRANSITION_MIN_BRAKE = 0.08
+CRUISE_TRACKED_LEAD_ACCEL_CAP_MIN_SPEED = 10.0
+CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_SPEED = 20.0
+CRUISE_TRACKED_LEAD_ACCEL_CAP_MIN_MODEL_PROB = 0.85
+CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LEAD_BRAKE = 0.25
+CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_PULLAWAY_SPEED = 1.0
+CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_GAP_BUFFER_MIN = 12.0
+CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_GAP_BUFFER_GAIN = 0.9
+CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LATERAL_OFFSET = 1.15
+CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MIN_CLOSING_SPEED = 1.5
+CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MAX_LEAD_DELTA = 0.25
+CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_ACCEL = 0.18
 
 # Uncertainty-based filter disable thresholds
 UNCERT_SLOPE_TRIG = 0.12  # per second
@@ -1153,6 +1164,61 @@ class LongitudinalPlanner:
       [LOW_SPEED_FOLLOW_TRANSITION_MIN_BRAKE, LOW_SPEED_FOLLOW_TRANSITION_MAX_BRAKE],
     ))
     return -cap_decel
+
+  def get_cruise_tracking_lead_accel_cap(self, lead, v_ego, t_follow, current_source, tracking_lead_active):
+    if lead is None or not lead.status or current_source != "cruise":
+      return None
+    if not (CRUISE_TRACKED_LEAD_ACCEL_CAP_MIN_SPEED <= float(v_ego) <= CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_SPEED):
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 1.0 if bool(getattr(lead, "radar", False)) else 0.0))
+    if not bool(getattr(lead, "radar", False)) and lead_prob < CRUISE_TRACKED_LEAD_ACCEL_CAP_MIN_MODEL_PROB:
+      return None
+
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    if lead_brake > CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LEAD_BRAKE:
+      return None
+
+    if abs(float(getattr(lead, "yRel", 0.0))) > CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LATERAL_OFFSET:
+      return None
+
+    lead_delta = float(lead.vLead) - float(v_ego)
+    if lead_delta > CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_PULLAWAY_SPEED:
+      return None
+
+    closing_speed = max(float(v_ego) - float(lead.vLead), 0.0)
+    raw_close_lead = self.raw_close_lead_needs_control(lead, v_ego)
+    unresolved_slow_lead = (
+      closing_speed >= CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MIN_CLOSING_SPEED and
+      lead_delta <= CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MAX_LEAD_DELTA
+    )
+    if not tracking_lead_active and not raw_close_lead and not unresolved_slow_lead:
+      return None
+
+    desired_gap = float(desired_follow_distance(v_ego, lead.vLead, t_follow))
+    gap_error = float(lead.dRel) - desired_gap
+    gap_buffer = max(CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_GAP_BUFFER_MIN,
+                     CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_GAP_BUFFER_GAIN * float(v_ego))
+    if gap_error > gap_buffer:
+      return None
+
+    base_cap = float(np.interp(
+      lead_delta,
+      [-1.5, -0.5, 0.0, 0.5, CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_PULLAWAY_SPEED],
+      [0.0, 0.04, 0.08, 0.12, 0.16],
+    ))
+
+    if raw_close_lead:
+      base_cap = min(base_cap, float(np.interp(closing_speed, [0.5, 1.5, 3.5], [0.10, 0.05, 0.0])))
+    else:
+      base_cap = min(base_cap, float(np.interp(closing_speed, [0.0, 1.0, 2.0], [0.18, 0.12, 0.06])))
+
+    if gap_error <= 0.0:
+      return max(0.0, base_cap)
+
+    gap_factor = float(np.clip(gap_error / max(gap_buffer, 0.1), 0.0, 1.0))
+    cap = min(CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_ACCEL, base_cap + 0.06 * gap_factor)
+    return max(0.0, cap)
 
   def lead_is_matched_follow_window(self, lead, v_ego, base_t_follow):
     if lead is None or not lead.status or v_ego < STEADY_FOLLOW_SMOOTHING_MIN_SPEED:
@@ -2176,6 +2242,18 @@ class LongitudinalPlanner:
         else:
           self.a_desired = max(self.a_desired, near_duplicate_transition_target)
         output_a_target = near_duplicate_transition_target
+
+    if follow_control_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
+      cruise_tracking_lead_accel_cap = self.get_cruise_tracking_lead_accel_cap(
+        follow_control_lead,
+        scene_v_ego,
+        effective_t_follow,
+        self.mpc.source,
+        tracking_lead,
+      )
+      if cruise_tracking_lead_accel_cap is not None:
+        self.a_desired = min(self.a_desired, cruise_tracking_lead_accel_cap)
+        output_a_target = min(output_a_target, cruise_tracking_lead_accel_cap)
 
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))

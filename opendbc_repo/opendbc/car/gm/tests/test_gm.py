@@ -117,6 +117,21 @@ class TestGMInterface:
     assert car_params.flags & GMFlags.NO_CAMERA.value
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_CAMERA.value
 
+  def test_silverado_alpha_long_uses_trimmed_longitudinal_tune(self):
+    CarInterface = interfaces[CAR.CHEVROLET_SILVERADO]
+    fingerprint = _empty_fingerprint()
+    fingerprint[0] = FINGERPRINTS[CAR.CHEVROLET_SILVERADO][0].copy()
+
+    car_params = CarInterface.get_params(CAR.CHEVROLET_SILVERADO, fingerprint, [], alpha_long=True, is_release=False,
+                                         docs=False, starpilot_toggles=_test_starpilot_toggles())
+
+    assert car_params.openpilotLongitudinalControl
+    assert not car_params.enableGasInterceptorDEPRECATED
+    assert list(car_params.longitudinalTuning.kpBP) == pytest.approx([0.0, 5.0, 15.0, 35.0])
+    assert list(car_params.longitudinalTuning.kpV) == pytest.approx([0.02, 0.03, 0.028, 0.022])
+    assert list(car_params.longitudinalTuning.kiBP) == pytest.approx([0.0, 5.0, 15.0, 35.0])
+    assert list(car_params.longitudinalTuning.kiV) == pytest.approx([0.28, 0.26, 0.20, 0.16])
+
   def test_volt_gateway_without_accel_pos_uses_brake_pedal_message(self):
     CarInterface = interfaces[CAR.CHEVROLET_VOLT]
     fingerprint = _empty_fingerprint()

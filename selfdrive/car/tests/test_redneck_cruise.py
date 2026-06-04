@@ -141,6 +141,17 @@ class TestRedneckCruise(unittest.TestCase):
     )
     self.assertAlmostEqual(71.0 * CV.MPH_TO_MS, target_speed)
 
+  def test_target_speed_stays_on_lead_target_when_cluster_drops_below_it(self):
+    target_speed = select_redneck_target_speed(
+      76.9,
+      32.9 * CV.MPH_TO_MS,
+      47.8 * CV.MPH_TO_MS,
+      [37.3 * CV.MPH_TO_MS, 37.2 * CV.MPH_TO_MS, 37.1 * CV.MPH_TO_MS],
+      10,
+      allow_plan_decrease=True,
+    )
+    self.assertAlmostEqual(37.1 * CV.MPH_TO_MS, target_speed)
+
 
 if __name__ == "__main__":
   unittest.main()

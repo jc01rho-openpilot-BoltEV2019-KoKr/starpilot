@@ -1996,6 +1996,59 @@ def test_matched_follow_transition_target_skips_low_speed_real_braking():
   assert smoothed is None
 
 
+def test_cruise_tracking_lead_accel_cap_limits_mid_speed_follow_nibble():
+  v_ego = 16.2
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=33.4, v_lead=16.0, a_lead=0.0, radar=False, model_prob=0.99, y_rel=0.12)
+
+  cap = planner.get_cruise_tracking_lead_accel_cap(
+    lead,
+    v_ego,
+    1.45,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert cap is not None
+  assert 0.05 <= cap <= 0.10
+
+
+def test_cruise_tracking_lead_accel_cap_blocks_unresolved_raw_close_lead_burst():
+  v_ego = 17.6
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=41.9, v_lead=14.2, a_lead=0.0, radar=True, model_prob=0.99, y_rel=-0.97)
+
+  cap = planner.get_cruise_tracking_lead_accel_cap(
+    lead,
+    v_ego,
+    1.45,
+    current_source="cruise",
+    tracking_lead_active=False,
+  )
+
+  assert cap is not None
+  assert 0.0 <= cap <= 0.05
+
+
+def test_cruise_tracking_lead_accel_cap_skips_when_lead_clearly_pulls_away():
+  v_ego = 14.5
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=35.0, v_lead=16.0, a_lead=0.0, radar=False, model_prob=0.99, y_rel=0.1)
+
+  cap = planner.get_cruise_tracking_lead_accel_cap(
+    lead,
+    v_ego,
+    1.45,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert cap is None
+
+
 def test_near_duplicate_lead_source_hysteresis_prefers_previous_source():
   v_ego = 27.0
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
