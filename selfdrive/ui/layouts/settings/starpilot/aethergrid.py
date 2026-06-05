@@ -481,6 +481,37 @@ def draw_soft_card(rect: rl.Rectangle, fill: rl.Color, border: rl.Color, radius:
   _draw_rounded_stroke(rect, border, radius_px=radius_px, segments=segments)
 
 
+def draw_status_badges(
+  start_x: float,
+  y: float,
+  items: list[str],
+  style: PanelStyle,
+  *,
+  height: float = 28.0,
+  font_size: int = 15,
+  gap: float = 8.0,
+  padding_x: float = 18.0,
+  text_color: rl.Color = AetherListColors.HEADER,
+):
+  badge_x = start_x
+  font = gui_app.font(FontWeight.BOLD)
+  for item in items:
+    text_size = measure_text_cached(font, item, font_size)
+    badge_w = text_size.x + padding_x
+    badge_rect = rl.Rectangle(badge_x, y, badge_w, height)
+
+    fill_color = _with_alpha(style.accent, 24)
+    border_color = _with_alpha(style.accent, 80)
+    _draw_rounded_fill(badge_rect, fill_color, radius_px=8)
+    _draw_rounded_stroke(badge_rect, border_color, radius_px=8)
+
+    text_x = badge_rect.x + (badge_rect.width - text_size.x) / 2
+    text_y = badge_rect.y + (badge_rect.height - text_size.y) / 2
+    rl.draw_text_ex(font, item, rl.Vector2(round(text_x), round(text_y)), font_size, 0, text_color)
+
+    badge_x += badge_w + gap
+
+
 def draw_list_row_shell(
   rect: rl.Rectangle,
   *,
