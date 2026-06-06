@@ -35,7 +35,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_status_badges,
 )
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
-from openpilot.selfdrive.ui.mici.layouts.settings.fingerprint_catalog import (
+from openpilot.selfdrive.ui.lib.fingerprint_catalog import (
   FingerprintModelOption,
   get_fingerprint_catalog,
   shorten_model_label,
@@ -605,20 +605,24 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
         def on_confirm(res):
           if res == DialogResult.CONFIRM:
             self._params.put_bool("DisableOpenpilotLongitudinal", True)
+            starpilot_state.update(force=True)
             if starpilot_state.started:
               HARDWARE.reboot()
         gui_app.push_widget(ConfirmDialog(tr("Disable openpilot longitudinal control?"), tr("Disable"), callback=on_confirm))
       else:
         self._params.put_bool("DisableOpenpilotLongitudinal", False)
+        starpilot_state.update(force=True)
       return
     if param_key == "RemapCancelToDistance":
       new_state = not self._params.get_bool("RemapCancelToDistance")
       self._params.put_bool("RemapCancelToDistance", new_state)
       if new_state:
         migrate_cancel_button_controls(self._params)
+      starpilot_state.update(force=True)
       return
     current = self._params.get_bool(param_key) if self._params.get(param_key) is not None else False
     self._params.put_bool(param_key, not current)
+    starpilot_state.update(force=True)
 
   def _on_select(self, key: str):
     if key == "CarMake":
@@ -648,7 +652,7 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
         if current_model not in available:
           self._params.remove("CarModel")
           self._params.remove("CarModelName")
-        starpilot_state.update()
+        starpilot_state.update(force=True)
 
     dialog = MultiOptionDialog(tr("Select Make"), makes, default_make, callback=on_select)
     gui_app.push_widget(dialog)
@@ -676,7 +680,7 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
         self._params.put("CarModel", opt.value)
         self._params.put("CarModelName", opt.label)
         self._params.put("CarMake", make)
-        starpilot_state.update()
+        starpilot_state.update(force=True)
 
     dialog = MultiOptionDialog(tr("Select Model"), option_labels, default_option, callback=on_select)
     gui_app.push_widget(dialog)
