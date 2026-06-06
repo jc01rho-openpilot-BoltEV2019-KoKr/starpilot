@@ -573,6 +573,8 @@ struct CarParams {
     kfDEPRECATED @6 :Float32;
     deadzoneBPDEPRECATED @4 :List(Float32);
     deadzoneVDEPRECATED @5 :List(Float32);
+    kdBP @7 :List(Float32);
+    kdV @8 :List(Float32);
   }
 
   struct LateralINDITuning {

@@ -556,9 +556,12 @@ class CarInterface(CarInterfaceBase):
         ret.longitudinalTuning.kiV = [0.09, 0.13, 0.19, 0.28]
 
         if candidate in BOLT_PEDAL_LONG_CARS:
-          ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
-          ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
-          ret.longitudinalTuning.kfDEPRECATED = 0.20
+          ret.longitudinalTuning.kpV = [0.085, 0.075, 0.060, 0.045]
+          ret.longitudinalTuning.kiV = [0.05, 0.07, 0.10, 0.13]
+          ret.longitudinalTuning.kfDEPRECATED = 0.18
+          ret.longitudinalTuning.kdBP = [0.0, 5.0, 15.0, 35.0]
+          ret.longitudinalTuning.kdV = [0.15, 0.12, 0.10, 0.08]
+          ret.longitudinalActuatorDelay = 0.7
         else:
           ret.longitudinalTuning.kfDEPRECATED = 0.25
 
@@ -577,10 +580,13 @@ class CarInterface(CarInterfaceBase):
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PEDAL_LONG.value
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_BOLT_2022_PEDAL.value
       ret.longitudinalTuning.kpBP = [0.0, 5.0, 15.0, 35.0]
-      ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
+      ret.longitudinalTuning.kpV = [0.085, 0.075, 0.060, 0.045]
       ret.longitudinalTuning.kiBP = [0.0, 3.0, 6.0, 35.0]
-      ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
-      ret.longitudinalTuning.kfDEPRECATED = 0.20
+      ret.longitudinalTuning.kiV = [0.05, 0.07, 0.10, 0.13]
+      ret.longitudinalTuning.kfDEPRECATED = 0.18
+      ret.longitudinalTuning.kdBP = [0.0, 5.0, 15.0, 35.0]
+      ret.longitudinalTuning.kdV = [0.15, 0.12, 0.10, 0.08]
+      ret.longitudinalActuatorDelay = 0.7
       ret.stoppingDecelRate = 0.8
       ret.minEnableSpeed = -1
       ret.pcmCruise = False
