@@ -283,9 +283,9 @@ class Car:
     CS.vCruise = float(self.v_cruise_helper.v_cruise_kph)
     CS.vCruiseCluster = float(self.v_cruise_helper.v_cruise_cluster_kph)
 
-    if any(be.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for be in filtered_CS.buttonEvents):
+    if any(be.type in (ButtonType.accelCruise, ButtonType.accelHardCruise, ButtonType.resumeCruise) for be in filtered_CS.buttonEvents):
       self.resume_prev_button = True
-    elif any(be.type in (ButtonType.decelCruise, ButtonType.setCruise) for be in filtered_CS.buttonEvents):
+    elif any(be.type in (ButtonType.decelCruise, ButtonType.decelHardCruise, ButtonType.setCruise) for be in filtered_CS.buttonEvents):
       self.resume_prev_button = False
 
     FPCS = self.starpilot_card.update(CS, FPCS, self.sm, self.starpilot_toggles)

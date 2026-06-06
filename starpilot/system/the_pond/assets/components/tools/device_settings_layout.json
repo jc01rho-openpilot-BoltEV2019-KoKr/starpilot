@@ -3219,6 +3219,13 @@
         "description": "Only enable this if the wide camera is broken or for development!\n\nDisabling the wide camera may degrade driving performance and cause instability.\n\nRequires a reboot to take effect.",
         "data_type": "bool",
         "ui_type": "toggle"
+      },
+      {
+        "key": "AllowImpossibleAcceleration",
+        "label": "Allow Impossible Acceleration",
+        "description": "WARNING: This suppresses openpilot's excessive longitudinal actuation diagnostic when measured acceleration looks impossible for the requested gas/brake command.\n\nLeave this OFF unless you are intentionally testing edge cases like shifting to neutral and understand that it can hide a real actuation problem.",
+        "data_type": "bool",
+        "ui_type": "toggle"
       }
     ]
   }

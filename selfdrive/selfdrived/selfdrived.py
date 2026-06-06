@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import os
 import time
 import threading
@@ -71,6 +72,9 @@ class SelfdriveD:
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
     self.excessive_actuation_check = ExcessiveActuationCheck()
+    self.allow_impossible_acceleration = self.params.get_bool("AllowImpossibleAcceleration")
+    if self.allow_impossible_acceleration:
+      self.clear_longitudinal_excessive_actuation_alert()
     self.excessive_actuation = self.params.get("Offroad_ExcessiveActuation") is not None
 
     # Setup sockets
@@ -172,6 +176,32 @@ class SelfdriveD:
 
     self.FPCP = messaging.log_from_bytes(self.params.get("StarPilotCarParams", block=True), custom.StarPilotCarParams)
 
+  def clear_longitudinal_excessive_actuation_alert(self):
+    alert = self.params.get("Offroad_ExcessiveActuation")
+    if not alert:
+      return
+
+    if isinstance(alert, bytes):
+      try:
+        alert = json.loads(alert.decode("utf-8", errors="replace"))
+      except json.JSONDecodeError:
+        return
+    elif isinstance(alert, str):
+      try:
+        alert = json.loads(alert)
+      except json.JSONDecodeError:
+        return
+
+    if not isinstance(alert, dict):
+      return
+
+    extra = alert.get("extra", "")
+    if isinstance(extra, bytes):
+      extra = extra.decode("utf-8", errors="replace")
+
+    if str(extra).strip().lower() == "longitudinal":
+      self.params.remove("Offroad_ExcessiveActuation")
+
   def update_events(self, CS):
     """Compute onroadEvents from carState"""
 
@@ -221,7 +251,7 @@ class SelfdriveD:
       return
 
     # Block resume if cruise never previously enabled
-    resume_pressed = any(be.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for be in CS.buttonEvents)
+    resume_pressed = any(be.type in (ButtonType.accelCruise, ButtonType.accelHardCruise, ButtonType.resumeCruise) for be in CS.buttonEvents)
     if not self.CP.pcmCruise and CS.vCruise > 250 and resume_pressed:
       self.events.add(EventName.resumeBlocked)
 
@@ -332,7 +362,9 @@ class SelfdriveD:
       self.calibrated_pose = self.pose_calibrator.build_calibrated_pose(device_pose)
 
     if self.calibrated_pose is not None:
-      excessive_actuation = self.excessive_actuation_check.update(self.sm, CS, self.calibrated_pose)
+      excessive_actuation = self.excessive_actuation_check.update(
+        self.sm, CS, self.calibrated_pose, self.allow_impossible_acceleration
+      )
       if not self.excessive_actuation and excessive_actuation is not None:
         set_offroad_alert("Offroad_ExcessiveActuation", True, extra_text=str(excessive_actuation))
         self.excessive_actuation = True

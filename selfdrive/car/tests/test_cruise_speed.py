@@ -1,5 +1,6 @@
 import pytest
 import itertools
+import math
 import numpy as np
 
 from parameterized import parameterized_class
@@ -100,6 +101,62 @@ class TestVCruiseHelper:
           starpilot_toggles=self.starpilot_toggles,
         )
         assert pressed == (self.v_cruise_helper.v_cruise_kph == self.v_cruise_helper.v_cruise_kph_last)
+
+  def test_hard_press_uses_long_press_interval(self):
+    self.enable(52 * CV.MPH_TO_MS, False)
+    initial_v_cruise_kph = self.v_cruise_helper.v_cruise_kph
+
+    pressed_cs = car.CarState(cruiseState={"available": True})
+    pressed_cs.buttonEvents = [ButtonEvent(type=ButtonType.accelHardCruise, pressed=True)]
+    self.v_cruise_helper.update_v_cruise(
+      pressed_cs,
+      enabled=True,
+      is_metric=False,
+      speed_limit_changed=False,
+      starpilot_toggles=self.starpilot_toggles,
+    )
+
+    released_cs = car.CarState(cruiseState={"available": True})
+    released_cs.buttonEvents = [ButtonEvent(type=ButtonType.accelHardCruise, pressed=False)]
+    self.v_cruise_helper.update_v_cruise(
+      released_cs,
+      enabled=True,
+      is_metric=False,
+      speed_limit_changed=False,
+      starpilot_toggles=self.starpilot_toggles,
+    )
+
+    hard_interval = self.starpilot_toggles.cruise_increase_long * IMPERIAL_INCREMENT
+    expected_kph = math.ceil(initial_v_cruise_kph / hard_interval) * hard_interval
+    assert self.v_cruise_helper.v_cruise_kph == pytest.approx(expected_kph)
+
+  def test_hard_decel_press_uses_long_press_interval(self):
+    self.enable(52 * CV.MPH_TO_MS, False)
+    initial_v_cruise_kph = self.v_cruise_helper.v_cruise_kph
+
+    pressed_cs = car.CarState(cruiseState={"available": True})
+    pressed_cs.buttonEvents = [ButtonEvent(type=ButtonType.decelHardCruise, pressed=True)]
+    self.v_cruise_helper.update_v_cruise(
+      pressed_cs,
+      enabled=True,
+      is_metric=False,
+      speed_limit_changed=False,
+      starpilot_toggles=self.starpilot_toggles,
+    )
+
+    released_cs = car.CarState(cruiseState={"available": True})
+    released_cs.buttonEvents = [ButtonEvent(type=ButtonType.decelHardCruise, pressed=False)]
+    self.v_cruise_helper.update_v_cruise(
+      released_cs,
+      enabled=True,
+      is_metric=False,
+      speed_limit_changed=False,
+      starpilot_toggles=self.starpilot_toggles,
+    )
+
+    hard_interval = self.starpilot_toggles.cruise_increase_long * IMPERIAL_INCREMENT
+    expected_kph = math.floor(initial_v_cruise_kph / hard_interval) * hard_interval
+    assert self.v_cruise_helper.v_cruise_kph == pytest.approx(expected_kph)
 
   def test_rising_edge_enable(self):
     """

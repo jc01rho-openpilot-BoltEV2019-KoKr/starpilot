@@ -2255,6 +2255,30 @@ def _serialize_param_write_value(raw_value):
     return raw_value.decode("utf-8", errors="replace")
   return str(raw_value or "")
 
+def _offroad_excessive_actuation_type():
+  alert = _safe_params_get_live_raw("Offroad_ExcessiveActuation")
+  if not alert:
+    return ""
+
+  if isinstance(alert, bytes):
+    try:
+      alert = json.loads(alert.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError:
+      return ""
+  elif isinstance(alert, str):
+    try:
+      alert = json.loads(alert)
+    except json.JSONDecodeError:
+      return ""
+
+  if not isinstance(alert, dict):
+    return ""
+
+  extra = alert.get("extra", "")
+  if isinstance(extra, bytes):
+    extra = extra.decode("utf-8", errors="replace")
+  return str(extra).strip().lower()
+
 def _apply_cellular_metered_setting(metered_enabled):
   """Apply GsmMetered changes to active NetworkManager GSM profiles."""
   if not shutil.which("nmcli"):
@@ -3741,6 +3765,18 @@ def setup(app):
 
       if key == "AutomaticUpdates" and params.get_bool("IsOnroad"):
         return jsonify({"error": "Cannot change Automatic Updates while driving."}), 403
+
+      if key == "AllowImpossibleAcceleration":
+        enabled = str_val.strip() in ("1", "true", "True")
+        params.put_bool(key, enabled)
+        if enabled and _offroad_excessive_actuation_type() == "longitudinal":
+          params.remove("Offroad_ExcessiveActuation")
+
+        update_starpilot_toggles()
+        return jsonify({
+          "message": f"Parameter '{key}' updated successfully.",
+          "updated": {key: enabled},
+        }), 200
 
       if key in {"EVTuning", "TruckTuning"}:
         enabled = str_val.strip() in ("1", "true", "True")
