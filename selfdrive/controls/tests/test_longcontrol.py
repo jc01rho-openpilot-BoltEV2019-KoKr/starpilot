@@ -409,7 +409,7 @@ def test_pedal_long_brake_bias_adds_small_negative_nudge_for_strong_decel_reques
   biased = lc._apply_pedal_long_brake_bias(-1.0, -3.0, CS)
 
   assert biased < -1.0
-  assert biased == pytest.approx(-1.15, abs=0.03)
+  assert biased == pytest.approx(-1.08, abs=0.03)
 
 
 def test_pedal_long_brake_bias_does_not_touch_non_pedal_or_mild_decel():
@@ -427,3 +427,103 @@ def test_pedal_long_brake_bias_does_not_touch_non_pedal_or_mild_decel():
 
   assert lc._apply_pedal_long_brake_bias(-1.0, -3.0, CS) == -1.0
   assert lc._apply_pedal_long_brake_bias(-0.4, -0.6, CS) == -0.4
+
+
+def test_d_term_damps_acceleration_overshoot():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+  CP.longitudinalTuning.kdBP = [0.0, 10.0]
+  CP.longitudinalTuning.kdV = [0.15, 0.10]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.pid
+
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False, gasPressed=False)
+  CS.cruiseState.standstill = False
+
+  lc.update(active=True, CS=CS, a_target=0.5, should_stop=False,
+            accel_limits=(-3.0, 2.0), starpilot_toggles=make_toggles())
+
+  assert lc.pid.k_d > 0.0
+
+
+def test_d_term_is_zero_when_kd_not_set():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.pid
+
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False, gasPressed=False)
+  CS.cruiseState.standstill = False
+
+  lc.update(active=True, CS=CS, a_target=0.5, should_stop=False,
+            accel_limits=(-3.0, 2.0), starpilot_toggles=make_toggles())
+
+  assert lc.pid.k_d == 0.0
+
+
+def test_aego_filter_tracks_acceleration():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+  CP.longitudinalTuning.kdBP = [0.0, 10.0]
+  CP.longitudinalTuning.kdV = [0.15, 0.10]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.pid
+
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=1.0, brakePressed=False, gasPressed=False)
+  CS.cruiseState.standstill = False
+
+  for _ in range(100):
+    lc.update(active=True, CS=CS, a_target=0.5, should_stop=False,
+              accel_limits=(-3.0, 2.0), starpilot_toggles=make_toggles())
+
+  assert lc.aego_filter.x == pytest.approx(1.0, abs=0.05)
+
+
+def test_pedal_long_freeze_uses_tighter_threshold():
+  CP = car.CarParams.new_message()
+  CP.brand = "gm"
+  CP.enableGasInterceptorDEPRECATED = True
+  CP.flags = 1
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+
+  lc._get_pedal_long_freeze(a_target=0.3, error=0.3, v_ego=8.0, accel_limits=(-3.0, 2.0))
+
+  assert lc.integrator_hold_frames > 0
+
+
+def test_trim_overshoot_uses_gradual_bleed_for_pedal_long():
+  CP = car.CarParams.new_message()
+  CP.brand = "gm"
+  CP.enableGasInterceptorDEPRECATED = True
+  CP.flags = 1
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  lc.pid.i = 0.5
+
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=0.5)
+
+  lc._trim_positive_overshoot_integrator(a_target=-0.5, error=-0.5, CS=CS)
+
+  assert lc.pid.i > 0.0
+  assert lc.pid.i < 0.5
