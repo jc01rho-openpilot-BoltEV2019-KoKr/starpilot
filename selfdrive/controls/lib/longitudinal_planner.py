@@ -45,6 +45,7 @@ LEAD_DEPART_CONFIDENT_MAX_GAP = 5.25
 LEAD_DEPART_CONFIDENT_MIN_LEAD_SPEED = 0.3
 LEAD_DEPART_CONFIDENT_MIN_LEAD_DELTA = 0.25
 LEAD_DEPART_CONFIDENT_MIN_LEAD_ACCEL = 0.2
+LEAD_DEPART_CONFIDENT_CONFIRM_TIME = 0.35
 RADAR_DEPART_CONFLICT_MAX_EGO_SPEED = 1.6
 RADAR_DEPART_CONFLICT_MIN_RADAR_LATERAL = 1.5
 RADAR_DEPART_CONFLICT_MAX_RADAR_DISTANCE = 18.0
@@ -205,6 +206,16 @@ CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LATERAL_OFFSET = 1.15
 CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MIN_CLOSING_SPEED = 1.5
 CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MAX_LEAD_DELTA = 0.25
 CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_ACCEL = 0.18
+CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_SPEED = 12.0
+CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_SPEED = 22.0
+CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_MODEL_PROB = 0.9
+CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_LEAD_BRAKE = 0.35
+CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_LATERAL_OFFSET = 1.15
+CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_PULLAWAY_SPEED = 2.25
+CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_HEADWAY_ABOVE_TARGET = 0.95
+CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_DELTA_A = 0.18
+CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_STEP = 0.06
+CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_STEP = 0.18
 
 # Uncertainty-based filter disable thresholds
 UNCERT_SLOPE_TRIG = 0.12  # per second
@@ -462,6 +473,7 @@ class LongitudinalPlanner:
     self.v_model_error = 0.0
     self.output_a_target = 0.0
     self.output_should_stop = False
+    self.confident_lead_depart_elapsed = 0.0
 
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
@@ -1219,6 +1231,62 @@ class LongitudinalPlanner:
     gap_factor = float(np.clip(gap_error / max(gap_buffer, 0.1), 0.0, 1.0))
     cap = min(CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_ACCEL, base_cap + 0.06 * gap_factor)
     return max(0.0, cap)
+
+  def get_cruise_tracking_lead_accel_transition_target(self, lead, v_ego, t_follow,
+                                                       prev_output_a_target, output_a_target,
+                                                       current_source):
+    if lead is None or not lead.status or current_source != "cruise":
+      return None
+    if not (CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_SPEED <= float(v_ego) <= CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_SPEED):
+      return None
+
+    target_delta = float(output_a_target) - float(prev_output_a_target)
+    if target_delta < CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_DELTA_A:
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 1.0 if bool(getattr(lead, "radar", False)) else 0.0))
+    if not bool(getattr(lead, "radar", False)) and lead_prob < CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_MODEL_PROB:
+      return None
+
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    if lead_brake > CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_LEAD_BRAKE:
+      return None
+
+    if abs(float(getattr(lead, "yRel", 0.0))) > CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_LATERAL_OFFSET:
+      return None
+
+    lead_delta = float(lead.vLead) - float(v_ego)
+    if lead_delta > CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_PULLAWAY_SPEED:
+      return None
+
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    headway_margin = actual_headway - float(t_follow)
+    if headway_margin > CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_HEADWAY_ABOVE_TARGET:
+      return None
+
+    positive_step = float(np.interp(
+      lead_delta,
+      [-1.0, 0.0, 1.0, CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_PULLAWAY_SPEED],
+      [CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_STEP,
+       0.08,
+       0.12,
+       CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_STEP],
+    ))
+    if headway_margin > 0.0:
+      headway_factor = float(np.clip(
+        headway_margin / max(CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_HEADWAY_ABOVE_TARGET, 1e-3),
+        0.0,
+        1.0,
+      ))
+      positive_step = float(np.interp(
+        headway_factor,
+        [0.0, 1.0],
+        [positive_step, CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_STEP],
+      ))
+
+    upper = float(prev_output_a_target) + positive_step
+    smoothed_target = float(min(output_a_target, upper))
+    return smoothed_target if smoothed_target < float(output_a_target) - 1e-6 else None
 
   def lead_is_matched_follow_window(self, lead, v_ego, base_t_follow):
     if lead is None or not lead.status or v_ego < STEADY_FOLLOW_SMOOTHING_MIN_SPEED:
@@ -2036,8 +2104,8 @@ class LongitudinalPlanner:
     moving_leads = [lead for lead in (self.lead_one, self.lead_two)
                     if lead.status and
                     lead.vLead > STANDSTILL_LEAD_NUDGE_MIN_SPEED and lead.dRel >= standstill_nudge_gap]
-    confident_depart_ready = any(self.is_confident_lead_depart(lead, float(sm['carState'].vEgo))
-                                 for lead in (self.lead_one, self.lead_two))
+    confident_depart_detected = any(self.is_confident_lead_depart(lead, float(sm['carState'].vEgo))
+                                    for lead in (self.lead_one, self.lead_two))
     lead_depart_ready = any(
       lead.status and
       lead.vLead >= STANDSTILL_LEAD_DEPART_MIN_LEAD_SPEED and
@@ -2046,6 +2114,24 @@ class LongitudinalPlanner:
     )
     depart_safety_veto = (not bool(getattr(starpilot_toggles, "radar_takeoffs", False))
                           and self.has_offcenter_radar_depart_conflict(sm))
+    if (
+      lead_control_active and
+      sm['carState'].standstill and
+      not depart_safety_veto and
+      not bool(getattr(sm['starpilotPlan'], 'forcingStop', False)) and
+      not bool(getattr(sm['starpilotPlan'], 'redLight', False)) and
+      confident_depart_detected
+    ):
+      self.confident_lead_depart_elapsed = min(
+        LEAD_DEPART_CONFIDENT_CONFIRM_TIME,
+        self.confident_lead_depart_elapsed + self.dt,
+      )
+    else:
+      self.confident_lead_depart_elapsed = 0.0
+    confident_depart_ready = (
+      confident_depart_detected and
+      self.confident_lead_depart_elapsed >= LEAD_DEPART_CONFIDENT_CONFIRM_TIME
+    )
 
     if lead_control_active and sm['carState'].standstill and moving_leads and not depart_safety_veto:
       output_a_target = max(output_a_target, STANDSTILL_LEAD_NUDGE_ACCEL)
@@ -2254,6 +2340,18 @@ class LongitudinalPlanner:
       if cruise_tracking_lead_accel_cap is not None:
         self.a_desired = min(self.a_desired, cruise_tracking_lead_accel_cap)
         output_a_target = min(output_a_target, cruise_tracking_lead_accel_cap)
+
+      cruise_tracking_lead_transition_target = self.get_cruise_tracking_lead_accel_transition_target(
+        follow_control_lead,
+        scene_v_ego,
+        effective_t_follow,
+        prev_output_a_target,
+        output_a_target,
+        self.mpc.source,
+      )
+      if cruise_tracking_lead_transition_target is not None:
+        self.a_desired = min(self.a_desired, cruise_tracking_lead_transition_target)
+        output_a_target = min(output_a_target, cruise_tracking_lead_transition_target)
 
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))
