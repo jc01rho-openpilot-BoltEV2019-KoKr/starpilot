@@ -36,6 +36,11 @@ BUTTONS_DICT = {CruiseButtons.RES_ACCEL: ButtonType.accelCruise, CruiseButtons.D
 HARD_BUTTONS_DICT = {CruiseButtons.RES_ACCEL: ButtonType.accelHardCruise, CruiseButtons.DECEL_SET: ButtonType.decelHardCruise}
 NORMAL_CRUISE_BUTTONS = (CruiseButtons.RES_ACCEL, CruiseButtons.DECEL_SET)
 
+
+def get_hard_cruise_buttons(steering_button_msg: dict) -> int:
+  return steering_button_msg.get("ACCButtonsHard", CruiseButtons.INIT)
+
+
 GearShifter = structs.CarState.GearShifter
 BOLT_GEN1_CANCEL_PERSONALITY_CARS = {
   CAR.CHEVROLET_BOLT_CC_2017,
@@ -126,20 +131,22 @@ class CarState(CarStateBase):
     prev_hard_cruise_buttons = self.hard_cruise_buttons
     prev_distance_button = self.distance_button
     if not sdgm_non_volt:
-      self.cruise_buttons = pt_cp.vl["ASCMSteeringButton"]["ACCButtons"]
-      self.hard_cruise_buttons = pt_cp.vl["ASCMSteeringButton"]["ACCButtonsHard"]
-      self.distance_button = pt_cp.vl["ASCMSteeringButton"]["DistanceButton"]
-      self.buttons_counter = pt_cp.vl["ASCMSteeringButton"]["RollingCounter"]
-      self.steering_button_checksum = pt_cp.vl["ASCMSteeringButton"]["SteeringButtonChecksum"]
+      steering_button_msg = pt_cp.vl["ASCMSteeringButton"]
+      self.cruise_buttons = steering_button_msg["ACCButtons"]
+      self.hard_cruise_buttons = get_hard_cruise_buttons(steering_button_msg)
+      self.distance_button = steering_button_msg["DistanceButton"]
+      self.buttons_counter = steering_button_msg["RollingCounter"]
+      self.steering_button_checksum = steering_button_msg["SteeringButtonChecksum"]
       self.steering_button_ts_nanos = pt_cp.ts_nanos["ASCMSteeringButton"]["ACCButtons"]
-      acc_always_one = pt_cp.vl["ASCMSteeringButton"]["ACCAlwaysOne"]
-      acc_hidden_bit = pt_cp.vl["ASCMSteeringButton"].get("ACCHiddenBit", 0)
+      acc_always_one = steering_button_msg["ACCAlwaysOne"]
+      acc_hidden_bit = steering_button_msg.get("ACCHiddenBit", 0)
       self.steering_button_prefix = (int(acc_always_one) & 1) | ((int(acc_hidden_bit) & 1) << 6)
     else:
-      self.cruise_buttons = cam_cp.vl["ASCMSteeringButton"]["ACCButtons"]
-      self.hard_cruise_buttons = cam_cp.vl["ASCMSteeringButton"]["ACCButtonsHard"]
-      self.distance_button = cam_cp.vl["ASCMSteeringButton"]["DistanceButton"]
-      self.buttons_counter = cam_cp.vl["ASCMSteeringButton"]["RollingCounter"]
+      steering_button_msg = cam_cp.vl["ASCMSteeringButton"]
+      self.cruise_buttons = steering_button_msg["ACCButtons"]
+      self.hard_cruise_buttons = get_hard_cruise_buttons(steering_button_msg)
+      self.distance_button = steering_button_msg["DistanceButton"]
+      self.buttons_counter = steering_button_msg["RollingCounter"]
       self.steering_button_ts_nanos = cam_cp.ts_nanos["ASCMSteeringButton"]["ACCButtons"]
 
     # A GM hard press keeps the normal cruise button signal active too. Suppress

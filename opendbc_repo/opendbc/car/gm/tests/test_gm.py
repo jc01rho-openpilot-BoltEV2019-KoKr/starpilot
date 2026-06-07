@@ -6,7 +6,7 @@ from opendbc.can import CANPacker, CANParser
 from opendbc.car import Bus, DT_CTRL, structs
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.gm import gmcan
-from opendbc.car.gm.carstate import CarState as GMCarState
+from opendbc.car.gm.carstate import CarState as GMCarState, get_hard_cruise_buttons
 from opendbc.car.gm.carcontroller import (
   VisualAlert,
   get_acc_dashboard_fcw_alert,
@@ -18,7 +18,7 @@ from opendbc.car.gm.carcontroller import (
 import opendbc.car.gm.interface as gm_interface
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.fingerprints import FINGERPRINTS
-from opendbc.car.gm.values import CAMERA_ACC_CAR, CAR, CC_ONLY_CAR, DBC, GM_RX_OFFSET, GMFlags, GMSafetyFlags
+from opendbc.car.gm.values import CAMERA_ACC_CAR, CAR, CC_ONLY_CAR, DBC, GM_RX_OFFSET, CruiseButtons, GMFlags, GMSafetyFlags
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.common.params import Params
 
@@ -63,6 +63,10 @@ class TestGMFingerprint:
 
 
 class TestGMInterface:
+  def test_missing_hard_cruise_signal_defaults_to_init(self):
+    assert get_hard_cruise_buttons({"ACCButtons": CruiseButtons.RES_ACCEL}) == CruiseButtons.INIT
+    assert get_hard_cruise_buttons({"ACCButtonsHard": CruiseButtons.DECEL_SET}) == CruiseButtons.DECEL_SET
+
   @parameterized.expand(VOLT_CARS)
   def test_volt_min_steer_speed_is_7_mph(self, car_model):
     CarInterface = interfaces[car_model]
