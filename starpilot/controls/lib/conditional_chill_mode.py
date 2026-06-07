@@ -194,7 +194,7 @@ class ConditionalChillMode:
     return CCStatus["LEAD"]
 
   def _adjacent_lead_ambiguous(self, sm, v_ego):
-    radar_state = sm.get("starpilotRadarState")
+    radar_state = self._get_sm_service(sm, "starpilotRadarState")
     if radar_state is None:
       return False
 
@@ -207,6 +207,16 @@ class ConditionalChillMode:
         return True
 
     return False
+
+  @staticmethod
+  def _get_sm_service(sm, key):
+    if isinstance(sm, dict):
+      return sm.get(key)
+
+    try:
+      return sm[key]
+    except (KeyError, IndexError, TypeError, AttributeError):
+      return None
 
   def _write_status(self, status_value):
     if status_value != self._prev_cc_status:

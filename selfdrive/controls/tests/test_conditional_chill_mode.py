@@ -40,6 +40,14 @@ class FakeDetector:
     return None
 
 
+class FakeSubMaster:
+  def __init__(self, services):
+    self.services = dict(services)
+
+  def __getitem__(self, key):
+    return self.services[key]
+
+
 def make_sm():
   return {
     "carState": SimpleNamespace(standstill=False, leftBlinker=False, rightBlinker=False),
@@ -49,6 +57,10 @@ def make_sm():
       leadRight=SimpleNamespace(status=False, dRel=float("inf"), vLead=0.0),
     ),
   }
+
+
+def make_submaster_sm():
+  return FakeSubMaster(make_sm())
 
 
 def make_toggles():
@@ -224,3 +236,16 @@ def test_ccm_restores_persisted_manual_experimental_override(monkeypatch):
   assert ccm.experimental_mode
   assert ccm.status_value == CCStatus["USER_EXPERIMENTAL"]
   assert planner.params_memory.get_int("CCStatus") == CCStatus["USER_EXPERIMENTAL"]
+
+
+def test_ccm_adjacent_lead_veto_works_with_submaster_like_input(monkeypatch):
+  planner, _detector, ccm = make_ccm()
+  sm = make_submaster_sm()
+  toggles = make_toggles()
+  sm["starpilotRadarState"].leadLeft = SimpleNamespace(status=True, dRel=20.0, vLead=12.0)
+
+  monkeypatch.setattr("openpilot.starpilot.controls.lib.conditional_chill_mode.time.monotonic", lambda: 10.0)
+  ccm.update(60 * CV.MPH_TO_MS, 65 * CV.MPH_TO_MS, sm, toggles)
+
+  assert ccm.experimental_mode
+  assert ccm.status_value == CCStatus["OFF"]
