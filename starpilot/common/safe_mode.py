@@ -113,6 +113,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "CESpeed",
   "CESpeedLead",
   "CCMLead",
+  "CCMLaunchAssist",
   "CCMSetSpeedMargin",
   "CCMSpeed",
   "CCMSpeedLead",
@@ -183,6 +184,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "GMAutoHold",
   "GMPedalLongitudinal",
   "GMDashSpoofOffsets",
+  "GMStockDashWhenNotEngaged",
   "LongPitch",
 )
 

@@ -30,7 +30,7 @@ private:
 
   QSet<QString> advancedLongitudinalTuneKeys = {"EVTuning", "TruckTuning", "LongitudinalActuatorDelay", "MaxDesiredAcceleration", "StartAccel", "StopAccel", "StoppingDecelRate", "VEgoStarting", "VEgoStopping"};
   QSet<QString> aggressivePersonalityKeys = {"AggressiveFollow", "AggressiveFollowHigh", "AggressiveJerkAcceleration", "AggressiveJerkDeceleration", "AggressiveJerkDanger", "AggressiveJerkSpeed", "AggressiveJerkSpeedDecrease", "ResetAggressivePersonality"};
-  QSet<QString> conditionalChillKeys = {"PersistChillState", "CCMSpeed", "CCMSpeedLead", "CCMLead", "CCMSetSpeedMargin", "ShowCCMStatus"};
+  QSet<QString> conditionalChillKeys = {"PersistChillState", "CCMSpeed", "CCMSpeedLead", "CCMLead", "CCMLaunchAssist", "CCMSetSpeedMargin", "ShowCCMStatus"};
   QSet<QString> conditionalExperimentalKeys = {"PersistExperimentalState", "CESpeed", "CESpeedLead", "CECurves", "CELead", "CEModelStopTime", "CESignalSpeed", "CEStopLights", "ShowCEMStatus"};
   QSet<QString> curveSpeedKeys = {"CalibratedLateralAcceleration", "CalibrationProgress", "ResetCurveData", "ShowCSCStatus"};
   QSet<QString> customDrivingPersonalityKeys = {"AggressivePersonalityProfile", "RelaxedPersonalityProfile", "StandardPersonalityProfile", "TrafficPersonalityProfile"};

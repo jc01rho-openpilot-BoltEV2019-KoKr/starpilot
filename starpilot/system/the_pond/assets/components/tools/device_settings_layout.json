@@ -1666,6 +1666,14 @@
         "parent_key": "ConditionalChill"
       },
       {
+        "key": "CCMLaunchAssist",
+        "label": "Launch Assist",
+        "description": "Temporarily switch to \"Chill Mode\" when starting from a stop if planner is already allowing throttle. Useful if your car launches too slowly from lights or stop signs.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ConditionalChill"
+      },
+      {
         "key": "CCMSetSpeedMargin",
         "label": "Set Speed Margin",
         "description": "How far below the set speed the car must be before open-road Conditional Chill can engage.",
@@ -2243,6 +2251,14 @@
         "parent_key": "CustomAlerts"
       },
       {
+        "key": "LoudBlindspotAlertWhenDisengaged",
+        "label": "Blind Spot Alert When Disengaged",
+        "description": "Play the loud blind spot alert while lateral control is off or paused. Useful when steering pauses on turn signal, since the lane-change state machine is inactive then.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomAlerts"
+      },
+      {
         "key": "SpeedLimitChangedAlert",
         "label": "Speed Limit Changed Alert",
         "description": "Play an alert when the posted speed limit changes.",
@@ -2398,6 +2414,13 @@
         "key": "GMDashSpoofOffsets",
         "label": "Apply Offsets To Dash Spoof",
         "description": "On GM pedal-long cars, add the configured set-speed offset to the spoofed dash set speed so it matches the on-screen set speed.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "GMStockDashWhenNotEngaged",
+        "label": "Stock Dash When Disengaged",
+        "description": "Use the stock GM dashboard set speed while openpilot is not engaged. When off, StarPilot keeps the existing dashboard spoof behavior.",
         "data_type": "bool",
         "ui_type": "toggle"
       },

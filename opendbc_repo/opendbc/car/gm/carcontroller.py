@@ -68,13 +68,14 @@ def should_spoof_dash_speed(CP, starpilot_toggles):
   return True
 
 
-def should_send_acc_dashboard_status(CP, dash_speed_spoof_active):
+def should_send_acc_dashboard_status(CP, dash_speed_spoof_active, enabled=True, stock_dash_when_not_engaged=False):
   status_car = CP.carFingerprint not in CC_ONLY_CAR or CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL
   volt_camera_no_camera = (
     CP.carFingerprint == CAR.CHEVROLET_VOLT_CAMERA and
     bool(getattr(CP, "flags", 0) & GMFlags.NO_CAMERA.value)
   )
-  return status_car and (dash_speed_spoof_active or volt_camera_no_camera)
+  should_spoof = dash_speed_spoof_active and (enabled or not stock_dash_when_not_engaged)
+  return status_car and (should_spoof or volt_camera_no_camera)
 
 
 def get_acc_dashboard_fcw_alert(hud_alert, CS):
@@ -725,7 +726,8 @@ class CarController(CarControllerBase):
                                                                idx, CC.enabled, near_stop, at_full_stop, self.CP))
             CS.auto_hold_engaged = False
 
-        if should_send_acc_dashboard_status(self.CP, dash_speed_spoof_active):
+        stock_dash_when_not_engaged = getattr(starpilot_toggles, "gm_stock_dash_when_not_engaged", False)
+        if should_send_acc_dashboard_status(self.CP, dash_speed_spoof_active, CC.enabled, stock_dash_when_not_engaged):
           acc_dashboard_status = get_acc_dashboard_status_values(CC.enabled, hud_v_cruise * CV.MS_TO_KPH, hud_control, CS)
           fcw_alert = get_acc_dashboard_fcw_alert(hud_alert, CS)
           can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN,

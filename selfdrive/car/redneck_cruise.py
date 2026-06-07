@@ -37,7 +37,7 @@ def select_redneck_target_speed(v_cruise_kph: float, speed_cluster_ms: float,
     target_speed_ms = float(starpilot_target_speed_ms)
 
   if allow_plan_decrease and len(plan_speeds_ms) > 0:
-    if lead_present and plan_speeds_ms[0] > speed_cluster_ms:
+    if lead_present and target_speed_ms > speed_cluster_ms and plan_speeds_ms[0] > speed_cluster_ms:
       recovery_lookahead_points = min(len(plan_speeds_ms), LEAD_RECOVERY_LOOKAHEAD_POINTS)
       recovery_target_speed_ms = max(speed_cluster_ms, min(plan_speeds_ms[:recovery_lookahead_points]))
       return min(target_speed_ms, recovery_target_speed_ms)

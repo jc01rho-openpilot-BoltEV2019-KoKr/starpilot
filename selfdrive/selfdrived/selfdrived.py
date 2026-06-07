@@ -52,6 +52,27 @@ StarPilotEventName = custom.StarPilotOnroadEvent.EventName
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 
 
+def should_loud_blindspot_alert_without_lateral(CS, sm, starpilot_toggles) -> bool:
+  if not (getattr(starpilot_toggles, "loud_blindspot_alert", False) and
+          getattr(starpilot_toggles, "loud_blindspot_alert_when_disengaged", False)):
+    return False
+
+  if sm['modelV2'].meta.laneChangeState == LaneChangeState.preLaneChange:
+    return False
+
+  left_signal_blocked = bool(CS.leftBlinker and CS.leftBlindspot)
+  right_signal_blocked = bool(CS.rightBlinker and CS.rightBlindspot)
+  one_blinker = bool(CS.leftBlinker) != bool(CS.rightBlinker)
+  if not (one_blinker and (left_signal_blocked or right_signal_blocked)):
+    return False
+
+  return (
+    not sm['carControl'].latActive or
+    not sm['starpilotPlan'].lateralCheck or
+    sm['starpilotCarState'].pauseLateral
+  )
+
+
 class SelfdriveD:
   def __init__(self, CP=None):
     self.params = Params()
@@ -374,10 +395,12 @@ class SelfdriveD:
     # ******************************************************************************************
 
     # Handle lane change
+    blindspot_alert_added = False
     if self.sm['modelV2'].meta.laneChangeState == LaneChangeState.preLaneChange:
       direction = self.sm['modelV2'].meta.laneChangeDirection
       if (CS.leftBlindspot and direction == LaneChangeDirection.left) or \
          (CS.rightBlindspot and direction == LaneChangeDirection.right):
+        blindspot_alert_added = True
         if self.starpilot_toggles.loud_blindspot_alert:
           self.starpilot_events.add(StarPilotEventName.laneChangeBlockedLoud)
         else:
@@ -397,6 +420,9 @@ class SelfdriveD:
     elif self.sm['modelV2'].meta.laneChangeState in (LaneChangeState.laneChangeStarting,
                                                     LaneChangeState.laneChangeFinishing):
       self.events.add(EventName.laneChange)
+
+    if not blindspot_alert_added and should_loud_blindspot_alert_without_lateral(CS, self.sm, self.starpilot_toggles):
+      self.starpilot_events.add(StarPilotEventName.laneChangeBlockedLoud)
 
     for i, pandaState in enumerate(self.sm['pandaStates']):
       # All pandas must match the list of safetyConfigs, and if outside this list, must be silent or noOutput

@@ -15,6 +15,7 @@ class CarState(CarStateBase):
     self.shifter_values = can_define.dv["Transmission"]["Gear"]
 
     self.angle_rate_calulator = CanSignalRateCalculator(50)
+    self.sng_cruise_enabled = False
 
   def update(self, can_parsers, starpilot_toggles) -> structs.CarState:
     cp = can_parsers[Bus.pt]
@@ -132,6 +133,22 @@ class CarState(CarStateBase):
       self.close_distance = cp_es_distance.vl["ES_Distance"]["Close_Distance"]
       self.cruise_state = cp_cam.vl["ES_DashStatus"]["Cruise_State"]
       self.throttle_msg = copy.copy(cp.vl["Throttle"])
+
+      sng_standstill_hold = (
+        ret.cruiseState.available and
+        ret.standstill and
+        self.car_follow == 1 and
+        self.cruise_state == 3 and
+        not ret.gasPressed
+      )
+      if ret.cruiseState.enabled:
+        self.sng_cruise_enabled = True
+      elif self.sng_cruise_enabled and sng_standstill_hold:
+        ret.cruiseState.enabled = True
+      else:
+        self.sng_cruise_enabled = False
+    else:
+      self.sng_cruise_enabled = False
 
     return ret, fp_ret
 

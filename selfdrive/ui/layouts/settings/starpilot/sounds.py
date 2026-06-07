@@ -404,6 +404,7 @@ class StarPilotSoundsLayout(_SettingsPage):
     "GreenLightAlert",
     "LeadDepartingAlert",
     "LoudBlindspotAlert",
+    "LoudBlindspotAlertWhenDisengaged",
     "SpeedLimitChangedAlert",
   ]
 
@@ -444,6 +445,12 @@ class StarPilotSoundsLayout(_SettingsPage):
         "subtitle": tr_noop("Blind spot collision warning"),
         "is_enabled": lambda: starpilot_state.car_state.hasBSM,
         "disabled_label": tr_noop("Needs BSM")
+      },
+      "LoudBlindspotAlertWhenDisengaged": {
+        "title": tr_noop("Loud While Paused"),
+        "subtitle": tr_noop("When lateral is off or paused"),
+        "is_enabled": lambda: starpilot_state.car_state.hasBSM and self._params.get_bool("LoudBlindspotAlert"),
+        "disabled_label": tr_noop("Enable Loud Blindspot")
       },
       "SpeedLimitChangedAlert": {
         "title": tr_noop("Speed Limit"),

@@ -723,6 +723,7 @@ class StarPilotVariables:
     toggle.conditional_chill_speed_lead = self.get_value("CCMSpeedLead", cast=float, condition=toggle.conditional_chill_mode, conversion=speed_conversion)
     toggle.conditional_chill_speed_margin = self.get_value("CCMSetSpeedMargin", cast=float, condition=toggle.conditional_chill_mode, conversion=speed_conversion)
     toggle.conditional_chill_lead = self.get_value("CCMLead", condition=toggle.conditional_chill_mode)
+    toggle.conditional_chill_launch_assist = self.get_value("CCMLaunchAssist", condition=toggle.conditional_chill_mode)
     toggle.cem_status = (
       self.get_value("ShowCEMStatus", condition=toggle.conditional_experimental_mode) or
       self.get_value("ShowCCMStatus", condition=toggle.conditional_chill_mode) or
@@ -738,6 +739,7 @@ class StarPilotVariables:
     toggle.green_light_alert = self.get_value("GreenLightAlert", condition=custom_alerts)
     toggle.lead_departing_alert = self.get_value("LeadDepartingAlert", condition=custom_alerts)
     toggle.loud_blindspot_alert = self.get_value("LoudBlindspotAlert", condition=custom_alerts and has_bsm)
+    toggle.loud_blindspot_alert_when_disengaged = self.get_value("LoudBlindspotAlertWhenDisengaged", condition=toggle.loud_blindspot_alert)
     toggle.speed_limit_changed_alert = self.get_value("SpeedLimitChangedAlert", condition=custom_alerts)
 
     toggle.custom_personalities = toggle.openpilot_longitudinal and self.get_value("CustomPersonalities")
@@ -1305,6 +1307,7 @@ class StarPilotVariables:
       toggle.green_light_alert = False
       toggle.lead_departing_alert = False
       toggle.loud_blindspot_alert = False
+      toggle.loud_blindspot_alert_when_disengaged = False
       toggle.speed_limit_changed_alert = False
 
       toggle.startup_alert_top = "Be ready to take over at any time"
@@ -1325,6 +1328,10 @@ class StarPilotVariables:
     toggle.gm_dash_spoof_offsets = self.get_value(
       "GMDashSpoofOffsets",
       condition=toggle.car_make == "gm" and toggle.has_pedal,
+    )
+    toggle.gm_stock_dash_when_not_engaged = self.get_value(
+      "GMStockDashWhenNotEngaged",
+      condition=toggle.car_make == "gm" and toggle.openpilot_longitudinal,
     )
     toggle.long_pitch = self.get_value(
       "LongPitch",

@@ -265,6 +265,33 @@ class TestGMCarController:
 
     assert should_send_acc_dashboard_status(cp, dash_speed_spoof_active=False)
 
+  def test_stock_dash_toggle_suppresses_disabled_dash_spoof(self):
+    cp = SimpleNamespace(carFingerprint=CAR.CADILLAC_XT4, flags=0)
+
+    assert should_send_acc_dashboard_status(cp, dash_speed_spoof_active=True, enabled=False)
+    assert not should_send_acc_dashboard_status(
+      cp,
+      dash_speed_spoof_active=True,
+      enabled=False,
+      stock_dash_when_not_engaged=True,
+    )
+    assert should_send_acc_dashboard_status(
+      cp,
+      dash_speed_spoof_active=True,
+      enabled=True,
+      stock_dash_when_not_engaged=True,
+    )
+
+  def test_stock_dash_toggle_keeps_no_camera_exception(self):
+    cp = SimpleNamespace(carFingerprint=CAR.CHEVROLET_VOLT_CAMERA, flags=GMFlags.NO_CAMERA.value)
+
+    assert should_send_acc_dashboard_status(
+      cp,
+      dash_speed_spoof_active=True,
+      enabled=False,
+      stock_dash_when_not_engaged=True,
+    )
+
   def test_acc_dashboard_no_camera_exception_is_volt_camera_only(self):
     assert not should_send_acc_dashboard_status(
       SimpleNamespace(carFingerprint=CAR.CHEVROLET_VOLT_CAMERA, flags=0),

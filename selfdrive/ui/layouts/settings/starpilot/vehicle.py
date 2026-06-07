@@ -144,7 +144,13 @@ class VehicleSettingsManagerView(AetherInteractiveMixin, Widget):
         "get_state": lambda: self._controller._params.get_bool("GMDashSpoofOffsets"),
         "set_state": lambda s: self._controller._on_toggle("GMDashSpoofOffsets"),
       })
-    if cs.isGM:
+    if cs.isGM and cs.hasOpenpilotLongitudinal:
+      toggles.append({
+        "title": tr("Stock Dash Disengaged"),
+        "subtitle": tr("Use the stock GM dash set speed while openpilot is not engaged."),
+        "get_state": lambda: self._controller._params.get_bool("GMStockDashWhenNotEngaged"),
+        "set_state": lambda s: self._controller._on_toggle("GMStockDashWhenNotEngaged"),
+      })
       toggles.append({
         "title": tr("Remote Start Panda"),
         "get_state": lambda: self._controller._params.get_bool("RemoteStartBootsComma"),

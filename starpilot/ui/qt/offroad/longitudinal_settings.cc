@@ -102,6 +102,7 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
     {"PersistChillState", tr("Persist Chill State"), tr("<b>Keep your manual Conditional Chill override through reboots</b> until you manually clear it."), ""},
     {"CCMSpeed", tr("Above"), tr("<b>Switch to \"Chill Mode\" on open roads above this speed when no lead is detected and the car is still below the set speed.</b>"), ""},
     {"CCMLead", tr("Stable Lead Ahead"), tr("<b>Switch to \"Chill Mode\" when following a steady, well-tracked lead vehicle at cruising speeds.</b>"), ""},
+    {"CCMLaunchAssist", tr("Launch Assist"), tr("<b>Temporarily switch to \"Chill Mode\" when starting from a stop if planner is already allowing throttle.</b> Useful if your car launches too slowly from lights or stop signs."), ""},
     {"CCMSetSpeedMargin", tr("Set Speed Margin"), tr("<b>How far below the set speed the car must be before open-road Conditional Chill can engage.</b>"), ""},
     {"ShowCCMStatus", tr("Status Widget"), tr("<b>Show which condition triggered \"Chill Mode\"</b> on the driving screen."), ""},
 
