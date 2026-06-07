@@ -548,8 +548,55 @@ def parse_cpp_file(filename):
 
     return items
 
+
+def merge_layouts(existing_layout, generated_layout):
+    existing_sections = {section["name"]: section for section in existing_layout}
+    generated_sections = {section["name"]: section for section in generated_layout}
+
+    merged_layout = []
+
+    for section in existing_layout:
+        name = section["name"]
+        generated = generated_sections.get(name)
+        if generated is None:
+            merged_layout.append(section)
+            continue
+
+        existing_params = section.get("params", [])
+        generated_params = generated.get("params", [])
+        generated_by_key = {param["key"]: param for param in generated_params}
+
+        merged_params = []
+        seen_keys = set()
+
+        for param in existing_params:
+            key = param["key"]
+            if key in generated_by_key:
+                merged_params.append(generated_by_key[key])
+            else:
+                merged_params.append(param)
+            seen_keys.add(key)
+
+        for param in generated_params:
+            key = param["key"]
+            if key not in seen_keys:
+                merged_params.append(param)
+                seen_keys.add(key)
+
+        merged_section = dict(section)
+        merged_section["icon"] = generated.get("icon", section.get("icon"))
+        merged_section["params"] = merged_params
+        merged_layout.append(merged_section)
+
+    existing_names = {section["name"] for section in existing_layout}
+    for section in generated_layout:
+        if section["name"] not in existing_names:
+            merged_layout.append(section)
+
+    return merged_layout
+
 def main():
-    layout = []
+    generated_layout = []
     for cat in CATEGORIES:
         items = parse_cpp_file(cat["file"])
         injected = INJECTED_SECTION_PARAMS.get(cat["name"], [])
@@ -557,12 +604,17 @@ def main():
             existing_keys = {item["key"] for item in items}
             items = [dict(item) for item in injected if item["key"] not in existing_keys] + items
         if items:
-            layout.append({
+            generated_layout.append({
                 "name": cat["name"],
                 "icon": cat["icon"],
                 "params": items
             })
     output_path = os.path.join(REPO_ROOT, "starpilot/system/the_pond/assets/components/tools/device_settings_layout.json")
+    layout = generated_layout
+    if os.path.exists(output_path):
+        with open(output_path, 'r', encoding='utf-8') as f:
+            existing_layout = json.load(f)
+        layout = merge_layouts(existing_layout, generated_layout)
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(layout, f, indent=2)
 
