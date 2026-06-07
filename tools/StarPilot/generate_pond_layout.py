@@ -116,6 +116,7 @@ PARENT_KEYS_MAPPING = {
     "longitudinal_settings.cc": {
         "advancedLongitudinalTuneKeys": "AdvancedLongitudinalTune",
         "aggressivePersonalityKeys": "AggressivePersonalityProfile",
+        "conditionalChillKeys": "ConditionalChill",
         "conditionalExperimentalKeys": "ConditionalExperimental",
         "curveSpeedKeys": "CurveSpeedController",
         "customDrivingPersonalityKeys": "CustomPersonalities",
@@ -453,9 +454,9 @@ def parse_cpp_file(filename):
                             if step_match:
                                 step = step_match.group(1)
 
-        # CESpeed is rendered in Qt with a dual numeric control (CESpeed + CESpeedLead),
+        # CESpeed/CCMSpeed are rendered in Qt with dual numeric controls,
         # so the generic assignment matcher cannot infer it reliably.
-        if key == "CESpeed":
+        if key in {"CESpeed", "CCMSpeed"}:
             widget_type = "numeric"
             data_type = "int"
             min_val, max_val, step = "0", "99", "1"
@@ -519,7 +520,7 @@ def parse_cpp_file(filename):
                 },
             ])
 
-        # Mirror CESpeed's dual slider (with-lead variant) from Qt.
+        # Mirror CESpeed/CCMSpeed's dual sliders (with-lead variants) from Qt.
         if key == "CESpeed":
             items.append({
                 "key": "CESpeedLead",
@@ -531,6 +532,18 @@ def parse_cpp_file(filename):
                 "max": 99.0,
                 "step": 1.0,
                 "parent_key": "ConditionalExperimental",
+            })
+        elif key == "CCMSpeed":
+            items.append({
+                "key": "CCMSpeedLead",
+                "label": "Above (With Lead)",
+                "description": "Switch to \"Chill Mode\" when following a stable lead above this speed.",
+                "data_type": "int",
+                "ui_type": "numeric",
+                "min": 0.0,
+                "max": 99.0,
+                "step": 1.0,
+                "parent_key": "ConditionalChill",
             })
 
     return items

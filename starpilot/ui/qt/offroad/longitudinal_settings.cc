@@ -16,6 +16,7 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
 
   StarPilotListWidget *advancedLongitudinalTuneList = new StarPilotListWidget(this);
   StarPilotListWidget *aggressivePersonalityList = new StarPilotListWidget(this);
+  StarPilotListWidget *conditionalChillList = new StarPilotListWidget(this);
   StarPilotListWidget *conditionalExperimentalList = new StarPilotListWidget(this);
   StarPilotListWidget *curveSpeedList = new StarPilotListWidget(this);
   StarPilotListWidget *customDrivingPersonalityList = new StarPilotListWidget(this);
@@ -36,6 +37,7 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
 
   ScrollView *advancedLongitudinalTunePanel = new ScrollView(advancedLongitudinalTuneList, this);
   ScrollView *aggressivePersonalityPanel = new ScrollView(aggressivePersonalityList, this);
+  ScrollView *conditionalChillPanel = new ScrollView(conditionalChillList, this);
   ScrollView *conditionalExperimentalPanel = new ScrollView(conditionalExperimentalList, this);
   ScrollView *curveSpeedPanel = new ScrollView(curveSpeedList, this);
   ScrollView *customDrivingPersonalityPanel = new ScrollView(customDrivingPersonalityList, this);
@@ -56,6 +58,7 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
 
   longitudinalLayout->addWidget(advancedLongitudinalTunePanel);
   longitudinalLayout->addWidget(aggressivePersonalityPanel);
+  longitudinalLayout->addWidget(conditionalChillPanel);
   longitudinalLayout->addWidget(conditionalExperimentalPanel);
   longitudinalLayout->addWidget(curveSpeedPanel);
   longitudinalLayout->addWidget(customDrivingPersonalityPanel);
@@ -95,6 +98,12 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
     {"CEModelStopTime", tr("Predicted Stop In"), tr("<b>Switch to \"Experimental Mode\" when openpilot predicts a stop within the set time.</b> This is usually triggered when the model \"sees\" a red light or stop sign ahead.<br><br><i><b>Disclaimer</b>: openpilot does not explicitly detect traffic lights or stop signs. In \"Experimental Mode\", openpilot makes end-to-end driving decisions from camera input, which means it may stop even when there's no clear reason!</i>"), ""},
     {"CESignalSpeed", tr("Turn Signal Below"), tr("<b>Switch to \"Experimental Mode\" when using a turn signal below the set speed</b> to allow the model to choose an appropriate speed for smoother left and right turns."), ""},
     {"ShowCEMStatus", tr("Status Widget"), tr("<b>Show which condition triggered \"Experimental Mode\"</b> on the driving screen."), ""},
+    {"ConditionalChill", tr("Conditional Chill Mode"), tr("<b>Keep \"Experimental Mode\" on by default, but temporarily switch to \"Chill Mode\" in simple cruising scenes where speed holding is usually better.</b>"), "../../starpilot/assets/toggle_icons/icon_conditional.png"},
+    {"PersistChillState", tr("Persist Chill State"), tr("<b>Keep your manual Conditional Chill override through reboots</b> until you manually clear it."), ""},
+    {"CCMSpeed", tr("Above"), tr("<b>Switch to \"Chill Mode\" on open roads above this speed when no lead is detected and the car is still below the set speed.</b>"), ""},
+    {"CCMLead", tr("Stable Lead Ahead"), tr("<b>Switch to \"Chill Mode\" when following a steady, well-tracked lead vehicle at cruising speeds.</b>"), ""},
+    {"CCMSetSpeedMargin", tr("Set Speed Margin"), tr("<b>How far below the set speed the car must be before open-road Conditional Chill can engage.</b>"), ""},
+    {"ShowCCMStatus", tr("Status Widget"), tr("<b>Show which condition triggered \"Chill Mode\"</b> on the driving screen."), ""},
 
     {"CurveSpeedController", tr("Curve Speed Controller"), tr("<b>Automatically slow down for upcoming curves</b> using data learned from your driving style, adapting to curves as you would."), "../../starpilot/assets/toggle_icons/icon_speed_map.png"},
     {"CalibratedLateralAcceleration", tr("Calibrated Lateral Acceleration"), tr("<b>The learned lateral acceleration from collected driving data.</b> This sets how fast openpilot will take curves. Higher values allow faster cornering; lower values slow the vehicle for gentler turns."), ""},
@@ -253,10 +262,21 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
         longitudinalLayout->setCurrentWidget(conditionalExperimentalPanel);
       });
       longitudinalToggle = conditionalExperimentalToggle;
+    } else if (param == "ConditionalChill") {
+      StarPilotManageControl *conditionalChillToggle = new StarPilotManageControl(param, title, desc, icon);
+      QObject::connect(conditionalChillToggle, &StarPilotManageControl::manageButtonClicked, [longitudinalLayout, conditionalChillPanel]() {
+        longitudinalLayout->setCurrentWidget(conditionalChillPanel);
+      });
+      longitudinalToggle = conditionalChillToggle;
     } else if (param == "CESpeed") {
       StarPilotParamValueControl *CESpeed = new StarPilotParamValueControl(param, title, desc, icon, 0, 99, tr(" mph"), std::map<float, QString>(), 1, true, 175);
       StarPilotParamValueControl *CESpeedLead = new StarPilotParamValueControl("CESpeedLead", tr("With Lead"), tr("<b>Switch to \"Experimental Mode\" when driving below this speed with a lead</b> to help openpilot handle low-speed situations more smoothly."), icon, 0, 99, tr(" mph"), std::map<float, QString>(), 1, true, 175);
       StarPilotDualParamValueControl *conditionalSpeeds = new StarPilotDualParamValueControl(CESpeed, CESpeedLead);
+      longitudinalToggle = reinterpret_cast<AbstractControl*>(conditionalSpeeds);
+    } else if (param == "CCMSpeed") {
+      StarPilotParamValueControl *CCMSpeed = new StarPilotParamValueControl(param, title, desc, icon, 0, 99, tr(" mph"), std::map<float, QString>(), 1, true, 175);
+      StarPilotParamValueControl *CCMSpeedLead = new StarPilotParamValueControl("CCMSpeedLead", tr("With Lead"), tr("<b>Switch to \"Chill Mode\" when a stable lead is being followed above this speed.</b>"), icon, 0, 99, tr(" mph"), std::map<float, QString>(), 1, true, 175);
+      StarPilotDualParamValueControl *conditionalSpeeds = new StarPilotDualParamValueControl(CCMSpeed, CCMSpeedLead);
       longitudinalToggle = reinterpret_cast<AbstractControl*>(conditionalSpeeds);
     } else if (param == "CECurves") {
       std::vector<QString> curveToggles{"CECurvesLead"};
@@ -266,6 +286,8 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
       std::vector<QString> leadToggles{"CESlowerLead", "CEStoppedLead"};
       std::vector<QString> leadToggleNames{tr("Slower Lead"), tr("Stopped Lead")};
       longitudinalToggle = new StarPilotButtonToggleControl(param, title, desc, icon, leadToggles, leadToggleNames);
+    } else if (param == "CCMSetSpeedMargin") {
+      longitudinalToggle = new StarPilotParamValueControl(param, title, desc, icon, 0, 15, tr(" mph"), std::map<float, QString>(), 1, true, 175);
     } else if (param == "CEModelStopTime") {
       std::map<float, QString> stopTimeLabels;
       for (int i = 0; i <= 10; ++i) {
@@ -586,6 +608,8 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
       advancedLongitudinalTuneList->addItem(longitudinalToggle);
     } else if (aggressivePersonalityKeys.contains(param)) {
       aggressivePersonalityList->addItem(longitudinalToggle);
+    } else if (conditionalChillKeys.contains(param)) {
+      conditionalChillList->addItem(longitudinalToggle);
     } else if (conditionalExperimentalKeys.contains(param)) {
       conditionalExperimentalList->addItem(longitudinalToggle);
     } else if (curveSpeedKeys.contains(param)) {
@@ -655,6 +679,20 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
   QObject::connect(static_cast<ToggleControl*>(toggles["TruckTuning"]), &ToggleControl::toggleFlipped, this, [this]() {
     if (params.getBool("TruckTuning")) {
       params.putBool("EVTuning", false);
+    }
+    updateToggles();
+  });
+  QObject::connect(static_cast<ToggleControl*>(toggles["ConditionalExperimental"]), &ToggleControl::toggleFlipped, this, [this]() {
+    if (params.getBool("ConditionalExperimental")) {
+      params.putBool("ConditionalChill", false);
+      static_cast<ParamControl*>(toggles["ConditionalChill"])->refresh();
+    }
+    updateToggles();
+  });
+  QObject::connect(static_cast<ToggleControl*>(toggles["ConditionalChill"]), &ToggleControl::toggleFlipped, this, [this]() {
+    if (params.getBool("ConditionalChill")) {
+      params.putBool("ConditionalExperimental", false);
+      static_cast<ParamControl*>(toggles["ConditionalExperimental"])->refresh();
     }
     updateToggles();
   });
@@ -831,6 +869,9 @@ void StarPilotLongitudinalPanel::updateMetric(bool metric, bool bootRun) {
     params.putIntNonBlocking("IncreasedStoppedDistanceRainStorm", params.getInt("IncreasedStoppedDistanceRainStorm") * distanceConversion);
     params.putIntNonBlocking("IncreasedStoppedDistanceSnow", params.getInt("IncreasedStoppedDistanceSnow") * distanceConversion);
 
+    params.putIntNonBlocking("CCMSpeed", params.getInt("CCMSpeed") * speedConversion);
+    params.putIntNonBlocking("CCMSpeedLead", params.getInt("CCMSpeedLead") * speedConversion);
+    params.putIntNonBlocking("CCMSetSpeedMargin", params.getInt("CCMSetSpeedMargin") * speedConversion);
     params.putIntNonBlocking("CESignalSpeed", params.getInt("CESignalSpeed") * speedConversion);
     params.putIntNonBlocking("CESpeed", params.getInt("CESpeed") * speedConversion);
     params.putIntNonBlocking("CESpeedLead", params.getInt("CESpeedLead") * speedConversion);
@@ -881,7 +922,9 @@ void StarPilotLongitudinalPanel::updateMetric(bool metric, bool bootRun) {
     labelsInitialized = true;
   }
 
+  StarPilotDualParamValueControl *ccmSpeedToggle = reinterpret_cast<StarPilotDualParamValueControl*>(toggles["CCMSpeed"]);
   StarPilotDualParamValueControl *ceSpeedToggle = reinterpret_cast<StarPilotDualParamValueControl*>(toggles["CESpeed"]);
+  StarPilotParamValueControl *ccmSetSpeedMarginToggle = static_cast<StarPilotParamValueControl*>(toggles["CCMSetSpeedMargin"]);
   StarPilotParamValueButtonControl *ceSignal = static_cast<StarPilotParamValueButtonControl*>(toggles["CESignalSpeed"]);
   StarPilotParamValueControl *customCruiseToggle = static_cast<StarPilotParamValueControl*>(toggles["CustomCruise"]);
   StarPilotParamValueControl *customCruiseLongToggle = static_cast<StarPilotParamValueControl*>(toggles["CustomCruiseLong"]);
@@ -922,6 +965,8 @@ void StarPilotLongitudinalPanel::updateMetric(bool metric, bool bootRun) {
     increasedStoppedDistanceRainStormToggle->updateControl(0, 3, metricDistanceLabels);
     increasedStoppedDistanceSnowToggle->updateControl(0, 3, metricDistanceLabels);
 
+    ccmSpeedToggle->updateControl(0, 150, metricSpeedLabels);
+    ccmSetSpeedMarginToggle->updateControl(0, 25, metricSpeedLabels);
     ceSignal->updateControl(0, 150, metricSpeedLabels);
     ceSpeedToggle->updateControl(0, 150, metricSpeedLabels);
     customCruiseToggle->updateControl(1, 150, metricSpeedLabels);
@@ -957,6 +1002,8 @@ void StarPilotLongitudinalPanel::updateMetric(bool metric, bool bootRun) {
     increasedStoppedDistanceRainStormToggle->updateControl(0, 10, imperialDistanceLabels);
     increasedStoppedDistanceSnowToggle->updateControl(0, 10, imperialDistanceLabels);
 
+    ccmSpeedToggle->updateControl(0, 99, imperialSpeedLabels);
+    ccmSetSpeedMarginToggle->updateControl(0, 15, imperialSpeedLabels);
     ceSignal->updateControl(0, 99, imperialSpeedLabels);
     ceSpeedToggle->updateControl(0, 99, imperialSpeedLabels);
     customCruiseToggle->updateControl(1, 99, imperialSpeedLabels);
@@ -1041,6 +1088,8 @@ void StarPilotLongitudinalPanel::updateToggles() {
         toggles["AdvancedLongitudinalTune"]->setVisible(true);
       } else if (aggressivePersonalityKeys.contains(key)) {
         toggles["AggressivePersonalityProfile"]->setVisible(true);
+      } else if (conditionalChillKeys.contains(key)) {
+        toggles["ConditionalChill"]->setVisible(true);
       } else if (conditionalExperimentalKeys.contains(key)) {
         toggles["ConditionalExperimental"]->setVisible(true);
       } else if (curveSpeedKeys.contains(key)) {

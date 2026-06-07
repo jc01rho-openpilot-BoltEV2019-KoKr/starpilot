@@ -6,8 +6,11 @@ from openpilot.selfdrive.car.cruise import CRUISE_LONG_PRESS, ButtonType
 from openpilot.selfdrive.selfdrived.events import ET
 
 from openpilot.starpilot.common.experimental_state import (
+  CCStatus,
   CEStatus,
+  next_manual_cc_status,
   next_manual_ce_status,
+  sync_manual_cc_state,
   sync_manual_ce_state,
 )
 from openpilot.starpilot.common.starpilot_utilities import is_FrogsGoMoo
@@ -80,6 +83,11 @@ class StarPilotCard:
       override_value = next_manual_ce_status(current_status, sm["selfdriveState"].experimentalMode)
       self.params_memory.put_int("CEStatus", override_value)
       sync_manual_ce_state(self.params, override_value)
+    elif getattr(starpilot_toggles, "conditional_chill_mode", False):
+      current_status = self.params_memory.get_int("CCStatus", default=CCStatus["OFF"])
+      override_value = next_manual_cc_status(current_status, sm["selfdriveState"].experimentalMode)
+      self.params_memory.put_int("CCStatus", override_value)
+      sync_manual_cc_state(self.params, override_value)
     else:
       self.params.put_bool_nonblocking("ExperimentalMode", not sm["selfdriveState"].experimentalMode)
 

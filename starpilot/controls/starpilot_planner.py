@@ -16,6 +16,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import A_CHA
 
 from openpilot.starpilot.common.starpilot_utilities import calculate_lane_width, calculate_road_curvature
 from openpilot.starpilot.common.starpilot_variables import CRUISING_SPEED, MINIMUM_LATERAL_ACCELERATION, PLANNER_TIME, THRESHOLD
+from openpilot.starpilot.controls.lib.conditional_chill_mode import ConditionalChillMode
 from openpilot.starpilot.controls.lib.conditional_experimental_mode import ConditionalExperimentalMode
 from openpilot.starpilot.controls.lib.starpilot_acceleration import StarPilotAcceleration
 from openpilot.starpilot.controls.lib.starpilot_events import StarPilotEvents
@@ -47,6 +48,7 @@ class StarPilotPlanner:
 
     self.starpilot_acceleration = StarPilotAcceleration(self)
     self.starpilot_cem = ConditionalExperimentalMode(self)
+    self.starpilot_ccm = ConditionalChillMode(self, self.starpilot_cem)
     self.starpilot_events = StarPilotEvents(self, error_log, ThemeManager)
     self.starpilot_following = StarPilotFollowing(self)
     self.starpilot_vcruise = StarPilotVCruise(self)
@@ -194,11 +196,17 @@ class StarPilotPlanner:
 
     self.starpilot_following.update(controls_enabled, v_ego, sm, starpilot_toggles)
 
-    cem_tracking_active = controls_enabled or sm["starpilotCarState"].alwaysOnLateralEnabled
-    if cem_tracking_active and starpilot_toggles.conditional_experimental_mode:
+    conditional_tracking_active = controls_enabled or sm["starpilotCarState"].alwaysOnLateralEnabled
+    if conditional_tracking_active and starpilot_toggles.conditional_experimental_mode:
       # Keep CEM's filters warm in AOL so engagement can inherit the current scene.
       self.starpilot_cem.update(v_ego, sm, starpilot_toggles)
+      self.starpilot_ccm.experimental_mode = True
+    elif conditional_tracking_active and starpilot_toggles.conditional_chill_mode:
+      self.starpilot_ccm.update(v_ego, v_cruise, sm, starpilot_toggles)
+      self.starpilot_cem.experimental_mode = False
     else:
+      self.starpilot_ccm.experimental_mode = True
+      self.starpilot_cem.experimental_mode = False
       self.starpilot_cem.curve_detected = False
       self.starpilot_cem.stop_sign_and_light(v_ego, sm, PLANNER_TIME - 2)
 
@@ -263,7 +271,13 @@ class StarPilotPlanner:
     starpilotPlan.disableThrottle = self.starpilot_following.disable_throttle
     starpilotPlan.trackingLead = self.tracking_lead
 
-    starpilotPlan.experimentalMode = self.starpilot_cem.experimental_mode or self.starpilot_vcruise.slc.experimental_mode
+    conditional_experimental_mode = False
+    if starpilot_toggles.conditional_experimental_mode:
+      conditional_experimental_mode = self.starpilot_cem.experimental_mode
+    elif starpilot_toggles.conditional_chill_mode:
+      conditional_experimental_mode = self.starpilot_ccm.experimental_mode
+
+    starpilotPlan.experimentalMode = conditional_experimental_mode or self.starpilot_vcruise.slc.experimental_mode
 
     starpilotPlan.forcingStop = self.starpilot_vcruise.forcing_stop
     starpilotPlan.forcingStopLength = self.starpilot_vcruise.tracked_model_length

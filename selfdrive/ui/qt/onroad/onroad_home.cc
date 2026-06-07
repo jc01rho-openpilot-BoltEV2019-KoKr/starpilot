@@ -59,13 +59,19 @@ void OnroadWindow::updateState(const UIState &s, const StarPilotUIState &fs) {
   nvg->updateState(s, fs);
 
   const StarPilotUIScene &starpilot_scene = fs.starpilot_scene;
+  const QJsonObject &starpilot_toggles = starpilot_scene.starpilot_toggles;
   const auto selfdriveState = (*s.sm)["selfdriveState"].getSelfdriveState();
   QColor bgColor = bg_colors[s.status];
+  const bool conditional_experimental_mode = starpilot_toggles.value("conditional_experimental_mode").toBool();
+  const bool conditional_chill_mode = starpilot_toggles.value("conditional_chill_mode").toBool();
+  const bool highlight_override =
+    (conditional_experimental_mode && starpilot_scene.conditional_status == 1) ||
+    (conditional_chill_mode && (starpilot_scene.conditional_status == 1 || starpilot_scene.conditional_status == 2));
   if (starpilot_scene.switchback_mode_enabled && (selfdriveState.getEnabled() || starpilot_scene.always_on_lateral_active)) {
     bgColor = bg_colors[STATUS_SWITCHBACK_MODE_ENABLED];
   } else if (starpilot_scene.always_on_lateral_active) {
     bgColor = bg_colors[STATUS_ALWAYS_ON_LATERAL_ACTIVE];
-  } else if (starpilot_scene.conditional_status == 1) {
+  } else if (highlight_override) {
     bgColor = bg_colors[STATUS_CEM_DISABLED];
   } else if (selfdriveState.getExperimentalMode()) {
     bgColor = bg_colors[STATUS_EXPERIMENTAL_MODE_ENABLED];
@@ -78,9 +84,6 @@ void OnroadWindow::updateState(const UIState &s, const StarPilotUIState &fs) {
     bg = bgColor;
     update();
   }
-
-  const QJsonObject &starpilot_toggles = starpilot_scene.starpilot_toggles;
-
   starpilot_nvg->alertHeight = alerts->alertHeight;
 
   starpilot_onroad->bg = bg;

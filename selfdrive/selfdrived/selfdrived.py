@@ -593,7 +593,7 @@ class SelfdriveD:
 
     self.starpilot_events.add_from_msg(self.sm['starpilotPlan'].starpilotEvents)
 
-    if self.starpilot_toggles.conditional_experimental_mode:
+    if self.starpilot_toggles.conditional_experimental_mode or getattr(self.starpilot_toggles, "conditional_chill_mode", False):
       self.experimental_mode = self.sm['starpilotPlan'].experimentalMode
     else:
       self.experimental_mode |= self.sm['starpilotPlan'].experimentalMode

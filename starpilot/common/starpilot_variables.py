@@ -229,6 +229,7 @@ EXCLUDED_KEYS = {
   "openpilotMinutes",
   "OverpassRequests",
   "PandaSignatures",
+  "PersistedCCStatus",
   "PersistedCEStatus",
   "SpeedLimits",
   "SpeedLimitsFiltered",
@@ -707,6 +708,7 @@ class StarPilotVariables:
     toggle.cluster_offset = self.get_value("ClusterOffset", cast=float, condition=toggle.car_make == "toyota")
 
     toggle.conditional_experimental_mode = toggle.openpilot_longitudinal and self.get_value("ConditionalExperimental")
+    toggle.conditional_chill_mode = toggle.openpilot_longitudinal and not toggle.conditional_experimental_mode and self.get_value("ConditionalChill")
     toggle.conditional_curves = self.get_value("CECurves", condition=toggle.conditional_experimental_mode)
     toggle.conditional_curves_lead = self.get_value("CECurvesLead", condition=toggle.conditional_curves)
     toggle.conditional_lead = self.get_value("CELead", condition=toggle.conditional_experimental_mode)
@@ -717,7 +719,15 @@ class StarPilotVariables:
     toggle.conditional_model_stop_time = self.get_value("CEModelStopTime", cast=float, condition=toggle.conditional_experimental_mode and self.get_value("CEStopLights"))
     toggle.conditional_signal = self.get_value("CESignalSpeed", cast=float, condition=toggle.conditional_experimental_mode, conversion=speed_conversion)
     toggle.conditional_signal_lane_detection = self.get_value("CESignalLaneDetection", condition=toggle.conditional_signal != 0)
-    toggle.cem_status = self.get_value("ShowCEMStatus", condition=toggle.conditional_experimental_mode) or toggle.debug_mode
+    toggle.conditional_chill_speed = self.get_value("CCMSpeed", cast=float, condition=toggle.conditional_chill_mode, conversion=speed_conversion)
+    toggle.conditional_chill_speed_lead = self.get_value("CCMSpeedLead", cast=float, condition=toggle.conditional_chill_mode, conversion=speed_conversion)
+    toggle.conditional_chill_speed_margin = self.get_value("CCMSetSpeedMargin", cast=float, condition=toggle.conditional_chill_mode, conversion=speed_conversion)
+    toggle.conditional_chill_lead = self.get_value("CCMLead", condition=toggle.conditional_chill_mode)
+    toggle.cem_status = (
+      self.get_value("ShowCEMStatus", condition=toggle.conditional_experimental_mode) or
+      self.get_value("ShowCCMStatus", condition=toggle.conditional_chill_mode) or
+      toggle.debug_mode
+    )
 
     toggle.curve_speed_controller = toggle.openpilot_longitudinal and self.get_value("CurveSpeedController")
     toggle.csc_status = self.get_value("ShowCSCStatus", condition=toggle.curve_speed_controller) or toggle.debug_mode

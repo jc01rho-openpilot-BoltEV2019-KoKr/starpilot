@@ -199,7 +199,7 @@ def starpilot_thread():
   sm = messaging.SubMaster(["carControl", "carState", "controlsState", "deviceState", "driverMonitoringState",
                             "gpsLocation", "gpsLocationExternal", "liveParameters", "managerState", "modelV2",
                             "onroadEvents", "pandaStates", "radarState", "selfdriveState", "starpilotCarState",
-                            "starpilotSelfdriveState", "starpilotModelV2", "starpilotOnroadEvents", "mapdOut"],
+                            "starpilotRadarState", "starpilotSelfdriveState", "starpilotModelV2", "starpilotOnroadEvents", "mapdOut"],
                             poll="modelV2")
 
   params = Params(return_defaults=True)

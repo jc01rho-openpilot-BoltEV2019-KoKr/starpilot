@@ -104,6 +104,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "ReduceLateralAccelerationRainStorm",
   "ReduceLateralAccelerationSnow",
   "ConditionalExperimental",
+  "ConditionalChill",
   "CECurves",
   "CECurvesLead",
   "CELead",
@@ -111,10 +112,16 @@ SAFE_MODE_MANAGED_KEYS = (
   "CEStoppedLead",
   "CESpeed",
   "CESpeedLead",
+  "CCMLead",
+  "CCMSetSpeedMargin",
+  "CCMSpeed",
+  "CCMSpeedLead",
   "CEModelStopTime",
   "CEStopLights",
   "CESignalSpeed",
   "CESignalLaneDetection",
+  "PersistChillState",
+  "ShowCCMStatus",
   "CurveSpeedController",
   "SpeedLimitController",
   "SetSpeedLimit",
@@ -199,6 +206,7 @@ SAFE_MODE_STOCK_PARAM_MAP = {
 }
 
 SAFE_MODE_MEMORY_VALUES = {
+  "CCStatus": 0,
   "CEStatus": 0,
 }
 

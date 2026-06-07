@@ -114,6 +114,11 @@ StarPilotUIState *starpilotUIState() {
 void StarPilotUIState::update() {
   update_state(this);
 
-  starpilot_scene.conditional_status = starpilot_scene.enabled ? params_memory.getInt("CEStatus") : 0;
+  if (starpilot_scene.enabled && starpilot_scene.starpilot_toggles.value("conditional_chill_mode").toBool() &&
+      !starpilot_scene.starpilot_toggles.value("conditional_experimental_mode").toBool()) {
+    starpilot_scene.conditional_status = params_memory.getInt("CCStatus");
+  } else {
+    starpilot_scene.conditional_status = starpilot_scene.enabled ? params_memory.getInt("CEStatus") : 0;
+  }
   starpilot_scene.driver_camera_timer = starpilot_scene.reverse && starpilot_scene.starpilot_toggles.value("driver_camera_in_reverse").toBool() ? starpilot_scene.driver_camera_timer + 1 : 0;
 }

@@ -65,7 +65,7 @@ from openpilot.starpilot.common.model_versions import (
   uses_combined_driving_artifacts,
   uses_split_off_policy_artifacts,
 )
-from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state
+from openpilot.starpilot.common.experimental_state import sync_persist_chill_state, sync_persist_experimental_state
 from openpilot.starpilot.common.starpilot_utilities import delete_file, get_lock_status, run_cmd
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH, ERROR_LOGS_PATH, EXCLUDED_KEYS, LEGACY_STARPILOT_PARAM_RENAMES, MAPS_PATH, MODELS_PATH, RESOURCES_REPO, SCREEN_RECORDINGS_PATH, STOCK_THEME_PATH, THEME_SAVE_PATH,\
                                                            default_ev_tuning_enabled, migrate_cancel_button_controls, update_starpilot_toggles
@@ -3794,6 +3794,22 @@ def setup(app):
           "updated": updated,
         }), 200
 
+      if key in {"ConditionalExperimental", "ConditionalChill"}:
+        enabled = str_val.strip() in ("1", "true", "True")
+        params.put_bool(key, enabled)
+
+        updated = {key: enabled}
+        if enabled:
+          other_key = "ConditionalChill" if key == "ConditionalExperimental" else "ConditionalExperimental"
+          params.put_bool(other_key, False)
+          updated[other_key] = False
+
+        update_starpilot_toggles()
+        return jsonify({
+          "message": f"Parameter '{key}' updated successfully.",
+          "updated": updated,
+        }), 200
+
       if key == "CustomAccelProfile":
         enabled = str_val.strip() in ("1", "true", "True")
         params.put_bool(key, enabled)
@@ -3822,6 +3838,18 @@ def setup(app):
           "updated": {
             "PersistExperimentalState": enabled,
             "PersistedCEStatus": params.get_int("PersistedCEStatus", default=0),
+          },
+        }), 200
+
+      if key == "PersistChillState":
+        enabled = str_val.strip() in ("1", "true", "True")
+        sync_persist_chill_state(params, params_memory, enabled)
+        update_starpilot_toggles()
+        return jsonify({
+          "message": f"Parameter '{key}' updated successfully.",
+          "updated": {
+            "PersistChillState": enabled,
+            "PersistedCCStatus": params.get_int("PersistedCCStatus", default=0),
           },
         }), 200
 
