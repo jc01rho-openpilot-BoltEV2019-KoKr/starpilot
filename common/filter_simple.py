@@ -32,3 +32,23 @@ class BounceFilter(FirstOrderFilter):
       self.velocity.x = 0.0
     self.x += self.velocity.x
     return self.x
+
+
+class SecondOrderFilter:
+  """Cascaded two FirstOrderFilters for steeper roll-off (-40dB/decade).
+  
+  Use for noise-prone signals where single LPF (e.g., 0.10s) is insufficient.
+  Typical: rc1=0.05s (3.2Hz) + rc2=0.02s (8Hz) → ~20dB attenuation at 5Hz.
+  """
+  def __init__(self, x0, rc1, rc2, dt, initialized=True):
+    self.f1 = FirstOrderFilter(x0, rc1, dt, initialized)
+    self.f2 = FirstOrderFilter(x0, rc2, dt, initialized)
+
+  def update(self, x):
+    return self.f2.update(self.f1.update(x))
+
+  def reset(self, x0):
+    self.f1.x = x0
+    self.f2.x = x0
+    self.f1.initialized = True
+    self.f2.initialized = True
