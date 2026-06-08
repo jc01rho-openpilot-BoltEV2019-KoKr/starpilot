@@ -560,7 +560,7 @@ class CarInterface(CarInterfaceBase):
         ret.longitudinalTuning.kiV = [0.13, 0.18, 0.22, 0.22]
         ret.longitudinalTuning.kfDEPRECATED = 0.18
         ret.longitudinalTuning.kdBP = [0.0, 5.0, 15.0, 35.0]
-        ret.longitudinalTuning.kdV = [0.0, 0.0, 0.0, 0.0]
+        ret.longitudinalTuning.kdV = [0.02, 0.015, 0.01, 0.005]
         ret.longitudinalActuatorDelay = 0.7
       else:
         ret.longitudinalTuning.kfDEPRECATED = 0.25
@@ -584,6 +584,8 @@ class CarInterface(CarInterfaceBase):
       ret.longitudinalTuning.kiBP = [0.0, 3.0, 6.0, 35.0]
       ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
       ret.longitudinalTuning.kfDEPRECATED = 0.20
+      ret.longitudinalTuning.kdBP = [0.0, 5.0, 15.0, 35.0]
+      ret.longitudinalTuning.kdV = [0.02, 0.015, 0.01, 0.005]
       ret.stoppingDecelRate = 0.8
       ret.minEnableSpeed = -1
       ret.pcmCruise = False
