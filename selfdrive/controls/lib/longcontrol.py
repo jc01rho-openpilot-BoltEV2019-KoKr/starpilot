@@ -113,13 +113,9 @@ class LongControl:
     self.CP = CP
     self.long_control_state = LongCtrlState.off
     self.experimental_mode = False
-    kd_bp = list(CP.longitudinalTuning.kdBP) or [0.0]
-    kd_v = list(CP.longitudinalTuning.kdV) or [0.0]
-    kd = (kd_bp, kd_v)
     self.pid = PIDController((CP.longitudinalTuning.kpBP, CP.longitudinalTuning.kpV),
-                              (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
-                              k_d=kd,
-                              rate=1 / DT_CTRL)
+                             (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
+                             rate=1 / DT_CTRL)
     # Preserve legacy behaviour when no feedforward gain is provided (default of 0.0)
     kf = getattr(CP.longitudinalTuning, 'kfDEPRECATED', 0.0)
     self.feedforward_gain = kf if kf != 0.0 else 1.0
@@ -129,8 +125,6 @@ class LongControl:
     self.last_a_target = 0.0
     self.integrator_hold_frames = 0
     self.stop_release_counter = 0
-    self.aego_filter = FirstOrderFilter(0.0, 0.10, DT_CTRL)
-    self.aego_filtered_prev = 0.0
     self.is_gm_pedal_long = bool(
       CP.brand == "gm" and CP.enableGasInterceptorDEPRECATED and (CP.flags & GMFlags.PEDAL_LONG.value)
     )
@@ -169,8 +163,6 @@ class LongControl:
     self.pid.reset()
     self.last_a_target = 0.0
     self.integrator_hold_frames = 0
-    self.aego_filter.x = 0.0
-    self.aego_filtered_prev = 0.0
     if not preserve_stop_release:
       self.stop_release_counter = 0
 
@@ -215,8 +207,8 @@ class LongControl:
       return False
 
     if self.is_gm_pedal_long:
-      handoff_threshold = interp(v_ego, [0.0, 4.0, 12.0, 25.0], [0.20, 0.28, 0.38, 0.50])
-      hold_frames = int(round(interp(v_ego, [0.0, 4.0, 12.0, 25.0], [35.0, 28.0, 20.0, 14.0])))
+      handoff_threshold = interp(v_ego, [0.0, 4.0, 12.0, 25.0], [0.35, 0.45, 0.55, 0.70])
+      hold_frames = int(round(interp(v_ego, [0.0, 4.0, 12.0, 25.0], [25.0, 20.0, 14.0, 10.0])))
     else:
       handoff_threshold = interp(v_ego, [0.0, 4.0, 12.0, 25.0], [0.24, 0.30, 0.38, 0.48])
       hold_frames = int(round(interp(v_ego, [0.0, 4.0, 12.0, 25.0], [12.0, 10.0, 8.0, 6.0])))
@@ -256,11 +248,7 @@ class LongControl:
     # If the planner has already crossed into decel but the car is still
     # accelerating, bleed stale positive I aggressively so the command can
     # cross back through zero instead of carrying throttle for several seconds.
-    # Bolt EV PEDAL_LONG: Use more gradual bleed to prevent step changes
-    if self.is_gm_pedal_long:
-      bleed = interp(abs(error), [0.15, 0.50, 1.0], [0.75, 0.50, 0.20])
-    else:
-      bleed = interp(abs(error), [0.25, 0.75, 1.5], [0.55, 0.25, 0.0])
+    bleed = interp(abs(error), [0.25, 0.75, 1.5], [0.55, 0.25, 0.0])
     self.pid.i *= bleed
 
   def _apply_pedal_long_brake_bias(self, output_accel, a_target, CS):
@@ -275,9 +263,9 @@ class LongControl:
     if authority_gap <= 0.40:
       return output_accel
 
-    speed_factor = interp(CS.vEgo, [5.0, 12.0, 25.0], [0.0, 0.5, 0.8])
-    max_bias = interp(abs(a_target), [0.8, 2.0, 3.5], [0.0, 0.07, 0.14])
-    bias = min(authority_gap * 0.10, max_bias) * speed_factor
+    speed_factor = interp(CS.vEgo, [5.0, 12.0, 25.0], [0.0, 0.7, 1.0])
+    max_bias = interp(abs(a_target), [0.8, 2.0, 3.5], [0.0, 0.10, 0.20])
+    bias = min(authority_gap * 0.12, max_bias) * speed_factor
     return output_accel - float(bias)
 
   @staticmethod
@@ -327,15 +315,12 @@ class LongControl:
 
     else:  # LongCtrlState.pid
       error = a_target - CS.aEgo
-      aego_filtered = self.aego_filter.update(CS.aEgo)
-      error_rate = (aego_filtered - self.aego_filtered_prev) / DT_CTRL
-      self.aego_filtered_prev = aego_filtered
       self.update_mpc_mode(self.experimental_mode)
       self._shape_volt_test_tune_integrator(error, CS.vEgo)
       self._trim_positive_overshoot_integrator(a_target, error, CS)
       feedforward = a_target * self.feedforward_gain
       freeze_integrator = self._get_pedal_long_freeze(a_target, error, CS.vEgo, accel_limits)
-      raw_output_accel = self.pid.update(error, error_rate=-error_rate, speed=CS.vEgo, feedforward=feedforward,
+      raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward,
                                          freeze_integrator=freeze_integrator)
       raw_output_accel = self._cap_positive_output_on_negative_target(raw_output_accel, a_target, error, CS)
       raw_output_accel = self._apply_pedal_long_brake_bias(raw_output_accel, a_target, CS)
