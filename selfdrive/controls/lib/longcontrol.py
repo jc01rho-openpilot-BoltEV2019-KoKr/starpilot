@@ -4,7 +4,7 @@ from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.common.pid import PIDController
 from openpilot.selfdrive.modeld.constants import ModelConstants
-from openpilot.common.filter_simple import FirstOrderFilter
+from openpilot.common.filter_simple import FirstOrderFilter, SecondOrderFilter
 from opendbc.car.gm.values import CarControllerParams, GMFlags
 from openpilot.starpilot.common.testing_grounds import testing_ground
 
@@ -131,6 +131,11 @@ class LongControl:
     self.is_volt = bool(
       CP.brand == "gm" and str(CP.carFingerprint).startswith("CHEVROLET_VOLT")
     )
+
+    # D-term (OFF by default, activated via kdV/kdBP in CarParams)
+    self.aEgo_filter = SecondOrderFilter(0.0, 0.05, 0.02, DT_CTRL)  # 3.2Hz + 8Hz cascade
+    self.prev_aEgo_filtered = 0.0
+    self.d_term_active = False
 
   def update_mpc_mode(self, experimental_mode):
     new_mode = 'blended' if experimental_mode else 'acc'
@@ -282,6 +287,18 @@ class LongControl:
     positive_cap = interp(a_target, [-1.5, -0.6, -0.1], [0.0, 0.0, 0.05])
     return min(output_accel, float(positive_cap))
 
+  def _compute_d_term(self, aEgo_raw, v_ego):
+    """Compute D-term using Derivative on Measurement (DOM) with cascaded LPF."""
+    aEgo_filtered = self.aEgo_filter.update(aEgo_raw)
+    aEgo_rate = (aEgo_filtered - self.prev_aEgo_filtered) / DT_CTRL
+    self.prev_aEgo_filtered = aEgo_filtered
+    if not hasattr(self.CP.longitudinalTuning, 'kdV') or len(self.CP.longitudinalTuning.kdV) == 0:
+      return 0.0
+    kd = np.interp(v_ego, self.CP.longitudinalTuning.kdBP, self.CP.longitudinalTuning.kdV)
+    if kd <= 0.0:
+      return 0.0
+    return -kd * aEgo_rate
+
   def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
     self.pid.neg_limit = accel_limits[0]
@@ -320,7 +337,9 @@ class LongControl:
       self._trim_positive_overshoot_integrator(a_target, error, CS)
       feedforward = a_target * self.feedforward_gain
       freeze_integrator = self._get_pedal_long_freeze(a_target, error, CS.vEgo, accel_limits)
-      raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward,
+
+      d_term = self._compute_d_term(CS.aEgo, CS.vEgo)
+      raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward + d_term,
                                          freeze_integrator=freeze_integrator)
       raw_output_accel = self._cap_positive_output_on_negative_target(raw_output_accel, a_target, error, CS)
       raw_output_accel = self._apply_pedal_long_brake_bias(raw_output_accel, a_target, CS)
