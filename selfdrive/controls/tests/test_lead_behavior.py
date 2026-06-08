@@ -86,3 +86,11 @@ def test_radarless_matched_follow_window_rejects_far_headway():
 
 def test_radarless_matched_follow_window_rejects_low_confidence_lead():
   assert not is_radarless_matched_follow_window(31.0, 48.0, 30.4, 1.45, radar=False, lead_brake=0.05, lead_prob=0.55)
+
+
+def test_radarless_matched_follow_window_keeps_default_low_speed_guard():
+  assert not is_radarless_matched_follow_window(14.4, 25.4, 16.2, 1.25, radar=False, lead_brake=0.0, lead_prob=1.0)
+
+
+def test_radarless_matched_follow_window_accepts_lower_speed_when_requested():
+  assert is_radarless_matched_follow_window(14.4, 25.4, 16.2, 1.25, radar=False, lead_brake=0.0, lead_prob=1.0, min_speed=12.0)

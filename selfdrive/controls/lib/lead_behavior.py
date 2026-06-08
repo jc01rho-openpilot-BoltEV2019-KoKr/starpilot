@@ -35,8 +35,9 @@ def should_track_lead(lead_status: bool, lead_distance: float, model_length: flo
 
 def is_radarless_matched_follow_window(v_ego: float, lead_distance: float, v_lead: float, t_follow: float, *,
                                        radar: bool = False, lead_brake: float = 0.0,
-                                       lead_prob: float = 0.0) -> bool:
-  if radar or float(t_follow) <= 0.0 or float(v_ego) < RADARLESS_MATCHED_FOLLOW_MIN_SPEED:
+                                       lead_prob: float = 0.0,
+                                       min_speed: float = RADARLESS_MATCHED_FOLLOW_MIN_SPEED) -> bool:
+  if radar or float(t_follow) <= 0.0 or float(v_ego) < float(min_speed):
     return False
   if float(lead_prob) < RADARLESS_MATCHED_FOLLOW_MIN_MODEL_PROB:
     return False

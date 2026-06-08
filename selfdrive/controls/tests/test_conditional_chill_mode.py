@@ -54,6 +54,7 @@ def make_sm():
     "selfdriveState": SimpleNamespace(enabled=True),
     "longitudinalPlan": SimpleNamespace(allowThrottle=True, shouldStop=False),
     "starpilotCarState": SimpleNamespace(trafficModeEnabled=False),
+    "starpilotPlan": SimpleNamespace(redLight=False, forcingStop=False),
     "starpilotRadarState": SimpleNamespace(
       leadLeft=SimpleNamespace(status=False, dRel=float("inf"), vLead=0.0),
       leadRight=SimpleNamespace(status=False, dRel=float("inf"), vLead=0.0),
@@ -91,6 +92,7 @@ def make_ccm():
       status=False,
       dRel=float("inf"),
       vLead=0.0,
+      vRel=0.0,
       aLeadK=0.0,
       modelProb=0.0,
       radar=False,
@@ -269,6 +271,60 @@ def test_ccm_launch_assist_does_not_bypass_real_stop_scene(monkeypatch):
   assert ccm.status_value == CCStatus["OFF"]
 
 
+def test_ccm_launch_assist_rejects_red_light_stationary_lead_even_if_planner_says_go(monkeypatch):
+  planner, _detector, ccm = make_ccm()
+  sm = make_sm()
+  sm["carState"].standstill = True
+  sm["starpilotPlan"].redLight = True
+  toggles = make_toggles()
+  toggles.conditional_chill_launch_assist = True
+
+  planner.tracking_lead = True
+  planner.lead_one.status = True
+  planner.lead_one.dRel = 6.1
+  planner.lead_one.vLead = 0.01
+  planner.lead_one.vRel = -0.08
+  planner.lead_one.aLeadK = 0.0
+  planner.lead_one.radar = True
+
+  monkeypatch.setattr("openpilot.starpilot.controls.lib.conditional_chill_mode.time.monotonic", lambda: 22.0)
+  ccm.update(0.0, 25 * CV.MPH_TO_MS, sm, toggles)
+
+  assert ccm.experimental_mode
+  assert ccm.status_value == CCStatus["OFF"]
+
+
+def test_ccm_launch_assist_requires_real_lead_departure_signal(monkeypatch):
+  planner, _detector, ccm = make_ccm()
+  sm = make_sm()
+  sm["carState"].standstill = True
+  toggles = make_toggles()
+  toggles.conditional_chill_launch_assist = True
+
+  planner.tracking_lead = True
+  planner.lead_one.status = True
+  planner.lead_one.dRel = 18.0
+  planner.lead_one.vLead = 0.12
+  planner.lead_one.vRel = 0.05
+  planner.lead_one.aLeadK = 0.02
+  planner.lead_one.radar = True
+
+  monkeypatch.setattr("openpilot.starpilot.controls.lib.conditional_chill_mode.time.monotonic", lambda: 23.0)
+  ccm.update(0.0, 25 * CV.MPH_TO_MS, sm, toggles)
+
+  assert ccm.experimental_mode
+  assert ccm.status_value == CCStatus["OFF"]
+
+  planner.lead_one.vLead = 0.8
+  planner.lead_one.vRel = 0.5
+  planner.lead_one.aLeadK = 0.2
+  monkeypatch.setattr("openpilot.starpilot.controls.lib.conditional_chill_mode.time.monotonic", lambda: 23.2)
+  ccm.update(0.0, 25 * CV.MPH_TO_MS, sm, toggles)
+
+  assert not ccm.experimental_mode
+  assert ccm.status_value == CCStatus["LEAD"]
+
+
 def test_ccm_launch_assist_exits_once_launch_speed_is_reached(monkeypatch):
   planner, _detector, ccm = make_ccm()
   sm = make_sm()
@@ -301,6 +357,7 @@ def test_ccm_launch_assist_exits_immediately_if_lead_slows_again(monkeypatch):
   planner.lead_one.status = True
   planner.lead_one.dRel = 18.0
   planner.lead_one.vLead = 2.0
+  planner.lead_one.vRel = 2.0
   planner.lead_one.radar = True
 
   ccm.update(0.0, 25 * CV.MPH_TO_MS, sm, toggles)
@@ -309,6 +366,7 @@ def test_ccm_launch_assist_exits_immediately_if_lead_slows_again(monkeypatch):
 
   sm["carState"].standstill = False
   planner.lead_one.vLead = 0.2
+  planner.lead_one.vRel = 0.0
   planner.lead_one.aLeadK = -0.4
   ccm.update(3 * CV.MPH_TO_MS, 25 * CV.MPH_TO_MS, sm, toggles)
 

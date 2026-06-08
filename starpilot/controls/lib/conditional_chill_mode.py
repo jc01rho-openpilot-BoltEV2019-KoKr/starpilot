@@ -22,6 +22,10 @@ class ConditionalChillMode:
   CHILL_LAUNCH_MAX_ENTRY_SPEED = 1.0
   CHILL_LAUNCH_MAX_BRAKE = 0.2
   CHILL_LAUNCH_MAX_CLOSING_SPEED = 0.75
+  CHILL_LAUNCH_MIN_LEAD_SPEED = 0.35
+  CHILL_LAUNCH_MIN_LEAD_DELTA = 0.2
+  CHILL_LAUNCH_MIN_LEAD_VREL = 0.2
+  CHILL_LAUNCH_MIN_LEAD_ACCEL = 0.08
 
   STABLE_LEAD_MIN_MODEL_PROB = 0.9
   STABLE_LEAD_MAX_BRAKE = 0.2
@@ -228,10 +232,23 @@ class ConditionalChillMode:
 
     selfdrive_state = self._get_sm_service(sm, "selfdriveState")
     longitudinal_plan = self._get_sm_service(sm, "longitudinalPlan")
+    starpilot_plan = self._get_sm_service(sm, "starpilotPlan")
     if selfdrive_state is None or longitudinal_plan is None:
       return False
 
     if not bool(getattr(selfdrive_state, "enabled", False)):
+      return False
+
+    if (
+      self.detector.stop_light_detected or
+      self.detector.stop_light_model_detected or
+      self.starpilot_planner.raw_model_stopped or
+      self.starpilot_planner.model_stopped or
+      self.starpilot_planner.starpilot_vcruise.stop_sign_confirmed or
+      self.starpilot_planner.starpilot_vcruise.forcing_stop or
+      bool(getattr(starpilot_plan, "redLight", False)) or
+      bool(getattr(starpilot_plan, "forcingStop", False))
+    ):
       return False
 
     if bool(getattr(longitudinal_plan, "shouldStop", False)) or not bool(getattr(longitudinal_plan, "allowThrottle", False)):
@@ -245,9 +262,19 @@ class ConditionalChillMode:
 
     lead_speed = float(getattr(lead, "vLead", 0.0))
     lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    lead_accel = float(getattr(lead, "aLeadK", 0.0))
+    lead_delta = lead_speed - float(v_ego)
+    lead_vrel = float(getattr(lead, "vRel", lead_delta))
     closing_speed = max(0.0, v_ego - lead_speed)
 
-    return lead_speed > self.STABLE_LEAD_MIN_SPEED and lead_brake <= self.CHILL_LAUNCH_MAX_BRAKE and closing_speed <= self.CHILL_LAUNCH_MAX_CLOSING_SPEED
+    return (
+      lead_speed >= self.CHILL_LAUNCH_MIN_LEAD_SPEED and
+      lead_delta >= self.CHILL_LAUNCH_MIN_LEAD_DELTA and
+      lead_vrel >= self.CHILL_LAUNCH_MIN_LEAD_VREL and
+      lead_accel >= self.CHILL_LAUNCH_MIN_LEAD_ACCEL and
+      lead_brake <= self.CHILL_LAUNCH_MAX_BRAKE and
+      closing_speed <= self.CHILL_LAUNCH_MAX_CLOSING_SPEED
+    )
 
   def _launch_exit_required(self, v_ego, sm):
     if v_ego >= self.CHILL_LAUNCH_EXIT_SPEED:
