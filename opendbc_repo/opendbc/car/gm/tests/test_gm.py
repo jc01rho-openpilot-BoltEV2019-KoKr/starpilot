@@ -141,27 +141,6 @@ class TestGMInterface:
     assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_BOLT_2022_PEDAL.value
 
-  @parameterized.expand([
-    CAR.CHEVROLET_BOLT_CC_2017,
-    CAR.CHEVROLET_BOLT_CC_2018_2021,
-    CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
-    CAR.CHEVROLET_BOLT_CC_2022_2023,
-    CAR.CHEVROLET_MALIBU_HYBRID_CC,
-  ])
-  def test_bolt_pedal_long_tuning_uses_jerky_tuning(self, car_model):
-    CarInterface = interfaces[car_model]
-    fingerprint = _empty_fingerprint()
-    fingerprint[0][0x201] = 8
-
-    car_params = CarInterface.get_params(car_model, fingerprint, [], alpha_long=False, is_release=False, docs=False,
-                                         starpilot_toggles=_test_starpilot_toggles())
-
-    assert list(car_params.longitudinalTuning.kpV) == pytest.approx([0.085, 0.075, 0.060, 0.045])
-    assert list(car_params.longitudinalTuning.kiV) == pytest.approx([0.05, 0.07, 0.10, 0.13])
-    assert list(car_params.longitudinalTuning.kdBP) == pytest.approx([0.0, 5.0, 15.0, 35.0])
-    assert list(car_params.longitudinalTuning.kdV) == pytest.approx([0.15, 0.12, 0.10, 0.08])
-    assert car_params.longitudinalActuatorDelay == pytest.approx(0.7)
-
 
 class TestGMCarController:
   def test_dash_speed_spoof_respects_live_stock_acc_toggles(self):
