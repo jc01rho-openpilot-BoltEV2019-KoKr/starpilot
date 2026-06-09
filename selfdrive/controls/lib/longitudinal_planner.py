@@ -46,6 +46,15 @@ LEAD_DEPART_CONFIDENT_MIN_LEAD_SPEED = 0.3
 LEAD_DEPART_CONFIDENT_MIN_LEAD_DELTA = 0.25
 LEAD_DEPART_CONFIDENT_MIN_LEAD_ACCEL = 0.2
 LEAD_DEPART_CONFIDENT_CONFIRM_TIME = 0.35
+STANDSTILL_STOPPED_LEAD_GUARD_MAX_EGO_SPEED = 0.5
+STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_SPEED = 0.45
+STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_DELTA = 0.35
+STANDSTILL_STOPPED_LEAD_GUARD_MIN_MODEL_PROB = 0.95
+STANDSTILL_STOPPED_LEAD_GUARD_MAX_LATERAL_OFFSET = 1.75
+STANDSTILL_STOPPED_LEAD_GUARD_MIN_DISTANCE = 3.0
+STANDSTILL_STOPPED_LEAD_GUARD_DISTANCE_MARGIN = 3.0
+STANDSTILL_STOPPED_LEAD_GUARD_MIN_BRAKE = 0.16
+STANDSTILL_STOPPED_LEAD_GUARD_MAX_BRAKE = 0.26
 RADAR_DEPART_CONFLICT_MAX_EGO_SPEED = 1.6
 RADAR_DEPART_CONFLICT_MIN_RADAR_LATERAL = 1.5
 RADAR_DEPART_CONFLICT_MAX_RADAR_DISTANCE = 18.0
@@ -1098,6 +1107,50 @@ class LongitudinalPlanner:
       0.55 * lead_factor + 0.45 * gap_factor, 0.0, 1.0)
     return min(accel_cap, max(float(model_desired_accel), LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL))
 
+  def get_standstill_stopped_lead_guard_cap(self, lead, v_ego, accel_min, stop_distance,
+                                            release_ready, confident_depart_ready):
+    if lead is None or not lead.status or release_ready or confident_depart_ready:
+      return None
+    if float(v_ego) > STANDSTILL_STOPPED_LEAD_GUARD_MAX_EGO_SPEED:
+      return None
+
+    lead_radar = bool(getattr(lead, "radar", False))
+    lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
+    if not lead_radar and lead_prob < STANDSTILL_STOPPED_LEAD_GUARD_MIN_MODEL_PROB:
+      return None
+
+    if abs(float(getattr(lead, "yRel", 0.0))) > STANDSTILL_STOPPED_LEAD_GUARD_MAX_LATERAL_OFFSET:
+      return None
+
+    lead_speed = max(float(getattr(lead, "vLead", 0.0)), 0.0)
+    lead_delta = lead_speed - float(v_ego)
+    max_distance = max(
+      STANDSTILL_STOPPED_LEAD_GUARD_MIN_DISTANCE,
+      float(stop_distance) + STANDSTILL_STOPPED_LEAD_GUARD_DISTANCE_MARGIN,
+    )
+    if (
+      float(getattr(lead, "dRel", float("inf"))) > max_distance or
+      lead_speed > STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_SPEED or
+      lead_delta > STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_DELTA
+    ):
+      return None
+
+    distance_factor = float(np.clip((max_distance - float(lead.dRel)) /
+                                    max(max_distance - STANDSTILL_STOPPED_LEAD_GUARD_MIN_DISTANCE, 0.1),
+                                    0.0, 1.0))
+    speed_factor = float(np.clip(lead_speed / max(STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_SPEED, 0.1), 0.0, 1.0))
+    delta_factor = float(np.clip((STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_DELTA - lead_delta) /
+                                 max(STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_DELTA, 0.1),
+                                 0.0, 1.0))
+    hold_brake = STANDSTILL_STOPPED_LEAD_GUARD_MIN_BRAKE + 0.06 * distance_factor + 0.02 * speed_factor + 0.02 * delta_factor
+    hold_brake = float(np.clip(
+      hold_brake,
+      STANDSTILL_STOPPED_LEAD_GUARD_MIN_BRAKE,
+      STANDSTILL_STOPPED_LEAD_GUARD_MAX_BRAKE,
+    ))
+    brake_floor = -hold_brake
+    return brake_floor if accel_min >= 0.0 else max(accel_min, brake_floor)
+
   def get_lead_catchup_accel_cap(self, lead, v_ego, t_follow):
     if lead is None or not lead.status:
       return None
@@ -2135,6 +2188,33 @@ class LongitudinalPlanner:
       self.confident_lead_depart_elapsed >= LEAD_DEPART_CONFIDENT_CONFIRM_TIME
     )
 
+    standstill_stopped_lead_guard_cap = None
+    if lead_control_active and (bool(sm['carState'].standstill) or float(sm['carState'].vEgo) <= STANDSTILL_STOPPED_LEAD_GUARD_MAX_EGO_SPEED):
+      release_ready = bool(lead_depart_ready or confident_depart_ready)
+      standstill_stopped_lead_guard_caps = [
+        cap for cap in (
+          self.get_standstill_stopped_lead_guard_cap(
+            self.lead_one,
+            float(sm['carState'].vEgo),
+            output_accel_min,
+            standstill_nudge_gap,
+            release_ready,
+            confident_depart_ready,
+          ),
+          self.get_standstill_stopped_lead_guard_cap(
+            self.lead_two,
+            float(sm['carState'].vEgo),
+            output_accel_min,
+            standstill_nudge_gap,
+            release_ready,
+            confident_depart_ready,
+          ),
+        ) if cap is not None
+      ]
+      if standstill_stopped_lead_guard_caps:
+        standstill_stopped_lead_guard_cap = min(standstill_stopped_lead_guard_caps)
+        output_should_stop = True
+
     if lead_control_active and sm['carState'].standstill and moving_leads and not depart_safety_veto:
       output_a_target = max(output_a_target, STANDSTILL_LEAD_NUDGE_ACCEL)
 
@@ -2361,6 +2441,10 @@ class LongitudinalPlanner:
     if close_stop_hold_cap is not None:
       self.a_desired = min(self.a_desired, close_stop_hold_cap)
       output_a_target = min(output_a_target, close_stop_hold_cap)
+
+    if standstill_stopped_lead_guard_cap is not None:
+      self.a_desired = min(self.a_desired, standstill_stopped_lead_guard_cap)
+      output_a_target = min(output_a_target, standstill_stopped_lead_guard_cap)
 
     if close_settle_cap is not None:
       self.a_desired = min(self.a_desired, close_settle_cap)
