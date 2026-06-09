@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "common/params.h"
 #include "common/swaglog.h"
 #include "selfdrive/ui/qt/util.h"
 
@@ -44,7 +45,8 @@ void AnnotatedCameraWidget::updateState(const UIState &s, const StarPilotUIState
 
   const cereal::CarState::Reader &carState = sm["carState"].getCarState();
 
-  const bool hide_steering_wheel = starpilot_toggles.value("hide_steering_wheel").toBool();
+  static Params params;
+  const bool hide_steering_wheel = starpilot_toggles.value("hide_steering_wheel").toBool() || params.getBool("HideSteeringWheel");
   experimental_btn->setVisible(!hide_steering_wheel);
 
   const QPoint experimental_button_position = hide_steering_wheel

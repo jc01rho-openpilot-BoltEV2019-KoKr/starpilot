@@ -174,6 +174,11 @@ StarPilotVisualsPanel::StarPilotVisualsPanel(StarPilotSettingsWindow *parent, bo
     QObject::connect(visualToggle, &AbstractControl::showDescriptionEvent, [this]() {
       update();
     });
+    if (ToggleControl *toggle = qobject_cast<ToggleControl*>(visualToggle)) {
+      QObject::connect(toggle, &ToggleControl::toggleFlipped, this, []() {
+        updateStarPilotToggles();
+      });
+    }
   }
 
   QSet<QString> forceUpdateKeys = {"HideLeadMarker", "ShowSpeedLimits"};
