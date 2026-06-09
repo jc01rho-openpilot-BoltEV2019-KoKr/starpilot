@@ -25,7 +25,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherButton,
   AetherListColors,
   AetherScrollbar,
-  panel_style_from_color,
+  DEFAULT_PANEL_STYLE,
   build_list_panel_frame,
   draw_action_pill,
   draw_busy_ring,
@@ -84,8 +84,7 @@ STATUS_BUTTON_GAP = 8
 STATUS_REMOVE_HEIGHT = 40
 STATUS_METRIC_GAP = 18
 STATUS_SELECTION_CHIP_HEIGHT = 30
-MAPS_TILE_GREEN = rl.Color(16, 185, 129, 255)
-PANEL_STYLE = panel_style_from_color("#10B981")
+PANEL_STYLE = DEFAULT_PANEL_STYLE
 MAPS_METRICS = replace(AETHER_LIST_METRICS, header_height=240)
 
 COUNTRIES_SECTION = next(section for section in MAPS_CATALOG if section["key"] == "countries")
@@ -544,7 +543,6 @@ class StarPilotMapsLayout(StarPilotPanel):
         enabled=self._primary_action_enabled,
         emphasized=True,
         font_size=24,
-        accent_color=MAPS_TILE_GREEN,
       )
     )
     self._schedule_button = self._child(

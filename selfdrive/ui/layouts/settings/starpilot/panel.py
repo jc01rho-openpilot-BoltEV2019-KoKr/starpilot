@@ -227,7 +227,7 @@ class _SettingsPage(StarPilotPanel):
   shared slider and selector dialog helpers.
   """
 
-  SLIDER_COLOR = "#597497"
+  SLIDER_COLOR = "#8B5CF6"
 
   def __init__(self):
     super().__init__()

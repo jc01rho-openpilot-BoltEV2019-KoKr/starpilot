@@ -18,7 +18,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherListColors,
   AetherScrollbar,
   AetherSliderDialog,
-  panel_style_from_color,
+  DEFAULT_PANEL_STYLE,
   draw_list_group_shell,
   draw_list_scroll_fades,
   draw_section_header,
@@ -89,7 +89,7 @@ SECTION_HEADER_HEIGHT = CUSTOM_METRICS.section_header_height
 SECTION_HEADER_GAP = CUSTOM_METRICS.section_header_gap
 ROW_HEIGHT = CUSTOM_METRICS.row_height
 FADE_HEIGHT = CUSTOM_METRICS.fade_height
-PANEL_STYLE = panel_style_from_color("#64748B")
+PANEL_STYLE = DEFAULT_PANEL_STYLE
 
 
 class VehicleSettingsManagerView(AetherInteractiveMixin, Widget):

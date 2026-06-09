@@ -42,7 +42,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherChip,
   AetherListColors,
   AetherScrollbar,
-  panel_style_from_color,
+  DEFAULT_PANEL_STYLE,
   _point_hits,
   draw_action_rail,
   draw_action_pill,
@@ -78,7 +78,7 @@ FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
 DRIVING_MODEL_METRICS = replace(AETHER_LIST_METRICS, header_height=210)
 CONFIRM_TIMEOUT_SECONDS = 3.0
 TRANSITION_SECONDS = 0.24
-PANEL_STYLE = panel_style_from_color("#3B82F6")
+PANEL_STYLE = DEFAULT_PANEL_STYLE
 
 
 @dataclass

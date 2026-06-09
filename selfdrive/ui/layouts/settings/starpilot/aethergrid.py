@@ -191,7 +191,7 @@ class AetherListColors:
   CURRENT_BORDER = rl.Color(116, 136, 168, 44)
   ACTION_BG = rl.Color(255, 255, 255, 0)
   ACTION_SEPARATOR = rl.Color(255, 255, 255, 18)
-  PRIMARY = hex_to_color("#597497")
+  PRIMARY = hex_to_color("#8B5CF6")
   PRIMARY_SOFT = rl.Color(89, 116, 151, 48)
   DANGER = rl.Color(173, 78, 90, 255)
   DANGER_SOFT = rl.Color(173, 78, 90, 44)
@@ -1799,6 +1799,8 @@ class AetherButton(Widget):
     rl.draw_rectangle_rounded(rect, 0.18, 12, bg)
     rl.draw_rectangle_rounded_lines_ex(rect, 0.18, 12, 1, border)
     rl.draw_rectangle_rec(rl.Rectangle(rect.x, rect.y, rect.width, 1), _with_alpha(AetherListColors.HEADER, 18 if enabled else 8))
+    if self._emphasized and enabled:
+      rl.draw_rectangle_rec(rl.Rectangle(rect.x + 1, rect.y + 1, rect.width - 2, 1), _with_alpha(AetherListColors.HEADER, 14))
     _draw_text_fit_common(
       gui_app.font(FontWeight.MEDIUM),
       self.text,
@@ -2183,7 +2185,7 @@ class AetherTile(Widget):
     elif surface_color:
       self.surface_color = surface_color
     else:
-      self.surface_color = hex_to_color("#3B82F6")
+      self.surface_color = AetherListColors.PRIMARY
     if isinstance(substrate_color, str):
       self.substrate_color = hex_to_color(substrate_color)
     else:
@@ -2326,7 +2328,12 @@ class AetherTile(Widget):
   def _draw_signal_edge(self, face: rl.Rectangle, color: rl.Color, width: int = 2, alpha: int = 58):
     snapped_face = _snap_rect(face)
     signal_width = max(1, int(width))
-    rl.draw_rectangle_rec(rl.Rectangle(snapped_face.x, snapped_face.y, signal_width, snapped_face.height), _with_alpha(color, alpha))
+    glow_color = _with_alpha(color, max(4, alpha // 3))
+    core_color = _with_alpha(color, alpha)
+    rl.draw_rectangle_rec(rl.Rectangle(snapped_face.x, snapped_face.y, signal_width, snapped_face.height), glow_color)
+    inner_x = snapped_face.x + max(1, signal_width - 2)
+    inner_w = max(1, signal_width - 1)
+    rl.draw_rectangle_rec(rl.Rectangle(inner_x, snapped_face.y, inner_w, snapped_face.height), core_color)
 
   def _measure_tile_stack(
     self,
@@ -2425,7 +2432,7 @@ class AetherTile(Widget):
       icon_width = custom_icon_base_size * custom_icon_scale_mult * icon_scale
       icon_x = face.x + (face.width - icon_width) / 2
       s = icon_scale * (custom_icon_base_size / custom_icon_canvas_size) * custom_icon_scale_mult
-      self._draw_custom_icon(custom_icon_key, icon_x, layout["top"], s, rl.WHITE)
+      self._draw_custom_icon(custom_icon_key, icon_x, layout["top"], s, _mix_colors(rl.Color(255, 255, 255, 255), self.surface_color, 0.08))
     elif icon:
       icon_width = icon.width * icon_scale
       icon_x = face.x + (face.width - icon_width) / 2
@@ -2499,7 +2506,7 @@ class HubTile(AetherTile):
 
   def _render(self, rect: rl.Rectangle):
     face = self._render_layers(rect)
-    self._draw_signal_edge(face, self.surface_color, width=TILE_SIGNAL_WIDTH, alpha=48)
+    self._draw_signal_edge(face, self.surface_color, alpha=48)
 
     status_text = self.get_status() if self.get_status else ""
     title_text = str(_resolve_value(self.title, ""))
@@ -3095,7 +3102,7 @@ class AetherSliderDialog(Widget):
     presets: list[float] | None = None,
     unit: str = "",
     labels: dict[float, str] | None = None,
-    color: rl.Color | str = "#F57371",
+    color: rl.Color | str = "#8B5CF6",
     on_change: Callable[[float], None] | None = None,
   ):
     super().__init__()

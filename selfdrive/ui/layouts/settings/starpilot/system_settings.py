@@ -35,7 +35,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherListColors,
   TileGrid,
   ToggleTile,
-  panel_style_from_color,
+  DEFAULT_PANEL_STYLE,
   init_list_panel,
   draw_list_group_shell,
   draw_list_scroll_fades,
@@ -94,7 +94,7 @@ SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height
 SECTION_HEADER_GAP = AETHER_LIST_METRICS.section_header_gap
 ROW_HEIGHT = AETHER_LIST_METRICS.row_height
 FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
-PANEL_STYLE = panel_style_from_color("#D946EF")
+PANEL_STYLE = DEFAULT_PANEL_STYLE
 
 SYSTEM_PANEL_METRICS = replace(
   AETHER_LIST_METRICS,

@@ -25,37 +25,31 @@ class StarPilotLayout(Widget):
       "title": "Alerts & Sounds",
       "icon": "sound",
       "panel": "SOUNDS",
-      "color": "#E63956",
     },
     {
       "title": "Driving Controls",
       "icon": "steering",
       "buttons": [("DRIVING MODEL", "DRIVING_MODEL"), ("GAS / BRAKE", "LONGITUDINAL"), ("STEERING", "LATERAL")],
-      "color": "#3B82F6",
     },
     {
       "title": "Map Data",
       "icon": "navigate",
       "panel": "MAPS",
-      "color": "#10B981",
     },
     {
       "title": "System",
       "icon": "system",
       "panel": "SYSTEM",
-      "color": "#D946EF",
     },
     {
       "title": "Appearance",
       "icon": "display",
       "panel": "VISUALS",
-      "color": "#8B5CF6",
     },
     {
       "title": "Vehicle Settings",
       "icon": "vehicle",
       "panel": "VEHICLE",
-      "color": "#64748B",
     },
   ]
 

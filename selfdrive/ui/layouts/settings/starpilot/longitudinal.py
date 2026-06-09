@@ -22,7 +22,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherListColors,
   AetherScrollbar,
   AetherSliderDialog,
-  panel_style_from_color,
+  DEFAULT_PANEL_STYLE,
   _point_hits,
   draw_list_group_shell,
   draw_list_scroll_fades,
@@ -43,7 +43,7 @@ from openpilot.starpilot.common.accel_profile import (
 from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state
 
 
-PANEL_STYLE = panel_style_from_color("#3B82F6")
+PANEL_STYLE = DEFAULT_PANEL_STYLE
 COMPACT_PANEL_METRICS = replace(AETHER_LIST_METRICS, header_height=96)  # noqa: re-exported
 SECTION_GAP = AETHER_LIST_METRICS.section_gap
 SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height

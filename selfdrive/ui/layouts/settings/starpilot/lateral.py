@@ -14,11 +14,11 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   AetherSliderDialog,
-  panel_style_from_color,
+  DEFAULT_PANEL_STYLE,
 )
 
 
-PANEL_STYLE = panel_style_from_color("#3B82F6")
+PANEL_STYLE = DEFAULT_PANEL_STYLE
 
 
 def _confirm_reboot_toggle(params, key, state):
