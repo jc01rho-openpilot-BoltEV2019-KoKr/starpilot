@@ -448,7 +448,7 @@ void Device::updateBrightness(const UIState &s, const StarPilotUIState &fs) {
   const StarPilotUIScene &starpilot_scene = fs.starpilot_scene;
   const QJsonObject &starpilot_toggles = starpilot_scene.starpilot_toggles;
   const int screen_brightness_onroad = starpilot_toggles.value("screen_brightness_onroad").toInt();
-  const int clamped_onroad_brightness = std::clamp(screen_brightness_onroad, 1, 100);
+  const int clamped_onroad_brightness = std::clamp(screen_brightness_onroad, 0, 100);
 
   float clipped_brightness = offroad_brightness;
   if (s.scene.started && s.scene.light_sensor >= 0) {
@@ -471,8 +471,6 @@ void Device::updateBrightness(const UIState &s, const StarPilotUIState &fs) {
   } else if (s.scene.started && !starpilot_scene.wake_up_screen && interactive_timeout == 0 && starpilot_toggles.value("standby_mode").toBool()) {
     brightness = 0;
   } else if (s.scene.started && screen_brightness_onroad != 101) {
-    // Guard against stale params that may still contain the old onroad "off"
-    // value. Standby mode is the only supported way to blank the screen onroad.
     brightness = interactive_timeout > 0 ? std::max(5, clamped_onroad_brightness) : clamped_onroad_brightness;
   } else if (starpilot_toggles.value("screen_brightness").toInt() != 101) {
     brightness = starpilot_toggles.value("screen_brightness").toInt();
@@ -490,6 +488,7 @@ void Device::updateWakefulness(const UIState &s, const StarPilotUIState &fs) {
   const StarPilotUIScene &starpilot_scene = fs.starpilot_scene;
   const QJsonObject &starpilot_toggles = starpilot_scene.starpilot_toggles;
   const bool standby_mode = starpilot_toggles.value("standby_mode").toBool();
+  const int screen_brightness_onroad = starpilot_toggles.value("screen_brightness_onroad").toInt();
   const int screen_timeout = starpilot_toggles.value("screen_timeout").toInt();
   const int screen_timeout_onroad = starpilot_toggles.value("screen_timeout_onroad").toInt();
 
@@ -499,7 +498,7 @@ void Device::updateWakefulness(const UIState &s, const StarPilotUIState &fs) {
   // Standby mode should extend the current wake window for alerts and status
   // changes, but it must not clear the timer every frame or manual wakes will
   // collapse immediately.
-  if (ignition_on && standby_mode && starpilot_scene.wake_up_screen) {
+  if (ignition_on && standby_mode && screen_brightness_onroad != 0 && starpilot_scene.wake_up_screen) {
     resetInteractiveTimeout(screen_timeout, screen_timeout_onroad);
   }
 

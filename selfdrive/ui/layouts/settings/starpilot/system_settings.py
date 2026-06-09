@@ -143,13 +143,13 @@ class SystemSettingsManagerView(PanelManagerView):
         "subtitle": tr("Screen brightness while driving."),
         "unit": "%",
         "labels": brightness_labels,
-        "min": 1,
+        "min": 0,
         "max": 101,
         "step": 1,
         "live": True,
-        "presets": [1, 35, 60, 80, 101],
-        "get": lambda: float(max(1, self._controller._params.get_int("ScreenBrightnessOnroad"))),
-        "set": lambda v: self._controller._set_brightness("ScreenBrightnessOnroad", max(1, int(v))),
+        "presets": [0, 35, 60, 80, 101],
+        "get": lambda: float(self._controller._params.get_int("ScreenBrightnessOnroad")),
+        "set": lambda v: self._controller._set_brightness("ScreenBrightnessOnroad", int(v)),
       },
       "ScreenTimeout": {
         "title": tr("Offroad Screen Timeout"),
@@ -917,8 +917,10 @@ class StarPilotSystemLayout(_SettingsPage):
 
   def _set_brightness(self, key, val):
     self._params.put_int(key, int(val))
+    if key == "ScreenBrightnessOnroad" and not ui_state.started:
+      return
     if key in ("ScreenBrightnessOnroad", "ScreenBrightness") and hasattr(HARDWARE, 'set_brightness'):
-        HARDWARE.set_brightness(int(val))
+      HARDWARE.set_brightness(int(val))
 
   def _get_konik_state(self):
     if Path("/data/not_vetted").exists():
