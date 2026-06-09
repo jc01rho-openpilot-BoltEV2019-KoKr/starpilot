@@ -111,7 +111,7 @@ def make_sm(v_ego: float, desired_accel: float, min_accel: float, *, experimenta
   }
 
 
-def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False):
+def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False, prioritize_smooth_following: bool = False):
   return SimpleNamespace(
     taco_tune=False,
     classic_model=False,
@@ -120,6 +120,7 @@ def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False):
     stop_distance=6.0,
     vEgoStopping=0.5,
     radar_takeoffs=radar_takeoffs,
+    prioritize_smooth_following=prioritize_smooth_following,
   )
 
 
@@ -2188,6 +2189,59 @@ def test_cruise_tracking_lead_accel_transition_target_skips_clear_pullaway():
   )
 
   assert smoothed is None
+
+
+def test_prioritize_smooth_following_skips_post_097_follow_nudges():
+  v_ego = 16.2
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  lead = make_lead(status=True, d_rel=33.4, v_lead=16.0, a_lead=0.0, radar=False, model_prob=0.99, y_rel=0.12)
+
+  def run_once(prioritize_smooth_following: bool) -> list[str]:
+    planner = LongitudinalPlanner(CP, init_v=v_ego)
+    sm = make_sm(
+      v_ego,
+      desired_accel=0.8,
+      min_accel=-0.5,
+      experimental_mode=False,
+      tracking_lead=True,
+      lead_one=lead,
+    )
+    sm["starpilotPlan"].vCruise = v_ego + 8.0
+
+    calls = []
+
+    def record(name, return_value=None):
+      def _inner(self, *args, **kwargs):
+        calls.append(name)
+        return return_value
+      return types.MethodType(_inner, planner)
+
+    planner.get_follow_control_lead = record("get_follow_control_lead", lead)
+    planner.get_lead_catchup_accel_cap = record("get_lead_catchup_accel_cap", None)
+    planner.get_tracked_vision_model_brake_floor = record("get_tracked_vision_model_brake_floor", None)
+    planner.get_low_speed_follow_transition_brake_cap = record("get_low_speed_follow_transition_brake_cap", None)
+    planner.get_tracked_vision_model_brake_cap = record("get_tracked_vision_model_brake_cap", None)
+    planner.get_cruise_tracking_lead_accel_cap = record("get_cruise_tracking_lead_accel_cap", None)
+    planner.get_cruise_tracking_lead_accel_transition_target = record("get_cruise_tracking_lead_accel_transition_target", None)
+
+    planner.update(sm, make_toggles(prioritize_smooth_following=prioritize_smooth_following))
+    return calls
+
+  calls_default = run_once(False)
+  calls_smooth = run_once(True)
+
+  expected_calls = {
+    "get_lead_catchup_accel_cap",
+    "get_follow_control_lead",
+    "get_tracked_vision_model_brake_floor",
+    "get_low_speed_follow_transition_brake_cap",
+    "get_tracked_vision_model_brake_cap",
+    "get_cruise_tracking_lead_accel_cap",
+    "get_cruise_tracking_lead_accel_transition_target",
+  }
+
+  assert expected_calls.issubset(set(calls_default))
+  assert not expected_calls.intersection(set(calls_smooth))
 
 
 def test_near_duplicate_lead_source_hysteresis_prefers_previous_source():

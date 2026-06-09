@@ -180,6 +180,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "RelaxedJerkSpeedDecrease",
   "FrogsGoMoosTweak",
   "SNGHack",
+  "ToyotaAutoHold",
   "SubaruSNG",
   "SubaruSNGManualParkingBrake",
   "VoltSNG",

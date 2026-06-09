@@ -9,6 +9,7 @@ from opendbc.car.structs import CarParams
 from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
 from opendbc.safety.tests.common import CANPackerSafety
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
 
 TOYOTA_COMMON_TX_MSGS = [[0x2E4, 0], [0x191, 0], [0x412, 0], [0x343, 0], [0x1D2, 0], [0x1D3, 0]]  # LKAS + LTA + ACC & PCM cancel cmds
 TOYOTA_SECOC_TX_MSGS = [[0x131, 0], [0x183, 0]] + TOYOTA_COMMON_TX_MSGS
@@ -93,6 +94,30 @@ class TestToyotaSafetyBase(common.CarSafetyTest, common.LongitudinalAccelSafetyT
             dat = [0]*6 + dat[-1:]
           msg = libsafety_py.make_CANPacket(0x283, 0, bytes(dat))
           self.assertEqual(not bad and not stock_longitudinal, self._tx(msg))
+
+  def test_auto_brake_hold_aeb_replacement_only_at_standstill(self):
+    self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.ALLOW_AEB)
+    hold_msg = libsafety_py.make_CANPacket(0x344, 0, b"\xfd\x80\x00\x00\x00\x00\x00\xcc")
+
+    self._rx(self._speed_msg(0))
+    self._rx(self._toggle_aol(True))
+    self._rx(self._user_gas_msg(False))
+    self.assertTrue(self._tx(hold_msg))
+    self.assertEqual(-1, self.safety.safety_fwd_hook(2, 0x344))
+
+    self._rx(self._speed_msg(1.0))
+    self.assertFalse(self._tx(hold_msg))
+    self.assertEqual(0, self.safety.safety_fwd_hook(2, 0x344))
+
+    self._rx(self._speed_msg(0))
+    self._rx(self._user_gas_msg(True))
+    self.assertFalse(self._tx(hold_msg))
+    self.assertEqual(0, self.safety.safety_fwd_hook(2, 0x344))
+
+    self._rx(self._user_gas_msg(False))
+    self._rx(self._toggle_aol(False))
+    self.assertFalse(self._tx(hold_msg))
+    self.assertEqual(0, self.safety.safety_fwd_hook(2, 0x344))
 
   # Only allow LTA msgs with no actuation
   def test_lta_steer_cmd(self):

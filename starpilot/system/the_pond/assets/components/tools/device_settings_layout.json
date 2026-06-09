@@ -2503,6 +2503,13 @@
         "ui_type": "toggle"
       },
       {
+        "key": "ToyotaAutoHold",
+        "label": "Toyota Auto Hold",
+        "description": "Hold the brakes at a stop on supported Toyota/Lexus TSS2 vehicles when cruise main is available and cruise is not active.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
         "key": "RemapCancelToDistance",
         "label": "Remap Cancel Button",
         "description": "On pedal-interceptor Bolts, treat the steering-wheel CANCEL button as an extra mappable button.",

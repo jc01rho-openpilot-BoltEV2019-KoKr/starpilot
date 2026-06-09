@@ -919,7 +919,6 @@ ALT_BUS_LDA_BUTTON_CARS = frozenset({
 # steering-wheel-status field instead of the dedicated LKAS bit.
 ALT_BUS_LDA_BUTTON_SWL_STAT_CARS = frozenset({
   CAR.HYUNDAI_SONATA,
-  CAR.HYUNDAI_SONATA_HYBRID,
 })
 
 

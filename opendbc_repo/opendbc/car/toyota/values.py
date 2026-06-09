@@ -75,6 +75,7 @@ class ToyotaFlags(IntFlag):
   # these cars can utilize 2.0 m/s^2
   RAISED_ACCEL_LIMIT = 1024
   SECOC = 2048
+  AUTO_BRAKE_HOLD = 4096
 
   # deprecated flags
   # these cars are speculated to allow stop and go when the DSU is unplugged

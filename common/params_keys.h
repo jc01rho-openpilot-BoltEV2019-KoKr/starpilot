@@ -627,6 +627,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"VeryLongStarButtonControl", {PERSISTENT, INT, "0", "0", 2}},
     {"VoltSNG", {PERSISTENT, BOOL, "0", "0", 2}},
     {"GMAutoHold", {PERSISTENT, BOOL, "0", "0", 2}},
+    {"ToyotaAutoHold", {PERSISTENT, BOOL, "0", "0", 2}},
     {"WarningImmediateVolume", {PERSISTENT, INT, "101", "101", 2}},
     {"WarningSoftVolume", {PERSISTENT, INT, "101", "101", 2}},
     {"WeatherPresets", {PERSISTENT, BOOL, "0", "0", 2}},

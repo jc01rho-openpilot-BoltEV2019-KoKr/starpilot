@@ -2,11 +2,13 @@ from opendbc.car import Bus, structs, get_safety_config, uds
 from opendbc.car.toyota.carstate import CarState
 from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.radar_interface import RadarInterface
-from opendbc.car.toyota.values import Ecu, CAR, DBC, ToyotaFlags, CarControllerParams, TSS2_CAR, RADAR_ACC_CAR, NO_DSU_CAR, \
+from opendbc.car.toyota.values import Ecu, CAR, DBC, ToyotaFlags, CarControllerParams, TSS2_CAR, RADAR_ACC_CAR, SECOC_CAR, NO_DSU_CAR, \
                                                   MIN_ACC_SPEED, EPS_SCALE, NO_STOP_TIMER_CAR, ANGLE_CONTROL_CAR, \
                                                   ToyotaSafetyFlags
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.interfaces import CarInterfaceBase
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
+from openpilot.common.params import Params
 
 SteerControlType = structs.CarParams.SteerControlType
 
@@ -137,6 +139,11 @@ class CarInterface(CarInterfaceBase):
 
     ret.autoResumeSng = ret.openpilotLongitudinalControl and candidate in NO_STOP_TIMER_CAR
     ret.enableGasInterceptorDEPRECATED = 0x201 in fingerprint[0] and ret.openpilotLongitudinalControl
+
+    toyota_auto_hold = Params(return_defaults=True).get_bool("ToyotaAutoHold")
+    if toyota_auto_hold and candidate in (TSS2_CAR - RADAR_ACC_CAR - SECOC_CAR):
+      ret.alternativeExperience |= ALTERNATIVE_EXPERIENCE.ALLOW_AEB
+      ret.flags |= ToyotaFlags.AUTO_BRAKE_HOLD.value
 
     if not ret.openpilotLongitudinalControl:
       ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value

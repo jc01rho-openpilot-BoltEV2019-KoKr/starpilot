@@ -2307,7 +2307,7 @@ class LongitudinalPlanner:
       if close_final_guard_caps:
         close_final_guard_cap = min(close_final_guard_caps)
 
-    if lead_one_active:
+    if allow_complex_follow_logic and lead_one_active:
       lead_catchup_accel_cap = self.get_lead_catchup_accel_cap(self.lead_one, scene_v_ego, effective_t_follow)
       if lead_catchup_accel_cap is not None:
         self.a_desired = min(self.a_desired, lead_catchup_accel_cap)
@@ -2328,7 +2328,7 @@ class LongitudinalPlanner:
       effective_t_follow,
       allow_optional_far_lead_logic=allow_complex_follow_logic,
     )
-    if follow_control_lead is not None and not panic_bypass:
+    if allow_complex_follow_logic and follow_control_lead is not None and not panic_bypass:
       if not output_should_stop and not vision_low_speed_stop_active:
         tracked_vision_model_brake_floor = self.get_tracked_vision_model_brake_floor(
           follow_control_lead,
@@ -2366,7 +2366,7 @@ class LongitudinalPlanner:
         self.a_desired = max(self.a_desired, far_lead_brake_cap)
         output_a_target = max(output_a_target, far_lead_brake_cap)
 
-    if follow_control_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
+    if allow_complex_follow_logic and follow_control_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
       tracked_vision_model_brake_cap = self.get_tracked_vision_model_brake_cap(
         follow_control_lead,
         scene_v_ego,
@@ -2411,7 +2411,7 @@ class LongitudinalPlanner:
           self.a_desired = max(self.a_desired, near_duplicate_transition_target)
         output_a_target = near_duplicate_transition_target
 
-    if follow_control_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
+    if allow_complex_follow_logic and follow_control_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
       cruise_tracking_lead_accel_cap = self.get_cruise_tracking_lead_accel_cap(
         follow_control_lead,
         scene_v_ego,

@@ -1190,6 +1190,7 @@ class StarPilotVariables:
     toggle.standby_mode = self.get_value("StandbyMode", condition=screen_management)
 
     toggle.sng_hack = self.get_value("SNGHack", condition=toggle.openpilot_longitudinal and toggle.car_make == "toyota" and not toggle.has_pedal and not has_sng)
+    toggle.toyota_auto_hold = self.get_value("ToyotaAutoHold", condition=toggle.car_make == "toyota")
 
     toggle.speed_limit_controller = toggle.openpilot_longitudinal and self.get_value("SpeedLimitController")
     speed_limit_display = toggle.show_speed_limits or toggle.speed_limit_controller

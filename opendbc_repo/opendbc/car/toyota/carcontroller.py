@@ -43,6 +43,7 @@ MAX_STEER_RATE_FRAMES = 18  # tx control frames needed before torque can be cut
 MAX_USER_TORQUE = 500
 
 PARK = structs.CarState.GearShifter.park
+REVERSE = structs.CarState.GearShifter.reverse
 
 # Lock / unlock door commands - Credit goes to AlexandreSato!
 LOCK_CMD = b"\x40\x05\x30\x11\x00\x80\x00\x00"
@@ -192,6 +193,11 @@ class CarController(CarControllerBase):
     self.secoc_prev_reset_counter = 0
 
     self.doors_locked = False
+    self.auto_brake_hold = bool(self.CP.flags & ToyotaFlags.AUTO_BRAKE_HOLD.value)
+    self.brake_hold_active = False
+    self._brake_hold_counter = 0
+    self._brake_hold_reset = False
+    self._prev_brake_pressed = False
 
   def _compute_interceptor_gas_cmd(self, CC, CS):
     if not (self.CP.enableGasInterceptorDEPRECATED and self.CP.openpilotLongitudinalControl and CC.longActive):
@@ -236,6 +242,27 @@ class CarController(CarControllerBase):
         self.standstill_req = True
 
     self.last_standstill = CS.out.standstill
+
+  def create_auto_brake_hold_messages(self, CS: structs.CarState, brake_hold_allowed_timer: int = 100):
+    can_sends = []
+    brake_hold_allowed = (CS.out.standstill and CS.out.cruiseState.available and
+                          not CS.out.gasPressed and not CS.out.cruiseState.enabled and
+                          CS.out.gearShifter not in (PARK, REVERSE))
+
+    if brake_hold_allowed:
+      self._brake_hold_counter += 1
+      self.brake_hold_active = self._brake_hold_counter > brake_hold_allowed_timer and not self._brake_hold_reset
+      self._brake_hold_reset = not self._prev_brake_pressed and CS.out.brakePressed and not self._brake_hold_reset
+    else:
+      self._brake_hold_counter = 0
+      self.brake_hold_active = False
+      self._brake_hold_reset = False
+    self._prev_brake_pressed = CS.out.brakePressed
+
+    if self.frame % 2 == 0:
+      can_sends.append(toyotacan.create_brake_hold_command(self.packer, self.frame, CS.pre_collision_2, self.brake_hold_active))
+
+    return can_sends
 
   def update(self, CC, CS, now_nanos, starpilot_toggles):
     actuators = CC.actuators
@@ -330,6 +357,9 @@ class CarController(CarControllerBase):
     # *** gas and brake ***
 
     self._update_standstill_request(CC, CS, actuators, starpilot_toggles)
+    if self.auto_brake_hold:
+      can_sends.extend(self.create_auto_brake_hold_messages(CS))
+
     interceptor_gas_cmd = self._compute_interceptor_gas_cmd(CC, CS)
 
     # handle UI messages

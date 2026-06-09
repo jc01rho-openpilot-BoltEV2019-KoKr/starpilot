@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from hypothesis import given, settings, strategies as st
 
-from opendbc.car import Bus
+from opendbc.car import Bus, structs
 from opendbc.can import CANPacker, CANParser
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
@@ -14,7 +14,9 @@ from opendbc.car.toyota.fingerprints import FW_VERSIONS
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.values import CAR, DBC, TSS2_CAR, ANGLE_CONTROL_CAR, RADAR_ACC_CAR, SECOC_CAR, \
                                                   FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, FUZZY_EXCLUDED_PLATFORMS, \
-                                                  get_platform_codes
+                                                  ToyotaFlags, get_platform_codes
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
+from openpilot.common.params import Params
 
 Ecu = CarParams.Ecu
 
@@ -39,6 +41,25 @@ class TestToyotaInterfaces:
     for car_model, dbc in DBC.items():
       if car_model in TSS2_CAR and car_model not in SECOC_CAR:
         assert dbc[Bus.pt] == "toyota_nodsu_pt_generated"
+
+  def test_auto_hold_sets_flag_on_supported_tss2(self):
+    params = Params()
+    try:
+      params.put_bool("ToyotaAutoHold", True)
+      car_params = CarInterface.get_params(
+        CAR.TOYOTA_CAMRY_TSS2,
+        {bus: {} for bus in range(8)},
+        [],
+        alpha_long=False,
+        is_release=False,
+        docs=False,
+        starpilot_toggles=SimpleNamespace(),
+      )
+    finally:
+      params.remove("ToyotaAutoHold")
+
+    assert car_params.flags & ToyotaFlags.AUTO_BRAKE_HOLD.value
+    assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALLOW_AEB
 
   def test_essential_ecus(self, subtests):
     # Asserts standard ECUs exist for each platform
@@ -296,6 +317,33 @@ class TestToyotaCarController:
     assert parser.vl["LKAS_HUD"]["BARRIERS"] == 0
     assert parser.vl["LKAS_HUD"]["LEFT_LINE"] == 0
     assert parser.vl["LKAS_HUD"]["RIGHT_LINE"] == 0
+
+  def test_auto_brake_hold_sends_modified_pre_collision_after_timer(self):
+    controller = self._make_controller()
+    controller.packer = CANPacker(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt])
+    controller.frame = 0
+    controller.brake_hold_active = False
+    controller._brake_hold_counter = 0
+    controller._brake_hold_reset = False
+    controller._prev_brake_pressed = False
+    cs = SimpleNamespace(
+      out=SimpleNamespace(
+        standstill=True,
+        cruiseState=SimpleNamespace(available=True, enabled=False),
+        gasPressed=False,
+        brakePressed=False,
+        gearShifter=structs.CarState.GearShifter.drive,
+      ),
+      pre_collision_2={},
+    )
+
+    can_sends = controller.create_auto_brake_hold_messages(cs, brake_hold_allowed_timer=0)
+
+    parser = CANParser(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt], [("PRE_COLLISION_2", 0)], 0)
+    parser.update([(1, can_sends)])
+    assert controller.brake_hold_active
+    assert parser.vl["PRE_COLLISION_2"]["DSS1GDRV"] == -1.0
+    assert parser.vl["PRE_COLLISION_2"]["PBRTRGR"] == 1
 
   def test_interceptor_stop_and_go_holds_small_launch_at_standstill(self):
     controller = self._make_controller()

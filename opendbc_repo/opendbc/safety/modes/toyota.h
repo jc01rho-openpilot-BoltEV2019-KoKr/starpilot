@@ -351,6 +351,13 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
         }
       }
     }
+
+    // Auto brake hold replaces the camera AEB message only while stopped.
+    if ((msg->addr == 0x344U) && ((alternative_experience & ALT_EXP_ALLOW_AEB) != 0)) {
+      if (vehicle_moving || gas_pressed || !acc_main_on) {
+        tx = false;
+      }
+    }
   }
 
   // UDS: Only tester present ("\x0F\x02\x3E\x00\x00\x00\x00\x00") allowed on diagnostics address
@@ -458,10 +465,20 @@ static safety_config toyota_init(uint16_t param) {
   return ret;
 }
 
+static bool toyota_fwd_hook(int bus_num, int addr) {
+  bool block_msg = false;
+  if (bus_num == 2) {
+    block_msg = (addr == 0x344) && ((alternative_experience & ALT_EXP_ALLOW_AEB) != 0) &&
+                !vehicle_moving && !gas_pressed && acc_main_on;
+  }
+  return block_msg;
+}
+
 const safety_hooks toyota_hooks = {
   .init = toyota_init,
   .rx = toyota_rx_hook,
   .tx = toyota_tx_hook,
+  .fwd = toyota_fwd_hook,
   .get_checksum = toyota_get_checksum,
   .compute_checksum = toyota_compute_checksum,
   .get_quality_flag_valid = toyota_get_quality_flag_valid,
