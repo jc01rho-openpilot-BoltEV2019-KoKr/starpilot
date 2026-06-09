@@ -5,7 +5,6 @@ import pyray as rl
 from openpilot.system.hardware import HARDWARE
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.multilang import tr, tr_noop
-from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
 from openpilot.system.ui.widgets import DialogResult, Widget
 from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
 from openpilot.system.ui.widgets.label import gui_label
@@ -14,19 +13,16 @@ from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherListMetrics,
-  AetherInteractiveMixin,
   AetherListColors,
-  AetherScrollbar,
   AetherSliderDialog,
   DEFAULT_PANEL_STYLE,
+  PanelManagerView,
   draw_list_group_shell,
-  draw_list_scroll_fades,
   draw_section_header,
   draw_selection_list_row,
   draw_settings_list_row,
   draw_settings_panel_header,
   draw_soft_card,
-  init_list_panel,
   TileGrid,
   ToggleTile,
   _with_alpha,
@@ -92,22 +88,16 @@ FADE_HEIGHT = CUSTOM_METRICS.fade_height
 PANEL_STYLE = DEFAULT_PANEL_STYLE
 
 
-class VehicleSettingsManagerView(AetherInteractiveMixin, Widget):
+class VehicleSettingsManagerView(PanelManagerView):
   HEADER_SUBTITLE_HEIGHT = 22
   HEADER_SUMMARY_GAP = 10
   HEADER_CARD_HEIGHT = 100
-  TWO_COLUMN_BREAKPOINT = 1180
-  COLUMN_GAP = 22
+  METRICS = CUSTOM_METRICS
 
   def __init__(self, controller: "StarPilotVehicleSettingsLayout"):
     super().__init__()
     self._controller = controller
-    self._scroll_panel = GuiScrollPanel2(horizontal=False)
-    self._scrollbar = AetherScrollbar()
-    self._content_height = 0.0
-    self._scroll_offset = 0.0
     self._shell_rect = rl.Rectangle(0, 0, 0, 0)
-    self._scroll_rect = rl.Rectangle(0, 0, 0, 0)
 
     self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_width=100)
     self._toggle_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
@@ -242,24 +232,8 @@ class VehicleSettingsManagerView(AetherInteractiveMixin, Widget):
       self._last_model = current_model
       self._rebuild_toggle_grid()
 
-  def _uses_two_columns(self, width: float) -> bool:
-    return width >= self.TWO_COLUMN_BREAKPOINT
-
-  def _column_width(self, width: float) -> float:
-    return (width - self.COLUMN_GAP) / 2 if self._uses_two_columns(width) else width
-
-  def _section_height(self, count: int, row_height: float) -> float:
-    return 0.0 if count <= 0 else count * row_height
-
-  def _section_block_height(self, content_height: float) -> float:
-    if content_height <= 0:
-      return 0.0
-    return SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + content_height
-
-  def _stacked_section_height(self, sections: list[float]) -> float:
-    if not sections:
-      return 0.0
-    return sum(sections) + SECTION_GAP * (len(sections) - 1)
+  def _on_frame_created(self, frame) -> None:
+    self._shell_rect = frame.shell
 
   def _activate_target(self, target_id: str | None):
     if not target_id:
@@ -269,28 +243,6 @@ class VehicleSettingsManagerView(AetherInteractiveMixin, Widget):
       self._controller._on_toggle(value)
     elif prefix == "select":
       self._controller._on_select(value)
-
-  def _render(self, rect: rl.Rectangle):
-    self.set_rect(rect)
-
-    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE, CUSTOM_METRICS)
-    self._shell_rect = frame.shell
-    self._scroll_rect = scroll_rect
-
-    self._draw_header(frame.header)
-
-    self._content_height = self._measure_content_height(content_width)
-    self._scroll_panel.set_enabled(self.is_visible)
-    self._scroll_offset = self._scroll_panel.update(scroll_rect, max(self._content_height, scroll_rect.height))
-
-    rl.begin_scissor_mode(int(scroll_rect.x), int(scroll_rect.y), int(scroll_rect.width), int(scroll_rect.height))
-    self._draw_scroll_content(scroll_rect, content_width)
-    rl.end_scissor_mode()
-
-    if self._content_height > scroll_rect.height:
-      self._scrollbar.render(scroll_rect, self._content_height, self._scroll_offset)
-
-    draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset, AetherListColors.PANEL_BG, fade_height=FADE_HEIGHT)
 
   def _draw_header(self, rect: rl.Rectangle):
     draw_settings_panel_header(rect, tr("Vehicle Settings"),

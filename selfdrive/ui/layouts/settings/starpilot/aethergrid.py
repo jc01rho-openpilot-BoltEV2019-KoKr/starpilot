@@ -450,6 +450,108 @@ class AetherInteractiveMixin:
     self._can_click = True
 
 
+class PanelManagerView(AetherInteractiveMixin, Widget):
+  """Shared base for list-panel ManagerViews used by some panels.
+
+  Encapsulates scroll infrastructure, the standard ``_render`` pipeline,
+  shared two-column layout helpers, and a convenience toggle-tile factory.
+  Subclasses declare panel-specific metrics via ``METRICS`` and override
+  ``_draw_header``, ``_measure_content_height``, and
+  ``_draw_scroll_content`` (at minimum).
+  """
+
+  METRICS: AetherListMetrics = AETHER_LIST_METRICS
+  PANEL_STYLE: PanelStyle = DEFAULT_PANEL_STYLE
+  TWO_COLUMN_BREAKPOINT: int = 1180
+  COLUMN_GAP: float = 22.0
+
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self._scroll_panel = GuiScrollPanel2(horizontal=False)
+    self._scrollbar = AetherScrollbar()
+    self._content_height = 0.0
+    self._scroll_offset = 0.0
+    self._scroll_rect = rl.Rectangle(0, 0, 0, 0)
+
+  # ── hooks ─────────────────────────────────────────────────
+
+  def _on_frame_created(self, frame: AetherListFrame) -> None:
+    """Called after ``init_list_panel`` builds the panel frame.
+    Override to store ``frame.shell`` or perform per-frame setup."""
+
+  def _draw_header(self, header_rect: rl.Rectangle) -> None:
+    """Override to render the panel header."""
+
+  def _measure_content_height(self, content_width: float) -> float:
+    """Override to compute total scrollable content height."""
+
+  def _draw_scroll_content(self, scroll_rect: rl.Rectangle, content_width: float) -> None:
+    """Override to render visible content rows inside the scissor region."""
+
+  # ── render pipeline ───────────────────────────────────────
+
+  def _render(self, rect: rl.Rectangle) -> None:
+    self._interactive_rects.clear()
+    self.set_rect(rect)
+
+    frame, scroll_rect, content_width = init_list_panel(rect, self.PANEL_STYLE, self.METRICS)
+    self._scroll_rect = scroll_rect
+    self._on_frame_created(frame)
+
+    self._draw_header(frame.header)
+
+    self._content_height = self._measure_content_height(content_width)
+    self._scroll_panel.set_enabled(self.is_visible)
+    self._scroll_offset = self._scroll_panel.update(
+      scroll_rect, max(self._content_height, scroll_rect.height))
+
+    rl.begin_scissor_mode(
+      int(scroll_rect.x), int(scroll_rect.y),
+      int(scroll_rect.width), int(scroll_rect.height))
+    self._draw_scroll_content(scroll_rect, content_width)
+    rl.end_scissor_mode()
+
+    if self._content_height > scroll_rect.height:
+      self._scrollbar.render(scroll_rect, self._content_height, self._scroll_offset)
+
+    draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset,
+                           AetherListColors.PANEL_BG)
+
+  # ── shared layout helpers ─────────────────────────────────
+
+  def _uses_two_columns(self, width: float) -> bool:
+    return width >= self.TWO_COLUMN_BREAKPOINT
+
+  def _column_width(self, width: float) -> float:
+    return (width - self.COLUMN_GAP) / 2 if self._uses_two_columns(width) else width
+
+  def _section_height(self, count: int, row_height: float) -> float:
+    return 0.0 if count <= 0 else count * row_height
+
+  def _section_block_height(self, content_height: float) -> float:
+    if content_height <= 0:
+      return 0.0
+    return self.METRICS.section_header_height + self.METRICS.section_header_gap + content_height
+
+  def _stacked_section_height(self, sections: list[float]) -> float:
+    if not sections:
+      return 0.0
+    return sum(sections) + self.METRICS.section_gap * (len(sections) - 1)
+
+  # ── convenience builders ──────────────────────────────────
+
+  def _make_toggle_tile(self, d: dict) -> ToggleTile:
+    return ToggleTile(
+      title=d["title"],
+      get_state=d.get("get_state", d.get("get")),
+      set_state=d.get("set_state", d.get("set")),
+      bg_color=self.PANEL_STYLE.accent,
+      desc=d.get("subtitle", d.get("desc", "")),
+      is_enabled=d.get("is_enabled"),
+      disabled_label=d.get("disabled_label", ""),
+    )
+
+
 PANEL_HEADER_TITLE_Y: int = 4
 PANEL_HEADER_SUBTITLE_Y: int = 48
 PANEL_HEADER_TITLE_FONT_SIZE: int = 40

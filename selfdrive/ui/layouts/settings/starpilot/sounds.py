@@ -9,7 +9,6 @@ from openpilot.common.basedir import BASEDIR
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MouseEvent, MousePos
 from openpilot.system.ui.lib.multilang import tr, tr_noop
-from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
 from openpilot.system.ui.widgets import Widget, DialogResult
 from openpilot.system.ui.widgets.label import gui_label
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -20,17 +19,15 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   COMPACT_PANEL_METRICS,
   AetherAdjustorRow,
   AetherListColors,
-  AetherScrollbar,
+  PanelManagerView,
   TileGrid,
   ToggleTile,
   DEFAULT_PANEL_STYLE,
   _point_hits,
   draw_action_pill,
   draw_list_group_shell,
-  draw_list_scroll_fades,
   draw_section_header,
   draw_settings_panel_header,
-  init_list_panel,
   AetherSliderDialog,
 )
 
@@ -53,7 +50,9 @@ SOUNDS_PANEL_METRICS = replace(
 )
 
 
-class SoundsManagerView(Widget):
+class SoundsManagerView(PanelManagerView):
+  METRICS = SOUNDS_PANEL_METRICS
+
   def __init__(self, controller: StarPilotSoundsLayout):
     super().__init__()
     self._controller = controller
@@ -62,11 +61,6 @@ class SoundsManagerView(Widget):
     self._can_click = True
     self._reset_rect = rl.Rectangle(0, 0, 0, 0)
 
-    self._scroll_panel = GuiScrollPanel2(horizontal=False)
-    self._scrollbar = AetherScrollbar()
-    self._content_height = 0.0
-    self._scroll_offset = 0.0
-    self._scroll_rect = rl.Rectangle(0, 0, 0, 0)
     self._tile_grid_h = 0.0
 
     self._init_adjustors()
@@ -244,33 +238,6 @@ class SoundsManagerView(Widget):
     super().hide_event()
     self._pressed_target = None
     self._can_click = True
-
-  def _render(self, rect: rl.Rectangle):
-    self.set_rect(rect)
-
-    frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE, metrics=SOUNDS_PANEL_METRICS)
-    self._scroll_rect = scroll_rect
-
-    self._draw_header(frame.header)
-
-    self._content_height = self._measure_content_height(content_width)
-
-    self._scroll_panel.set_enabled(self.is_visible)
-    self._scroll_offset = self._scroll_panel.update(
-      scroll_rect, max(self._content_height, scroll_rect.height)
-    )
-
-    rl.begin_scissor_mode(
-      int(scroll_rect.x), int(scroll_rect.y),
-      int(scroll_rect.width), int(scroll_rect.height)
-    )
-    self._draw_scroll_content(scroll_rect, content_width)
-    rl.end_scissor_mode()
-
-    if self._content_height > scroll_rect.height:
-      self._scrollbar.render(scroll_rect, self._content_height, self._scroll_offset)
-    draw_list_scroll_fades(scroll_rect, self._content_height, self._scroll_offset,
-                           AetherListColors.PANEL_BG)
 
   def _measure_content_height(self, content_width: float) -> float:
     col_width = (content_width - SECTION_GAP) / 2
