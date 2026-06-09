@@ -297,11 +297,19 @@ class SystemSettingsManagerView(PanelManagerView):
     self._basics_tile_grid_h = 0.0
 
     self._connectivity_tile_grid = TileGrid(columns=2, padding=12)
+    for toggle_def in self._toggle_defs:
+      tile = ToggleTile(
+        title=toggle_def["title"],
+        get_state=toggle_def["get"],
+        set_state=toggle_def["set"],
+        bg_color=PANEL_STYLE.accent,
+        desc=toggle_def["subtitle"],
+        is_enabled=toggle_def.get("is_enabled"),
+        disabled_label=toggle_def.get("disabled_label", ""),
+      )
+      self._connectivity_tile_grid.add_tile(tile)
     self._connectivity_tile_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
     self._child(self._connectivity_tile_grid)
-    self._page_grid = self._connectivity_tile_grid
-
-    self._set_toggle_pages([self._toggle_defs[i:i+4] for i in range(0, len(self._toggle_defs), 4)])
 
     self._drive_mode_control = self._child(
       AetherSegmentedControl(
@@ -546,7 +554,7 @@ class SystemSettingsManagerView(PanelManagerView):
 
   def _draw_connectivity_tiles_column(self, y: float, x: float, width: float, height: float):
     draw_list_group_shell(rl.Rectangle(x, y, width, height), style=PANEL_STYLE)
-    self._render_page_grid(self._connectivity_tile_grid, rl.Rectangle(x + 12, y + 12, width - 24, height - 24))
+    self._connectivity_tile_grid.render(rl.Rectangle(x + 12, y + 12, width - 24, height - 24))
 
   def _draw_connectivity_tiles_section(self, y: float, x: float, width: float):
     tile_rows = self._connectivity_tile_grid.get_row_count(len(self._connectivity_tile_grid.tiles), available_width=width)
@@ -554,7 +562,7 @@ class SystemSettingsManagerView(PanelManagerView):
     tiles_content_h = tile_rows * 130 + tile_gaps
 
     draw_list_group_shell(rl.Rectangle(x, y, width, tiles_content_h + 24), style=PANEL_STYLE)
-    self._render_page_grid(self._connectivity_tile_grid, rl.Rectangle(x + 12, y + 12, width - 24, tiles_content_h))
+    self._connectivity_tile_grid.render(rl.Rectangle(x + 12, y + 12, width - 24, tiles_content_h))
 
   def _draw_slider_section(self, y: float, x: float, width: float, title: str, keys: list[str]) -> float:
     draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), title, style=PANEL_STYLE)
