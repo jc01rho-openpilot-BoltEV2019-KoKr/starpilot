@@ -303,7 +303,6 @@ class SpeedLimitController:
     elif desired_target > self.target and (desired_source == "None" or not self.starpilot_toggles.speed_limit_confirmation_higher):
       self.source = desired_source
       self.target = desired_target
-      self.clear_override_for_source_limit(desired_source, desired_target, had_override)
 
     elif desired_target == self.target:
       self.source = desired_source
