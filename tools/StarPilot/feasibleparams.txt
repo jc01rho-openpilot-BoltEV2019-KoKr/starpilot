@@ -57,11 +57,11 @@ CalibrationParams
 CalibrationProgress
 CameraView
 CancelButtonControl
-CoastUpToLeads
 ColorScheme
 CommunityFavorites
 ConditionalChill
 ConditionalExperimental
+PrioritizeSmoothFollowing
 CurveSpeedController
 CustomAlerts
 CustomCruise

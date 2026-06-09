@@ -192,7 +192,11 @@ class StarPilotPlanner:
     self.road_curvature_detected = (1 / abs(self.road_curvature))**0.5 < v_ego > CRUISING_SPEED and not (sm["carState"].leftBlinker or sm["carState"].rightBlinker)
 
     if not sm["carState"].standstill:
-      self.tracking_lead = self.update_lead_status(v_ego, starpilot_toggles.stop_distance)
+      self.tracking_lead = self.update_lead_status(
+        v_ego,
+        starpilot_toggles.stop_distance,
+        prioritize_smooth_following=bool(getattr(starpilot_toggles, "prioritize_smooth_following", False)),
+      )
 
     self.starpilot_following.update(controls_enabled, v_ego, sm, starpilot_toggles)
 
@@ -219,7 +223,7 @@ class StarPilotPlanner:
     else:
       self.starpilot_weather.weather_id = 0
 
-  def update_lead_status(self, v_ego, stop_distance=STOP_DISTANCE):
+  def update_lead_status(self, v_ego, stop_distance=STOP_DISTANCE, prioritize_smooth_following=False):
     following_lead = should_track_lead(
       self.lead_one.status,
       self.lead_one.dRel,
@@ -241,12 +245,12 @@ class StarPilotPlanner:
       lead_brake=max(0.0, -float(getattr(self.lead_one, "aLeadK", 0.0))),
       lead_prob=float(getattr(self.lead_one, "modelProb", 0.0)),
     )
-    if matched_follow_window and (following_lead or self.tracking_lead or self.tracking_lead_filter.x >= THRESHOLD * 0.6):
+    if not prioritize_smooth_following and matched_follow_window and (following_lead or self.tracking_lead or self.tracking_lead_filter.x >= THRESHOLD * 0.6):
       self.radarless_follow_hold_until = now_t + RADARLESS_TRACK_HOLD_TIME
-    elif lead_radar or not self.lead_one.status:
+    elif prioritize_smooth_following or lead_radar or not self.lead_one.status:
       self.radarless_follow_hold_until = 0.0
 
-    if not following_lead and matched_follow_window and now_t < self.radarless_follow_hold_until:
+    if not prioritize_smooth_following and not following_lead and matched_follow_window and now_t < self.radarless_follow_hold_until:
       following_lead = True
 
     self.tracking_lead_filter.update(following_lead)

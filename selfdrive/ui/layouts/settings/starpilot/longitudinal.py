@@ -351,10 +351,10 @@ class StarPilotLongitudinalTuneLayout(_SettingsPage):
                    visible=self._longitudinal_enabled),
       ]),
       SettingSection(tr_noop("Human-Like Driving"), [
-        SettingRow("CoastUpToLeads", "toggle", tr_noop("Coast Up To Leads"),
-                   subtitle=tr_noop("Keep optional far-lead comfort logic on. Recommended unless your car shows lead-follow stutter or springy gas/brake behavior."),
-                   get_state=lambda: self._params.get_bool("CoastUpToLeads"),
-                   set_state=lambda s: self._params.put_bool("CoastUpToLeads", s),
+        SettingRow("PrioritizeSmoothFollowing", "toggle", tr_noop("Prioritize Smooth Following"),
+                   subtitle=tr_noop("Disables the newer far-lead follow logic on cars that show lead-follow stutter. Tradeoff: it may react later in some edge-case lead stops."),
+                   get_state=lambda: self._params.get_bool("PrioritizeSmoothFollowing"),
+                   set_state=lambda s: self._params.put_bool("PrioritizeSmoothFollowing", s),
                    visible=self._longitudinal_enabled),
       ], column_pair="human_driving"),
       SettingSection(tr_noop("Lane Changes"), [

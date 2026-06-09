@@ -71,7 +71,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "AccelerationProfile",
   "DecelerationProfile",
   "HumanAcceleration",
-  "CoastUpToLeads",
+  "PrioritizeSmoothFollowing",
   "HumanLaneChanges",
   "LeadDetectionThreshold",
   "RecoveryPower",

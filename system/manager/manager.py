@@ -36,7 +36,7 @@ LEGACY_BOLT_FP_MIGRATION_FLAG = Path("/data") / "legacy_bolt_fp_migration_v1"
 STARPILOT_DEFAULTS_PARITY_MIGRATION_FLAG = Path("/data") / "starpilot_defaults_parity_v1"
 STARPILOT_HUMANLIKE_DISABLE_MIGRATION_FLAG = Path("/data") / "starpilot_humanlike_disable_v1"
 STARPILOT_CLUSTER_OFFSET_MIGRATION_FLAG = Path("/data") / "starpilot_cluster_offset_v1"
-STARPILOT_COAST_UP_TO_LEADS_MIGRATION_FLAG = Path("/data") / "starpilot_coast_up_to_leads_v1"
+STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG = Path("/data") / "starpilot_prioritize_smooth_following_v1"
 STARPILOT_PARAM_RENAME_MIGRATION_FLAG = Path("/data") / "starpilot_param_rename_v1"
 STARPILOT_PARAM_CANONICALIZATION_MIGRATION_FLAG = Path("/data") / "starpilot_param_canonicalization_v1"
 STARPILOT_PC_ROOT_MIGRATION_FLAG = Path("/data") / "starpilot_pc_root_v1"
@@ -463,20 +463,33 @@ def migrate_cluster_offset_default(params: Params, params_cache: Params) -> None
     cloudlog.exception(f"Failed to write migration flag: {STARPILOT_CLUSTER_OFFSET_MIGRATION_FLAG}")
 
 
-def migrate_coast_up_to_leads_default(params: Params, params_cache: Params) -> None:
-  if STARPILOT_COAST_UP_TO_LEADS_MIGRATION_FLAG.exists():
+def migrate_prioritize_smooth_following_default(params: Params, params_cache: Params) -> None:
+  if STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG.exists():
     return
 
-  if not _has_persisted_param_file(params, "CoastUpToLeads") and not _has_persisted_param_file(params_cache, "CoastUpToLeads"):
-    params.put_bool("CoastUpToLeads", True)
-    params_cache.put_bool("CoastUpToLeads", True)
-    cloudlog.warning("Seeded CoastUpToLeads to default enabled")
+  if not (_has_persisted_param_file(params, "PrioritizeSmoothFollowing") or _has_persisted_param_file(params_cache, "PrioritizeSmoothFollowing")):
+    migrated_from_legacy = False
+    for params_obj in (params, params_cache):
+      if not _has_persisted_param_file(params_obj, "CoastUpToLeads"):
+        continue
+
+      prioritize_smooth_following = not params_obj.get_bool("CoastUpToLeads")
+      params.put_bool("PrioritizeSmoothFollowing", prioritize_smooth_following)
+      params_cache.put_bool("PrioritizeSmoothFollowing", prioritize_smooth_following)
+      cloudlog.warning(f"Migrated CoastUpToLeads to PrioritizeSmoothFollowing={int(prioritize_smooth_following)}")
+      migrated_from_legacy = True
+      break
+
+    if not migrated_from_legacy:
+      params.put_bool("PrioritizeSmoothFollowing", False)
+      params_cache.put_bool("PrioritizeSmoothFollowing", False)
+      cloudlog.warning("Seeded PrioritizeSmoothFollowing to default disabled")
 
   try:
-    STARPILOT_COAST_UP_TO_LEADS_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
-    STARPILOT_COAST_UP_TO_LEADS_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+    STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
   except Exception:
-    cloudlog.exception(f"Failed to write migration flag: {STARPILOT_COAST_UP_TO_LEADS_MIGRATION_FLAG}")
+    cloudlog.exception(f"Failed to write migration flag: {STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG}")
 
 
 def _read_raw_param_bytes(params: Params, key: str | bytes):
@@ -648,7 +661,7 @@ def manager_init() -> None:
   migrate_starpilot_default_parity(params, params_cache)
   migrate_disable_humanlike_defaults(params, params_cache)
   migrate_cluster_offset_default(params, params_cache)
-  migrate_coast_up_to_leads_default(params, params_cache)
+  migrate_prioritize_smooth_following_default(params, params_cache)
 
   # set unset params to their default value
   for k in params.all_keys():

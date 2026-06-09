@@ -1083,9 +1083,13 @@ class StarPilotVariables:
     else:
       toggle.custom_accel_profile_values = [custom_accel_defaults[key] for key in CUSTOM_ACCEL_PROFILE_PARAM_KEYS]
     toggle.human_acceleration = self.get_value("HumanAcceleration", condition=longitudinal_tuning)
-    toggle.coast_up_to_leads = self.get_value("CoastUpToLeads", condition=longitudinal_tuning)
-    if longitudinal_tuning and self.params.get("CoastUpToLeads") is None:
-      toggle.coast_up_to_leads = True
+    toggle.prioritize_smooth_following = self.get_value("PrioritizeSmoothFollowing", condition=longitudinal_tuning)
+    if longitudinal_tuning and self.params_raw.get("PrioritizeSmoothFollowing") is None:
+      legacy_coast_value = self.params_raw.get("CoastUpToLeads")
+      if legacy_coast_value is not None:
+        toggle.prioritize_smooth_following = not self.params_raw.get_bool("CoastUpToLeads")
+      else:
+        toggle.prioritize_smooth_following = False
     toggle.human_lane_changes = has_radar and self.get_value("HumanLaneChanges", condition=longitudinal_tuning)
     toggle.nav_longitudinal_allowed = toggle.openpilot_longitudinal and self.get_value("NavLongitudinalAllowed", condition=longitudinal_tuning)
     # Keep lead detection sensitivity normalized even when longitudinal tuning is disabled.

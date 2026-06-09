@@ -1001,9 +1001,9 @@
         "parent_key": "LongitudinalTune"
       },
       {
-        "key": "CoastUpToLeads",
-        "label": "Coast Up To Leads",
-        "description": "Keep the optional far-lead comfort logic enabled, including gentle coasting and matched-follow smoothing for distant leads. Recommended to leave on unless your vehicle shows lead-follow stutter or springy gas/brake behavior.",
+        "key": "PrioritizeSmoothFollowing",
+        "label": "Prioritize Smooth Following",
+        "description": "Disable the newer far-lead follow logic on cars that show lead-follow stutter or springy gas/brake behavior. Tradeoff: the car may react later and brake less proactively in some edge-case lead approaches.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LongitudinalTune"

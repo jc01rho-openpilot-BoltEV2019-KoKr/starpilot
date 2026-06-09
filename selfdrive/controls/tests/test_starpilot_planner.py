@@ -117,3 +117,44 @@ def test_lateral_resume_delay_ignores_signal_cycles_that_never_slow_enough(monke
     assert planner.blinker_delay_active is False
   finally:
     planner.shutdown()
+
+
+def test_prioritize_smooth_following_skips_radarless_follow_hold(monkeypatch):
+  planner = StarPilotPlanner(Path("/tmp/nonexistent"), DummyThemeManager())
+
+  try:
+    monkeypatch.setattr(starpilot_planner_module.time, "monotonic", lambda: 100.0)
+    planner.model_length = 30.0
+    planner.tracking_lead = True
+    planner.starpilot_following.t_follow = 1.45
+    planner.lead_one = SimpleNamespace(
+      status=True,
+      dRel=46.0,
+      vLead=27.0,
+      aLeadK=0.0,
+      modelProb=0.98,
+      radar=False,
+    )
+
+    planner.update_lead_status(27.5, stop_distance=6.0, prioritize_smooth_following=False)
+    assert planner.radarless_follow_hold_until > 100.0
+
+    planner_smooth = StarPilotPlanner(Path("/tmp/nonexistent"), DummyThemeManager())
+    planner_smooth.model_length = 30.0
+    planner_smooth.tracking_lead = True
+    planner_smooth.starpilot_following.t_follow = 1.45
+    planner_smooth.lead_one = SimpleNamespace(
+      status=True,
+      dRel=46.0,
+      vLead=27.0,
+      aLeadK=0.0,
+      modelProb=0.98,
+      radar=False,
+    )
+
+    planner_smooth.update_lead_status(27.5, stop_distance=6.0, prioritize_smooth_following=True)
+    assert planner_smooth.radarless_follow_hold_until == 0.0
+  finally:
+    planner.shutdown()
+    if 'planner_smooth' in locals():
+      planner_smooth.shutdown()
