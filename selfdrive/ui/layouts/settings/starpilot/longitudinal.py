@@ -172,10 +172,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                    subtitle=tr_noop("Automatically slow down for upcoming curves based on learned road data."),
                    get_value=lambda: tr_noop("Configure"),
                    navigate_to="curve"),
-        SettingRow("WeatherNav", "value", tr_noop("Weather"),
-                   subtitle=tr_noop("Adjust following distance, acceleration, and curve speed for weather conditions."),
-                   get_value=lambda: tr_noop("Configure"),
-                   navigate_to="weather"),
       ], tab_key="adaptive"),
 
       # ── Limits tab ──
@@ -277,6 +273,16 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                    get_state=lambda: self._params.get_bool("MapDeceleration"),
                    set_state=lambda s: self._params.put_bool("MapDeceleration", s),
                    visible=lambda: self._params.get_bool("QOLLongitudinal") and self._params.get_bool("MapGears")),
+        SettingRow("WeatherPresets", "toggle", tr_noop("Weather Condition Offsets"),
+                   subtitle=tr_noop("Automatically adjust driving behavior based on real-time weather."),
+                   get_state=lambda: self._params.get_bool("WeatherPresets"),
+                   set_state=lambda s: self._params.put_bool("WeatherPresets", s),
+                   visible=lambda: self._params.get_bool("QOLLongitudinal")),
+        SettingRow("WeatherNav", "value", tr_noop("Configure Weather Offsets"),
+                   subtitle=tr_noop("Adjust following distance, acceleration, and curve speed for weather conditions."),
+                   get_value=lambda: tr_noop("Configure"),
+                   navigate_to="weather",
+                   visible=lambda: self._params.get_bool("QOLLongitudinal") and self._params.get_bool("WeatherPresets")),
        ], tab_key="daily", column_pair="daily"),
     ]
 
