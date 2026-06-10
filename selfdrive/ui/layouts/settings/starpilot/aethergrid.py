@@ -24,6 +24,11 @@ TILE_RADIUS_PX = 18.0
 TILE_SIGNAL_WIDTH = 1
 MIN_TILE_WIDTH = 300
 
+_HUD_BG_ON = rl.Color(12, 10, 18, 230)
+_HUD_BORDER_OFF = rl.Color(28, 27, 34, 255)
+_HUD_TEXT_DIM = rl.Color(160, 160, 175, 255)
+_HUD_LED_BASE = rl.Color(36, 35, 44, 255)
+
 
 class SPACING:
   xs: int = 4
@@ -2922,7 +2927,7 @@ class ToggleTile(AetherTile):
     desc: str = "",
     is_enabled: Callable[[], bool] | None = None,
     disabled_label: str = "",
-    show_led: bool = False,
+    show_led: bool = True,
   ):
     if bg_color:
       super().__init__(surface_color=bg_color)
@@ -2940,6 +2945,23 @@ class ToggleTile(AetherTile):
     self._disabled_color = rl.Color(75, 75, 75, 255)
     self._disabled_label = disabled_label
     self._show_led = show_led
+    self._glow: float = 1.0 if (self.get_state() and (is_enabled or True)) else 0.0
+    self._squish: float = 1.0
+
+  def _update_state(self):
+    dt = rl.get_frame_time()
+    target = 1.0 if self.get_state() and self.enabled else 0.0
+    self._glow += (target - self._glow) * 10.0 * dt
+    if self._squish < 1.0:
+      self._squish += (1.0 - self._squish) * 15.0 * dt
+
+  def _handle_mouse_press(self, mouse_pos: MousePos):
+    if not self.enabled:
+      return
+    if rl.check_collision_point_rec(mouse_pos, self._hit_rect):
+      self._is_pressed = True
+      self._plate_target = 1.0
+      self._squish = 0.95
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
     if self._is_pressed:
@@ -2951,58 +2973,95 @@ class ToggleTile(AetherTile):
   def _render(self, rect: rl.Rectangle):
     enabled = self.enabled
     active = self.get_state()
-    if enabled and active:
-      self.surface_color = self._active_color
-    elif enabled:
-      self.surface_color = self._inactive_color
-    else:
+    self._animate_plate(rl.get_frame_time())
+
+    if not enabled:
       self.surface_color = self._disabled_color
       self._plate_offset = 0.0
       self._plate_target = 0.0
-    face = self._render_layers(rect)
-    if enabled:
-      state_text = tr("ON") if active else tr("OFF")
-    else:
+      face = self._render_layers(rect)
       state_text = tr(self._disabled_label) if self._disabled_label else tr("LOCKED")
-    self._draw_signal_edge(face, self._active_color if enabled and active else self.surface_color, width=TILE_SIGNAL_WIDTH, alpha=62 if enabled and active else 28)
+      self._draw_signal_edge(face, self.surface_color, width=TILE_SIGNAL_WIDTH, alpha=28)
+      self._render_tile_stack(face, title=self.title, primary=state_text, desc=self.desc,
+                              title_font=self._font, primary_font=self._font, desc_font=self._font_desc,
+                              title_size=28, primary_size=30)
+      return
 
-    if self._show_led and enabled:
-      layout = self._render_tile_stack(
-        face,
-        title=self.title,
-        primary="",
-        desc=self.desc,
-        title_font=self._font,
-        primary_font=self._font,
-        desc_font=self._font_desc,
-        title_size=28,
-        primary_size=30,
-      )
-      primary_y = layout["primary_y"]
-      content_pad = SPACING.tile_content
-      scale = max(0.82, min(1.12, min(face.width / 360.0, face.height / 205.0)))
-      ps = max(18, int(round(30 * scale)))
-      cx = face.x + face.width - content_pad - 10
-      cy = primary_y + ps / 2
-      if active:
-        glow_color = _with_alpha(self._active_color, 24)
-        rl.draw_circle(int(cx), int(cy), 10, glow_color)
-        rl.draw_circle(int(cx), int(cy), 6, self._active_color)
-      else:
-        rl.draw_circle(int(cx), int(cy), 7, rl.Color(14, 16, 22, 255))
-        rl.draw_ring(rl.Vector2(cx, cy), 5, 6, 0, 360, 24, rl.Color(70, 78, 95, 140))
+    if not self._show_led:
+      self.surface_color = self._active_color if active else self._inactive_color
+      face = self._render_layers(rect)
+      state_text = tr("ON") if active else tr("OFF")
+      self._draw_signal_edge(face, self._active_color if active else self.surface_color,
+                             width=TILE_SIGNAL_WIDTH, alpha=62 if active else 28)
+      self._render_tile_stack(face, title=self.title, primary=state_text, desc=self.desc,
+                              title_font=self._font, primary_font=self._font, desc_font=self._font_desc,
+                              title_size=28, primary_size=30)
+      return
+
+    # --- HUD toggle path (show_led + enabled) ---
+    g = self._glow
+    sq = self._squish
+    snapped = _snap_rect(rect)
+    sw = snapped.width * sq
+    sh = snapped.height * sq
+    ox = snapped.x + (snapped.width - sw) / 2
+    oy = snapped.y + (snapped.height - sh) / 2
+    rx, ry, rw, rh = int(ox), int(oy), int(sw), int(sh)
+    face = rl.Rectangle(rx, ry, rw, rh)
+
+    accent = self._active_color
+    off_border = _HUD_BORDER_OFF
+
+    # Concentric glow layers (outermost first)
+    for i in range(4, 0, -1):
+      off = i * 2.5 * g
+      gr = rl.Rectangle(rx - off, ry - off, rw + off * 2, rh + off * 2)
+      a = int(25 * (1.0 - i / 5) * g)
+      _draw_rounded_fill(gr, rl.Color(accent.r, accent.g, accent.b, a), radius_px=100)
+
+    # Panel fill
+    panel = rl.Color(12, 10, 18, 230) if active else _HUD_BG_ON
+    _draw_rounded_fill(face, panel, radius_px=100)
+
+    # Glowing border — interpolates off → accent
+    bc = rl.Color(
+      int(off_border.r + (accent.r - off_border.r) * g),
+      int(off_border.g + (accent.g - off_border.g) * g),
+      int(off_border.b + (accent.b - off_border.b) * g),
+      255)
+    _draw_rounded_stroke(face, bc, radius_px=100)
+
+    # Compact LED bar (centered pill at top)
+    led_w, led_h = 32, 2
+    led_x = rx + (rw - led_w) // 2
+    led_y = ry + 12
+    led_base = _HUD_LED_BASE
+    led_col = rl.Color(
+      int(led_base.r + (accent.r - led_base.r) * g),
+      int(led_base.g + (accent.g - led_base.g) * g),
+      int(led_base.b + (accent.b - led_base.b) * g),
+      255)
+    rl.draw_rectangle(led_x, led_y, led_w, led_h, led_col)
+
+    # Title text
+    content_pad = SPACING.tile_content
+    max_w = rw - content_pad * 2
+    text_scale = min(rw / 360.0, rh / 205.0)
+    title_size = max(18, int(round(22 * text_scale)))
+    title_color = rl.WHITE if active else _HUD_TEXT_DIM
+    self._draw_text_fit(self._font, self.title,
+                        rl.Vector2(rx + content_pad, ry + int(rh * 0.50)),
+                        max_w, title_size, align_center=True, color=title_color)
+
+    # Status LED
+    led_cx = rx + rw // 2
+    led_cy = ry + int(rh * 0.75)
+    if active:
+      rl.draw_circle(int(led_cx), int(led_cy), 11, rl.Color(accent.r, accent.g, accent.b, 24))
+      rl.draw_circle(int(led_cx), int(led_cy), 6, accent)
     else:
-      self._render_tile_stack(
-        face,
-        title=self.title,
-        primary=state_text,
-        desc=self.desc,
-        title_font=self._font,
-        primary_font=self._font,
-        desc_font=self._font_desc,
-        title_size=28,
-        primary_size=30,
-      )
+      rl.draw_circle(int(led_cx), int(led_cy), 7, rl.Color(14, 16, 22, 255))
+      rl.draw_ring(rl.Vector2(led_cx, led_cy), 5, 6, 0, 360, 24, rl.Color(70, 78, 95, 140))
 
 
 class ValueTile(AetherTile):
