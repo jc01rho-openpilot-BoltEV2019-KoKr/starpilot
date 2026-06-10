@@ -2808,6 +2808,46 @@ class AetherTile(Widget):
 
     return layout
 
+  def _render_hud_background(self, rect: rl.Rectangle, accent: rl.Color, glow: float = 1.0) -> tuple[rl.Rectangle, rl.Color]:
+    sq = getattr(self, '_squish', 1.0)
+    snapped = _snap_rect(rect)
+    sw = snapped.width * sq
+    sh = snapped.height * sq
+    ox = snapped.x + (snapped.width - sw) / 2
+    oy = snapped.y + (snapped.height - sh) / 2
+    rx, ry, rw, rh = int(ox), int(oy), int(sw), int(sh)
+    face = rl.Rectangle(rx, ry, rw, rh)
+
+    off_border = _HUD_BORDER_OFF
+
+    for i in range(4, 0, -1):
+      off = i * 2.5 * glow
+      gr = rl.Rectangle(rx - off, ry - off, rw + off * 2, rh + off * 2)
+      a = int(25 * (1.0 - i / 5) * glow)
+      _draw_rounded_fill(gr, rl.Color(accent.r, accent.g, accent.b, a), radius_px=100)
+
+    _draw_rounded_fill(face, _HUD_BG_ON, radius_px=100)
+
+    bc = rl.Color(
+      int(off_border.r + (accent.r - off_border.r) * glow),
+      int(off_border.g + (accent.g - off_border.g) * glow),
+      int(off_border.b + (accent.b - off_border.b) * glow),
+      255)
+    _draw_rounded_stroke(face, bc, radius_px=100)
+
+    led_w, led_h = 32, 2
+    led_x = rx + (rw - led_w) // 2
+    led_y = ry + 12
+    led_base = _HUD_LED_BASE
+    led_col = rl.Color(
+      int(led_base.r + (accent.r - led_base.r) * glow),
+      int(led_base.g + (accent.g - led_base.g) * glow),
+      int(led_base.b + (accent.b - led_base.b) * glow),
+      255)
+    rl.draw_rectangle(led_x, led_y, led_w, led_h, led_col)
+
+    return face, accent
+
   def _render(self, rect: rl.Rectangle):
     pass
 
@@ -2833,41 +2873,83 @@ class HubTile(AetherTile):
     self._icon = None
     self._font_title = gui_app.font(FontWeight.BOLD)
     self._font_desc = gui_app.font(FontWeight.NORMAL)
+    self._squish: float = 1.0
+
+  def _update_state(self):
+    dt = rl.get_frame_time()
+    if self._squish < 1.0:
+      self._squish += (1.0 - self._squish) * 15.0 * dt
+
+  def _handle_mouse_press(self, mouse_pos: MousePos):
+    if not self.enabled:
+      return
+    if rl.check_collision_point_rec(mouse_pos, self._hit_rect):
+      self._is_pressed = True
+      self._plate_target = 1.0
+      self._squish = 0.95
 
   def _render(self, rect: rl.Rectangle):
-    face = self._render_layers(rect)
-    self._draw_signal_edge(face, self.surface_color, alpha=48)
+    self._animate_plate(rl.get_frame_time())
 
     status_text = self.get_status() if self.get_status else ""
     title_text = str(_resolve_value(self.title, ""))
     fallback_desc = str(_resolve_value(self.desc, ""))
+
+    face, accent = self._render_hud_background(rect, self.surface_color)
+    rx, ry, rw, rh = face.x, face.y, face.width, face.height
+    content_pad = SPACING.tile_content
+    max_w = rw - content_pad * 2
+    text_scale = min(rw / 360.0, rh / 205.0)
+    gap = SPACING.line_gap
+
+    title_size = max(18, int(round(22 * text_scale)))
+    desc_to_render = status_text if status_text else fallback_desc
+    desc_size = max(12, int(round(14 * text_scale))) if desc_to_render else 0
+
+    icon_h = 0.0
+    if self.custom_icon_key:
+      icon_base_size = 100.0
+      icon_scale_mult = 1.25
+      icon_canvas_size = 60.0
+      icon_scale = min(0.80, max(0.56, text_scale * 0.72))
+      icon_h = icon_base_size * icon_scale_mult * icon_scale
+
+    total_h = icon_h + (gap if icon_h > 0 else 0) + title_size + (gap if desc_to_render else 0) + desc_size
+    content_top = ry + max(0, (rh - total_h) / 2)
+
+    if self.custom_icon_key:
+      icon_base_size = 100.0
+      icon_scale_mult = 1.25
+      icon_canvas_size = 60.0
+      icon_scale = min(0.80, max(0.56, text_scale * 0.72))
+      icon_width = icon_base_size * icon_scale_mult * icon_scale
+      icon_x = rx + (rw - icon_width) / 2
+      s = icon_scale * (icon_base_size / icon_canvas_size) * icon_scale_mult
+      self._draw_custom_icon(self.custom_icon_key, icon_x, content_top, s, _mix_colors(rl.Color(255, 255, 255, 255), accent, 0.08))
+      content_top += icon_h + gap
+
+    self._draw_text_fit(self._font_title, title_text,
+                        rl.Vector2(rx + content_pad, content_top),
+                        max_w, title_size, align_center=True, color=rl.WHITE)
+    content_top += title_size
+
+    if desc_to_render:
+      content_top += gap
+      self._draw_text_fit(self._font_desc, desc_to_render,
+                          rl.Vector2(rx + content_pad, content_top),
+                          max_w, desc_size, align_center=True, color=_HUD_TEXT_DIM)
+
     if status_text:
       import re
-
       m = re.search(r'(\d+)%$', status_text)
       if m:
         ratio = min(1.0, max(0.0, float(m.group(1)) / 100.0))
         if ratio > 0.05:
           meter_h = 6
-          meter_rect = rl.Rectangle(face.x + SPACING.tile_content, face.y + face.height - SPACING.tile_content - meter_h, face.width - SPACING.tile_content * 2, meter_h)
+          meter_rect = rl.Rectangle(rx + content_pad, ry + rh - content_pad - meter_h, rw - content_pad * 2, meter_h)
           fill_rect = rl.Rectangle(meter_rect.x, meter_rect.y, meter_rect.width * ratio, meter_h)
           rl.draw_rectangle_rec(_snap_rect(meter_rect), rl.Color(255, 255, 255, 14))
-          rl.draw_rectangle_rec(_snap_rect(fill_rect), _with_alpha(self.surface_color, 170))
-
-    desc_to_render = status_text if status_text else fallback_desc
-    self._render_tile_stack(
-      face,
-      icon=self._icon,
-      title=title_text,
-      primary=desc_to_render,
-      desc="",
-      title_font=self._font_title,
-      primary_font=self._font_desc,
-      desc_font=self._font_desc,
-      title_size=30,
-      primary_size=18,
-      custom_icon_key=self.custom_icon_key,
-    )
+          rl.draw_rectangle_rec(_snap_rect(fill_rect), _with_alpha(accent, 170))
 
 
 class AetherSelectionTile(AetherTile):
@@ -2999,64 +3081,21 @@ class ToggleTile(AetherTile):
       return
 
     # --- HUD toggle path (show_led + enabled) ---
-    g = self._glow
-    sq = self._squish
-    snapped = _snap_rect(rect)
-    sw = snapped.width * sq
-    sh = snapped.height * sq
-    ox = snapped.x + (snapped.width - sw) / 2
-    oy = snapped.y + (snapped.height - sh) / 2
-    rx, ry, rw, rh = int(ox), int(oy), int(sw), int(sh)
-    face = rl.Rectangle(rx, ry, rw, rh)
+    face, accent = self._render_hud_background(rect, self._active_color, self._glow)
+    rx, ry, rw, rh = face.x, face.y, face.width, face.height
 
-    accent = self._active_color
-    off_border = _HUD_BORDER_OFF
-
-    # Concentric glow layers (outermost first)
-    for i in range(4, 0, -1):
-      off = i * 2.5 * g
-      gr = rl.Rectangle(rx - off, ry - off, rw + off * 2, rh + off * 2)
-      a = int(25 * (1.0 - i / 5) * g)
-      _draw_rounded_fill(gr, rl.Color(accent.r, accent.g, accent.b, a), radius_px=100)
-
-    # Panel fill
-    panel = rl.Color(12, 10, 18, 230) if active else _HUD_BG_ON
-    _draw_rounded_fill(face, panel, radius_px=100)
-
-    # Glowing border — interpolates off → accent
-    bc = rl.Color(
-      int(off_border.r + (accent.r - off_border.r) * g),
-      int(off_border.g + (accent.g - off_border.g) * g),
-      int(off_border.b + (accent.b - off_border.b) * g),
-      255)
-    _draw_rounded_stroke(face, bc, radius_px=100)
-
-    # Compact LED bar (centered pill at top)
-    led_w, led_h = 32, 2
-    led_x = rx + (rw - led_w) // 2
-    led_y = ry + 12
-    led_base = _HUD_LED_BASE
-    led_col = rl.Color(
-      int(led_base.r + (accent.r - led_base.r) * g),
-      int(led_base.g + (accent.g - led_base.g) * g),
-      int(led_base.b + (accent.b - led_base.b) * g),
-      255)
-    rl.draw_rectangle(led_x, led_y, led_w, led_h, led_col)
-
-    # Title text
     content_pad = SPACING.tile_content
     max_w = rw - content_pad * 2
     text_scale = min(rw / 360.0, rh / 205.0)
     title_size = max(18, int(round(22 * text_scale)))
-    title_color = rl.WHITE if active else _HUD_TEXT_DIM
+    title_color = rl.WHITE if self.get_state() else _HUD_TEXT_DIM
     self._draw_text_fit(self._font, self.title,
                         rl.Vector2(rx + content_pad, ry + int(rh * 0.50)),
                         max_w, title_size, align_center=True, color=title_color)
 
-    # Status LED
     led_cx = rx + rw // 2
     led_cy = ry + int(rh * 0.75)
-    if active:
+    if self.get_state():
       rl.draw_circle(int(led_cx), int(led_cy), 11, rl.Color(accent.r, accent.g, accent.b, 24))
       rl.draw_circle(int(led_cx), int(led_cy), 6, accent)
     else:
@@ -3083,27 +3122,52 @@ class ValueTile(AetherTile):
     self._font_desc = gui_app.font(FontWeight.NORMAL)
     self._active_color = self.surface_color
     self._disabled_color = rl.Color(120, 120, 120, 255)
+    self._squish: float = 1.0
+
+  def _update_state(self):
+    dt = rl.get_frame_time()
+    if self._squish < 1.0:
+      self._squish += (1.0 - self._squish) * 15.0 * dt
+
+  def _handle_mouse_press(self, mouse_pos: MousePos):
+    if not self.enabled:
+      return
+    if rl.check_collision_point_rec(mouse_pos, self._hit_rect):
+      self._is_pressed = True
+      self._plate_target = 1.0
+      self._squish = 0.95
 
   def _render(self, rect: rl.Rectangle):
     enabled = self.enabled
-    self.surface_color = self._active_color if enabled else self._disabled_color
+    self._animate_plate(rl.get_frame_time())
+
     if not enabled:
+      self.surface_color = self._disabled_color
       self._plate_offset = 0.0
       self._plate_target = 0.0
-    face = self._render_layers(rect)
+      face = self._render_layers(rect)
+      self._draw_signal_edge(face, self.surface_color, width=TILE_SIGNAL_WIDTH, alpha=28)
+      self._render_tile_stack(face, title=self.title, primary=self.get_value(), desc=self.desc,
+                              title_font=self._font, primary_font=self._font, desc_font=self._font_desc,
+                              title_size=28, primary_size=28)
+      return
+
+    face, accent = self._render_hud_background(rect, self._active_color)
+    rx, ry, rw, rh = face.x, face.y, face.width, face.height
+
+    content_pad = SPACING.tile_content
+    max_w = rw - content_pad * 2
+    text_scale = min(rw / 360.0, rh / 205.0)
+    title_size = max(18, int(round(22 * text_scale)))
+    self._draw_text_fit(self._font, self.title,
+                        rl.Vector2(rx + content_pad, ry + int(rh * 0.35)),
+                        max_w, title_size, align_center=True, color=_HUD_TEXT_DIM)
+
     val_text = self.get_value()
-    self._draw_signal_edge(face, self._active_color if enabled else self._disabled_color, width=TILE_SIGNAL_WIDTH, alpha=38 if enabled else 20)
-    self._render_tile_stack(
-      face,
-      title=self.title,
-      primary=val_text,
-      desc=self.desc,
-      title_font=self._font,
-      primary_font=self._font,
-      desc_font=self._font_desc,
-      title_size=28,
-      primary_size=28,
-    )
+    val_size = max(18, int(round(24 * text_scale)))
+    self._draw_text_fit(self._font, val_text,
+                        rl.Vector2(rx + content_pad, ry + int(rh * 0.58)),
+                        max_w, val_size, align_center=True, color=accent)
 
 
 class SliderTile(AetherTile):
@@ -3149,10 +3213,17 @@ class SliderTile(AetherTile):
         self._press_start_x = 0.0
         self._press_start_time: float | None = None
         self._long_press_triggered = False
+        self._squish: float = 1.0
+
+    def _update_state(self):
+        dt = rl.get_frame_time()
+        if self._squish < 1.0:
+            self._squish += (1.0 - self._squish) * 15.0 * dt
 
     def _handle_mouse_press(self, mouse_pos: MousePos):
         if rl.check_collision_point_rec(mouse_pos, self._hit_rect) and self.enabled:
             self._is_pressed = True
+            self._squish = 0.95
             self._last_mouse_x = mouse_pos.x
             self._velocity = 0.0
             self._press_start_x = mouse_pos.x
@@ -3213,37 +3284,46 @@ class SliderTile(AetherTile):
         dt = rl.get_frame_time()
 
         self._smooth_value += (current_val - self._smooth_value) * (1 - math.exp(-dt / 0.1))
+        self._animate_plate(dt)
 
-        self.surface_color = self._active_color if enabled else self._disabled_color
         if not enabled:
+            self.surface_color = self._disabled_color
             self._plate_offset = 0.0
             self._plate_target = 0.0
+            face = self._render_layers(rect)
+            self._draw_signal_edge(face, self.surface_color, width=TILE_SIGNAL_WIDTH, alpha=28)
+            val_str = self.labels.get(current_val, f"{int(current_val)}{self.unit}")
+            self._render_tile_stack(face, title=self.title, primary=val_str, desc=self.desc,
+                                    title_font=self._font, primary_font=self._font, desc_font=self._font_desc,
+                                    title_size=28, primary_size=28)
+            return
 
-        face = self._render_layers(rect)
-        self._draw_signal_edge(face, self.surface_color, width=TILE_SIGNAL_WIDTH, alpha=38 if enabled else 20)
+        face, accent = self._render_hud_background(rect, self._active_color)
+        rx, ry, rw, rh = face.x, face.y, face.width, face.height
+
+        content_pad = SPACING.tile_content
+        max_w = rw - content_pad * 2
+        text_scale = min(rw / 360.0, rh / 205.0)
+        title_size = max(18, int(round(22 * text_scale)))
+        self._draw_text_fit(self._font, self.title,
+                            rl.Vector2(rx + content_pad, ry + int(rh * 0.30)),
+                            max_w, title_size, align_center=True, color=_HUD_TEXT_DIM)
+
+        val_str = self.labels.get(current_val, f"{int(current_val)}{self.unit}")
+        val_size = max(18, int(round(24 * text_scale)))
+        self._draw_text_fit(self._font, val_str,
+                            rl.Vector2(rx + content_pad, ry + int(rh * 0.52)),
+                            max_w, val_size, align_center=True, color=accent)
 
         value_range = self.max_val - self.min_val
         frac = 0.0 if value_range == 0 else max(0.0, min(1.0, (self._smooth_value - self.min_val) / value_range))
         meter_h = 6
-        meter_rect = rl.Rectangle(face.x + SPACING.tile_content, face.y + face.height - SPACING.tile_content - meter_h, face.width - SPACING.tile_content * 2, meter_h)
+        meter_rect = rl.Rectangle(rx + content_pad, ry + rh - content_pad - meter_h, rw - content_pad * 2, meter_h)
         fill_w = meter_rect.width * frac
         rl.draw_rectangle_rec(_snap_rect(meter_rect), rl.Color(255, 255, 255, 14))
         if fill_w > 1:
             fill_rect = rl.Rectangle(meter_rect.x, meter_rect.y, fill_w, meter_rect.height)
-            rl.draw_rectangle_rec(_snap_rect(fill_rect), _with_alpha(self.surface_color, 176))
-
-        val_str = self.labels.get(current_val, f"{int(current_val)}{self.unit}")
-        self._render_tile_stack(
-            face,
-            title=self.title,
-            primary=val_str,
-            desc=self.desc,
-            title_font=self._font,
-            primary_font=self._font,
-            desc_font=self._font_desc,
-            title_size=28,
-            primary_size=28,
-        )
+            rl.draw_rectangle_rec(_snap_rect(fill_rect), _with_alpha(accent, 176))
 
 
 class AetherSlider(Widget):
