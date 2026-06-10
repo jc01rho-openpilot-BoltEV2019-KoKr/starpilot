@@ -16,6 +16,7 @@ NAV_TURN_DISTANCE_SPEED_BREAKPOINTS = [0.0, 5.0, 10.0]
 NAV_TURN_DISTANCE_BREAKPOINTS = [20.0, 25.0, 30.0]
 NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS = [0.0, 15.0, 30.0]
 NAV_KEEP_DISTANCE_BREAKPOINTS = [25.0, 90.0, 160.0]
+NAV_KEEP_AMBIGUOUS_SPLIT_DISTANCE_SCALE = 0.6
 
 DESIRES = {
   LaneChangeDirection.none: {
@@ -119,21 +120,29 @@ class DesireHelper:
     return distance <= float(np.interp(carstate.vEgo, NAV_TURN_DISTANCE_SPEED_BREAKPOINTS, NAV_TURN_DISTANCE_BREAKPOINTS))
 
   @staticmethod
-  def _nav_keep_is_imminent(carstate, maneuver_distance):
+  def _nav_keep_is_imminent(carstate, maneuver_distance, maneuver_type="", same_side_lane_count=0):
     try:
       distance = float(maneuver_distance)
     except (TypeError, ValueError):
       return False
 
-    return distance <= float(np.interp(carstate.vEgo, NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS, NAV_KEEP_DISTANCE_BREAKPOINTS))
+    threshold = float(np.interp(carstate.vEgo, NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS, NAV_KEEP_DISTANCE_BREAKPOINTS))
+    if maneuver_type in ("off ramp", "fork") and int(same_side_lane_count or 0) > 1:
+      threshold *= NAV_KEEP_AMBIGUOUS_SPLIT_DISTANCE_SCALE
+    return distance <= threshold
 
   @staticmethod
   def _nav_effective_modifier(nav_instruction_state, carstate, maneuver_distance):
     modifier = str(nav_instruction_state.get("maneuverModifier", ""))
     maneuver_type = str(nav_instruction_state.get("maneuverType", ""))
     active_lane_direction = str(nav_instruction_state.get("activeLaneDirection", ""))
+    same_side_lane_count = int(nav_instruction_state.get("sameSideLaneCount", 0) or 0)
 
-    if modifier in ("left", "right") and maneuver_type in ("off ramp", "fork") and DesireHelper._nav_keep_is_imminent(carstate, maneuver_distance):
+    if maneuver_type in ("off ramp", "fork") and modifier in ("slightLeft", "slightRight"):
+      if not DesireHelper._nav_keep_is_imminent(carstate, maneuver_distance, maneuver_type, same_side_lane_count):
+        return ""
+
+    if modifier in ("left", "right") and maneuver_type in ("off ramp", "fork") and DesireHelper._nav_keep_is_imminent(carstate, maneuver_distance, maneuver_type, same_side_lane_count):
       if active_lane_direction in ("slightLeft", "left"):
         return "slightLeft"
       if active_lane_direction in ("slightRight", "right"):
