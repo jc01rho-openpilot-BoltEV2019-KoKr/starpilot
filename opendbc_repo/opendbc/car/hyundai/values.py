@@ -725,6 +725,11 @@ class CAR(Platforms):
     CarSpecs(mass=1450, wheelbase=2.65, steerRatio=13.75, tireStiffnessFactor=0.5),
     flags=HyundaiFlags.LEGACY,
   )
+  KIA_XCEED_PHEV = HyundaiPlatformConfig(
+    [HyundaiCarDocs("Kia XCeed Plug-in Hybrid 2021", car_parts=CarParts.common([CarHarness.hyundai_b]))],
+    CarSpecs(mass=1650, wheelbase=2.65, steerRatio=13.75, tireStiffnessFactor=0.5),
+    flags=HyundaiFlags.LEGACY | HyundaiFlags.HYBRID,
+  )
   KIA_EV6 = HyundaiCanFDPlatformConfig(
     [
       HyundaiCarDocs("Kia EV6 (Southeast Asia only) 2022-24", "All", car_parts=CarParts.common([CarHarness.hyundai_p])),
@@ -1082,7 +1087,7 @@ FW_QUERY_CONFIG = FwQueryConfig(
   non_essential_ecus={
     Ecu.abs: [CAR.HYUNDAI_PALISADE, CAR.HYUNDAI_SONATA, CAR.HYUNDAI_SANTA_FE_2022, CAR.KIA_K5_2021, CAR.HYUNDAI_ELANTRA_2021,
               CAR.HYUNDAI_SANTA_FE, CAR.HYUNDAI_KONA_EV_2022, CAR.HYUNDAI_KONA_EV, CAR.HYUNDAI_CUSTIN_1ST_GEN, CAR.KIA_SORENTO,
-              CAR.KIA_CEED, CAR.KIA_SELTOS],
+              CAR.KIA_CEED, CAR.KIA_XCEED_PHEV, CAR.KIA_SELTOS],
     Ecu.fwdRadar: [CAR.HYUNDAI_KONA_NON_SCC],
   },
   extra_ecus=[
