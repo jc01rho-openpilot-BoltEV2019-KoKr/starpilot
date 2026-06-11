@@ -156,6 +156,7 @@ class GpsSample:
     longitude: float
     speed: float
     bearing_deg: float
+    hacc: float
 
 
 @dataclass
@@ -187,6 +188,7 @@ class ChangeRow:
     latitude: float
     longitude: float
     matched_osm: bool
+    hacc: float = 0.0
     slc_overridden_mps: float = 0.0
     unconfirmed_mps: float = 0.0
     slc_next_mps: float = 0.0
@@ -470,6 +472,7 @@ def parse_route_logs(
                     longitude=float(g.longitude),
                     speed=float(g.speed or 0),
                     bearing_deg=float(g.bearingDeg or 0),
+                    hacc=float(g.horizontalAccuracy or 999),
                 )
             )
         elif which == "starpilotCarState":
@@ -817,9 +820,11 @@ class OverpassClient:
 
 
 def match_gps_to_ways(
-    lat: float, lon: float, ways: dict[int, OsmWay]
+    lat: float, lon: float, ways: dict[int, OsmWay], hacc: float = 0
 ) -> tuple[float, str]:
-    """Find nearest OSM way within MATCH_RADIUS_M.  Returns (maxspeed_mps, name)."""
+    """Find nearest OSM way, with adaptive radius gated on GPS hAcc.
+    Returns (maxspeed_mps, name)."""
+    radius = max(MATCH_RADIUS_M, hacc * 1.5) if hacc > 0 else MATCH_RADIUS_M
     best_d = float("inf")
     best_ms = 0.0
     best_name = ""
@@ -831,7 +836,7 @@ def match_gps_to_ways(
             best_d = d
             best_ms = w.maxspeed_mps
             best_name = w.road_name
-    if best_d <= MATCH_RADIUS_M:
+    if best_d <= radius:
         return best_ms, best_name
     return 0.0, ""
 
@@ -841,26 +846,26 @@ def match_gps_to_ways(
 # ============================================================================
 
 
-def interpolate_gps(gps_events: list[GpsSample]) -> list[tuple[float, float, float]]:
-    """Build a sorted list of (monotime_ns, lat, lon) from GPS events."""
+def interpolate_gps(gps_events: list[GpsSample]) -> list[tuple[float, float, float, float]]:
+    """Build a sorted list of (monotime_ns, lat, lon, hacc) from GPS events."""
     out = []
     for g in gps_events:
         if abs(g.latitude) > 0.01 or abs(g.longitude) > 0.01:
-            out.append((float(g.log_mono_time), g.latitude, g.longitude))
+            out.append((float(g.log_mono_time), g.latitude, g.longitude, g.hacc))
     out.sort(key=lambda x: x[0])
     return out
 
 
 def gps_at_time(
-    t_ns: int, gps_timeline: list[tuple[float, float, float]]
-) -> tuple[float, float]:
-    """Interpolate GPS position at a given logMonoTime."""
+    t_ns: int, gps_timeline: list[tuple[float, float, float, float]]
+) -> tuple[float, float, float]:
+    """Interpolate GPS position at a given logMonoTime. Returns (lat, lon, hacc)."""
     if not gps_timeline:
-        return 0.0, 0.0
+        return 0.0, 0.0, 999.0
     if t_ns <= gps_timeline[0][0]:
-        return gps_timeline[0][1], gps_timeline[0][2]
+        return gps_timeline[0][1], gps_timeline[0][2], gps_timeline[0][3]
     if t_ns >= gps_timeline[-1][0]:
-        return gps_timeline[-1][1], gps_timeline[-1][2]
+        return gps_timeline[-1][1], gps_timeline[-1][2], gps_timeline[-1][3]
     lo, hi = 0, len(gps_timeline) - 1
     while hi - lo > 1:
         mid = (lo + hi) // 2
@@ -868,12 +873,12 @@ def gps_at_time(
             lo = mid
         else:
             hi = mid
-    t0, lat0, lon0 = gps_timeline[lo]
-    t1, lat1, lon1 = gps_timeline[hi]
+    t0, lat0, lon0, _ = gps_timeline[lo]
+    t1, lat1, lon1, hacc1 = gps_timeline[hi]
     if t1 == t0:
-        return lat0, lon0
+        return lat0, lon0, hacc1
     frac = (t_ns - t0) / (t1 - t0)
-    return lat0 + frac * (lat1 - lat0), lon0 + frac * (lon1 - lon0)
+    return lat0 + frac * (lat1 - lat0), lon0 + frac * (lon1 - lon0), hacc1
 
 
 # ============================================================================
@@ -973,9 +978,9 @@ def detect_changes(
         lead_d_rel = lv.d_rel if lv and lv.has_lead else 0.0
         lead_v = lv.v_lead if lv and lv.has_lead else 0.0
 
-        lat, lon = gps_at_time(t_ns, gps_timeline) if gps_timeline else (0, 0)
+        lat, lon, hacc = gps_at_time(t_ns, gps_timeline) if gps_timeline else (0, 0, 999)
         osm_sl, osm_name = (
-            match_gps_to_ways(lat, lon, osm_ways) if osm_ways else (0.0, "")
+            match_gps_to_ways(lat, lon, osm_ways, hacc) if osm_ways else (0.0, "")
         )
         slc_active, slc_mode = _parse_toggles(ev)
 
@@ -1107,6 +1112,7 @@ def detect_changes(
                         way_sel=way_sel,
                         latitude=lat,
                         longitude=lon,
+                        hacc=hacc,
                         matched_osm=osm_sl > 0,
                         slc_overridden_mps=overridden,
                         unconfirmed_mps=unconfirmed,
@@ -1171,7 +1177,7 @@ def print_table(rows: list[ChangeRow], use_mph: bool) -> None:
     unit = "mph" if use_mph else "km/h"
     hdr = (
         f"  {'Time':>7}  {'Event':<16}  {'Road':<22}  "
-        f"{'SLC':>8}  {'Src':<8}  {'vEgo':>6}  Notes"
+        f"{'SLC':>8}  {'Mapd':>8}  {'OSM':>8}  {'Next':>8}  {'WaySel':<10}  {'Src':<8}  {'vEgo':>6}  {'hAcc':>6}  Notes"
     )
     sep = "  " + "-" * (len(hdr) - 2)
 
@@ -1181,6 +1187,7 @@ def print_table(rows: list[ChangeRow], use_mph: bool) -> None:
 
     stale_count = 0
     mismatch_count = 0
+    prev_way_sel = ""
 
     for r in rows:
         notes: list[str] = []
@@ -1206,8 +1213,25 @@ def print_table(rows: list[ChangeRow], use_mph: bool) -> None:
         if r.decel_pressed:
             notes.append("decel")
 
+        # ── waySel context (mapd's GetCurrentWay priority chain) ─────
+        WS_LABEL = {
+            "predicted": "nextWay",
+            "possible":  "scanned",
+            "extended":  "extended",
+            "fail":      "no-match",
+        }
+        if r.way_sel != prev_way_sel:
+            label = WS_LABEL.get(r.way_sel)
+            if label:
+                notes.append(label)
+            prev_way_sel = r.way_sel
+
         sc = fmt_speed(r.slc_mps, use_mph, 6)
+        md = fmt_speed(r.mapd_mps, use_mph, 6)
+        om = fmt_speed(r.osm_mps, use_mph, 6)
+        nx = fmt_speed(r.next_mapd_mps, use_mph, 6)
         ve = fmt_speed(r.v_ego_mps, use_mph, 5)
+        ha = f"{r.hacc:>4.0f}m" if r.hacc > 0 and r.hacc < 999 else "    —"
 
         t_min = int(r.time_offset_s) // 60
         t_sec = int(r.time_offset_s) % 60
@@ -1216,14 +1240,27 @@ def print_table(rows: list[ChangeRow], use_mph: bool) -> None:
         event = r.event_type[:16]
         road = (r.road_name[:22] + "..") if len(r.road_name) > 22 else r.road_name
         src_label = (r.slc_source[:8] or "—") if r.slc_source else "—"
-        note_str = detail or ", ".join(notes) if notes else ""
+        if detail:
+            note_str = " ⋮ ".join(
+                p for p in ([detail] + notes) if p
+            ) if notes else detail
+        else:
+            note_str = ", ".join(notes) if notes else ""
 
         print(
             f"  {ts:>7}  {event:<16}  {road:<22}  "
-            f"{sc:>8}  {src_label:<8}  {ve:>6}  {note_str}"
+            f"{sc:>8}  {md:>8}  {om:>8}  {nx:>8}  {r.way_sel:<10}  {src_label:<8}  {ve:>6}  {ha:>6}  {note_str}"
         )
 
     print(sep)
+    print(
+        "  WaySel guide (mapd priority chain, see github.com/pfeiferj/mapd):\n"
+        "    current   — directly on matched road (confident)\n"
+        "    predicted — matched connected nextWay (adjacent road)\n"
+        "    possible  — scanned ALL nearby ways (low confidence)\n"
+        "    extended  — held current way at extended range\n"
+        "    fail      — no match within range"
+    )
     parts = []
     if stale_count:
         parts.append(f"{stale_count} stale (mapd != OSM)")
@@ -1278,7 +1315,7 @@ def main(argv: list[str] | None = None) -> int:
         if gps_timeline:
             print("Querying Overpass API for OSM speed limits...", file=sys.stderr)
             oc = OverpassClient()
-            gps_pts = [(lat, lon) for _, lat, lon in gps_timeline]
+            gps_pts = [(lat, lon) for _, lat, lon, _ in gps_timeline]
             osm_ways = oc.fetch_for_route(gps_pts)
             print(f"  Found {len(osm_ways)} speed-limited OSM ways", file=sys.stderr)
         else:
