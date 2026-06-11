@@ -143,6 +143,8 @@ KIA_EV6_CARS = (
 )
 KIA_FORTE_CARS = (
   HYUNDAI_CAR.KIA_FORTE,
+  HYUNDAI_CAR.KIA_FORTE_2019_NON_SCC,
+  HYUNDAI_CAR.KIA_FORTE_2021_NON_SCC,
 )
 PRIUS_CARS = (
   TOYOTA_CAR.TOYOTA_PRIUS,
@@ -334,11 +336,18 @@ KIA_FORTE_CRAWL_TURN_IN_FF_SPEED = 4.5
 KIA_FORTE_CRAWL_TURN_IN_FF_SPEED_WIDTH = 0.8
 KIA_FORTE_CRAWL_TURN_IN_FF_LAT = 0.10
 KIA_FORTE_CRAWL_TURN_IN_FF_LAT_WIDTH = 0.05
-KIA_FORTE_CENTER_TAPER_MAX = 0.14
-KIA_FORTE_CENTER_TAPER_LAT = 0.16
-KIA_FORTE_CENTER_TAPER_LAT_WIDTH = 0.03
-KIA_FORTE_CENTER_TAPER_SPEED = 24.0
-KIA_FORTE_CENTER_TAPER_SPEED_WIDTH = 2.5
+KIA_FORTE_CENTER_TAPER_MAX = 0.18
+KIA_FORTE_CENTER_TAPER_LAT = 0.18
+KIA_FORTE_CENTER_TAPER_LAT_WIDTH = 0.04
+KIA_FORTE_CENTER_TAPER_SPEED = 22.5
+KIA_FORTE_CENTER_TAPER_SPEED_WIDTH = 3.0
+KIA_FORTE_FRICTION_CENTER_LAT = 0.18
+KIA_FORTE_FRICTION_CENTER_LAT_WIDTH = 0.04
+KIA_FORTE_FRICTION_SPEED = 24.0
+KIA_FORTE_FRICTION_SPEED_WIDTH = 3.0
+KIA_FORTE_FRICTION_CALM_JERK = 0.24
+KIA_FORTE_FRICTION_CALM_JERK_WIDTH = 0.08
+KIA_FORTE_FRICTION_THRESHOLD_GAIN = 0.18
 
 PALISADE_BASE_LAT_ACCEL_FACTOR_MULT = 0.98
 PALISADE_FF_GAIN_LEFT = 0.14
@@ -1315,6 +1324,15 @@ def get_kia_forte_center_taper_scale(desired_lateral_accel: float, v_ego: float)
   return 1.0 - reduction
 
 
+def get_kia_forte_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
+  base_threshold = get_friction_threshold(v_ego)
+  speed_weight = _kia_forte_sigmoid((v_ego - KIA_FORTE_FRICTION_SPEED) / KIA_FORTE_FRICTION_SPEED_WIDTH)
+  center_weight = _kia_forte_sigmoid((KIA_FORTE_FRICTION_CENTER_LAT - abs(desired_lateral_accel)) / KIA_FORTE_FRICTION_CENTER_LAT_WIDTH)
+  calm_jerk_weight = _kia_forte_sigmoid((KIA_FORTE_FRICTION_CALM_JERK - abs(desired_lateral_jerk)) / KIA_FORTE_FRICTION_CALM_JERK_WIDTH)
+  threshold_scale = 1.0 + (KIA_FORTE_FRICTION_THRESHOLD_GAIN * speed_weight * center_weight * calm_jerk_weight)
+  return base_threshold * min(max(threshold_scale, 1.0), 1.18)
+
+
 def _palisade_sigmoid(x: float) -> float:
   return _sigmoid(x)
 
@@ -2094,6 +2112,7 @@ class LatControlTorque(LatControl):
         ff *= get_elantra_non_scc_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif kia_forte_active:
         ff *= get_kia_forte_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * kia_forte_center_taper
+        friction_threshold = get_kia_forte_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
       elif kia_ev6_test_active:
         ff *= get_kia_ev6_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * kia_ev6_center_taper
         friction_threshold = get_kia_ev6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)

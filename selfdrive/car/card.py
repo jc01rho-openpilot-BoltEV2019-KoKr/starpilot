@@ -31,7 +31,7 @@ from openpilot.starpilot.controls.starpilot_card import StarPilotCard
 REPLAY = "REPLAY" in os.environ
 OPENPILOT_LEAD_MIN_DISTANCE = 0.1
 REDNECK_DECREASE_LOOKAHEAD_POINTS = 10
-REDNECK_AUTO_BUTTON_FILTER_FRAMES = int(0.3 / DT_CTRL)
+REDNECK_AUTO_BUTTON_FILTER_FRAMES = int(0.12 / DT_CTRL)
 
 EventName = log.OnroadEvent.EventName
 

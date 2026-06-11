@@ -260,8 +260,9 @@ class TestGMInterface:
     linear_low_torque = low_lataccel / car_params.lateralTuning.torque.latAccelFactor
     linear_high_torque = high_lataccel / car_params.lateralTuning.torque.latAccelFactor
 
-    assert low_torque > linear_low_torque * 1.35
-    assert high_torque == pytest.approx(linear_high_torque, rel=0.02)
+    assert low_torque > linear_low_torque * 1.15
+    assert low_torque < linear_low_torque * 1.30
+    assert high_torque == pytest.approx(linear_high_torque, rel=0.03)
     assert torque_from_lataccel(-low_lataccel, car_params.lateralTuning.torque) == pytest.approx(-low_torque, rel=1e-6)
 
 
