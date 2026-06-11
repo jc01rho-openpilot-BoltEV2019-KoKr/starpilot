@@ -211,6 +211,40 @@ def test_ccm_hard_vetoes_force_experimental(monkeypatch):
   assert ccm.status_value == CCStatus["OFF"]
 
 
+def test_ccm_far_lateral_adjacent_lead_does_not_block_open_road_chill(monkeypatch):
+  planner, _detector, ccm = make_ccm()
+  sm = make_sm()
+  toggles = make_toggles()
+  monotonic_values = iter([10.0, 10.5])
+  monkeypatch.setattr("openpilot.starpilot.controls.lib.conditional_chill_mode.time.monotonic", lambda: next(monotonic_values))
+
+  sm["starpilotRadarState"].leadLeft = SimpleNamespace(status=True, dRel=18.0, vLead=12.0, yRel=6.5)
+
+  v_ego = 55 * CV.MPH_TO_MS
+  v_cruise = v_ego + 5 * CV.MPH_TO_MS
+  ccm.update(v_ego, v_cruise, sm, toggles)
+  ccm.update(v_ego, v_cruise, sm, toggles)
+
+  assert not ccm.experimental_mode
+  assert ccm.status_value == CCStatus["SPEED"]
+
+
+def test_ccm_immediate_adjacent_lead_still_blocks_open_road_chill(monkeypatch):
+  planner, _detector, ccm = make_ccm()
+  sm = make_sm()
+  toggles = make_toggles()
+
+  monkeypatch.setattr("openpilot.starpilot.controls.lib.conditional_chill_mode.time.monotonic", lambda: 10.0)
+  sm["starpilotRadarState"].leadLeft = SimpleNamespace(status=True, dRel=18.0, vLead=12.0, yRel=4.5)
+
+  v_ego = 55 * CV.MPH_TO_MS
+  v_cruise = v_ego + 5 * CV.MPH_TO_MS
+  ccm.update(v_ego, v_cruise, sm, toggles)
+
+  assert ccm.experimental_mode
+  assert ccm.status_value == CCStatus["OFF"]
+
+
 def test_ccm_immediately_exits_chill_when_scene_turns_into_slow_lead(monkeypatch):
   planner, detector, ccm = make_ccm()
   sm = make_sm()

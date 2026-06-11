@@ -38,6 +38,7 @@ class ConditionalChillMode:
   ADJACENT_LEAD_VETO_MIN_SPEED = 1.0
   ADJACENT_LEAD_VETO_MAX_DISTANCE = 65.0
   ADJACENT_LEAD_VETO_MAX_DISTANCE_TIME = 3.5
+  ADJACENT_LEAD_VETO_MAX_LATERAL_OFFSET = 5.5
 
   LOW_SPEED_STOP_SCENE_MAX_SPEED = 18 * CV.MPH_TO_MS
 
@@ -308,6 +309,10 @@ class ConditionalChillMode:
     max_distance = min(self.ADJACENT_LEAD_VETO_MAX_DISTANCE, max(25.0, v_ego * self.ADJACENT_LEAD_VETO_MAX_DISTANCE_TIME))
     for lead in (getattr(radar_state, "leadLeft", None), getattr(radar_state, "leadRight", None)):
       if lead is None or not getattr(lead, "status", False):
+        continue
+
+      lateral_offset = abs(float(getattr(lead, "yRel", 0.0)))
+      if lateral_offset > self.ADJACENT_LEAD_VETO_MAX_LATERAL_OFFSET:
         continue
 
       if float(getattr(lead, "dRel", float("inf"))) < max_distance and float(getattr(lead, "vLead", 0.0)) > self.ADJACENT_LEAD_VETO_MIN_SPEED:
