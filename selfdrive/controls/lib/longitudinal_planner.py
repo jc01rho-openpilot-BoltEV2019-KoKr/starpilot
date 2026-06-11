@@ -291,6 +291,17 @@ LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MAX_NEGATIVE_STEP = 0.08
 LOW_SPEED_MATCHED_FOLLOW_TRANSITION_SIGN_CROSS_STEP = 0.06
 LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_TARGET = -0.12
 LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_DELTA_A = 0.12
+MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_SPEED = 3.0
+MILD_FOLLOW_ZERO_CROSS_GUARD_MAX_SPEED = 35.0
+MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_MODEL_PROB = 0.95
+MILD_FOLLOW_ZERO_CROSS_GUARD_MAX_LEAD_BRAKE = 0.80
+MILD_FOLLOW_ZERO_CROSS_GUARD_MAX_CLOSING_SPEED = 3.25
+MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_TTC = 6.0
+MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_HEADWAY_MARGIN = 0.25
+MILD_FOLLOW_ZERO_CROSS_GUARD_FULL_HEADWAY_MARGIN = 0.85
+MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_DELTA_A = 0.08
+MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_DEADBAND = 0.04
+MILD_FOLLOW_ZERO_CROSS_GUARD_MAX_DEADBAND = 0.08
 NEAR_DUPLICATE_LEAD_TRANSITION_MIN_SPEED = 20.0
 NEAR_DUPLICATE_LEAD_TRANSITION_MIN_MODEL_PROB = 0.95
 NEAR_DUPLICATE_LEAD_TRANSITION_MAX_LEAD_BRAKE = 0.35
@@ -1626,6 +1637,56 @@ class LongitudinalPlanner:
     smoothed_target = float(np.clip(output_a_target, lower, upper))
     return smoothed_target if abs(smoothed_target - float(output_a_target)) > 1e-6 else None
 
+  def get_mild_follow_zero_cross_guard_target(self, lead, v_ego, base_t_follow,
+                                              prev_output_a_target, output_a_target,
+                                              current_source, tracking_lead_active):
+    if lead is None or not lead.status:
+      return None
+    if current_source not in ("cruise", "lead0", "lead1") and not tracking_lead_active:
+      return None
+    if not (MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_SPEED <= float(v_ego) <= MILD_FOLLOW_ZERO_CROSS_GUARD_MAX_SPEED):
+      return None
+
+    target_delta = float(output_a_target) - float(prev_output_a_target)
+    if abs(target_delta) < MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_DELTA_A:
+      return None
+
+    lead_radar = bool(getattr(lead, "radar", False))
+    lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
+    if not lead_radar and lead_prob < MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_MODEL_PROB:
+      return None
+
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    if lead_brake > MILD_FOLLOW_ZERO_CROSS_GUARD_MAX_LEAD_BRAKE:
+      return None
+
+    closing_speed = max(0.0, float(v_ego) - float(lead.vLead))
+    if closing_speed > MILD_FOLLOW_ZERO_CROSS_GUARD_MAX_CLOSING_SPEED:
+      return None
+
+    ttc = float(lead.dRel) / max(closing_speed, 0.1) if closing_speed > 0.1 else float("inf")
+    if ttc < MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_TTC:
+      return None
+
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    headway_margin = actual_headway - float(base_t_follow)
+    if headway_margin < MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_HEADWAY_MARGIN:
+      return None
+
+    deadband = float(np.interp(
+      headway_margin,
+      [MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_HEADWAY_MARGIN, MILD_FOLLOW_ZERO_CROSS_GUARD_FULL_HEADWAY_MARGIN],
+      [MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_DEADBAND, MILD_FOLLOW_ZERO_CROSS_GUARD_MAX_DEADBAND],
+    ))
+
+    if float(prev_output_a_target) * float(output_a_target) < 0.0:
+      return 0.0
+
+    if abs(float(output_a_target)) < deadband and abs(float(prev_output_a_target)) < deadband + 0.06:
+      return 0.0
+
+    return None
+
   def get_tracked_vision_model_brake_floor(self, lead, v_ego, accel_min, t_follow, model_desired):
     if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
       return None
@@ -2434,6 +2495,18 @@ class LongitudinalPlanner:
       if cruise_tracking_lead_transition_target is not None:
         self.a_desired = min(self.a_desired, cruise_tracking_lead_transition_target)
         output_a_target = min(output_a_target, cruise_tracking_lead_transition_target)
+
+      mild_follow_zero_cross_guard_target = self.get_mild_follow_zero_cross_guard_target(
+        follow_control_lead,
+        scene_v_ego,
+        effective_t_follow,
+        prev_output_a_target,
+        output_a_target,
+        self.mpc.source,
+        tracking_lead,
+      )
+      if mild_follow_zero_cross_guard_target is not None:
+        output_a_target = mild_follow_zero_cross_guard_target
 
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))

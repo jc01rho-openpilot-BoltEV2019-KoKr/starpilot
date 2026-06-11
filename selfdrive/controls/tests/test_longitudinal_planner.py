@@ -2191,6 +2191,63 @@ def test_cruise_tracking_lead_accel_transition_target_skips_clear_pullaway():
   assert smoothed is None
 
 
+def test_mild_follow_zero_cross_guard_coasts_on_cruise_sign_flip():
+  v_ego = 19.8
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=42.0, v_lead=19.0, a_lead=-0.15, radar=False, model_prob=0.99, y_rel=0.10)
+
+  guarded = planner.get_mild_follow_zero_cross_guard_target(
+    lead,
+    v_ego,
+    1.45,
+    prev_output_a_target=0.18,
+    output_a_target=-0.12,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert guarded == pytest.approx(0.0, abs=1e-6)
+
+
+def test_mild_follow_zero_cross_guard_coasts_on_near_duplicate_sign_flip():
+  v_ego = 24.5
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=51.0, v_lead=21.7, a_lead=-0.25, radar=False, model_prob=0.99, y_rel=0.08)
+
+  guarded = planner.get_mild_follow_zero_cross_guard_target(
+    lead,
+    v_ego,
+    1.45,
+    prev_output_a_target=0.33,
+    output_a_target=-0.13,
+    current_source="lead1",
+    tracking_lead_active=True,
+  )
+
+  assert guarded == pytest.approx(0.0, abs=1e-6)
+
+
+def test_mild_follow_zero_cross_guard_skips_urgent_close_follow():
+  v_ego = 17.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=16.0, v_lead=12.0, a_lead=-0.45, radar=False, model_prob=0.99, y_rel=0.05)
+
+  guarded = planner.get_mild_follow_zero_cross_guard_target(
+    lead,
+    v_ego,
+    1.45,
+    prev_output_a_target=0.22,
+    output_a_target=-0.28,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert guarded is None
+
+
 def test_prioritize_smooth_following_skips_post_097_follow_nudges():
   v_ego = 16.2
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
