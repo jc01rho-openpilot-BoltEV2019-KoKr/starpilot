@@ -13,7 +13,9 @@ HYST_GAP = 0.0
 INCREASE_INACTIVE_TIMER = 0.12
 DECREASE_INACTIVE_TIMER = 0.05
 LEAD_INCREASE_INACTIVE_TIMER = 0.05
+MANUAL_BUTTON_INACTIVE_TIMER = 0.5
 LEAD_RECOVERY_LOOKAHEAD_POINTS = 4
+LEAD_RECOVERY_HOLD_BUFFER_MS = 0.5 * CV.MPH_TO_MS
 LEAD_COAST_BUFFER_MS = 1.0 * CV.MPH_TO_MS
 
 CRUISE_BUTTON_TIMERS = {
@@ -43,6 +45,10 @@ def select_redneck_target_speed(v_cruise_kph: float, speed_cluster_ms: float,
       return min(target_speed_ms, recovery_target_speed_ms)
 
     decrease_target_speed_ms = min(plan_speeds_ms[:lookahead_points])
+    if lead_present and target_speed_ms > speed_cluster_ms and \
+        decrease_target_speed_ms >= speed_cluster_ms - LEAD_RECOVERY_HOLD_BUFFER_MS:
+      return speed_cluster_ms
+
     if lead_present and decrease_target_speed_ms < speed_cluster_ms:
       decrease_target_speed_ms = max(0.0, decrease_target_speed_ms - LEAD_COAST_BUFFER_MS)
 
@@ -107,7 +113,7 @@ class RedneckCruise:
 
   def _update_readiness(self, CS: car.CarState, CC: car.CarControl) -> None:
     update_manual_button_timers(CS, self.cruise_button_timers)
-    button_pressed = any(timer > 0 for timer in self.cruise_button_timers.values())
+    button_pressed = any(0 < timer <= int(MANUAL_BUTTON_INACTIVE_TIMER / DT_CTRL) for timer in self.cruise_button_timers.values())
     self.is_ready = CC.enabled and not CC.cruiseControl.override and not CC.cruiseControl.cancel and not CC.cruiseControl.resume and not button_pressed
 
   def _desired_state(self) -> str:

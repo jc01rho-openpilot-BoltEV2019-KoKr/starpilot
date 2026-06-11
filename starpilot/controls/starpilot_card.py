@@ -103,22 +103,24 @@ class StarPilotCard:
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled")
 
     if self.hyundai_aol_needs_engagement:
-      if carState.gearShifter in NON_DRIVING_GEARS or not carState.cruiseState.available:
+      if carState.gearShifter in NON_DRIVING_GEARS:
         self.hyundai_aol_ready = False
         self.always_on_lateral_allowed = False
       elif sm["selfdriveState"].active or carState.cruiseState.enabled:
         self.hyundai_aol_ready = True
 
-    can_toggle_aol = not self.hyundai_aol_needs_engagement or self.hyundai_aol_ready
-
     if self.CP.brand == "hyundai" or starpilot_toggles.lkas_allowed_for_aol:
       for be in carState.buttonEvents:
-        if be.type == ButtonType.lkas and be.pressed and starpilot_toggles.always_on_lateral_lkas and can_toggle_aol:
+        if be.type == ButtonType.lkas and be.pressed and starpilot_toggles.always_on_lateral_lkas:
+          if self.hyundai_aol_needs_engagement:
+            self.hyundai_aol_ready = True
           self.always_on_lateral_allowed = not self.always_on_lateral_allowed
           if carState.cruiseState.enabled or self.pause_lateral:
             self.pause_lateral = not self.always_on_lateral_allowed
         elif be.type == ButtonType.mainCruise and be.pressed:
-          if starpilot_toggles.main_cruise_aol_toggle and can_toggle_aol:
+          if starpilot_toggles.main_cruise_aol_toggle:
+            if self.hyundai_aol_needs_engagement:
+              self.hyundai_aol_ready = True
             self.always_on_lateral_allowed = not self.always_on_lateral_allowed
           elif starpilot_toggles.main_cruise_slc_adopt and starpilot_toggles.speed_limit_controller:
             self.params_memory.put_bool("SLCAdoptSpeedLimit", True)

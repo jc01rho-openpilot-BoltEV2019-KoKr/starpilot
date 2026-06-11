@@ -917,7 +917,6 @@ CANCEL_BUTTON_ENABLE_CARS = frozenset({
 # engage/disengage regression.
 ALT_BUS_LDA_BUTTON_CARS = frozenset({
   CAR.HYUNDAI_SONATA,
-  CAR.HYUNDAI_SONATA_HYBRID,
 })
 
 # On these Sonata layouts the alt-bus LKAS button pulses through the CLU13

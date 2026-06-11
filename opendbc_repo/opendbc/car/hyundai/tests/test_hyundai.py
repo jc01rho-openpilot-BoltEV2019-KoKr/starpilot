@@ -683,7 +683,7 @@ class TestHyundaiFingerprint:
     ret = update(0, 3)
     assert any(be.type == ButtonType.lkas and not be.pressed for be in ret.buttonEvents)
 
-  def test_sonata_hybrid_uses_alt_bus_lkas_parser(self):
+  def test_sonata_hybrid_uses_main_bus_lkas_parser(self):
     toggles = get_test_toggles()
     fingerprint = gen_empty_fingerprint()
     fingerprint[0][0x391] = 8
@@ -694,9 +694,9 @@ class TestHyundaiFingerprint:
     car_state = CarState(CP, FPCP)
     can_parsers = car_state.get_can_parsers(CP)
 
-    assert Bus.alt in can_parsers
+    assert Bus.alt not in can_parsers
 
-  def test_sonata_hybrid_alt_bus_clu13_lkas_button_event(self):
+  def test_sonata_hybrid_bcm_lkas_button_event(self):
     toggles = get_test_toggles()
     fingerprint = gen_empty_fingerprint()
     fingerprint[0][0x391] = 8
@@ -709,18 +709,20 @@ class TestHyundaiFingerprint:
     packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
 
     def update(lkas_button: int, frame: int):
-      msg = packer.make_can_msg("CLU13", 1, {
-        "CF_Clu_LdwsLkasSW": lkas_button,
+      msg = packer.make_can_msg("BCM_PO_11", 0, {
+        "LDA_BTN": lkas_button,
       })
-      can_parsers[Bus.alt].update([(frame, [msg])])
+      can_parsers[Bus.pt].update([(frame, [msg])])
       return car_state.update(can_parsers, toggles)[0]
 
     update(0, 1)
     ret = update(1, 2)
     assert any(be.type == ButtonType.lkas and be.pressed for be in ret.buttonEvents)
+
+    ret = update(0, 3)
     assert any(be.type == ButtonType.lkas and not be.pressed for be in ret.buttonEvents)
 
-  def test_sonata_hybrid_alt_bus_initial_high_does_not_emit_lkas_button_event(self):
+  def test_sonata_hybrid_ignores_noisy_alt_bus_clu13_lkas_button(self):
     toggles = get_test_toggles()
     fingerprint = gen_empty_fingerprint()
     fingerprint[0][0x391] = 8
@@ -730,24 +732,8 @@ class TestHyundaiFingerprint:
 
     car_state = CarState(CP, FPCP)
     can_parsers = car_state.get_can_parsers(CP)
-    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
 
-    def update(lkas_button: int, frame: int):
-      msg = packer.make_can_msg("CLU13", 1, {
-        "CF_Clu_LdwsLkasSW": lkas_button,
-      })
-      can_parsers[Bus.alt].update([(frame, [msg])])
-      return car_state.update(can_parsers, toggles)[0]
-
-    ret = update(1, 1)
-    assert not any(be.type == ButtonType.lkas for be in ret.buttonEvents)
-
-    ret = update(0, 2)
-    assert not any(be.type == ButtonType.lkas for be in ret.buttonEvents)
-
-    ret = update(1, 3)
-    assert any(be.type == ButtonType.lkas and be.pressed for be in ret.buttonEvents)
-    assert any(be.type == ButtonType.lkas and not be.pressed for be in ret.buttonEvents)
+    assert Bus.alt not in can_parsers
 
   def test_sonata_alt_bus_clu13_swl_stat_lkas_button_event(self):
     toggles = get_test_toggles()
