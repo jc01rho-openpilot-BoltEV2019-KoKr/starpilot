@@ -80,6 +80,28 @@ class TestLeads:
     assert leads_are_duplicate(lead_one, lead_two)
     assert not leads_are_duplicate(lead_one, distinct_lead)
 
+  def test_duplicate_lead_helper_supports_attribute_objects(self):
+    lead_one = SimpleNamespace(
+      status=True,
+      radar=False,
+      radarTrackId=-1,
+      dRel=32.1,
+      vLead=14.2,
+      yRel=0.03,
+      modelProb=0.98,
+    )
+    lead_two = SimpleNamespace(
+      status=True,
+      radar=False,
+      radarTrackId=-1,
+      dRel=32.2,
+      vLead=14.1,
+      yRel=0.05,
+      modelProb=0.97,
+    )
+
+    assert leads_are_duplicate(lead_one, lead_two)
+
   def test_radar_fault(self):
     # if there's no radar-related can traffic, radard should either not respond or respond with an error
     # this is tightly coupled with underlying car radar_interface implementation, but it's a good sanity check

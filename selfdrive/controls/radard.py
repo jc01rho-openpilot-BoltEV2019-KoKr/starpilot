@@ -202,30 +202,36 @@ VISION_DUPLICATE_LEAD_MAX_YREL_DIFF = 0.4
 VISION_DUPLICATE_LEAD_MIN_MODEL_PROB = 0.7
 
 
-def leads_are_duplicate(lead_one: dict[str, Any], lead_two: dict[str, Any]) -> bool:
-  if not lead_one.get("status", False) or not lead_two.get("status", False):
+def get_lead_field(lead: Any, field: str, default: Any) -> Any:
+  if isinstance(lead, dict):
+    return lead.get(field, default)
+  return getattr(lead, field, default)
+
+
+def leads_are_duplicate(lead_one: Any, lead_two: Any) -> bool:
+  if not get_lead_field(lead_one, "status", False) or not get_lead_field(lead_two, "status", False):
     return False
 
-  lead_one_radar = bool(lead_one.get("radar", False))
-  lead_two_radar = bool(lead_two.get("radar", False))
+  lead_one_radar = bool(get_lead_field(lead_one, "radar", False))
+  lead_two_radar = bool(get_lead_field(lead_two, "radar", False))
 
   if lead_one_radar and lead_two_radar:
-    lead_one_track_id = int(lead_one.get("radarTrackId", -1))
-    lead_two_track_id = int(lead_two.get("radarTrackId", -1))
+    lead_one_track_id = int(get_lead_field(lead_one, "radarTrackId", -1))
+    lead_two_track_id = int(get_lead_field(lead_two, "radarTrackId", -1))
     return lead_one_track_id != -1 and lead_one_track_id == lead_two_track_id
 
   if lead_one_radar or lead_two_radar:
     return False
 
-  lead_one_prob = float(lead_one.get("modelProb", 0.0))
-  lead_two_prob = float(lead_two.get("modelProb", 0.0))
+  lead_one_prob = float(get_lead_field(lead_one, "modelProb", 0.0))
+  lead_two_prob = float(get_lead_field(lead_two, "modelProb", 0.0))
   if min(lead_one_prob, lead_two_prob) < VISION_DUPLICATE_LEAD_MIN_MODEL_PROB:
     return False
 
   return (
-    abs(float(lead_one.get("dRel", 0.0)) - float(lead_two.get("dRel", 0.0))) <= VISION_DUPLICATE_LEAD_MAX_DREL_DIFF and
-    abs(float(lead_one.get("vLead", 0.0)) - float(lead_two.get("vLead", 0.0))) <= VISION_DUPLICATE_LEAD_MAX_VLEAD_DIFF and
-    abs(float(lead_one.get("yRel", 0.0)) - float(lead_two.get("yRel", 0.0))) <= VISION_DUPLICATE_LEAD_MAX_YREL_DIFF
+    abs(float(get_lead_field(lead_one, "dRel", 0.0)) - float(get_lead_field(lead_two, "dRel", 0.0))) <= VISION_DUPLICATE_LEAD_MAX_DREL_DIFF and
+    abs(float(get_lead_field(lead_one, "vLead", 0.0)) - float(get_lead_field(lead_two, "vLead", 0.0))) <= VISION_DUPLICATE_LEAD_MAX_VLEAD_DIFF and
+    abs(float(get_lead_field(lead_one, "yRel", 0.0)) - float(get_lead_field(lead_two, "yRel", 0.0))) <= VISION_DUPLICATE_LEAD_MAX_YREL_DIFF
   )
 
 
