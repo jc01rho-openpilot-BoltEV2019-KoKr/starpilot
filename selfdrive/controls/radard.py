@@ -196,6 +196,39 @@ def get_RadarState_from_vision(lead_msg: capnp._DynamicStructReader, v_ego: floa
   }
 
 
+VISION_DUPLICATE_LEAD_MAX_DREL_DIFF = 0.75
+VISION_DUPLICATE_LEAD_MAX_VLEAD_DIFF = 0.5
+VISION_DUPLICATE_LEAD_MAX_YREL_DIFF = 0.4
+VISION_DUPLICATE_LEAD_MIN_MODEL_PROB = 0.7
+
+
+def leads_are_duplicate(lead_one: dict[str, Any], lead_two: dict[str, Any]) -> bool:
+  if not lead_one.get("status", False) or not lead_two.get("status", False):
+    return False
+
+  lead_one_radar = bool(lead_one.get("radar", False))
+  lead_two_radar = bool(lead_two.get("radar", False))
+
+  if lead_one_radar and lead_two_radar:
+    lead_one_track_id = int(lead_one.get("radarTrackId", -1))
+    lead_two_track_id = int(lead_two.get("radarTrackId", -1))
+    return lead_one_track_id != -1 and lead_one_track_id == lead_two_track_id
+
+  if lead_one_radar or lead_two_radar:
+    return False
+
+  lead_one_prob = float(lead_one.get("modelProb", 0.0))
+  lead_two_prob = float(lead_two.get("modelProb", 0.0))
+  if min(lead_one_prob, lead_two_prob) < VISION_DUPLICATE_LEAD_MIN_MODEL_PROB:
+    return False
+
+  return (
+    abs(float(lead_one.get("dRel", 0.0)) - float(lead_two.get("dRel", 0.0))) <= VISION_DUPLICATE_LEAD_MAX_DREL_DIFF and
+    abs(float(lead_one.get("vLead", 0.0)) - float(lead_two.get("vLead", 0.0))) <= VISION_DUPLICATE_LEAD_MAX_VLEAD_DIFF and
+    abs(float(lead_one.get("yRel", 0.0)) - float(lead_two.get("yRel", 0.0))) <= VISION_DUPLICATE_LEAD_MAX_YREL_DIFF
+  )
+
+
 def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capnp._DynamicStructReader,
              model_v_ego: float, model_data: capnp._DynamicStructReader, standstill: bool,
              starpilot_plan: capnp._DynamicStructReader, starpilot_toggles: SimpleNamespace,
@@ -314,6 +347,11 @@ class RadarD:
       self.radar_state.leadTwo = get_lead(self.v_ego, self.ready, self.tracks, leads_v3[1], model_v_ego, sm['modelV2'],
                                           sm['carState'].standstill, sm['starpilotPlan'], self.starpilot_toggles, low_speed_override=False,
                                           g90_radar_filter=self.g90_radar_filter)
+      # The model exposes two lead slots, but both can occasionally fuse to the
+      # same radar object. Publishing that as two separate leads makes MPC churn
+      # between lead0/lead1 even though the scene only has one physical target.
+      if leads_are_duplicate(self.radar_state.leadOne, self.radar_state.leadTwo):
+        self.radar_state.leadTwo = {'status': False}
 
     if self.ready and (self.starpilot_toggles.adjacent_lead_tracking or self.starpilot_toggles.human_lane_changes):
       self.starpilot_radar_state.leadLeft = get_adjacent_lead(self.tracks, sm['carState'].standstill, sm['modelV2'], left=True)
