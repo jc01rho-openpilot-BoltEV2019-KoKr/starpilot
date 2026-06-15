@@ -286,7 +286,7 @@ async function fetchLayoutAndParams() {
   state.loadingValues = true
 
   try {
-    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=favorite-slots-4", { cache: "no-store" })
+    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=favorite-slots-5", { cache: "no-store" })
     const rawLayoutData = await layoutRes.json()
 
     const layoutData = rawLayoutData
@@ -537,6 +537,7 @@ async function saveFavoriteSlots(slots) {
       state.values = { ...state.values, ...state.favoriteValues, StarPilotFavoriteSlots: state.favoriteSlots }
       showParamSnackbar(data.message || "Favorite slots saved.")
       scheduleSyncInputs()
+      window.setTimeout(() => window.location.reload(), 250)
     } else {
       state.favoriteSlots = previousSlots
       showParamSnackbar(data.error || "Failed to save favorite slots", "error")
