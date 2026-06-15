@@ -286,7 +286,7 @@ async function fetchLayoutAndParams() {
   state.loadingValues = true
 
   try {
-    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=favorite-slots-3", { cache: "no-store" })
+    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=favorite-slots-4", { cache: "no-store" })
     const rawLayoutData = await layoutRes.json()
 
     const layoutData = rawLayoutData
@@ -987,13 +987,53 @@ function renderFavoriteSlotsPanel() {
 
   const slots = normalizeFavoriteSlots(state.favoriteSlots)
   const options = normalizeFavoriteOptions(state.favoriteOptions)
+  const optionByKey = new Map(options.map(opt => [opt.key, opt]))
+  const quickFavorites = slots
+    .map((slot, index) => {
+      const selectedKey = slot.key || ""
+      const selectedOption = optionByKey.get(selectedKey)
+      return {
+        index,
+        slot,
+        selectedKey,
+        selectedOption,
+        selectedValue: selectedKey ? !!state.values[selectedKey] : false,
+      }
+    })
+    .filter(favorite => favorite.slot.enabled && favorite.selectedKey && favorite.selectedOption)
 
   return html`
     <div class="ds-favorites-panel">
+      ${quickFavorites.length ? html`
+        <div class="ds-favorite-quick-grid">
+          ${quickFavorites.map(favorite => {
+            const selectedOption = favorite.selectedOption
+            const selectedKey = favorite.selectedKey
+            const selectedValue = favorite.selectedValue
+
+            return html`
+              <label class="ds-favorite-quick-card">
+                <div class="ds-favorite-quick-copy">
+                  <span class="ds-favorite-quick-slot">Favorite #${favorite.index + 1}</span>
+                  <span class="ds-favorite-quick-title">${selectedOption.label || favorite.slot.label || selectedKey}</span>
+                  ${selectedOption.section ? html`<span class="ds-favorite-quick-section">${selectedOption.section}</span>` : ""}
+                  ${selectedOption.description ? html`<span class="ds-favorite-quick-desc">${selectedOption.description}</span>` : ""}
+                </div>
+                <input
+                  type="checkbox"
+                  class="ds-toggle ds-favorite-quick-toggle"
+                  data-favorite-value-key="${selectedKey}"
+                  checked="${() => selectedValue}"
+                  @change="${(e) => updateFavoriteValue(selectedKey, !!e.currentTarget.checked)}" />
+              </label>
+            `
+          })}
+        </div>
+      ` : ""}
+
       ${slots.map((slot, index) => {
-        const selectedOption = options.find(opt => opt.key === slot.key)
+        const selectedOption = optionByKey.get(slot.key)
         const selectedKey = slot.key || ""
-        const selectedValue = selectedKey ? !!state.values[selectedKey] : false
         const favoriteFilter = state.favoriteFilters[index] || ""
         const filteredOptions = options.filter(opt => favoriteOptionMatchesFilter(opt, favoriteFilter))
 
@@ -1057,21 +1097,6 @@ function renderFavoriteSlotsPanel() {
                   @change="${(e) => updateFavoriteSlot(index, { show_onroad: !!e.currentTarget.checked })}" />
               </label>
             </div>
-
-            ${selectedKey ? html`
-              <div class="ds-favorite-live-row">
-                <div class="ds-favorite-live-copy">
-                  <span class="ds-row-label">${selectedOption?.label || slot.label || selectedKey}</span>
-                  ${selectedOption?.description ? html`<div class="ds-row-desc">${selectedOption.description}</div>` : ""}
-                </div>
-                <input
-                  type="checkbox"
-                  class="ds-toggle"
-                  data-favorite-value-key="${selectedKey}"
-                  checked="${() => selectedValue}"
-                  @change="${(e) => updateFavoriteValue(selectedKey, !!e.currentTarget.checked)}" />
-              </div>
-            ` : ""}
           </div>
         `
       })}

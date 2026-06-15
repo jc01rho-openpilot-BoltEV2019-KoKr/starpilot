@@ -3485,6 +3485,7 @@ def setup(app):
     if request.path in {
       "/assets/components/router.js",
       "/assets/components/tools/device_settings.js",
+      "/assets/components/tools/device_settings.css",
       "/assets/components/tools/device_settings_layout.json",
     }:
       response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
