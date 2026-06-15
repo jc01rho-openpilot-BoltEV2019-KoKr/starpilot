@@ -237,6 +237,9 @@ CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LATERAL_OFFSET = 1.15
 CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MIN_CLOSING_SPEED = 1.5
 CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MAX_LEAD_DELTA = 0.25
 CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_ACCEL = 0.18
+CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN = 0.25
+CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN_LEAD_DELTA = 0.35
+CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN_GAP_MARGIN = 1.0
 CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_SPEED = 12.0
 CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_SPEED = 22.0
 CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_MODEL_PROB = 0.9
@@ -1351,6 +1354,16 @@ class LongitudinalPlanner:
     gap_buffer = max(CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_GAP_BUFFER_MIN,
                      CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_GAP_BUFFER_GAIN * float(v_ego))
     if gap_error > gap_buffer:
+      return None
+
+    # If the same lead is already accelerating away and we're no longer tight to
+    # the follow target, don't slam the accel cap back on just because lead_delta
+    # momentarily falls near the pull-away threshold. That produces the repeated
+    # 0.18 m/s^2 "surge / give up / surge" behavior seen in real logs.
+    lead_accel = float(getattr(lead, "aLeadK", 0.0))
+    if (lead_delta >= CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN_LEAD_DELTA and
+        lead_accel >= CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN and
+        gap_error >= CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN_GAP_MARGIN):
       return None
 
     base_cap = float(np.interp(

@@ -2208,6 +2208,23 @@ def test_cruise_tracking_lead_accel_cap_skips_when_lead_clearly_pulls_away():
   assert cap is None
 
 
+def test_cruise_tracking_lead_accel_cap_skips_accelerating_away_radar_lead():
+  v_ego = 11.4
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=20.5, v_lead=12.4, a_lead=0.46, radar=True, model_prob=1.0, y_rel=0.1)
+
+  cap = planner.get_cruise_tracking_lead_accel_cap(
+    lead,
+    v_ego,
+    1.45,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert cap is None
+
+
 def test_cruise_tracking_lead_accel_transition_target_damps_mid_speed_reacquisition_burst():
   v_ego = 16.2
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
@@ -2388,6 +2405,23 @@ def test_stable_follow_cruise_hysteresis_skips_fast_closing_radar_lead():
   hysteresis = planner.mpc.get_stable_follow_cruise_hysteresis(lead, v_ego, 1.45)
 
   assert hysteresis == 0.0
+
+
+def test_near_duplicate_lead_source_hysteresis_prefers_previous_source_for_identical_radar_track():
+  v_ego = 27.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=34.6, v_lead=24.2, a_lead=-0.04, radar=True, model_prob=1.0)
+  lead_two = make_lead(status=True, d_rel=34.7, v_lead=24.2, a_lead=-0.04, radar=True, model_prob=1.0)
+  lead_one.vRel = -0.8
+  lead_two.vRel = -0.78
+  lead_one.radarTrackId = 123
+  lead_two.radarTrackId = 123
+
+  lead_0_bias, lead_1_bias = planner.mpc.get_near_duplicate_lead_source_hysteresis("lead0", lead_one, lead_two, v_ego)
+
+  assert lead_0_bias == 0.0
+  assert lead_1_bias > 0.0
 
 
 def test_near_duplicate_lead_source_hysteresis_skips_distinct_leads():

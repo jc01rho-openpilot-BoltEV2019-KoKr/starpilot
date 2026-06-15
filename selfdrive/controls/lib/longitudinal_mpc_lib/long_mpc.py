@@ -621,8 +621,17 @@ class LongitudinalMpc:
       return False
     if float(v_ego) < NEAR_DUPLICATE_LEAD_SOURCE_MIN_SPEED:
       return False
-    if bool(getattr(lead_one, "radar", False)) or bool(getattr(lead_two, "radar", False)):
-      return False
+    lead_one_radar = bool(getattr(lead_one, "radar", False))
+    lead_two_radar = bool(getattr(lead_two, "radar", False))
+    if lead_one_radar or lead_two_radar:
+      track_one = int(getattr(lead_one, "radarTrackId", -1))
+      track_two = int(getattr(lead_two, "radarTrackId", -1))
+      return (
+        lead_one_radar and lead_two_radar and
+        track_one >= 0 and track_one == track_two and
+        abs(float(lead_one.dRel) - float(lead_two.dRel)) <= NEAR_DUPLICATE_LEAD_SOURCE_MAX_DREL_DIFF and
+        abs(float(lead_one.vRel) - float(lead_two.vRel)) <= max(1.0, NEAR_DUPLICATE_LEAD_SOURCE_MAX_VREL_DIFF)
+      )
     if float(getattr(lead_one, "modelProb", 0.0)) < NEAR_DUPLICATE_LEAD_SOURCE_MIN_MODEL_PROB:
       return False
     if float(getattr(lead_two, "modelProb", 0.0)) < NEAR_DUPLICATE_LEAD_SOURCE_MIN_MODEL_PROB:
