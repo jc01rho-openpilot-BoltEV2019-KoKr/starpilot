@@ -27,6 +27,12 @@ const state = reactive({
   fetched: false,
   activeSectionSlug: "",
   numericUpdating: {},
+  favoriteLoading: false,
+  favoriteSaving: false,
+  favoriteOptions: [],
+  favoriteSlots: [],
+  favoriteFilters: ["", "", ""],
+  favoriteValues: {},
 })
 
 function slugifySectionName(name) {
@@ -218,6 +224,33 @@ function syncInputs() {
       syncSelectValue(el, key)
     }
   }
+
+  const favoriteSlots = normalizeFavoriteSlots(state.favoriteSlots)
+  for (const el of document.querySelectorAll("[data-favorite-slot][data-favorite-field]")) {
+    const slotIndex = Number.parseInt(el.dataset.favoriteSlot, 10)
+    const field = el.dataset.favoriteField
+    const slot = favoriteSlots[slotIndex]
+    if (!slot) continue
+
+    if (el.tagName === "SELECT" && field === "key") {
+      el.value = slot.key || ""
+      el.disabled = !!state.favoriteSaving
+    } else if (el.tagName === "INPUT" && field === "search") {
+      el.value = state.favoriteFilters[slotIndex] || ""
+      el.disabled = !!state.favoriteSaving
+    } else if (el.tagName === "INPUT" && el.type === "checkbox") {
+      el.checked = !!slot[field]
+      if (field === "enabled") {
+        el.disabled = !!state.favoriteSaving
+      } else if (field === "show_onroad") {
+        el.disabled = !!state.favoriteSaving || !slot.enabled || !slot.key
+      }
+    }
+  }
+
+  for (const el of document.querySelectorAll("input[type='checkbox'][data-favorite-value-key]")) {
+    el.checked = !!state.values[el.dataset.favoriteValueKey]
+  }
 }
 
 async function fetchDefaultValues() {
@@ -252,7 +285,7 @@ async function fetchLayoutAndParams() {
   state.loadingValues = true
 
   try {
-    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json")
+    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=favorite-slots-2", { cache: "no-store" })
     const rawLayoutData = await layoutRes.json()
 
     const layoutData = rawLayoutData
@@ -293,6 +326,9 @@ async function fetchLayoutAndParams() {
     console.error("Failed to fetch param values:", e)
     state.defaultValues = {}
   }
+
+  await fetchFavoriteSlots()
+
   state.loadingValues = false
 
   // Resolve slug now that layout is available (uses stored route params)
@@ -394,6 +430,145 @@ function coerceValueByType(rawValue, dataType) {
     return Number.isFinite(n) ? n : rawValue
   }
   return rawValue
+}
+
+function defaultFavoriteSlots() {
+  return [0, 1, 2].map(() => ({
+    enabled: false,
+    show_onroad: false,
+    key: null,
+    label: "",
+  }))
+}
+
+function normalizeFavoriteSlots(slots) {
+  const normalized = defaultFavoriteSlots()
+  if (!Array.isArray(slots)) return normalized
+
+  slots.slice(0, 3).forEach((slot, index) => {
+    if (!slot || typeof slot !== "object") return
+    const key = slot.key ? String(slot.key) : null
+    normalized[index] = {
+      enabled: !!slot.enabled,
+      show_onroad: !!slot.show_onroad,
+      key,
+      label: key ? String(slot.label || key) : "",
+    }
+  })
+
+  return normalized
+}
+
+async function fetchFavoriteSlots() {
+  state.favoriteLoading = true
+  try {
+    const res = await fetch("/api/favorites/slots")
+    const data = await res.json()
+    if (res.ok) {
+      state.favoriteOptions = Array.isArray(data.options) ? data.options : []
+      state.favoriteSlots = normalizeFavoriteSlots(data.slots)
+      state.favoriteValues = data.values || {}
+      state.values = { ...state.values, ...state.favoriteValues, StarPilotFavoriteSlots: state.favoriteSlots }
+    }
+  } catch (e) {
+    console.error("Failed to fetch favorite slots:", e)
+  }
+  state.favoriteLoading = false
+}
+
+async function saveFavoriteSlots(slots) {
+  if (state.favoriteSaving) return
+
+  const previousSlots = state.favoriteSlots
+  state.favoriteSlots = normalizeFavoriteSlots(slots)
+  state.favoriteSaving = true
+
+  try {
+    const res = await fetch("/api/favorites/slots", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slots: state.favoriteSlots }),
+    })
+    const data = await res.json()
+
+    if (res.ok) {
+      state.favoriteOptions = Array.isArray(data.options) ? data.options : state.favoriteOptions
+      state.favoriteSlots = normalizeFavoriteSlots(data.slots)
+      state.favoriteValues = data.values || {}
+      state.values = { ...state.values, ...state.favoriteValues, StarPilotFavoriteSlots: state.favoriteSlots }
+      showParamSnackbar(data.message || "Favorite slots saved.")
+      scheduleSyncInputs()
+    } else {
+      state.favoriteSlots = previousSlots
+      showParamSnackbar(data.error || "Failed to save favorite slots", "error")
+    }
+  } catch (e) {
+    state.favoriteSlots = previousSlots
+    showParamSnackbar("Network error — is the device reachable?", "error")
+  }
+
+  state.favoriteSaving = false
+}
+
+function updateFavoriteSlot(index, patch) {
+  const slots = normalizeFavoriteSlots(state.favoriteSlots)
+  const current = slots[index] || defaultFavoriteSlots()[0]
+  const nextSlot = { ...current, ...patch }
+
+  if (!nextSlot.key) {
+    nextSlot.label = ""
+  } else {
+    const option = state.favoriteOptions.find(opt => opt.key === nextSlot.key)
+    nextSlot.label = option?.label || nextSlot.key
+  }
+
+  slots[index] = nextSlot
+  saveFavoriteSlots(slots)
+}
+
+function updateFavoriteFilter(index, event) {
+  const filters = Array.isArray(state.favoriteFilters) ? [...state.favoriteFilters] : ["", "", ""]
+  filters[index] = getEventValue(event)
+  state.favoriteFilters = filters.slice(0, 3)
+  scheduleSyncInputs()
+}
+
+function favoriteOptionMatchesFilter(option, filter) {
+  if (!filter) return true
+  const q = filter.toLowerCase()
+  return [option.label, option.key, option.section, option.description]
+    .some(value => String(value || "").toLowerCase().includes(q))
+}
+
+async function updateFavoriteValue(key, checked) {
+  const current = state.values[key]
+  state.values = { ...state.values, [key]: checked }
+  state.favoriteValues = { ...state.favoriteValues, [key]: checked }
+
+  try {
+    const res = await fetch("/api/params", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value: checked }),
+    })
+    const data = await res.json()
+
+    if (res.ok) {
+      const updated = (data.updated && typeof data.updated === "object") ? data.updated : {}
+      state.values = { ...state.values, [key]: checked, ...updated }
+      state.favoriteValues = { ...state.favoriteValues, [key]: state.values[key] }
+      showParamSnackbar(data.message || `Parameter '${key}' updated.`)
+      scheduleSyncInputs()
+    } else {
+      state.values = { ...state.values, [key]: current }
+      state.favoriteValues = { ...state.favoriteValues, [key]: current }
+      showParamSnackbar(data.error || "Failed to update parameter", "error")
+    }
+  } catch (e) {
+    state.values = { ...state.values, [key]: current }
+    state.favoriteValues = { ...state.favoriteValues, [key]: current }
+    showParamSnackbar("Network error — is the device reachable?", "error")
+  }
 }
 
 function stepPrecision(step, explicitPrecision) {
@@ -598,6 +773,11 @@ async function resetNumericParam(param) {
 }
 
 async function updateParam(key, elType) {
+  if (String(key).toLowerCase() === "starpilotfavoriteslots") {
+    await saveFavoriteSlots(state.favoriteSlots)
+    return
+  }
+
   const current = state.values[key]
   const el = document.getElementById(`ds-${key}`)
   if (!el) return
@@ -767,7 +947,113 @@ function handleSectionTabClick(sectionSlug, event) {
   }
 }
 
+function renderFavoriteSlotsPanel() {
+  if (state.favoriteLoading) {
+    return html`<div class="ds-loading">Loading favorite slots...</div>`
+  }
+
+  const slots = normalizeFavoriteSlots(state.favoriteSlots)
+  const options = state.favoriteOptions || []
+
+  return html`
+    <div class="ds-favorites-panel">
+      ${slots.map((slot, index) => {
+        const selectedOption = options.find(opt => opt.key === slot.key)
+        const selectedKey = slot.key || ""
+        const selectedValue = selectedKey ? !!state.values[selectedKey] : false
+        const favoriteFilter = state.favoriteFilters[index] || ""
+        let filteredOptions = options.filter(opt => favoriteOptionMatchesFilter(opt, favoriteFilter))
+        if (selectedOption && !filteredOptions.some(opt => opt.key === selectedOption.key)) {
+          filteredOptions = [selectedOption, ...filteredOptions]
+        }
+
+        return html`
+          <div class="ds-favorite-card">
+            <div class="ds-favorite-card-header">
+              <div>
+                <div class="ds-row-label">Favorite #${index + 1}</div>
+                <div class="ds-row-desc">${selectedOption?.section || "No toggle selected"}</div>
+              </div>
+              <label class="ds-favorite-switch">
+                <span>Enabled</span>
+                <input
+                  type="checkbox"
+                  class="ds-toggle"
+                  data-favorite-slot="${index}"
+                  data-favorite-field="enabled"
+                  checked="${() => slot.enabled}"
+                  disabled="${() => state.favoriteSaving}"
+                  @change="${(e) => updateFavoriteSlot(index, { enabled: !!e.currentTarget.checked })}" />
+              </label>
+            </div>
+
+            <div class="ds-favorite-controls">
+              <label class="ds-favorite-field">
+                <span>Search</span>
+                <input
+                  type="search"
+                  class="ds-search ds-favorite-search"
+                  data-favorite-slot="${index}"
+                  data-favorite-field="search"
+                  value="${() => favoriteFilter}"
+                  disabled="${() => state.favoriteSaving}"
+                  @input="${(e) => updateFavoriteFilter(index, e)}" />
+              </label>
+
+              <label class="ds-favorite-field">
+                <span>Toggle</span>
+                <select
+                  class="ds-select ds-favorite-select"
+                  data-favorite-slot="${index}"
+                  data-favorite-field="key"
+                  disabled="${() => state.favoriteSaving}"
+                  @change="${(e) => updateFavoriteSlot(index, { key: e.currentTarget.value || null })}">
+                  <option value="" selected="${() => selectedKey === ""}">Select a toggle...</option>
+                  ${filteredOptions.map(opt => html`
+                    <option value="${opt.key}" selected="${() => selectedKey === opt.key}">${opt.label}</option>
+                  `)}
+                </select>
+              </label>
+
+              <label class="ds-favorite-switch">
+                <span>Show On-Road Button</span>
+                <input
+                  type="checkbox"
+                  class="ds-toggle"
+                  data-favorite-slot="${index}"
+                  data-favorite-field="show_onroad"
+                  checked="${() => slot.show_onroad}"
+                  disabled="${() => state.favoriteSaving || !slot.enabled || !selectedKey}"
+                  @change="${(e) => updateFavoriteSlot(index, { show_onroad: !!e.currentTarget.checked })}" />
+              </label>
+            </div>
+
+            ${selectedKey ? html`
+              <div class="ds-favorite-live-row">
+                <div class="ds-favorite-live-copy">
+                  <span class="ds-row-label">${selectedOption?.label || slot.label || selectedKey}</span>
+                  ${selectedOption?.description ? html`<div class="ds-row-desc">${selectedOption.description}</div>` : ""}
+                </div>
+                <input
+                  type="checkbox"
+                  class="ds-toggle"
+                  data-favorite-value-key="${selectedKey}"
+                  checked="${() => selectedValue}"
+                  @change="${(e) => updateFavoriteValue(selectedKey, !!e.currentTarget.checked)}" />
+              </div>
+            ` : ""}
+          </div>
+        `
+      })}
+    </div>
+  `
+}
+
 function renderSettingRow(p) {
+  if (p.ui_type === "favorites") {
+    return renderFavoriteSlotsPanel()
+  }
+
   if (p.parent_key && !state.filter) {
     if (!isParamEnabledForChildren(p.parent_key)) return ""
     if (!state.expanded[p.parent_key]) return ""

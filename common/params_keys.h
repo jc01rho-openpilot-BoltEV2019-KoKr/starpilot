@@ -316,6 +316,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"StarPilotCarParams", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, BYTES, "", ""}},
     {"StarPilotCarParamsPersistent", {PERSISTENT, BYTES, "", ""}},
     {"StarPilotDongleId", {PERSISTENT | DONT_LOG, STRING, "", "", 0}},
+    {"StarPilotFavoriteSlots", {PERSISTENT, JSON, "[]", "[]", 1}},
     {"StarPilotStats", {PERSISTENT | DONT_LOG, JSON, "{}", "{}"}},
     {"StarPilotTogglesUpdated", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
     {"FrogsGoMoosTweak", {PERSISTENT, BOOL, "1", "0", 2}},

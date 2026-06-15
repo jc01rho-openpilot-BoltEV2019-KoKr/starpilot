@@ -1,7 +1,7 @@
 import { html, reactive } from "/assets/vendor/arrow-core.js"
 import { createBrowserHistory, createRouter } from "/assets/vendor/remix-router-1.3.1.js"
 import { hideSidebar } from "/assets/js/utils.js"
-import { DeviceSettings } from "/assets/components/tools/device_settings.js"
+import { DeviceSettings } from "/assets/components/tools/device_settings.js?v=favorite-slots-2"
 import { ErrorLogs } from "/assets/components/tools/error_logs.js"
 import { VehicleFeatures } from "/assets/components/tools/vehicle_features.js"
 import { GalaxyPairing } from "/assets/components/tools/galaxy.js"

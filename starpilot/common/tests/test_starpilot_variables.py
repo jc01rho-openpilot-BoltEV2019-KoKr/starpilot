@@ -105,6 +105,16 @@ def test_button_function_ignores_tuning_level_gate():
   assert variables.get_button_function("LKASButtonControl") == spv.BUTTON_FUNCTIONS["AOL_TOGGLE"]
 
 
+def test_favorite_button_flags_map_to_three_slots():
+  toggle = SimpleNamespace()
+
+  spv.StarPilotVariables.set_favorite_button_flags(toggle, "lkas", spv.BUTTON_FUNCTIONS["FAVORITE_2"])
+
+  assert toggle.favorite_1_via_lkas is False
+  assert toggle.favorite_2_via_lkas is True
+  assert toggle.favorite_3_via_lkas is False
+
+
 def test_set_speed_limit_available_on_openpilot_longitudinal():
   assert spv.set_speed_limit_available(openpilot_longitudinal=True, has_cc_long=False, pcm_cruise_speed=True) is True
 

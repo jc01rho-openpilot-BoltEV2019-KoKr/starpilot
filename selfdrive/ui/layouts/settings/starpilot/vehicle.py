@@ -52,6 +52,9 @@ ACTION_OPTIONS = [
   {"id": 8, "name": tr_noop("Create Bookmark")},
   {"id": 9, "name": tr_noop("Toggle Always On Lateral")},
   {"id": 10, "name": tr_noop("Adopt Current Speed Limit")},
+  {"id": 11, "name": tr_noop("Favorite #1")},
+  {"id": 12, "name": tr_noop("Favorite #2")},
+  {"id": 13, "name": tr_noop("Favorite #3")},
 ]
 ACTION_NAMES = [o["name"] for o in ACTION_OPTIONS]
 ACTION_IDS = {o["name"]: o["id"] for o in ACTION_OPTIONS}
@@ -529,9 +532,9 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
   def _get_available_actions(self, key: str | None = None) -> list[str]:
     cs = starpilot_state.car_state
     if key == "MainCruiseButtonControl":
-      allowed_ids = {0, 9, 10}
+      allowed_ids = {0, 9, 10, 11, 12, 13}
       return [tr(o["name"]) for o in ACTION_OPTIONS if o["id"] in allowed_ids]
-    allowed_ids = set(range(9))
+    allowed_ids = set(range(9)) | {11, 12, 13}
     if key == "LKASButtonControl":
       allowed_ids.add(9)
     return [tr(o["name"]) for o in ACTION_OPTIONS
