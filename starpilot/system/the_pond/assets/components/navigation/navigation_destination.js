@@ -140,39 +140,44 @@ function parseCoordinatePair(value) {
   return { latitude, longitude };
 }
 
+let map;
+let destinationMarker;
+let favoriteMarkers = [];
+let sessionToken = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
+let remountCheckScheduled = false;
+
+const state = reactive({
+  amap1Key: undefined,
+  amap2Key: undefined,
+  canToggleProvider: false,
+  confirmedRoute: null,
+  confirmedRouteRefresh: 0,
+  destination: undefined,
+  favoriteRoutes: [],
+  favoriteToRemove: null,
+  favoriteToRename: null,
+  favoritesCount: 0,
+  favoritesVisible: false,
+  fetched: false,
+  initialized: false,
+  isMetric: true,
+  lastPosition: undefined,
+  loadingRoute: false,
+  mapboxPublic: undefined,
+  mapboxSecret: undefined,
+  missingKeys: null,
+  newFavoriteName: "",
+  previousDestinations: "[]",
+  searchProvider: "mapbox",
+  selectedRoute: null,
+  showRemoveFavoriteModal: false,
+  showRenameFavoriteModal: false,
+  suggestions: "[]"
+});
+
+const searchFieldState = reactive({ value: "" });
+
 export function NavDestination() {
-  let map;
-  let destinationMarker;
-  let favoriteMarkers = [];
-  const state = reactive({
-    amap1Key: undefined,
-    amap2Key: undefined,
-    canToggleProvider: false,
-    confirmedRoute: null,
-    confirmedRouteRefresh: 0,
-    destination: undefined,
-    favoriteRoutes: [],
-    favoriteToRemove: null,
-    favoriteToRename: null,
-    favoritesCount: 0,
-    favoritesVisible: false,
-    initialized: false,
-    isMetric: true,
-    lastPosition: undefined,
-    loadingRoute: false,
-    mapboxPublic: undefined,
-    mapboxSecret: undefined,
-    missingKeys: null,
-    newFavoriteName: "",
-    previousDestinations: "[]",
-    searchProvider: "mapbox",
-    selectedRoute: null,
-    showRemoveFavoriteModal: false,
-    showRenameFavoriteModal: false,
-    suggestions: "[]"
-  });
-  const searchFieldState = reactive({ value: "" });
-  const sessionToken = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
 
   function areRoutesEqual(a, b) {
     return a?.routeHash && b?.routeHash && a.routeHash === b.routeHash;
@@ -585,18 +590,31 @@ export function NavDestination() {
   }
 
   const setupMap = async (retries = 0) => {
-    if (!state.mapboxPublic || state.initialized) return;
+    if (!state.mapboxPublic) return false;
+
+    const container = document.getElementById("map");
+    if (!container) {
+      if (retries >= 50) return false;
+      await new Promise(r => requestAnimationFrame(r));
+      return setupMap(retries + 1);
+    }
+
+    if (map?.getContainer?.() && map.getContainer() !== container) {
+      favoriteMarkers.forEach(marker => marker.remove());
+      favoriteMarkers = [];
+      destinationMarker?.remove();
+      destinationMarker = undefined;
+      map.remove();
+      map = undefined;
+      state.initialized = false;
+    }
+
+    if (state.initialized) return false;
 
     if (typeof mapboxgl === "undefined") {
       await loadMapboxGL();
     }
 
-    const container = document.getElementById("map");
-    if (!container) {
-      if (retries >= 50) return;
-      await new Promise(r => requestAnimationFrame(r));
-      return setupMap(retries + 1);
-    }
     state.initialized = true;
     mapboxgl.accessToken = state.mapboxPublic;
     const initialCenter = state.lastPosition
@@ -654,9 +672,22 @@ export function NavDestination() {
         labelLayer
       );
     });
+    return true;
   };
 
-  getNavigationData();
+  if (!state.fetched) {
+    state.fetched = true;
+    void getNavigationData();
+  } else if (!remountCheckScheduled && !state.missingKeys) {
+    remountCheckScheduled = true;
+    queueMicrotask(async () => {
+      remountCheckScheduled = false;
+      const recreated = await setupMap();
+      if (recreated) {
+        await loadFavoritesAlphabetically();
+      }
+    });
+  }
 
   return html`
     <div class="navigation-container">
