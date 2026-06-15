@@ -7,6 +7,7 @@ const COLOR_UI_DEFAULTS = {
   PathEdgesColor: "#00ff00",
   PathColor: "#30ff9c",
 }
+const FAVORITE_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
 
 // Plain variables — scheduling/routing flags that must NOT be reactive
 let syncScheduled = false
@@ -233,7 +234,7 @@ function syncInputs() {
     if (!slot) continue
 
     if (el.tagName === "SELECT" && field === "key") {
-      el.value = slot.key || ""
+      populateFavoriteSelect(slotIndex, el)
       el.disabled = !!state.favoriteSaving
     } else if (el.tagName === "INPUT" && field === "search") {
       el.value = state.favoriteFilters[slotIndex] || ""
@@ -285,7 +286,7 @@ async function fetchLayoutAndParams() {
   state.loadingValues = true
 
   try {
-    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=favorite-slots-2", { cache: "no-store" })
+    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=favorite-slots-3", { cache: "no-store" })
     const rawLayoutData = await layoutRes.json()
 
     const layoutData = rawLayoutData
@@ -459,13 +460,51 @@ function normalizeFavoriteSlots(slots) {
   return normalized
 }
 
+function compareFavoriteOptions(a, b) {
+  const labelCompare = FAVORITE_OPTION_COLLATOR.compare(String(a?.label || a?.key || ""), String(b?.label || b?.key || ""))
+  if (labelCompare !== 0) return labelCompare
+  return FAVORITE_OPTION_COLLATOR.compare(String(a?.key || ""), String(b?.key || ""))
+}
+
+function normalizeFavoriteOptions(options) {
+  if (!Array.isArray(options)) return []
+  return [...options].sort(compareFavoriteOptions)
+}
+
+function favoriteOptionMatchesFilter(option, filter) {
+  if (!filter) return true
+  const q = filter.toLowerCase()
+  return [option.label, option.key, option.section, option.description]
+    .some(value => String(value || "").toLowerCase().includes(q))
+}
+
+function filteredFavoriteOptions(index) {
+  const filter = state.favoriteFilters[index] || ""
+  return normalizeFavoriteOptions(state.favoriteOptions).filter(opt => favoriteOptionMatchesFilter(opt, filter))
+}
+
+function populateFavoriteSelect(index, selectEl = null) {
+  const select = selectEl || document.querySelector(`select[data-favorite-slot="${index}"][data-favorite-field="key"]`)
+  if (!select) return
+
+  const slots = normalizeFavoriteSlots(state.favoriteSlots)
+  const selectedKey = slots[index]?.key || ""
+  const options = filteredFavoriteOptions(index)
+  select.replaceChildren()
+  select.appendChild(new Option("Select a toggle...", "", false, selectedKey === ""))
+  for (const opt of options) {
+    select.appendChild(new Option(opt.label, opt.key, false, selectedKey === opt.key))
+  }
+  select.value = options.some(opt => opt.key === selectedKey) ? selectedKey : ""
+}
+
 async function fetchFavoriteSlots() {
   state.favoriteLoading = true
   try {
     const res = await fetch("/api/favorites/slots")
     const data = await res.json()
     if (res.ok) {
-      state.favoriteOptions = Array.isArray(data.options) ? data.options : []
+      state.favoriteOptions = normalizeFavoriteOptions(data.options)
       state.favoriteSlots = normalizeFavoriteSlots(data.slots)
       state.favoriteValues = data.values || {}
       state.values = { ...state.values, ...state.favoriteValues, StarPilotFavoriteSlots: state.favoriteSlots }
@@ -492,7 +531,7 @@ async function saveFavoriteSlots(slots) {
     const data = await res.json()
 
     if (res.ok) {
-      state.favoriteOptions = Array.isArray(data.options) ? data.options : state.favoriteOptions
+      state.favoriteOptions = Array.isArray(data.options) ? normalizeFavoriteOptions(data.options) : normalizeFavoriteOptions(state.favoriteOptions)
       state.favoriteSlots = normalizeFavoriteSlots(data.slots)
       state.favoriteValues = data.values || {}
       state.values = { ...state.values, ...state.favoriteValues, StarPilotFavoriteSlots: state.favoriteSlots }
@@ -530,14 +569,8 @@ function updateFavoriteFilter(index, event) {
   const filters = Array.isArray(state.favoriteFilters) ? [...state.favoriteFilters] : ["", "", ""]
   filters[index] = getEventValue(event)
   state.favoriteFilters = filters.slice(0, 3)
+  populateFavoriteSelect(index)
   scheduleSyncInputs()
-}
-
-function favoriteOptionMatchesFilter(option, filter) {
-  if (!filter) return true
-  const q = filter.toLowerCase()
-  return [option.label, option.key, option.section, option.description]
-    .some(value => String(value || "").toLowerCase().includes(q))
 }
 
 async function updateFavoriteValue(key, checked) {
@@ -953,7 +986,7 @@ function renderFavoriteSlotsPanel() {
   }
 
   const slots = normalizeFavoriteSlots(state.favoriteSlots)
-  const options = state.favoriteOptions || []
+  const options = normalizeFavoriteOptions(state.favoriteOptions)
 
   return html`
     <div class="ds-favorites-panel">
@@ -962,10 +995,7 @@ function renderFavoriteSlotsPanel() {
         const selectedKey = slot.key || ""
         const selectedValue = selectedKey ? !!state.values[selectedKey] : false
         const favoriteFilter = state.favoriteFilters[index] || ""
-        let filteredOptions = options.filter(opt => favoriteOptionMatchesFilter(opt, favoriteFilter))
-        if (selectedOption && !filteredOptions.some(opt => opt.key === selectedOption.key)) {
-          filteredOptions = [selectedOption, ...filteredOptions]
-        }
+        const filteredOptions = options.filter(opt => favoriteOptionMatchesFilter(opt, favoriteFilter))
 
         return html`
           <div class="ds-favorite-card">

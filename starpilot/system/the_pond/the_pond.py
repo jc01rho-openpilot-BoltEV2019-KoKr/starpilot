@@ -2050,6 +2050,7 @@ def _get_favorite_slot_options():
   except Exception:
     options = []
 
+  options.sort(key=lambda option: (str(option.get("label") or option.get("key") or "").casefold(), str(option.get("key") or "").casefold()))
   _favorite_slot_options = options
   return _favorite_slot_options
 
