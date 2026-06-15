@@ -1,3 +1,4 @@
+import json
 import pyray as rl
 import numpy as np
 import time
@@ -59,6 +60,11 @@ class UIState:
         "rawAudioData",
         "starpilotCarState",
         "starpilotPlan",
+        "starpilotRadarState",
+        "starpilotSelfdriveState",
+        "liveTracks",
+        "liveDelay",
+        "liveTorqueParameters",
       ]
     )
 
@@ -88,6 +94,22 @@ class UIState:
     self.switchback_mode_enabled: bool = False
     self.traffic_mode_enabled: bool = False
     self.conditional_status: int = 0
+    self.starpilot_toggles: dict = {
+      "debug_mode": False,
+      "driver_camera_in_reverse": False,
+      "force_offroad": False,
+      "force_onroad": False,
+      "screen_brightness": 101,
+      "screen_brightness_onroad": 101,
+      "screen_timeout": 30,
+      "screen_timeout_onroad": 10,
+      "sidebar_color1": "#FFFFFFFF",
+      "sidebar_color2": "#FFFFFFFF",
+      "sidebar_color3": "#FFFFFFFF",
+      "simple_mode": False,
+      "standby_mode": False,
+      "tethering_config": 0,
+    }
 
     # Callbacks
     self._offroad_transition_callbacks: list[Callable[[], None]] = []
@@ -142,9 +164,11 @@ class UIState:
       self.light_sensor = -1
 
     # Trust hardwared's filtered started state; raw ignition can flap on Toyota.
+    force_onroad = self.params.get_bool("ForceOnroad")
+    force_offroad = self.params.get_bool("ForceOffroad")
     started = self.sm["deviceState"].started
-    started |= self.params.get_bool("ForceOnroad")
-    started &= not self.params.get_bool("ForceOffroad")
+    started |= force_onroad
+    started &= not force_offroad
     self.started = started
 
     # Update recording audio state
@@ -163,6 +187,20 @@ class UIState:
       self.traffic_mode_enabled = False
 
     self.conditional_status = self.params_memory.get_int("CEStatus", default=0) if self.started else 0
+
+    if self.sm.updated["starpilotPlan"]:
+      plan = self.sm["starpilotPlan"]
+      toggles_str = plan.starpilotToggles
+      if toggles_str:
+        try:
+          parsed = json.loads(toggles_str)
+          if isinstance(parsed, dict):
+            self.starpilot_toggles.update(parsed)
+        except Exception as e:
+          cloudlog.warning(f"Error parsing starpilot_toggles: {e}")
+
+    self.starpilot_toggles["force_offroad"] = force_offroad
+    self.starpilot_toggles["force_onroad"] = force_onroad
 
   def _update_status(self) -> None:
     if self.started and self.sm.updated["selfdriveState"]:
@@ -213,6 +251,7 @@ class Device:
     self._interactive_timeout_callbacks: list[Callable] = []
     self._prev_timed_out = False
     self._awake: bool = True
+    self._params = Params()
 
     self._offroad_brightness: int = BACKLIGHT_OFFROAD
     self._last_brightness: int = 0
@@ -233,11 +272,21 @@ class Device:
     if self._override_interactive_timeout is not None:
       return self._override_interactive_timeout
 
-    ignition_timeout = 10 if gui_app.big_ui() else 5
-    return ignition_timeout if ui_state.ignition else 30
+    timeout_onroad = self._params.get_int("ScreenTimeoutOnroad", return_default=True)
+    timeout_offroad = self._params.get_int("ScreenTimeout", return_default=True)
+
+    if timeout_onroad <= 0:
+      timeout_onroad = 10 if gui_app.big_ui() else 5
+    if timeout_offroad <= 0:
+      timeout_offroad = 30
+
+    return int(timeout_onroad if ui_state.ignition else timeout_offroad)
 
   def _reset_interactive_timeout(self) -> None:
     self._interaction_time = time.monotonic() + self.interactive_timeout
+
+  def reset_interactive_timeout(self) -> None:
+    self._reset_interactive_timeout()
 
   def add_interactive_timeout_callback(self, callback: Callable):
     self._interactive_timeout_callbacks.append(callback)

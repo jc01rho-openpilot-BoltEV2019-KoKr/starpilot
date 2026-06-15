@@ -33,64 +33,7 @@ function agnos_init {
   # StarPilot variables
   sudo chmod 0777 /cache
 
-  # Weston loads display color correction from /data/misc/display/color_cal/color_cal.
-  # Prefer a factory /persist/comma/color_cal blob when present. Otherwise, derive a
-  # Weston-compatible calibration blob from the device's legacy dwo gamma tables.
-  COLOR_CAL_SRC="/persist/comma/color_cal"
-  DWO_GAMMA_SRC="/persist/comma/dwo_gamma_curves"
-  COLOR_CAL_DST_DIR="/data/misc/display/color_cal"
-  COLOR_CAL_DST="${COLOR_CAL_DST_DIR}/color_cal"
-  COLOR_CAL_HASH_PATH="${COLOR_CAL_DST_DIR}/source.sha256"
-  DWO_REFERENCE="$DIR/tools/reference_dwo_gamma_curves.txt"
-  DWO_GENERATOR="$DIR/tools/generate_color_cal_from_dwo.py"
-  COLOR_CAL_UPDATED=0
-  COLOR_CAL_TMP=""
-  DWO_SOURCE_HASH=""
-
-  if [ -f "$COLOR_CAL_SRC" ]; then
-    sudo mkdir -p "$COLOR_CAL_DST_DIR"
-    if [ ! -f "$COLOR_CAL_DST" ] || ! cmp -s "$COLOR_CAL_SRC" "$COLOR_CAL_DST"; then
-      sudo cp "$COLOR_CAL_SRC" "$COLOR_CAL_DST"
-      sudo chown -R comma:comma "$COLOR_CAL_DST_DIR"
-      sudo chmod 664 "$COLOR_CAL_DST"
-      sudo rm -f "$COLOR_CAL_HASH_PATH"
-      COLOR_CAL_UPDATED=1
-    fi
-  elif [ -f "$DWO_GAMMA_SRC" ] && [ -f "$DWO_REFERENCE" ] && [ -f "$DWO_GENERATOR" ]; then
-    DWO_SOURCE_HASH="$(cat "$DWO_GAMMA_SRC" "$DWO_REFERENCE" "$DWO_GENERATOR" | sha256sum | awk '{print $1}')"
-    if [ ! -f "$COLOR_CAL_DST" ] || [ ! -f "$COLOR_CAL_HASH_PATH" ] || [ "$(cat "$COLOR_CAL_HASH_PATH" 2>/dev/null)" != "$DWO_SOURCE_HASH" ]; then
-      COLOR_CAL_TMP="$(mktemp)"
-      if python3 "$DWO_GENERATOR" --reference "$DWO_REFERENCE" --input "$DWO_GAMMA_SRC" --output "$COLOR_CAL_TMP"; then
-        sudo mkdir -p "$COLOR_CAL_DST_DIR"
-        if [ ! -f "$COLOR_CAL_DST" ] || ! cmp -s "$COLOR_CAL_TMP" "$COLOR_CAL_DST"; then
-          sudo cp "$COLOR_CAL_TMP" "$COLOR_CAL_DST"
-          COLOR_CAL_UPDATED=1
-        fi
-        printf '%s' "$DWO_SOURCE_HASH" | sudo tee "$COLOR_CAL_HASH_PATH" >/dev/null
-        sudo chown -R comma:comma "$COLOR_CAL_DST_DIR"
-        sudo chmod 664 "$COLOR_CAL_DST" "$COLOR_CAL_HASH_PATH"
-      fi
-      rm -f "$COLOR_CAL_TMP"
-    fi
-  fi
-
-  if [ "$COLOR_CAL_UPDATED" = "1" ] && systemctl is-active --quiet weston.service; then
-    sudo systemctl restart weston.service
-
-    # Weston can recreate wayland-0 as root on service restart before weston-ready
-    # fixes ownership. Repair it here so the Qt UI can always reconnect.
-    if [ -d /var/tmp/weston ]; then
-      for _ in $(seq 1 50); do
-        if [ -S /var/tmp/weston/wayland-0 ]; then
-          sudo chown -R comma:comma /var/tmp/weston 2>/dev/null || true
-          sudo chmod -R 700 /var/tmp/weston 2>/dev/null || true
-          SOCKET_OWNER="$(stat -c '%U:%G' /var/tmp/weston/wayland-0 2>/dev/null || true)"
-          [ "$SOCKET_OWNER" = "comma:comma" ] && break
-        fi
-        sleep 0.1
-      done
-    fi
-  fi
+  sudo rm -f /data/misc/display/color_cal/color_cal /data/misc/display/color_cal/source.sha256
 
   # Check if AGNOS update is required
   if [ $(< /VERSION) != "$AGNOS_VERSION" ]; then

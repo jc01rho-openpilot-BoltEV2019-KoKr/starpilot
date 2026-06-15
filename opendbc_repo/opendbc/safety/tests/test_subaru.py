@@ -16,6 +16,7 @@ class SubaruMsg(enum.IntEnum):
   Throttle          = 0x40
   Steering_Torque   = 0x119
   Wheel_Speeds      = 0x13a
+  Brake_Pedal       = 0x139
   ES_LKAS           = 0x122
   ES_LKAS_ANGLE     = 0x124
   ES_Brake          = 0x220
@@ -180,6 +181,12 @@ class TestSubaruTorqueSafetyBase(TestSubaruSafetyBase, common.DriverTorqueSteeri
 class TestSubaruGen1TorqueStockLongitudinalSafety(TestSubaruStockLongitudinalSafetyBase, TestSubaruTorqueSafetyBase):
   FLAGS = 0
   TX_MSGS = lkas_tx_msgs(SUBARU_MAIN_BUS)
+
+
+class TestSubaruGen1StopAndGoSafety(TestSubaruStockLongitudinalSafetyBase, TestSubaruTorqueSafetyBase):
+  FLAGS = SubaruSafetyFlags.STOP_AND_GO
+  TX_MSGS = lkas_tx_msgs(SUBARU_MAIN_BUS) + [[SubaruMsg.Throttle, SUBARU_CAM_BUS],
+                                             [SubaruMsg.Brake_Pedal, SUBARU_CAM_BUS]]
 
 
 class TestSubaruGen2TorqueSafetyBase(TestSubaruTorqueSafetyBase):

@@ -615,6 +615,7 @@ bool StarPilotModelPanel::isModelInstalled(const QString &key) const {
   }
 
   bool has_thneed = false;
+  bool has_combined_tg = false;
   bool has_policy_meta = false;
   bool has_policy_tg = false;
   bool has_vision_meta = false;
@@ -635,7 +636,9 @@ bool StarPilotModelPanel::isModelInstalled(const QString &key) const {
     if (ext == "thneed") {
       has_thneed = true;
     } else if (ext == "pkl") {
-      if (base.contains("_driving_policy_metadata")) {
+      if (base.contains("_driving_tinygrad")) {
+        has_combined_tg = true;
+      } else if (base.contains("_driving_policy_metadata")) {
         has_policy_meta = true;
       } else if (base.contains("_driving_policy_tinygrad")) {
         has_policy_tg = true;
@@ -652,6 +655,10 @@ bool StarPilotModelPanel::isModelInstalled(const QString &key) const {
   }
 
   if (has_thneed) {
+    return true;
+  }
+
+  if (has_combined_tg) {
     return true;
   }
 

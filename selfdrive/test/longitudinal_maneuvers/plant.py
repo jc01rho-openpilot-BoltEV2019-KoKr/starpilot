@@ -56,7 +56,8 @@ class Plant:
 
   def __init__(self, lead_relevancy=False, speed=0.0, distance_lead=2.0,
                enabled=True, only_lead2=False, only_radar=False, track_lead_with_gate=False,
-               e2e=False, personality=0, force_decel=False):
+               e2e=False, personality=0, force_decel=False,
+               prioritize_smooth_following=False):
     self.rate = 1. / DT_MDL
 
     current_prefix = os.environ.get("OPENPILOT_PREFIX")
@@ -91,6 +92,7 @@ class Plant:
     self.e2e = e2e
     self.personality = personality
     self.force_decel = force_decel
+    self.prioritize_smooth_following = prioritize_smooth_following
     self.tracking_lead_filter = FirstOrderFilter(0.0, 0.5, DT_MDL)
 
     self.rk = Ratekeeper(self.rate, print_delay_threshold=100.0)
@@ -111,6 +113,7 @@ class Plant:
       stop_distance=6.0,
       longitudinalActuatorDelay=0.2,
       vEgoStopping=0.5,
+      prioritize_smooth_following=self.prioritize_smooth_following,
     )
 
   @property

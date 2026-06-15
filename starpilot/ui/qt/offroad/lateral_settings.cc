@@ -43,7 +43,6 @@ StarPilotLateralPanel::StarPilotLateralPanel(StarPilotSettingsWindow *parent, bo
     {"ForceTorqueController", tr("Force Torque Controller"), tr("<b>Use torque-based steering control instead of angle-based control for smoother lane keeping, especially in curves.</b>"), ""},
 
     {"AlwaysOnLateral", tr("Always On Lateral"), tr("<b>openpilot's steering remains active even when the accelerator or brake pedals are pressed.</b>"), "../../starpilot/assets/toggle_icons/icon_always_on_lateral.png"},
-    {"AlwaysOnLateralLKAS", tr("Enable With LKAS"), tr("<b>Enable \"Always On Lateral\" whenever \"LKAS\" is on, even when openpilot is not engaged.</b>"), ""},
     {"PauseAOLOnBrake", tr("Pause on Brake Press Below"), tr("<b>Pause \"Always On Lateral\" below the set speed while the brake pedal is pressed.</b>"), ""},
 
     {"LaneChanges", tr("Lane Changes"), tr("<b>Allow openpilot to change lanes.</b>"), "../../starpilot/assets/toggle_icons/icon_lane.png"},
@@ -56,11 +55,13 @@ StarPilotLateralPanel::StarPilotLateralPanel(StarPilotSettingsWindow *parent, bo
 
     {"LateralTune", tr("Lateral Tuning"), tr("<b>Miscellaneous steering control changes</b> to fine-tune how openpilot drives."), "../../starpilot/assets/toggle_icons/icon_lateral_tune.png"},
     {"TurnDesires", tr("Force Turn Desires Below Lane Change Speed"), tr("<b>While driving below the minimum lane change speed with an active turn signal, instruct openpilot to turn left/right.</b>"), ""},
+    {"NavDesiresAllowed", tr("Use Route Desires"), tr("<b>Allow an active navigation route to request keep-left, keep-right, and low-speed turn desires.</b>"), ""},
     {"NNFF", tr("Neural Network Feedforward (NNFF)"), tr("<b>Twilsonco's \"Neural Network FeedForward\" controller.</b> Uses a trained neural network model to predict steering torque based on vehicle speed, roll, and past/future planned path data for smoother, model-based steering."), ""},
     {"NNFFLite", tr("Neural Network Feedforward (NNFF) Lite"), tr("<b>A lightweight version of Twilsonco's \"Neural Network FeedForward\" controller.</b> Uses the \"look-ahead\" planned lateral jerk logic from the full model to help smoothen steering adjustments in curves, but does not use the full neural network for torque calculation."), ""},
 
     {"QOLLateral", tr("Quality of Life"), tr("<b>Steering control changes to fine-tune how openpilot drives.</b>"), "../../starpilot/assets/toggle_icons/icon_quality_of_life.png"},
-    {"PauseLateralSpeed", tr("Pause Steering Below"), tr("<b>Pause steering below the set speed.</b>"), ""}
+    {"PauseLateralSpeed", tr("Pause Steering Below"), tr("<b>Pause steering below the set speed.</b>"), ""},
+    {"LateralResumeDelay", tr("Lateral Resume Delay"), tr("<b>Delay before lateral control resumes after the turn signal is turned off.</b> Only applies when the vehicle speed dropped below half the \"Pause Steering Below\" speed during the turn signal. Set to 0 to disable."), ""}
   };
 
   for (const auto &[param, title, desc, icon] : lateralToggles) {
@@ -139,6 +140,14 @@ StarPilotLateralPanel::StarPilotLateralPanel(StarPilotSettingsWindow *parent, bo
       std::vector<QString> pauseLateralToggles{"PauseLateralOnSignal"};
       std::vector<QString> pauseLateralToggleNames{tr("Turn Signal Only")};
       lateralToggle = new StarPilotParamValueButtonControl(param, title, desc, icon, 0, 99, QString(), std::map<float, QString>(), 1, true, pauseLateralToggles, pauseLateralToggleNames, true);
+
+    } else if (param == "LateralResumeDelay") {
+      std::map<float, QString> delayLabels;
+      for (int i = 0; i <= 50; ++i) {
+        float key = i / 10.0f;
+        delayLabels[key] = key == 0.0f ? tr("Off") : QString::number(key, 'f', 1) + tr(" s");
+      }
+      lateralToggle = new StarPilotParamValueControl(param, title, desc, icon, 0, 5, QString(), delayLabels, 0.1);
 
     } else {
       lateralToggle = new ParamControl(param, title, desc, icon);
@@ -360,11 +369,7 @@ void StarPilotLateralPanel::updateToggles() {
     bool setVisible = showAllToggles || parent->tuningLevel >= parent->starpilotToggleLevels[key].toDouble();
 
     if (!showAllToggles) {
-      if (key == "AlwaysOnLateralLKAS") {
-        setVisible &= parent->lkasAllowedForAOL;
-      }
-
-      else if (key == "ForceAutoTune") {
+      if (key == "ForceAutoTune") {
         setVisible &= !parent->hasAutoTune;
         setVisible &= !parent->isAngleCar;
         setVisible &= parent->isTorqueCar || forcingTorqueController || usingNNFF;
@@ -385,6 +390,10 @@ void StarPilotLateralPanel::updateToggles() {
 
       else if (key == "LaneDetectionWidth") {
         setVisible &= params.getBool("LaneChanges") && params.getBool("NudgelessLaneChange");
+      }
+
+      else if (key == "LateralResumeDelay") {
+        setVisible &= params.getBool("PauseLateralOnSignal");
       }
 
       else if (key == "NNFF") {

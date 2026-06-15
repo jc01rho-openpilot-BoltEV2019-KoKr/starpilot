@@ -5,6 +5,7 @@ import pyray as rl
 from enum import IntEnum
 from typing import TypeVar
 from collections.abc import Callable
+from openpilot.system.hardware import PC
 from openpilot.system.ui.lib.application import gui_app, MousePos, MAX_TOUCH_SLOTS, MouseEvent
 
 try:
@@ -162,7 +163,7 @@ class Widget(abc.ABC):
 
       elif mouse_event.left_released:
         self._handle_mouse_event(mouse_event)
-        if self.__is_pressed[mouse_event.slot] and mouse_in_rect:
+        if (self.__is_pressed[mouse_event.slot] or PC) and mouse_in_rect:
           self._handle_mouse_release(mouse_event.pos)
         self.__is_pressed[mouse_event.slot] = False
         self.__tracking_is_pressed[mouse_event.slot] = False

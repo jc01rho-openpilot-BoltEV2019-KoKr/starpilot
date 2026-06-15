@@ -358,6 +358,19 @@ def create_brake_pedal(packer, frame, brake_pedal_msg, speed_cmd, brake_cmd):
   return packer.make_can_msg("Brake_Pedal", CanBus.camera, values)
 
 
+def create_preglobal_brake_pedal(packer, brake_pedal_msg, speed_cmd):
+  values = {s: brake_pedal_msg[s] for s in sorted([
+    "Brake_Pedal",
+    "Signal1",
+    "Speed",
+  ])}
+
+  if speed_cmd:
+    values["Speed"] = 1
+
+  return packer.make_can_msg("Brake_Pedal", CanBus.camera, values)
+
+
 def create_throttle(packer, frame, throttle_msg, throttle_cmd):
   values = {s: throttle_msg[s] for s in sorted([
     "CHECKSUM",

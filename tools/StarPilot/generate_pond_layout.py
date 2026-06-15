@@ -50,6 +50,13 @@ INJECTED_SECTION_PARAMS = {
             "data_type": "bool",
             "ui_type": "toggle",
         },
+        {
+            "key": "IsRHD",
+            "label": "Right Hand Driving",
+            "description": "Use right-hand-drive driver monitoring. This follows the auto-detected side until changed manually.",
+            "data_type": "bool",
+            "ui_type": "toggle",
+        },
     ],
 }
 
@@ -109,6 +116,7 @@ PARENT_KEYS_MAPPING = {
     "longitudinal_settings.cc": {
         "advancedLongitudinalTuneKeys": "AdvancedLongitudinalTune",
         "aggressivePersonalityKeys": "AggressivePersonalityProfile",
+        "conditionalChillKeys": "ConditionalChill",
         "conditionalExperimentalKeys": "ConditionalExperimental",
         "curveSpeedKeys": "CurveSpeedController",
         "customDrivingPersonalityKeys": "CustomPersonalities",
@@ -446,9 +454,9 @@ def parse_cpp_file(filename):
                             if step_match:
                                 step = step_match.group(1)
 
-        # CESpeed is rendered in Qt with a dual numeric control (CESpeed + CESpeedLead),
+        # CESpeed/CCMSpeed are rendered in Qt with dual numeric controls,
         # so the generic assignment matcher cannot infer it reliably.
-        if key == "CESpeed":
+        if key in {"CESpeed", "CCMSpeed"}:
             widget_type = "numeric"
             data_type = "int"
             min_val, max_val, step = "0", "99", "1"
@@ -512,7 +520,7 @@ def parse_cpp_file(filename):
                 },
             ])
 
-        # Mirror CESpeed's dual slider (with-lead variant) from Qt.
+        # Mirror CESpeed/CCMSpeed's dual sliders (with-lead variants) from Qt.
         if key == "CESpeed":
             items.append({
                 "key": "CESpeedLead",
@@ -525,11 +533,70 @@ def parse_cpp_file(filename):
                 "step": 1.0,
                 "parent_key": "ConditionalExperimental",
             })
+        elif key == "CCMSpeed":
+            items.append({
+                "key": "CCMSpeedLead",
+                "label": "Above (With Lead)",
+                "description": "Switch to \"Chill Mode\" when following a stable lead above this speed.",
+                "data_type": "int",
+                "ui_type": "numeric",
+                "min": 0.0,
+                "max": 99.0,
+                "step": 1.0,
+                "parent_key": "ConditionalChill",
+            })
 
     return items
 
+
+def merge_layouts(existing_layout, generated_layout):
+    existing_sections = {section["name"]: section for section in existing_layout}
+    generated_sections = {section["name"]: section for section in generated_layout}
+
+    merged_layout = []
+
+    for section in existing_layout:
+        name = section["name"]
+        generated = generated_sections.get(name)
+        if generated is None:
+            merged_layout.append(section)
+            continue
+
+        existing_params = section.get("params", [])
+        generated_params = generated.get("params", [])
+        generated_by_key = {param["key"]: param for param in generated_params}
+
+        merged_params = []
+        seen_keys = set()
+
+        for param in existing_params:
+            key = param["key"]
+            if key in generated_by_key:
+                merged_params.append(generated_by_key[key])
+            else:
+                merged_params.append(param)
+            seen_keys.add(key)
+
+        for param in generated_params:
+            key = param["key"]
+            if key not in seen_keys:
+                merged_params.append(param)
+                seen_keys.add(key)
+
+        merged_section = dict(section)
+        merged_section["icon"] = generated.get("icon", section.get("icon"))
+        merged_section["params"] = merged_params
+        merged_layout.append(merged_section)
+
+    existing_names = {section["name"] for section in existing_layout}
+    for section in generated_layout:
+        if section["name"] not in existing_names:
+            merged_layout.append(section)
+
+    return merged_layout
+
 def main():
-    layout = []
+    generated_layout = []
     for cat in CATEGORIES:
         items = parse_cpp_file(cat["file"])
         injected = INJECTED_SECTION_PARAMS.get(cat["name"], [])
@@ -537,12 +604,17 @@ def main():
             existing_keys = {item["key"] for item in items}
             items = [dict(item) for item in injected if item["key"] not in existing_keys] + items
         if items:
-            layout.append({
+            generated_layout.append({
                 "name": cat["name"],
                 "icon": cat["icon"],
                 "params": items
             })
     output_path = os.path.join(REPO_ROOT, "starpilot/system/the_pond/assets/components/tools/device_settings_layout.json")
+    layout = generated_layout
+    if os.path.exists(output_path):
+        with open(output_path, 'r', encoding='utf-8') as f:
+            existing_layout = json.load(f)
+        layout = merge_layouts(existing_layout, generated_layout)
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(layout, f, indent=2)
 

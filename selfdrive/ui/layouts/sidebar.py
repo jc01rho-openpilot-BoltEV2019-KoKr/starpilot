@@ -155,8 +155,8 @@ class Sidebar(Widget):
         self._open_settings_callback()
 
   def _draw_buttons(self, rect: rl.Rectangle):
-    mouse_pos = rl.get_mouse_position()
-    mouse_down = self.is_pressed and rl.is_mouse_button_down(rl.MouseButton.MOUSE_BUTTON_LEFT)
+    mouse_pos = gui_app.last_mouse_event.pos
+    mouse_down = self.is_pressed and gui_app.last_mouse_event.left_down
 
     # Settings button
     settings_down = mouse_down and rl.check_collision_point_rec(mouse_pos, SETTINGS_BTN)

@@ -4,6 +4,16 @@
 
 #include "selfdrive/ui/qt/util.h"
 
+namespace {
+bool ccmManualOverride(int status) {
+  return status == 1 || status == 2;
+}
+
+bool cemManualOverride(int status) {
+  return status == 1 || status == 2;
+}
+}  // namespace
+
 void drawIcon(QPainter &p, const QPoint &center, const QPixmap &img, const QBrush &bg, float opacity, const int &angle) {
   p.setRenderHint(QPainter::Antialiasing);
   p.setOpacity(1.0);  // bg dictates opacity of ellipse
@@ -38,9 +48,13 @@ void ExperimentalButton::changeMode() {
   bool can_change = hasLongitudinalControl(cp) && params.getBool("ExperimentalModeConfirmed");
   if (can_change) {
     if (starpilot_toggles.value("conditional_experimental_mode").toBool()) {
-      int override_value = (starpilot_scene.conditional_status == 1 || starpilot_scene.conditional_status == 2) ? 0 : experimental_mode ? 1 : 2;
+      int override_value = cemManualOverride(starpilot_scene.conditional_status) ? 0 : experimental_mode ? 1 : 2;
       params_memory.putInt("CEStatus", override_value);
       params.putInt("PersistedCEStatus", params.getBool("PersistExperimentalState") ? override_value : 0);
+    } else if (starpilot_toggles.value("conditional_chill_mode").toBool()) {
+      int override_value = ccmManualOverride(starpilot_scene.conditional_status) ? 0 : experimental_mode ? 2 : 1;
+      params_memory.putInt("CCStatus", override_value);
+      params.putInt("PersistedCCStatus", params.getBool("PersistChillState") ? override_value : 0);
     } else {
       params.putBool("ExperimentalMode", !experimental_mode);
     }
@@ -97,6 +111,11 @@ void ExperimentalButton::showEvent(QShowEvent *event) {
 }
 
 void ExperimentalButton::updateBackgroundColor() {
+  const bool conditional_experimental_mode = starpilot_toggles.value("conditional_experimental_mode").toBool();
+  const bool conditional_chill_mode = starpilot_toggles.value("conditional_chill_mode").toBool();
+  const bool highlight_override =
+    (conditional_experimental_mode && starpilot_scene.conditional_status == 1) ||
+    (conditional_chill_mode && ccmManualOverride(starpilot_scene.conditional_status));
   if (starpilot_toggles.value("simple_mode").toBool()) {
     background_color = QColor(0, 0, 0, 166);
   } else if (isDown() || !engageable) {
@@ -105,7 +124,7 @@ void ExperimentalButton::updateBackgroundColor() {
     background_color = bg_colors[STATUS_SWITCHBACK_MODE_ENABLED];
   } else if (starpilot_scene.always_on_lateral_active) {
     background_color = bg_colors[STATUS_ALWAYS_ON_LATERAL_ACTIVE];
-  } else if (starpilot_scene.conditional_status == 1) {
+  } else if (highlight_override) {
     background_color = bg_colors[STATUS_CEM_DISABLED];
   } else if (experimental_mode) {
     background_color = bg_colors[STATUS_EXPERIMENTAL_MODE_ENABLED];

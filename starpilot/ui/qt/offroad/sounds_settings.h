@@ -27,7 +27,7 @@ private:
 
   QSet<QString> alertCooldownKeys {"SwitchbackModeCooldown"};
   QSet<QString> alertVolumeControlKeys {"BelowSteerSpeedVolume", "DisengageVolume", "EngageVolume", "PromptDistractedVolume", "PromptVolume", "RefuseVolume", "WarningImmediateVolume", "WarningSoftVolume"};
-  QSet<QString> customAlertsKeys {"GoatScream", "GoatScreamCriticalAlerts", "GreenLightAlert", "LeadDepartingAlert", "LoudBlindspotAlert", "SpeedLimitChangedAlert"};
+  QSet<QString> customAlertsKeys {"GoatScream", "GoatScreamCriticalAlerts", "GreenLightAlert", "LeadDepartingAlert", "LoudBlindspotAlert", "LoudBlindspotAlertWhenDisengaged", "SpeedLimitChangedAlert"};
 
   QSet<QString> parentKeys;
 

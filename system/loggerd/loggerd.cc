@@ -31,7 +31,7 @@ void logger_rotate(LoggerdState *s) {
 
 void rotate_if_needed(LoggerdState *s) {
   // all encoders ready, trigger rotation
-  bool all_ready = s->ready_to_rotate == s->max_waiting;
+  bool all_ready = s->max_waiting > 0 && s->ready_to_rotate == s->max_waiting;
 
   // fallback logic to prevent extremely long segments in the case of camera, encoder, etc. malfunctions
   bool timed_out = false;
@@ -51,6 +51,22 @@ void rotate_if_needed(LoggerdState *s) {
   if (all_ready || timed_out) {
     logger_rotate(s);
   }
+}
+
+template <size_t N>
+int get_expected_encoder_count(const LogCameraInfo (&cameras)[N]) {
+  const auto streams = VisionIpcClient::getAvailableStreams("camerad", false);
+  if (streams.empty()) {
+    return 0;
+  }
+
+  int count = 0;
+  for (const auto &cam : cameras) {
+    if (streams.count(cam.stream_type) > 0) {
+      count += cam.encoder_infos.size();
+    }
+  }
+  return count;
 }
 
 struct RemoteEncoder {
@@ -262,9 +278,9 @@ void loggerd_thread() {
   for (const auto &cam : cameras_logged) {
     for (const auto &encoder_info : cam.encoder_infos) {
       encoder_infos_dict[encoder_info.publish_name] = encoder_info;
-      s.max_waiting++;
     }
   }
+  s.max_waiting = get_expected_encoder_count(cameras_logged);
 
   for (auto &[sock, service] : service_state) {
     auto it = encoder_infos_dict.find(service.name);
@@ -305,6 +321,9 @@ void loggerd_thread() {
         }
 
         if (service.encoder) {
+          if (s.max_waiting == 0) {
+            s.max_waiting = get_expected_encoder_count(cameras_logged);
+          }
           s.last_camera_seen_tms = millis_since_boot();
           bytes_count += handle_encoder_msg(&s, msg, service.name, remote_encoders[sock], encoder_infos_dict[service.name]);
         } else {

@@ -139,6 +139,11 @@ void ParamControl::toggleClicked(bool state) {
   if (!confirm || confirmed || !state || do_confirm()) {
     if (store_confirm && state) params.putBool(key + "Confirmed", true);
     params.putBool(key, state);
+    if (state && key == "ConditionalExperimental") {
+      params.putBool("ConditionalChill", false);
+    } else if (state && key == "ConditionalChill") {
+      params.putBool("ConditionalExperimental", false);
+    }
     if (key == "PersistExperimentalState") {
       static Params params_memory{"", true};
       int persisted_status = 0;
@@ -147,6 +152,14 @@ void ParamControl::toggleClicked(bool state) {
         persisted_status = (current_status == 1 || current_status == 2) ? current_status : 0;
       }
       params.putInt("PersistedCEStatus", persisted_status);
+    } else if (key == "PersistChillState") {
+      static Params params_memory{"", true};
+      int persisted_status = 0;
+      if (state) {
+        int current_status = params_memory.getInt("CCStatus");
+        persisted_status = (current_status == 1 || current_status == 2) ? current_status : 0;
+      }
+      params.putInt("PersistedCCStatus", persisted_status);
     }
     setIcon(state);
   } else {

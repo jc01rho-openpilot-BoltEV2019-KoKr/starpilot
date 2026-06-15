@@ -8,20 +8,12 @@ import pyray as rl
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.lib.starpilot_theme import get_param_color, get_theme_color, is_stock_color_scheme, with_alpha
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.shader_polygon import draw_polygon, Gradient
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 
-_METRICS_FONT = None
 _METRICS_FONT_SIZE = 45
 _STOCK_LINE_GREEN = rl.Color(0, 255, 0, 241)
-
-
-def _get_metrics_font():
-  global _METRICS_FONT
-  if _METRICS_FONT is None or _METRICS_FONT.baseSize != _METRICS_FONT_SIZE:
-    if _METRICS_FONT is not None:
-      rl.unload_font(_METRICS_FONT)
-    _METRICS_FONT = rl.load_font_ex("fonts/Inter-SemiBold.ttf", _METRICS_FONT_SIZE, None, 256)
-  return _METRICS_FONT
 
 
 def _hsla_to_color(h: float, s: float, l: float, a: float) -> rl.Color:
@@ -51,95 +43,83 @@ def _draw_text_with_outline(text: str, x: float, y: float, font, font_size: int)
   rl.draw_text_ex(font, text, pos, font_size, 0, rl.WHITE)
 
 
-def render_adjacent_paths(renderer) -> None:
-  """Draw left and right adjacent lane paths with gradient coloring.
+def render_adjacent_lanes(renderer) -> None:
+  """Draw left and right adjacent lane paths.
 
-  Qt reference: paintAdjacentPaths in starpilot_annotated_camera.cc:337-392
-
-  Gradient color is based on lane width ratio compared to LaneDetectionWidth toggle.
-  hue = (ratio^2) * (120/360), where ratio = laneWidth / lane_detection_width
-  Gradient: HSL(hue, 0.75, 0.5, 0.4) at bottom, 0.35 at mid, 0.0 at top.
-
-  If AdjacentPathMetrics is enabled, show lane width text on each path.
+  Consolidates adjacent width path rendering and blind spot warning overlays.
+  If a blind spot is active on a side and BlindSpotPath is enabled, that side draws red.
+  Otherwise, if AdjacentPath is enabled, it draws with width-based gradient coloring.
   """
   sm = ui_state.sm
-  if sm.recv_frame["starpilotPlan"] < ui_state.started_frame:
-    return
+  adjacent_enabled = renderer._params.get_bool("AdjacentPath")
+  blind_spot_enabled = renderer._params.get_bool("BlindSpotPath")
 
-  plan = sm["starpilotPlan"]
-  lane_width_left = float(plan.laneWidthLeft)
-  lane_width_right = float(plan.laneWidthRight)
-  lane_detection_width = renderer._params.get_float("LaneDetectionWidth") if renderer._params.get("LaneDetectionWidth") else 3.5
+  if not (adjacent_enabled or blind_spot_enabled):
+    return
 
   vertices = renderer._adjacent_path_vertices
   if not vertices or len(vertices) < 2:
     return
 
-  show_metrics = renderer._params.get_bool("AdjacentPathMetrics")
-  rect = renderer._rect
+  # Fetch blindspot status if blind spot path is enabled
+  blindspot_left = False
+  blindspot_right = False
+  if blind_spot_enabled and sm.recv_frame["carState"] >= ui_state.started_frame:
+    car_state = sm["carState"]
+    blindspot_left = bool(car_state.leftBlindspot)
+    blindspot_right = bool(car_state.rightBlindspot)
 
+  # Fetch adjacent lane widths if adjacent path is enabled
+  lane_width_left = 0.0
+  lane_width_right = 0.0
+  lane_detection_width = 3.5
+  if adjacent_enabled and sm.recv_frame["starpilotPlan"] >= ui_state.started_frame:
+    plan = sm["starpilotPlan"]
+    lane_width_left = float(plan.laneWidthLeft)
+    lane_width_right = float(plan.laneWidthRight)
+    lane_detection_width = renderer._params.get_float("LaneDetectionWidth") if renderer._params.get("LaneDetectionWidth") else 3.5
+
+  rect = renderer._rect
+  show_metrics = renderer._params.get_bool("AdjacentPathMetrics")
   distance_conversion = 3.28084 if not ui_state.is_metric else 1.0
   unit = "ft" if not ui_state.is_metric else "m"
-  font = _get_metrics_font()
+  font = gui_app.font(FontWeight.SEMI_BOLD)
 
-  for i, (verts, lane_width) in enumerate(zip(vertices, [lane_width_left, lane_width_right], strict=True)):
-    if verts.size < 4 or lane_width == 0.0:
+  sides = [
+    (0, blindspot_left, lane_width_left),
+    (1, blindspot_right, lane_width_right)
+  ]
+
+  for side_idx, has_blindspot, lane_width in sides:
+    verts = vertices[side_idx]
+    if verts.size < 4:
       continue
 
-    ratio = np.clip(lane_width / lane_detection_width, 0.0, 1.0)
-    hue = (ratio * ratio) * (120.0 / 360.0)
-    gradient = _make_gradient(hue)
-    draw_polygon(rect, verts, gradient=gradient)
+    hue = None
+    if has_blindspot:
+      hue = 0.0  # Red for blind spot warning
+    elif adjacent_enabled and lane_width > 0.0:
+      ratio = np.clip(lane_width / lane_detection_width, 0.0, 1.0)
+      hue = (ratio * ratio) * (120.0 / 360.0)
 
-    if show_metrics:
-      is_left = i == 0
-      mid_index = len(verts) // 2
-      anchor_idx = mid_index // 2 if is_left else mid_index + (len(verts) - mid_index) // 2
-      anchor = verts[anchor_idx]
+    if hue is not None:
+      gradient = _make_gradient(hue)
+      draw_polygon(rect, verts, gradient=gradient)
 
-      text = f"{lane_width * distance_conversion:.2f}{unit}"
-      text_width = rl.measure_text_ex(font, text, _METRICS_FONT_SIZE, 0).x
-      text_height = rl.measure_text_ex(font, text, _METRICS_FONT_SIZE, 0).y
+      # Draw width text if adjacent path is enabled on this side
+      if adjacent_enabled and lane_width > 0.0 and show_metrics:
+        mid_index = len(verts) // 2
+        left = verts[mid_index // 2]
+        right = verts[mid_index + (len(verts) - mid_index) // 2]
 
-      text_x = anchor[0] - text_width if is_left else anchor[0]
-      text_y = anchor[1] - text_height / 2 + text_height * 0.75
-      _draw_text_with_outline(text, text_x, text_y, font, _METRICS_FONT_SIZE)
+        text = f"{lane_width * distance_conversion:.2f}{unit}"
+        text_sz = measure_text_cached(font, text, _METRICS_FONT_SIZE)
+        text_width = text_sz.x
+        text_height = text_sz.y
 
-
-def render_blind_spot_path(renderer) -> None:
-  """Draw red gradient overlay on adjacent lanes when vehicle detected in blind spot.
-
-  Qt reference: paintBlindSpotPath in starpilot_annotated_camera.cc:394-411
-
-  Red gradient: HSL(0, 0.75, 0.5, 0.4) at bottom, 0.35 at mid, 0.0 at top.
-  Only draws on the side where blind spot is active.
-  """
-  sm = ui_state.sm
-  if sm.recv_frame["carState"] < ui_state.started_frame:
-    return
-
-  if not renderer._params.get_bool("BlindSpotPath"):
-    return
-
-  car_state = sm["carState"]
-  blindspot_left = bool(car_state.leftBlindspot)
-  blindspot_right = bool(car_state.rightBlindspot)
-
-  if not blindspot_left and not blindspot_right:
-    return
-
-  vertices = renderer._adjacent_path_vertices
-  if not vertices or len(vertices) < 2:
-    return
-
-  gradient = _make_gradient(0.0)
-  rect = renderer._rect
-
-  if blindspot_left and vertices[0].size >= 4:
-    draw_polygon(rect, vertices[0], gradient=gradient)
-
-  if blindspot_right and vertices[1].size >= 4:
-    draw_polygon(rect, vertices[1], gradient=gradient)
+        text_x = (left[0] + right[0]) / 2.0 - text_width / 2.0
+        text_y = (left[1] + right[1]) / 2.0 - text_height / 2.0 + text_height * 0.75
+        _draw_text_with_outline(text, text_x, text_y, font, _METRICS_FONT_SIZE)
 
 
 def render_path_edges(renderer) -> None:

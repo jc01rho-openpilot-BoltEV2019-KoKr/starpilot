@@ -28,12 +28,23 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import types
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 import requests
 
 # ── StarPilot / openpilot imports ──────────────────────────────────────────
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# smbus2 is a hardware I2C library only present on comma's tici device.
+# On PC it's never installed, and SMBus is never called (the TICI flag is
+# False). Stub it so the eager import chain in openpilot.system.hardware
+# succeeds without installing tici-only platform dependencies.
+_smbus2 = types.ModuleType('smbus2')
+_smbus2.SMBus = None
+sys.modules['smbus2'] = _smbus2
 
 from openpilot.common.constants import CV
 from openpilot.tools.lib.auth import login as oauth_login
@@ -127,6 +138,16 @@ class ScsSample:
 
 
 @dataclass
+class LeadSample:
+    """One radarState lead-vehicle event from the log."""
+
+    log_mono_time: int
+    has_lead: bool
+    d_rel: float   # metres ahead
+    v_lead: float  # m/s absolute speed of lead
+
+
+@dataclass
 class GpsSample:
     """One gpsLocationExternal event from the log."""
 
@@ -135,6 +156,7 @@ class GpsSample:
     longitude: float
     speed: float
     bearing_deg: float
+    hacc: float
 
 
 @dataclass
@@ -166,6 +188,7 @@ class ChangeRow:
     latitude: float
     longitude: float
     matched_osm: bool
+    hacc: float = 0.0
     slc_overridden_mps: float = 0.0
     unconfirmed_mps: float = 0.0
     slc_next_mps: float = 0.0
@@ -241,6 +264,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         epilog=JWT_HELP,
     )
     p.add_argument(
+        "route_pos",
+        nargs="?",
+        default=None,
+        help="Route name (positional format alternative)."
+    )
+    p.add_argument(
         "--route",
         default=None,
         help=(
@@ -257,7 +286,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Display speeds in km/h (default: mph).",
     )
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.route_pos:
+        args.route = args.route_pos
+    return args
 
 
 def resolve_route_identifier(raw: str) -> str:
@@ -297,6 +329,8 @@ def resolve_route_identifier(raw: str) -> str:
             "Expected: dongle_id|log_id  (16 hex chars | identifier)"
         )
     dongle, log_id, suffix = m.group(1), m.group(2), m.group(3) or ""
+    if suffix:
+        suffix = re.sub(r"^/(\d+)/(\d+)$", r"/\1:\2", suffix)
     return f"{dongle}/{log_id}{suffix}"
 
 
@@ -354,18 +388,19 @@ def parse_route_logs(
     list[CarSample],
     list[GpsSample],
     list[ScsSample],
+    list[LeadSample],
     list[int],
 ]:
     """Use LogReader to parse qlog and extract all speed-related messages.
 
-    Returns (mapd_events, splan_events, car_events, gps_events, scs_events, segments).
+    Returns (mapd_events, splan_events, car_events, gps_events, scs_events, lead_events, segments).
     """
     mapd_events: list[MapdSample] = []
     splan_events: list[SplanSample] = []
     car_events: list[CarSample] = []
     gps_events: list[GpsSample] = []
     scs_events: list[ScsSample] = []
-    segments_found: set[int] = set()
+    lead_events: list[LeadSample] = []
     segments_found: set[int] = set()
     seg_of_msg: dict[int, int] = {}
 
@@ -437,6 +472,7 @@ def parse_route_logs(
                     longitude=float(g.longitude),
                     speed=float(g.speed or 0),
                     bearing_deg=float(g.bearingDeg or 0),
+                    hacc=float(g.horizontalAccuracy or 999),
                 )
             )
         elif which == "starpilotCarState":
@@ -446,6 +482,17 @@ def parse_route_logs(
                     log_mono_time=t,
                     accel_pressed=bool(s.accelPressed),
                     decel_pressed=bool(s.decelPressed),
+                )
+            )
+        elif which == "radarState":
+            r = msg.radarState
+            lead = r.leadOne
+            lead_events.append(
+                LeadSample(
+                    log_mono_time=t,
+                    has_lead=bool(lead.status),
+                    d_rel=float(lead.dRel or 0),
+                    v_lead=float(lead.vLead or 0),
                 )
             )
 
@@ -472,7 +519,7 @@ def parse_route_logs(
 
     segments = sorted(segments_found) if segments_found else [0]
 
-    return mapd_events, splan_events, car_events, gps_events, scs_events, segments
+    return mapd_events, splan_events, car_events, gps_events, scs_events, lead_events, segments
 
 
 # ============================================================================
@@ -773,9 +820,11 @@ class OverpassClient:
 
 
 def match_gps_to_ways(
-    lat: float, lon: float, ways: dict[int, OsmWay]
+    lat: float, lon: float, ways: dict[int, OsmWay], hacc: float = 0
 ) -> tuple[float, str]:
-    """Find nearest OSM way within MATCH_RADIUS_M.  Returns (maxspeed_mps, name)."""
+    """Find nearest OSM way, with adaptive radius gated on GPS hAcc.
+    Returns (maxspeed_mps, name)."""
+    radius = max(MATCH_RADIUS_M, hacc * 1.5) if hacc > 0 else MATCH_RADIUS_M
     best_d = float("inf")
     best_ms = 0.0
     best_name = ""
@@ -787,7 +836,7 @@ def match_gps_to_ways(
             best_d = d
             best_ms = w.maxspeed_mps
             best_name = w.road_name
-    if best_d <= MATCH_RADIUS_M:
+    if best_d <= radius:
         return best_ms, best_name
     return 0.0, ""
 
@@ -797,26 +846,26 @@ def match_gps_to_ways(
 # ============================================================================
 
 
-def interpolate_gps(gps_events: list[GpsSample]) -> list[tuple[float, float, float]]:
-    """Build a sorted list of (monotime_ns, lat, lon) from GPS events."""
+def interpolate_gps(gps_events: list[GpsSample]) -> list[tuple[float, float, float, float]]:
+    """Build a sorted list of (monotime_ns, lat, lon, hacc) from GPS events."""
     out = []
     for g in gps_events:
         if abs(g.latitude) > 0.01 or abs(g.longitude) > 0.01:
-            out.append((float(g.log_mono_time), g.latitude, g.longitude))
+            out.append((float(g.log_mono_time), g.latitude, g.longitude, g.hacc))
     out.sort(key=lambda x: x[0])
     return out
 
 
 def gps_at_time(
-    t_ns: int, gps_timeline: list[tuple[float, float, float]]
-) -> tuple[float, float]:
-    """Interpolate GPS position at a given logMonoTime."""
+    t_ns: int, gps_timeline: list[tuple[float, float, float, float]]
+) -> tuple[float, float, float]:
+    """Interpolate GPS position at a given logMonoTime. Returns (lat, lon, hacc)."""
     if not gps_timeline:
-        return 0.0, 0.0
+        return 0.0, 0.0, 999.0
     if t_ns <= gps_timeline[0][0]:
-        return gps_timeline[0][1], gps_timeline[0][2]
+        return gps_timeline[0][1], gps_timeline[0][2], gps_timeline[0][3]
     if t_ns >= gps_timeline[-1][0]:
-        return gps_timeline[-1][1], gps_timeline[-1][2]
+        return gps_timeline[-1][1], gps_timeline[-1][2], gps_timeline[-1][3]
     lo, hi = 0, len(gps_timeline) - 1
     while hi - lo > 1:
         mid = (lo + hi) // 2
@@ -824,12 +873,12 @@ def gps_at_time(
             lo = mid
         else:
             hi = mid
-    t0, lat0, lon0 = gps_timeline[lo]
-    t1, lat1, lon1 = gps_timeline[hi]
+    t0, lat0, lon0, _ = gps_timeline[lo]
+    t1, lat1, lon1, hacc1 = gps_timeline[hi]
     if t1 == t0:
-        return lat0, lon0
+        return lat0, lon0, hacc1
     frac = (t_ns - t0) / (t1 - t0)
-    return lat0 + frac * (lat1 - lat0), lon0 + frac * (lon1 - lon0)
+    return lat0 + frac * (lat1 - lat0), lon0 + frac * (lon1 - lon0), hacc1
 
 
 # ============================================================================
@@ -874,9 +923,10 @@ def detect_changes(
     osm_ways: dict[int, OsmWay],
     gps_timeline: list[tuple[float, float, float]],
     base_time_ns: int,
+    lead_events: list[LeadSample] | None = None,
 ) -> list[ChangeRow]:
     """Walk starpilotPlan events to detect every SLC state transition,
-    correlating with mapd, carState, and starpilotCarState for full context.
+    correlating with mapd, carState, starpilotCarState, and radarState for full context.
 
     Produces a timeline of SLC decisions: limits, overrides, prompts, lookaheads.
     """
@@ -887,6 +937,9 @@ def detect_changes(
     splan_sorted = sorted(splan_events, key=lambda e: e.log_mono_time)
     mapd_sorted = (
         sorted(mapd_events, key=lambda e: e.log_mono_time) if mapd_events else []
+    )
+    lead_sorted = (
+        sorted(lead_events, key=lambda e: e.log_mono_time) if lead_events else []
     )
 
     prev_slc = -1.0
@@ -910,6 +963,7 @@ def detect_changes(
         m = _nearest(mapd_sorted, t_ns)
         c = _nearest(car_events, t_ns)
         s = _nearest(scs_events, t_ns)
+        lv = _nearest(lead_sorted, t_ns) if lead_sorted else None
 
         mapd_sl = m.speed_limit if m else 0
         mapd_next = m.next_speed_limit if m else 0
@@ -920,10 +974,13 @@ def detect_changes(
         gas = bool(c.gas_pressed) if c else False
         accel = bool(s.accel_pressed) if s else False
         decel = bool(s.decel_pressed) if s else False
+        has_lead = bool(lv.has_lead) if lv else False
+        lead_d_rel = lv.d_rel if lv and lv.has_lead else 0.0
+        lead_v = lv.v_lead if lv and lv.has_lead else 0.0
 
-        lat, lon = gps_at_time(t_ns, gps_timeline) if gps_timeline else (0, 0)
+        lat, lon, hacc = gps_at_time(t_ns, gps_timeline) if gps_timeline else (0, 0, 999)
         osm_sl, osm_name = (
-            match_gps_to_ways(lat, lon, osm_ways) if osm_ways else (0.0, "")
+            match_gps_to_ways(lat, lon, osm_ways, hacc) if osm_ways else (0.0, "")
         )
         slc_active, slc_mode = _parse_toggles(ev)
 
@@ -1001,11 +1058,17 @@ def detect_changes(
             detail = f"gas pressed: {v_ego * KPH_TO_MPH * MS_TO_KPH:.0f} > {slc * KPH_TO_MPH * MS_TO_KPH:.0f}"
             if accel:
                 detail += " (accel)"
+            if has_lead:
+                detail += f" [lead {lead_d_rel:.0f}m ahead]"
+
+        elif ov_end and not limit_changed and has_lead and not gas:
+            event_type = "OVERRIDE CLEAR"
+            detail = f"ACC decel behind lead ({lead_d_rel:.0f}m, {lead_v * KPH_TO_MPH * MS_TO_KPH:.0f} mph) — not driver brake"
 
         elif ov_end and not limit_changed:
             if ov_phase:
                 event_type = "OVERRIDE CLEAR"
-                detail = "override ended"
+                detail = "override ended" + (f" [lead {lead_d_rel:.0f}m, {lead_v * KPH_TO_MPH * MS_TO_KPH:.0f} mph]" if has_lead else "")
 
         elif active_ov and ov_phase != "active":
             event_type = "OVERRIDE ACTIVE"
@@ -1014,6 +1077,8 @@ def detect_changes(
         elif stale_ov and ov_phase != "stale":
             event_type = "STALE OVERRIDE"
             detail = f"overridden > {slc * KPH_TO_MPH * MS_TO_KPH:.0f}, v_ego={v_ego * KPH_TO_MPH * MS_TO_KPH:.0f}"
+            if has_lead:
+                detail += f" [ACC: lead {lead_d_rel:.0f}m, {lead_v * KPH_TO_MPH * MS_TO_KPH:.0f} mph]"
 
         elif source_changed:
             event_type = "SOURCE"
@@ -1047,6 +1112,7 @@ def detect_changes(
                         way_sel=way_sel,
                         latitude=lat,
                         longitude=lon,
+                        hacc=hacc,
                         matched_osm=osm_sl > 0,
                         slc_overridden_mps=overridden,
                         unconfirmed_mps=unconfirmed,
@@ -1091,14 +1157,14 @@ def fmt_speed(mps: float, use_mph: bool, width: int = 5) -> str:
 
 
 def print_header(
-    route_name: str, mapd_n: int, splan_n: int, gps_n: int, scs_n: int
+    route_name: str, mapd_n: int, splan_n: int, gps_n: int, scs_n: int, lead_n: int = 0
 ) -> None:
     sep = "=" * 82
     print(f"\n{sep}")
     print(f"  SLC / mapd Diagnostic Timeline")
     print(f"  Route: {route_name}")
     print(
-        f"  Events: mapdOut={mapd_n} | starpilotPlan={splan_n} | starpilotCarState={scs_n} | GPS={gps_n}"
+        f"  Events: mapdOut={mapd_n} | starpilotPlan={splan_n} | starpilotCarState={scs_n} | GPS={gps_n} | radarState={lead_n}"
     )
     print(f"{sep}")
 
@@ -1111,7 +1177,7 @@ def print_table(rows: list[ChangeRow], use_mph: bool) -> None:
     unit = "mph" if use_mph else "km/h"
     hdr = (
         f"  {'Time':>7}  {'Event':<16}  {'Road':<22}  "
-        f"{'SLC':>8}  {'Src':<8}  {'vEgo':>6}  Notes"
+        f"{'SLC':>8}  {'Mapd':>8}  {'OSM':>8}  {'Next':>8}  {'WaySel':<10}  {'Src':<8}  {'vEgo':>6}  {'hAcc':>6}  Notes"
     )
     sep = "  " + "-" * (len(hdr) - 2)
 
@@ -1121,6 +1187,7 @@ def print_table(rows: list[ChangeRow], use_mph: bool) -> None:
 
     stale_count = 0
     mismatch_count = 0
+    prev_way_sel = ""
 
     for r in rows:
         notes: list[str] = []
@@ -1146,8 +1213,25 @@ def print_table(rows: list[ChangeRow], use_mph: bool) -> None:
         if r.decel_pressed:
             notes.append("decel")
 
+        # ── waySel context (mapd's GetCurrentWay priority chain) ─────
+        WS_LABEL = {
+            "predicted": "nextWay",
+            "possible":  "scanned",
+            "extended":  "extended",
+            "fail":      "no-match",
+        }
+        if r.way_sel != prev_way_sel:
+            label = WS_LABEL.get(r.way_sel)
+            if label:
+                notes.append(label)
+            prev_way_sel = r.way_sel
+
         sc = fmt_speed(r.slc_mps, use_mph, 6)
+        md = fmt_speed(r.mapd_mps, use_mph, 6)
+        om = fmt_speed(r.osm_mps, use_mph, 6)
+        nx = fmt_speed(r.next_mapd_mps, use_mph, 6)
         ve = fmt_speed(r.v_ego_mps, use_mph, 5)
+        ha = f"{r.hacc:>4.0f}m" if r.hacc > 0 and r.hacc < 999 else "    —"
 
         t_min = int(r.time_offset_s) // 60
         t_sec = int(r.time_offset_s) % 60
@@ -1156,14 +1240,27 @@ def print_table(rows: list[ChangeRow], use_mph: bool) -> None:
         event = r.event_type[:16]
         road = (r.road_name[:22] + "..") if len(r.road_name) > 22 else r.road_name
         src_label = (r.slc_source[:8] or "—") if r.slc_source else "—"
-        note_str = detail or ", ".join(notes) if notes else ""
+        if detail:
+            note_str = " ⋮ ".join(
+                p for p in ([detail] + notes) if p
+            ) if notes else detail
+        else:
+            note_str = ", ".join(notes) if notes else ""
 
         print(
             f"  {ts:>7}  {event:<16}  {road:<22}  "
-            f"{sc:>8}  {src_label:<8}  {ve:>6}  {note_str}"
+            f"{sc:>8}  {md:>8}  {om:>8}  {nx:>8}  {r.way_sel:<10}  {src_label:<8}  {ve:>6}  {ha:>6}  {note_str}"
         )
 
     print(sep)
+    print(
+        "  WaySel guide (mapd priority chain, see github.com/pfeiferj/mapd):\n"
+        "    current   — directly on matched road (confident)\n"
+        "    predicted — matched connected nextWay (adjacent road)\n"
+        "    possible  — scanned ALL nearby ways (low confidence)\n"
+        "    extended  — held current way at extended range\n"
+        "    fail      — no match within range"
+    )
     parts = []
     if stale_count:
         parts.append(f"{stale_count} stale (mapd != OSM)")
@@ -1197,7 +1294,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nProcessing route: {canonical}", file=sys.stderr)
 
         # ── Parse qlog ──────────────────────────────────────────────────
-        mapd_ev, splan_ev, car_ev, gps_ev, scs_ev, segments = parse_route_logs(
+        mapd_ev, splan_ev, car_ev, gps_ev, scs_ev, lead_ev, segments = parse_route_logs(
             canonical
         )
 
@@ -1218,7 +1315,7 @@ def main(argv: list[str] | None = None) -> int:
         if gps_timeline:
             print("Querying Overpass API for OSM speed limits...", file=sys.stderr)
             oc = OverpassClient()
-            gps_pts = [(lat, lon) for _, lat, lon in gps_timeline]
+            gps_pts = [(lat, lon) for _, lat, lon, _ in gps_timeline]
             osm_ways = oc.fetch_for_route(gps_pts)
             print(f"  Found {len(osm_ways)} speed-limited OSM ways", file=sys.stderr)
         else:
@@ -1226,11 +1323,12 @@ def main(argv: list[str] | None = None) -> int:
 
         # ── Detect changes ──────────────────────────────────────────
         rows = detect_changes(
-            mapd_ev, splan_ev, car_ev, scs_ev, osm_ways, gps_timeline, base_time
+            mapd_ev, splan_ev, car_ev, scs_ev, osm_ways, gps_timeline, base_time,
+            lead_events=lead_ev,
         )
 
         # ── Output ─────────────────────────────────────────────────
-        print_header(canonical, len(mapd_ev), len(splan_ev), len(gps_ev), len(scs_ev))
+        print_header(canonical, len(mapd_ev), len(splan_ev), len(gps_ev), len(scs_ev), len(lead_ev))
         print_table(rows, not args.kmh)
 
         stale = sum(1 for r in rows if r.stale)

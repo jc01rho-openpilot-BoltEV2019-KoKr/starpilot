@@ -17,7 +17,16 @@
 #define SUBARU_PG_MAIN_BUS 0U
 #define SUBARU_PG_CAM_BUS  2U
 
+#define SUBARU_PG_COMMON_TX_MSGS() \
+  {MSG_SUBARU_PG_ES_Distance, SUBARU_PG_MAIN_BUS, 8, .check_relay = true}, \
+  {MSG_SUBARU_PG_ES_LKAS,     SUBARU_PG_MAIN_BUS, 8, .check_relay = true}, \
+
+#define SUBARU_PG_STOP_AND_GO_ADDITIONAL_TX_MSGS() \
+  {MSG_SUBARU_PG_Throttle,    SUBARU_PG_CAM_BUS,  8, .check_relay = false}, \
+  {MSG_SUBARU_PG_Brake_Pedal, SUBARU_PG_CAM_BUS,  4, .check_relay = false}, \
+
 static bool subaru_pg_reversed_driver_torque = false;
+static bool subaru_pg_stop_and_go = false;
 
 static void subaru_preglobal_rx_hook(const CANPacket_t *msg) {
   if (msg->bus == SUBARU_PG_MAIN_BUS) {
@@ -81,8 +90,12 @@ static bool subaru_preglobal_tx_hook(const CANPacket_t *msg) {
 
 static safety_config subaru_preglobal_init(uint16_t param) {
   static const CanMsg SUBARU_PG_TX_MSGS[] = {
-    {MSG_SUBARU_PG_ES_Distance, SUBARU_PG_MAIN_BUS, 8, .check_relay = true},
-    {MSG_SUBARU_PG_ES_LKAS,     SUBARU_PG_MAIN_BUS, 8, .check_relay = true}
+    SUBARU_PG_COMMON_TX_MSGS()
+  };
+
+  static const CanMsg SUBARU_PG_STOP_AND_GO_TX_MSGS[] = {
+    SUBARU_PG_COMMON_TX_MSGS()
+    SUBARU_PG_STOP_AND_GO_ADDITIONAL_TX_MSGS()
   };
 
   // TODO: do checksum and counter checks after adding the signals to the outback dbc file
@@ -95,9 +108,14 @@ static safety_config subaru_preglobal_init(uint16_t param) {
   };
 
   const uint16_t SUBARU_PG_PARAM_REVERSED_DRIVER_TORQUE = 4;
+  const uint16_t SUBARU_PG_PARAM_STOP_AND_GO = 8;
 
   subaru_pg_reversed_driver_torque = GET_FLAG(param, SUBARU_PG_PARAM_REVERSED_DRIVER_TORQUE);
-  return BUILD_SAFETY_CFG(subaru_preglobal_rx_checks, SUBARU_PG_TX_MSGS);
+  subaru_pg_stop_and_go = GET_FLAG(param, SUBARU_PG_PARAM_STOP_AND_GO);
+
+  safety_config ret = subaru_pg_stop_and_go ? BUILD_SAFETY_CFG(subaru_preglobal_rx_checks, SUBARU_PG_STOP_AND_GO_TX_MSGS) : \
+                                             BUILD_SAFETY_CFG(subaru_preglobal_rx_checks, SUBARU_PG_TX_MSGS);
+  return ret;
 }
 
 const safety_hooks subaru_preglobal_hooks = {

@@ -47,6 +47,7 @@ def get_test_starpilot_toggles() -> SimpleNamespace:
     reverse_cruise_increase=False,
     sng_hack=False,
     subaru_sng=False,
+    subaru_sng_manual_parking_brake=False,
     unlock_doors=False,
     vEgoStopping=0.5,
     volt_sng=False,

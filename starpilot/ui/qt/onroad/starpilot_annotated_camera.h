@@ -14,7 +14,7 @@ public:
   void mousePressEvent(QMouseEvent *mouseEvent) override;
   void paintAdjacentPaths(QPainter &p);
   void paintBlindSpotPath(QPainter &p);
-  void paintStarPilotWidgets(QPainter &p, UIState &s);
+  void paintStarPilotWidgets(QPainter &p, UIState &s, bool hideCameraOverlays = false);
   void paintLeadMetrics(QPainter &p, bool adjacent, QPointF *chevron, const cereal::RadarState::LeadData::Reader &lead_data);
   void paintPathEdges(QPainter &p, int height);
   void paintRainbowPath(QPainter &p, QLinearGradient &bg, float lin_grad_point);

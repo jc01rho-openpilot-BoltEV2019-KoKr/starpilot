@@ -70,5 +70,10 @@ class TestSubaruPreglobalReversedDriverTorqueSafety(TestSubaruPreglobalSafety):
   DBC = "subaru_outback_2019_generated"
 
 
+class TestSubaruPreglobalStopAndGoSafety(TestSubaruPreglobalSafety):
+  FLAGS = SubaruSafetyFlags.STOP_AND_GO
+  TX_MSGS = [[0x161, 0], [0x164, 0], [0x140, 2], [0xD1, 2]]
+
+
 if __name__ == "__main__":
   unittest.main()
