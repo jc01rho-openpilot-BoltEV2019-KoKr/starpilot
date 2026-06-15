@@ -12,8 +12,13 @@ ExperimentalModeButton::ExperimentalModeButton(QWidget *parent) : QPushButton(pa
   chill_pixmap = QPixmap("../assets/icons/couch.svg").scaledToWidth(img_width, Qt::SmoothTransformation);
   experimental_pixmap = QPixmap("../assets/icons/experimental_grey.svg").scaledToWidth(img_width, Qt::SmoothTransformation);
 
-  // go to toggles and expand experimental mode description
-  connect(this, &QPushButton::clicked, [=]() { emit openSettings(2, "ExperimentalMode"); });
+  // go to toggles and expand whichever mode control is actually active
+  connect(this, &QPushButton::clicked, [=]() {
+    const QString toggle = params.getBool("ConditionalExperimental") ? "ConditionalExperimental" :
+                           params.getBool("ConditionalChill") ? "ConditionalChill" :
+                           "ExperimentalMode";
+    emit openSettings(2, toggle);
+  });
 
   setFixedHeight(125);
   QHBoxLayout *main_layout = new QHBoxLayout;
@@ -76,6 +81,12 @@ void ExperimentalModeButton::showEvent(QShowEvent *event) {
       status = params.getInt("PersistedCEStatus");
     }
     experimental_mode = !params.getBool("SafeMode") && status == 2;
+  } else if (params.getBool("ConditionalChill")) {
+    int status = params_memory.getInt("CCStatus");
+    if ((status != 1 && status != 2) && params.getBool("PersistChillState")) {
+      status = params.getInt("PersistedCCStatus");
+    }
+    experimental_mode = !params.getBool("SafeMode") && (status == 0 || status == 1);
   } else {
     experimental_mode = params.getBool("ExperimentalMode") && !params.getBool("SafeMode");
   }

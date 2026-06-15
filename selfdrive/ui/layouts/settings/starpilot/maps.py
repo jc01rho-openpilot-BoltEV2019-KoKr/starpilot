@@ -25,7 +25,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherButton,
   AetherListColors,
   AetherScrollbar,
-  panel_style_from_color,
+  DEFAULT_PANEL_STYLE,
   build_list_panel_frame,
   draw_action_pill,
   draw_busy_ring,
@@ -84,8 +84,7 @@ STATUS_BUTTON_GAP = 8
 STATUS_REMOVE_HEIGHT = 40
 STATUS_METRIC_GAP = 18
 STATUS_SELECTION_CHIP_HEIGHT = 30
-MAPS_TILE_GREEN = rl.Color(16, 185, 129, 255)
-PANEL_STYLE = panel_style_from_color("#10B981")
+PANEL_STYLE = DEFAULT_PANEL_STYLE
 MAPS_METRICS = replace(AETHER_LIST_METRICS, header_height=240)
 
 COUNTRIES_SECTION = next(section for section in MAPS_CATALOG if section["key"] == "countries")
@@ -535,6 +534,7 @@ class StarPilotMapsLayout(StarPilotPanel):
     self._active_state_group_key = "whole_us"
     self._full_us_mode = True
     self._whole_us_context_initialized = False
+    self._cached_selected_tokens: set[str] = set()
 
     self._download_button = self._child(
       AetherButton(
@@ -543,7 +543,6 @@ class StarPilotMapsLayout(StarPilotPanel):
         enabled=self._primary_action_enabled,
         emphasized=True,
         font_size=24,
-        accent_color=MAPS_TILE_GREEN,
       )
     )
     self._schedule_button = self._child(
@@ -585,6 +584,9 @@ class StarPilotMapsLayout(StarPilotPanel):
 
   def _update_state(self):
     super()._update_state()
+    self._cached_selected_tokens = _selected_token_set(
+      self._params.get("MapsSelected", encoding="utf-8") or ""
+    )
     self._sync_download_state()
     if self._pending_storage_state is not None:
       generation, storage_text, has_downloaded_data = self._pending_storage_state
@@ -692,7 +694,7 @@ class StarPilotMapsLayout(StarPilotPanel):
     return _format_mb(total_size), has_files
 
   def _selected_tokens(self) -> set[str]:
-    return _selected_token_set(self._params.get("MapsSelected", encoding="utf-8") or "")
+    return self._cached_selected_tokens
 
   def _selected_count(self) -> int:
     return len(self._selected_tokens())
@@ -903,7 +905,7 @@ class StarPilotMapsLayout(StarPilotPanel):
     return token in self._selected_tokens()
 
   def _set_map_state(self, token: str, state: bool):
-    selected = self._selected_tokens()
+    selected = set(self._cached_selected_tokens)
     if state:
       if token == US_COUNTRY_TOKEN:
         selected = {item for item in selected if not item.startswith(STATE_PREFIX)}
@@ -921,6 +923,7 @@ class StarPilotMapsLayout(StarPilotPanel):
         if self._active_state_group_key == "whole_us":
           self._active_state_group_key = STATES_SECTION["groups"][0]["key"]
     self._params.put("MapsSelected", sanitize_selected_locations_csv(sorted(selected)))
+    self._cached_selected_tokens = selected
 
   def _network_type(self):
     return ui_state.sm["deviceState"].networkType if ui_state.sm.valid.get("deviceState", False) else NetworkType.none

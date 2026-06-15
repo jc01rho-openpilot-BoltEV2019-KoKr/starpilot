@@ -26,6 +26,8 @@ ALL_GAS_EV_HYBRID_COMBOS = [
   {"GAS_MSG": ("ACCELERATOR_ALT", "ACCELERATOR_PEDAL"), "SCC_BUS": 2, "SAFETY_PARAM": HyundaiSafetyFlags.HYBRID_GAS | HyundaiSafetyFlags.CAMERA_SCC},
 ]
 
+MRR35_RADAR_TRACK_ADDRS = list(range(0x3A5, 0x3C5))
+
 
 def _set_value(msg: bytearray, sig, ival: int) -> None:
   i = sig.lsb // 8
@@ -172,7 +174,7 @@ class TestHyundaiCanfdAngleSteering(HyundaiButtonBase, common.CarSafetyTest):
   BUTTONS_TX_BUS = 2
   LATERAL_FREQUENCY = 100
   STANDSTILL_THRESHOLD = 12
-  STEER_ANGLE_MAX = 180
+  STEER_ANGLE_MAX = 360
   DEG_TO_CAN = 10
   GAS_MSG = ("ACCELERATOR_ALT", "ACCELERATOR_PEDAL")
   SAFETY_PARAM = HyundaiSafetyFlags.CANFD_ANGLE_STEERING | HyundaiSafetyFlags.CAMERA_SCC | HyundaiSafetyFlags.HYBRID_GAS
@@ -246,7 +248,7 @@ class TestHyundaiCanfdAngleSteering(HyundaiButtonBase, common.CarSafetyTest):
     checksum = sig_checksum.calc_checksum(addr, sig_checksum, dat)
     _set_value(dat, sig_checksum, checksum)
 
-  def _angle_cmd_msg(self, angle, enabled, increment_timer=True):
+  def _angle_cmd_msg(self, angle, enabled, increment_timer=True, gain_raw=250):
     if increment_timer:
       self.safety.set_timer(self.angle_cmd_cnt * int(1e6 / self.LATERAL_FREQUENCY))
       self.angle_cmd_cnt += 1
@@ -270,7 +272,7 @@ class TestHyundaiCanfdAngleSteering(HyundaiButtonBase, common.CarSafetyTest):
     dat[9] = (dat[9] & ~0x30) | (((2 if enabled else 1) & 0x3) << 4)
     dat[10] = (dat[10] & 0x03) | ((desired_angle & 0x3F) << 2)
     dat[11] = (desired_angle >> 6) & 0xFF
-    dat[12] = 250 if enabled else 0
+    dat[12] = gain_raw if enabled or gain_raw != 250 else 0
     self._update_checksum(addr, dat)
     return libsafety_py.make_CANPacket(addr, 0, bytes(dat))
 
@@ -332,6 +334,19 @@ class TestHyundaiCanfdAngleSteering(HyundaiButtonBase, common.CarSafetyTest):
     self.safety.set_timer(common.RT_INTERVAL)
     self.assertFalse(self._tx(self._angle_cmd_msg(0, True, increment_timer=False)))
     self.assertTrue(self._tx(self._angle_cmd_msg(0, True, increment_timer=False)))
+
+  def test_angle_torque_reduction_gain_limits(self):
+    if self.__class__.__name__ != "TestHyundaiCanfdAngleSteering":
+      return
+
+    self.safety.set_controls_allowed(True)
+    self._reset_speed_measurement(1)
+    self._set_prev_desired_angle(0)
+    self.assertTrue(self._tx(self._angle_cmd_msg(0, True, gain_raw=250)))
+    self._set_prev_desired_angle(0)
+    self.assertFalse(self._tx(self._angle_cmd_msg(0, True, gain_raw=251)))
+    self._set_prev_desired_angle(0)
+    self.assertFalse(self._tx(self._angle_cmd_msg(0, False, gain_raw=1)))
 
 
 class TestHyundaiCanfdAngleSteeringLfaAlt(TestHyundaiCanfdAngleSteering):
@@ -422,6 +437,37 @@ class TestHyundaiCanfdLFASteeringAltButtons(TestHyundaiCanfdLFASteeringAltButton
   pass
 
 
+class TestHyundaiCanfdCCNCSupportFrames(common.SafetyTestBase):
+  TX_MSGS = [[0x161, 0], [0x162, 0], [0x7C4, 2], [0xEA, 2]]
+
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_canfd_generated")
+    self.safety = libsafety_py.libsafety
+
+  def _set_hooks(self, param):
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, param)
+    self.safety.init_tests()
+
+  def test_ccnc_support_frames_require_ccnc_flag(self):
+    support_msgs = (
+      self.packer.make_can_msg_safety("CCNC_0x161", 0, {}),
+      self.packer.make_can_msg_safety("CCNC_0x162", 0, {}),
+      common.make_msg(2, 0x7C4, 8),
+      common.make_msg(2, 0xEA, 24),
+    )
+
+    for longitudinal in (False, True):
+      base_param = HyundaiSafetyFlags.CAMERA_SCC | (HyundaiSafetyFlags.LONG if longitudinal else 0)
+
+      self._set_hooks(base_param)
+      for msg in support_msgs:
+        self.assertFalse(self._tx(msg))
+
+      self._set_hooks(base_param | HyundaiSafetyFlags.CCNC)
+      for msg in support_msgs:
+        self.assertTrue(self._tx(msg))
+
+
 class TestHyundaiCanfdLKASteeringEV(TestHyundaiCanfdBase):
 
   TX_MSGS = [[0x50, 0], [0x1CF, 1], [0x2A4, 0]]
@@ -485,6 +531,7 @@ class TestHyundaiCanfdLKASteeringLongEV(HyundaiLongitudinalBase, TestHyundaiCanf
              [0x1a0, 1], [0x1ea, 1], [0x200, 1], [0x345, 1], [0x1da, 1]]
 
   RELAY_MALFUNCTION_ADDRS = {0: (0x50, 0x2a4), 1: (0x1a0,)}  # LKAS, CAM_0x2A4, SCC_CONTROL
+  FWD_BLACKLISTED_ADDRS = {0: MRR35_RADAR_TRACK_ADDRS, 2: [0x50, 0x2a4]}
 
   DISABLED_ECU_UDS_MSG = (0x730, 1)
   DISABLED_ECU_ACTUATION_MSG = (0x1a0, 1)

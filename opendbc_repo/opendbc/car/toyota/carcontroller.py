@@ -25,13 +25,14 @@ ACCEL_WINDUP_LIMIT = 4.0 * DT_CTRL * 3  # m/s^2 / frame
 ACCEL_WINDDOWN_LIMIT = -4.0 * DT_CTRL * 3  # m/s^2 / frame
 ACCEL_PID_UNWIND = 0.03 * DT_CTRL * 3  # m/s^2 / frame
 PRIUS_INTEGRAL_MISMATCH_UNWIND = 8.0
-PRIUS_POSITIVE_FEEDFORWARD_SCALE = 0.5
+PRIUS_POSITIVE_FEEDFORWARD_SCALE = 0.7
 
 MAX_PITCH_COMPENSATION = 1.5  # m/s^2
 TOYOTA_COAST_BRAKE_MIN_SPEED = 15.0  # m/s
 TOYOTA_COAST_BRAKE_ENABLE_ACCEL = -0.10  # m/s^2
 TOYOTA_COAST_BRAKE_DISABLE_ACCEL = -0.06  # m/s^2
 TOYOTA_NO_LEAD_COAST_BRAKE_ACCEL = -0.30  # m/s^2
+TOYOTA_INTERCEPTOR_COMFORT_TARGET_ACCEL = 2.0  # m/s^2
 
 # LKA limits
 # EPS faults if you apply torque while the steering rate is above 100 deg/s for too long
@@ -42,6 +43,7 @@ MAX_STEER_RATE_FRAMES = 18  # tx control frames needed before torque can be cut
 MAX_USER_TORQUE = 500
 
 PARK = structs.CarState.GearShifter.park
+REVERSE = structs.CarState.GearShifter.reverse
 
 # Lock / unlock door commands - Credit goes to AlexandreSato!
 LOCK_CMD = b"\x40\x05\x30\x11\x00\x80\x00\x00"
@@ -89,6 +91,77 @@ def update_permit_braking(current: bool, net_acceleration_request_min: float, st
   return current
 
 
+def limit_interceptor_pcm_accel(pcm_accel_cmd: float, target_accel: float, stopping: bool, v_ego: float) -> float:
+  if stopping:
+    return pcm_accel_cmd
+
+  # The Toyota long path should not cross the accel sign against a strong planner
+  # request on pedal/SDSU cars during ordinary driving.
+  if target_accel > 0.15 and pcm_accel_cmd < 0.0:
+    positive_floor = float(np.interp(v_ego, [0.0, 5.0, 15.0], [0.12, 0.08, 0.0]))
+    pcm_accel_cmd = max(pcm_accel_cmd, positive_floor)
+  elif target_accel < -0.15 and pcm_accel_cmd > 0.0:
+    negative_floor = float(np.interp(v_ego, [0.0, 5.0, 15.0], [-0.12, -0.08, 0.0]))
+    pcm_accel_cmd = min(pcm_accel_cmd, negative_floor)
+
+  if target_accel <= -1.6:
+    return pcm_accel_cmd
+
+  if abs(target_accel) > TOYOTA_INTERCEPTOR_COMFORT_TARGET_ACCEL:
+    return pcm_accel_cmd
+
+  lower_delta = float(np.interp(v_ego, [0.0, 5.0, 15.0], [0.20, 0.25, 0.35]))
+  upper_delta = float(np.interp(v_ego, [0.0, 5.0, 15.0], [0.25, 0.30, 0.40]))
+  limited = float(np.clip(pcm_accel_cmd, target_accel - lower_delta, target_accel + upper_delta))
+
+  # Pedal/SDSU cars can feel especially surgey if the Toyota longitudinal controller
+  # swings far away from the planner target. Bias comfort-zone requests back toward
+  # the planner while still allowing some controller correction.
+  target_weight = float(np.interp(v_ego, [0.0, 5.0, 15.0], [0.8, 0.65, 0.5]))
+  limited = (target_weight * target_accel) + ((1.0 - target_weight) * limited)
+
+  if target_accel > 0.15:
+    limited = max(limited, float(np.interp(v_ego, [0.0, 5.0, 15.0], [0.10, 0.05, 0.0])))
+  elif target_accel < -0.15:
+    limited = min(limited, float(np.interp(v_ego, [0.0, 5.0, 15.0], [-0.10, -0.05, 0.0])))
+
+  return limited
+
+
+def limit_interceptor_stopping_accel(pcm_accel_cmd: float, target_accel: float, stopping: bool, v_ego: float, lead_visible: bool) -> float:
+  if not stopping or lead_visible or pcm_accel_cmd >= 0.0 or v_ego >= 2.5:
+    return pcm_accel_cmd
+
+  # Pedal/SDSU Toyotas can feel abrupt in the last few feet of a no-lead stop
+  # because stopping state can hold onto a stale strong negative command even
+  # after the planner target has already softened. Keep real lead stops
+  # untouched, but let the last 2-3 mph of a no-lead stop unwind toward the
+  # current planner target instead of shoving through zero.
+  stop_floor = float(np.interp(v_ego, [0.0, 0.2, 0.5, 0.9, 1.5, 2.5], [-0.72, -0.76, -0.82, -0.92, -1.05, -1.20]))
+  target_buffer = float(np.interp(v_ego, [0.0, 0.5, 1.5, 2.5], [0.08, 0.10, 0.15, 0.20]))
+  planner_floor = float(target_accel) - target_buffer
+  return max(pcm_accel_cmd, max(stop_floor, planner_floor))
+
+
+def limit_prius_stopping_accel(pcm_accel_cmd: float, target_accel: float, stopping: bool, v_ego: float, lead_visible: bool) -> float:
+  if not stopping or pcm_accel_cmd >= 0.0 or v_ego >= 1.5:
+    return pcm_accel_cmd
+
+  # Prius can hold onto a stale full negative stop command at standstill even after the
+  # planner has already softened. Keep enough brake to hold the stop, but let the command
+  # unwind toward the live planner target so launches are not delayed and stop transitions
+  # are less abrupt.
+  if target_accel <= -1.8:
+    return pcm_accel_cmd
+
+  stop_floor = float(np.interp(v_ego,
+                               [0.0, 0.2, 0.5, 0.9, 1.5],
+                               [-0.96, -1.00, -1.08, -1.18, -1.35] if lead_visible else [-0.84, -0.88, -0.96, -1.08, -1.24]))
+  target_buffer = float(np.interp(v_ego, [0.0, 0.5, 1.5], [0.06, 0.10, 0.16]))
+  planner_floor = float(target_accel) - target_buffer
+  return max(pcm_accel_cmd, max(stop_floor, planner_floor))
+
+
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -120,13 +193,18 @@ class CarController(CarControllerBase):
     self.secoc_prev_reset_counter = 0
 
     self.doors_locked = False
+    self.auto_brake_hold = bool(self.CP.flags & ToyotaFlags.AUTO_BRAKE_HOLD.value)
+    self.brake_hold_active = False
+    self._brake_hold_counter = 0
+    self._brake_hold_reset = False
+    self._prev_brake_pressed = False
 
   def _compute_interceptor_gas_cmd(self, CC, CS):
     if not (self.CP.enableGasInterceptorDEPRECATED and self.CP.openpilotLongitudinalControl and CC.longActive):
       return 0.0
 
-    if self.CP.minEnableSpeed < 0.0:
-      return 0.12 if CS.out.standstill and self.accel > 0.0 else 0.0
+    if CS.out.standstill:
+      return 0.12 if self.accel > 0.0 else 0.0
 
     max_interceptor_gas = 0.5
     if self.CP.carFingerprint == CAR.TOYOTA_RAV4:
@@ -164,6 +242,27 @@ class CarController(CarControllerBase):
         self.standstill_req = True
 
     self.last_standstill = CS.out.standstill
+
+  def create_auto_brake_hold_messages(self, CS: structs.CarState, brake_hold_allowed_timer: int = 100):
+    can_sends = []
+    brake_hold_allowed = (CS.out.standstill and CS.out.cruiseState.available and
+                          not CS.out.gasPressed and not CS.out.cruiseState.enabled and
+                          CS.out.gearShifter not in (PARK, REVERSE))
+
+    if brake_hold_allowed:
+      self._brake_hold_counter += 1
+      self.brake_hold_active = self._brake_hold_counter > brake_hold_allowed_timer and not self._brake_hold_reset
+      self._brake_hold_reset = not self._prev_brake_pressed and CS.out.brakePressed and not self._brake_hold_reset
+    else:
+      self._brake_hold_counter = 0
+      self.brake_hold_active = False
+      self._brake_hold_reset = False
+    self._prev_brake_pressed = CS.out.brakePressed
+
+    if self.frame % 2 == 0:
+      can_sends.append(toyotacan.create_brake_hold_command(self.packer, self.frame, CS.pre_collision_2, self.brake_hold_active))
+
+    return can_sends
 
   def update(self, CC, CS, now_nanos, starpilot_toggles):
     actuators = CC.actuators
@@ -258,6 +357,9 @@ class CarController(CarControllerBase):
     # *** gas and brake ***
 
     self._update_standstill_request(CC, CS, actuators, starpilot_toggles)
+    if self.auto_brake_hold:
+      can_sends.extend(self.create_auto_brake_hold_messages(CS))
+
     interceptor_gas_cmd = self._compute_interceptor_gas_cmd(CC, CS)
 
     # handle UI messages
@@ -309,31 +411,38 @@ class CarController(CarControllerBase):
         a_ego_future = a_ego_blended + j_ego * future_t
 
         if CC.longActive:
-          # constantly slowly unwind integral to recover from large temporary errors
-          unwind_rate = ACCEL_PID_UNWIND
-          if self.CP.carFingerprint == CAR.TOYOTA_PRIUS and pcm_accel_cmd * self.long_pid.i < 0.0:
-            unwind_rate *= PRIUS_INTEGRAL_MISMATCH_UNWIND
-          self.long_pid.i -= unwind_rate * float(np.sign(self.long_pid.i))
+          if self.CP.enableGasInterceptorDEPRECATED:
+            # Pedal/SDSU Toyotas have shown better behavior when we trust the planner
+            # target directly instead of letting the Toyota longitudinal PID swing it
+            # around. Keep the shared rate limits above, but bypass the extra
+            # correction layer that causes rev/release oscillation.
+            self.long_pid.reset()
+          else:
+            # constantly slowly unwind integral to recover from large temporary errors
+            unwind_rate = ACCEL_PID_UNWIND
+            if self.CP.carFingerprint == CAR.TOYOTA_PRIUS and pcm_accel_cmd * self.long_pid.i < 0.0:
+              unwind_rate *= PRIUS_INTEGRAL_MISMATCH_UNWIND
+            self.long_pid.i -= unwind_rate * float(np.sign(self.long_pid.i))
 
-          error_future = pcm_accel_cmd - a_ego_future
+            error_future = pcm_accel_cmd - a_ego_future
 
-          if not stopping:
-            # Toyota's PCM slowly responds to changes in pitch. On change, we amplify our
-            # acceleration request to compensate for the undershoot and following overshoot
-            pitch_compensation = float(np.clip(math.sin(self.pitch_hp.x) * ACCELERATION_DUE_TO_GRAVITY,
-                                               -MAX_PITCH_COMPENSATION, MAX_PITCH_COMPENSATION))
-            pcm_accel_cmd += pitch_compensation
+            if not stopping:
+              # Toyota's PCM slowly responds to changes in pitch. On change, we amplify our
+              # acceleration request to compensate for the undershoot and following overshoot
+              pitch_compensation = float(np.clip(math.sin(self.pitch_hp.x) * ACCELERATION_DUE_TO_GRAVITY,
+                                                 -MAX_PITCH_COMPENSATION, MAX_PITCH_COMPENSATION))
+              pcm_accel_cmd += pitch_compensation
 
-          feedforward = pcm_accel_cmd
-          if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
-            # Keep Prius positive handoffs softer than the stock tune, while restoring some launch authority.
-            if feedforward > 0.0:
-              feedforward *= PRIUS_POSITIVE_FEEDFORWARD_SCALE
+            feedforward = pcm_accel_cmd
+            if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
+              # Keep Prius positive handoffs softer than the stock tune, while restoring some launch authority.
+              if feedforward > 0.0:
+                feedforward *= PRIUS_POSITIVE_FEEDFORWARD_SCALE
 
-          pcm_accel_cmd = self.long_pid.update(error_future,
-                                               speed=CS.out.vEgo,
-                                               feedforward=feedforward,
-                                               freeze_integrator=actuators.longControlState != LongCtrlState.pid)
+            pcm_accel_cmd = self.long_pid.update(error_future,
+                                                 speed=CS.out.vEgo,
+                                                 feedforward=feedforward,
+                                                 freeze_integrator=actuators.longControlState != LongCtrlState.pid)
         else:
           self.long_pid.reset()
 
@@ -346,6 +455,12 @@ class CarController(CarControllerBase):
                                                     CC.longActive,
                                                     CS.out.vEgo,
                                                     lead)
+
+        if self.CP.enableGasInterceptorDEPRECATED:
+          pcm_accel_cmd = limit_interceptor_pcm_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo)
+          pcm_accel_cmd = limit_interceptor_stopping_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, bool(hud_control.leadVisible))
+        elif self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
+          pcm_accel_cmd = limit_prius_stopping_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, lead)
 
         pcm_accel_cmd = float(np.clip(pcm_accel_cmd, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
 
@@ -389,7 +504,7 @@ class CarController(CarControllerBase):
       if self.frame % 20 == 0 or send_ui:
         can_sends.append(toyotacan.create_ui_command(self.packer, steer_alert, pcm_cancel_cmd, hud_control.leftLaneVisible,
                                                      hud_control.rightLaneVisible, hud_control.leftLaneDepart,
-                                                     hud_control.rightLaneDepart, CC.enabled, CS.lkas_hud))
+                                                     hud_control.rightLaneDepart, CS.lkas_hud, lat_active))
 
       if (self.frame % 100 == 0 or send_ui) and self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
         can_sends.append(toyotacan.create_fcw_command(self.packer, fcw_alert))

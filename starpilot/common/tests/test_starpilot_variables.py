@@ -91,3 +91,19 @@ def test_cancel_button_migration_copies_distance_actions_once():
 
   assert spv.migrate_cancel_button_controls(params) is False
   assert params.get_int("CancelButtonControl") == 3
+
+
+def test_set_speed_limit_available_on_openpilot_longitudinal():
+  assert spv.set_speed_limit_available(openpilot_longitudinal=True, has_cc_long=False, pcm_cruise_speed=True) is True
+
+
+def test_set_speed_limit_available_on_gm_helper_path():
+  assert spv.set_speed_limit_available(openpilot_longitudinal=False, has_cc_long=True, pcm_cruise_speed=True) is True
+
+
+def test_set_speed_limit_available_on_redneck_helper_path():
+  assert spv.set_speed_limit_available(openpilot_longitudinal=False, has_cc_long=False, pcm_cruise_speed=False) is True
+
+
+def test_set_speed_limit_unavailable_on_stock_pcm_without_helper():
+  assert spv.set_speed_limit_available(openpilot_longitudinal=False, has_cc_long=False, pcm_cruise_speed=True) is False

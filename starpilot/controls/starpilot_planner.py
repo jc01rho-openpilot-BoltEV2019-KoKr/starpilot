@@ -14,6 +14,7 @@ from openpilot.selfdrive.controls.lib.lead_behavior import is_radarless_matched_
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import A_CHANGE_COST, DANGER_ZONE_COST, J_EGO_COST, STOP_DISTANCE
 from openpilot.starpilot.common.starpilot_utilities import calculate_lane_width, calculate_road_curvature
 from openpilot.starpilot.common.starpilot_variables import CRUISING_SPEED, MINIMUM_LATERAL_ACCELERATION, PLANNER_TIME, THRESHOLD
+from openpilot.starpilot.controls.lib.conditional_chill_mode import ConditionalChillMode
 from openpilot.starpilot.controls.lib.conditional_experimental_mode import ConditionalExperimentalMode
 from openpilot.starpilot.controls.lib.starpilot_acceleration import StarPilotAcceleration
 from openpilot.starpilot.controls.lib.starpilot_events import StarPilotEvents
@@ -45,6 +46,7 @@ class StarPilotPlanner:
 
     self.starpilot_acceleration = StarPilotAcceleration(self)
     self.starpilot_cem = ConditionalExperimentalMode(self)
+    self.starpilot_ccm = ConditionalChillMode(self, self.starpilot_cem)
     self.starpilot_events = StarPilotEvents(self, error_log, ThemeManager)
     self.starpilot_following = StarPilotFollowing(self)
     self.starpilot_vcruise = StarPilotVCruise(self)
@@ -57,7 +59,16 @@ class StarPilotPlanner:
     self.raw_model_stopped = False
     self.road_curvature_detected = False
     self.tracking_lead = False
+    self._last_gps_memory_state = ""
+    self._last_gps_memory_write = 0.0
     self._prev_gps_bearing = 0
+
+    # Blinker-based lateral resume delay state
+    self.blinker_min_speed = float('inf')
+    self.blinker_delay_active = False
+    self.blinker_delay_frame = 0
+    self.CS_prev_left_blinker = False
+    self.CS_prev_right_blinker = False
 
     self.lane_width_left = 0
     self.lane_width_right = 0
@@ -101,11 +112,23 @@ class StarPilotPlanner:
       "latitude": gps_location.latitude,
       "longitude": gps_location.longitude,
       "bearing": gps_location.bearingDeg,
+      "speed": v_ego,
+      "hasFix": bool(getattr(gps_location, "hasFix", False)),
+      "updatedAtMonotonic": time.monotonic(),
+      "updatedAtSec": time.time(),
     }
-    self.gps_valid = self.gps_position["latitude"] != 0 or self.gps_position["longitude"] != 0
+    self.gps_valid = self.gps_position["hasFix"] and (self.gps_position["latitude"] != 0 or self.gps_position["longitude"] != 0)
     bearing = self.gps_position["bearing"]
+    if self.gps_valid:
+      gps_memory_state = json.dumps(_sanitize_json_value(self.gps_position), allow_nan=False)
+      now_mono = self.gps_position["updatedAtMonotonic"]
+      should_refresh_memory = gps_memory_state != self._last_gps_memory_state and (now_mono - self._last_gps_memory_write) >= 0.25
+      if should_refresh_memory:
+        self.params_memory.put_nonblocking("LastGPSPosition", gps_memory_state)
+        self._last_gps_memory_state = gps_memory_state
+        self._last_gps_memory_write = now_mono
+
     if getattr(starpilot_toggles, "compass", False) and abs(bearing - self._prev_gps_bearing) > 0.5:
-      self.params_memory.put("LastGPSPosition", json.dumps(self.gps_position))
       self._prev_gps_bearing = bearing
 
     if v_ego >= starpilot_toggles.minimum_lane_change_speed:
@@ -126,6 +149,37 @@ class StarPilotPlanner:
     self.lateral_check |= sm["carState"].standstill
     self.lateral_check &= not sm["starpilotCarState"].pauseLateral
 
+    # Blinker-based lateral resume delay: after blinker turns off, delay lateral
+    # resumption if the vehicle went below half the pause speed during the blinker.
+    # This lets the driver manually straighten the wheel after a turn without
+    # openpilot fighting them.
+    CS = sm["carState"]
+    blinker_on = CS.leftBlinker or CS.rightBlinker
+    prev_blinker_on = self.CS_prev_left_blinker or self.CS_prev_right_blinker
+
+    if blinker_on:
+      # Track minimum speed while blinker is active
+      if not prev_blinker_on:
+        self.blinker_min_speed = CS.vEgo
+      else:
+        self.blinker_min_speed = min(self.blinker_min_speed, CS.vEgo)
+      self.blinker_delay_active = False
+    elif prev_blinker_on and starpilot_toggles.pause_lateral_below_signal and starpilot_toggles.pause_lateral_signal_delay > 0:
+      # Blinker just turned off — start the delay timer
+      self.blinker_delay_active = True
+      self.blinker_delay_frame = sm.frame
+
+    if self.blinker_delay_active:
+      time_since_blinker = (sm.frame - self.blinker_delay_frame) * DT_MDL
+      if time_since_blinker < starpilot_toggles.pause_lateral_signal_delay and \
+         self.blinker_min_speed < starpilot_toggles.pause_lateral_below_speed / 2:
+        self.lateral_check = False
+      else:
+        self.blinker_delay_active = False
+
+    self.CS_prev_left_blinker = CS.leftBlinker
+    self.CS_prev_right_blinker = CS.rightBlinker
+
     self.model_length = sm["modelV2"].position.x[-1]
 
     self.raw_model_stopped = self.model_length < CRUISING_SPEED * PLANNER_TIME
@@ -136,15 +190,25 @@ class StarPilotPlanner:
     self.road_curvature_detected = (1 / abs(self.road_curvature))**0.5 < v_ego > CRUISING_SPEED and not (sm["carState"].leftBlinker or sm["carState"].rightBlinker)
 
     if not sm["carState"].standstill:
-      self.tracking_lead = self.update_lead_status(v_ego, starpilot_toggles.stop_distance)
+      self.tracking_lead = self.update_lead_status(
+        v_ego,
+        starpilot_toggles.stop_distance,
+        prioritize_smooth_following=bool(getattr(starpilot_toggles, "prioritize_smooth_following", False)),
+      )
 
     self.starpilot_following.update(controls_enabled, v_ego, sm, starpilot_toggles)
 
-    cem_tracking_active = controls_enabled or sm["starpilotCarState"].alwaysOnLateralEnabled
-    if cem_tracking_active and starpilot_toggles.conditional_experimental_mode:
+    conditional_tracking_active = controls_enabled or sm["starpilotCarState"].alwaysOnLateralEnabled
+    if conditional_tracking_active and starpilot_toggles.conditional_experimental_mode:
       # Keep CEM's filters warm in AOL so engagement can inherit the current scene.
       self.starpilot_cem.update(v_ego, sm, starpilot_toggles)
+      self.starpilot_ccm.experimental_mode = True
+    elif conditional_tracking_active and starpilot_toggles.conditional_chill_mode:
+      self.starpilot_ccm.update(v_ego, v_cruise, sm, starpilot_toggles)
+      self.starpilot_cem.experimental_mode = False
     else:
+      self.starpilot_ccm.experimental_mode = True
+      self.starpilot_cem.experimental_mode = False
       self.starpilot_cem.curve_detected = False
       self.starpilot_cem.stop_sign_and_light(v_ego, sm, PLANNER_TIME - 2)
 
@@ -157,7 +221,7 @@ class StarPilotPlanner:
     else:
       self.starpilot_weather.weather_id = 0
 
-  def update_lead_status(self, v_ego, stop_distance=STOP_DISTANCE):
+  def update_lead_status(self, v_ego, stop_distance=STOP_DISTANCE, prioritize_smooth_following=False):
     following_lead = should_track_lead(
       self.lead_one.status,
       self.lead_one.dRel,
@@ -179,12 +243,12 @@ class StarPilotPlanner:
       lead_brake=max(0.0, -float(getattr(self.lead_one, "aLeadK", 0.0))),
       lead_prob=float(getattr(self.lead_one, "modelProb", 0.0)),
     )
-    if matched_follow_window and (following_lead or self.tracking_lead or self.tracking_lead_filter.x >= THRESHOLD * 0.6):
+    if not prioritize_smooth_following and matched_follow_window and (following_lead or self.tracking_lead or self.tracking_lead_filter.x >= THRESHOLD * 0.6):
       self.radarless_follow_hold_until = now_t + RADARLESS_TRACK_HOLD_TIME
-    elif lead_radar or not self.lead_one.status:
+    elif prioritize_smooth_following or lead_radar or not self.lead_one.status:
       self.radarless_follow_hold_until = 0.0
 
-    if not following_lead and matched_follow_window and now_t < self.radarless_follow_hold_until:
+    if not prioritize_smooth_following and not following_lead and matched_follow_window and now_t < self.radarless_follow_hold_until:
       following_lead = True
 
     self.tracking_lead_filter.update(following_lead)
@@ -209,7 +273,13 @@ class StarPilotPlanner:
     starpilotPlan.disableThrottle = self.starpilot_following.disable_throttle
     starpilotPlan.trackingLead = self.tracking_lead
 
-    starpilotPlan.experimentalMode = self.starpilot_cem.experimental_mode or self.starpilot_vcruise.slc.experimental_mode
+    conditional_experimental_mode = False
+    if starpilot_toggles.conditional_experimental_mode:
+      conditional_experimental_mode = self.starpilot_cem.experimental_mode
+    elif starpilot_toggles.conditional_chill_mode:
+      conditional_experimental_mode = self.starpilot_ccm.experimental_mode
+
+    starpilotPlan.experimentalMode = conditional_experimental_mode or self.starpilot_vcruise.slc.experimental_mode
 
     starpilotPlan.forcingStop = self.starpilot_vcruise.forcing_stop
     starpilotPlan.forcingStopLength = self.starpilot_vcruise.tracked_model_length

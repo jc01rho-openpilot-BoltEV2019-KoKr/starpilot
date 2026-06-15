@@ -401,6 +401,28 @@ def render_speed_limit(content_rect: rl.Rectangle):
   if not state['hide']:
     _draw_speed_limit_sign(state, sign_x, sign_y, sign_width)
 
+    # 2.5 Active source label below sign
+    if not state['show_sources']:
+      source = state.get('speed_limit_source')
+      if source and source != "None" and source != "":
+        source_map = {
+          "Dashboard": "DASH",
+          "Map Data": "MAPS",
+          "Vision": "VISION",
+          "Mapbox": "MAPB",
+          "Upcoming": "NAV"
+        }
+        label = source_map.get(source, source.upper())
+        font = _get_semi_bold()
+        font_size = 20
+        sz = measure_text_cached(font, label, font_size)
+        cx = sign_x + (EU_SIGN_SIZE if use_vienna else sign_width) / 2
+        bottom_y = sign_y + (EU_SIGN_SIZE if use_vienna else US_SIGN_HEIGHT)
+        rect = rl.Rectangle(cx - sz.x / 2 - 8, bottom_y + 8, sz.x + 16, font_size + 8)
+        rl.draw_rectangle_rounded(rect, 0.4, 8, rl.Color(0, 0, 0, 180))
+        rl.draw_rectangle_rounded_lines_ex(rect, 0.4, 8, 1, rl.Color(255, 255, 255, 100))
+        rl.draw_text_ex(font, label, rl.Vector2(cx - sz.x / 2, bottom_y + 12), font_size, 0, rl.WHITE)
+
   # 3. Sources panel
   if state['show_sources']:
     sign_rect = _calc_sign_rect(sign_x, sign_y, sign_width, use_vienna)

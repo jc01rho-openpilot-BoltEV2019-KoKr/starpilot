@@ -297,7 +297,7 @@ void StarPilotAnnotatedCameraWidget::mousePressEvent(QMouseEvent *mouseEvent) {
   mouseEvent->ignore();
 }
 
-void StarPilotAnnotatedCameraWidget::paintStarPilotWidgets(QPainter &p, UIState &s) {
+void StarPilotAnnotatedCameraWidget::paintStarPilotWidgets(QPainter &p, UIState &s, bool hideCameraOverlays) {
   if (cachedSimpleMode) {
     cemStatusPosition = QPoint(0, 0);
     compassPosition = QPoint(0, 0);
@@ -345,7 +345,7 @@ void StarPilotAnnotatedCameraWidget::paintStarPilotWidgets(QPainter &p, UIState 
     paintPedalIcons(p);
   }
 
-  if (cachedRadarTracks) {
+  if (!hideCameraOverlays && cachedRadarTracks) {
     paintRadarTracks(p);
   }
 
@@ -368,7 +368,7 @@ void StarPilotAnnotatedCameraWidget::paintStarPilotWidgets(QPainter &p, UIState 
     paintStandstillTimer(p);
   }
 
-  if (track_vertices.length() >= 1 && redLight && cachedShowStoppingPoint) {
+  if (!hideCameraOverlays && track_vertices.length() >= 1 && redLight && cachedShowStoppingPoint) {
     paintStoppingPoint(p);
   }
 
@@ -468,9 +468,14 @@ void StarPilotAnnotatedCameraWidget::paintCEMStatus(QPainter &p) {
   cemStatusPosition.setY(dmIconPosition.y() - widget_size / 2);
 
   QRect cemWidget(cemStatusPosition, QSize(widget_size, widget_size));
+  const bool conditionalExperimentalMode = starpilot_toggles.value("conditional_experimental_mode").toBool();
+  const bool conditionalChillMode = starpilot_toggles.value("conditional_chill_mode").toBool();
+  const bool manualOverride =
+    (conditionalExperimentalMode && starpilot_scene.conditional_status == 1) ||
+    (conditionalChillMode && (starpilot_scene.conditional_status == 1 || starpilot_scene.conditional_status == 2));
 
   p.setBrush(blackColor(166));
-  if (starpilot_scene.conditional_status == 1) {
+  if (manualOverride) {
     p.setPen(QPen(QColor(bg_colors[STATUS_CEM_DISABLED]), 10));
   } else if (experimentalMode) {
     p.setPen(QPen(QColor(bg_colors[STATUS_EXPERIMENTAL_MODE_ENABLED]), 10));
@@ -480,7 +485,19 @@ void StarPilotAnnotatedCameraWidget::paintCEMStatus(QPainter &p) {
   p.drawRoundedRect(cemWidget, 24, 24);
 
   QSharedPointer<QMovie> icon = chillModeIcon;
-  if (experimentalMode) {
+  if (conditionalChillMode && !conditionalExperimentalMode) {
+    if (starpilot_scene.conditional_status == 1) {
+      icon = experimentalModeIcon;
+    } else if (starpilot_scene.conditional_status == 2) {
+      icon = chillModeIcon;
+    } else if (starpilot_scene.conditional_status == 4) {
+      icon = cemLeadIcon;
+    } else if (starpilot_scene.conditional_status == 6) {
+      icon = cemSpeedIcon;
+    } else {
+      icon = experimentalMode ? experimentalModeIcon : chillModeIcon;
+    }
+  } else if (experimentalMode) {
     if (starpilot_scene.conditional_status == 1) {
       icon = chillModeIcon;
     } else if (starpilot_scene.conditional_status == 2) {
@@ -786,12 +803,17 @@ void StarPilotAnnotatedCameraWidget::paintPathEdges(QPainter &p, int height) {
     gradient.setColorAt(0.5f, QColor(baseColor.red(), baseColor.green(), baseColor.blue(), 255.0f * 0.35f));
     gradient.setColorAt(1.0f, QColor(baseColor.red(), baseColor.green(), baseColor.blue(), 255.0f * 0.0f));
   };
+  const bool conditionalExperimentalMode = starpilot_toggles.value("conditional_experimental_mode").toBool();
+  const bool conditionalChillMode = starpilot_toggles.value("conditional_chill_mode").toBool();
+  const bool highlightOverride =
+    (conditionalExperimentalMode && starpilot_scene.conditional_status == 1) ||
+    (conditionalChillMode && (starpilot_scene.conditional_status == 1 || starpilot_scene.conditional_status == 2));
 
   if (starpilot_scene.switchback_mode_enabled) {
     setPathEdgeColors(bg_colors[STATUS_SWITCHBACK_MODE_ENABLED]);
   } else if (starpilot_scene.always_on_lateral_active) {
     setPathEdgeColors(bg_colors[STATUS_ALWAYS_ON_LATERAL_ACTIVE]);
-  } else if (starpilot_scene.conditional_status == 1) {
+  } else if (highlightOverride) {
     setPathEdgeColors(bg_colors[STATUS_CEM_DISABLED]);
   } else if (experimentalMode) {
     setPathEdgeColors(bg_colors[STATUS_EXPERIMENTAL_MODE_ENABLED]);

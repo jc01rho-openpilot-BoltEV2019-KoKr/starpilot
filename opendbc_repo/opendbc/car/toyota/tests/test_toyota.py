@@ -2,14 +2,21 @@ from types import SimpleNamespace
 
 from hypothesis import given, settings, strategies as st
 
-from opendbc.car import Bus
+from opendbc.car import Bus, structs
+from opendbc.can import CANPacker, CANParser
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
-from opendbc.car.toyota.carcontroller import CarController, update_permit_braking
+from opendbc.car.toyota import toyotacan
+from opendbc.car.toyota.carcontroller import CarController, limit_interceptor_pcm_accel, limit_interceptor_stopping_accel, \
+                                             limit_prius_stopping_accel, update_permit_braking
+from opendbc.car.toyota.carstate import calculate_interceptor_gas_pressed
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
+from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.values import CAR, DBC, TSS2_CAR, ANGLE_CONTROL_CAR, RADAR_ACC_CAR, SECOC_CAR, \
                                                   FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, FUZZY_EXCLUDED_PLATFORMS, \
-                                                  get_platform_codes
+                                                  ToyotaFlags, ToyotaSafetyFlags, get_platform_codes
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
+from openpilot.common.params import Params
 
 Ecu = CarParams.Ecu
 
@@ -34,6 +41,25 @@ class TestToyotaInterfaces:
     for car_model, dbc in DBC.items():
       if car_model in TSS2_CAR and car_model not in SECOC_CAR:
         assert dbc[Bus.pt] == "toyota_nodsu_pt_generated"
+
+  def test_auto_hold_sets_flag_on_supported_tss2(self):
+    params = Params()
+    try:
+      params.put_bool("ToyotaAutoHold", True)
+      car_params = CarInterface.get_params(
+        CAR.TOYOTA_CAMRY_TSS2,
+        {bus: {} for bus in range(8)},
+        [],
+        alpha_long=False,
+        is_release=False,
+        docs=False,
+        starpilot_toggles=SimpleNamespace(),
+      )
+    finally:
+      params.remove("ToyotaAutoHold")
+
+    assert car_params.flags & ToyotaFlags.AUTO_BRAKE_HOLD.value
+    assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALLOW_AEB
 
   def test_essential_ecus(self, subtests):
     # Asserts standard ECUs exist for each platform
@@ -248,6 +274,14 @@ class TestToyotaCarController:
     assert update_permit_braking(False, 0.10, True, True, 25.0, False) is True
     assert update_permit_braking(False, 0.10, False, False, 25.0, False) is True
 
+  def test_prius_stopping_accel_unwinds_stale_stop_hold(self):
+    limited = limit_prius_stopping_accel(-3.28, -0.05, True, 0.0, True)
+    assert -1.5 < limited < 0.0
+
+  def test_prius_stopping_accel_keeps_hard_stop_commands(self):
+    limited = limit_prius_stopping_accel(-3.28, -2.0, True, 0.0, True)
+    assert limited == -3.28
+
   def test_sng_hack_clears_existing_standstill_latch(self):
     controller = self._make_controller(standstill_req=True, last_standstill=True)
 
@@ -259,6 +293,57 @@ class TestToyotaCarController:
     )
 
     assert controller.standstill_req is False
+
+  def test_ui_command_shows_aol_bars_when_lateral_active(self):
+    packer = CANPacker(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt])
+    parser = CANParser(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt], [("LKAS_HUD", 0)], 0)
+
+    msg = toyotacan.create_ui_command(packer, False, False, True, True, False, False, {}, True)
+    parser.update([(1, [msg])])
+
+    assert parser.can_valid
+    assert parser.vl["LKAS_HUD"]["BARRIERS"] == 1
+    assert parser.vl["LKAS_HUD"]["LEFT_LINE"] == 1
+    assert parser.vl["LKAS_HUD"]["RIGHT_LINE"] == 1
+
+  def test_ui_command_hides_lane_markers_when_lateral_inactive(self):
+    packer = CANPacker(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt])
+    parser = CANParser(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt], [("LKAS_HUD", 0)], 0)
+
+    msg = toyotacan.create_ui_command(packer, False, False, True, True, False, False, {}, False)
+    parser.update([(1, [msg])])
+
+    assert parser.can_valid
+    assert parser.vl["LKAS_HUD"]["BARRIERS"] == 0
+    assert parser.vl["LKAS_HUD"]["LEFT_LINE"] == 0
+    assert parser.vl["LKAS_HUD"]["RIGHT_LINE"] == 0
+
+  def test_auto_brake_hold_sends_modified_pre_collision_after_timer(self):
+    controller = self._make_controller()
+    controller.packer = CANPacker(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt])
+    controller.frame = 0
+    controller.brake_hold_active = False
+    controller._brake_hold_counter = 0
+    controller._brake_hold_reset = False
+    controller._prev_brake_pressed = False
+    cs = SimpleNamespace(
+      out=SimpleNamespace(
+        standstill=True,
+        cruiseState=SimpleNamespace(available=True, enabled=False),
+        gasPressed=False,
+        brakePressed=False,
+        gearShifter=structs.CarState.GearShifter.drive,
+      ),
+      pre_collision_2={},
+    )
+
+    can_sends = controller.create_auto_brake_hold_messages(cs, brake_hold_allowed_timer=0)
+
+    parser = CANParser(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt], [("PRE_COLLISION_2", 0)], 0)
+    parser.update([(1, can_sends)])
+    assert controller.brake_hold_active
+    assert parser.vl["PRE_COLLISION_2"]["DSS1GDRV"] == -1.0
+    assert parser.vl["PRE_COLLISION_2"]["PBRTRGR"] == 1
 
   def test_interceptor_stop_and_go_holds_small_launch_at_standstill(self):
     controller = self._make_controller()
@@ -286,6 +371,20 @@ class TestToyotaCarController:
 
     assert 0.0 < gas_cmd <= 0.5
 
+  def test_interceptor_corolla_scales_with_accel_request_when_pedal_enables_sng(self):
+    controller = self._make_controller()
+    controller.CP.enableGasInterceptorDEPRECATED = True
+    controller.CP.carFingerprint = CAR.TOYOTA_COROLLA
+    controller.CP.minEnableSpeed = -1.0
+    controller.accel = 0.8
+
+    gas_cmd = controller._compute_interceptor_gas_cmd(
+      SimpleNamespace(longActive=True),
+      SimpleNamespace(out=SimpleNamespace(standstill=False, vEgo=8.0)),
+    )
+
+    assert 0.0 < gas_cmd <= 0.5
+
   def test_interceptor_disabled_returns_zero(self):
     controller = self._make_controller()
     controller.accel = 1.0
@@ -296,3 +395,93 @@ class TestToyotaCarController:
     )
 
     assert gas_cmd == 0.0
+
+  def test_interceptor_comfort_limit_keeps_positive_target_out_of_coast(self):
+    limited = limit_interceptor_pcm_accel(-0.30, 0.70, False, 8.5)
+
+    assert limited > 0.0
+    assert limited < 0.70
+
+  def test_interceptor_comfort_limit_keeps_mild_brake_request_negative(self):
+    limited = limit_interceptor_pcm_accel(0.25, -0.35, False, 8.5)
+
+    assert limited < 0.0
+    assert limited > -0.35
+
+  def test_interceptor_comfort_limit_bypasses_harder_braking(self):
+    original = -1.80
+    limited = limit_interceptor_pcm_accel(original, -1.80, False, 8.5)
+
+    assert limited == original
+
+  def test_interceptor_comfort_limit_prevents_positive_target_from_crossing_negative(self):
+    limited = limit_interceptor_pcm_accel(-2.0, 1.7, False, 7.5)
+
+    assert limited >= 0.0
+
+  def test_interceptor_comfort_limit_prevents_negative_target_from_crossing_positive(self):
+    limited = limit_interceptor_pcm_accel(0.8, -0.7, False, 7.5)
+
+    assert limited <= 0.0
+
+  def test_interceptor_stopping_limit_softens_no_lead_final_crawl(self):
+    limited = limit_interceptor_stopping_accel(-1.48, -1.48, True, 0.5, False)
+
+    assert limited > -1.48
+    assert limited == -0.82
+
+  def test_interceptor_stopping_limit_tracks_softer_target_near_standstill(self):
+    limited = limit_interceptor_stopping_accel(-1.86, -0.63, True, 0.5, False)
+
+    assert limited > -1.0
+    assert limited == -0.73
+
+  def test_interceptor_stopping_limit_keeps_visible_lead_stop_untouched(self):
+    limited = limit_interceptor_stopping_accel(-1.48, -0.63, True, 0.5, True)
+
+    assert limited == -1.48
+
+  def test_interceptor_stopping_limit_keeps_higher_speed_stop_untouched(self):
+    limited = limit_interceptor_stopping_accel(-1.48, -0.63, True, 3.0, False)
+
+    assert limited == -1.48
+
+  def test_interceptor_stopping_limit_softens_low_speed_no_lead_stop_before_final_crawl(self):
+    limited = limit_interceptor_stopping_accel(-1.55, -0.66, True, 1.45, False)
+
+    assert abs(limited - (-0.8075)) < 1e-6
+
+  def test_avalon_pedal_params_raise_delay_and_soften_stop(self):
+    CP = CarInterface.get_params(
+      CAR.TOYOTA_AVALON_2019,
+      {0: {0x2FF: 8, 0x201: 8}},
+      [],
+      True,
+      False,
+      False,
+      None,
+    )
+
+    assert CP.enableGasInterceptorDEPRECATED
+    assert CP.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.GAS_INTERCEPTOR
+    assert abs(CP.longitudinalActuatorDelay - 0.2) < 1e-6
+    assert CP.stopAccel == -1.5
+
+
+class TestToyotaCarState:
+  def test_interceptor_gas_pressed_threshold(self):
+    cp = SimpleNamespace(vl={
+      "GAS_SENSOR": {
+        "INTERCEPTOR_GAS": 900,
+        "INTERCEPTOR_GAS2": 910,
+      }
+    })
+    assert calculate_interceptor_gas_pressed(cp) is True
+
+    cp = SimpleNamespace(vl={
+      "GAS_SENSOR": {
+        "INTERCEPTOR_GAS": 700,
+        "INTERCEPTOR_GAS2": 710,
+      }
+    })
+    assert calculate_interceptor_gas_pressed(cp) is False

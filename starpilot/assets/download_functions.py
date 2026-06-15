@@ -83,7 +83,7 @@ def download_file(cancel_param, destination, progress_param, url, download_param
 
 def get_remote_file_size(url, suppress_errors=False):
   try:
-    response = requests.head(url, headers={"Accept-Encoding": "identity"}, timeout=10)
+    response = requests.head(url, headers={"Accept-Encoding": "identity"}, timeout=10, allow_redirects=True)
     response.raise_for_status()
     return int(response.headers.get("Content-Length", 0))
   except Exception as error:

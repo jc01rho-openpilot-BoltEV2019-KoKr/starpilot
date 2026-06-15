@@ -38,6 +38,7 @@ def gui_label(
   alignment_vertical: int = rl.GuiTextAlignmentVertical.TEXT_ALIGN_MIDDLE,
   elide_right: bool = True
 ):
+  text = str(_resolve_value(text))
   font = gui_app.font(font_weight)
   text_size = measure_text_cached(font, text, font_size)
   display_text = text

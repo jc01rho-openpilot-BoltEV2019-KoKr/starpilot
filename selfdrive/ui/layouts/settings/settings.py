@@ -4,7 +4,6 @@ from enum import IntEnum
 from collections.abc import Callable
 from openpilot.selfdrive.ui.layouts.settings.developer import DeveloperLayout
 from openpilot.selfdrive.ui.layouts.settings.device import DeviceLayout
-from openpilot.selfdrive.ui.layouts.settings.firehose import FirehoseLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.main_panel import StarPilotLayout
 from openpilot.selfdrive.ui.layouts.settings.software import SoftwareLayout
 from openpilot.selfdrive.ui.layouts.settings.toggles import TogglesLayout
@@ -37,8 +36,7 @@ class PanelType(IntEnum):
   NETWORK = 2
   TOGGLES = 3
   SOFTWARE = 4
-  FIREHOSE = 5
-  DEVELOPER = 6
+  DEVELOPER = 5
 
 
 @dataclass
@@ -67,7 +65,6 @@ class SettingsLayout(Widget):
       PanelType.NETWORK: PanelInfo(tr_noop("Network"), NetworkUI(wifi_manager)),
       PanelType.TOGGLES: PanelInfo(tr_noop("Toggles"), TogglesLayout()),
       PanelType.SOFTWARE: PanelInfo(tr_noop("Software"), SoftwareLayout()),
-      PanelType.FIREHOSE: PanelInfo(tr_noop("Firehose"), FirehoseLayout()),
       PanelType.DEVELOPER: PanelInfo(tr_noop("Developer"), DeveloperLayout()),
     }
 
@@ -117,7 +114,7 @@ class SettingsLayout(Widget):
     # Back/Close button - hierarchical navigation
     back_btn_rect = rl.Rectangle(rect.x + (rect.width - CLOSE_BTN_SIZE) / 2, rect.y + 60, CLOSE_BTN_SIZE, CLOSE_BTN_SIZE)
 
-    pressed = rl.is_mouse_button_down(rl.MouseButton.MOUSE_BUTTON_LEFT) and rl.check_collision_point_rec(rl.get_mouse_position(), back_btn_rect)
+    pressed = gui_app.last_mouse_event.left_down and rl.check_collision_point_rec(gui_app.last_mouse_event.pos, back_btn_rect)
     close_color = CLOSE_BTN_PRESSED if pressed else CLOSE_BTN_COLOR
     rl.draw_rectangle_rounded(back_btn_rect, 1.0, 20, close_color)
 
@@ -143,9 +140,6 @@ class SettingsLayout(Widget):
     # Navigation buttons
     y = rect.y + 300
     for panel_type, panel_info in self._panels.items():
-      if panel_type == PanelType.FIREHOSE:
-        continue
-
       button_rect = rl.Rectangle(rect.x + 50, y, rect.width - 150, NAV_BTN_HEIGHT)
 
       # Button styling

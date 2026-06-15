@@ -86,6 +86,38 @@ def create_pcs_commands(packer, accel, active, mass):
   return [msg1, msg2]
 
 
+def create_brake_hold_command(packer, frame, pre_collision_2, brake_hold_active):
+  values = {s: pre_collision_2[s] for s in [
+    "DSS1GDRV",
+    "DS1STAT2",
+    "DS1STBK2",
+    "PCSWAR",
+    "PCSALM",
+    "PCSOPR",
+    "PCSABK",
+    "PBATRGR",
+    "PPTRGR",
+    "IBTRGR",
+    "CLEXTRGR",
+    "IRLT_REQ",
+    "BRKHLD",
+    "AVSTRGR",
+    "VGRSTRGR",
+    "PREFILL",
+    "PBRTRGR",
+    "PCSDIS",
+    "PBPREPMP",
+  ] if s in pre_collision_2}
+
+  if brake_hold_active:
+    values = {
+      "DSS1GDRV": 0x3FF,
+      "PBRTRGR": frame % 730 < 727,
+    }
+
+  return packer.make_can_msg("PRE_COLLISION_2", 0, values)
+
+
 def create_acc_cancel_command(packer):
   values = {
     "GAS_RELEASED": 0,
@@ -110,13 +142,13 @@ def create_fcw_command(packer, fcw):
   return packer.make_can_msg("PCS_HUD", 0, values)
 
 
-def create_ui_command(packer, steer, chime, left_line, right_line, left_lane_depart, right_lane_depart, enabled, stock_lkas_hud):
+def create_ui_command(packer, steer, chime, left_line, right_line, left_lane_depart, right_lane_depart, stock_lkas_hud, lat_active):
   values = {
     "TWO_BEEPS": chime,
     "LDA_ALERT": steer,
-    "RIGHT_LINE": 3 if right_lane_depart else 1 if right_line else 2,
-    "LEFT_LINE": 3 if left_lane_depart else 1 if left_line else 2,
-    "BARRIERS": 1 if enabled else 0,
+    "RIGHT_LINE": 0 if not lat_active else 3 if right_lane_depart else 1 if right_line else 2,
+    "LEFT_LINE": 0 if not lat_active else 3 if left_lane_depart else 1 if left_line else 2,
+    "BARRIERS": 1 if lat_active else 0,
 
     # static signals
     "SET_ME_X02": 2,

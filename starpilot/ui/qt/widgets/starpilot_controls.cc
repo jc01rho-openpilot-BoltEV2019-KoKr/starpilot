@@ -128,7 +128,7 @@ void loadImage(const QString &basePath, QPixmap &pixmap, QSharedPointer<QMovie> 
 void openDescriptions(bool forceOpenDescriptions, std::map<QString, AbstractControl*> toggles) {
   if (forceOpenDescriptions) {
     for (auto &[key, toggle] : toggles) {
-      if (key != "CESpeed") {
+      if (key != "CESpeed" && key != "CCMSpeed") {
         toggle->showDescription();
       }
     }

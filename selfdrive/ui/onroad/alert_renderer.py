@@ -107,6 +107,9 @@ class AlertRenderer(Widget):
     if ss.alertSize == 0:
       return None
 
+    if ss.alertStatus.raw == AlertStatus.normal and ui_state.starpilot_toggles.get("hide_alerts", False):
+      return None
+
     # Don't get old alert
     if recv_frame < ui_state.started_frame:
       return None

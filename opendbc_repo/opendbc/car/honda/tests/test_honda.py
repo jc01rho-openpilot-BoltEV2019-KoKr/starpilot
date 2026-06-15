@@ -266,3 +266,12 @@ class TestHondaFingerprint:
 
     new_actuators, _ = controller.update(CC.as_reader(), CS, 0, toggles)
     assert new_actuators.accel == pytest.approx(-0.3)
+
+  def test_honda_hrv_3g_uses_matched_longitudinal_delay(self):
+    toggles = get_test_toggles()
+
+    hrv3g_cp = CarInterface.get_params(CAR.HONDA_HRV_3G, gen_empty_fingerprint(), [], True, False, False, toggles)
+    accord_cp = CarInterface.get_params(CAR.HONDA_ACCORD, gen_empty_fingerprint(), [], True, False, False, toggles)
+
+    assert hrv3g_cp.longitudinalActuatorDelay == pytest.approx(0.4)
+    assert accord_cp.longitudinalActuatorDelay == pytest.approx(0.5)

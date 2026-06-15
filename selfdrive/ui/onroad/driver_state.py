@@ -64,6 +64,8 @@ class DriverStateRenderer(Widget):
     self.h_arc_data = None
     self.v_arc_data = None
 
+    self.x_shift: float = 0.0
+
     # Pre-allocate drawing arrays
     self.face_lines = [rl.Vector2(0, 0) for _ in range(len(DEFAULT_FACE_KPTS_3D))]
     self.h_arc_lines = [rl.Vector2(0, 0) for _ in range(ARC_POINT_COUNT)]
@@ -79,7 +81,8 @@ class DriverStateRenderer(Widget):
     self.disengaged_color = rl.Color(139, 139, 139, 255)
 
     self.set_visible(lambda: (ui_state.sm["selfdriveState"].alertSize == AlertSize.none and
-                              ui_state.sm.recv_frame["driverStateV2"] > ui_state.started_frame))
+                              ui_state.sm.recv_frame["driverStateV2"] > ui_state.started_frame and
+                              not ui_state.starpilot_toggles.get("hide_dm_icon", False)))
 
   def _render(self, rect):
     # Set opacity based on active state
@@ -165,7 +168,7 @@ class DriverStateRenderer(Widget):
     # Calculate icon position (bottom-left or bottom-right)
     width, height = self._rect.width, self._rect.height
     offset = UI_BORDER_SIZE + BTN_SIZE // 2
-    self.position_x = self._rect.x + (width - offset if self.is_rhd else offset)
+    self.position_x = self._rect.x + (width - offset if self.is_rhd else offset) + self.x_shift
     self.position_y = self._rect.y + height - offset
 
     # Pre-calculate the face lines positions

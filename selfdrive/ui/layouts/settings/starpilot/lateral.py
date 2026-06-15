@@ -1,24 +1,29 @@
 from __future__ import annotations
 
+import pyray as rl
+
 from openpilot.system.hardware import HARDWARE
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.system.ui.lib.application import gui_app
-from openpilot.system.ui.lib.multilang import tr, tr_noop
+from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.widgets import DialogResult
 from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
 
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
-  SettingRow, SettingSection, AetherSettingsView, COMPACT_PANEL_METRICS,
-)
-from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
-  AETHER_LIST_METRICS,
+  AetherListMetrics,
+  AetherListColors,
   AetherSliderDialog,
-  panel_style_from_color,
+  DEFAULT_PANEL_STYLE,
+  PanelManagerView,
+  TileGrid,
+  ToggleTile,
+  draw_list_group_shell,
+  draw_section_header,
+  draw_selection_list_row,
+  draw_settings_panel_header,
+  _with_alpha,
 )
-
-
-PANEL_STYLE = panel_style_from_color("#3B82F6")
 
 
 def _confirm_reboot_toggle(params, key, state):
@@ -31,237 +36,544 @@ def _confirm_reboot_toggle(params, key, state):
     ))
 
 
-# ═══════════════════════════════════════════════════════════════
-# StarPilotAdvancedLateralLayout
-# ═══════════════════════════════════════════════════════════════
+CUSTOM_METRICS = AetherListMetrics(
+  max_content_width=1560,
+  outer_margin_x=18,
+  outer_margin_y=10,
+  panel_padding_x=16,
+  panel_padding_top=16,
+  panel_padding_bottom=12,
+  header_height=164,
+  section_gap=12,
+  section_header_height=28,
+  section_header_gap=8,
+  row_height=104,
+  utility_row_height=88,
+)
 
-class StarPilotAdvancedLateralLayout(_SettingsPage):
-  def __init__(self):
+SECTION_GAP = CUSTOM_METRICS.section_gap
+SECTION_HEADER_HEIGHT = CUSTOM_METRICS.section_header_height
+SECTION_HEADER_GAP = CUSTOM_METRICS.section_header_gap
+ROW_HEIGHT = CUSTOM_METRICS.row_height
+PANEL_STYLE = DEFAULT_PANEL_STYLE
+
+_LATERAL_TUNE_KEYS = ["TurnDesires", "NNFF", "NNFFLite", "ForceTorqueController"]
+_ADVANCED_LATERAL_KEYS = ["ForceAutoTune", "ForceAutoTuneOff"]
+
+
+def _ensure(params, key):
+  if not params.get_bool(key):
+    params.put_bool(key, True)
+
+
+def _sync_parent(params, parent_key, child_keys):
+  if any(params.get_bool(k) for k in child_keys):
+    if not params.get_bool(parent_key):
+      params.put_bool(parent_key, True)
+  else:
+    if params.get_bool(parent_key):
+      params.put_bool(parent_key, False)
+
+
+class SteeringManagerView(PanelManagerView):
+  METRICS = CUSTOM_METRICS
+
+  def __init__(self, controller: "StarPilotLateralLayout"):
     super().__init__()
-    self._build_view()
+    self._controller = controller
+    self._shell_rect = rl.Rectangle(0, 0, 0, 0)
 
-  def _advanced_enabled(self):
-    return self._params.get_bool("AdvancedLateralTune")
+    self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_width=100)
+    self._toggle_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
+    self._child(self._toggle_grid)
 
-  def _using_nnff(self):
-    return starpilot_state.car_state.hasNNFFLog and self._params.get_bool("LateralTune") and self._params.get_bool("NNFF")
+  def show_event(self):
+    super().show_event()
+    starpilot_state.update(force=True)
+    self._rebuild_toggle_grid()
 
-  def _forcing_auto_tune(self):
-    return not starpilot_state.car_state.hasAutoTune and self._params.get_bool("ForceAutoTune")
+  def _on_frame_created(self, frame) -> None:
+    self._shell_rect = frame.shell
 
-  def _forcing_auto_tune_off(self):
-    return starpilot_state.car_state.hasAutoTune and self._params.get_bool("ForceAutoTuneOff")
+  def _activate_target(self, target_id: str | None):
+    if not target_id:
+      return
+    prefix, _, value = target_id.partition(":")
+    if prefix == "select":
+      self._controller._on_select(value)
 
-  def _forcing_torque_controller(self):
-    return not starpilot_state.car_state.isAngleCar and self._params.get_bool("ForceTorqueController")
+  def _draw_header(self, rect: rl.Rectangle):
+    draw_settings_panel_header(rect, tr("Steering"),
+                                tr("Fine-tune lateral control, lane changes, and steering behavior."),
+                                subtitle_size=22)
 
-  def _torque_tuning_active(self):
-    return starpilot_state.car_state.isTorqueCar or self._forcing_torque_controller() or self._using_nnff()
+  def _build_toggle_defs(self) -> list[dict]:
+    p = self._controller._params
+    cs = starpilot_state.car_state
+    toggles: list[dict] = []
 
-  def _manual_tuning_values_enabled(self):
-    if starpilot_state.car_state.hasAutoTune:
-      return self._forcing_auto_tune_off()
-    return not self._forcing_auto_tune()
+    toggles.append({
+      "key": "AdvancedLateralTune",
+      "title": tr("Advanced Lateral Tuning"),
+      "subtitle": tr("Fine-tune steering response and auto-tuning."),
+      "get": lambda: p.get_bool("AdvancedLateralTune"),
+      "set": lambda s: p.put_bool("AdvancedLateralTune", s),
+    })
 
-  def _build_view(self):
-    adv = self._advanced_enabled
-    torque = self._torque_tuning_active
-    manual = self._manual_tuning_values_enabled
-    nnff = self._using_nnff
+    toggles.append({
+      "key": "AlwaysOnLateral",
+      "title": tr("Always On Lateral"),
+      "subtitle": tr("Steering stays active when ACC is off."),
+      "get": lambda: p.get_bool("AlwaysOnLateral"),
+      "set": lambda s: (_confirm_reboot_toggle(p, "AlwaysOnLateral", s)
+                        if s else p.put_bool("AlwaysOnLateral", False)),
+    })
 
-    sections = [
-      SettingSection(tr_noop("Steering Tuning"), [
-        SettingRow("SteerDelay", "value", tr_noop("Actuator Delay"),
-                   subtitle=tr_noop("The time between openpilot's steering command and the vehicle's response."),
-                   get_value=lambda: f"{self._params.get_float('SteerDelay'):.2f}s",
-                   on_click=lambda: self._show_slider("SteerDelay", 0.01, 1.0, step=0.01, unit="s", value_type="float"),
-                   visible=lambda: adv() and starpilot_state.car_state.steerActuatorDelay != 0),
-        SettingRow("SteerFriction", "value", tr_noop("Friction"),
-                   subtitle=tr_noop("Compensates for steering friction around center."),
-                   get_value=lambda: f"{self._params.get_float('SteerFriction'):.3f}",
-                   on_click=lambda: self._show_slider("SteerFriction", 0.0, max(1.0, starpilot_state.car_state.friction * 1.5), step=0.01, value_type="float"),
-                   visible=lambda: adv() and starpilot_state.car_state.friction != 0 and torque() and not nnff() and manual()),
-        SettingRow("SteerKP", "value", tr_noop("Kp Factor"),
-                   subtitle=tr_noop("How strongly openpilot corrects lateral position."),
-                   get_value=lambda: f"{self._params.get_float('SteerKP'):.2f}",
-                   on_click=lambda: self._show_slider("SteerKP", max(0.01, starpilot_state.car_state.steerKp) * 0.5, max(0.01, starpilot_state.car_state.steerKp) * 1.5, step=0.01, value_type="float"),
-                   visible=lambda: adv() and starpilot_state.car_state.steerKp != 0 and torque() and not starpilot_state.car_state.isAngleCar),
-        SettingRow("SteerLatAccel", "value", tr_noop("Lateral Acceleration"),
-                   subtitle=tr_noop("Maps steering torque to turning response."),
-                   get_value=lambda: f"{self._params.get_float('SteerLatAccel'):.2f}",
-                   on_click=lambda: self._show_slider("SteerLatAccel", max(0.01, starpilot_state.car_state.latAccelFactor) * 0.5, max(0.01, starpilot_state.car_state.latAccelFactor) * 1.5, step=0.01, value_type="float"),
-                   visible=lambda: adv() and starpilot_state.car_state.latAccelFactor != 0 and torque() and not nnff() and manual()),
-        SettingRow("SteerRatio", "value", tr_noop("Steer Ratio"),
-                   subtitle=tr_noop("Adjust the relationship between steering wheel input and road-wheel angle."),
-                   get_value=lambda: f"{self._params.get_float('SteerRatio'):.2f}",
-                   on_click=lambda: self._show_slider("SteerRatio", max(0.01, starpilot_state.car_state.steerRatio) * 0.5, max(0.01, starpilot_state.car_state.steerRatio) * 1.5, step=0.01, value_type="float"),
-                   visible=lambda: adv() and starpilot_state.car_state.steerRatio != 0 and manual()),
-        SettingRow("ForceAutoTune", "toggle", tr_noop("Force Auto-Tune On"),
-                   subtitle=tr_noop("Force-enable live auto-tuning for friction and lateral acceleration."),
-                   get_state=lambda: self._params.get_bool("ForceAutoTune"),
-                   set_state=lambda s: (self._params.put_bool("ForceAutoTune", s), s and self._params.put_bool("ForceAutoTuneOff", False)),
-                   visible=lambda: adv() and not starpilot_state.car_state.hasAutoTune and not starpilot_state.car_state.isAngleCar and torque()),
-        SettingRow("ForceAutoTuneOff", "toggle", tr_noop("Force Auto-Tune Off"),
-                   subtitle=tr_noop("Force-disable live auto-tuning and use your set values instead."),
-                   get_state=lambda: self._params.get_bool("ForceAutoTuneOff"),
-                   set_state=lambda s: (self._params.put_bool("ForceAutoTuneOff", s), s and self._params.put_bool("ForceAutoTune", False)),
-                   visible=lambda: adv() and starpilot_state.car_state.hasAutoTune and not starpilot_state.car_state.isAngleCar),
-        SettingRow("ForceTorqueController", "toggle", tr_noop("Force Torque Controller"),
-                   subtitle=tr_noop("Use torque-based steering control instead of the stock steering mode when supported."),
-                   get_state=lambda: self._params.get_bool("ForceTorqueController"),
-                   set_state=lambda s: _confirm_reboot_toggle(self._params, "ForceTorqueController", s),
-                   visible=lambda: adv() and not starpilot_state.car_state.isAngleCar and not starpilot_state.car_state.isTorqueCar),
-      ]),
-    ]
-    self._manager_view = AetherSettingsView(
-      self, sections,
-      header_title=tr_noop("Advanced Lateral Tuning"),
-      header_subtitle=tr_noop("Adjust steering response, torque controller behavior, and auto-tuning controls."),
-      panel_style=PANEL_STYLE,
-      metrics=COMPACT_PANEL_METRICS,
+    toggles.append({
+      "key": "LaneChanges",
+      "title": tr("Lane Changes"),
+      "subtitle": tr("Allow openpilot to change lanes."),
+      "get": lambda: p.get_bool("LaneChanges"),
+      "set": lambda s: p.put_bool("LaneChanges", s),
+    })
+
+    toggles.append({
+      "key": "PauseLateralOnSignal",
+      "title": tr("Turn Signal Only"),
+      "subtitle": tr("Only pause steering when turn signal is active."),
+      "get": lambda: p.get_bool("PauseLateralOnSignal"),
+      "set": lambda s: p.put_bool("PauseLateralOnSignal", s),
+    })
+
+    toggles.append({
+      "key": "NudgelessLaneChange",
+      "title": tr("Auto Lane Changes"),
+      "subtitle": tr("Signal triggers automatic lane change."),
+      "get": lambda: p.get_bool("NudgelessLaneChange"),
+      "set": lambda s: p.put_bool("NudgelessLaneChange", s),
+    })
+
+    toggles.append({
+      "key": "OneLaneChange",
+      "title": tr("One Per Signal"),
+      "subtitle": tr("One lane change per signal activation."),
+      "get": lambda: p.get_bool("OneLaneChange"),
+      "set": lambda s: p.put_bool("OneLaneChange", s),
+    })
+
+    toggles.append({
+      "key": "TurnDesires",
+      "title": tr("Force Turn Desires"),
+      "subtitle": tr("Follow turn intent below min lane change speed."),
+      "get": lambda: p.get_bool("TurnDesires"),
+      "set": lambda s: (p.put_bool("TurnDesires", s),
+                        _sync_parent(p, "LateralTune", _LATERAL_TUNE_KEYS)),
+    })
+
+    toggles.append({
+      "key": "NavDesiresAllowed",
+      "title": tr("Use Route Desires"),
+      "subtitle": tr("Allow navigation to request lane keep and turns."),
+      "get": lambda: p.get_bool("NavDesiresAllowed"),
+      "set": lambda s: p.put_bool("NavDesiresAllowed", s),
+    })
+
+    toggles.append({
+      "key": "NNFF",
+      "title": tr("NNFF"),
+      "subtitle": tr("Neural net feedforward steering controller."),
+      "get": lambda: p.get_bool("NNFF"),
+      "set": lambda s: (p.put_bool("NNFF", s),
+                        s and p.put_bool("NNFFLite", False),
+                        _sync_parent(p, "LateralTune", _LATERAL_TUNE_KEYS)),
+      "enabled": cs.hasNNFFLog and not cs.isAngleCar,
+      "disabled_label": tr("Not Available"),
+    })
+
+    toggles.append({
+      "key": "NNFFLite",
+      "title": tr("NNFF Lite"),
+      "subtitle": tr("Lightweight NNFF when full model is off."),
+      "get": lambda: p.get_bool("NNFFLite"),
+      "set": lambda s: (p.put_bool("NNFFLite", s),
+                        _sync_parent(p, "LateralTune", _LATERAL_TUNE_KEYS)),
+      "enabled": not cs.isAngleCar,
+      "disabled_label": tr("Not Available"),
+    })
+
+    toggles.append({
+      "key": "ForceAutoTune",
+      "title": tr("Force Auto-Tune On"),
+      "subtitle": tr("Force-enable live auto-tuning for friction and lateral accel."),
+      "get": lambda: p.get_bool("ForceAutoTune"),
+      "set": lambda s: (p.put_bool("ForceAutoTune", s),
+                        s and p.put_bool("ForceAutoTuneOff", False),
+                        _sync_parent(p, "AdvancedLateralTune", _ADVANCED_LATERAL_KEYS)),
+      "enabled": not cs.hasAutoTune and cs.isTorqueCar and not cs.isAngleCar,
+      "disabled_label": tr("Not Available"),
+    })
+
+    toggles.append({
+      "key": "ForceAutoTuneOff",
+      "title": tr("Force Auto-Tune Off"),
+      "subtitle": tr("Force-disable auto-tuning and use your set values."),
+      "get": lambda: p.get_bool("ForceAutoTuneOff"),
+      "set": lambda s: (p.put_bool("ForceAutoTuneOff", s),
+                        s and p.put_bool("ForceAutoTune", False),
+                        _sync_parent(p, "AdvancedLateralTune", _ADVANCED_LATERAL_KEYS)),
+      "enabled": cs.hasAutoTune and cs.isTorqueCar and not cs.isAngleCar,
+      "disabled_label": tr("Not Available"),
+    })
+
+    toggles.append({
+      "key": "ForceTorqueController",
+      "title": tr("Force Torque Ctrl"),
+      "subtitle": tr("Torque-based steering for smoother lane keeping."),
+      "get": lambda: p.get_bool("ForceTorqueController"),
+      "set": lambda s: (p.put_bool("ForceTorqueController", s),
+                        _sync_parent(p, "LateralTune", _LATERAL_TUNE_KEYS)),
+      "enabled": not cs.isTorqueCar and not cs.isAngleCar,
+      "disabled_label": tr("Not Available"),
+    })
+
+    return toggles
+
+  def _rebuild_toggle_grid(self):
+    self._toggle_grid.clear()
+    for td in self._build_toggle_defs():
+      self._toggle_grid.add_tile(ToggleTile(
+        title=td["title"],
+        get_state=td["get"],
+        set_state=td["set"],
+        bg_color=PANEL_STYLE.accent,
+        desc=td.get("subtitle", ""),
+        is_enabled=td.get("enabled", True),
+        disabled_label=td.get("disabled_label", ""),
+        show_led=True,
+      ))
+
+  def _measure_content_height(self, width: float) -> float:
+    sections = self._build_left_sections()
+    left_h = self._stacked_section_height([s["height"] for s in sections if s.get("visible", True)])
+
+    tiles_height = 0.0
+    if self._toggle_grid.tiles:
+      N = len(self._toggle_grid.tiles)
+      gap = self._toggle_grid.gap
+      if self._uses_two_columns(width):
+        cols = 2
+        tile_rows = (N + cols - 1) // cols
+        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
+        tiles_content_h = tile_rows * 130 + tile_gaps
+        tiles_height = self._section_block_height(tiles_content_h + 24)
+      else:
+        cols = 3
+        tile_rows = (N + cols - 1) // cols
+        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
+        tiles_content_h = tile_rows * 130 + tile_gaps
+        tiles_height = SECTION_GAP + self._section_block_height(tiles_content_h + 24)
+
+    if self._uses_two_columns(width):
+      vh = self._scroll_rect.height if self._scroll_rect and self._scroll_rect.height > 0 else tiles_height
+      return max(left_h, vh)
+    return left_h + tiles_height
+
+  def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
+    self._interactive_rects.clear()
+    y = rect.y + self._scroll_offset
+    self._draw_panel_content(y, rect.x, width)
+
+  def _draw_panel_content(self, y: float, x: float, width: float):
+    sections = self._build_left_sections()
+
+    drawn_first = False
+
+    if self._uses_two_columns(width):
+      column_w = self._column_width(width)
+      curr_y = y
+
+      for section in sections:
+        if not section.get("rows"):
+          continue
+        if drawn_first:
+          curr_y += SECTION_GAP
+        drawn_first = True
+        draw_section_header(rl.Rectangle(x, curr_y, column_w, SECTION_HEADER_HEIGHT),
+                            section["title"], style=PANEL_STYLE)
+        curr_y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
+        row_count = len(section["rows"])
+        container_rect = rl.Rectangle(x, curr_y, column_w, row_count * ROW_HEIGHT)
+        draw_list_group_shell(container_rect, style=PANEL_STYLE)
+        for index, row in enumerate(section["rows"]):
+          row_rect = rl.Rectangle(x, curr_y + index * ROW_HEIGHT, column_w, ROW_HEIGHT)
+          self._draw_row(row_rect, row, is_last=index == row_count - 1)
+        curr_y += row_count * ROW_HEIGHT
+
+      if self._toggle_grid.tiles:
+        rx = x + column_w + self.COLUMN_GAP
+        draw_section_header(rl.Rectangle(rx, y, column_w, SECTION_HEADER_HEIGHT),
+                            tr("Toggles"), style=PANEL_STYLE)
+        right_container_y = y + SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
+
+        N = len(self._toggle_grid.tiles)
+        cols = 2
+        self._toggle_grid._columns = cols
+        gap = self._toggle_grid.gap
+        tile_rows = (N + cols - 1) // cols
+        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
+        tiles_content_h = tile_rows * 130 + tile_gaps
+
+        needed_height = tiles_content_h + 24
+        viewport_remaining = (self._scroll_rect.y + self._scroll_rect.height) - right_container_y
+        container_h = max(needed_height, viewport_remaining)
+
+        draw_list_group_shell(rl.Rectangle(rx, right_container_y, column_w, container_h), style=PANEL_STYLE)
+        self._toggle_grid.set_parent_rect(self._scroll_rect)
+        self._toggle_grid.render(rl.Rectangle(rx + 12, right_container_y + 12, column_w - 24, container_h - 24))
+    else:
+      curr_y = y
+      for section in sections:
+        if not section.get("rows"):
+          continue
+        if drawn_first:
+          curr_y += SECTION_GAP
+        drawn_first = True
+        draw_section_header(rl.Rectangle(x, curr_y, width, SECTION_HEADER_HEIGHT),
+                            section["title"], style=PANEL_STYLE)
+        curr_y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
+        row_count = len(section["rows"])
+        container_rect = rl.Rectangle(x, curr_y, width, row_count * ROW_HEIGHT)
+        draw_list_group_shell(container_rect, style=PANEL_STYLE)
+        for index, row in enumerate(section["rows"]):
+          row_rect = rl.Rectangle(x, curr_y + index * ROW_HEIGHT, width, ROW_HEIGHT)
+          self._draw_row(row_rect, row, is_last=index == row_count - 1)
+        curr_y += row_count * ROW_HEIGHT
+
+      if self._toggle_grid.tiles:
+        curr_y += SECTION_GAP
+        draw_section_header(rl.Rectangle(x, curr_y, width, SECTION_HEADER_HEIGHT),
+                            tr("Toggles"), style=PANEL_STYLE)
+        curr_y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
+
+        N = len(self._toggle_grid.tiles)
+        cols = 3
+        self._toggle_grid._columns = cols
+        gap = self._toggle_grid.gap
+        avail_w = width - 24
+        tile_rows = (N + cols - 1) // cols
+        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
+        tiles_content_h = tile_rows * 130 + tile_gaps
+
+        draw_list_group_shell(rl.Rectangle(x, curr_y, width, tiles_content_h + 24), style=PANEL_STYLE)
+        self._toggle_grid.set_parent_rect(self._scroll_rect)
+        self._toggle_grid.render(rl.Rectangle(x + 12, curr_y + 12, avail_w, tiles_content_h))
+
+  def _draw_row(self, rect: rl.Rectangle, row: dict, is_last: bool):
+    target_id = row["target_id"]
+    is_enabled = row.get("is_enabled", True)
+    hovered, pressed = self._interactive_state(target_id, rect) if is_enabled else (False, False)
+
+    draw_selection_list_row(
+      rect, title=row["title"], subtitle=row.get("subtitle", ""),
+      action_text=row["get_value"](), hovered=hovered and is_enabled,
+      pressed=pressed and is_enabled, is_last=is_last,
+      action_width=188, action_pill=True,
+      action_pill_width=row.get("pill_width", 108), action_pill_height=44,
+      title_size=34, subtitle_size=22, action_text_size=18,
+      row_separator=PANEL_STYLE.divider_color,
+      action_fill=PANEL_STYLE.current_fill if is_enabled else _with_alpha(PANEL_STYLE.current_fill, 120),
+      action_border=PANEL_STYLE.current_border if is_enabled else _with_alpha(PANEL_STYLE.current_border, 100),
+      action_text_color=AetherListColors.HEADER if is_enabled else AetherListColors.MUTED,
     )
 
+  def _build_left_sections(self) -> list[dict]:
+    p = self._controller._params
+    cs = starpilot_state.car_state
+    sections: list[dict] = []
+
+    alt = p.get_bool("AdvancedLateralTune")
+    aol = p.get_bool("AlwaysOnLateral")
+    lc = p.get_bool("LaneChanges")
+    nlc = p.get_bool("NudgelessLaneChange")
+    pos = p.get_bool("PauseLateralOnSignal")
+
+    if alt:
+      rows: list[dict] = []
+      if cs.steerActuatorDelay != 0:
+        rows.append({
+          "target_id": "select:SteerDelay",
+          "title": tr("Actuator Delay"),
+          "subtitle": tr("Time between steering command and vehicle response."),
+          "get_value": lambda: f"{p.get_float('SteerDelay'):.2f}s",
+          "pill_width": 120,
+        })
+      if cs.friction != 0:
+        rows.append({
+          "target_id": "select:SteerFriction",
+          "title": tr("Friction"),
+          "subtitle": tr("Compensates for steering friction around center."),
+          "get_value": lambda: f"{p.get_float('SteerFriction'):.3f}",
+          "pill_width": 120,
+        })
+      if cs.steerKp != 0:
+        rows.append({
+          "target_id": "select:SteerKP",
+          "title": tr("Kp Factor"),
+          "subtitle": tr("How strongly openpilot corrects lateral position."),
+          "get_value": lambda: f"{p.get_float('SteerKP'):.2f}",
+          "pill_width": 120,
+        })
+      if cs.latAccelFactor != 0:
+        rows.append({
+          "target_id": "select:SteerLatAccel",
+          "title": tr("Lateral Acceleration"),
+          "subtitle": tr("Maps steering torque to turning response."),
+          "get_value": lambda: f"{p.get_float('SteerLatAccel'):.2f}",
+          "pill_width": 120,
+        })
+      if cs.steerRatio != 0:
+        rows.append({
+          "target_id": "select:SteerRatio",
+          "title": tr("Steer Ratio"),
+          "subtitle": tr("Relationship between steering wheel and road-wheel angle."),
+          "get_value": lambda: f"{p.get_float('SteerRatio'):.2f}",
+          "pill_width": 120,
+        })
+      sections.append({
+        "title": tr("Advanced Tuning"),
+        "rows": rows,
+        "visible": True,
+        "height": self._section_block_height(self._section_height(len(rows), ROW_HEIGHT)),
+      })
+
+    if aol:
+      aol_rows = [{
+        "target_id": "select:PauseAOLOnBrake",
+        "title": tr("Pause AOL On Brake"),
+        "subtitle": tr("Pause AOL below this speed while brake is pressed."),
+        "get_value": lambda: f"{p.get_int('PauseAOLOnBrake')} mph",
+        "pill_width": 140,
+      }]
+      sections.append({
+        "title": tr("Always On Lateral"),
+        "rows": aol_rows,
+        "visible": True,
+        "height": self._section_block_height(self._section_height(len(aol_rows), ROW_HEIGHT)),
+      })
+
+    if lc:
+      lc_rows: list[dict] = [{
+        "target_id": "select:MinimumLaneChangeSpeed",
+        "title": tr("Min Lane Change Speed"),
+        "subtitle": tr("Lowest speed at which openpilot will change lanes."),
+        "get_value": lambda: f"{p.get_int('MinimumLaneChangeSpeed')} mph",
+        "pill_width": 140,
+      }]
+      if nlc:
+        lc_rows.append({
+          "target_id": "select:LaneChangeTime",
+          "title": tr("Lane Change Delay"),
+          "subtitle": tr("Delay before the start of an automatic lane change. 0 = Instant."),
+          "get_value": lambda: tr("Instant") if p.get_float("LaneChangeTime") == 0
+                         else f"{p.get_float('LaneChangeTime'):.1f}s",
+          "pill_width": 120,
+        })
+        lc_rows.append({
+          "target_id": "select:LaneDetectionWidth",
+          "title": tr("Min Lane Width"),
+          "subtitle": tr("Prevent lane changes into narrower lanes."),
+          "get_value": lambda: f"{p.get_float('LaneDetectionWidth'):.1f} ft",
+          "pill_width": 120,
+        })
+      lc_rows.append({
+        "target_id": "select:LaneChangeSmoothing",
+        "title": tr("Lane Change Smoothing"),
+        "subtitle": tr("Smoothness of lane change commit. 10 = Stock, 1 = Smoothest."),
+        "get_value": lambda: tr("Stock") if p.get_int("LaneChangeSmoothing") == 10
+                       else f"{p.get_int('LaneChangeSmoothing')}",
+        "pill_width": 120,
+      })
+      sections.append({
+        "title": tr("Lane Changes"),
+        "rows": lc_rows,
+        "visible": True,
+        "height": self._section_block_height(self._section_height(len(lc_rows), ROW_HEIGHT)),
+      })
+
+    paus_rows: list[dict] = [{
+      "target_id": "select:PauseLateralSpeed",
+      "title": tr("Pause Lateral Below"),
+      "subtitle": tr("Pause steering below the set speed."),
+      "get_value": lambda: f"{p.get_int('PauseLateralSpeed')} mph",
+      "pill_width": 140,
+    }]
+    if pos:
+      paus_rows.append({
+        "target_id": "select:LateralResumeDelay",
+        "title": tr("Resume Delay"),
+        "subtitle": tr("Delay before lateral resumes after signal off. 0 = Off."),
+        "get_value": lambda: tr("Off") if p.get_float("LateralResumeDelay") == 0
+                       else f"{p.get_float('LateralResumeDelay'):.1f}s",
+        "pill_width": 120,
+      })
+    sections.append({
+      "title": tr("Pause Lateral"),
+      "rows": paus_rows,
+      "visible": True,
+      "height": self._section_block_height(self._section_height(len(paus_rows), ROW_HEIGHT)),
+      })
+
+    return sections
+
 
 # ═══════════════════════════════════════════════════════════════
-# StarPilotLateralLayout — top-level hub with 3 tabs
+# StarPilotLateralLayout — top-level hybrid panel
 # ═══════════════════════════════════════════════════════════════
 
 class StarPilotLateralLayout(_SettingsPage):
+  SLIDER_COLOR = "#5B9BD5"
+
   def __init__(self):
     super().__init__()
+    self._manager_view = SteeringManagerView(self)
 
-    self._sub_panels = {
-      "advanced_lateral": StarPilotAdvancedLateralLayout(),
-    }
-    self._wire_sub_panels()
-    self._build_view()
+  def _on_select(self, key: str):
+    if key == "PauseAOLOnBrake":
+      self._show_slider("PauseAOLOnBrake", 0, 100, unit=" mph")
+    elif key == "PauseLateralSpeed":
+      def on_speed_close(res, val):
+        if res == DialogResult.CONFIRM:
+          self._params.put_int("PauseLateralSpeed", int(val))
+          self._params.put_bool("QOLLateral", int(val) > 0)
+      current = self._params.get_int("PauseLateralSpeed")
+      gui_app.push_widget(AetherSliderDialog(
+        tr("Pause Lateral Below"), 0, 100, 1, current, on_speed_close,
+        unit=" mph", color=self.SLIDER_COLOR))
+    elif key == "LateralResumeDelay":
+      self._show_slider("LateralResumeDelay", 0.0, 5.0, step=0.1, unit="s", value_type="float")
+    elif key == "MinimumLaneChangeSpeed":
+      self._show_slider("MinimumLaneChangeSpeed", 0, 100, unit=" mph")
+    elif key == "LaneChangeTime":
+      self._show_slider("LaneChangeTime", 0.0, 5.0, step=0.1, unit="s", value_type="float")
+    elif key == "LaneDetectionWidth":
+      self._show_slider("LaneDetectionWidth", 0.0, 15.0, step=0.1, unit=" ft", value_type="float")
+    elif key == "LaneChangeSmoothing":
+      self._show_lane_smoothing()
+    elif key == "SteerDelay":
+      self._show_slider("SteerDelay", 0.01, 1.0, step=0.01, unit="s", value_type="float")
+    elif key == "SteerFriction":
+      self._show_slider("SteerFriction", 0.0, max(1.0, starpilot_state.car_state.friction * 1.5), step=0.01, value_type="float")
+    elif key == "SteerKP":
+      self._show_slider("SteerKP", max(0.01, starpilot_state.car_state.steerKp) * 0.5, max(0.01, starpilot_state.car_state.steerKp) * 1.5, step=0.01, value_type="float")
+    elif key == "SteerLatAccel":
+      self._show_slider("SteerLatAccel", max(0.01, starpilot_state.car_state.latAccelFactor) * 0.5, max(0.01, starpilot_state.car_state.latAccelFactor) * 1.5, step=0.01, value_type="float")
+    elif key == "SteerRatio":
+      self._show_slider("SteerRatio", max(0.01, starpilot_state.car_state.steerRatio) * 0.5, max(0.01, starpilot_state.car_state.steerRatio) * 1.5, step=0.01, value_type="float")
 
-  def _build_view(self):
-    tab_defs = [
-      {"id": "steering", "title": tr_noop("Steering"), "subtitle": tr_noop("Steering modes")},
-      {"id": "lane", "title": tr_noop("Lane"), "subtitle": tr_noop("Lane changes")},
-      {"id": "tune", "title": tr_noop("Tune"), "subtitle": tr_noop("Advanced controls")},
-    ]
-
-    sections = [
-      # ── Steering tab ──
-      SettingSection(tr_noop("Steering Modes"), [
-        SettingRow("AlwaysOnLateral", "toggle", tr_noop("Always On Lateral"),
-                   subtitle=tr_noop("Keep lateral control active even without openpilot engaged."),
-                   get_state=lambda: self._params.get_bool("AlwaysOnLateral"),
-                   set_state=lambda s: _confirm_reboot_toggle(self._params, "AlwaysOnLateral", s) if s else self._params.put_bool("AlwaysOnLateral", False)),
-        SettingRow("AlwaysOnLateralLKAS", "toggle", tr_noop("Enable With LKAS"),
-                   subtitle="",
-                   get_state=lambda: self._params.get_bool("AlwaysOnLateralLKAS"),
-                   set_state=lambda s: self._params.put_bool("AlwaysOnLateralLKAS", s),
-                   visible=lambda: self._params.get_bool("AlwaysOnLateral") and starpilot_state.car_state.lkasAllowedForAOL),
-        SettingRow("PauseAOLOnBrake", "value", tr_noop("Pause Below"),
-                   subtitle="",
-                   get_value=lambda: f"{self._params.get_int('PauseAOLOnBrake')} mph",
-                   on_click=lambda: self._show_slider("PauseAOLOnBrake", 0, 100, unit=" mph"),
-                   visible=lambda: self._params.get_bool("AlwaysOnLateral")),
-        SettingRow("QOLLateral", "toggle", tr_noop("Quality of Life"),
-                   subtitle="",
-                   get_state=lambda: self._params.get_bool("QOLLateral"),
-                   set_state=lambda s: self._params.put_bool("QOLLateral", s)),
-        SettingRow("PauseLateralSpeed", "value", tr_noop("Pause Steering Below"),
-                   subtitle="",
-                   get_value=lambda: f"{self._params.get_int('PauseLateralSpeed')} mph",
-                   on_click=lambda: self._show_slider("PauseLateralSpeed", 0, 100, unit=" mph"),
-                   visible=lambda: self._params.get_bool("QOLLateral")),
-        SettingRow("PauseLateralOnSignal", "toggle", tr_noop("Turn Signal Only"),
-                   subtitle=tr_noop("Only pause steering when the turn signal is active."),
-                   get_state=lambda: self._params.get_bool("PauseLateralOnSignal"),
-                   set_state=lambda s: self._params.put_bool("PauseLateralOnSignal", s),
-                   visible=lambda: self._params.get_bool("QOLLateral") and self._params.get_int("PauseLateralSpeed") > 0),
-      ], tab_key="steering"),
-
-      # ── Lane tab ──
-      SettingSection("", [
-        SettingRow("LaneChanges", "toggle", tr_noop("Lane Changes"),
-                   subtitle="",
-                   get_state=lambda: self._params.get_bool("LaneChanges"),
-                   set_state=lambda s: self._params.put_bool("LaneChanges", s)),
-        SettingRow("NudgelessLaneChange", "toggle", tr_noop("Automatic Lane Changes"),
-                   subtitle="",
-                   get_state=lambda: self._params.get_bool("NudgelessLaneChange"),
-                   set_state=lambda s: self._params.put_bool("NudgelessLaneChange", s),
-                   visible=lambda: self._params.get_bool("LaneChanges")),
-        SettingRow("LaneChangeTime", "value", tr_noop("Lane Change Delay"),
-                   subtitle="",
-                   get_value=lambda: f"{self._params.get_float('LaneChangeTime'):.1f}s",
-                   on_click=lambda: self._show_slider("LaneChangeTime", 0.0, 5.0, step=0.1, unit="s", value_type="float"),
-                   visible=lambda: self._params.get_bool("LaneChanges") and self._params.get_bool("NudgelessLaneChange")),
-        SettingRow("MinimumLaneChangeSpeed", "value", tr_noop("Min Lane Change Speed"),
-                   subtitle="",
-                   get_value=lambda: f"{self._params.get_int('MinimumLaneChangeSpeed')} mph",
-                   on_click=lambda: self._show_slider("MinimumLaneChangeSpeed", 0, 100, unit=" mph"),
-                   visible=lambda: self._params.get_bool("LaneChanges")),
-        SettingRow("LaneDetectionWidth", "value", tr_noop("Minimum Lane Width"),
-                   subtitle="",
-                   get_value=lambda: f"{self._params.get_float('LaneDetectionWidth'):.1f} ft",
-                   on_click=lambda: self._show_slider("LaneDetectionWidth", 0.0, 15.0, step=0.1, unit=" ft", value_type="float"),
-                   visible=lambda: self._params.get_bool("LaneChanges") and self._params.get_bool("NudgelessLaneChange")),
-        SettingRow("OneLaneChange", "toggle", tr_noop("One Lane Change Per Signal"),
-                   subtitle="",
-                   get_state=lambda: self._params.get_bool("OneLaneChange"),
-                   set_state=lambda s: self._params.put_bool("OneLaneChange", s),
-                   visible=lambda: self._params.get_bool("LaneChanges")),
-        SettingRow("LaneChangeSmoothing", "value", tr_noop("Lane Change Smoothing"),
-                   subtitle=tr_noop("How smoothly openpilot commits to a lane change. 10 is stock; lower values produce a gentler, more gradual maneuver."),
-                   get_value=lambda: f"{self._params.get_int('LaneChangeSmoothing')}",
-                   on_click=self._show_modal_pace_selector,
-                   visible=lambda: self._params.get_bool("LaneChanges")),
-      ], tab_key="lane"),
-
-      # ── Tune tab ──
-      SettingSection(tr_noop("Advanced Lateral Tuning"), [
-        SettingRow("AdvancedLateralTune", "toggle", tr_noop("Advanced Lateral Tuning"),
-                   subtitle=tr_noop("Advanced steering control changes to fine-tune how openpilot drives."),
-                   get_state=lambda: self._params.get_bool("AdvancedLateralTune"),
-                   set_state=lambda s: self._params.put_bool("AdvancedLateralTune", s)),
-        SettingRow("AdvancedConfigure", "value", tr_noop("Configure"),
-                   subtitle=tr_noop("Adjust steering response, torque controller behavior, and auto-tuning controls."),
-                   get_value=lambda: tr_noop("Settings"),
-                   navigate_to="advanced_lateral",
-                   enabled=lambda: self._params.get_bool("AdvancedLateralTune"),
-                   disabled_label=tr_noop("Enable First")),
-      ], tab_key="tune"),
-      SettingSection(tr_noop("Lateral Tuning"), [
-        SettingRow("LateralTune", "toggle", tr_noop("Lateral Tuning"),
-                   subtitle=tr_noop("Miscellaneous steering control changes such as turn desires and NNFF modes."),
-                   get_state=lambda: self._params.get_bool("LateralTune"),
-                   set_state=lambda s: self._params.put_bool("LateralTune", s)),
-        SettingRow("TurnDesires", "toggle", tr_noop("Force Turn Desires Below Lane Change Speed"),
-                   subtitle=tr_noop("Allow openpilot to follow turn intent below the minimum lane change speed when signaling."),
-                   get_state=lambda: self._params.get_bool("TurnDesires"),
-                   set_state=lambda s: self._params.put_bool("TurnDesires", s),
-                   visible=lambda: self._params.get_bool("LateralTune")),
-        SettingRow("NNFF", "toggle", tr_noop("Neural Network Feedforward (NNFF)"),
-                   subtitle=tr_noop("Use the full neural-network feedforward steering controller when available."),
-                   get_state=lambda: self._params.get_bool("NNFF"),
-                   set_state=lambda s: (self._params.put_bool("NNFF", s), s and self._params.put_bool("NNFFLite", False)),
-                   visible=lambda: self._params.get_bool("LateralTune") and starpilot_state.car_state.hasNNFFLog and not starpilot_state.car_state.isAngleCar),
-        SettingRow("NNFFLite", "toggle", tr_noop("Neural Network Feedforward (NNFF) Lite"),
-                   subtitle=tr_noop("Use the lightweight NNFF steering logic when the full model is off."),
-                   get_state=lambda: self._params.get_bool("NNFFLite"),
-                   set_state=lambda s: _confirm_reboot_toggle(self._params, "NNFFLite", s),
-                   visible=lambda: self._params.get_bool("LateralTune") and not self._params.get_bool("NNFF") and not starpilot_state.car_state.isAngleCar),
-      ], tab_key="tune"),
-    ]
-
-    self._manager_view = AetherSettingsView(
-      self, sections,
-      header_title=tr_noop("Steering"),
-      header_subtitle=tr_noop("Fine-tune lateral control, lane changes, and steering behavior."),
-      tab_defs=tab_defs,
-      panel_style=PANEL_STYLE,
-      metrics=COMPACT_PANEL_METRICS,
-    )
-
-  def _show_modal_pace_selector(self):
+  def _show_lane_smoothing(self):
     def on_close(res, val):
       if res == DialogResult.CONFIRM:
         self._params.put_int("LaneChangeSmoothing", int(val))
     current = self._params.get_int("LaneChangeSmoothing") if self._params.get_int("LaneChangeSmoothing") > 0 else 10
-    gui_app.set_modal_overlay(AetherSliderDialog(tr("Lane Change Smoothing"), 1, 10, 1, current, on_close, color=PANEL_STYLE.accent))
+    gui_app.push_widget(AetherSliderDialog(tr("Lane Change Smoothing"), 1, 10, 1, current, on_close,
+                                           color=self.SLIDER_COLOR))

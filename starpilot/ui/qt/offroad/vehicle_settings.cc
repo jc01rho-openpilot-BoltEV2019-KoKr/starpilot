@@ -181,6 +181,7 @@ StarPilotVehiclesPanel::StarPilotVehiclesPanel(StarPilotSettingsWindow *parent, 
 
     {"SubaruToggles", tr("Subaru Settings"), tr("<b>StarPilot features for Subaru vehicles.</b>"), ""},
     {"SubaruSNG", tr("Stop and Go"), tr("Stop and go for supported Subaru vehicles."), ""},
+    {"SubaruSNGManualParkingBrake", tr("Stop and Go for Manual Parking Brake"), tr("<b>Use the manual-parking-brake Subaru stop-and-go strategy.</b><br><br>Enable this for supported Subaru Global models with a manual handbrake. Keep it off on models with an electric parking brake."), ""},
 
     {"ToyotaToggles", tr("Toyota/Lexus Settings"), tr("<b>StarPilot features for Lexus and Toyota vehicles.</b>"), ""},
     {"ToyotaDoors", tr("Automatically Lock/Unlock Doors"), tr("<b>Automatically lock/unlock doors</b> when shifting in and out of drive."), ""},
@@ -417,6 +418,10 @@ void StarPilotVehiclesPanel::updateToggles() {
 
       else if (key == "SubaruSNG") {
         setVisible &= parent->hasSNG;
+      }
+
+      else if (key == "SubaruSNGManualParkingBrake") {
+        setVisible &= parent->hasSNG && params.getBool("SubaruSNG");
       }
 
       else if (key == "VoltSNG") {

@@ -22,7 +22,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherListColors,
   AetherScrollbar,
   AetherSliderDialog,
-  panel_style_from_color,
+  DEFAULT_PANEL_STYLE,
   _point_hits,
   draw_list_group_shell,
   draw_list_scroll_fades,
@@ -43,7 +43,7 @@ from openpilot.starpilot.common.accel_profile import (
 from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state
 
 
-PANEL_STYLE = panel_style_from_color("#3B82F6")
+PANEL_STYLE = DEFAULT_PANEL_STYLE
 COMPACT_PANEL_METRICS = replace(AETHER_LIST_METRICS, header_height=96)  # noqa: re-exported
 SECTION_GAP = AETHER_LIST_METRICS.section_gap
 SECTION_HEADER_HEIGHT = AETHER_LIST_METRICS.section_header_height
@@ -172,10 +172,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                    subtitle=tr_noop("Automatically slow down for upcoming curves based on learned road data."),
                    get_value=lambda: tr_noop("Configure"),
                    navigate_to="curve"),
-        SettingRow("WeatherNav", "value", tr_noop("Weather"),
-                   subtitle=tr_noop("Adjust following distance, acceleration, and curve speed for weather conditions."),
-                   get_value=lambda: tr_noop("Configure"),
-                   navigate_to="weather"),
       ], tab_key="adaptive"),
 
       # ── Limits tab ──
@@ -230,12 +226,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                    on_click=lambda: self._show_slider("CustomCruiseLong", 1, 100, unit=" mph",
                                                       current_value=max(1, self._params.get_int("CustomCruiseLong"))),
                    visible=lambda: self._params.get_bool("QOLLongitudinal")),
-        SettingRow("ReverseCruise", "toggle", tr_noop("Reverse Cruise"),
-                   subtitle="",
-                   get_state=lambda: self._params.get_bool("ReverseCruise"),
-                   set_state=lambda s: self._params.put_bool("ReverseCruise", s),
-                   visible=lambda: self._params.get_bool("QOLLongitudinal")),
-        SettingRow("ForceStops", "toggle", tr_noop("Force Stops"),
+         SettingRow("ForceStops", "toggle", tr_noop("Force Stops"),
                    subtitle="",
                    get_state=lambda: self._params.get_bool("ForceStops"),
                    set_state=lambda s: self._params.put_bool("ForceStops", s),
@@ -245,6 +236,11 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                    get_value=lambda: f"{self._params.get_int('ForceStopDistanceOffset'):+d} ft",
                    on_click=lambda: self._show_slider("ForceStopDistanceOffset", -20, 20, unit=" ft"),
                    visible=lambda: self._params.get_bool("QOLLongitudinal") and self._params.get_bool("ForceStops")),
+        SettingRow("RadarTakeoffs", "toggle", tr_noop("Radar for Takeoffs"),
+                   subtitle=tr_noop("Turns on/off using radar data to track leads at standstill, making following/takeoffs more responsive once leads move."),
+                   get_state=lambda: self._params.get_bool("RadarTakeoffs"),
+                   set_state=lambda s: self._params.put_bool("RadarTakeoffs", s),
+                   visible=lambda: self._params.get_bool("QOLLongitudinal") and starpilot_state.car_state.hasRadar),
       ], tab_key="daily", column_pair="daily"),
       SettingSection(tr_noop("Standstill & Gears"), [
         SettingRow("ForceStandstill", "toggle", tr_noop("Force Standstill"),
@@ -277,6 +273,16 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                    get_state=lambda: self._params.get_bool("MapDeceleration"),
                    set_state=lambda s: self._params.put_bool("MapDeceleration", s),
                    visible=lambda: self._params.get_bool("QOLLongitudinal") and self._params.get_bool("MapGears")),
+        SettingRow("WeatherPresets", "toggle", tr_noop("Weather Condition Offsets"),
+                   subtitle=tr_noop("Automatically adjust driving behavior based on real-time weather."),
+                   get_state=lambda: self._params.get_bool("WeatherPresets"),
+                   set_state=lambda s: self._params.put_bool("WeatherPresets", s),
+                   visible=lambda: self._params.get_bool("QOLLongitudinal")),
+        SettingRow("WeatherNav", "value", tr_noop("Configure Weather Offsets"),
+                   subtitle=tr_noop("Adjust following distance, acceleration, and curve speed for weather conditions."),
+                   get_value=lambda: tr_noop("Configure"),
+                   navigate_to="weather",
+                   visible=lambda: self._params.get_bool("QOLLongitudinal") and self._params.get_bool("WeatherPresets")),
        ], tab_key="daily", column_pair="daily"),
     ]
 
@@ -351,15 +357,10 @@ class StarPilotLongitudinalTuneLayout(_SettingsPage):
                    visible=self._longitudinal_enabled),
       ]),
       SettingSection(tr_noop("Human-Like Driving"), [
-        SettingRow("HumanAcceleration", "toggle", tr_noop("Human-Like Acceleration"),
-                   subtitle=tr_noop("Smooth throttle at low speed with stronger takeoff from a stop."),
-                   get_state=lambda: self._params.get_bool("HumanAcceleration"),
-                   set_state=lambda s: self._params.put_bool("HumanAcceleration", s),
-                   visible=self._longitudinal_enabled),
-        SettingRow("CoastUpToLeads", "toggle", tr_noop("Coast Up To Leads"),
-                   subtitle=tr_noop("Briefly coast toward far leads before applying normal throttle again."),
-                   get_state=lambda: self._params.get_bool("CoastUpToLeads"),
-                   set_state=lambda s: self._params.put_bool("CoastUpToLeads", s),
+        SettingRow("PrioritizeSmoothFollowing", "toggle", tr_noop("Prioritize Smooth Following"),
+                   subtitle=tr_noop("Disables the newer far-lead follow logic on cars that show lead-follow stutter. Tradeoff: it may react later in some edge-case lead stops."),
+                   get_state=lambda: self._params.get_bool("PrioritizeSmoothFollowing"),
+                   set_state=lambda s: self._params.put_bool("PrioritizeSmoothFollowing", s),
                    visible=self._longitudinal_enabled),
       ], column_pair="human_driving"),
       SettingSection(tr_noop("Lane Changes"), [
@@ -377,10 +378,10 @@ class StarPilotLongitudinalTuneLayout(_SettingsPage):
                    visible=self._longitudinal_enabled),
       ], column_pair="detection_tune"),
       SettingSection(tr_noop("Tuning"), [
-        SettingRow("TacoTune", "toggle", tr_noop("Taco Bell Run Turn Speed Hack"),
-                   subtitle=tr_noop("Slow down more assertively for turns."),
-                   get_state=lambda: self._params.get_bool("TacoTune"),
-                   set_state=lambda s: self._params.put_bool("TacoTune", s),
+        SettingRow("NavLongitudinalAllowed", "toggle", tr_noop("Use Route Speed Control"),
+                   subtitle=tr_noop("Allow an active navigation route to reduce cruise speed for upcoming turns, ramps, and roundabouts."),
+                   get_state=lambda: self._params.get_bool("NavLongitudinalAllowed"),
+                   set_state=lambda s: self._params.put_bool("NavLongitudinalAllowed", s),
                    visible=self._longitudinal_enabled),
       ], column_pair="detection_tune"),
     ]
@@ -449,6 +450,11 @@ class StarPilotAdvancedLongitudinalLayout(_SettingsPage):
                    visible=adv,
                    enabled=lambda: not self._params.get_bool("EVTuning"),
                    disabled_label=tr_noop("EV Active")),
+        SettingRow("TrailerLoad", "value", tr_noop("Trailer Load"),
+                   subtitle=tr_noop("Loaded trailer weight for tow-aware gas, brake, and conservative lateral assist."),
+                   get_value=lambda: f"{self._params.get_int('TrailerLoad')} lb",
+                   on_click=lambda: self._show_slider("TrailerLoad", 0, 15000, step=500, unit=" lb"),
+                   visible=adv),
         SettingRow("ActuatorDelay", "value", tr_noop("Actuator Delay"),
                    subtitle=tr_noop("Time between command and the vehicle's response."),
                    get_value=lambda: f"{self._params.get_float('LongitudinalActuatorDelay'):.2f}s",

@@ -17,7 +17,7 @@ def get_repo_root() -> str:
 
 # Constants
 REPO_ROOT = get_repo_root()
-PARAMS_CC_PATH = os.path.join(REPO_ROOT, 'common/params.cc')
+PARAMS_KEYS_PATH = os.path.join(REPO_ROOT, 'common/params_keys.h')
 UI_DIRECTORIES = [
     os.path.join(REPO_ROOT, 'selfdrive/ui'),
     os.path.join(REPO_ROOT, 'starpilot/ui')
@@ -27,6 +27,7 @@ UI_DIRECTORIES = [
 # rather than user-toggled configurations.
 KNOWN_READ_ONLY = {
     "ApiCache_Device", "ApiCache_DriveStats", "ApiCache_NavDestinations",
+    "CCStatus", "CEStatus",
     "CarMake", "CarModel", "CarModelName", "CarParamsPersistent", "CarVin",
     "ClusterOffset", "Compass", "DeveloperSidebarMetric1", "DeveloperSidebarMetric2",
     "DeveloperSidebarMetric3", "DeveloperSidebarMetric4", "DeveloperSidebarMetric5",
@@ -36,25 +37,26 @@ KNOWN_READ_ONLY = {
     "GitRemote", "GithubSshKeys", "GithubUsername", "HardwareSerial", "IMEI",
     "InstallDate", "IsRhdDetected", "KonikMinutes", "LastGPSPosition",
     "LastMapsUpdate", "LastUpdateTime", "ModelDrivesAndScores", "ModelReleasedDates",
-    "ModelVersions", "PrimeType", "TermsVersion", "TrainingVersion", "Version",
+    "ModelVersions", "PersistedCCStatus", "PersistedCEStatus", "PrimeType",
+    "TermsVersion", "TrainingVersion", "Version",
     "openpilotMinutes", "CompletedTrainingVersion"
 }
 
 def extract_registered_keys(params_path: str) -> set:
-    """Extracts all legally registered parameter keys from common/params.cc"""
+    """Extracts all legally registered parameter keys from common/params_keys.h"""
     registered_keys = set()
     try:
         with open(params_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # Isolate the keys `unordered_map` block
-        keys_block_match = re.search(r'unordered_map<std::string, uint32_t> keys = \{(.*?)\};', content, re.DOTALL)
+        # Isolate the registered keys block.
+        keys_block_match = re.search(r'keys\s*=\s*\{(.*?)\n\};', content, re.DOTALL)
         if not keys_block_match:
-            print("Error: Could not locate 'keys' map in params.cc")
+            print("Error: Could not locate 'keys' map in params_keys.h")
             return registered_keys
 
-        # Extract {"KeyName", FLAG} entries
-        for match in re.finditer(r'\{"([A-Za-z0-9_]+)",\s*([^}]+)\}', keys_block_match.group(1)):
+        # Extract {"KeyName", {FLAGS...}} entries.
+        for match in re.finditer(r'\{"([A-Za-z0-9_]+)",\s*\{([^}]*)\}\s*\}', keys_block_match.group(1)):
             key, flag = match.group(1), match.group(2)
             # Remove keys that are strictly internal ephemeral states
             if 'CLEAR_ON_MANAGER_START' not in flag:
@@ -90,7 +92,7 @@ def main():
     print(f"Starting parameter derivation inside {REPO_ROOT}...")
 
     # 1. Fetch
-    registered_keys = extract_registered_keys(PARAMS_CC_PATH)
+    registered_keys = extract_registered_keys(PARAMS_KEYS_PATH)
     ui_strings = extract_ui_string_literals(UI_DIRECTORIES)
 
     # 2. Intersect

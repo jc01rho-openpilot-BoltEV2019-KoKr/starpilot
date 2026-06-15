@@ -77,6 +77,21 @@ def should_send_acc_dashboard_status(CP, dash_speed_spoof_active):
   return status_car and (dash_speed_spoof_active or volt_camera_no_camera)
 
 
+def get_acc_dashboard_fcw_alert(hud_alert, CS):
+  if hud_alert == VisualAlert.fcw:
+    return 0x3
+
+  stock_fcw_alert = int(getattr(CS, "stock_fcw_alert", 0)) & 0x3
+  if stock_fcw_alert != 0:
+    return stock_fcw_alert
+
+  cs_out = getattr(CS, "out", None)
+  if cs_out is not None and (getattr(cs_out, "stockAeb", False) or getattr(cs_out, "stockFcw", False)):
+    return 0x3
+
+  return 0
+
+
 ECM_CRUISE_SPOOF_CARS = {
   CAR.CHEVROLET_BOLT_CC_2017,
   CAR.CHEVROLET_BOLT_CC_2018_2021,
@@ -119,7 +134,7 @@ def get_testing_ground_1_brake_switch_bias(v_ego: float) -> int:
 def supports_volt_auto_hold(CP, auto_hold_enabled: bool):
   safety_cfg = getattr(CP, "safetyConfigs", ())
   safety_param = safety_cfg[0].safetyParam if safety_cfg else 0
-  stock_hold_safety_ready = CP.openpilotLongitudinalControl or bool(safety_param & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value)
+  stock_hold_safety_ready = bool(safety_param & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value)
   return (
     auto_hold_enabled and
     stock_hold_safety_ready and
@@ -688,9 +703,9 @@ class CarController(CarControllerBase):
             CS.auto_hold_engaged = False
 
         if should_send_acc_dashboard_status(self.CP, dash_speed_spoof_active):
-          send_fcw = hud_alert == VisualAlert.fcw
+          fcw_alert = get_acc_dashboard_fcw_alert(hud_alert, CS)
           can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, CC.enabled,
-                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
+                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, fcw_alert))
 
       # Radar needs to know current speed and yaw rate (50hz),
       # and that ADAS is alive (10hz)

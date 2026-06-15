@@ -5,7 +5,7 @@ from openpilot.selfdrive.ui.mici.widgets.dialog import BigDialog, BigMultiOption
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets.scroller import NavScroller
 
-CAMERA_VIEW_LABELS = ["Auto", "Driver", "Standard", "Wide"]
+CAMERA_VIEW_LABELS = ["Auto", "Driver", "Standard", "Wide", "None"]
 
 
 class CameraViewBigButton(BigButton):

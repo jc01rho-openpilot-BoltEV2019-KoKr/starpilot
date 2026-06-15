@@ -1,6 +1,6 @@
 import numpy as np
 from opendbc.can import CANPacker
-from opendbc.car import Bus, make_tester_present_msg
+from opendbc.car import Bus, DT_CTRL, make_tester_present_msg
 from opendbc.car.lateral import apply_driver_steer_torque_limits, common_fault_avoidance
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.subaru import subarucan
@@ -26,14 +26,9 @@ class CarController(CarControllerBase):
     self.p = CarControllerParams(CP)
     self.packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
 
-    self.manual_hold = False
-    self.prev_standstill = False
-    self.sng_acc_resume = False
-
     self.prev_close_distance = 0
-    self.prev_cruise_state = 0
-    self.sng_acc_resume_cnt = 0
-    self.standstill_start = 0
+    self.epb_resume_frames_remaining = -1
+    self.last_standstill_frame = 0
 
   def update(self, CC, CS, now_nanos, starpilot_toggles):
     actuators = CC.actuators
@@ -70,8 +65,9 @@ class CarController(CarControllerBase):
       self.apply_torque_last = apply_torque
 
     # *** stop and go ***
+    subaru_sng_manual_parking_brake = getattr(starpilot_toggles, "subaru_sng_manual_parking_brake", False)
     if starpilot_toggles.subaru_sng:
-      throttle_cmd, speed_cmd = self.stop_and_go(CC, CS)
+      throttle_cmd, speed_cmd = self.stop_and_go(CC, CS, subaru_sng_manual_parking_brake)
 
     # *** longitudinal ***
 
@@ -110,7 +106,11 @@ class CarController(CarControllerBase):
         can_sends.append(subarucan.create_preglobal_es_distance(self.packer, cruise_button, CS.es_distance_msg))
 
       if starpilot_toggles.subaru_sng:
-        can_sends.append(subarucan.create_preglobal_throttle(self.packer, CS.throttle_msg["COUNTER"] + 1, CS.throttle_msg, throttle_cmd))
+        can_sends.append(subarucan.create_preglobal_throttle(self.packer, CS.throttle_msg["COUNTER"] + 1, CS.throttle_msg,
+                                                             throttle_cmd))
+        if self.frame % 2 == 0:
+          can_sends.append(subarucan.create_preglobal_brake_pedal(self.packer, CS.brake_pedal_msg,
+                                                                  speed_cmd))
     else:
       if self.frame % 10 == 0:
         can_sends.append(subarucan.create_es_dashstatus(self.packer, self.frame // 10, CS.es_dashstatus_msg, CC.enabled,
@@ -124,9 +124,11 @@ class CarController(CarControllerBase):
           can_sends.append(subarucan.create_es_infotainment(self.packer, self.frame // 10, CS.es_infotainment_msg, hud_control.visualAlert))
 
       if starpilot_toggles.subaru_sng:
-        can_sends.append(subarucan.create_throttle(self.packer, CS.throttle_msg["COUNTER"] + 1, CS.throttle_msg, throttle_cmd))
+        can_sends.append(subarucan.create_throttle(self.packer, CS.throttle_msg["COUNTER"] + 1, CS.throttle_msg,
+                                                   throttle_cmd))
         if self.frame % 2 == 0:
-          can_sends.append(subarucan.create_brake_pedal(self.packer, self.frame // 2, CS.brake_pedal_msg, speed_cmd, pcm_cancel_cmd))
+          can_sends.append(subarucan.create_brake_pedal(self.packer, self.frame // 2, CS.brake_pedal_msg,
+                                                        speed_cmd, pcm_cancel_cmd))
 
       if self.CP.openpilotLongitudinalControl:
         if self.frame % 5 == 0:
@@ -166,49 +168,37 @@ class CarController(CarControllerBase):
     self.frame += 1
     return new_actuators, can_sends
 
-  def stop_and_go(self, CC, CS, speed_cmd=False, throttle_cmd=False):
-    if self.CP.flags & SubaruFlags.PREGLOBAL:
-      trigger_resume = CC.enabled
-      trigger_resume &= CS.car_follow == 1
-      trigger_resume &= CS.close_distance > self.prev_close_distance
-      trigger_resume &= CS.out.standstill
-      trigger_resume &= _SNG_ACC_MIN_DIST < CS.close_distance < _SNG_ACC_MAX_DIST
+  def stop_and_go(self, CC, CS, manual_parking_brake=False):
+    throttle_cmd = False
+    speed_cmd = False
 
-      if trigger_resume:
-        self.sng_acc_resume = True
-    else:
-      if CS.car_follow == 0 and CS.cruise_state == 3 and CS.out.standstill and self.prev_cruise_state == 1:
-        self.manual_hold = True
+    if not CC.enabled or not CC.hudControl.leadVisible:
+      return throttle_cmd, speed_cmd
 
-      if not CS.out.standstill:
-        self.manual_hold = False
+    close_distance = CS.close_distance
+    if not CS.out.standstill:
+      self.last_standstill_frame = self.frame
 
-      trigger_resume = CC.enabled
-      trigger_resume &= CS.car_follow == 1
-      trigger_resume &= CS.close_distance > self.prev_close_distance
-      trigger_resume &= CS.cruise_state == 3
-      trigger_resume &= not self.manual_hold
-      trigger_resume &= _SNG_ACC_MIN_DIST < CS.close_distance < _SNG_ACC_MAX_DIST
+    standstill_timers = (0.75, 0.8) if self.CP.flags & SubaruFlags.PREGLOBAL else (0.5, 0.55)
+    standstill_duration = (self.frame - self.last_standstill_frame) * DT_CTRL
+    in_standstill_hold = standstill_duration > standstill_timers[0]
+    if standstill_duration >= standstill_timers[1]:
+      self.last_standstill_frame = self.frame
 
-      if trigger_resume:
-        self.sng_acc_resume = True
+    if manual_parking_brake or not (self.CP.flags & SubaruFlags.PREGLOBAL):
+      speed_cmd = in_standstill_hold
 
-      if CC.enabled and CS.car_follow == 1 and CS.out.standstill and self.frame > self.standstill_start + 50:
-        speed_cmd = True
+    should_resume = (
+      CS.out.standstill and
+      _SNG_ACC_MIN_DIST < close_distance < _SNG_ACC_MAX_DIST and
+      close_distance > self.prev_close_distance
+    )
+    if should_resume:
+      self.epb_resume_frames_remaining = 15
 
-      if CS.out.standstill and not self.prev_standstill:
-        self.standstill_start = self.frame
+    throttle_cmd = self.epb_resume_frames_remaining > 0
+    if self.epb_resume_frames_remaining > 0:
+      self.epb_resume_frames_remaining -= 1
 
-      self.prev_standstill = CS.out.standstill
-      self.prev_cruise_state = CS.cruise_state
-
-    if self.sng_acc_resume:
-      if self.sng_acc_resume_cnt < 5:
-        throttle_cmd = True
-        self.sng_acc_resume_cnt += 1
-      else:
-        self.sng_acc_resume = False
-        self.sng_acc_resume_cnt = -1
-
-    self.prev_close_distance = CS.close_distance
+    self.prev_close_distance = close_distance
     return throttle_cmd, speed_cmd

@@ -195,6 +195,9 @@ class CarInterface(CarInterfaceBase):
         ret.wheelSpeedFactor = 1.025
       else:
         ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.8], [0.24]]  # TODO: can probably use some tuning
+        # The 3G HR-V settles more cleanly in lead follow when planner delay
+        # better matches its stronger immediate longitudinal response.
+        ret.longitudinalActuatorDelay = 0.4
 
     elif candidate == CAR.HONDA_CLARITY:
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 2560], [0, 2560]]

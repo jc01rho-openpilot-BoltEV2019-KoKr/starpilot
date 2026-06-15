@@ -10,7 +10,7 @@ from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     AetherSliderDialog,
-    panel_style_from_color,
+    DEFAULT_PANEL_STYLE,
 )
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     SettingRow,
@@ -18,7 +18,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     AetherSettingsView,
 )
 
-PANEL_STYLE = panel_style_from_color("#8B5CF6")
+PANEL_STYLE = DEFAULT_PANEL_STYLE
 
 THEME_KEY_CONFIG = {
     "BootLogo": {
@@ -297,6 +297,53 @@ class StarPilotAppearanceLayout(_SettingsPage):
                            set_state=lambda s: self._params.put_bool("RotatingWheel", s)),
             ], tab_key="widgets", column_pair="widgets"),
 
+            SettingSection(tr_noop("Screen Borders"), [
+                SettingRow("ShowSteering", "toggle", tr_noop("Steering Torque Indicator"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("ShowSteering"),
+                           set_state=lambda s: self._params.put_bool("ShowSteering", s)),
+                SettingRow("SignalMetrics", "toggle", tr_noop("Turn Signal Borders"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("SignalMetrics"),
+                           set_state=lambda s: self._params.put_bool("SignalMetrics", s)),
+                SettingRow("BlindSpotMetrics", "toggle", tr_noop("Blind Spot Borders"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("BlindSpotMetrics"),
+                           set_state=lambda s: self._params.put_bool("BlindSpotMetrics", s),
+                           visible=bsm),
+            ], tab_key="widgets", column_pair="widgets_extra"),
+
+            SettingSection(tr_noop("Developer Metrics"), [
+                SettingRow("RadarTracksUI", "toggle", tr_noop("Radar Point Display"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("RadarTracksUI"),
+                           set_state=lambda s: self._params.put_bool("RadarTracksUI", s)),
+                SettingRow("LeadInfo", "toggle", tr_noop("Lead Vehicle Metrics"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("LeadInfo"),
+                           set_state=lambda s: self._params.put_bool("LeadInfo", s),
+                           visible=ol),
+                SettingRow("LeadDetectionProbability", "value", tr_noop("Lead Detection Threshold"),
+                           subtitle="",
+                           get_value=lambda: f"{self._params.get_int('LeadDetectionThreshold')}%",
+                           on_click=lambda: self._show_int_selector("LeadDetectionProbability", 25, 100, "%"),
+                           visible=ol),
+                SettingRow("ShowStoppingPoint", "toggle", tr_noop("Show Stop Sign"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("ShowStoppingPoint"),
+                           set_state=lambda s: self._params.put_bool("ShowStoppingPoint", s),
+                           visible=ol),
+                SettingRow("ShowStoppingPointMetrics", "toggle", tr_noop("Stop Distance"),
+                           subtitle="",
+                           get_state=lambda: self._params.get_bool("ShowStoppingPointMetrics"),
+                           set_state=lambda s: self._params.put_bool("ShowStoppingPointMetrics", s),
+                           visible=lambda: self._params.get_bool("ShowStoppingPoint") and ol()),
+                SettingRow("DeveloperSidebar", "toggle", tr_noop("Developer Sidebar"),
+                           subtitle=tr_noop("Driving metrics panel on the right"),
+                           get_state=lambda: self._params.get_bool("DeveloperSidebar"),
+                           set_state=lambda s: self._params.put_bool("DeveloperSidebar", s)),
+            ], tab_key="widgets", column_pair="widgets_extra"),
+
             # ═══ Tab 3: Convenience — QOL + Navigation ═══
             SettingSection(tr_noop("Quality of Life"), [
                 SettingRow("QOLVisuals", "toggle", tr_noop("Quality of Life"),
@@ -322,6 +369,10 @@ class StarPilotAppearanceLayout(_SettingsPage):
                            subtitle=tr_noop("Show navigation info on the driving screen."),
                            get_state=lambda: self._params.get_bool("NavigationUI"),
                            set_state=lambda s: self._params.put_bool("NavigationUI", s)),
+                SettingRow("ClearNavOnOffroad", "toggle", tr_noop("Clear Route When Offroad"),
+                           subtitle=tr_noop("Clear the active navigation destination when the device goes offroad."),
+                           get_state=lambda: self._params.get_bool("ClearNavOnOffroad"),
+                           set_state=lambda s: self._params.put_bool("ClearNavOnOffroad", s)),
                 SettingRow("RoadNameUI", "toggle", tr_noop("Road Name"),
                            subtitle="",
                            get_state=lambda: self._params.get_bool("RoadNameUI"),

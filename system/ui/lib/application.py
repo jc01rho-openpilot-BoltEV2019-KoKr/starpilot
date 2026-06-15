@@ -28,10 +28,13 @@ FPS_LOG_INTERVAL = 5  # Seconds between logging FPS drops
 FPS_DROP_THRESHOLD = 0.9  # FPS drop threshold for triggering a warning
 FPS_CRITICAL_THRESHOLD = 0.5  # Critical threshold for triggering strict actions
 MOUSE_THREAD_RATE = 140  # touch controller runs at 140Hz
+DESKTOP_MOUSE_THREAD_RATE = int(os.getenv("DESKTOP_MOUSE_RATE", "500"))
+DESKTOP_CLICK_DEBOUNCE = float(os.getenv("DESKTOP_CLICK_DEBOUNCE", "0.2"))
 MAX_TOUCH_SLOTS = 2
 TOUCH_HISTORY_TIMEOUT = 3.0  # Seconds before touch points fade out
 
 BIG_UI = os.getenv("BIG", "0") == "1"
+MACOS = platform.system() == "Darwin"
 ENABLE_VSYNC = os.getenv("ENABLE_VSYNC", "0") == "1"
 MICI_FORCE_RENDER_TEXTURE = os.getenv("MICI_FORCE_RENDER_TEXTURE", "1" if DEVICE_TYPE == "mici" else "0") == "1"
 SHOW_FPS = os.getenv("SHOW_FPS") == "1"
@@ -136,6 +139,84 @@ class MouseEvent(NamedTuple):
   t: float
 
 
+class DesktopMouseSample(NamedTuple):
+  pos: MousePos
+  left_pressed: bool
+  left_released: bool
+  left_down: bool
+  t: float
+
+
+class DesktopMouseProvider:
+  def sample(self) -> tuple[MousePos, bool]:
+    raise NotImplementedError
+
+  def close(self) -> None:
+    pass
+
+  @staticmethod
+  def create() -> "DesktopMouseProvider | None":
+    if MACOS:
+      return MacOSDesktopMouseProvider()
+    if platform.system() == "Linux":
+      return LinuxDesktopMouseProvider()
+    if platform.system() == "Windows":
+      return WindowsDesktopMouseProvider()
+    return None
+
+
+class MacOSDesktopMouseProvider(DesktopMouseProvider):
+  def __init__(self):
+    import Quartz
+    self._quartz = Quartz
+
+  def sample(self) -> tuple[MousePos, bool]:
+    q = self._quartz
+    loc = q.CGEventGetLocation(q.CGEventCreate(None))
+    left_down = (
+      q.CGEventSourceButtonState(q.kCGEventSourceStateHIDSystemState, q.kCGMouseButtonLeft) or
+      q.CGEventSourceButtonState(q.kCGEventSourceStateCombinedSessionState, q.kCGMouseButtonLeft)
+    )
+    return MousePos(loc.x, loc.y), bool(left_down)
+
+
+class LinuxDesktopMouseProvider(DesktopMouseProvider):
+  def __init__(self):
+    from Xlib import X, display
+    self._button_mask = X.Button1Mask
+    self._display = display.Display()
+    self._root = self._display.screen().root
+
+  def sample(self) -> tuple[MousePos, bool]:
+    data = self._root.query_pointer()._data
+    return MousePos(data["root_x"], data["root_y"]), bool(data["mask"] & self._button_mask)
+
+  def close(self) -> None:
+    self._display.close()
+
+
+class WindowsDesktopMouseProvider(DesktopMouseProvider):
+  def __init__(self):
+    import ctypes
+    self._ctypes = ctypes
+    self._user32 = ctypes.windll.user32
+
+    class POINT(ctypes.Structure):
+      _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    self._point_cls = POINT
+    try:
+      self._user32.SetProcessDPIAware()
+    except AttributeError:
+      pass
+
+  def sample(self) -> tuple[MousePos, bool]:
+    point = self._point_cls()
+    self._user32.GetCursorPos(self._ctypes.byref(point))
+    left_down = bool(self._user32.GetAsyncKeyState(0x01) & 0x8000)
+    return MousePos(point.x, point.y), left_down
+
+
 class MouseState:
   def __init__(self, scale: float = 1.0):
     self._scale = scale
@@ -146,6 +227,12 @@ class MouseState:
     self._lock = threading.Lock()
     self._exit_event = threading.Event()
     self._thread = None
+    self._desktop_left_down = False
+    self._desktop_click_active = False
+    self._desktop_click_suppressed = False
+    self._desktop_last_click_t = -math.inf
+    self._desktop_samples: deque[DesktopMouseSample] = deque(maxlen=DESKTOP_MOUSE_THREAD_RATE)
+    self._desktop_provider: DesktopMouseProvider | None = None
 
   def get_events(self) -> list[MouseEvent]:
     with self._lock:
@@ -159,10 +246,39 @@ class MouseState:
       self._thread = threading.Thread(target=self._run_thread, daemon=True)
       self._thread.start()
 
+  def start_desktop_mouse_sampler(self):
+    try:
+      self._desktop_provider = DesktopMouseProvider.create()
+    except Exception:
+      cloudlog.exception("Failed to initialize desktop mouse sampler")
+      self._desktop_provider = None
+
+    if self._desktop_provider is None:
+      return
+
+    self._exit_event.clear()
+    if self._thread is None or not self._thread.is_alive():
+      self._thread = threading.Thread(target=self._run_desktop_thread, daemon=True)
+      self._thread.start()
+
   def stop(self):
     self._exit_event.set()
     if self._thread is not None and self._thread.is_alive():
       self._thread.join()
+    if self._desktop_provider is not None:
+      self._desktop_provider.close()
+      self._desktop_provider = None
+    self._desktop_left_down = False
+    self._desktop_click_active = False
+    self._desktop_click_suppressed = False
+
+  def _desktop_mouse_pos(self) -> MousePos:
+    mouse_pos = rl.get_mouse_position()
+    return MousePos(mouse_pos.x, mouse_pos.y)
+
+  def _desktop_window_pos(self) -> MousePos:
+    window_pos = rl.get_window_position()
+    return MousePos(window_pos.x, window_pos.y)
 
   def _run_thread(self):
     while not self._exit_event.is_set():
@@ -170,29 +286,144 @@ class MouseState:
       self._handle_mouse_event()
       self._rk.keep_time()
 
+  def _run_desktop_thread(self):
+    rk = Ratekeeper(DESKTOP_MOUSE_THREAD_RATE, print_delay_threshold=None)
+    prev_pos: MousePos | None = None
+    prev_left_down = False
+
+    while not self._exit_event.is_set():
+      try:
+        assert self._desktop_provider is not None
+        pos, left_down = self._desktop_provider.sample()
+      except Exception:
+        cloudlog.exception("Desktop mouse sampler failed")
+        self._desktop_provider = None
+        break
+
+      left_pressed = left_down and not prev_left_down
+      left_released = prev_left_down and not left_down
+      if left_pressed or left_released or pos != prev_pos:
+        with self._lock:
+          self._desktop_samples.append(DesktopMouseSample(
+            pos,
+            left_pressed,
+            left_released,
+            left_down,
+            time.monotonic(),
+          ))
+
+      prev_pos = pos
+      prev_left_down = left_down
+      rk.keep_time()
+
+  def _get_desktop_samples(self) -> list[DesktopMouseSample]:
+    with self._lock:
+      samples = list(self._desktop_samples)
+      self._desktop_samples.clear()
+    return samples
+
+  def _debounce_desktop_mouse_event(self, ev: MouseEvent) -> MouseEvent | None:
+    if ev.left_pressed:
+      if ev.t - self._desktop_last_click_t < DESKTOP_CLICK_DEBOUNCE:
+        self._desktop_click_active = False
+        self._desktop_click_suppressed = True
+        return None
+
+      self._desktop_click_active = True
+      self._desktop_click_suppressed = False
+      return ev
+
+    if self._desktop_click_suppressed:
+      if ev.left_released or not ev.left_down:
+        self._desktop_click_suppressed = False
+      return None
+
+    if ev.left_released:
+      if not self._desktop_click_active:
+        return None
+
+      self._desktop_click_active = False
+      self._desktop_last_click_t = ev.t
+      return ev
+
+    if ev.left_down and not self._desktop_click_active:
+      return None
+
+    return ev
+
   def _handle_mouse_event(self):
     # TODO: read touch events from evdev directly to get real kernel timestamps.
     #  Polling at 140Hz with time.monotonic() causes timing jitter that makes scroll
     #  velocity oscillate (alternating high/low). Real timestamps would also let us
     #  detect swipe-stop-lift via event gaps instead of the fragile decel heuristic.
+    if PC:
+      if self._desktop_provider is not None:
+        scale = self._scale if self._scale != 0 else 1.0
+        window_pos = self._desktop_window_pos()
+        for sample in self._get_desktop_samples():
+          local_pos = MousePos(
+            (sample.pos.x - window_pos.x) / scale,
+            (sample.pos.y - window_pos.y) / scale,
+          )
+          event = self._debounce_desktop_mouse_event(MouseEvent(
+            local_pos,
+            0,
+            sample.left_pressed,
+            sample.left_released,
+            sample.left_down,
+            sample.t,
+          ))
+          if event is not None:
+            self._append_mouse_event(event)
+        return
+
+      left_down = rl.is_mouse_button_down(rl.MouseButton.MOUSE_BUTTON_LEFT)  # noqa: TID251
+      left_pressed = (
+        rl.is_mouse_button_pressed(rl.MouseButton.MOUSE_BUTTON_LEFT) or  # noqa: TID251
+        (left_down and not self._desktop_left_down)
+      )
+      left_released = (
+        rl.is_mouse_button_released(rl.MouseButton.MOUSE_BUTTON_LEFT) or  # noqa: TID251
+        (self._desktop_left_down and not left_down)
+      )
+      self._append_mouse_event(MouseEvent(
+        self._desktop_mouse_pos(),
+        0,
+        left_pressed,
+        left_released,
+        left_down,
+        time.monotonic(),
+      ))
+      self._desktop_left_down = left_down
+      return
+
     for slot in range(MAX_TOUCH_SLOTS):
       mouse_pos = rl.get_touch_position(slot)
       x = mouse_pos.x / self._scale if self._scale != 1.0 else mouse_pos.x
       y = mouse_pos.y / self._scale if self._scale != 1.0 else mouse_pos.y
-      ev = MouseEvent(
+      self._append_mouse_event(MouseEvent(
         MousePos(x, y),
         slot,
         rl.is_mouse_button_pressed(slot),  # noqa: TID251
         rl.is_mouse_button_released(slot),  # noqa: TID251
         rl.is_mouse_button_down(slot),
         time.monotonic(),
-      )
-      # Only add changes
-      prev = self._prev_mouse_event[slot]
-      if prev is None or ev[:-1] != prev[:-1]:
-        with self._lock:
-          self._events.append(ev)
-        self._prev_mouse_event[slot] = ev
+      ))
+
+  def _append_mouse_event(self, ev: MouseEvent):
+    if ev.left_pressed and ev.left_released:
+      press_ev = MouseEvent(ev.pos, ev.slot, True, False, True, ev.t)
+      release_ev = MouseEvent(ev.pos, ev.slot, False, True, False, ev.t)
+      self._append_mouse_event(press_ev)
+      self._append_mouse_event(release_ev)
+      return
+
+    # Only add changes
+    prev = self._prev_mouse_event[ev.slot]
+    if prev is None or ev[:-1] != prev[:-1]:
+      with self._lock:
+        self._events.append(ev)
+      self._prev_mouse_event[ev.slot] = ev
 
 
 class GuiApplication:
@@ -213,6 +444,10 @@ class GuiApplication:
     self._scaled_height = int(self._height * self._scale)
     self._scaled_width += self._scaled_width % 2
     self._scaled_height += self._scaled_height % 2
+    self._pixel_scale_x = 1.0
+    self._pixel_scale_y = 1.0
+    self._render_texture_width = self._scaled_width
+    self._render_texture_height = self._scaled_height
 
     self._render_texture: rl.RenderTexture | None = None
     self._burn_in_shader: rl.Shader | None = None
@@ -268,10 +503,9 @@ class GuiApplication:
 
   def init_window(self, title: str, fps: int = _DEFAULT_FPS):
     with self._startup_profile_context():
-      def _close(sig, frame):
-        self.close()
-        sys.exit(0)
-      signal.signal(signal.SIGINT, _close)
+      def _request_close(sig, frame):
+        self.request_close()
+      signal.signal(signal.SIGINT, _request_close)
       atexit.register(self.close)
 
       flags = rl.ConfigFlags.FLAG_MSAA_4X_HINT
@@ -280,14 +514,22 @@ class GuiApplication:
       rl.set_config_flags(flags)
 
       rl.init_window(self._scaled_width, self._scaled_height, title)
+      screen_width = max(rl.get_screen_width(), 1)
+      screen_height = max(rl.get_screen_height(), 1)
+      self._pixel_scale_x = max(1.0, rl.get_render_width() / screen_width) if PC else 1.0
+      self._pixel_scale_y = max(1.0, rl.get_render_height() / screen_height) if PC else 1.0
+      self._render_texture_width = max(1, int(round(self._scaled_width * self._pixel_scale_x)))
+      self._render_texture_height = max(1, int(round(self._scaled_height * self._pixel_scale_y)))
 
       needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD or MICI_FORCE_RENDER_TEXTURE
-      if self._scale != 1.0:
+      if PC and self._scale != 1.0:
         rl.set_mouse_scale(1 / self._scale, 1 / self._scale)
+      if PC:
+        self._mouse.start_desktop_mouse_sampler()
       if needs_render_texture:
         if MICI_FORCE_RENDER_TEXTURE:
           cloudlog.warning("Forcing render texture path for mici UI")
-        self._render_texture = rl.load_render_texture(self._scaled_width, self._scaled_height)
+        self._render_texture = rl.load_render_texture(self._render_texture_width, self._render_texture_height)
         rl.set_texture_filter(self._render_texture.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
 
       if RECORD:
@@ -298,7 +540,7 @@ class GuiApplication:
           '-nostats',               # Suppress encoding progress
           '-f', 'rawvideo',         # Input format
           '-pix_fmt', 'rgba',       # Input pixel format
-          '-s', f'{self._scaled_width}x{self._scaled_height}',  # Input resolution
+          '-s', f'{self._render_texture_width}x{self._render_texture_height}',  # Input resolution
           '-r', str(fps),           # Input frame rate
           '-i', 'pipe:0',           # Input from stdin
           '-vf', 'vflip,format=yuv420p',  # Flip vertically and convert to yuv420p
@@ -477,8 +719,8 @@ class GuiApplication:
       image_obj = self._load_image_from_path(fspath.as_posix(), width, height, alpha_premultiply, keep_aspect_ratio, flip_x)
       texture_obj = self._load_texture_from_image(image_obj)
 
-    # Set logical size so widget layout math stays at 1x coordinates
-    if self._scale != 1.0 and width is not None and height is not None:
+    # Set logical size so widget layout math stays at 1x coordinates.
+    if self._render_texture is not None and width is not None and height is not None:
       texture_obj.width = width
       texture_obj.height = height
 
@@ -493,10 +735,10 @@ class GuiApplication:
     if alpha_premultiply:
       rl.image_alpha_premultiply(image)
 
-    # Scale up load size for sharper rendering, capped at source resolution
-    if self._scale != 1.0 and width is not None and height is not None:
-      width = min(int(width * self._scale), image.width)
-      height = min(int(height * self._scale), image.height)
+    # Scale up load size for sharper rendering, capped at source resolution.
+    if self._render_texture is not None and width is not None and height is not None:
+      width = min(int(width * self._scale * self._pixel_scale_x), image.width)
+      height = min(int(height * self._scale * self._pixel_scale_y), image.height)
 
     if width is not None and height is not None:
       same_dimensions = image.width == width and image.height == height
@@ -573,8 +815,7 @@ class GuiApplication:
       rl.unload_shader(self._burn_in_shader)
       self._burn_in_shader = None
 
-    if not PC:
-      self._mouse.stop()
+    self._mouse.stop()
 
     self.close_ffmpeg()
 
@@ -599,7 +840,7 @@ class GuiApplication:
       while not (self._window_close_requested or rl.window_should_close()):
         self._mark_progress("gui_app.loop_start")
         if PC:
-          # Thread is not used on PC, need to manually add mouse events
+          # Thread is not used on PC, need to manually add mouse events.
           self._mouse._handle_mouse_event()
 
         # Store all mouse events for the current frame
@@ -631,9 +872,12 @@ class GuiApplication:
           rl.clear_background(rl.BLACK)
           self._mark_progress("gui_app.after_clear_background")
 
-        if self._scale != 1.0:
+        render_scale_x = self._scale * (self._pixel_scale_x if self._render_texture else 1.0)
+        render_scale_y = self._scale * (self._pixel_scale_y if self._render_texture else 1.0)
+        needs_render_scale = render_scale_x != 1.0 or render_scale_y != 1.0
+        if needs_render_scale:
           rl.rl_push_matrix()
-          rl.rl_scalef(self._scale, self._scale, 1.0)
+          rl.rl_scalef(render_scale_x, render_scale_y, 1.0)
 
         # Allow a Widget to still run a function regardless of the stack depth
         self._mark_progress("gui_app.before_nav_ticks")
@@ -650,7 +894,7 @@ class GuiApplication:
         self._mark_progress("gui_app.frame_ready")
         yield True
 
-        if self._scale != 1.0:
+        if needs_render_scale:
           rl.rl_pop_matrix()
 
         if self._render_texture:
@@ -662,7 +906,7 @@ class GuiApplication:
           self._mark_progress("gui_app.before_present_clear_background")
           rl.clear_background(rl.BLACK)
           self._mark_progress("gui_app.after_present_clear_background")
-          src_rect = rl.Rectangle(0, 0, float(self._scaled_width), -float(self._scaled_height))
+          src_rect = rl.Rectangle(0, 0, float(self._render_texture_width), -float(self._render_texture_height))
           dst_rect = rl.Rectangle(0, 0, float(self._scaled_width), float(self._scaled_height))
           texture = self._render_texture.texture
           if texture:
@@ -753,8 +997,9 @@ class GuiApplication:
 
     def _begin_scissor_mode_scaled(x, y, width, height):
       return rl._orig_begin_scissor_mode(
-        int(x * self._scale), int(y * self._scale),
-        int(math.ceil(width * self._scale)), int(math.ceil(height * self._scale)))
+        int(x * self._scale * self._pixel_scale_x), int(y * self._scale * self._pixel_scale_y),
+        int(math.ceil(width * self._scale * self._pixel_scale_x)),
+        int(math.ceil(height * self._scale * self._pixel_scale_y)))
 
     rl.begin_scissor_mode = _begin_scissor_mode_scaled
 

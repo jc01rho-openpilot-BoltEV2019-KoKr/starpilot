@@ -4,6 +4,7 @@ import cereal.messaging as messaging
 from openpilot.system.hardware import PC
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.selfdrive.ui.layouts.sidebar import Sidebar, SIDEBAR_WIDTH
+from openpilot.selfdrive.ui.onroad.starpilot.developer_sidebar import DeveloperSidebar
 from openpilot.selfdrive.ui.layouts.home import HomeLayout
 from openpilot.selfdrive.ui.layouts.settings.settings import SettingsLayout, PanelType
 from openpilot.selfdrive.ui.onroad.starpilot.starpilot_onroad_view import StarPilotOnroadView
@@ -25,21 +26,20 @@ class MainLayout(Widget):
     self._pm = messaging.PubMaster(['bookmarkButton'])
 
     self._sidebar = Sidebar()
+    self._dev_sidebar = DeveloperSidebar()
     self._current_mode = MainState.HOME
     self._prev_onroad = False
 
-    # Initialize layouts
     self._layouts = {MainState.HOME: HomeLayout(), MainState.SETTINGS: SettingsLayout(), MainState.ONROAD: StarPilotOnroadView()}
 
     self._sidebar_rect = rl.Rectangle(0, 0, 0, 0)
+    self._dev_sidebar_rect = rl.Rectangle(0, 0, 0, 0)
     self._content_rect = rl.Rectangle(0, 0, 0, 0)
 
-    # Set callbacks
     self._setup_callbacks()
 
     gui_app.push_widget(self)
 
-    # Skip onboarding on desktop; keep normal flow on device.
     self._onboarding_window = None
     if not PC:
       self._onboarding_window = OnboardingWindow()
@@ -54,27 +54,33 @@ class MainLayout(Widget):
     self._sidebar.set_callbacks(on_settings=self._on_settings_clicked,
                                 on_flag=self._on_bookmark_clicked,
                                 open_settings=lambda: self.open_settings(PanelType.TOGGLES))
-    self._layouts[MainState.HOME]._setup_widget.set_open_settings_callback(lambda: self.open_settings(PanelType.FIREHOSE))
     self._layouts[MainState.HOME].set_settings_callback(lambda: self.open_settings(PanelType.TOGGLES))
     self._layouts[MainState.SETTINGS].set_callbacks(on_close=self._set_mode_for_state)
     self._layouts[MainState.ONROAD].set_click_callback(self._on_onroad_clicked)
     device.add_interactive_timeout_callback(self._set_mode_for_state)
 
   def _update_layout_rects(self):
-    self._sidebar_rect = rl.Rectangle(self._rect.x, self._rect.y, SIDEBAR_WIDTH, self._rect.height)
+    left_w = SIDEBAR_WIDTH if self._sidebar.is_visible else 0
+    right_w = SIDEBAR_WIDTH if (self._current_mode == MainState.ONROAD and self._dev_sidebar.visible) else 0
 
-    x_offset = SIDEBAR_WIDTH if self._sidebar.is_visible else 0
-    self._content_rect = rl.Rectangle(self._rect.y + x_offset, self._rect.y, self._rect.width - x_offset, self._rect.height)
+    self._sidebar_rect = rl.Rectangle(self._rect.x, self._rect.y, SIDEBAR_WIDTH, self._rect.height)
+    self._dev_sidebar_rect = rl.Rectangle(
+      self._rect.x + self._rect.width - SIDEBAR_WIDTH, self._rect.y,
+      SIDEBAR_WIDTH, self._rect.height
+    )
+
+    self._content_rect = rl.Rectangle(
+      self._rect.x + left_w, self._rect.y,
+      self._rect.width - left_w - right_w, self._rect.height
+    )
 
   def _handle_onroad_transition(self):
     if ui_state.started != self._prev_onroad:
       self._prev_onroad = ui_state.started
-
       self._set_mode_for_state()
 
   def _set_mode_for_state(self):
     if ui_state.started:
-      # Don't hide sidebar from interactive timeout
       if self._current_mode != MainState.ONROAD:
         self._sidebar.set_visible(False)
       self._set_current_layout(MainState.ONROAD)
@@ -105,9 +111,22 @@ class MainLayout(Widget):
     self._sidebar.set_visible(not self._sidebar.is_visible)
 
   def _render_main_content(self):
-    # Render sidebar
+    if self._current_mode == MainState.ONROAD:
+      self._dev_sidebar.update()
+
+    self._update_layout_rects()
+    mode_before_sidebar = self._current_mode
+    sidebar_visible_before = self._sidebar.is_visible
+
     if self._sidebar.is_visible:
       self._sidebar.render(self._sidebar_rect)
 
-    content_rect = self._content_rect if self._sidebar.is_visible else self._rect
+    if self._current_mode != mode_before_sidebar or self._sidebar.is_visible != sidebar_visible_before:
+      return
+
+    has_dev = self._current_mode == MainState.ONROAD and self._dev_sidebar.visible
+    content_rect = self._content_rect if (self._sidebar.is_visible or has_dev) else self._rect
     self._layouts[self._current_mode].render(content_rect)
+
+    if has_dev:
+      self._dev_sidebar.render(self._dev_sidebar_rect)

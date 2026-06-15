@@ -234,8 +234,9 @@ void SpectraMaster::init() {
 
 SpectraCamera::SpectraCamera(SpectraMaster *master, const CameraConfig &config)
   : m(master),
-    enabled(config.enabled),
     cc(config) {
+  enabled = camera_enabled_at_runtime(config.camera_num);
+
   ife_buf_depth = VIPC_BUFFER_COUNT;
   assert(ife_buf_depth < MAX_IFE_BUFS);
 }
@@ -279,7 +280,12 @@ void SpectraCamera::camera_open(VisionIpcServer *v, cl_device_id device_id, cl_c
     return;
   }
 
-  if (!enabled) return;
+  if (!enabled) {
+    // Disabled or failed cameras still run through sensor setup, but they
+    // should not keep an idle session around for the rest of camerad's life.
+    camera_close();
+    return;
+  }
 
   buf.out_img_width = sensor->frame_width / sensor->out_scale;
   buf.out_img_height = (sensor->hdr_offset > 0 ? (sensor->frame_height - sensor->hdr_offset) / 2 : sensor->frame_height) / sensor->out_scale;
@@ -1473,7 +1479,7 @@ bool SpectraCamera::syncFirstFrame(int camera_id, uint64_t request_id, uint64_t 
 
   // Ensure all cameras are up
   int enabled_camera_count = std::count_if(std::begin(ALL_CAMERA_CONFIGS), std::end(ALL_CAMERA_CONFIGS),
-                                           [](const auto &config) { return config.enabled; });
+                                           [](const auto &config) { return camera_enabled_at_runtime(config.camera_num); });
   bool all_cams_up = camera_sync_data.size() == enabled_camera_count;
 
   // Wait until the timestamps line up

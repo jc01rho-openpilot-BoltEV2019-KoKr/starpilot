@@ -12,9 +12,9 @@ from openpilot.selfdrive.ui.onroad.driver_state import DriverStateRenderer
 from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.onroad.cameraview import CameraView
-from openpilot.selfdrive.ui.lib.starpilot_mode_banner import ModeTransitionBanner
 from openpilot.selfdrive.ui.lib.starpilot_status import get_screen_edge_color
 from openpilot.system.ui.lib.application import gui_app, FontWeight
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.common.transformations.camera import DEVICE_CAMERAS, DeviceCameraConfig, view_frame_from_device_frame
 from openpilot.common.transformations.orientation import rot_from_euler
 
@@ -121,10 +121,10 @@ class MinSteerSpeedBanner:
     text = self._get_message(min_steer_speed)
     font_size = 52
     max_text_width = rect.width - 100
-    text_size = rl.measure_text_ex(self._font, text, font_size, 0)
+    text_size = measure_text_cached(self._font, text, font_size)
     while font_size > 36 and text_size.x > max_text_width:
       font_size -= 2
-      text_size = rl.measure_text_ex(self._font, text, font_size, 0)
+      text_size = measure_text_cached(self._font, text, font_size)
 
     text_pos = rl.Vector2(
       rect.x + (rect.width - text_size.x) / 2,
@@ -150,7 +150,6 @@ class AugmentedRoadView(CameraView):
     self._hud_renderer = HudRenderer()
     self.alert_renderer = AlertRenderer()
     self.driver_state_renderer = DriverStateRenderer()
-    self._mode_transition_banner = ModeTransitionBanner()
     self._min_steer_speed_banner = MinSteerSpeedBanner()
 
     # debug
@@ -193,11 +192,8 @@ class AugmentedRoadView(CameraView):
     current_alert = self.alert_renderer.get_alert(ui_state.sm)
     self.model_renderer.render(self._content_rect)
     self._hud_renderer.render(self._content_rect)
-    self._mode_transition_banner.update()
     self.alert_renderer.render(self._content_rect)
     self.driver_state_renderer.render(self._content_rect)
-    if current_alert is None:
-      self._mode_transition_banner.render(self._content_rect)
     self._min_steer_speed_banner.render(self._content_rect)
 
     # Custom UI extension point - add custom overlays here

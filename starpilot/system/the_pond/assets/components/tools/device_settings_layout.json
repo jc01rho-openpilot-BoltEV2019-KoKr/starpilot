@@ -98,14 +98,6 @@
         "is_parent_toggle": true
       },
       {
-        "key": "AlwaysOnLateralLKAS",
-        "label": "Enable With LKAS",
-        "description": "Enable \"Always On Lateral\" whenever \"LKAS\" is on, even when openpilot is not engaged.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AlwaysOnLateral"
-      },
-      {
         "key": "PauseAOLOnBrake",
         "label": "Pause on Brake Press Below",
         "description": "Pause \"Always On Lateral\" below the set speed while the brake pedal is pressed.",
@@ -201,6 +193,14 @@
         "parent_key": "LateralTune"
       },
       {
+        "key": "NavDesiresAllowed",
+        "label": "Use Route Desires",
+        "description": "Allow an active navigation route to request keep-left, keep-right, and low-speed turn desires.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune"
+      },
+      {
         "key": "NNFF",
         "label": "Neural Network Feedforward (NNFF)",
         "description": "Twilsonco's \"Neural Network FeedForward\" controller. Uses a trained neural network model to predict steering torque based on vehicle speed, roll, and past/future planned path data for smoother, model-based steering.",
@@ -234,6 +234,25 @@
         "max": 99.0,
         "step": 1.0,
         "parent_key": "QOLLateral"
+      },
+      {
+        "key": "PauseLateralOnSignal",
+        "label": "Turn Signal Only",
+        "description": "Only pause steering when the turn signal is active.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLLateral"
+      },
+      {
+        "key": "LateralResumeDelay",
+        "label": "Lateral Resume Delay",
+        "description": "Delay before lateral control resumes after the turn signal is turned off. Only applies when the vehicle speed dropped below half the \"Pause Steering Below\" speed during the turn signal. Set to 0 to disable.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 5.0,
+        "step": 0.1,
+        "parent_key": "QOLLateral"
       }
     ]
   },
@@ -266,6 +285,17 @@
         "parent_key": "AdvancedLongitudinalTune"
       },
       {
+        "key": "TrailerLoad",
+        "label": "Trailer Load",
+        "description": "Add trailer weight to vehicle mass for tow-aware gas, brake, and conservative lateral assist. Enter the loaded trailer weight in pounds.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0,
+        "max": 15000,
+        "step": 500,
+        "parent_key": "AdvancedLongitudinalTune"
+      },
+      {
         "key": "CustomAccelProfile",
         "label": "Custom Accel Profile",
         "description": "Replace the built-in acceleration profile with your own per-speed max-acceleration values. Breakpoint speeds stay fixed, and the starting defaults mirror the currently selected acceleration profile plus EV or Truck tuning.",
@@ -277,7 +307,7 @@
       {
         "key": "CustomAccelProfile0MPH",
         "label": "0 mph",
-        "description": "Max acceleration in m/s² at the fixed 0 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 0 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -289,7 +319,7 @@
       {
         "key": "CustomAccelProfile11MPH",
         "label": "11 mph",
-        "description": "Max acceleration in m/s² at the fixed 11 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 11 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -301,7 +331,7 @@
       {
         "key": "CustomAccelProfile22MPH",
         "label": "22 mph",
-        "description": "Max acceleration in m/s² at the fixed 22 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 22 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -313,7 +343,7 @@
       {
         "key": "CustomAccelProfile34MPH",
         "label": "34 mph",
-        "description": "Max acceleration in m/s² at the fixed 34 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 34 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -325,7 +355,7 @@
       {
         "key": "CustomAccelProfile45MPH",
         "label": "45 mph",
-        "description": "Max acceleration in m/s² at the fixed 45 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 45 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -337,7 +367,7 @@
       {
         "key": "CustomAccelProfile56MPH",
         "label": "56 mph",
-        "description": "Max acceleration in m/s² at the fixed 56 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 56 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -349,7 +379,7 @@
       {
         "key": "CustomAccelProfile89MPH",
         "label": "89 mph",
-        "description": "Max acceleration in m/s² at the fixed 89 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 89 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -579,8 +609,8 @@
         "description": "Customize the \"Traffic Mode\" personality profile. Designed for stop-and-go driving.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "is_parent_toggle": true,
-        "parent_key": "CustomPersonalities"
+        "parent_key": "CustomPersonalities",
+        "is_parent_toggle": true
       },
       {
         "key": "AggressivePersonalityProfile",
@@ -588,8 +618,8 @@
         "description": "Customize the \"Aggressive\" personality profile. Designed for assertive driving with tighter gaps.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "is_parent_toggle": true,
-        "parent_key": "CustomPersonalities"
+        "parent_key": "CustomPersonalities",
+        "is_parent_toggle": true
       },
       {
         "key": "StandardPersonalityProfile",
@@ -597,8 +627,8 @@
         "description": "Customize the \"Standard\" personality profile. Designed for balanced driving with moderate gaps.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "is_parent_toggle": true,
-        "parent_key": "CustomPersonalities"
+        "parent_key": "CustomPersonalities",
+        "is_parent_toggle": true
       },
       {
         "key": "RelaxedPersonalityProfile",
@@ -606,8 +636,8 @@
         "description": "Customize the \"Relaxed\" personality profile. Designed for smoother, more comfortable driving with larger gaps.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "is_parent_toggle": true,
-        "parent_key": "CustomPersonalities"
+        "parent_key": "CustomPersonalities",
+        "is_parent_toggle": true
       },
       {
         "key": "TrafficFollow",
@@ -971,9 +1001,9 @@
         "parent_key": "LongitudinalTune"
       },
       {
-        "key": "CoastUpToLeads",
-        "label": "Coast Up To Leads",
-        "description": "Allow openpilot to briefly coast toward far leads before resuming normal throttle. Disable this if your vehicle shows gas/brake alternation while approaching distant traffic.",
+        "key": "PrioritizeSmoothFollowing",
+        "label": "Prioritize Smooth Following",
+        "description": "Disable the newer far-lead follow logic on cars that show lead-follow stutter or springy gas/brake behavior. Tradeoff: the car may react later and brake less proactively in some edge-case lead approaches.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LongitudinalTune"
@@ -1000,6 +1030,14 @@
         "key": "TacoTune",
         "label": "\\\"Taco Bell Run\\\" Turn Speed Hack",
         "description": "The turn-speed hack from comma's 2022 \"Taco Bell Run\". Designed to slow down for left and right turns.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LongitudinalTune"
+      },
+      {
+        "key": "NavLongitudinalAllowed",
+        "label": "Use Route Speed Control",
+        "description": "Allow an active navigation route to reduce cruise speed for upcoming turns, ramps, and roundabouts.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LongitudinalTune"
@@ -1042,7 +1080,7 @@
       },
       {
         "key": "ForceStopDistanceOffset",
-        "label": "Force Stop Distance Offset (ft)",
+        "label": "Force Stop Distance Offset",
         "description": "Tune where Force Stops bring the car to rest. Positive values let the car roll further before stopping (longer stop, closer to the line). Negative values stop the car sooner (more buffer before the line).",
         "data_type": "int",
         "ui_type": "numeric",
@@ -1054,6 +1092,14 @@
         "key": "ForceStandstill",
         "label": "Force Standstill State",
         "description": "Keep openpilot in the standstill state until you press the gas pedal or the Resume/+ cruise button.\n\nThis applies to any engaged stop, not just red lights or stop signs.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLLongitudinal"
+      },
+      {
+        "key": "RadarTakeoffs",
+        "label": "Radar for Takeoffs",
+        "description": "Turns on/off using radar data to track leads at standstill, making following/takeoffs more responsive once leads move.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "QOLLongitudinal"
@@ -1108,7 +1154,6 @@
         "description": "Automatically adjust driving behavior based on real-time weather. Helps maintain comfort and safety in low visibility, rain, or snow.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "is_parent_toggle": true,
         "parent_key": "QOLLongitudinal"
       },
       {
@@ -1318,7 +1363,7 @@
       {
         "key": "SpeedLimitController",
         "label": "Speed Limit Controller",
-        "description": "Limit openpilot's maximum driving speed to the current speed limit obtained from downloaded maps, Mapbox, or the dashboard for supported vehicles (Ford, Genesis, Hyundai, Kia, Lexus, Toyota).",
+        "description": "Limit openpilot's maximum driving speed to the current speed limit obtained from downloaded maps, Mapbox, the dashboard, or vision-detected signs.",
         "data_type": "bool",
         "ui_type": "toggle",
         "is_parent_toggle": true
@@ -1329,7 +1374,6 @@
         "description": "Use the road camera to detect speed limit signs for SLC and speed limit filling.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "is_parent_toggle": true,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1362,7 +1406,6 @@
         "description": "Ask before changing to a new speed limit. To accept, tap the flashing on-screen widget or press the Cruise Increase button. To deny, press the Cruise Decrease button or ignore the prompt for 30 seconds.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "is_parent_toggle": true,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1389,7 +1432,6 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 30.0,
-        "step": 0.1,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1400,7 +1442,6 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 30.0,
-        "step": 0.1,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1527,7 +1568,6 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
-        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1538,7 +1578,6 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
-        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1549,7 +1588,6 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
-        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1560,7 +1598,6 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
-        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1571,7 +1608,6 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
-        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1582,7 +1618,6 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
-        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1593,7 +1628,6 @@
         "ui_type": "numeric",
         "min": -99.0,
         "max": 99.0,
-        "step": 1.0,
         "parent_key": "SpeedLimitController"
       },
       {
@@ -1608,6 +1642,95 @@
         "key": "SpeedLimitSources",
         "label": "Show Speed Limit Sources",
         "description": "Display the speed-limit sources and their current values on the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "ConditionalChill",
+        "label": "Conditional Chill Mode",
+        "description": "Keep \"Experimental Mode\" on by default, but temporarily switch to \"Chill Mode\" in simple cruising scenes where speed holding is usually better.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "PersistChillState",
+        "label": "Persist Chill State",
+        "description": "Keep your manual Conditional Chill override through reboots until you manually clear it.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ConditionalChill"
+      },
+      {
+        "key": "CCMSpeed",
+        "label": "Above",
+        "description": "Switch to \"Chill Mode\" on open roads above this speed when no lead is detected and the car is still below the set speed.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 99.0,
+        "step": 1.0,
+        "parent_key": "ConditionalChill"
+      },
+      {
+        "key": "CCMSpeedLead",
+        "label": "Above (With Lead)",
+        "description": "Switch to \"Chill Mode\" when following a stable lead above this speed.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 99.0,
+        "step": 1.0,
+        "parent_key": "ConditionalChill"
+      },
+      {
+        "key": "CCMLead",
+        "label": "Stable Lead Ahead",
+        "description": "Switch to \"Chill Mode\" when following a steady, well-tracked lead vehicle at cruising speeds.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ConditionalChill"
+      },
+      {
+        "key": "CCMLaunchAssist",
+        "label": "Launch Assist",
+        "description": "Temporarily switch to \"Chill Mode\" when starting from a stop if planner is already allowing throttle. Useful if your car launches too slowly from lights or stop signs.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ConditionalChill"
+      },
+      {
+        "key": "CCMSetSpeedMargin",
+        "label": "Set Speed Margin",
+        "description": "How far below the set speed the car must be before open-road Conditional Chill can engage.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 15.0,
+        "step": 1.0,
+        "parent_key": "ConditionalChill"
+      },
+      {
+        "key": "ShowCCMStatus",
+        "label": "Status Widget",
+        "description": "Show which condition triggered \"Chill Mode\" on the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ConditionalChill"
+      },
+      {
+        "key": "SLCAbbreviatedSources",
+        "label": "Show Abbreviated Icon Sources",
+        "description": "Render the speed-limit sources as compact text labels (e.g. \"Dash-45\", \"MapD-30\") without icons.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "SpeedLimitController"
+      },
+      {
+        "key": "SLCActiveSourcesOnly",
+        "label": "Only Show Sources With Speed Limits",
+        "description": "Hide source rows that have no current speed limit reading. Works with both abbreviated and full display.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "SpeedLimitController"
@@ -1662,6 +1785,14 @@
         "key": "HideSpeedLimit",
         "label": "Hide Speed Limits",
         "description": "Hide posted speed limits from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "HideSteeringWheel",
+        "label": "Hide Steering Wheel",
+        "description": "Hide the steering-wheel button from the top-right of the driving screen.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedCustomUI"
@@ -1865,6 +1996,13 @@
         "is_parent_toggle": true
       },
       {
+        "key": "ClearNavOnOffroad",
+        "label": "Clear Route When Offroad",
+        "description": "Clear the active navigation destination when the device goes offroad.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
         "key": "RoadNameUI",
         "label": "Road Name",
         "description": "Display the road name at the bottom of the driving screen using data from \"OpenStreetMap (OSM)\".",
@@ -1953,6 +2091,45 @@
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "QOLVisuals"
+      },
+      {
+        "key": "HideChangingLanesBanner",
+        "label": "Hide Changing Lanes Banner",
+        "description": "Hide the 'Changing Lanes' banner from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "HideDistanceProfileBanner",
+        "label": "Hide Distance Profile Banner",
+        "description": "Hide the driving personality banner when changing distance profiles.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "HideDMIcon",
+        "label": "Hide Driver Monitoring Icon",
+        "description": "Hide the driver monitoring icon from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "HideTurningBanner",
+        "label": "Hide Turning Banner",
+        "description": "Hide the 'Turning Left/Right' banner from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI"
+      },
+      {
+        "key": "DisableWideRoad",
+        "label": "Disable Wide Road Camera",
+        "description": "Only enable this if the wide camera is broken or for development!\n\nDisabling the wide camera may degrade driving performance and cause instability.\n\nRequires a reboot to take effect.",
+        "data_type": "bool",
+        "ui_type": "toggle"
       }
     ]
   },
@@ -1982,7 +2159,7 @@
       {
         "key": "BelowSteerSpeedVolume",
         "label": "Min Steer Speed Alert Volume",
-        "description": "Set the volume for the \"Steer Unavailable Under\" alert shown below the car's minimum steering speed. Set to Muted to silence only this alert.",
+        "description": "Set the volume for the \"Steer Unavailable Under\" alert shown below the car's minimum steering speed.\n\nSet to Muted to silence only this alert.",
         "data_type": "int",
         "ui_type": "numeric",
         "min": 0.0,
@@ -2116,6 +2293,14 @@
         "parent_key": "CustomAlerts"
       },
       {
+        "key": "LoudBlindspotAlertWhenDisengaged",
+        "label": "Blind Spot Alert When Disengaged",
+        "description": "Play the loud blind spot alert while lateral control is off or paused. Useful when steering pauses on turn signal, since the lane-change state machine is inactive then.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomAlerts"
+      },
+      {
         "key": "SpeedLimitChangedAlert",
         "label": "Speed Limit Changed Alert",
         "description": "Play an alert when the posted speed limit changes.",
@@ -2149,6 +2334,13 @@
         "key": "ForceFingerprint",
         "label": "Disable Automatic Fingerprint Detection",
         "description": "Force the selected fingerprint and prevent it from changing automatically.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "IsRHD",
+        "label": "Right Hand Driving",
+        "description": "Use right-hand-drive driver monitoring. This follows the auto-detected side until changed manually.",
         "data_type": "bool",
         "ui_type": "toggle"
       },
@@ -2303,6 +2495,13 @@
         "ui_type": "toggle"
       },
       {
+        "key": "SubaruSNGManualParkingBrake",
+        "label": "Stop and Go for Manual Parking Brake",
+        "description": "Use the manual-parking-brake Subaru stop-and-go strategy. Enable this for supported Subaru Global models with a manual handbrake. Keep it off on models with an electric parking brake.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
         "key": "ClusterOffset",
         "label": "Dashboard Speed Offset",
         "description": "The speed offset openpilot uses to match the speed on the dashboard display.",
@@ -2316,6 +2515,20 @@
         "key": "SNGHack",
         "label": "Stop-and-Go Hack",
         "description": "Force stop-and-go on Lexus/Toyota vehicles without stock stop-and-go functionality.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "ToyotaAutoHold",
+        "label": "Toyota Auto Hold",
+        "description": "Hold the brakes at a stop on supported Toyota/Lexus TSS2 vehicles when cruise main is available and cruise is not active.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "RemapCancelToDistance",
+        "label": "Remap Cancel Button",
+        "description": "On pedal-interceptor Bolts, treat the steering-wheel CANCEL button as an extra mappable button.",
         "data_type": "bool",
         "ui_type": "toggle"
       }
@@ -2651,6 +2864,31 @@
           {
             "value": 8,
             "label": "Create Bookmark"
+          },
+          {
+            "value": 9,
+            "label": "Toggle Always On Lateral"
+          }
+        ]
+      },
+      {
+        "key": "MainCruiseButtonControl",
+        "label": "CC Main Button",
+        "description": "Action performed when the cruise control main button is pressed.",
+        "data_type": "int",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "No Action"
+          },
+          {
+            "value": 9,
+            "label": "Toggle Always On Lateral"
+          },
+          {
+            "value": 10,
+            "label": "Adopt Current Speed Limit"
           }
         ]
       },
@@ -2962,7 +3200,6 @@
         "description": "WARNING: This will prevent your drives from being uploaded to comma connect which will impact debugging and official support from comma!\n\nPrevent the device from uploading driving data.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "is_parent_toggle": true,
         "parent_key": "DeviceManagement"
       },
       {
@@ -3038,8 +3275,6 @@
         "description": "The screen brightness while not driving.",
         "data_type": "int",
         "ui_type": "numeric",
-        "min": 1.0,
-        "max": 101.0,
         "step": 1.0,
         "parent_key": "ScreenManagement"
       },
@@ -3049,8 +3284,6 @@
         "description": "The screen brightness while driving.",
         "data_type": "int",
         "ui_type": "numeric",
-        "min": 1.0,
-        "max": 101.0,
         "step": 1.0,
         "parent_key": "ScreenManagement"
       },
@@ -3091,6 +3324,14 @@
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "ScreenManagement"
+      },
+      {
+        "key": "DisableWideRoad",
+        "label": "Disable Wide Road Camera",
+        "description": "WARNING: Only use this if the wide camera is malfunctioning or for development purposes. This may cause instability!\n\nRequires a reboot to take effect.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeviceManagement"
       }
     ]
   },
@@ -3139,6 +3380,26 @@
         "data_type": "string",
         "ui_type": "dropdown",
         "options_endpoint": "/api/models/installed"
+      }
+    ]
+  },
+  {
+    "name": "Developer",
+    "icon": "bi-exclamation-triangle",
+    "params": [
+      {
+        "key": "DisableWideRoad",
+        "label": "Disable Wide Road Camera",
+        "description": "Only enable this if the wide camera is broken or for development!\n\nDisabling the wide camera may degrade driving performance and cause instability.\n\nRequires a reboot to take effect.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "AllowImpossibleAcceleration",
+        "label": "Allow Impossible Acceleration",
+        "description": "WARNING: This suppresses openpilot's excessive longitudinal actuation diagnostic when measured acceleration looks impossible for the requested gas/brake command.\n\nLeave this OFF unless you are intentionally testing edge cases like shifting to neutral and understand that it can hide a real actuation problem.",
+        "data_type": "bool",
+        "ui_type": "toggle"
       }
     ]
   }

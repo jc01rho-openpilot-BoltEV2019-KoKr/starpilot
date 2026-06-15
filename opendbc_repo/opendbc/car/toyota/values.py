@@ -57,6 +57,7 @@ class ToyotaSafetyFlags(IntFlag):
   LTA = (4 << 8)
   SECOC = (8 << 8)
   LONG_FILTER = (16 << 8)
+  GAS_INTERCEPTOR = (32 << 8)
 
 
 class ToyotaFlags(IntFlag):
@@ -75,6 +76,7 @@ class ToyotaFlags(IntFlag):
   # these cars can utilize 2.0 m/s^2
   RAISED_ACCEL_LIMIT = 1024
   SECOC = 2048
+  AUTO_BRAKE_HOLD = 4096
 
   # deprecated flags
   # these cars are speculated to allow stop and go when the DSU is unplugged

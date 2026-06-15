@@ -69,6 +69,9 @@
   {.msg = {{0x116, 0, 8, 42U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
   {.msg = {{0x101, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
 
+#define TOYOTA_GAS_INTERCEPTOR_ADDR_CHECK                                                                                                  \
+  {.msg = {{0x201, 0, 6, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
+
 static bool toyota_secoc = false;
 static bool toyota_alt_brake = false;
 static bool toyota_stock_longitudinal = false;
@@ -88,6 +91,12 @@ static uint32_t toyota_compute_checksum(const CANPacket_t *msg) {
 static uint32_t toyota_get_checksum(const CANPacket_t *msg) {
   int checksum_byte = GET_LEN(msg) - 1U;
   return (uint8_t)(msg->data[checksum_byte]);
+}
+
+static int toyota_get_interceptor(const CANPacket_t *msg) {
+  uint16_t val1 = ((uint16_t)msg->data[0] << 8U) | (uint16_t)msg->data[1];
+  uint16_t val2 = ((uint16_t)msg->data[2] << 8U) | (uint16_t)msg->data[3];
+  return (int)((val1 + val2) / 2U);
 }
 
 static bool toyota_get_quality_flag_valid(const CANPacket_t *msg) {
@@ -150,7 +159,9 @@ static void toyota_rx_hook(const CANPacket_t *msg) {
       if (msg->addr == 0x1D2U) {
         bool cruise_engaged = GET_BIT(msg, 5U);  // PCM_CRUISE.CRUISE_ACTIVE
         pcm_cruise_check(cruise_engaged);
-        gas_pressed = !GET_BIT(msg, 4U);  // PCM_CRUISE.GAS_RELEASED
+        if (!enable_gas_interceptor) {
+          gas_pressed = !GET_BIT(msg, 4U);  // PCM_CRUISE.GAS_RELEASED
+        }
       }
       if (!toyota_alt_brake && (msg->addr == 0x226U)) {
         brake_pressed = GET_BIT(msg, 37U);  // BRAKE_MODULE.BRAKE_PRESSED (toyota_nodsu_pt_generated.dbc)
@@ -180,6 +191,14 @@ static void toyota_rx_hook(const CANPacket_t *msg) {
 
     if (msg->addr == 0x365U) {
       acc_main_on = GET_BIT(msg, 0U);
+    }
+
+    if (enable_gas_interceptor && (msg->addr == 0x201U)) {
+      // Match the DBC's physical pedal threshold to avoid controls state mismatches.
+      const int toyota_gas_interceptor_threshold = 805;
+      int gas_interceptor = toyota_get_interceptor(msg);
+      gas_pressed = gas_interceptor > toyota_gas_interceptor_threshold;
+      gas_interceptor_prev = gas_interceptor;
     }
   }
 }
@@ -351,6 +370,17 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
         }
       }
     }
+
+    if ((msg->addr == 0x200U) && longitudinal_interceptor_checks(msg)) {
+      tx = false;
+    }
+
+    // Auto brake hold replaces the camera AEB message only while stopped.
+    if ((msg->addr == 0x344U) && ((alternative_experience & ALT_EXP_ALLOW_AEB) != 0)) {
+      if (vehicle_moving || gas_pressed || !acc_main_on) {
+        tx = false;
+      }
+    }
   }
 
   // UDS: Only tester present ("\x0F\x02\x3E\x00\x00\x00\x00\x00") allowed on diagnostics address
@@ -384,6 +414,16 @@ static safety_config toyota_init(uint16_t param) {
     TOYOTA_COMMON_LONG_TX_MSGS_FILTER
   };
 
+  static const CanMsg TOYOTA_INTERCEPTOR_TX_MSGS[] = {
+    TOYOTA_COMMON_LONG_TX_MSGS
+    {0x200, 0, 6, .check_relay = false},
+  };
+
+  static const CanMsg TOYOTA_INTERCEPTOR_TX_MSGS_FILTER[] = {
+    TOYOTA_COMMON_LONG_TX_MSGS_FILTER
+    {0x200, 0, 6, .check_relay = false},
+  };
+
   static const CanMsg TOYOTA_SECOC_LONG_TX_MSGS[] = {
     TOYOTA_COMMON_SECOC_LONG_TX_MSGS
   };
@@ -396,6 +436,7 @@ static safety_config toyota_init(uint16_t param) {
   const uint32_t TOYOTA_PARAM_STOCK_LONGITUDINAL = 2UL << TOYOTA_PARAM_OFFSET;
   const uint32_t TOYOTA_PARAM_LTA = 4UL << TOYOTA_PARAM_OFFSET;
   const uint32_t TOYOTA_PARAM_LONG_FILTER = 16UL << TOYOTA_PARAM_OFFSET;
+  const uint32_t TOYOTA_PARAM_GAS_INTERCEPTOR = 32UL << TOYOTA_PARAM_OFFSET;
 
 #ifdef ALLOW_DEBUG
   const uint32_t TOYOTA_PARAM_SECOC = 8UL << TOYOTA_PARAM_OFFSET;
@@ -406,7 +447,12 @@ static safety_config toyota_init(uint16_t param) {
   toyota_stock_longitudinal = GET_FLAG(param, TOYOTA_PARAM_STOCK_LONGITUDINAL);
   toyota_lta = GET_FLAG(param, TOYOTA_PARAM_LTA);
   toyota_long_filter = GET_FLAG(param, TOYOTA_PARAM_LONG_FILTER);
+  enable_gas_interceptor = GET_FLAG(param, TOYOTA_PARAM_GAS_INTERCEPTOR);
   toyota_dbc_eps_torque_factor = param & TOYOTA_EPS_FACTOR;
+
+  if (toyota_stock_longitudinal || toyota_secoc) {
+    enable_gas_interceptor = false;
+  }
 
   safety_config ret;
   if (toyota_secoc) {
@@ -418,6 +464,12 @@ static safety_config toyota_init(uint16_t param) {
   } else {
     if (toyota_stock_longitudinal) {
       SET_TX_MSGS(TOYOTA_TX_MSGS, ret);
+    } else if (enable_gas_interceptor) {
+      if (toyota_long_filter) {
+        SET_TX_MSGS(TOYOTA_INTERCEPTOR_TX_MSGS_FILTER, ret);
+      } else {
+        SET_TX_MSGS(TOYOTA_INTERCEPTOR_TX_MSGS, ret);
+      }
     } else {
       if (toyota_long_filter) {
         SET_TX_MSGS(TOYOTA_LONG_TX_MSGS_FILTER, ret);
@@ -438,8 +490,16 @@ static safety_config toyota_init(uint16_t param) {
     static RxCheck toyota_lta_rx_checks[] = {
       TOYOTA_RX_CHECKS(true)
     };
+    static RxCheck toyota_lta_interceptor_rx_checks[] = {
+      TOYOTA_RX_CHECKS(true)
+      TOYOTA_GAS_INTERCEPTOR_ADDR_CHECK
+    };
 
-    SET_RX_CHECKS(toyota_lta_rx_checks, ret);
+    if (enable_gas_interceptor) {
+      SET_RX_CHECKS(toyota_lta_interceptor_rx_checks, ret);
+    } else {
+      SET_RX_CHECKS(toyota_lta_rx_checks, ret);
+    }
   } else {
     static RxCheck toyota_lka_rx_checks[] = {
       TOYOTA_RX_CHECKS(false)
@@ -447,8 +507,20 @@ static safety_config toyota_init(uint16_t param) {
     static RxCheck toyota_lka_alt_brake_rx_checks[] = {
       TOYOTA_ALT_BRAKE_RX_CHECKS(false)
     };
+    static RxCheck toyota_lka_interceptor_rx_checks[] = {
+      TOYOTA_RX_CHECKS(false)
+      TOYOTA_GAS_INTERCEPTOR_ADDR_CHECK
+    };
+    static RxCheck toyota_lka_alt_brake_interceptor_rx_checks[] = {
+      TOYOTA_ALT_BRAKE_RX_CHECKS(false)
+      TOYOTA_GAS_INTERCEPTOR_ADDR_CHECK
+    };
 
-    if (!toyota_alt_brake) {
+    if (enable_gas_interceptor && !toyota_alt_brake) {
+      SET_RX_CHECKS(toyota_lka_interceptor_rx_checks, ret);
+    } else if (enable_gas_interceptor) {
+      SET_RX_CHECKS(toyota_lka_alt_brake_interceptor_rx_checks, ret);
+    } else if (!toyota_alt_brake) {
       SET_RX_CHECKS(toyota_lka_rx_checks, ret);
     } else {
       SET_RX_CHECKS(toyota_lka_alt_brake_rx_checks, ret);
@@ -458,10 +530,20 @@ static safety_config toyota_init(uint16_t param) {
   return ret;
 }
 
+static bool toyota_fwd_hook(int bus_num, int addr) {
+  bool block_msg = false;
+  if (bus_num == 2) {
+    block_msg = (addr == 0x344) && ((alternative_experience & ALT_EXP_ALLOW_AEB) != 0) &&
+                !vehicle_moving && !gas_pressed && acc_main_on;
+  }
+  return block_msg;
+}
+
 const safety_hooks toyota_hooks = {
   .init = toyota_init,
   .rx = toyota_rx_hook,
   .tx = toyota_tx_hook,
+  .fwd = toyota_fwd_hook,
   .get_checksum = toyota_get_checksum,
   .compute_checksum = toyota_compute_checksum,
   .get_quality_flag_valid = toyota_get_quality_flag_valid,
