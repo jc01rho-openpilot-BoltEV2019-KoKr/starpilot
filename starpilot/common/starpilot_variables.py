@@ -967,6 +967,7 @@ class StarPilotVariables:
     toggle.lane_detection_width = self.get_value("LaneDetectionWidth", cast=float, condition=toggle.lane_changes, conversion=distance_conversion)
     toggle.minimum_lane_change_speed = self.get_value("MinimumLaneChangeSpeed", cast=float, condition=toggle.lane_changes, conversion=speed_conversion)
     toggle.nudgeless = self.get_value("NudgelessLaneChange", condition=toggle.lane_changes)
+    toggle.nudgeless_lane_change_only_when_engaged = self.get_value("NudgelessLaneChangeOnlyWhenEngaged", condition=toggle.lane_changes and toggle.nudgeless)
     toggle.one_lane_change = self.get_value("OneLaneChange", condition=toggle.lane_changes)
 
     # Lane change pace: 1 = smoothest (~8 s target), 10 = stock (no clamp applied)

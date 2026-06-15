@@ -432,6 +432,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NoLogging", {PERSISTENT, BOOL, "0", "0", 2}},
     {"NoUploads", {PERSISTENT, BOOL, "0", "0", 2}},
     {"NudgelessLaneChange", {PERSISTENT, BOOL, "0", "0", 0}},
+    {"NudgelessLaneChangeOnlyWhenEngaged", {PERSISTENT, BOOL, "0", "0", 1}},
     {"NumericalTemp", {PERSISTENT, BOOL, "1", "0", 3}},
     {"Offset1", {PERSISTENT, FLOAT, "5.0", "0.0", 0}},
     {"Offset2", {PERSISTENT, FLOAT, "5.0", "0.0", 0}},

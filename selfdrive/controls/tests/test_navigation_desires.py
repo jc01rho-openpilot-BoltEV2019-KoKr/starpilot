@@ -28,6 +28,7 @@ def make_toggles(**overrides):
     "lane_detection_width": 3.0,
     "minimum_lane_change_speed": 10.0,
     "nudgeless": True,
+    "nudgeless_lane_change_only_when_engaged": False,
     "one_lane_change": False,
     "use_turn_desires": False,
     "lane_changes_require_cruise": False,
@@ -352,6 +353,71 @@ def test_lane_changes_without_cruise_requirement_keep_existing_behavior():
 
   assert helper.lane_change_state == LaneChangeState.preLaneChange
   assert helper.lane_change_direction == LaneChangeDirection.left
+
+
+def test_nudgeless_only_when_engaged_allows_automatic_lane_change_when_engaged():
+  helper = DesireHelper()
+
+  for _ in range(2):
+    helper.update(
+      make_car_state(leftBlinker=True),
+      True,
+      0.0,
+      make_plan(),
+      make_toggles(nudgeless_lane_change_only_when_engaged=True),
+      controls_enabled=True,
+    )
+
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+  assert helper.lane_change_direction == LaneChangeDirection.left
+
+
+def test_nudgeless_only_when_engaged_requires_nudge_when_aol_only():
+  helper = DesireHelper()
+  toggles = make_toggles(nudgeless_lane_change_only_when_engaged=True)
+
+  for _ in range(2):
+    helper.update(
+      make_car_state(leftBlinker=True),
+      True,
+      0.0,
+      make_plan(),
+      toggles,
+      controls_enabled=False,
+    )
+
+  assert helper.lane_change_state == LaneChangeState.preLaneChange
+  assert helper.lane_change_direction == LaneChangeDirection.left
+
+  helper.update(
+    make_car_state(leftBlinker=True, steeringPressed=True, steeringTorque=1.0),
+    True,
+    0.0,
+    make_plan(),
+    toggles,
+    controls_enabled=False,
+  )
+
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+  assert helper.lane_change_direction == LaneChangeDirection.left
+
+
+def test_nav_desires_nudgeless_only_when_engaged_blocks_keep_when_aol_only():
+  helper = DesireHelper()
+  helper.nav_desires_allowed = True
+  helper._update_nav_params = lambda: None
+  helper._nav_instruction_state = {"valid": True, "maneuverModifier": "slightLeft"}
+
+  helper.update(
+    make_car_state(vEgo=20.0),
+    True,
+    0.0,
+    make_plan(laneWidthLeft=4.2),
+    make_toggles(nudgeless=True, nudgeless_lane_change_only_when_engaged=True),
+    controls_enabled=False,
+  )
+
+  assert helper.desire == log.Desire.none
 
 
 def test_nav_desires_disabled_leave_desire_unchanged():

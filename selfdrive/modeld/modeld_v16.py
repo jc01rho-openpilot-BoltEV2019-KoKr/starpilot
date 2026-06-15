@@ -479,7 +479,7 @@ def main(demo=False):
       l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
       r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
       lane_change_prob = l_lane_change_prob + r_lane_change_prob
-      desire_helper.update(sm["carState"], sm["carControl"].latActive, lane_change_prob, sm["starpilotPlan"], starpilot_toggles)
+      desire_helper.update(sm["carState"], sm["carControl"].latActive, lane_change_prob, sm["starpilotPlan"], starpilot_toggles, sm["carControl"].enabled)
       modelv2_send.modelV2.meta.laneChangeState = desire_helper.lane_change_state
       modelv2_send.modelV2.meta.laneChangeDirection = desire_helper.lane_change_direction
       starpilot_modelv2_send.starpilotModelV2.turnDirection = desire_helper.turn_direction

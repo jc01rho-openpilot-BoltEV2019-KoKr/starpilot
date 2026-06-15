@@ -120,6 +120,13 @@ class DesireHelper:
     return distance <= float(np.interp(carstate.vEgo, NAV_TURN_DISTANCE_SPEED_BREAKPOINTS, NAV_TURN_DISTANCE_BREAKPOINTS))
 
   @staticmethod
+  def _nudgeless_enabled(starpilot_toggles, controls_enabled):
+    nudgeless = bool(getattr(starpilot_toggles, "nudgeless", False))
+    if getattr(starpilot_toggles, "nudgeless_lane_change_only_when_engaged", False):
+      nudgeless &= bool(controls_enabled)
+    return nudgeless
+
+  @staticmethod
   def _nav_keep_is_imminent(carstate, maneuver_distance, maneuver_type="", same_side_lane_count=0):
     try:
       distance = float(maneuver_distance)
@@ -172,7 +179,7 @@ class DesireHelper:
 
     return modifier
 
-  def _navigation_desire(self, carstate, lateral_active, starpilotPlan, starpilot_toggles):
+  def _navigation_desire(self, carstate, lateral_active, starpilotPlan, starpilot_toggles, nudgeless_enabled):
     self._update_nav_params()
     if not self.nav_desires_allowed or not lateral_active or not bool(self._nav_instruction_state.get("valid", False)):
       return log.Desire.none
@@ -185,14 +192,14 @@ class DesireHelper:
     if modifier == "slightLeft":
       lane_change_direction = LaneChangeDirection.left
       desired_lane_width = starpilotPlan.laneWidthLeft
-      nudgeless_allowed = starpilot_toggles.nudgeless and desired_lane_width >= starpilot_toggles.lane_detection_width
+      nudgeless_allowed = nudgeless_enabled and desired_lane_width >= starpilot_toggles.lane_detection_width
       if not carstate.rightBlinker and self._nav_keep_direction_is_clear(carstate, lane_change_direction):
         if self._nav_torque_applied(carstate, lane_change_direction) or nudgeless_allowed:
           return log.Desire.keepLeft
     elif modifier == "slightRight":
       lane_change_direction = LaneChangeDirection.right
       desired_lane_width = starpilotPlan.laneWidthRight
-      nudgeless_allowed = starpilot_toggles.nudgeless and desired_lane_width >= starpilot_toggles.lane_detection_width
+      nudgeless_allowed = nudgeless_enabled and desired_lane_width >= starpilot_toggles.lane_detection_width
       if not carstate.leftBlinker and self._nav_keep_direction_is_clear(carstate, lane_change_direction):
         if self._nav_torque_applied(carstate, lane_change_direction) or nudgeless_allowed:
           return log.Desire.keepRight
@@ -209,11 +216,13 @@ class DesireHelper:
   def get_lane_change_direction(CS):
     return LaneChangeDirection.left if CS.leftBlinker else LaneChangeDirection.right
 
-  def update(self, carstate, lateral_active, lane_change_prob, starpilotPlan, starpilot_toggles):
+  def update(self, carstate, lateral_active, lane_change_prob, starpilotPlan, starpilot_toggles, controls_enabled=None):
     v_ego = carstate.vEgo
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
     below_lane_change_speed = v_ego < starpilot_toggles.minimum_lane_change_speed
     cruise_state = getattr(carstate, "cruiseState", None)
+    controls_enabled = bool(getattr(cruise_state, "enabled", False)) if controls_enabled is None else bool(controls_enabled)
+    nudgeless_enabled = self._nudgeless_enabled(starpilot_toggles, controls_enabled)
     lane_changes_allowed = starpilot_toggles.lane_changes
     lane_changes_allowed &= not getattr(starpilot_toggles, "lane_changes_require_cruise", False) or bool(getattr(cruise_state, "enabled", False))
 
@@ -244,7 +253,7 @@ class DesireHelper:
         if torque_applied:
           self.lane_change_wait_timer = starpilot_toggles.lane_change_delay
         else:
-          torque_applied |= starpilot_toggles.nudgeless
+          torque_applied |= nudgeless_enabled
           torque_applied &= self.lane_change_wait_timer >= starpilot_toggles.lane_change_delay
 
           desired_lane_width = starpilotPlan.laneWidthLeft if self.lane_change_direction == LaneChangeDirection.left else starpilotPlan.laneWidthRight
@@ -312,6 +321,6 @@ class DesireHelper:
 
       self.lane_change_wait_timer = 0.0
 
-    nav_desire = self._navigation_desire(carstate, lateral_active, starpilotPlan, starpilot_toggles)
+    nav_desire = self._navigation_desire(carstate, lateral_active, starpilotPlan, starpilot_toggles, nudgeless_enabled)
     if nav_desire != log.Desire.none and self.lane_change_state == LaneChangeState.off:
       self.desire = nav_desire

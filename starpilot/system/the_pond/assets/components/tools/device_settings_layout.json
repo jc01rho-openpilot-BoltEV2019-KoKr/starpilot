@@ -138,6 +138,14 @@
         "parent_key": "LaneChanges"
       },
       {
+        "key": "NudgelessLaneChangeOnlyWhenEngaged",
+        "label": "Automatic Lane Changes Only When Engaged",
+        "description": "Require a steering-wheel nudge for lane changes while using Always On Lateral without full engagement.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LaneChanges"
+      },
+      {
         "key": "LaneChangeTime",
         "label": "Lane Change Delay",
         "description": "Delay between turn signal activation and the start of an automatic lane change.",
