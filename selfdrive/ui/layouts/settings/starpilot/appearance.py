@@ -205,7 +205,7 @@ class AppearanceManagerView(AetherSettingsView):
                 )
             )
 
-        self._page_grid = self._toggle_grid
+        self.register_page_grid(self._toggle_grid)
         self._set_toggle_pages([toggles[i:i+6] for i in range(0, len(toggles), 6)])
 
     def _init_adjustors(self):
@@ -242,24 +242,7 @@ class AppearanceManagerView(AetherSettingsView):
             color=self._panel_style.accent,
         )
         self._adjustor.set_enabled(ol)
-
-    def _handle_mouse_press(self, mouse_pos):
-        super()._handle_mouse_press(mouse_pos)
-        if self._active_tab_key == "widgets":
-            self._adjustor._handle_mouse_press(mouse_pos)
-            self._toggle_grid._handle_mouse_press(mouse_pos)
-
-    def _handle_mouse_release(self, mouse_pos):
-        super()._handle_mouse_release(mouse_pos)
-        if self._active_tab_key == "widgets":
-            self._adjustor._handle_mouse_release(mouse_pos)
-            self._toggle_grid._handle_mouse_release(mouse_pos)
-
-    def _handle_mouse_event(self, mouse_event):
-        super()._handle_mouse_event(mouse_event)
-        if self._active_tab_key == "widgets":
-            self._adjustor._handle_mouse_event(mouse_event)
-            self._toggle_grid._handle_mouse_event(mouse_event)
+        self._child(self._adjustor)
 
     def _measure_content_height(self, width: float) -> float:
         if self._active_tab_key == "widgets":

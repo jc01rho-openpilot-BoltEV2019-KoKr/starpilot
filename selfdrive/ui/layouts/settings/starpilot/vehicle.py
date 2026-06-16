@@ -103,8 +103,7 @@ class VehicleSettingsManagerView(PanelManagerView):
     self._shell_rect = rl.Rectangle(0, 0, 0, 0)
 
     self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_width=100)
-    self._toggle_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
-    self._child(self._toggle_grid)
+    self.register_page_grid(self._toggle_grid)
 
     self._last_make = ""
     self._last_model = ""
@@ -212,7 +211,6 @@ class VehicleSettingsManagerView(PanelManagerView):
     return toggles
 
   def _rebuild_toggle_grid(self):
-    self._page_grid = self._toggle_grid
     defs = self._build_driving_toggles()
     self._set_toggle_pages([defs[i:i+6] for i in range(0, len(defs), 6)])
 

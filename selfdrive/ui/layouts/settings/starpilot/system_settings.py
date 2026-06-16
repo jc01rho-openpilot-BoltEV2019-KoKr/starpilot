@@ -298,19 +298,9 @@ class SystemSettingsManagerView(PanelManagerView):
 
     self._connectivity_tile_grid = TileGrid(columns=2, padding=12)
     for toggle_def in self._toggle_defs:
-      tile = ToggleTile(
-        title=toggle_def["title"],
-        get_state=toggle_def["get"],
-        set_state=toggle_def["set"],
-        bg_color=PANEL_STYLE.accent,
-        desc=toggle_def["subtitle"],
-        is_enabled=toggle_def.get("is_enabled"),
-        disabled_label=toggle_def.get("disabled_label", ""),
-      )
+      tile = self._make_toggle_tile(toggle_def)
       self._connectivity_tile_grid.add_tile(tile)
-    self._connectivity_tile_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
-    self._child(self._connectivity_tile_grid)
-    self._page_grid = self._connectivity_tile_grid
+    self.register_page_grid(self._connectivity_tile_grid)
     self._set_toggle_pages([self._toggle_defs[i:i+4] for i in range(0, len(self._toggle_defs), 4)])
 
     self._drive_mode_control = self._child(

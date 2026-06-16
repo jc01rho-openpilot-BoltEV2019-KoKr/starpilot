@@ -613,6 +613,13 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
   def _has_pagination(self) -> bool:
     return self._page_count > 1
 
+  def register_page_grid(self, grid: TileGrid) -> None:
+    self._page_grid = grid
+    if grid not in self._children:
+      self._child(grid)
+    grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid() and not getattr(self, '_page_drag_active', False))
+
+
   def _set_toggle_pages(self, pages: list[list]) -> None:
     self._toggle_pages = pages
     self._page_count = max(1, len(pages))
