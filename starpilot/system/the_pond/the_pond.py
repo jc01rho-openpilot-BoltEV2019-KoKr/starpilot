@@ -5175,17 +5175,27 @@ def setup(app):
     else:
       env = short_branch
 
+    software_info = {
+      "branchName": build_metadata.channel,
+      "buildEnvironment": env,
+      "changelogUrl": utilities.get_github_changelog_url(build_metadata.openpilot.git_normalized_origin, build_metadata.channel),
+      "commitHash": build_metadata.openpilot.git_commit,
+      "commitUrl": utilities.get_github_commit_url(build_metadata.openpilot.git_normalized_origin, build_metadata.openpilot.git_commit),
+      "forkMaintainer": utilities.get_repo_owner(build_metadata.openpilot.git_normalized_origin),
+      "updateAvailable": "Yes" if params.get_bool("UpdaterFetchAvailable") else "No",
+      "versionDate": utilities.format_git_date(build_metadata.openpilot.git_commit_date),
+    }
+
+    try:
+      dashboard_stats = utilities.get_dashboard_stats(FOOTAGE_PATHS, params)
+    except Exception:
+      dashboard_stats = utilities.get_dashboard_stats([], params)
+
     return {
       "diskUsage": utilities.get_disk_usage(),
       "driveStats": utilities.get_drive_stats(),
-      "softwareInfo": {
-        "branchName": build_metadata.channel,
-        "buildEnvironment": env,
-        "commitHash": build_metadata.openpilot.git_commit,
-        "forkMaintainer": utilities.get_repo_owner(build_metadata.openpilot.git_normalized_origin),
-        "updateAvailable": "Yes" if params.get_bool("UpdaterFetchAvailable") else "No",
-        "versionDate": utilities.format_git_date(build_metadata.openpilot.git_commit_date),
-      },
+      "softwareInfo": software_info,
+      "dashboard": dashboard_stats,
     }
 
   @app.route("/api/plots/live", methods=["GET"])

@@ -312,6 +312,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ForceStandstill", {PERSISTENT, BOOL, "0", "0", 2}},
     {"ForceTorqueController", {PERSISTENT, BOOL, "0", "0", 3}},
     {"FPSCounter", {PERSISTENT, BOOL, "1", "0", 3}},
+    {"GalaxyDashboardStats", {PERSISTENT | DONT_LOG, JSON, "{}", "{}"}},
     {"StarPilotApiToken", {PERSISTENT | DONT_LOG, STRING, "", "", 0}},
     {"StarPilotCarParams", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, BYTES, "", ""}},
     {"StarPilotCarParamsPersistent", {PERSISTENT, BYTES, "", ""}},

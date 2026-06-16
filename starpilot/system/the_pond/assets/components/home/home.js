@@ -1,12 +1,15 @@
 import { html } from "/assets/vendor/arrow-core.js";
 
 const HOME_STATE = {
-  status: "loading", // loading | ready | error
+  status: "loading",
   data: null,
   unit: "miles",
   error: "",
   initialized: false,
 };
+
+const FAVORITE_COLORS = ["#5ec8c8", "#8b6cc5", "#d4a060", "#e05577", "#6cc56e", "#8aa3ff"];
+const TOP_MODEL_LIMIT = 3;
 
 function withTimeout(promise, timeoutMs, label) {
   return new Promise((resolve, reject) => {
@@ -21,101 +24,443 @@ function withTimeout(promise, timeoutMs, label) {
   });
 }
 
-function formatInt(value) {
-  const n = Number(value || 0);
-  return Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "0";
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
-function renderDiskUsageSection(state) {
-  const { data } = state;
+function safeUrl(value) {
+  const text = String(value ?? "").trim();
+  return text.startsWith("https://github.com/") ? text : "";
+}
+
+function numberValue(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function formatInt(value) {
+  return Math.round(numberValue(value)).toLocaleString("en-US", { maximumFractionDigits: 0 });
+}
+
+function formatOneDecimal(value) {
+  return numberValue(value).toLocaleString("en-US", { maximumFractionDigits: 1 });
+}
+
+function formatPercent(value) {
+  return `${Math.max(0, Math.min(100, Math.round(numberValue(value))))}%`;
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(numberValue(seconds)));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function formatDate(value) {
+  if (!value) return "No drives yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatBytes(bytes) {
+  const value = Math.max(0, numberValue(bytes));
+  if (value >= 2 ** 30) return `${formatOneDecimal(value / (2 ** 30))} GB`;
+  if (value >= 2 ** 20) return `${formatOneDecimal(value / (2 ** 20))} MB`;
+  return `${formatInt(value / 1024)} KB`;
+}
+
+function statBlock(title, stats = {}, unit) {
+  return `
+    <section class="dashboard-card dashboard-summary-card">
+      <h2>${escapeHtml(title)}</h2>
+      <div class="dashboard-stat-row">
+        <div><strong>${formatInt(stats.drives)}</strong><span>drives</span></div>
+        <div><strong>${formatOneDecimal(stats.distance)}</strong><span>${escapeHtml(stats.unit || unit)}</span></div>
+        <div><strong>${formatOneDecimal(stats.hours)}</strong><span>hours</span></div>
+      </div>
+    </section>
+  `;
+}
+
+function fallbackDashboard(data, unit) {
+  const disk = Array.isArray(data?.diskUsage) ? data.diskUsage[0] : {};
+  const usedText = String(disk?.used || "0 GB");
+  const sizeText = String(disk?.size || "0 GB");
+  return {
+    lastDrive: {
+      date: "",
+      distance: 0,
+      duration: 0,
+      avgSpeed: 0,
+      engagedPercent: 0,
+      model: "Unknown model",
+      segmentCount: 0,
+      distractedMoments: 0,
+      unresponsiveMoments: 0,
+      distanceUnit: unit,
+      speedUnit: unit === "kilometers" ? "kph" : "mph",
+    },
+    recentDrives: [],
+    week: {
+      distance: 0,
+      duration: 0,
+      hours: 0,
+      drives: 0,
+      engagedPercent: 0,
+      dailyDistance: [],
+      distanceUnit: unit,
+    },
+    records: {
+      longestDrive: { value: "0", detail: unit },
+      mostEngagedDay: { value: "0%", detail: "No drives" },
+      bestWeek: { value: "0", detail: unit },
+      highestStreak: { value: "0 days", detail: "No drives" },
+      longestUndistractedDrive: { value: "0.0 hours", detail: "No clean drives" },
+      cleanDriveStreak: { value: "0 drives", detail: "No clean drives" },
+    },
+    device: { status: "Parked", online: true, uptimeSeconds: null, cpuTempC: null },
+    storage: {
+      freeBytes: 0,
+      usedBytes: 0,
+      totalBytes: 0,
+      usedPercent: Number.parseFloat(disk?.usedPercentage) || 0,
+      legacyText: `${usedText} used of ${sizeText}`,
+      segmentCounts: { standard: 0, highResolution: 0, alternate: 0 },
+    },
+    favoriteModels: [],
+  };
+}
+
+function renderLastDrive(drive) {
+  return `
+    <section class="dashboard-card dashboard-last-drive">
+      <div class="dashboard-card-kicker"><span></span>Last drive</div>
+      <div class="dashboard-drive-date">${escapeHtml(formatDate(drive.date))}</div>
+      <div class="dashboard-drive-metrics">
+        <div><strong>${formatOneDecimal(drive.distance)}</strong><span>${escapeHtml(drive.distanceUnit || "miles")}</span></div>
+        <div><strong>${formatDuration(drive.duration)}</strong><span>duration</span></div>
+        <div><strong>${formatInt(drive.avgSpeed)}</strong><span>${escapeHtml(drive.speedUnit || "mph")} avg</span></div>
+        <div><strong>${formatPercent(drive.engagedPercent)}</strong><span>engaged</span></div>
+      </div>
+      <div class="dashboard-drive-footer">
+        <span><i class="bi bi-cpu"></i>${escapeHtml(drive.model || "Unknown model")}</span>
+        <span><i class="bi bi-eye"></i>${formatInt(drive.distractedMoments)} distracted</span>
+        <span><i class="bi bi-exclamation-triangle"></i>${formatInt(drive.unresponsiveMoments)} unresponsive</span>
+      </div>
+    </section>
+  `;
+}
+
+function renderWeekChart(week) {
+  const days = Array.isArray(week.dailyDistance) && week.dailyDistance.length
+    ? week.dailyDistance
+    : ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(label => ({ label, distance: 0 }));
+  const maxDistance = Math.max(1, ...days.map(day => numberValue(day.distance)));
+  const bars = days.map(day => {
+    const height = Math.max(4, (numberValue(day.distance) / maxDistance) * 100);
+    return `
+      <div class="dashboard-day">
+        <div class="dashboard-day-bar" style="height:${height}%"></div>
+        <span>${escapeHtml(day.label)}</span>
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <section class="dashboard-card dashboard-week">
+      <h2>This week</h2>
+      <div class="dashboard-week-top">
+        <div class="dashboard-donut" style="--value:${Math.max(0, Math.min(100, numberValue(week.engagedPercent)))}">
+          <strong>${formatPercent(week.engagedPercent)}</strong>
+          <span>engaged</span>
+        </div>
+        <div class="dashboard-week-metrics">
+          <div><strong>${formatOneDecimal(week.distance)}</strong><span>${escapeHtml(week.distanceUnit || "miles")}</span></div>
+          <div><strong>${formatOneDecimal(week.hours)}</strong><span>hours</span></div>
+          <div><strong>${formatInt(week.drives)}</strong><span>drives</span></div>
+        </div>
+      </div>
+      <h3>Distance per day</h3>
+      <div class="dashboard-bars">${bars}</div>
+    </section>
+  `;
+}
+
+function recordRow(icon, title, record) {
+  return `
+    <div class="dashboard-record-row">
+      <span><i class="bi ${icon}"></i></span>
+      <div>
+        <p>${escapeHtml(title)}</p>
+        <strong>${escapeHtml(record?.value ?? "0")}</strong>
+        <small>${escapeHtml(record?.detail ?? "")}</small>
+      </div>
+    </div>
+  `;
+}
+
+function renderRecords(records) {
+  return `
+    <section class="dashboard-card dashboard-records">
+      <h2>Personal records</h2>
+      ${recordRow("bi-arrow-right", "Longest drive", records.longestDrive)}
+      ${recordRow("bi-check2-circle", "Most-engaged day", records.mostEngagedDay)}
+      ${recordRow("bi-graph-up-arrow", "Best week", records.bestWeek)}
+      ${recordRow("bi-lightning-charge", "Highest streak", records.highestStreak)}
+      ${recordRow("bi-shield-check", "Longest undistracted drive", records.longestUndistractedDrive)}
+      ${recordRow("bi-stars", "Clean-drive streak", records.cleanDriveStreak)}
+    </section>
+  `;
+}
+
+function renderRecentDrives(drives) {
+  if (!Array.isArray(drives) || drives.length === 0) {
+    return `
+      <section class="dashboard-card dashboard-recent">
+        <h2>Recent drives</h2>
+        <div class="dashboard-empty">No local drives found yet.</div>
+      </section>
+    `;
+  }
+
+  const rows = drives.map(drive => `
+    <div class="dashboard-drive-row">
+      <div class="dashboard-drive-main">
+        <strong>${escapeHtml(formatDate(drive.date))}</strong>
+        <span>${escapeHtml(drive.model || "Unknown model")}</span>
+      </div>
+      <div class="dashboard-drive-details">
+        <span>${formatOneDecimal(drive.distance)} ${escapeHtml(drive.distanceUnit || "miles")}</span>
+        <span>${formatDuration(drive.duration)}</span>
+        <span>${formatInt(drive.segmentCount)} segments</span>
+      </div>
+      <div class="dashboard-attention">
+        <span>${formatInt(drive.distractedMoments)} distracted</span>
+        <span>${formatInt(drive.unresponsiveMoments)} unresponsive</span>
+      </div>
+      <div class="dashboard-engaged-cell">
+        <div class="dashboard-mini-bar"><span style="width:${Math.max(0, Math.min(100, numberValue(drive.engagedPercent)))}%"></span></div>
+        <strong>${formatPercent(drive.engagedPercent)} engaged</strong>
+      </div>
+    </div>
+  `).join("");
+
+  return `
+    <section class="dashboard-card dashboard-recent">
+      <h2>Recent drives</h2>
+      ${rows}
+    </section>
+  `;
+}
+
+function favoriteChart(models) {
+  if (!Array.isArray(models) || models.length === 0) {
+    return {
+      style: "background: conic-gradient(var(--dashboard-track) 0 100%)",
+      rows: `<div class="dashboard-empty">No model usage recorded yet.</div>`,
+    };
+  }
+
+  const topModels = models.slice(0, TOP_MODEL_LIMIT);
+  const total = topModels.reduce((sum, model) => sum + Math.max(1, numberValue(model.weight)), 0);
+  let start = 0;
+  const segments = topModels.map((model, index) => {
+    const end = start + (Math.max(1, numberValue(model.weight)) / total) * 100;
+    const segment = `${FAVORITE_COLORS[index]} ${start}% ${end}%`;
+    start = end;
+    return segment;
+  });
+
+  const rows = topModels.map((model, index) => `
+    <div class="dashboard-model-row">
+      <span class="dashboard-swatch" style="background:${FAVORITE_COLORS[index]}"></span>
+      <div>
+        <strong>${escapeHtml(model.name)}</strong>
+        <small>${formatInt(model.drives)} ${numberValue(model.drives) === 1 ? "drive" : "drives"} using this model</small>
+      </div>
+    </div>
+  `).join("");
+
+  return {
+    style: `background: conic-gradient(${segments.join(", ")})`,
+    rows,
+  };
+}
+
+function renderFavoriteModels(models) {
+  const chart = favoriteChart(models);
+  return `
+    <section class="dashboard-card dashboard-models">
+      <h2>Most used models</h2>
+      <div class="dashboard-model-layout">
+        <div class="dashboard-favorite-donut" style="${chart.style}"></div>
+        <div class="dashboard-model-list">${chart.rows}</div>
+      </div>
+    </section>
+  `;
+}
+
+function renderStorage(storage) {
+  const usedPercent = Math.max(0, Math.min(100, numberValue(storage.usedPercent)));
+  const counts = storage.segmentCounts || {};
+  const summary = storage.legacyText || `${formatBytes(storage.usedBytes)} used of ${formatBytes(storage.totalBytes)}`;
+  return `
+    <section class="dashboard-card dashboard-device-card">
+      <h2>Storage</h2>
+      <p class="dashboard-muted">${escapeHtml(summary)}</p>
+      <div class="dashboard-storage-track"><span style="width:${usedPercent}%"></span></div>
+      <div class="dashboard-key-values">
+        <div><span>Dashcam footage</span><strong>${formatInt(counts.standard)} segments</strong></div>
+        <div><span>High-resolution footage</span><strong>${formatInt(counts.highResolution)} segments</strong></div>
+        <div><span>Konik footage</span><strong>${formatInt(counts.alternate)} segments</strong></div>
+        <div><span>Free space</span><strong>${formatBytes(storage.freeBytes)}</strong></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderVitals(device) {
+  const uptime = device.uptimeSeconds == null ? "unknown" : formatDuration(device.uptimeSeconds);
+  const cpu = device.cpuTempC == null ? "unknown" : `${formatInt(device.cpuTempC)} C`;
+  return `
+    <section class="dashboard-card dashboard-device-card">
+      <h2>Vitals</h2>
+      <div class="dashboard-key-values">
+        <div><span>Status</span><strong>${escapeHtml(device.status || "Parked")}</strong></div>
+        <div><span>Uptime</span><strong>${escapeHtml(uptime)}</strong></div>
+        <div><span>CPU temp</span><strong>${escapeHtml(cpu)}</strong></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderSoftware(info = {}) {
+  const changelogUrl = safeUrl(info.changelogUrl);
+  const commitUrl = safeUrl(info.commitUrl);
+  const commitHref = changelogUrl || commitUrl;
+  const fields = [
+    { label: "Branch", value: info.branchName },
+    { label: "Build", value: info.buildEnvironment },
+    { label: "Commit", value: info.commitHash, href: commitHref },
+    { label: "Version date", value: info.versionDate },
+    { label: "Fork maintainer", value: info.forkMaintainer },
+    { label: "Update available", value: info.updateAvailable },
+  ];
+
+  return `
+    <section class="dashboard-card dashboard-device-card">
+      <h2>Software</h2>
+      <div class="dashboard-software-list">
+        ${fields.map((field) => `
+          <div>
+            <span>${escapeHtml(field.label)}</span>
+            <strong>${field.href ? `<a href="${escapeHtml(field.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(field.value ?? "unknown")}</a>` : escapeHtml(field.value ?? "unknown")}</strong>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function bindDashboardActions() {
+  const refreshButton = document.getElementById("dashboard_refresh");
+  if (refreshButton) {
+    refreshButton.onclick = () => initializeHome(true);
+  }
+}
+
+function renderDashboard(state) {
   const shell = document.getElementById("home_shell");
   if (!shell) return;
 
   if (state.status === "error") {
-    shell.innerHTML = `<p class="error">Failed to load data: ${state.error}</p>`;
-    return;
-  }
-
-  if (state.status !== "ready" || !data) {
-    shell.innerHTML = "<p>Loading...</p>";
-    return;
-  }
-
-  const driveStats = data.driveStats || {};
-  const softwareInfo = data.softwareInfo || {};
-  const diskUsage = Array.isArray(data.diskUsage) ? data.diskUsage : [];
-  const diskError = Array.isArray(data.diskError) ? data.diskError : [];
-
-  const statBlock = (title, stats = {}) => `
-    <div class="drivingStat">
-      <h2>${title}</h2>
-      <div><p>${formatInt(stats.drives)}</p><p>drives</p></div>
-      <div><p>${formatInt(stats.distance)}</p><p>${stats.unit || state.unit}</p></div>
-      <div><p>${formatInt(stats.hours)}</p><p>hours</p></div>
-    </div>
-  `;
-
-  const diskBlock = (disk = {}) => {
-    const usedPct = Number.parseFloat(disk.usedPercentage) || 0;
-    const rightRadius = usedPct >= 100 ? "0" : "var(--border-radius-md)";
-    return `
-      <div class="disk">
-        <p>${disk.used || "0 GB"} used of ${disk.size || "0 GB"}</p>
-        <div class="progress">
-          <div
-            class="bar"
-            style="
-              border-bottom-right-radius: ${rightRadius};
-              border-top-right-radius: ${rightRadius};
-              width: ${Math.max(0, 100 - usedPct)}%;
-            "
-          ></div>
-        </div>
+    shell.innerHTML = `
+      <div class="dashboard dashboard-narrow">
+        <div class="dashboard-error">Failed to load dashboard: ${escapeHtml(state.error)}</div>
+        <button id="dashboard_refresh" class="dashboard-refresh"><i class="bi bi-arrow-clockwise"></i>Refresh</button>
       </div>
     `;
-  };
+    bindDashboardActions();
+    return;
+  }
 
-  const softwareFields = [
-    ["Branch Name", softwareInfo.branchName],
-    ["Build", softwareInfo.buildEnvironment],
-    ["Commit Hash", softwareInfo.commitHash],
-    ["Fork Maintainer", softwareInfo.forkMaintainer],
-    ["Update Available", softwareInfo.updateAvailable],
-    ["Version Date", softwareInfo.versionDate],
-  ];
+  if (state.status !== "ready" || !state.data) {
+    shell.innerHTML = `
+      <div class="dashboard dashboard-narrow">
+        <div class="dashboard-loading">Loading dashboard...</div>
+      </div>
+    `;
+    return;
+  }
 
-  const softwareMarkup = softwareFields
-    .map(([label, value]) => `<p><strong>${label}:</strong> ${value ?? "Unknown"}</p>`)
-    .join("");
-
-  const diskMarkup = diskError.length
-    ? `<p>${diskError.join("<br>")}</p>`
-    : (diskUsage.length ? diskUsage.map(diskBlock).join("") : diskBlock({}));
+  const data = state.data || {};
+  const dashboard = data.dashboard || fallbackDashboard(data, state.unit);
+  const driveStats = data.driveStats || {};
+  const device = dashboard.device || {};
+  const status = device.status || "Parked";
+  const onlineText = device.online === false ? "device offline" : "device online";
 
   shell.innerHTML = `
-    <div>
-      <h1>Galaxy</h1>
+    <main class="dashboard">
+      <header class="dashboard-header">
+        <div>
+          <h1>Dashboard</h1>
+          <p><span class="dashboard-status-dot"></span><strong>${escapeHtml(status)}</strong> - ${escapeHtml(onlineText)}</p>
+        </div>
+        <button id="dashboard_refresh" class="dashboard-refresh"><i class="bi bi-arrow-clockwise"></i>Refresh</button>
+      </header>
 
-      <div class="drivingStats">
-        ${statBlock("All Time", driveStats.all)}
-        ${statBlock("Past Week", driveStats.week)}
-        ${statBlock("StarPilot", driveStats.starpilot)}
+      ${renderLastDrive(dashboard.lastDrive || fallbackDashboard(data, state.unit).lastDrive)}
+
+      <div class="dashboard-section-label"><span></span>Your driving</div>
+      <div class="dashboard-summary-grid">
+        ${statBlock("All time", driveStats.all, state.unit)}
+        ${statBlock("Past week", driveStats.week, state.unit)}
+        ${statBlock("StarPilot", driveStats.starpilot, state.unit)}
       </div>
 
-      <h2>Disk Usage</h2>
-      <div class="diskUsage">
-        ${diskMarkup}
+      <div class="dashboard-two-column">
+        ${renderWeekChart(dashboard.week || {})}
+        ${renderRecords(dashboard.records || {})}
       </div>
 
-      <h2>Software Info</h2>
-      <div class="softwareInfo">
-        <div class="softwareGrid">${softwareMarkup}</div>
+      ${renderRecentDrives(dashboard.recentDrives || [])}
+
+      <div class="dashboard-two-column dashboard-model-storage">
+        ${renderFavoriteModels(dashboard.favoriteModels || [])}
+        ${renderStorage(dashboard.storage || {})}
       </div>
-    </div>
+
+      <div class="dashboard-section-label"><span></span>Your device</div>
+      <div class="dashboard-device-grid">
+        ${renderVitals(device)}
+        ${renderSoftware(data.softwareInfo || {})}
+      </div>
+    </main>
   `;
+
+  bindDashboardActions();
 }
 
-async function initializeHome() {
+async function initializeHome(force = false) {
+  if (force) {
+    HOME_STATE.status = "loading";
+    renderDashboard(HOME_STATE);
+  }
+
   try {
     const [statsResponse, unitResponse] = await Promise.all([
       withTimeout(fetch("/api/stats"), 5000, "stats request"),
@@ -136,17 +481,17 @@ async function initializeHome() {
     HOME_STATE.error = err?.message || String(err);
   }
 
-  renderDiskUsageSection(HOME_STATE);
+  renderDashboard(HOME_STATE);
 }
 
 export function Home() {
   setTimeout(() => {
-    renderDiskUsageSection(HOME_STATE);
+    renderDashboard(HOME_STATE);
     if (!HOME_STATE.initialized) {
       HOME_STATE.initialized = true;
       initializeHome();
     }
   }, 0);
 
-  return html`<div id="home_shell"><p>Loading...</p></div>`;
+  return html`<div id="home_shell"><p>Loading dashboard...</p></div>`;
 }
