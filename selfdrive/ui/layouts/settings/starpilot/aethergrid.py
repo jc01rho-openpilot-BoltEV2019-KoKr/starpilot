@@ -558,6 +558,24 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
       return 0.0
     return sum(sections) + self.METRICS.section_gap * (len(sections) - 1)
 
+  def _compute_two_column_height(self, left_height: float) -> float:
+    return max(self._scroll_rect.height if self._scroll_rect else 0.0, left_height)
+
+  def _draw_two_column_tile_grid(self, grid: TileGrid, x: float, y: float, column_width: float, matching_height: float, title: str | None = None, style: PanelStyle | None = None):
+    if style is None:
+      style = self.PANEL_STYLE
+    grid._columns = 2
+    if title:
+      draw_section_header(rl.Rectangle(x, y, column_width, self.METRICS.section_header_height), title, style=style)
+      draw_y = y + self.METRICS.section_header_height + self.METRICS.section_header_gap
+      draw_h = max(0.0, matching_height - (self.METRICS.section_header_height + self.METRICS.section_header_gap))
+    else:
+      draw_y = y
+      draw_h = max(0.0, matching_height)
+    
+    draw_list_group_shell(rl.Rectangle(x, draw_y, column_width, draw_h), style=style)
+    self._render_page_grid(grid, rl.Rectangle(x + 12, draw_y + 12, column_width - 24, max(0.0, draw_h - 24)))
+
   # ── convenience builders ──────────────────────────────────
 
   def _make_toggle_tile(self, d: dict) -> ToggleTile:

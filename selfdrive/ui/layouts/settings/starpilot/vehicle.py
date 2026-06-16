@@ -327,21 +327,14 @@ class VehicleSettingsManagerView(PanelManagerView):
     # Right Column/Features height
     tiles_height = 0.0
     if self._toggle_grid.tiles:
-      if self._uses_two_columns(width):
-        self._toggle_grid._columns = 2
-        column_w = self._column_width(width)
-        col_w = (column_w - 24 - 12) / 2
-        grid_h = 2 * col_w + 12
-        tiles_height = self._section_block_height(grid_h + 24)
-      else:
+      if not self._uses_two_columns(width):
         self._toggle_grid._columns = 3
         avail_w = width - 24
         tiles_content_h = self._toggle_grid.measure_height(avail_w)
         tiles_height = SECTION_GAP + self._section_block_height(tiles_content_h + 24)
 
     if self._uses_two_columns(width):
-      vh = self._scroll_rect.height if self._scroll_rect and self._scroll_rect.height > 0 else tiles_height
-      return max(left_h, vh)
+      return self._compute_two_column_height(left_h)
     return left_h + tiles_height
 
   def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
@@ -399,16 +392,8 @@ class VehicleSettingsManagerView(PanelManagerView):
       # Right Column: Features
       if self._toggle_grid.tiles:
         rx = x + column_w + self.COLUMN_GAP
-        draw_section_header(rl.Rectangle(rx, y, column_w, SECTION_HEADER_HEIGHT), tr("Features"), style=PANEL_STYLE)
-        right_container_y = y + SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-
-        self._toggle_grid._columns = 2
-        col_w = (column_w - 24 - 12) / 2
-        grid_h = 2 * col_w + 12
-        container_h = grid_h + 24
-
-        draw_list_group_shell(rl.Rectangle(rx, right_container_y, column_w, container_h), style=PANEL_STYLE)
-        self._render_page_grid(self._toggle_grid, rl.Rectangle(rx + 12, right_container_y + 12, column_w - 24, grid_h))
+        left_h = curr_y - y
+        self._draw_two_column_tile_grid(self._toggle_grid, rx, y, column_w, left_h, title=tr("Features"), style=PANEL_STYLE)
     else:
       # Single Column Stacked Layout
       draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), tr("Vehicle Identity"), style=PANEL_STYLE)

@@ -246,17 +246,11 @@ class SoundsManagerView(PanelManagerView):
 
     cd_h = self._adjustor_rows[self._controller.COOLDOWN_KEY].measure_height(col_width)
 
-    tiles_content_h = self._toggle_grid.measure_height(col_width - 24)
-    # col_w is the width of each tile in the 2-column grid
-    col_w = (col_width - 24 - 12) / 2
-    # Standardize right-side grid height: 2x3 rectangular layout (same container as before)
-    self._tile_grid_h = 2 * col_w + 12
-
-    right_column_total_h = cd_h + SECTION_GAP + (GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP) + (self._tile_grid_h + 24.0)
+    tiles_container_h = left_column_total_h - cd_h - SECTION_GAP
+    self._tiles_container_h = max(130.0, tiles_container_h)
 
     section_overhead = SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-    min_h = self._scroll_rect.height if self._scroll_rect else 0.0
-    return max(min_h, section_overhead + max(left_column_total_h, right_column_total_h))
+    return self._compute_two_column_height(section_overhead + max(left_column_total_h, cd_h + SECTION_GAP + self._tiles_container_h))
 
   def _draw_header(self, rect: rl.Rectangle):
     draw_settings_panel_header(rect, tr("Sounds & Alerts"), tr("Manage system volumes and custom alert toggles."), subtitle_size=24)
@@ -344,9 +338,8 @@ class SoundsManagerView(PanelManagerView):
 
     current_y = self._draw_group_header(x + 24, current_y, width - 48, tr("CUSTOM ALERTS"))
 
-    draw_list_group_shell(rl.Rectangle(x, current_y, width, self._tile_grid_h + 24), style=PANEL_STYLE)
-
-    self._render_page_grid(self._toggle_grid, rl.Rectangle(x + 12, current_y + 12, width - 24, self._tile_grid_h))
+    grid_container_h = self._tiles_container_h - (GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP)
+    self._draw_two_column_tile_grid(self._toggle_grid, x, current_y, width, grid_container_h, title=None, style=PANEL_STYLE)
 
 
 class StarPilotSoundsLayout(_SettingsPage):
