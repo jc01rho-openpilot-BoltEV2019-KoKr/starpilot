@@ -2263,7 +2263,7 @@ class SettingSection:
 
 # ── AetherSettingsView — reusable list-panel ManagerView ──
 
-class AetherSettingsView(AetherInteractiveMixin, Widget):
+class AetherSettingsView(PanelManagerView):
   """Reusable list-panel manager for toggle/value/action settings pages."""
 
   TAB_HEIGHT = 68

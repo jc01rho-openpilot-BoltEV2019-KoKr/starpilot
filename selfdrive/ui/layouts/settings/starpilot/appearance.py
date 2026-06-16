@@ -8,14 +8,18 @@ from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
+import pyray as rl
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     AetherSliderDialog,
     DEFAULT_PANEL_STYLE,
-)
-from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     SettingRow,
     SettingSection,
     AetherSettingsView,
+    TileGrid,
+    ToggleTile,
+    AetherAdjustorRow,
+    draw_list_group_shell,
+    draw_section_header,
 )
 
 PANEL_STYLE = DEFAULT_PANEL_STYLE
@@ -62,6 +66,278 @@ def _theme_display_name(value: str) -> str:
 # Unified Appearance panel
 # ═══════════════════════════════════════════════════════════════
 
+class AppearanceManagerView(AetherSettingsView):
+    def __init__(self, controller, sections, **kwargs):
+        super().__init__(controller, sections, **kwargs)
+        self._toggle_grid = TileGrid(columns=2, padding=12)
+        self._toggle_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
+        self._init_toggles()
+        self._init_adjustors()
+
+    def _init_toggles(self):
+        po = lambda: self._controller._params.get_bool("PedalsOnUI")
+        ol = lambda: starpilot_state.car_state.hasOpenpilotLongitudinal
+        bsm = lambda: starpilot_state.car_state.hasBSM
+
+        toggles = [
+            # Path Overlays
+            {
+                "title": tr("Driving Screen Widgets"),
+                "subtitle": tr("Show interactive indicators on the driving screen."),
+                "get_state": lambda: self._controller._params.get_bool("CustomUI"),
+                "set_state": lambda s: self._controller._params.put_bool("CustomUI", s),
+            },
+            {
+                "title": tr("Acceleration Path"),
+                "get_state": lambda: self._controller._params.get_bool("AccelerationPath"),
+                "set_state": lambda s: self._controller._params.put_bool("AccelerationPath", s),
+                "is_enabled": ol,
+            },
+            {
+                "title": tr("Adjacent Lanes"),
+                "get_state": lambda: self._controller._params.get_bool("AdjacentPath"),
+                "set_state": lambda s: self._controller._params.put_bool("AdjacentPath", s),
+            },
+            {
+                "title": tr("Adjacent Lane Metrics"),
+                "get_state": lambda: self._controller._params.get_bool("AdjacentPathMetrics"),
+                "set_state": lambda s: self._controller._params.put_bool("AdjacentPathMetrics", s),
+            },
+            {
+                "title": tr("Blind Spot Path"),
+                "get_state": lambda: self._controller._params.get_bool("BlindSpotPath"),
+                "set_state": lambda s: self._controller._params.put_bool("BlindSpotPath", s),
+                "is_enabled": bsm,
+            },
+            # Dashboard Controls
+            {
+                "title": tr("Compass"),
+                "get_state": lambda: self._controller._params.get_bool("Compass"),
+                "set_state": lambda s: self._controller._params.put_bool("Compass", s),
+            },
+            {
+                "title": tr("Personality Button"),
+                "get_state": lambda: self._controller._params.get_bool("OnroadDistanceButton"),
+                "set_state": lambda s: self._controller._params.put_bool("OnroadDistanceButton", s),
+            },
+            {
+                "title": tr("Pedal Indicators"),
+                "get_state": lambda: self._controller._params.get_bool("PedalsOnUI"),
+                "set_state": lambda s: self._controller._params.put_bool("PedalsOnUI", s),
+                "is_enabled": ol,
+            },
+            {
+                "title": tr("Dynamic Pedals"),
+                "get_state": lambda: self._controller._params.get_bool("DynamicPedalsOnUI"),
+                "set_state": lambda s: self._controller._set_exclusive_pedal("DynamicPedalsOnUI", "StaticPedalsOnUI", s),
+                "is_enabled": lambda: po() and ol(),
+            },
+            {
+                "title": tr("Static Pedals"),
+                "get_state": lambda: self._controller._params.get_bool("StaticPedalsOnUI"),
+                "set_state": lambda s: self._controller._set_exclusive_pedal("StaticPedalsOnUI", "DynamicPedalsOnUI", s),
+                "is_enabled": lambda: po() and ol(),
+            },
+            {
+                "title": tr("Rotating Wheel"),
+                "get_state": lambda: self._controller._params.get_bool("RotatingWheel"),
+                "set_state": lambda s: self._controller._params.put_bool("RotatingWheel", s),
+            },
+            # Screen Borders
+            {
+                "title": tr("Steering Torque Indicator"),
+                "get_state": lambda: self._controller._params.get_bool("ShowSteering"),
+                "set_state": lambda s: self._controller._params.put_bool("ShowSteering", s),
+            },
+            {
+                "title": tr("Turn Signal Borders"),
+                "get_state": lambda: self._controller._params.get_bool("SignalMetrics"),
+                "set_state": lambda s: self._controller._params.put_bool("SignalMetrics", s),
+            },
+            {
+                "title": tr("Blind Spot Borders"),
+                "get_state": lambda: self._controller._params.get_bool("BlindSpotMetrics"),
+                "set_state": lambda s: self._controller._params.put_bool("BlindSpotMetrics", s),
+                "is_enabled": bsm,
+            },
+            # Developer Metrics
+            {
+                "title": tr("Radar Point Display"),
+                "get_state": lambda: self._controller._params.get_bool("RadarTracksUI"),
+                "set_state": lambda s: self._controller._params.put_bool("RadarTracksUI", s),
+            },
+            {
+                "title": tr("Lead Vehicle Metrics"),
+                "get_state": lambda: self._controller._params.get_bool("LeadInfo"),
+                "set_state": lambda s: self._controller._params.put_bool("LeadInfo", s),
+                "is_enabled": ol,
+            },
+            {
+                "title": tr("Show Stop Sign"),
+                "get_state": lambda: self._controller._params.get_bool("ShowStoppingPoint"),
+                "set_state": lambda s: self._controller._params.put_bool("ShowStoppingPoint", s),
+                "is_enabled": ol,
+            },
+            {
+                "title": tr("Stop Distance"),
+                "get_state": lambda: self._controller._params.get_bool("ShowStoppingPointMetrics"),
+                "set_state": lambda s: self._controller._params.put_bool("ShowStoppingPointMetrics", s),
+                "is_enabled": lambda: self._controller._params.get_bool("ShowStoppingPoint") and ol(),
+            },
+            {
+                "title": tr("Developer Sidebar"),
+                "subtitle": tr("Driving metrics panel on the right"),
+                "get_state": lambda: self._controller._params.get_bool("DeveloperSidebar"),
+                "set_state": lambda s: self._controller._params.put_bool("DeveloperSidebar", s),
+            },
+        ]
+
+        for toggle_def in toggles:
+            self._toggle_grid.add_tile(
+                ToggleTile(
+                    title=toggle_def["title"],
+                    get_state=toggle_def.get("get_state"),
+                    set_state=toggle_def.get("set_state"),
+                    bg_color=self._panel_style.accent,
+                    desc=toggle_def.get("subtitle", ""),
+                    is_enabled=toggle_def.get("is_enabled"),
+                    disabled_label=toggle_def.get("disabled_label", ""),
+                )
+            )
+
+        self._page_grid = self._toggle_grid
+        self._set_toggle_pages([toggles[i:i+6] for i in range(0, len(toggles), 6)])
+
+    def _init_adjustors(self):
+        ol = lambda: starpilot_state.car_state.hasOpenpilotLongitudinal
+        def on_close(res, val):
+            if res == DialogResult.CONFIRM:
+                self._controller._params.put_int("LeadDetectionThreshold", int(val))
+                
+        self._adjustor = AetherAdjustorRow(
+            tr("Lead Detection Threshold"),
+            "",
+            25.0, 100.0, 1.0,
+            get_value=lambda: float(self._controller._params.get_int("LeadDetectionThreshold", return_default=True, default=35)),
+            on_change=lambda _v: None,
+            on_commit=None,
+            unit="%",
+            labels={},
+            presets=[25, 50, 75, 100],
+            is_active=lambda: False,
+            set_active=lambda active: gui_app.push_widget(
+                AetherSliderDialog(
+                    tr("Lead Detection Threshold"),
+                    25.0,
+                    100.0,
+                    1.0,
+                    float(self._controller._params.get_int("LeadDetectionThreshold", return_default=True, default=35)),
+                    on_close,
+                    presets=[25.0, 50.0, 75.0, 100.0],
+                    unit="%",
+                    color=self._panel_style.accent,
+                )
+            ) if active else None,
+            style=self._panel_style,
+            color=self._panel_style.accent,
+        )
+        self._adjustor.set_enabled(ol)
+
+    def _handle_mouse_press(self, mouse_pos):
+        super()._handle_mouse_press(mouse_pos)
+        if self._active_tab_key == "widgets":
+            self._adjustor._handle_mouse_press(mouse_pos)
+            self._toggle_grid._handle_mouse_press(mouse_pos)
+
+    def _handle_mouse_release(self, mouse_pos):
+        super()._handle_mouse_release(mouse_pos)
+        if self._active_tab_key == "widgets":
+            self._adjustor._handle_mouse_release(mouse_pos)
+            self._toggle_grid._handle_mouse_release(mouse_pos)
+
+    def _handle_mouse_event(self, mouse_event):
+        super()._handle_mouse_event(mouse_event)
+        if self._active_tab_key == "widgets":
+            self._adjustor._handle_mouse_event(mouse_event)
+            self._toggle_grid._handle_mouse_event(mouse_event)
+
+    def _measure_content_height(self, width: float) -> float:
+        if self._active_tab_key == "widgets":
+            col_width = (width - self.COLUMN_GAP) / 2 if self._uses_two_columns(width) else width
+            
+            left_h = self._adjustor.measure_height(col_width)
+            section_overhead = self._metrics.section_header_height + self._metrics.section_header_gap
+            left_column_total_h = left_h + section_overhead
+
+            tiles_content_h = self._toggle_grid.measure_height(col_width - 24)
+            right_column_total_h = tiles_content_h + 24 + section_overhead
+            
+            tab_h = self.TAB_HEIGHT + self.TAB_BOTTOM_GAP if self._tab_defs else 0
+            
+            if self._uses_two_columns(width):
+                content_h = max(left_column_total_h, right_column_total_h)
+            else:
+                content_h = left_column_total_h + self._metrics.section_gap + right_column_total_h
+            
+            return tab_h + content_h
+        else:
+            return super()._measure_content_height(width)
+
+    def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
+        if self._active_tab_key == "widgets":
+            y = rect.y + self._scroll_offset
+            if self._tab_defs:
+                y = self._draw_tabs(y, rect.x, width)
+
+            if self._uses_two_columns(width):
+                col_w = self._column_width(width)
+                
+                # Left Column: Lead Detection Threshold
+                draw_section_header(
+                    rl.Rectangle(rect.x, y, col_w, self._metrics.section_header_height),
+                    tr("Developer Metrics"), style=self._panel_style
+                )
+                left_group_y = y + self._metrics.section_header_height + self._metrics.section_header_gap
+                
+                left_h = self._adjustor.measure_height(col_w)
+                draw_list_group_shell(rl.Rectangle(rect.x, left_group_y, col_w, left_h), style=self._panel_style)
+                
+                self._adjustor.set_is_last(True)
+                self._adjustor.set_parent_rect(self._scroll_rect)
+                self._adjustor.render(rl.Rectangle(rect.x, left_group_y, col_w, left_h))
+                
+                # Right Column: Toggles
+                self._draw_two_column_tile_grid(self._toggle_grid, rect.x + col_w + self.COLUMN_GAP, y, col_w, self._scroll_rect.height - (y - rect.y), title=tr("Widgets"), style=self._panel_style)
+            else:
+                # Single column
+                draw_section_header(
+                    rl.Rectangle(rect.x, y, width, self._metrics.section_header_height),
+                    tr("Developer Metrics"), style=self._panel_style
+                )
+                y += self._metrics.section_header_height + self._metrics.section_header_gap
+                left_h = self._adjustor.measure_height(width)
+                draw_list_group_shell(rl.Rectangle(rect.x, y, width, left_h), style=self._panel_style)
+                self._adjustor.set_is_last(True)
+                self._adjustor.set_parent_rect(self._scroll_rect)
+                self._adjustor.render(rl.Rectangle(rect.x, y, width, left_h))
+                y += left_h + self._metrics.section_gap
+                
+                draw_section_header(
+                    rl.Rectangle(rect.x, y, width, self._metrics.section_header_height),
+                    tr("Widgets"), style=self._panel_style
+                )
+                y += self._metrics.section_header_height + self._metrics.section_header_gap
+                tiles_content_h = self._toggle_grid.measure_height(width - 24)
+                draw_list_group_shell(rl.Rectangle(rect.x, y, width, tiles_content_h + 24), style=self._panel_style)
+                self._render_page_grid(self._toggle_grid, rl.Rectangle(rect.x + 12, y + 12, width - 24, tiles_content_h))
+
+        else:
+            super()._draw_scroll_content(rect, width)
+
+# ═══════════════════════════════════════════════════════════════
+# Unified Appearance panel
+# ═══════════════════════════════════════════════════════════════
+
 class StarPilotAppearanceLayout(_SettingsPage):
     def __init__(self):
         super().__init__()
@@ -69,8 +345,8 @@ class StarPilotAppearanceLayout(_SettingsPage):
 
     def _build_view(self):
         tab_defs = [
-            {"id": "display", "title": tr_noop("Display"), "subtitle": tr_noop("Screen visibility")},
             {"id": "widgets", "title": tr_noop("Widgets"), "subtitle": tr_noop("Driving indicators")},
+            {"id": "display", "title": tr_noop("Display"), "subtitle": tr_noop("Screen visibility")},
             {"id": "convenience", "title": tr_noop("Convenience"), "subtitle": tr_noop("QOL & navigation")},
             {"id": "model", "title": tr_noop("Model"), "subtitle": tr_noop("Path visualization")},
             {"id": "theme", "title": tr_noop("Theme"), "subtitle": tr_noop("Customization")},
@@ -81,7 +357,7 @@ class StarPilotAppearanceLayout(_SettingsPage):
         bsm = lambda: starpilot_state.car_state.hasBSM
 
         sections: list[SettingSection] = [
-            # ═══ Tab 1: Display — screen visibility toggles ═══
+            # ═══ Tab 2: Display — screen visibility toggles ═══
             SettingSection(tr_noop("Screen Elements"), [
                 SettingRow("AdvancedCustomUI", "toggle", tr_noop("Advanced UI Controls"),
                            subtitle=tr_noop("Fine-tune which elements appear on screen."),
@@ -136,109 +412,6 @@ class StarPilotAppearanceLayout(_SettingsPage):
                            get_state=lambda: self._params.get_bool("WheelSpeed"),
                            set_state=lambda s: self._params.put_bool("WheelSpeed", s)),
             ], tab_key="display", column_pair="display"),
-
-            # ═══ Tab 2: Widgets — driving screen widget toggles ═══
-            SettingSection(tr_noop("Path Overlays"), [
-                SettingRow("CustomUI", "toggle", tr_noop("Driving Screen Widgets"),
-                           subtitle=tr_noop("Show interactive indicators on the driving screen."),
-                           get_state=lambda: self._params.get_bool("CustomUI"),
-                           set_state=lambda s: self._params.put_bool("CustomUI", s)),
-                SettingRow("AccelerationPath", "toggle", tr_noop("Acceleration Path"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("AccelerationPath"),
-                           set_state=lambda s: self._params.put_bool("AccelerationPath", s),
-                           visible=ol),
-                SettingRow("AdjacentPath", "toggle", tr_noop("Adjacent Lanes"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("AdjacentPath"),
-                           set_state=lambda s: self._params.put_bool("AdjacentPath", s)),
-                SettingRow("AdjacentPathMetrics", "toggle", tr_noop("Adjacent Lane Metrics"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("AdjacentPathMetrics"),
-                           set_state=lambda s: self._params.put_bool("AdjacentPathMetrics", s)),
-                SettingRow("BlindSpotPath", "toggle", tr_noop("Blind Spot Path"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("BlindSpotPath"),
-                           set_state=lambda s: self._params.put_bool("BlindSpotPath", s),
-                           visible=bsm),
-            ], tab_key="widgets", column_pair="widgets"),
-
-            SettingSection(tr_noop("Dashboard Controls"), [
-                SettingRow("Compass", "toggle", tr_noop("Compass"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("Compass"),
-                           set_state=lambda s: self._params.put_bool("Compass", s)),
-                SettingRow("OnroadDistanceButton", "toggle", tr_noop("Personality Button"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("OnroadDistanceButton"),
-                           set_state=lambda s: self._params.put_bool("OnroadDistanceButton", s)),
-                SettingRow("PedalsOnUI", "toggle", tr_noop("Pedal Indicators"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("PedalsOnUI"),
-                           set_state=lambda s: self._params.put_bool("PedalsOnUI", s),
-                           visible=ol),
-                SettingRow("DynamicPedalsOnUI", "toggle", tr_noop("Dynamic Pedals"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("DynamicPedalsOnUI"),
-                           set_state=lambda s: self._set_exclusive_pedal("DynamicPedalsOnUI", "StaticPedalsOnUI", s),
-                           visible=lambda: po() and ol()),
-                SettingRow("StaticPedalsOnUI", "toggle", tr_noop("Static Pedals"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("StaticPedalsOnUI"),
-                           set_state=lambda s: self._set_exclusive_pedal("StaticPedalsOnUI", "DynamicPedalsOnUI", s),
-                           visible=lambda: po() and ol()),
-                SettingRow("RotatingWheel", "toggle", tr_noop("Rotating Wheel"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("RotatingWheel"),
-                           set_state=lambda s: self._params.put_bool("RotatingWheel", s)),
-            ], tab_key="widgets", column_pair="widgets"),
-
-            SettingSection(tr_noop("Screen Borders"), [
-                SettingRow("ShowSteering", "toggle", tr_noop("Steering Torque Indicator"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("ShowSteering"),
-                           set_state=lambda s: self._params.put_bool("ShowSteering", s)),
-                SettingRow("SignalMetrics", "toggle", tr_noop("Turn Signal Borders"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("SignalMetrics"),
-                           set_state=lambda s: self._params.put_bool("SignalMetrics", s)),
-                SettingRow("BlindSpotMetrics", "toggle", tr_noop("Blind Spot Borders"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("BlindSpotMetrics"),
-                           set_state=lambda s: self._params.put_bool("BlindSpotMetrics", s),
-                           visible=bsm),
-            ], tab_key="widgets", column_pair="widgets_extra"),
-
-            SettingSection(tr_noop("Developer Metrics"), [
-                SettingRow("RadarTracksUI", "toggle", tr_noop("Radar Point Display"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("RadarTracksUI"),
-                           set_state=lambda s: self._params.put_bool("RadarTracksUI", s)),
-                SettingRow("LeadInfo", "toggle", tr_noop("Lead Vehicle Metrics"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("LeadInfo"),
-                           set_state=lambda s: self._params.put_bool("LeadInfo", s),
-                           visible=ol),
-                SettingRow("LeadDetectionProbability", "value", tr_noop("Lead Detection Threshold"),
-                           subtitle="",
-                           get_value=lambda: f"{self._params.get_int('LeadDetectionThreshold')}%",
-                           on_click=lambda: self._show_int_selector("LeadDetectionProbability", 25, 100, "%"),
-                           visible=ol),
-                SettingRow("ShowStoppingPoint", "toggle", tr_noop("Show Stop Sign"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("ShowStoppingPoint"),
-                           set_state=lambda s: self._params.put_bool("ShowStoppingPoint", s),
-                           visible=ol),
-                SettingRow("ShowStoppingPointMetrics", "toggle", tr_noop("Stop Distance"),
-                           subtitle="",
-                           get_state=lambda: self._params.get_bool("ShowStoppingPointMetrics"),
-                           set_state=lambda s: self._params.put_bool("ShowStoppingPointMetrics", s),
-                           visible=lambda: self._params.get_bool("ShowStoppingPoint") and ol()),
-                SettingRow("DeveloperSidebar", "toggle", tr_noop("Developer Sidebar"),
-                           subtitle=tr_noop("Driving metrics panel on the right"),
-                           get_state=lambda: self._params.get_bool("DeveloperSidebar"),
-                           set_state=lambda s: self._params.put_bool("DeveloperSidebar", s)),
-            ], tab_key="widgets", column_pair="widgets_extra"),
 
             # ═══ Tab 3: Convenience — QOL + Navigation ═══
             SettingSection(tr_noop("Quality of Life"), [
@@ -350,7 +523,7 @@ class StarPilotAppearanceLayout(_SettingsPage):
             ], tab_key="theme", column_pair="theme"),
         ]
 
-        self._manager_view = AetherSettingsView(
+        self._manager_view = AppearanceManagerView(
             self, sections,
             header_title=tr_noop("Appearance"),
             header_subtitle=tr_noop("Customize your display, driving widgets, model visualization, and themes."),
