@@ -462,19 +462,15 @@ async function initializeHome(force = false) {
   }
 
   try {
-    const [statsResponse, unitResponse] = await Promise.all([
-      withTimeout(fetch("/api/stats"), 5000, "stats request"),
-      withTimeout(fetch("/api/params?key=IsMetric"), 5000, "metric request"),
-    ]);
+    const statsResponse = await withTimeout(fetch("/api/stats"), 5000, "stats request");
 
     if (!statsResponse.ok) throw new Error(`stats API error: ${statsResponse.status}`);
-    if (!unitResponse.ok) throw new Error(`params API error: ${unitResponse.status}`);
 
     const statsJson = await withTimeout(statsResponse.json(), 5000, "stats JSON parse");
-    const isMetricText = (await withTimeout(unitResponse.text(), 5000, "metric read")).trim();
+    const payloadUnit = statsJson?.dashboard?.week?.distanceUnit || statsJson?.driveStats?.all?.unit;
 
     HOME_STATE.data = statsJson;
-    HOME_STATE.unit = isMetricText === "1" ? "kilometers" : "miles";
+    HOME_STATE.unit = payloadUnit || HOME_STATE.unit || "miles";
     HOME_STATE.status = "ready";
   } catch (err) {
     HOME_STATE.status = "error";

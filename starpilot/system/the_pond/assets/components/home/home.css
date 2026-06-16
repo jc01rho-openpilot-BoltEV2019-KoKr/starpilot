@@ -273,7 +273,12 @@
 .dashboard-donut {
   --value: 0;
   background: conic-gradient(var(--dashboard-accent) calc(var(--value) * 1%), var(--dashboard-track) 0);
+  flex-basis: 116px;
   height: 116px;
+  max-height: 116px;
+  max-width: 116px;
+  min-height: 116px;
+  min-width: 116px;
   width: 116px;
 }
 
@@ -471,7 +476,12 @@
 
 .dashboard-favorite-donut {
   background: conic-gradient(var(--dashboard-track) 0 100%);
+  flex-basis: 132px;
   height: 132px;
+  max-height: 132px;
+  max-width: 132px;
+  min-height: 132px;
+  min-width: 132px;
   width: 132px;
 }
 

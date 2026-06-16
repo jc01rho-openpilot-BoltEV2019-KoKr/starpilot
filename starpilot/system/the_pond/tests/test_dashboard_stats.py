@@ -418,6 +418,101 @@ def test_persistent_personal_records_and_model_usage_survive_empty_routes():
   assert restored_records["cleanDriveStreak"]["value"] == "3 drives"
 
 
+def test_persistent_loader_accepts_decoded_param_dict():
+  params = FakeParams({
+    utilities.DASHBOARD_PERSISTENT_STATS_PARAM: {
+      "routes": {
+        "route-1": {
+          "date": "2026-06-15T08:00:00",
+          "distanceMeters": 1000,
+          "duration": 60,
+          "model": "Orion",
+          "attentionKnown": False,
+        },
+      },
+    },
+  })
+
+  stats = utilities._load_dashboard_persistent_stats(params)
+
+  assert stats["routes"]["route-1"]["distanceMeters"] == 1000
+  assert stats["routes"]["route-1"]["attentionKnown"] is False
+
+
+def test_lightweight_routes_surface_recent_drives_without_log_analysis(monkeypatch):
+  utilities._invalidate_dashboard_cache()
+  route_infos = [
+    {
+      "name": "route-new",
+      "segments": [],
+      "segmentCount": 3,
+      "startedAt": utilities.datetime(2026, 6, 16, 9, 0, 0),
+      "modifiedAt": 100,
+    },
+    {
+      "name": "route-old",
+      "segments": [],
+      "segmentCount": 2,
+      "startedAt": utilities.datetime(2026, 6, 15, 9, 0, 0),
+      "modifiedAt": 90,
+    },
+  ]
+  params = FakeParams({
+    "IsMetric": False,
+    "Model": "orion",
+    "AvailableModels": "orion",
+    "AvailableModelNames": "Orion",
+    "AvailableModelSeries": "City",
+  })
+  monkeypatch.setattr(utilities, "_list_dashboard_routes", lambda paths: route_infos)
+  monkeypatch.setattr(utilities, "_start_dashboard_background_analysis", lambda *args: None)
+  monkeypatch.setattr(utilities, "_build_storage_summary", lambda paths: {"freeBytes": 0, "usedBytes": 0, "totalBytes": 0, "usedPercent": 0, "segmentCounts": {}})
+
+  dashboard = utilities.get_dashboard_stats(["/tmp/missing"], params, now=utilities.datetime(2026, 6, 16, 12, 0, 0))
+
+  assert [drive["name"] for drive in dashboard["recentDrives"]] == ["route-new", "route-old"]
+  assert dashboard["lastDrive"]["model"] == "Orion"
+  assert dashboard["week"]["drives"] == 2
+  assert dashboard["favoriteModels"][0]["name"] == "Orion"
+  assert dashboard["favoriteModels"][0]["drives"] == 2
+  utilities._invalidate_dashboard_cache()
+
+
+def test_unknown_attention_rows_do_not_reset_persisted_clean_records():
+  params = FakeParams()
+  known_drive = {
+    "name": "route-1",
+    "date": "2026-06-15T08:00:00",
+    "distanceMeters": 10000.0,
+    "duration": 3600,
+    "engagedSeconds": 3000.0,
+    "model": "Orion",
+    "distractedMoments": 0,
+    "unresponsiveMoments": 0,
+    "routeModifiedAt": 100,
+    "attentionKnown": True,
+  }
+  shell_drive = {
+    "name": "route-2",
+    "date": "2026-06-16T08:00:00",
+    "distanceMeters": 0.0,
+    "duration": 120,
+    "engagedSeconds": 0.0,
+    "model": "Orion",
+    "distractedMoments": 0,
+    "unresponsiveMoments": 0,
+    "routeModifiedAt": 100,
+    "attentionKnown": False,
+  }
+
+  utilities._update_dashboard_persistent_stats(params, [known_drive], wall_now=1000)
+  stats = utilities._update_dashboard_persistent_stats(params, [shell_drive], wall_now=1000)
+  records = utilities._display_personal_records(stats, is_metric=False)
+
+  assert records["longestUndistractedDrive"]["value"] == "1.0 hour"
+  assert records["cleanDriveStreak"]["value"] == "1 drive"
+
+
 def test_github_urls_accept_owner_repo_origin():
   assert utilities.get_github_changelog_url("owner/repo", "main") == "https://github.com/owner/repo/commits/main/"
   assert utilities.get_github_changelog_url("github.com/owner/repo", "main") == "https://github.com/owner/repo/commits/main/"

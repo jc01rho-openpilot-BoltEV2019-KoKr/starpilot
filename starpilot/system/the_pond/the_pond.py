@@ -458,6 +458,11 @@ starpilot_default_params = _build_default_params()
 
 params = ParamsCompat(_params_raw)
 params_memory = ParamsCompat(_params_memory_raw)
+STATS_RESPONSE_CACHE_SECONDS = 2.0
+_STATS_RESPONSE_CACHE = {
+  "updated_at": 0.0,
+  "payload": None,
+}
 
 try:
   FOOTAGE_PATHS = [
@@ -5163,6 +5168,11 @@ def setup(app):
 
   @app.route("/api/stats", methods=["GET"])
   def get_stats():
+    cache_now = time.monotonic()
+    cached_payload = _STATS_RESPONSE_CACHE.get("payload")
+    if cached_payload is not None and cache_now - _STATS_RESPONSE_CACHE.get("updated_at", 0.0) < STATS_RESPONSE_CACHE_SECONDS:
+      return cached_payload
+
     build_metadata = get_build_metadata()
 
     short_branch = build_metadata.channel
@@ -5191,12 +5201,17 @@ def setup(app):
     except Exception:
       dashboard_stats = utilities.get_dashboard_stats([], params)
 
-    return {
+    payload = {
       "diskUsage": utilities.get_disk_usage(),
       "driveStats": utilities.get_drive_stats(),
       "softwareInfo": software_info,
       "dashboard": dashboard_stats,
     }
+    _STATS_RESPONSE_CACHE.update({
+      "updated_at": cache_now,
+      "payload": payload,
+    })
+    return payload
 
   @app.route("/api/plots/live", methods=["GET"])
   def get_live_plots():
