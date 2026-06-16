@@ -241,6 +241,9 @@ CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_GAP_BUFFER_GAIN = 0.9
 CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LATERAL_OFFSET = 1.15
 CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MIN_CLOSING_SPEED = 1.5
 CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MAX_LEAD_DELTA = 0.25
+CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_HEADWAY_ABOVE_TARGET = 0.95
+CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_CLOSING_SPEED = 0.8
+CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_LEAD_BRAKE = 0.10
 CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_ACCEL = 0.18
 CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN = 0.25
 CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN_LEAD_DELTA = 0.35
@@ -1377,6 +1380,18 @@ class LongitudinalPlanner:
       lead_delta <= CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MAX_LEAD_DELTA
     )
     if not tracking_lead_active and not raw_close_lead and not unresolved_slow_lead:
+      return None
+
+    # Don't let a spacious, nearly pace-matched tracked lead toggle this cap on
+    # and off while cruise remains the source. That creates the square-wave
+    # accel "surge / give up / surge" behavior seen in real logs.
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    headway_margin = actual_headway - float(t_follow)
+    tracking_only_follow = tracking_lead_active and not raw_close_lead and not unresolved_slow_lead
+    if (tracking_only_follow and
+        headway_margin > CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_HEADWAY_ABOVE_TARGET and
+        closing_speed < CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_CLOSING_SPEED and
+        lead_brake <= CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_LEAD_BRAKE):
       return None
 
     desired_gap = float(desired_follow_distance(v_ego, lead.vLead, t_follow))

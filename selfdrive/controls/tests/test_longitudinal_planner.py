@@ -2238,6 +2238,23 @@ def test_cruise_tracking_lead_accel_cap_skips_accelerating_away_radar_lead():
   assert cap is None
 
 
+def test_cruise_tracking_lead_accel_cap_skips_spacious_tracking_only_follow():
+  v_ego = 18.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=45.0, v_lead=17.4, a_lead=0.0, radar=True, model_prob=1.0, y_rel=0.1)
+
+  cap = planner.get_cruise_tracking_lead_accel_cap(
+    lead,
+    v_ego,
+    1.45,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert cap is None
+
+
 def test_route_8bc6_post_departure_cruise_cap_skips_accelerating_away_radar_lead():
   v_ego = 19.03
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
