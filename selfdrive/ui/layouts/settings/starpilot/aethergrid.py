@@ -730,6 +730,9 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
   def _handle_mouse_press(self, mouse_pos: MousePos) -> None:
     super()._handle_mouse_press(mouse_pos)
     if self._has_pagination:
+      if self._page_clip_rect and not rl.check_collision_point_rec(mouse_pos, self._page_clip_rect):
+        return
+      
       if self._page_animating:
         self._page_animating = False
         self._page_anim_prev_tiles.clear()
