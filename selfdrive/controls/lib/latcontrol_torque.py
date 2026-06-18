@@ -547,6 +547,12 @@ IONIQ_6_CRAWL_TURN_IN_FF_SPEED = 4.5
 IONIQ_6_CRAWL_TURN_IN_FF_SPEED_WIDTH = 0.8
 IONIQ_6_CRAWL_TURN_IN_FF_LAT = 0.10
 IONIQ_6_CRAWL_TURN_IN_FF_LAT_WIDTH = 0.05
+IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_BOOST = 0.10
+IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_SPEED = 18.0
+IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_SPEED_WIDTH = 2.5
+IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_START = 0.06
+IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_END = 0.22
+IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_WIDTH = 0.035
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_START = 0.82
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_WIDTH = 0.12
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_LEFT = 0.10
@@ -1742,7 +1748,17 @@ def get_ioniq_6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
                                         IONIQ_6_CRAWL_TURN_IN_FF_LAT_WIDTH)
     crawl_turn_in_scale = _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_CRAWL_TURN_IN_FF_BOOST_LEFT,
                                               IONIQ_6_CRAWL_TURN_IN_FF_BOOST_RIGHT) * crawl_speed_weight * crawl_lat_weight
-  return (1.0 + crawl_turn_in_scale + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))) * get_ioniq_6_directional_taper_scale(desired_lateral_accel, desired_lateral_jerk, v_ego)
+  high_speed_right_turn_in_scale = 0.0
+  if desired_lateral_accel < 0.0 and desired_lateral_accel * desired_lateral_jerk > 0.0:
+    high_speed_weight = _ioniq_6_sigmoid((max(v_ego, 0.0) - IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_SPEED) /
+                                         IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_SPEED_WIDTH)
+    high_speed_lat_onset = _ioniq_6_sigmoid((abs_lateral_accel - IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_START) /
+                                            IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_WIDTH)
+    high_speed_lat_cutoff = _ioniq_6_sigmoid((IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_END - abs_lateral_accel) /
+                                             IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_WIDTH)
+    high_speed_right_turn_in_scale = IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_BOOST * high_speed_weight * high_speed_lat_onset * high_speed_lat_cutoff
+  return (1.0 + crawl_turn_in_scale + high_speed_right_turn_in_scale +
+          (extra_scale * turn_in_boost * max(unwind_taper, 0.0))) * get_ioniq_6_directional_taper_scale(desired_lateral_accel, desired_lateral_jerk, v_ego)
 
 
 def get_ioniq_6_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:

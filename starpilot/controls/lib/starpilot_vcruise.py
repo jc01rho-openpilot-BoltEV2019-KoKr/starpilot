@@ -101,6 +101,11 @@ class StarPilotVCruise:
     self._nav_instruction_state = {}
 
   @staticmethod
+  def _elapsed_seconds(now, since):
+    delta = now - since
+    return delta.total_seconds() if hasattr(delta, "total_seconds") else float(delta)
+
+  @staticmethod
   def _nav_maneuver_target_speed(maneuver_type, maneuver_modifier):
     maneuver_type = str(maneuver_type or "").strip().lower()
     maneuver_modifier = str(maneuver_modifier or "").strip()
@@ -241,7 +246,7 @@ class StarPilotVCruise:
         self.standstill_force_stop_clear_since = 0.0
       elif self.standstill_force_stop_clear_since == 0.0:
         self.standstill_force_stop_clear_since = now
-      elif (now - self.standstill_force_stop_clear_since) >= STANDSTILL_FORCE_STOP_CLEAR_TIME:
+      elif self._elapsed_seconds(now, self.standstill_force_stop_clear_since) >= STANDSTILL_FORCE_STOP_CLEAR_TIME:
         self.standstill_force_stop_hold = False
         self.standstill_force_stop_clear_since = 0.0
 

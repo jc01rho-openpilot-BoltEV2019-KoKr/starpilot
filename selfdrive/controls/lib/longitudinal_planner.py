@@ -211,6 +211,9 @@ LEAD_CATCHUP_ACCEL_MIN_EGO = 8.0
 LEAD_CATCHUP_ACCEL_MIN_LEAD_DELTA = -0.5
 LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_MIN = 4.0
 LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_GAIN = 0.15
+RADAR_MATCHED_FOLLOW_CATCHUP_CAP_BUFFER_MARGIN = 0.75
+RADAR_MATCHED_FOLLOW_CATCHUP_HOLD_CAP = 0.04
+RADAR_MATCHED_FOLLOW_CATCHUP_HOLD_MAX_GAP_ERROR = 0.75
 POST_DEPARTURE_FOLLOW_BYPASS_MIN_SPEED = 12.0
 POST_DEPARTURE_FOLLOW_BYPASS_MIN_MODEL_PROB = 0.95
 POST_DEPARTURE_FOLLOW_BYPASS_MIN_LEAD_DELTA = 0.35
@@ -1367,8 +1370,6 @@ class LongitudinalPlanner:
 
     lead_delta = float(lead.vLead) - float(v_ego)
     min_lead_delta = LOW_SPEED_FOLLOW_ACCEL_CAP_MIN_LEAD_DELTA if low_speed_follow_window else LEAD_CATCHUP_ACCEL_MIN_LEAD_DELTA
-    if lead_delta < min_lead_delta:
-      return None
 
     desired_gap = float(desired_follow_distance(v_ego, lead.vLead, t_follow))
     if low_speed_follow_window:
@@ -1378,6 +1379,23 @@ class LongitudinalPlanner:
       gap_buffer = max(LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_MIN,
                        LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_GAIN * float(v_ego))
     gap_error = float(lead.dRel) - desired_gap
+
+    radar_matched_follow_active = (
+      lead_radar and
+      tracking_lead_active and
+      self.lead_is_matched_follow_window(lead, v_ego, t_follow)
+    )
+    if radar_matched_follow_active and gap_error > (gap_buffer - RADAR_MATCHED_FOLLOW_CATCHUP_CAP_BUFFER_MARGIN):
+      return None
+
+    if (radar_matched_follow_active and current_source == "cruise" and
+        gap_error <= RADAR_MATCHED_FOLLOW_CATCHUP_HOLD_MAX_GAP_ERROR and
+        lead_delta < min_lead_delta):
+      return RADAR_MATCHED_FOLLOW_CATCHUP_HOLD_CAP
+
+    if lead_delta < min_lead_delta:
+      return None
+
     if gap_error > gap_buffer:
       return None
 

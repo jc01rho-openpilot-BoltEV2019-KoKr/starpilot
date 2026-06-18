@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 
 from openpilot.common.constants import CV
@@ -195,6 +197,51 @@ def test_standstill_seeded_force_stop_hold_requires_clear_window_before_release(
   released = vcruise.update(
     controls_enabled=True,
     now=1.2,
+    time_validated=True,
+    v_cruise=20.0,
+    v_ego=0.0,
+    sm=sm,
+    starpilot_toggles=toggles,
+  )
+  assert released == pytest.approx(20.0)
+  assert not vcruise.standstill_force_stop_hold
+  assert not vcruise.forcing_stop
+
+
+def test_standstill_seeded_force_stop_hold_accepts_datetime_now_without_crashing():
+  planner, vcruise = make_vcruise(red_light=True, raw_model_stopped=False, forcing_stop=False)
+  sm = make_sm(standstill=True)
+  toggles = make_toggles()
+  base = datetime.datetime(2026, 6, 18, tzinfo=datetime.timezone.utc)
+
+  first = vcruise.update(
+    controls_enabled=True,
+    now=base,
+    time_validated=True,
+    v_cruise=20.0,
+    v_ego=0.0,
+    sm=sm,
+    starpilot_toggles=toggles,
+  )
+  assert first == pytest.approx(0.0)
+  assert vcruise.standstill_force_stop_hold
+
+  planner.starpilot_cem.stop_light_detected = False
+  second = vcruise.update(
+    controls_enabled=True,
+    now=base + datetime.timedelta(seconds=0.4),
+    time_validated=True,
+    v_cruise=20.0,
+    v_ego=0.0,
+    sm=sm,
+    starpilot_toggles=toggles,
+  )
+  assert second == pytest.approx(0.0)
+  assert vcruise.standstill_force_stop_hold
+
+  released = vcruise.update(
+    controls_enabled=True,
+    now=base + datetime.timedelta(seconds=1.2),
     time_validated=True,
     v_cruise=20.0,
     v_ego=0.0,
