@@ -2730,6 +2730,31 @@ def test_near_duplicate_lead_transition_target_damps_tracking_cruise_sign_flip()
   assert smoothed == pytest.approx(-0.92, abs=1e-6)
 
 
+def test_near_duplicate_lead_transition_target_damps_low_speed_duplicate_radar_handoff():
+  v_ego = 14.31
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=25.7, v_lead=14.61, a_lead=0.0, radar=True, model_prob=1.0)
+  lead_two = make_lead(status=True, d_rel=25.7, v_lead=14.61, a_lead=0.0, radar=True, model_prob=1.0)
+  lead_one.vRel = lead_one.vLead - v_ego
+  lead_two.vRel = lead_two.vLead - v_ego
+  planner.lead_one = lead_one
+  planner.lead_two = lead_two
+
+  smoothed = planner.get_near_duplicate_lead_transition_target(
+    lead_one,
+    v_ego,
+    1.45,
+    prev_output_a_target=0.68,
+    output_a_target=0.03,
+    current_source="lead0",
+    tracking_lead_active=True,
+  )
+
+  assert smoothed is not None
+  assert smoothed == pytest.approx(0.36, abs=1e-6)
+
+
 def test_duplicate_slow_lead_brake_hold_prevents_zero_cross_from_duplicate_voacc_leads():
   v_ego = 24.0
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)

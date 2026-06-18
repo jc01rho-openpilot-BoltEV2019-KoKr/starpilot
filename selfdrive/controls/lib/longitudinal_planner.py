@@ -1813,17 +1813,25 @@ class LongitudinalPlanner:
                                                 current_source, tracking_lead_active):
     if lead is None or not lead.status:
       return None
-    if current_source not in ("lead0", "lead1") and not tracking_lead_active:
+    if current_source not in ("cruise", "lead0", "lead1") and not tracking_lead_active:
       return None
     if not (self.lead_one.status and self.lead_two.status):
       return None
     if not self.mpc.leads_are_near_duplicates(self.lead_one, self.lead_two, v_ego):
       return None
-    if float(v_ego) < NEAR_DUPLICATE_LEAD_TRANSITION_MIN_SPEED:
+    low_speed_extension_active = bool(
+      tracking_lead_active and
+      current_source in ("cruise", "lead0", "lead1") and
+      LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_SPEED <= float(v_ego) < NEAR_DUPLICATE_LEAD_TRANSITION_MIN_SPEED
+    )
+    if float(v_ego) < LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_SPEED:
+      return None
+    if float(v_ego) < NEAR_DUPLICATE_LEAD_TRANSITION_MIN_SPEED and not low_speed_extension_active:
       return None
 
-    lead_prob = float(getattr(lead, "modelProb", 0.0))
-    if bool(getattr(lead, "radar", False)) or lead_prob < NEAR_DUPLICATE_LEAD_TRANSITION_MIN_MODEL_PROB:
+    lead_radar = bool(getattr(lead, "radar", False))
+    lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
+    if not lead_radar and lead_prob < NEAR_DUPLICATE_LEAD_TRANSITION_MIN_MODEL_PROB:
       return None
 
     lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
@@ -1847,6 +1855,10 @@ class LongitudinalPlanner:
 
     target_delta = float(output_a_target) - float(prev_output_a_target)
     if abs(target_delta) < NEAR_DUPLICATE_LEAD_TRANSITION_MIN_DELTA_A:
+      return None
+
+    if low_speed_extension_active and (float(prev_output_a_target) < LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_TARGET or
+                                       float(output_a_target) < LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_TARGET):
       return None
 
     positive_step = NEAR_DUPLICATE_LEAD_TRANSITION_POSITIVE_STEP
