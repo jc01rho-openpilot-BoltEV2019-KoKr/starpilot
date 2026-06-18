@@ -11,6 +11,7 @@ from openpilot.starpilot.controls.lib.speed_limit_controller import SpeedLimitCo
 
 CSC_MIN_SPEED = CITY_SPEED_LIMIT * CV.MPH_TO_MS
 OVERRIDE_FORCE_STOP_TIMER = 10
+STANDSTILL_FORCE_STOP_CLEAR_TIME = 0.75
 NAV_TURN_COMFORT_DECEL = 1.25
 NAV_TURN_DISTANCE_BUFFER = 8.0
 NAV_TURN_MIN_TARGET_DELTA = 0.25
@@ -64,6 +65,8 @@ class StarPilotVCruise:
 
     self.override_force_stop_timer = 0
     self.force_stop_timer = 0.0
+    self.standstill_force_stop_hold = False
+    self.standstill_force_stop_clear_since = 0.0
     # Kinematic distance estimator. Same attribute also published as
     # starpilotPlan.forcingStopLength, so the existing reader keeps working.
     self.tracked_model_length = 0.0
@@ -213,11 +216,41 @@ class StarPilotVCruise:
       self.stop_sign_confirmed = True
 
     raw_model_stopped = bool(getattr(self.starpilot_planner, "raw_model_stopped", False))
+    standstill_force_stop_scene_active = bool(force_stop_active or raw_model_stopped)
+
+    # If the driver engages while already stopped at a red light / stop sign, seed
+    # the same stop-hold path openpilot would have had if it made the stop itself.
+    # Without this, a brief model-clear dropout can release the stop immediately.
+    if (
+      controls_enabled and
+      sm["carState"].standstill and
+      standstill_force_stop_scene_active and
+      not self.forcing_stop and
+      self.force_stop_timer < 0.5
+    ):
+      self.standstill_force_stop_hold = True
+      self.standstill_force_stop_clear_since = 0.0
+      self.tracked_model_length = 0.0
+
+    if self.standstill_force_stop_hold:
+      pedal_override = bool(sm["carState"].gasPressed or sm["starpilotCarState"].accelPressed)
+      if (not controls_enabled) or (not sm["carState"].standstill) or lead_present or pedal_override:
+        self.standstill_force_stop_hold = False
+        self.standstill_force_stop_clear_since = 0.0
+      elif standstill_force_stop_scene_active:
+        self.standstill_force_stop_clear_since = 0.0
+      elif self.standstill_force_stop_clear_since == 0.0:
+        self.standstill_force_stop_clear_since = now
+      elif (now - self.standstill_force_stop_clear_since) >= STANDSTILL_FORCE_STOP_CLEAR_TIME:
+        self.standstill_force_stop_hold = False
+        self.standstill_force_stop_clear_since = 0.0
 
     # Timer ramp. Faster commitment when the dashboard confirms.
     if force_stop_active and not sm["carState"].standstill:
       rate = DT_MDL * 2 if dash_active else DT_MDL
       self.force_stop_timer = min(self.force_stop_timer + rate, 2.0)
+    elif self.standstill_force_stop_hold:
+      self.force_stop_timer = max(self.force_stop_timer, 0.5)
     elif (self.forcing_stop and sm["carState"].standstill and not dash_active and
           not self.starpilot_planner.starpilot_cem.stop_light_detected and not raw_model_stopped):
       self.force_stop_timer = 0.0
@@ -227,6 +260,7 @@ class StarPilotVCruise:
     force_stop_enabled = self.force_stop_timer >= 0.5
     # Stay committed across model dropouts until standstill
     force_stop_enabled |= self.forcing_stop and not sm["carState"].standstill
+    force_stop_enabled |= self.standstill_force_stop_hold
 
     # Override: gas/accel pedal during an active force stop
     self.override_force_stop |= sm["carState"].gasPressed
@@ -298,29 +332,35 @@ class StarPilotVCruise:
       v_cruise = 0.0
 
     elif force_stop_enabled and not self.override_force_stop:
-      self.forcing_stop |= not sm["carState"].standstill
+      self.forcing_stop |= not sm["carState"].standstill or self.standstill_force_stop_hold
 
-      # Kinematic distance estimator (also published as forcingStopLength).
-      # Decay one-to-one with motion, clamp by current model_length so we adopt
-      # the model's view when it regains sight, and snap closer to DASH_SEED_M
-      # whenever the dashboard signal is active.
-      self.tracked_model_length = max(self.tracked_model_length - (v_ego * DT_MDL), 0.0)
-      self.tracked_model_length = min(self.tracked_model_length, self.starpilot_planner.model_length)
-      if dash_active:
-        self.tracked_model_length = min(self.tracked_model_length, DASH_SEED_M)
-
-      # Kinematic profile with user offset. Positive offset shifts the perceived
-      # line further down the road -> car rolls further before commanding 0.
-      effective_d = self.tracked_model_length + offset_m
-      if effective_d <= MPC_HANDOFF_M:
-        v_target = 0.0
+      if self.standstill_force_stop_hold:
+        self.tracked_model_length = 0.0
+        v_cruise = 0.0
       else:
-        v_target = math.sqrt(2.0 * COMFORT_DECEL * (effective_d - MPC_HANDOFF_M))
+        # Kinematic distance estimator (also published as forcingStopLength).
+        # Decay one-to-one with motion, clamp by current model_length so we adopt
+        # the model's view when it regains sight, and snap closer to DASH_SEED_M
+        # whenever the dashboard signal is active.
+        self.tracked_model_length = max(self.tracked_model_length - (v_ego * DT_MDL), 0.0)
+        self.tracked_model_length = min(self.tracked_model_length, self.starpilot_planner.model_length)
+        if dash_active:
+          self.tracked_model_length = min(self.tracked_model_length, DASH_SEED_M)
 
-      v_cruise = min(v_target, v_cruise)
+        # Kinematic profile with user offset. Positive offset shifts the perceived
+        # line further down the road -> car rolls further before commanding 0.
+        effective_d = self.tracked_model_length + offset_m
+        if effective_d <= MPC_HANDOFF_M:
+          v_target = 0.0
+        else:
+          v_target = math.sqrt(2.0 * COMFORT_DECEL * (effective_d - MPC_HANDOFF_M))
+
+        v_cruise = min(v_target, v_cruise)
 
     else:
       self.forcing_stop = False
+      self.standstill_force_stop_hold = False
+      self.standstill_force_stop_clear_since = 0.0
       # Latch is only meaningful during an active force-stop cycle
       self.stop_sign_confirmed = False
 

@@ -1367,6 +1367,7 @@ class StarPilotVariables:
 
     gm_auto_hold_supported = toggle.car_model in LEGACY_VOLT_STOCK_ACC_CARS
     toggle.gm_auto_hold = self.get_value("GMAutoHold", condition=gm_auto_hold_supported)
+    toggle.volt_one_pedal_mode = self.get_value("VoltOnePedalMode", condition=gm_auto_hold_supported)
 
     toggle.volt_sng = self.get_value("VoltSNG", condition=toggle.car_model in LEGACY_VOLT_STOCK_ACC_CARS)
 

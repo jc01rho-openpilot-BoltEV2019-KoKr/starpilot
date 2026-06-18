@@ -43,10 +43,12 @@ from opendbc.car.gm.carcontroller import (
   get_testing_ground_1_brake_switch_bias,
   get_stock_cc_active_for_cancel,
   should_activate_auto_hold,
+  should_activate_volt_one_pedal,
   should_send_stock_long_cancel,
   should_spoof_dash_speed,
   should_spoof_ecm_cruise_status,
   supports_volt_auto_hold,
+  supports_volt_one_pedal,
   use_interceptor_sng_launch,
 )
 from opendbc.car.gm.gmcan import get_friction_brake_mode
@@ -223,6 +225,52 @@ def test_auto_hold_brake_estimate_uses_driver_or_op_brake_and_clamps():
   assert estimate_auto_hold_brake(100.0, 400.0) == 240
 
 
+def test_volt_one_pedal_requires_toggle_supported_volt_stock_safety_and_ev_transmission():
+  stock_safety = [SimpleNamespace(safetyParam=0x8000)]
+  no_safety = [SimpleNamespace(safetyParam=0)]
+
+  assert supports_volt_one_pedal(
+    SimpleNamespace(
+      carFingerprint=CAR.CHEVROLET_VOLT_CAMERA,
+      safetyConfigs=stock_safety,
+      transmissionType=structs.CarParams.TransmissionType.direct,
+    ),
+    True,
+  )
+  assert not supports_volt_one_pedal(
+    SimpleNamespace(
+      carFingerprint=CAR.CHEVROLET_VOLT_CAMERA,
+      safetyConfigs=no_safety,
+      transmissionType=structs.CarParams.TransmissionType.direct,
+    ),
+    True,
+  )
+  assert not supports_volt_one_pedal(
+    SimpleNamespace(
+      carFingerprint=CAR.CHEVROLET_VOLT_CC,
+      safetyConfigs=stock_safety,
+      transmissionType=structs.CarParams.TransmissionType.direct,
+    ),
+    True,
+  )
+  assert not supports_volt_one_pedal(
+    SimpleNamespace(
+      carFingerprint=CAR.CHEVROLET_VOLT_CAMERA,
+      safetyConfigs=stock_safety,
+      transmissionType=structs.CarParams.TransmissionType.automatic,
+    ),
+    True,
+  )
+  assert not supports_volt_one_pedal(
+    SimpleNamespace(
+      carFingerprint=CAR.CHEVROLET_VOLT_CAMERA,
+      safetyConfigs=stock_safety,
+      transmissionType=structs.CarParams.TransmissionType.direct,
+    ),
+    False,
+  )
+
+
 def test_auto_hold_drive_gears_accept_capnp_dynamic_enum_membership():
   msg = structs.CarState.new_message()
   msg.gearShifter = structs.CarState.GearShifter.drive
@@ -307,6 +355,75 @@ def test_auto_hold_activation_releases_immediately_on_gas_press():
     False,
     False,
     0.0,
+  )
+
+
+def test_volt_one_pedal_activation_requires_main_l_mode_and_no_driver_input():
+  assert should_activate_volt_one_pedal(
+    True,
+    True,
+    False,
+    False,
+    False,
+    False,
+    True,
+    structs.CarState.GearShifter.low,
+    False,
+  )
+  assert not should_activate_volt_one_pedal(
+    True,
+    False,
+    False,
+    False,
+    False,
+    False,
+    True,
+    structs.CarState.GearShifter.low,
+    False,
+  )
+  assert not should_activate_volt_one_pedal(
+    True,
+    True,
+    True,
+    False,
+    False,
+    False,
+    True,
+    structs.CarState.GearShifter.low,
+    False,
+  )
+  assert not should_activate_volt_one_pedal(
+    True,
+    True,
+    False,
+    True,
+    False,
+    False,
+    True,
+    structs.CarState.GearShifter.low,
+    False,
+  )
+  assert not should_activate_volt_one_pedal(
+    True,
+    True,
+    False,
+    False,
+    False,
+    True,
+    True,
+    structs.CarState.GearShifter.low,
+    False,
+  )
+  assert not should_activate_volt_one_pedal(
+    True,
+    True,
+    False,
+    False,
+    False,
+    False,
+    False,
+    structs.CarState.GearShifter.drive,
+    False,
   )
 
 

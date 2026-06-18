@@ -357,6 +357,18 @@ NEAR_DUPLICATE_LEAD_TRANSITION_MIN_DELTA_A = 0.35
 NEAR_DUPLICATE_LEAD_TRANSITION_POSITIVE_STEP = 0.22
 NEAR_DUPLICATE_LEAD_TRANSITION_NEGATIVE_STEP = 0.32
 NEAR_DUPLICATE_LEAD_TRANSITION_SIGN_CROSS_STEP = 0.18
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_SPEED = 12.0
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_MODEL_PROB = 0.95
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_PREV_DECEL = 0.35
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_CLOSING_SPEED = 0.5
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MAX_LEAD_BRAKE = 0.8
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MAX_HEADWAY_ABOVE_TARGET = 0.85
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_DELTA_A = 0.35
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MAX_DREL_DIFF = 1.5
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MAX_VREL_DIFF = 0.35
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_POSITIVE_STEP = 0.12
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MAX_POSITIVE_STEP = 0.28
+DUPLICATE_SLOW_LEAD_BRAKE_HOLD_SIGN_CROSS_STEP = 0.22
 TRACKED_VISION_MODEL_FLOOR_MIN_SPEED = 10.0
 TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_PROB = 0.95
 TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_DECEL = 0.80
@@ -1898,6 +1910,62 @@ class LongitudinalPlanner:
 
     return None
 
+  def get_duplicate_slow_lead_brake_hold_target(self, lead, v_ego, base_t_follow,
+                                                prev_output_a_target, output_a_target,
+                                                current_source, tracking_lead_active):
+    if lead is None or not lead.status:
+      return None
+    if current_source not in ("cruise", "lead0", "lead1") and not tracking_lead_active:
+      return None
+    if not (self.lead_one.status and self.lead_two.status):
+      return None
+    if (
+      abs(float(self.lead_one.dRel) - float(self.lead_two.dRel)) > DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MAX_DREL_DIFF or
+      abs(float(self.lead_one.vRel) - float(self.lead_two.vRel)) > DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MAX_VREL_DIFF
+    ):
+      return None
+    if float(v_ego) < DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_SPEED:
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 0.0))
+    if bool(getattr(lead, "radar", False)) or lead_prob < DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_MODEL_PROB:
+      return None
+
+    prev_brake = max(0.0, -float(prev_output_a_target))
+    if prev_brake < DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_PREV_DECEL:
+      return None
+
+    target_delta = float(output_a_target) - float(prev_output_a_target)
+    if target_delta < DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_DELTA_A:
+      return None
+
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    if lead_brake > DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MAX_LEAD_BRAKE:
+      return None
+
+    closing_speed = max(0.0, float(v_ego) - float(lead.vLead))
+    if closing_speed < DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_CLOSING_SPEED:
+      return None
+
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    if actual_headway > float(base_t_follow) + DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MAX_HEADWAY_ABOVE_TARGET:
+      return None
+
+    positive_step = float(np.interp(
+      closing_speed,
+      [DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_CLOSING_SPEED, 1.5, 4.0, 8.0],
+      [DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MIN_POSITIVE_STEP,
+       0.16,
+       0.22,
+       DUPLICATE_SLOW_LEAD_BRAKE_HOLD_MAX_POSITIVE_STEP],
+    ))
+    if float(prev_output_a_target) * float(output_a_target) < 0.0:
+      positive_step = min(positive_step, DUPLICATE_SLOW_LEAD_BRAKE_HOLD_SIGN_CROSS_STEP)
+
+    upper = float(prev_output_a_target) + positive_step
+    smoothed_target = float(min(float(output_a_target), upper))
+    return smoothed_target if abs(smoothed_target - float(output_a_target)) > 1e-6 else None
+
   def get_tracked_vision_model_brake_floor(self, lead, v_ego, accel_min, t_follow, model_desired):
     if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
       return None
@@ -2735,6 +2803,22 @@ class LongitudinalPlanner:
         else:
           self.a_desired = max(self.a_desired, near_duplicate_transition_target)
         output_a_target = near_duplicate_transition_target
+
+      duplicate_slow_lead_brake_hold_target = self.get_duplicate_slow_lead_brake_hold_target(
+        comfort_lead,
+        scene_v_ego,
+        effective_t_follow,
+        prev_output_a_target,
+        output_a_target,
+        self.mpc.source,
+        bool(getattr(sm["starpilotPlan"], "trackingLead", False)),
+      )
+      if duplicate_slow_lead_brake_hold_target is not None:
+        if duplicate_slow_lead_brake_hold_target < output_a_target:
+          self.a_desired = min(self.a_desired, duplicate_slow_lead_brake_hold_target)
+        else:
+          self.a_desired = max(self.a_desired, duplicate_slow_lead_brake_hold_target)
+        output_a_target = duplicate_slow_lead_brake_hold_target
 
     if allow_complex_follow_logic and follow_control_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
       cruise_tracking_lead_accel_cap = self.get_cruise_tracking_lead_accel_cap(

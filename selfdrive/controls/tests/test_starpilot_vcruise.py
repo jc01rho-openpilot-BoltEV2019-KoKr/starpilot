@@ -141,6 +141,71 @@ def test_force_stop_stays_committed_while_moving_even_if_scene_opens():
   assert vcruise.forcing_stop
 
 
+def test_engage_while_already_stopped_in_red_light_scene_seeds_force_stop_hold():
+  _, vcruise = make_vcruise(red_light=True, raw_model_stopped=False, forcing_stop=False)
+
+  result = vcruise.update(
+    controls_enabled=True,
+    now=0.0,
+    time_validated=True,
+    v_cruise=20.0,
+    v_ego=0.0,
+    sm=make_sm(standstill=True),
+    starpilot_toggles=make_toggles(),
+  )
+
+  assert result == pytest.approx(0.0)
+  assert vcruise.standstill_force_stop_hold
+  assert vcruise.force_stop_timer >= 0.5
+  assert vcruise.forcing_stop
+  assert vcruise.tracked_model_length == pytest.approx(0.0)
+
+
+def test_standstill_seeded_force_stop_hold_requires_clear_window_before_release():
+  planner, vcruise = make_vcruise(red_light=True, raw_model_stopped=False, forcing_stop=False)
+  sm = make_sm(standstill=True)
+  toggles = make_toggles()
+
+  first = vcruise.update(
+    controls_enabled=True,
+    now=0.0,
+    time_validated=True,
+    v_cruise=20.0,
+    v_ego=0.0,
+    sm=sm,
+    starpilot_toggles=toggles,
+  )
+  assert first == pytest.approx(0.0)
+  assert vcruise.standstill_force_stop_hold
+
+  planner.starpilot_cem.stop_light_detected = False
+  second = vcruise.update(
+    controls_enabled=True,
+    now=0.4,
+    time_validated=True,
+    v_cruise=20.0,
+    v_ego=0.0,
+    sm=sm,
+    starpilot_toggles=toggles,
+  )
+  assert second == pytest.approx(0.0)
+  assert vcruise.standstill_force_stop_hold
+  assert vcruise.forcing_stop
+
+  released = vcruise.update(
+    controls_enabled=True,
+    now=1.2,
+    time_validated=True,
+    v_cruise=20.0,
+    v_ego=0.0,
+    sm=sm,
+    starpilot_toggles=toggles,
+  )
+  assert released == pytest.approx(20.0)
+  assert not vcruise.standstill_force_stop_hold
+  assert not vcruise.forcing_stop
+
+
 def test_nav_turn_speed_control_default_off():
   _, vcruise = make_vcruise(nav_state={
     "valid": True,
