@@ -917,6 +917,50 @@ def _deadline_reached(deadline):
   return deadline is not None and time.monotonic() >= deadline
 
 
+def _numeric_attr(value, attr):
+  try:
+    return getattr(value, attr)
+  except Exception:
+    return None
+
+
+def _wall_time_seconds_from_payload(payload):
+  if payload is None:
+    return None
+
+  for attr in ("wallTimeNanos", "wallTimeNs", "unixTimestampNanos"):
+    value = _safe_float(_numeric_attr(payload, attr), 0.0)
+    if value > 1e12:
+      return value / 1e9
+
+  for attr in ("wallTimeMillis", "unixTimestampMillis"):
+    value = _safe_float(_numeric_attr(payload, attr), 0.0)
+    if value > 1e9:
+      return value / 1000.0
+
+  for attr in ("wallTime", "unixTimestamp"):
+    value = _safe_float(_numeric_attr(payload, attr), 0.0)
+    if value > 1e8:
+      return value
+
+  return None
+
+
+def _log_wall_time_range(first_time, last_time, wall_time_offset, duration_seconds):
+  if first_time is None or wall_time_offset is None:
+    return None
+
+  start_seconds = first_time + wall_time_offset
+  end_seconds = (last_time + wall_time_offset) if last_time is not None else start_seconds
+  if end_seconds <= start_seconds and duration_seconds > 0:
+    end_seconds = start_seconds + duration_seconds
+
+  try:
+    return _jsonable_time(datetime.fromtimestamp(start_seconds)), _jsonable_time(datetime.fromtimestamp(end_seconds))
+  except (OSError, OverflowError, ValueError):
+    return None
+
+
 def _sample_route_info(route_info, limit=DASHBOARD_ROUTE_SEGMENT_SAMPLE_LIMIT):
   segments = route_info.get("segments", [])
   segment_count = len(segments)
@@ -961,6 +1005,7 @@ def _analyze_route_messages(messages, route_info, model_names, is_metric, deadli
   distracted_moments = 0
   unresponsive_moments = 0
   model = ""
+  wall_time_offset = None
 
   for message in messages:
     if _deadline_reached(deadline):
@@ -974,6 +1019,12 @@ def _analyze_route_messages(messages, route_info, model_names, is_metric, deadli
 
     message_type = _message_type(message)
     payload = _message_payload(message, message_type)
+    if seconds is not None and wall_time_offset is None:
+      wall_seconds = _wall_time_seconds_from_payload(payload)
+      if wall_seconds is None:
+        wall_seconds = _wall_time_seconds_from_payload(message)
+      if wall_seconds is not None:
+        wall_time_offset = wall_seconds - seconds
 
     if message_type == "initData" and payload is not None and not model:
       model = _route_model_from_init_data(payload, model_names)
@@ -1023,10 +1074,13 @@ def _analyze_route_messages(messages, route_info, model_names, is_metric, deadli
   engaged_percent = round((engaged_seconds / duration_seconds) * 100) if duration_seconds > 0 else 0
   distance = distance_m * (METER_TO_KILOMETER if is_metric else METER_TO_MILE)
   avg_speed = (distance_m / duration_seconds) * (CV.MS_TO_KPH if is_metric else METER_PER_SECOND_TO_MPH) if duration_seconds > 0 else 0.0
+  time_range = _log_wall_time_range(first_time, last_time, wall_time_offset, duration_seconds)
+  start_date, end_date = time_range if time_range is not None else _route_time_range(route_info, duration_seconds)
 
   return {
     "name": route_info.get("name", ""),
-    "date": _jsonable_time(route_info.get("startedAt")),
+    "date": start_date,
+    "endDate": end_date,
     "distance": round(distance, 1),
     "distanceMeters": round(distance_m, 1),
     "duration": int(round(duration_seconds)),
@@ -1069,6 +1123,7 @@ def _empty_drive(is_metric):
   return {
     "name": "",
     "date": "",
+    "endDate": "",
     "distance": 0,
     "duration": 0,
     "avgSpeed": 0,
@@ -1092,6 +1147,16 @@ def _public_drive(drive, is_metric):
   return public
 
 
+def _route_time_range(route_info, duration_seconds):
+  modified_at = _safe_float(route_info.get("modifiedAt", 0.0), 0.0)
+  duration_seconds = max(0.0, _safe_float(duration_seconds, 0.0))
+  if modified_at > 0.0 and duration_seconds > 0.0:
+    end_time = datetime.fromtimestamp(modified_at)
+    start_time = end_time - timedelta(seconds=duration_seconds)
+    return _jsonable_time(start_time), _jsonable_time(end_time)
+  return _jsonable_time(route_info.get("startedAt")), _jsonable_time(datetime.fromtimestamp(modified_at)) if modified_at > 0.0 else ""
+
+
 def _distance_from_meters(distance_m, is_metric):
   return distance_m * (METER_TO_KILOMETER if is_metric else METER_TO_MILE)
 
@@ -1110,12 +1175,15 @@ def _current_model_name(params_obj, model_names):
 
 def _route_shell_drive(route_info, params_obj, model_names, is_metric):
   segment_count = max(0, _safe_int(route_info.get("segmentCount", 0), 0))
+  duration_seconds = segment_count * 60
+  start_date, end_date = _route_time_range(route_info, duration_seconds)
   return {
     "name": route_info.get("name", ""),
-    "date": _jsonable_time(route_info.get("startedAt")),
+    "date": start_date,
+    "endDate": end_date,
     "distance": 0,
     "distanceMeters": 0.0,
-    "duration": segment_count * 60,
+    "duration": duration_seconds,
     "avgSpeed": 0,
     "engagedPercent": 0,
     "engagedSeconds": 0.0,
@@ -1138,6 +1206,7 @@ def _drive_from_persistent_route(route_name, entry, is_metric):
   return {
     "name": route_name,
     "date": entry.get("date", ""),
+    "endDate": entry.get("endDate", ""),
     "distance": round(_distance_from_meters(distance_m, is_metric), 1),
     "distanceMeters": round(distance_m, 1),
     "duration": duration,
@@ -1185,6 +1254,59 @@ def _merge_dashboard_drives(*drive_lists):
         merged[route_name] = dict(drive)
 
   return sorted(merged.values(), key=_drive_sort_time, reverse=True)
+
+
+def _drive_display_group_key(drive):
+  start_text = str(drive.get("date", "")).strip()
+  end_text = str(drive.get("endDate", "")).strip()
+  model_key = _model_usage_key(drive.get("model", ""))
+  if not start_text or not end_text or not model_key:
+    return None
+  return start_text, end_text, model_key
+
+
+def _coalesced_drive_group(group, is_metric):
+  if len(group) == 1:
+    return dict(group[0])
+
+  ordered = sorted(group, key=_drive_sort_time, reverse=True)
+  primary = dict(ordered[0])
+  total_distance_m = sum(max(0.0, _safe_float(drive.get("distanceMeters", 0.0), 0.0)) for drive in ordered)
+  total_duration = sum(max(0, _safe_int(drive.get("duration", 0), 0)) for drive in ordered)
+  total_engaged = sum(max(0.0, _safe_float(drive.get("engagedSeconds", 0.0), 0.0)) for drive in ordered)
+
+  if total_distance_m > 0.0:
+    primary["distanceMeters"] = round(total_distance_m, 1)
+    primary["distance"] = round(_distance_from_meters(total_distance_m, is_metric), 1)
+  else:
+    primary["distance"] = round(sum(max(0.0, _safe_float(drive.get("distance", 0.0), 0.0)) for drive in ordered), 1)
+  primary["duration"] = total_duration
+  primary["engagedSeconds"] = round(total_engaged, 1)
+  primary["engagedPercent"] = max(0, min(100, round((total_engaged / total_duration) * 100))) if total_duration > 0 else 0
+  primary["avgSpeed"] = int(round((total_distance_m / total_duration) * (CV.MS_TO_KPH if is_metric else METER_PER_SECOND_TO_MPH))) if total_distance_m > 0.0 and total_duration > 0 else 0
+  primary["segmentCount"] = sum(max(0, _safe_int(drive.get("segmentCount", 0), 0)) for drive in ordered)
+  primary["distractedMoments"] = sum(max(0, _safe_int(drive.get("distractedMoments", 0), 0)) for drive in ordered)
+  primary["unresponsiveMoments"] = sum(max(0, _safe_int(drive.get("unresponsiveMoments", 0), 0)) for drive in ordered)
+  primary["routeModifiedAt"] = max(_safe_float(drive.get("routeModifiedAt", 0.0), 0.0) for drive in ordered)
+  primary["attentionKnown"] = any(bool(drive.get("attentionKnown", True)) for drive in ordered)
+  primary["analysisComplete"] = all(bool(drive.get("analysisComplete", False)) for drive in ordered)
+  primary["name"] = ",".join(str(drive.get("name", "")).strip() for drive in ordered if str(drive.get("name", "")).strip())
+  return primary
+
+
+def _coalesce_display_drives(drives, is_metric):
+  groups = {}
+  fallback = []
+  for drive in drives or []:
+    group_key = _drive_display_group_key(drive)
+    if group_key is None:
+      fallback.append(dict(drive))
+      continue
+    groups.setdefault(group_key, []).append(drive)
+
+  coalesced = [_coalesced_drive_group(group, is_metric) for group in groups.values()]
+  coalesced.extend(fallback)
+  return sorted(coalesced, key=_drive_sort_time, reverse=True)
 
 
 def _analysis_candidates(route_infos, persistent_stats):
@@ -1581,6 +1703,7 @@ def _normalize_persistent_routes(raw_routes):
       continue
     routes[name] = {
       "date": date,
+      "endDate": str(entry.get("endDate", "")).strip(),
       "distanceMeters": max(0.0, _safe_float(entry.get("distanceMeters", 0.0), 0.0)),
       "duration": max(0, _safe_int(entry.get("duration", 0), 0)),
       "clean": bool(entry.get("clean", False)),
@@ -1815,6 +1938,7 @@ def _update_dashboard_persistent_stats(params_obj, drives, wall_now):
     attention_known = bool(drive.get("attentionKnown", True))
     next_entry = {
       "date": route_date,
+      "endDate": str(drive.get("endDate", "")).strip(),
       "distanceMeters": max(0.0, _safe_float(drive.get("distanceMeters", 0.0), 0.0)),
       "duration": max(0, _safe_int(drive.get("duration", 0), 0)),
       "clean": attention_known and _drive_is_clean(drive),
@@ -1844,6 +1968,10 @@ def _update_dashboard_persistent_stats(params_obj, drives, wall_now):
         next_entry["distanceMeters"] = existing_distance
         existing_duration = _safe_int(existing_entry.get("duration", 0), 0)
         next_entry["duration"] = existing_duration if existing_attention_known else max(existing_duration, next_entry["duration"])
+        if existing_attention_known and str(existing_entry.get("date", "")).strip():
+          next_entry["date"] = str(existing_entry.get("date", "")).strip()
+        if str(existing_entry.get("endDate", "")).strip():
+          next_entry["endDate"] = str(existing_entry.get("endDate", "")).strip()
         next_entry["engagedSeconds"] = max(0.0, _safe_float(existing_entry.get("engagedSeconds", 0.0), 0.0))
         next_entry["distractedMoments"] = max(0, _safe_int(existing_entry.get("distractedMoments", 0), 0))
         next_entry["unresponsiveMoments"] = max(0, _safe_int(existing_entry.get("unresponsiveMoments", 0), 0))
@@ -2030,15 +2158,16 @@ def get_dashboard_stats(footage_paths, params_obj=None, now=None):
 
   persisted_drives = _persistent_drives(persistent_stats, is_metric)
   combined_drives = _merge_dashboard_drives(shell_drives, persisted_drives, analyzed_drives)
+  display_drives = _coalesce_display_drives(combined_drives, is_metric)
 
-  if not combined_drives:
+  if not display_drives:
     dashboard = _dashboard_empty(is_metric, now, footage_paths, params_obj, persistent_stats)
   else:
     records = _display_personal_records(persistent_stats, is_metric)
     dashboard = {
-      "lastDrive": _public_drive(combined_drives[0], is_metric),
-      "recentDrives": [_public_drive(drive, is_metric) for drive in combined_drives[:DASHBOARD_RECENT_DRIVE_LIMIT]],
-      "week": _build_week_summary(combined_drives, now, is_metric),
+      "lastDrive": _public_drive(display_drives[0], is_metric),
+      "recentDrives": [_public_drive(drive, is_metric) for drive in display_drives[:DASHBOARD_RECENT_DRIVE_LIMIT]],
+      "week": _build_week_summary(display_drives, now, is_metric),
       "records": records,
       "device": _build_device_summary(params_obj),
       "storage": _build_storage_summary(footage_paths),

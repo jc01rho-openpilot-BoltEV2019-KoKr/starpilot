@@ -75,6 +75,24 @@ function formatDate(value) {
   });
 }
 
+function formatDriveTimeRange(startValue, endValue) {
+  if (!startValue) return "No drives yet";
+  const start = new Date(startValue);
+  const end = new Date(endValue);
+  if (Number.isNaN(start.getTime())) return String(startValue);
+  if (Number.isNaN(end.getTime()) || end <= start) return formatDate(startValue);
+
+  const dateLabel = start.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const startTime = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const endTime = end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  if (start.toDateString() === end.toDateString()) {
+    return `${dateLabel}, ${startTime}-${endTime}`;
+  }
+
+  const endDateLabel = end.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `${dateLabel}, ${startTime}-${endDateLabel}, ${endTime}`;
+}
+
 function formatBytes(bytes) {
   const value = Math.max(0, numberValue(bytes));
   if (value >= 2 ** 30) return `${formatOneDecimal(value / (2 ** 30))} GB`;
@@ -154,7 +172,7 @@ function renderLastDrive(drive) {
   return `
     <section class="dashboard-card dashboard-last-drive">
       <div class="dashboard-card-kicker"><span></span>Last drive</div>
-      <div class="dashboard-drive-date">${escapeHtml(formatDate(drive.date))}</div>
+      <div class="dashboard-drive-date">${escapeHtml(formatDriveTimeRange(drive.date, drive.endDate))}</div>
       <div class="dashboard-drive-metrics">
         <div><strong>${ready ? formatOneDecimal(drive.distance) : "..."}</strong><span>${ready ? escapeHtml(drive.distanceUnit || "miles") : "analyzing"}</span></div>
         <div><strong>${formatDuration(drive.duration)}</strong><span>duration</span></div>
@@ -249,7 +267,7 @@ function renderRecentDrives(drives) {
     return `
     <div class="dashboard-drive-row ${ready ? "" : "is-pending"}">
       <div class="dashboard-drive-main">
-        <strong>${escapeHtml(formatDate(drive.date))}</strong>
+        <strong>${escapeHtml(formatDriveTimeRange(drive.date, drive.endDate))}</strong>
         <span>${escapeHtml(drive.model || "Unknown model")}</span>
       </div>
       <div class="dashboard-drive-details">

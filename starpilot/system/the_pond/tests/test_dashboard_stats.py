@@ -288,6 +288,30 @@ def test_route_model_reads_logged_param_entries():
   assert drive["model"] == "Orion"
 
 
+def test_route_date_uses_logged_wall_time_before_directory_mtime():
+  route = {
+    "name": "route-a",
+    "segmentCount": 1,
+    "startedAt": utilities.datetime(2026, 6, 18, 9, 24, 0),
+    "modifiedAt": utilities.datetime(2026, 6, 18, 9, 24, 0).timestamp(),
+  }
+  logged_start = utilities.datetime(2026, 6, 17, 21, 53, 0)
+  messages = [
+    msg("initData", 100, SimpleNamespace(params={"Model": b"orion"}, wallTimeNanos=int(logged_start.timestamp() * 1e9))),
+    msg("carState", 100, SimpleNamespace(vEgo=10.0)),
+    msg("selfdriveState", 100, SimpleNamespace(enabled=True)),
+    msg("carState", 700, SimpleNamespace(vEgo=10.0)),
+    msg("selfdriveState", 700, SimpleNamespace(enabled=False)),
+  ]
+  model_names = {"orion": {"name": "Orion", "series": "City", "key": "orion"}}
+
+  drive = utilities._analyze_route_messages(messages, route, model_names, is_metric=False)
+
+  assert drive["date"].startswith("2026-06-17T21:53:00")
+  assert drive["endDate"].startswith("2026-06-17T22:03:00")
+  assert drive["duration"] == 600
+
+
 def test_week_and_record_summaries_use_analyzed_drives():
   now = utilities.datetime(2026, 6, 16, 12, 0, 0)
   drives = [
@@ -489,14 +513,14 @@ def test_lightweight_routes_surface_recent_drives_without_log_analysis(monkeypat
       "segments": [],
       "segmentCount": 3,
       "startedAt": utilities.datetime(2026, 6, 16, 9, 0, 0),
-      "modifiedAt": 100,
+      "modifiedAt": utilities.datetime(2026, 6, 16, 9, 3, 0).timestamp(),
     },
     {
       "name": "route-old",
       "segments": [],
       "segmentCount": 2,
       "startedAt": utilities.datetime(2026, 6, 15, 9, 0, 0),
-      "modifiedAt": 90,
+      "modifiedAt": utilities.datetime(2026, 6, 15, 9, 2, 0).timestamp(),
     },
   ]
   params = FakeParams({
@@ -518,6 +542,71 @@ def test_lightweight_routes_surface_recent_drives_without_log_analysis(monkeypat
   assert dashboard["favoriteModels"][0]["name"] == "Orion"
   assert dashboard["favoriteModels"][0]["drives"] == 2
   utilities._invalidate_dashboard_cache()
+
+
+def test_recent_drives_coalesce_exact_duplicate_time_ranges_only():
+  drives = [
+    {
+      "name": "route-a",
+      "date": "2026-06-18T09:24:10",
+      "endDate": "2026-06-18T09:34:10",
+      "distanceMeters": 1609.344,
+      "distance": 1.0,
+      "duration": 600,
+      "engagedSeconds": 300.0,
+      "model": "Orion",
+      "segmentCount": 10,
+      "distractedMoments": 1,
+      "unresponsiveMoments": 0,
+      "routeModifiedAt": 100,
+      "attentionKnown": True,
+      "analysisComplete": True,
+    },
+    {
+      "name": "route-b",
+      "date": "2026-06-18T09:24:10",
+      "endDate": "2026-06-18T09:34:10",
+      "distanceMeters": 3218.688,
+      "distance": 2.0,
+      "duration": 300,
+      "engagedSeconds": 300.0,
+      "model": "Orion",
+      "segmentCount": 5,
+      "distractedMoments": 0,
+      "unresponsiveMoments": 1,
+      "routeModifiedAt": 110,
+      "attentionKnown": True,
+      "analysisComplete": True,
+    },
+    {
+      "name": "route-c",
+      "date": "2026-06-18T09:24:30",
+      "endDate": "2026-06-18T09:27:30",
+      "distanceMeters": 804.672,
+      "distance": 0.5,
+      "duration": 120,
+      "engagedSeconds": 0.0,
+      "model": "Orion",
+      "segmentCount": 2,
+      "distractedMoments": 0,
+      "unresponsiveMoments": 0,
+      "routeModifiedAt": 120,
+      "attentionKnown": True,
+      "analysisComplete": True,
+    },
+  ]
+
+  coalesced = utilities._coalesce_display_drives(drives, is_metric=False)
+
+  assert len(coalesced) == 2
+  duplicate_group = next(drive for drive in coalesced if drive["date"] == "2026-06-18T09:24:10")
+  short_drive = next(drive for drive in coalesced if drive["date"] == "2026-06-18T09:24:30")
+  assert duplicate_group["distance"] == 3.0
+  assert duplicate_group["duration"] == 900
+  assert duplicate_group["engagedPercent"] == 67
+  assert duplicate_group["distractedMoments"] == 1
+  assert duplicate_group["unresponsiveMoments"] == 1
+  assert short_drive["distance"] == 0.5
 
 
 def test_unknown_attention_rows_do_not_reset_persisted_clean_records():
