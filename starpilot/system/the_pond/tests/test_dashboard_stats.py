@@ -541,6 +541,8 @@ def test_lightweight_routes_surface_recent_drives_without_log_analysis(monkeypat
   assert dashboard["week"]["drives"] == 2
   assert dashboard["favoriteModels"][0]["name"] == "Orion"
   assert dashboard["favoriteModels"][0]["drives"] == 2
+  assert dashboard["analysis"]["pendingRoutes"] == 2
+  assert dashboard["analysis"]["batchSize"] == 2
   utilities._invalidate_dashboard_cache()
 
 
@@ -674,6 +676,112 @@ def test_shell_update_preserves_old_analysis_version_for_reparse():
   assert stats["routes"]["route-1"]["date"] == "2026-06-18T09:24:00"
   assert stats["routes"]["route-1"]["analysisVersion"] == utilities.DASHBOARD_ROUTE_ANALYSIS_VERSION - 1
   assert utilities._analysis_candidates([{"name": "route-1", "modifiedAt": 100}], stats)
+
+
+def test_week_summary_ignores_stale_premigration_route_rows(monkeypatch):
+  utilities._invalidate_dashboard_cache()
+  route_infos = [
+    {
+      "name": "route-stale",
+      "segments": [],
+      "segmentCount": 1,
+      "startedAt": utilities.datetime(2026, 6, 15, 8, 0, 0),
+      "modifiedAt": 100,
+    },
+    {
+      "name": "route-current",
+      "segments": [],
+      "segmentCount": 1,
+      "startedAt": utilities.datetime(2026, 6, 17, 8, 0, 0),
+      "modifiedAt": 200,
+    },
+  ]
+  params = FakeParams({
+    utilities.DASHBOARD_PERSISTENT_STATS_PARAM: {
+      "routes": {
+        "route-stale": {
+          "date": "2026-06-15T08:00:00",
+          "endDate": "2026-06-15T08:20:00",
+          "distanceMeters": 160934.4,
+          "duration": 1200,
+          "engagedSeconds": 600.0,
+          "model": "Orion",
+          "modifiedAt": 100,
+          "attentionKnown": True,
+          "analysisComplete": True,
+          "analysisVersion": utilities.DASHBOARD_ROUTE_ANALYSIS_VERSION - 1,
+        },
+        "route-current": {
+          "date": "2026-06-17T08:00:00",
+          "endDate": "2026-06-17T08:20:00",
+          "distanceMeters": 32186.88,
+          "duration": 1200,
+          "engagedSeconds": 900.0,
+          "model": "Orion",
+          "modifiedAt": 200,
+          "attentionKnown": True,
+          "analysisComplete": True,
+          "analysisVersion": utilities.DASHBOARD_ROUTE_ANALYSIS_VERSION,
+        },
+      },
+    },
+  })
+  monkeypatch.setattr(utilities, "_list_dashboard_routes", lambda paths: route_infos)
+  monkeypatch.setattr(utilities, "_start_dashboard_background_analysis", lambda *args: False)
+  monkeypatch.setattr(utilities, "_build_storage_summary", lambda paths: {"freeBytes": 0, "usedBytes": 0, "totalBytes": 0, "usedPercent": 0, "segmentCounts": {}})
+
+  dashboard = utilities.get_dashboard_stats(["/tmp/missing"], params, now=utilities.datetime(2026, 6, 18, 12, 0, 0))
+
+  assert dashboard["week"]["distance"] == 20.0
+  assert dashboard["week"]["dailyDistance"][0]["distance"] == 0.0
+  assert dashboard["week"]["dailyDistance"][2]["distance"] == 20.0
+  assert dashboard["analysis"]["pendingRoutes"] == 1
+  utilities._invalidate_dashboard_cache()
+
+
+def test_week_summary_keeps_persisted_rows_when_raw_route_is_gone(monkeypatch):
+  utilities._invalidate_dashboard_cache()
+  params = FakeParams({
+    utilities.DASHBOARD_PERSISTENT_STATS_PARAM: {
+      "routes": {
+        "route-pruned": {
+          "date": "2026-06-15T08:00:00",
+          "endDate": "2026-06-15T08:20:00",
+          "distanceMeters": 16093.44,
+          "duration": 1200,
+          "engagedSeconds": 600.0,
+          "model": "Orion",
+          "modifiedAt": 100,
+          "attentionKnown": True,
+          "analysisComplete": True,
+          "analysisVersion": utilities.DASHBOARD_ROUTE_ANALYSIS_VERSION - 1,
+        },
+      },
+    },
+  })
+  monkeypatch.setattr(utilities, "_list_dashboard_routes", lambda paths: [])
+  monkeypatch.setattr(utilities, "_start_dashboard_background_analysis", lambda *args: False)
+  monkeypatch.setattr(utilities, "_build_storage_summary", lambda paths: {"freeBytes": 0, "usedBytes": 0, "totalBytes": 0, "usedPercent": 0, "segmentCounts": {}})
+
+  dashboard = utilities.get_dashboard_stats(["/tmp/missing"], params, now=utilities.datetime(2026, 6, 18, 12, 0, 0))
+
+  assert dashboard["week"]["distance"] == 10.0
+  assert dashboard["week"]["dailyDistance"][0]["distance"] == 10.0
+  assert dashboard["analysis"]["pendingRoutes"] == 0
+  utilities._invalidate_dashboard_cache()
+
+
+def test_week_summary_resets_at_monday_midnight():
+  drives = [
+    {"date": "2026-06-21T23:59:00", "distance": 30.0, "duration": 1800, "engagedSeconds": 900},
+    {"date": "2026-06-22T00:00:00", "distance": 4.0, "duration": 600, "engagedSeconds": 300},
+  ]
+
+  week = utilities._build_week_summary(drives, utilities.datetime(2026, 6, 22, 0, 1, 0), is_metric=False)
+
+  assert week["distance"] == 4.0
+  assert week["drives"] == 1
+  assert week["dailyDistance"][0]["distance"] == 4.0
 
 
 def test_unknown_attention_rows_do_not_reset_persisted_clean_records():

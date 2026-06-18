@@ -353,6 +353,7 @@ NEAR_DUPLICATE_LEAD_TRANSITION_MAX_CLOSING_SPEED = 3.5
 NEAR_DUPLICATE_LEAD_TRANSITION_MIN_TTC = 8.0
 NEAR_DUPLICATE_LEAD_TRANSITION_MIN_HEADWAY_BELOW_TARGET = 0.45
 NEAR_DUPLICATE_LEAD_TRANSITION_MAX_HEADWAY_ABOVE_TARGET = 0.85
+LOW_SPEED_IDENTICAL_RADAR_DUPLICATE_TRANSITION_EXTRA_HEADWAY = 0.15
 NEAR_DUPLICATE_LEAD_TRANSITION_MIN_DELTA_A = 0.35
 NEAR_DUPLICATE_LEAD_TRANSITION_POSITIVE_STEP = 0.22
 NEAR_DUPLICATE_LEAD_TRANSITION_NEGATIVE_STEP = 0.32
@@ -1813,10 +1814,13 @@ class LongitudinalPlanner:
                                                 current_source, tracking_lead_active):
     if lead is None or not lead.status:
       return None
-    if current_source not in ("cruise", "lead0", "lead1") and not tracking_lead_active:
+    if current_source not in ("cruise", "lead0", "lead1"):
+      return None
+    if current_source == "cruise" and not tracking_lead_active:
       return None
     if not (self.lead_one.status and self.lead_two.status):
       return None
+    identical_radar_duplicates = self.mpc.leads_share_identical_radar_track(self.lead_one, self.lead_two)
     if not self.mpc.leads_are_near_duplicates(self.lead_one, self.lead_two, v_ego):
       return None
     low_speed_extension_active = bool(
@@ -1850,7 +1854,10 @@ class LongitudinalPlanner:
     actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
     if actual_headway < max(0.0, float(base_t_follow) - NEAR_DUPLICATE_LEAD_TRANSITION_MIN_HEADWAY_BELOW_TARGET):
       return None
-    if actual_headway > float(base_t_follow) + NEAR_DUPLICATE_LEAD_TRANSITION_MAX_HEADWAY_ABOVE_TARGET:
+    max_headway_above_target = NEAR_DUPLICATE_LEAD_TRANSITION_MAX_HEADWAY_ABOVE_TARGET
+    if low_speed_extension_active and identical_radar_duplicates:
+      max_headway_above_target += LOW_SPEED_IDENTICAL_RADAR_DUPLICATE_TRANSITION_EXTRA_HEADWAY
+    if actual_headway > float(base_t_follow) + max_headway_above_target:
       return None
 
     target_delta = float(output_a_target) - float(prev_output_a_target)

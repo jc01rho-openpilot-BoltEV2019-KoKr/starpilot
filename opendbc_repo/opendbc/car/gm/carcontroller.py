@@ -40,13 +40,15 @@ AUTO_HOLD_MAX_BRAKE = 240
 AUTO_HOLD_MIN_DRIVE_TIME_S = 3.0
 VOLT_ONE_PEDAL_DECEL_BP = [0.5 * CV.MPH_TO_MS, 6.0 * CV.MPH_TO_MS]
 VOLT_ONE_PEDAL_DECEL_V = [-1.0, -1.1]
-VOLT_ONE_PEDAL_MAX_DECEL = -1.6
+VOLT_ONE_PEDAL_REGEN_PADDLE_DECEL_V = [-1.5, -1.6]
+VOLT_ONE_PEDAL_MAX_DECEL = min((*VOLT_ONE_PEDAL_DECEL_V, *VOLT_ONE_PEDAL_REGEN_PADDLE_DECEL_V)) - 0.5
+VOLT_ONE_PEDAL_PID_NEG_LIMIT = -3.5
 VOLT_ONE_PEDAL_SPEED_ERROR_FACTOR_BP = [1.5, 20.0]
 VOLT_ONE_PEDAL_SPEED_ERROR_FACTOR_V = [0.4, 0.2]
 VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_SPEED_FACTOR_BP = [0.0, 10.0 * CV.MPH_TO_MS]
-VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_SPEED_FACTOR_V = [0.25, 1.0]
+VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_SPEED_FACTOR_V = [0.2, 1.0]
 VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_STEER_FACTOR_BP = [20.0, 120.0]
-VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_STEER_FACTOR_V = [1.0, 0.25]
+VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_STEER_FACTOR_V = [1.0, 0.2]
 VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_UP = 0.8 * DT_CTRL * 4
 VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_DOWN = 0.8 * DT_CTRL * 4
 VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_BP = [4.0, 8.0]
@@ -189,6 +191,10 @@ def estimate_auto_hold_brake(driver_brake: float, op_brake: float) -> int:
   return int(round(np.clip(hold_brake, AUTO_HOLD_MIN_BRAKE, AUTO_HOLD_MAX_BRAKE)))
 
 
+def get_volt_one_pedal_target_decel(v_ego: float) -> float:
+  return float(np.interp(v_ego, VOLT_ONE_PEDAL_DECEL_BP, VOLT_ONE_PEDAL_DECEL_V))
+
+
 def should_activate_volt_one_pedal(one_pedal_ready: bool, cruise_main: bool, long_active: bool,
                                    gas_pressed: bool, brake_pressed: bool, regen_braking: bool,
                                    single_pedal_mode: bool, gear_shifter, moving_backward: bool) -> bool:
@@ -294,7 +300,7 @@ class CarController(CarControllerBase):
       (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
       rate=1 / (DT_CTRL * 4),
       pos_limit=0.0,
-      neg_limit=VOLT_ONE_PEDAL_MAX_DECEL,
+      neg_limit=VOLT_ONE_PEDAL_PID_NEG_LIMIT,
     )
     self.volt_one_pedal_decel = 0.0
     self.volt_one_pedal_brake = 0
@@ -309,17 +315,13 @@ class CarController(CarControllerBase):
     self.volt_one_pedal_brake = 0
 
   def _update_volt_one_pedal_brake(self, CC, CS):
-    if CS.out.vEgo > VOLT_ONE_PEDAL_DECEL_BP[-1]:
-      self._reset_volt_one_pedal()
-      return
-
     pitch_accel = 0.0
     if len(CC.orientationNED) == 3 and CS.out.vEgo > self.CP.vEgoStopping:
       pitch_accel = math.sin(CC.orientationNED[1]) * ACCELERATION_DUE_TO_GRAVITY
       pitch_factor_values = VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_V if pitch_accel <= 0.0 else VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_INCLINE_V
       pitch_accel *= float(np.interp(CS.out.vEgo, VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_BP, pitch_factor_values))
 
-    target_decel = float(np.interp(CS.out.vEgo, VOLT_ONE_PEDAL_DECEL_BP, VOLT_ONE_PEDAL_DECEL_V))
+    target_decel = get_volt_one_pedal_target_decel(CS.out.vEgo)
     measured_decel = min(0.0, CS.out.aEgo + pitch_accel)
     error_factor = float(np.interp(CS.out.vEgo, VOLT_ONE_PEDAL_SPEED_ERROR_FACTOR_BP, VOLT_ONE_PEDAL_SPEED_ERROR_FACTOR_V))
     error = (target_decel - measured_decel) * error_factor
@@ -330,7 +332,7 @@ class CarController(CarControllerBase):
       float(np.interp(abs(CS.out.steeringAngleDeg), VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_STEER_FACTOR_BP, VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_STEER_FACTOR_V)),
     )
     lower = min(self.volt_one_pedal_decel, measured_decel) - VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_UP * rate_limit_factor
-    upper = max(self.volt_one_pedal_decel, measured_decel) + VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_DOWN * rate_limit_factor
+    upper = max(self.volt_one_pedal_decel, measured_decel) + VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_DOWN + rate_limit_factor
     self.volt_one_pedal_decel = float(np.clip(raw_decel, lower, upper))
     self.volt_one_pedal_decel = max(self.volt_one_pedal_decel, VOLT_ONE_PEDAL_MAX_DECEL)
     self.volt_one_pedal_brake = int(round(np.clip(

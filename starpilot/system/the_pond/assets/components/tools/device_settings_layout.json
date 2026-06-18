@@ -2511,7 +2511,7 @@
       {
         "key": "VoltOnePedalMode",
         "label": "Volt One Pedal Mode",
-        "description": "On supported Chevy Volts in L / single-pedal mode, blend light friction braking at low speed so the car can come to a stop and hold without using the brake pedal.",
+        "description": "On supported Chevy Volts in L / single-pedal mode, blend friction braking so the car can slow to a stop and hold without using the brake pedal.",
         "data_type": "bool",
         "ui_type": "toggle"
       },

@@ -2667,6 +2667,34 @@ def test_near_duplicate_lead_source_hysteresis_prefers_previous_source_for_ident
   assert lead_1_bias > 0.0
 
 
+def test_near_duplicate_leads_detect_identical_radar_track_below_45_mph():
+  v_ego = 14.31
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=25.7, v_lead=14.61, a_lead=0.0, radar=True, model_prob=1.0)
+  lead_two = make_lead(status=True, d_rel=25.7, v_lead=14.61, a_lead=0.0, radar=True, model_prob=1.0)
+  lead_one.vRel = lead_one.vLead - v_ego
+  lead_two.vRel = lead_two.vLead - v_ego
+  lead_one.radarTrackId = 2493
+  lead_two.radarTrackId = 2493
+
+  assert planner.mpc.leads_are_near_duplicates(lead_one, lead_two, v_ego)
+
+
+def test_identical_radar_duplicate_source_hold_keeps_previous_label():
+  v_ego = 21.6
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=33.5, v_lead=20.7, a_lead=-0.03, radar=True, model_prob=1.0)
+  lead_two = make_lead(status=True, d_rel=33.5, v_lead=20.7, a_lead=-0.03, radar=True, model_prob=1.0)
+  lead_one.radarTrackId = 2493
+  lead_two.radarTrackId = 2493
+
+  sticky = planner.mpc.get_identical_radar_duplicate_source_hold("lead1", lead_one, lead_two, 33.52, 33.50)
+
+  assert sticky == "lead1"
+
+
 def test_near_duplicate_lead_source_hysteresis_skips_distinct_leads():
   v_ego = 27.0
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
@@ -2731,13 +2759,15 @@ def test_near_duplicate_lead_transition_target_damps_tracking_cruise_sign_flip()
 
 
 def test_near_duplicate_lead_transition_target_damps_low_speed_duplicate_radar_handoff():
-  v_ego = 14.31
+  v_ego = 17.61
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=v_ego)
-  lead_one = make_lead(status=True, d_rel=25.7, v_lead=14.61, a_lead=0.0, radar=True, model_prob=1.0)
-  lead_two = make_lead(status=True, d_rel=25.7, v_lead=14.61, a_lead=0.0, radar=True, model_prob=1.0)
+  lead_one = make_lead(status=True, d_rel=41.9, v_lead=16.85, a_lead=0.0, radar=True, model_prob=1.0)
+  lead_two = make_lead(status=True, d_rel=41.9, v_lead=16.85, a_lead=0.0, radar=True, model_prob=1.0)
   lead_one.vRel = lead_one.vLead - v_ego
   lead_two.vRel = lead_two.vLead - v_ego
+  lead_one.radarTrackId = 2493
+  lead_two.radarTrackId = 2493
   planner.lead_one = lead_one
   planner.lead_two = lead_two
 
@@ -2745,14 +2775,14 @@ def test_near_duplicate_lead_transition_target_damps_low_speed_duplicate_radar_h
     lead_one,
     v_ego,
     1.45,
-    prev_output_a_target=0.68,
-    output_a_target=0.03,
-    current_source="lead0",
+    prev_output_a_target=0.89,
+    output_a_target=0.05,
+    current_source="cruise",
     tracking_lead_active=True,
   )
 
   assert smoothed is not None
-  assert smoothed == pytest.approx(0.36, abs=1e-6)
+  assert smoothed == pytest.approx(0.57, abs=1e-6)
 
 
 def test_duplicate_slow_lead_brake_hold_prevents_zero_cross_from_duplicate_voacc_leads():

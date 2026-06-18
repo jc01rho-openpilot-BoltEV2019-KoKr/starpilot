@@ -120,6 +120,32 @@
   border-color: rgba(139, 108, 197, 0.42);
 }
 
+.dashboard-analysis-status {
+  align-items: center;
+  background: rgba(139, 108, 197, 0.12);
+  border: 1px solid var(--dashboard-border);
+  border-radius: 8px;
+  color: var(--dashboard-muted);
+  display: inline-flex;
+  font-size: 0.88rem;
+  font-weight: var(--font-weight-bold);
+  gap: 0.5rem;
+  justify-self: start;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.55rem 0.75rem;
+}
+
+.dashboard-analysis-status i {
+  color: var(--dashboard-accent-2);
+  flex: 0 0 auto;
+}
+
+.dashboard-analysis-status span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .dashboard-last-drive {
   display: grid;
   gap: 0.9rem;

@@ -58,7 +58,7 @@ METER_TO_KILOMETER = 0.001
 METER_PER_SECOND_TO_MPH = CV.MS_TO_KPH * CV.KPH_TO_MPH
 
 DASHBOARD_CACHE_TTL_SECONDS = 5.0
-DASHBOARD_ROUTE_SCAN_LIMIT = 24
+DASHBOARD_ROUTE_SCAN_LIMIT = 96
 DASHBOARD_ROUTE_ANALYSIS_LIMIT = 0
 DASHBOARD_ANALYSIS_TIME_BUDGET_SECONDS = 0.0
 DASHBOARD_BACKGROUND_ROUTE_ANALYSIS_LIMIT = 5
@@ -1313,6 +1313,20 @@ def _coalesce_display_drives(drives, is_metric):
   return sorted(coalesced, key=_drive_sort_time, reverse=True)
 
 
+def _drive_has_stale_analysis(drive):
+  if not bool(drive.get("attentionKnown", True)) or not bool(drive.get("analysisComplete", False)):
+    return False
+  return _safe_int(drive.get("analysisVersion", 0), 0) < DASHBOARD_ROUTE_ANALYSIS_VERSION
+
+
+def _week_summary_drives(drives, pending_route_names=None):
+  pending_route_names = pending_route_names or set()
+  return [
+    drive for drive in drives or []
+    if not (_drive_has_stale_analysis(drive) and str(drive.get("name", "")).strip() in pending_route_names)
+  ]
+
+
 def _analysis_candidates(route_infos, persistent_stats):
   routes = persistent_stats.get("routes", {}) if isinstance(persistent_stats, dict) else {}
   routes = routes if isinstance(routes, dict) else {}
@@ -1383,15 +1397,30 @@ def _dashboard_worker_env(repo_root):
   return env
 
 
-def _start_dashboard_background_analysis(footage_paths, route_infos, persistent_stats):
+def _dashboard_analyzer_running():
+  process = _DASHBOARD_ANALYZER_PROCESS
+  return process is not None and process.poll() is None
+
+
+def _dashboard_analysis_status(candidates):
+  pending_count = len(candidates or [])
+  return {
+    "pendingRoutes": pending_count,
+    "running": _dashboard_analyzer_running(),
+    "batchSize": min(DASHBOARD_BACKGROUND_ROUTE_ANALYSIS_LIMIT, pending_count),
+  }
+
+
+def _start_dashboard_background_analysis(footage_paths, route_infos, persistent_stats, candidates=None):
   global _DASHBOARD_ANALYZER_PROCESS
 
-  if not route_infos or not _analysis_candidates(route_infos, persistent_stats):
-    return
+  candidates = candidates if candidates is not None else _analysis_candidates(route_infos, persistent_stats)
+  if not route_infos or not candidates:
+    return False
 
   with _DASHBOARD_ANALYZER_LOCK:
-    if _DASHBOARD_ANALYZER_PROCESS is not None and _DASHBOARD_ANALYZER_PROCESS.poll() is None:
-      return
+    if _dashboard_analyzer_running():
+      return True
     repo_root = Path(__file__).resolve().parents[3]
     worker_code = (
       "import json, sys;"
@@ -1423,6 +1452,8 @@ def _start_dashboard_background_analysis(footage_paths, route_infos, persistent_
     finally:
       if log_file is not None:
         log_file.close()
+
+  return _dashboard_analyzer_running()
 
 
 def _start_of_week(now):
@@ -2143,7 +2174,12 @@ def get_dashboard_stats(footage_paths, params_obj=None, now=None):
     and _DASHBOARD_CACHE["value"] is not None
     and cache_now - _DASHBOARD_CACHE["updated_at"] < DASHBOARD_CACHE_TTL_SECONDS
   ):
-    return copy.deepcopy(_DASHBOARD_CACHE["value"])
+    cached_dashboard = copy.deepcopy(_DASHBOARD_CACHE["value"])
+    cached_analysis = cached_dashboard.get("analysis", {}) if isinstance(cached_dashboard, dict) else {}
+    if isinstance(cached_analysis, dict):
+      cached_analysis["running"] = _dashboard_analyzer_running()
+      cached_dashboard["analysis"] = cached_analysis
+    return cached_dashboard
 
   is_metric = _params_get_bool(params_obj, "IsMetric")
   model_names = _model_lookup(params_obj)
@@ -2171,6 +2207,11 @@ def get_dashboard_stats(footage_paths, params_obj=None, now=None):
   persisted_drives = _persistent_drives(persistent_stats, is_metric)
   combined_drives = _merge_dashboard_drives(shell_drives, persisted_drives, analyzed_drives)
   display_drives = _coalesce_display_drives(combined_drives, is_metric)
+  pending_candidates = _analysis_candidates(route_infos, persistent_stats)
+  pending_route_names = {str(route.get("name", "")).strip() for route in pending_candidates}
+  week_drives = _week_summary_drives(combined_drives, pending_route_names)
+  _start_dashboard_background_analysis(footage_paths, route_infos, persistent_stats, pending_candidates)
+  analysis_status = _dashboard_analysis_status(pending_candidates)
 
   if not display_drives:
     dashboard = _dashboard_empty(is_metric, now, footage_paths, params_obj, persistent_stats)
@@ -2179,19 +2220,19 @@ def get_dashboard_stats(footage_paths, params_obj=None, now=None):
     dashboard = {
       "lastDrive": _public_drive(display_drives[0], is_metric),
       "recentDrives": [_public_drive(drive, is_metric) for drive in display_drives[:DASHBOARD_RECENT_DRIVE_LIMIT]],
-      "week": _build_week_summary(display_drives, now, is_metric),
+      "week": _build_week_summary(week_drives, now, is_metric),
       "records": records,
       "device": _build_device_summary(params_obj),
       "storage": _build_storage_summary(footage_paths),
       "favoriteModels": _build_favorite_models(params_obj, persistent_stats),
     }
+  dashboard["analysis"] = analysis_status
 
   _DASHBOARD_CACHE.update({
     "key": cache_key,
     "updated_at": cache_now,
     "value": copy.deepcopy(dashboard),
   })
-  _start_dashboard_background_analysis(footage_paths, route_infos, persistent_stats)
   return dashboard
 
 

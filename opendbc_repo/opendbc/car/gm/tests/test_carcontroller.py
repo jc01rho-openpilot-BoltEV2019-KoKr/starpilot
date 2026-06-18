@@ -40,6 +40,7 @@ from opendbc.car.gm.carcontroller import (
   estimate_auto_hold_brake,
   get_adas_keepalive_step,
   get_lka_steering_cmd_counter,
+  get_volt_one_pedal_target_decel,
   get_testing_ground_1_brake_switch_bias,
   get_stock_cc_active_for_cancel,
   should_activate_auto_hold,
@@ -54,6 +55,7 @@ from opendbc.car.gm.carcontroller import (
 from opendbc.car.gm.gmcan import get_friction_brake_mode
 from opendbc.car.gm.values import AccState, CAR, GMFlags
 from opendbc.car.structs import CarParams
+from opendbc.car.common.conversions import Conversions as CV
 
 
 def _cs(enabled, pcm_acc_status):
@@ -425,6 +427,12 @@ def test_volt_one_pedal_activation_requires_main_l_mode_and_no_driver_input():
     structs.CarState.GearShifter.drive,
     False,
   )
+
+
+def test_volt_one_pedal_target_decel_stays_active_above_low_speed_band():
+  assert get_volt_one_pedal_target_decel(0.5 * CV.MPH_TO_MS) == -1.0
+  assert get_volt_one_pedal_target_decel(6.0 * CV.MPH_TO_MS) == -1.1
+  assert get_volt_one_pedal_target_decel(20.0 * CV.MPH_TO_MS) == -1.1
 
 
 def test_friction_brake_mode_keeps_near_stop_disabled_for_regular_long_braking():

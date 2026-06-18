@@ -6,6 +6,7 @@ const HOME_STATE = {
   unit: "miles",
   error: "",
   initialized: false,
+  refreshTimer: null,
 };
 
 const FAVORITE_COLORS = ["#5ec8c8", "#8b6cc5", "#d4a060", "#e05577", "#6cc56e", "#8aa3ff"];
@@ -165,6 +166,51 @@ function fallbackDashboard(data, unit) {
 
 function driveStatsReady(drive) {
   return drive?.attentionKnown !== false;
+}
+
+function dashboardPendingDriveCount(dashboard) {
+  const recent = Array.isArray(dashboard?.recentDrives) ? dashboard.recentDrives : [];
+  return recent.filter(drive => !driveStatsReady(drive)).length;
+}
+
+function dashboardShouldAutoRefresh(dashboard) {
+  const analysis = dashboard?.analysis || {};
+  return Boolean(analysis.running)
+    || numberValue(analysis.pendingRoutes) > 0
+    || dashboardPendingDriveCount(dashboard) > 0;
+}
+
+function clearDashboardRefreshTimer() {
+  if (HOME_STATE.refreshTimer) {
+    clearTimeout(HOME_STATE.refreshTimer);
+    HOME_STATE.refreshTimer = null;
+  }
+}
+
+function scheduleDashboardRefresh(dashboard) {
+  clearDashboardRefreshTimer();
+  if (!dashboardShouldAutoRefresh(dashboard)) return;
+  HOME_STATE.refreshTimer = setTimeout(() => initializeHome(false), 3500);
+}
+
+function renderAnalysisStatus(dashboard) {
+  const analysis = dashboard?.analysis || {};
+  const pendingRoutes = Math.max(0, Math.round(numberValue(analysis.pendingRoutes)));
+  const pendingDrives = dashboardPendingDriveCount(dashboard);
+  const count = Math.max(pendingRoutes, pendingDrives);
+  if (!analysis.running && count <= 0) return "";
+
+  const runningCount = count || Math.max(1, Math.round(numberValue(analysis.batchSize)));
+  const label = analysis.running
+    ? `Analyzing ${runningCount} ${runningCount === 1 ? "drive" : "drives"}`
+    : `${count} ${count === 1 ? "drive" : "drives"} queued`;
+
+  return `
+    <div class="dashboard-analysis-status">
+      <i class="bi bi-hourglass-split"></i>
+      <span>${escapeHtml(label)}</span>
+    </div>
+  `;
 }
 
 function renderLastDrive(drive) {
@@ -416,6 +462,7 @@ function renderDashboard(state) {
   if (!shell) return;
 
   if (state.status === "error") {
+    clearDashboardRefreshTimer();
     shell.innerHTML = `
       <div class="dashboard dashboard-narrow">
         <div class="dashboard-error">Failed to load dashboard: ${escapeHtml(state.error)}</div>
@@ -453,6 +500,7 @@ function renderDashboard(state) {
       </header>
 
       ${renderLastDrive(dashboard.lastDrive || fallbackDashboard(data, state.unit).lastDrive)}
+      ${renderAnalysisStatus(dashboard)}
 
       <div class="dashboard-section-label"><span></span>Your driving</div>
       <div class="dashboard-summary-grid">
@@ -482,10 +530,12 @@ function renderDashboard(state) {
   `;
 
   bindDashboardActions();
+  scheduleDashboardRefresh(dashboard);
 }
 
 async function initializeHome(force = false) {
   if (force) {
+    clearDashboardRefreshTimer();
     HOME_STATE.status = "loading";
     renderDashboard(HOME_STATE);
   }
