@@ -470,7 +470,7 @@ class TestHyundaiCanfdCCNCSupportFrames(common.SafetyTestBase):
 
 class TestHyundaiCanfdLKASteeringEV(TestHyundaiCanfdBase):
 
-  TX_MSGS = [[0x50, 0], [0x12A, 1], [0x1CF, 1], [0x2A4, 0]]
+  TX_MSGS = [[0x50, 0], [0x1CF, 1], [0x2A4, 0]]
   RELAY_MALFUNCTION_ADDRS = {0: (0x50, 0x2a4)}  # LKAS, CAM_0x2A4
   FWD_BLACKLISTED_ADDRS = {2: [0x50, 0x2a4]}
 
@@ -507,7 +507,7 @@ class TestHyundaiCanfdLKASteeringEV(TestHyundaiCanfdBase):
 # TODO: Handle ICE and HEV configurations once we see cars that use the new messages
 class TestHyundaiCanfdLKASteeringAltEV(TestHyundaiCanfdBase):
 
-  TX_MSGS = [[0x110, 0], [0x12A, 1], [0x1CF, 1], [0x362, 0]]
+  TX_MSGS = [[0x110, 0], [0x1CF, 1], [0x362, 0]]
   RELAY_MALFUNCTION_ADDRS = {0: (0x110, 0x362)}  # LKAS_ALT, CAM_0x362
   FWD_BLACKLISTED_ADDRS = {2: [0x110, 0x362]}
 

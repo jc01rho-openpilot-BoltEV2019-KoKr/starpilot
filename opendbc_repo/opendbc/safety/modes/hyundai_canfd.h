@@ -8,13 +8,11 @@
 
 #define HYUNDAI_CANFD_LKA_STEERING_COMMON_TX_MSGS(a_can, e_can) \
   HYUNDAI_CANFD_CRUISE_BUTTON_TX_MSGS(e_can)                        \
-  {0x12A, e_can, 16, .check_relay = (e_can) == 0},  /* LFA */       \
   {0x50,  a_can, 16, .check_relay = (a_can) == 0},  /* LKAS */      \
   {0x2A4, a_can, 24, .check_relay = (a_can) == 0},  /* CAM_0x2A4 */ \
 
 #define HYUNDAI_CANFD_LKA_STEERING_ALT_COMMON_TX_MSGS(a_can, e_can) \
   HYUNDAI_CANFD_CRUISE_BUTTON_TX_MSGS(e_can)                        \
-  {0x12A, e_can, 16, .check_relay = (e_can) == 0},  /* LFA */       \
   {0x110, a_can, 32, .check_relay = (a_can) == 0},  /* LKAS_ALT */  \
   {0x362, a_can, 32, .check_relay = (a_can) == 0},  /* CAM_0x362 */ \
 
@@ -223,9 +221,8 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
   }
 
   // steering
-  const bool stock_lka_steering = hyundai_canfd_lka_steering && !hyundai_longitudinal;
-  const bool steer_msg = (msg->addr == 0x12aU) || (stock_lka_steering && (msg->addr == hyundai_canfd_get_lka_addr()));
-  if (steer_msg) {
+  const unsigned int steer_addr = (hyundai_canfd_lka_steering && !hyundai_longitudinal) ? hyundai_canfd_get_lka_addr() : 0x12aU;
+  if (msg->addr == steer_addr) {
     if (hyundai_canfd_angle_steering) {
       const int lkas_angle_active = (msg->data[9] >> 4U) & 0x3U;
       const bool steer_angle_req = lkas_angle_active != 1;

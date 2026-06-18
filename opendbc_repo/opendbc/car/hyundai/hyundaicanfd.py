@@ -132,8 +132,8 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
   ret = []
   if CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
     lkas_msg = "LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT else "LKAS"
-    # Keep the direct LFA packet shape aligned across stock-long and OP-long paths.
-    ret.append(packer.make_can_msg("LFA", CAN.ECAN, lfa_values))
+    if CP.openpilotLongitudinalControl:
+      ret.append(packer.make_can_msg("LFA", CAN.ECAN, lfa_values))
     ret.append(packer.make_can_msg(lkas_msg, CAN.ACAN, lkas_values))
   else:
     if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:

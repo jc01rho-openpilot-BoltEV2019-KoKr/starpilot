@@ -1394,7 +1394,6 @@ class TestHyundaiFingerprint:
 
     packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
     can_bus = CanBus(CP)
-    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LFA", 0)], can_bus.ECAN)
 
     stock_lfa = {
       "CHECKSUM": 1234,
@@ -1416,23 +1415,8 @@ class TestHyundaiFingerprint:
 
     msgs = hyundaicanfd.create_steering_messages(packer, CP, can_bus, True, True, 123, 0.0, stock_lfa)
     assert [(packer.dbc.addr_to_msg[addr].name, bus) for addr, _, bus in msgs] == [
-      ("LFA", can_bus.ECAN),
       ("LKAS", can_bus.ACAN),
     ]
-
-    lfa_msgs = [msg for msg in msgs if msg[0] == 0x12A]
-    assert len(lfa_msgs) == 1
-
-    parser.update([(1, lfa_msgs)])
-
-    assert parser.can_valid
-    assert parser.vl["LFA"]["NEW_SIGNAL_1"] == 3
-    assert parser.vl["LFA"]["NEW_SIGNAL_2"] == 2
-    assert parser.vl["LFA"]["HAS_LANE_SAFETY"] == 1
-    assert parser.vl["LFA"]["DAMP_FACTOR"] == 0x77
-    assert parser.vl["LFA"]["TORQUE_REQUEST"] == 123
-    assert parser.vl["LFA"]["STEER_REQ"] == 1
-    assert parser.vl["LFA"]["LKA_ICON"] == 2
 
   def test_kia_ev6_lkas_helper_preserves_stock_camera_fields_with_stock_long(self):
     CP = CarParams.new_message()
