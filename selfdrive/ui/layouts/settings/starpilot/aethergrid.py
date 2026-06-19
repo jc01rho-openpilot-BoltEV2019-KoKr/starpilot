@@ -2718,6 +2718,30 @@ class AetherCategoryTileView(AetherSettingsView):
     
     rl.end_scissor_mode()
 
+    # Draw horizontal scroll indicator glows on the sides using the thematic color
+    if scrolling_enabled:
+      glow_w = 120
+      fade_dist = 100.0
+      left_remaining = -self._scroll_offset
+      right_remaining = (content_width_needed - self._scroll_rect.width) + self._scroll_offset
+      
+      left_alpha = int(max(0.0, min(1.0, left_remaining / fade_dist)) * 60)
+      right_alpha = int(max(0.0, min(1.0, right_remaining / fade_dist)) * 60)
+      
+      glow_y = int(d_rect.y)
+      glow_h = int(d_rect.height)
+      
+      if left_alpha > 0:
+        rl.draw_rectangle_gradient_h(
+          int(d_rect.x + 2), glow_y, glow_w, glow_h,
+          _with_alpha(self._color, left_alpha), _with_alpha(self._color, 0)
+        )
+      if right_alpha > 0:
+        rl.draw_rectangle_gradient_h(
+          int(d_rect.x + d_rect.width - glow_w - 2), glow_y, glow_w, glow_h,
+          _with_alpha(self._color, 0), _with_alpha(self._color, right_alpha)
+        )
+
   def _target_at(self, mouse_pos: MousePos) -> str | None:
     if self._back_btn_rect and rl.check_collision_point_rec(mouse_pos, self._back_btn_rect):
       return "static:back"
