@@ -55,6 +55,7 @@ def _install_aethergrid_stubs():
   app_mod.FontWeight = types.SimpleNamespace(BOLD=700, NORMAL=400, MEDIUM=500, SEMI_BOLD=600)
   app_mod.MousePos = type("MousePos", (), {})
   app_mod.MouseEvent = type("MouseEvent", (), {})
+  app_mod.FONT_SCALE = 1.0
   app_mod.gui_app = types.SimpleNamespace(
     width=1920,
     height=1080,

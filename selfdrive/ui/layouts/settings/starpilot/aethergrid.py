@@ -4,7 +4,7 @@ import math
 import time
 import pyray as rl
 from collections.abc import Callable
-from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos, MouseEvent
+from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos, MouseEvent, FONT_SCALE
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -148,7 +148,7 @@ def _draw_text_fit_common(
 ):
   if uppercase:
     text = text.upper()
-  requested_spacing = letter_spacing if letter_spacing > 0 else font_size * 0.06
+  requested_spacing = letter_spacing * FONT_SCALE
   spacing = round(requested_spacing)
   base_font_size = max(1, int(round(font_size)))
   size = measure_text_cached(font, text, base_font_size, spacing=spacing)
@@ -2945,7 +2945,7 @@ class HubTile(AetherTile):
     self.custom_icon_key = icon_key if icon_key in ("sound", "steering", "navigate", "system", "display", "vehicle") else None
     self._icon = None
     self._font_title = gui_app.font(FontWeight.BOLD)
-    self._font_desc = gui_app.font(FontWeight.NORMAL)
+    self._font_desc = gui_app.font(FontWeight.MEDIUM)
     self._squish: float = 1.0
 
   def _update_state(self):
@@ -2972,12 +2972,12 @@ class HubTile(AetherTile):
     rx, ry, rw, rh = face.x, face.y, face.width, face.height
     content_pad = SPACING.tile_content
     max_w = rw - content_pad * 2
-    text_scale = min(rw / 360.0, rh / 205.0)
+    text_scale = max(0.82, min(1.12, min(rw / 360.0, rh / 205.0)))
     gap = SPACING.line_gap
 
     title_size = max(18, int(round(22 * text_scale)))
     desc_to_render = status_text if status_text else fallback_desc
-    desc_size = max(12, int(round(14 * text_scale))) if desc_to_render else 0
+    desc_size = max(15, int(round(16 * text_scale))) if desc_to_render else 0
 
     icon_h = 0.0
     if self.custom_icon_key:
@@ -3010,7 +3010,7 @@ class HubTile(AetherTile):
       content_top += gap
       self._draw_text_fit(self._font_desc, desc_to_render,
                           rl.Vector2(rx + content_pad, content_top),
-                          max_w, desc_size, align_center=True, color=_HUD_TEXT_DIM)
+                          max_w, desc_size, align_center=True, color=AetherListColors.SUBTEXT)
 
     if status_text:
       import re
@@ -3094,7 +3094,7 @@ class ToggleTile(AetherTile):
     self.set_state = set_state
     self.set_enabled(is_enabled or True)
     self._font = gui_app.font(FontWeight.BOLD)
-    self._font_desc = gui_app.font(FontWeight.NORMAL)
+    self._font_desc = gui_app.font(FontWeight.MEDIUM)
     self._active_color = self.surface_color
     self._inactive_color = rl.Color(120, 120, 120, 255)
     self._disabled_color = rl.Color(75, 75, 75, 255)
@@ -3155,7 +3155,7 @@ class ToggleTile(AetherTile):
 
     content_pad = SPACING.tile_content
     max_w = rw - content_pad * 2
-    text_scale = min(rw / 360.0, rh / 205.0)
+    text_scale = max(0.82, min(1.12, min(rw / 360.0, rh / 205.0)))
     title_size = max(18, int(round(22 * text_scale)))
 
     if not enabled:
@@ -3169,11 +3169,23 @@ class ToggleTile(AetherTile):
                           max_w, desc_size, align_center=True, color=_HUD_TEXT_DIM)
     else:
       title_color = rl.WHITE if active else _HUD_TEXT_DIM
-      self._draw_text_fit(self._font, self.title,
-                          rl.Vector2(rx + content_pad, ry + int(rh * 0.50)),
-                          max_w, title_size, align_center=True, color=title_color)
-      led_cx = rx + rw // 2
-      led_cy = ry + int(rh * 0.75)
+      if self.desc:
+        desc_size = max(14, int(round(16 * text_scale)))
+        self._draw_text_fit(self._font, self.title,
+                            rl.Vector2(rx + content_pad, ry + int(rh * 0.28)),
+                            max_w, title_size, align_center=True, color=title_color)
+        self._draw_text_fit(self._font_desc, self.desc,
+                            rl.Vector2(rx + content_pad, ry + int(rh * 0.50)),
+                            max_w, desc_size, align_center=True, color=AetherListColors.SUBTEXT)
+        led_cx = rx + rw // 2
+        led_cy = ry + int(rh * 0.78)
+      else:
+        self._draw_text_fit(self._font, self.title,
+                            rl.Vector2(rx + content_pad, ry + int(rh * 0.50)),
+                            max_w, title_size, align_center=True, color=title_color)
+        led_cx = rx + rw // 2
+        led_cy = ry + int(rh * 0.75)
+
       if active:
         rl.draw_circle(int(led_cx), int(led_cy), 11, rl.Color(accent.r, accent.g, accent.b, 24))
         rl.draw_circle(int(led_cx), int(led_cy), 6, accent)
@@ -3198,7 +3210,7 @@ class ValueTile(AetherTile):
     self.get_value = get_value
     self.set_enabled(is_enabled or (lambda: True))
     self._font = gui_app.font(FontWeight.BOLD)
-    self._font_desc = gui_app.font(FontWeight.NORMAL)
+    self._font_desc = gui_app.font(FontWeight.MEDIUM)
     self._active_color = self.surface_color
     self._disabled_color = rl.Color(120, 120, 120, 255)
     self._squish: float = 1.0
@@ -3280,7 +3292,7 @@ class SliderTile(AetherTile):
         self.on_test = on_test
         self.set_enabled(is_enabled or (lambda: True))
         self._font = gui_app.font(FontWeight.BOLD)
-        self._font_desc = gui_app.font(FontWeight.NORMAL)
+        self._font_desc = gui_app.font(FontWeight.MEDIUM)
         self._active_color = self.surface_color
         self._disabled_color = rl.Color(120, 120, 120, 255)
 
@@ -4220,7 +4232,7 @@ class AetherMultiSelectTile(AetherTile):
     self.set_values = set_values
     self.set_enabled(is_enabled or (lambda: True))
     self._font = gui_app.font(FontWeight.BOLD)
-    self._font_desc = gui_app.font(FontWeight.NORMAL)
+    self._font_desc = gui_app.font(FontWeight.MEDIUM)
     self._active_color = self.surface_color
     self._disabled_color = rl.Color(120, 120, 120, 255)
     self._squish: float = 1.0
