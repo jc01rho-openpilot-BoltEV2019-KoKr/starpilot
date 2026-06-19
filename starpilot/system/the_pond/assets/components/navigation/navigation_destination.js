@@ -140,6 +140,76 @@ function parseCoordinatePair(value) {
   return { latitude, longitude };
 }
 
+function cleanSuggestionText(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function joinSuggestionParts(parts) {
+  const seen = new Set();
+  const unique = [];
+
+  for (const part of parts) {
+    const text = cleanSuggestionText(part);
+    if (!text) continue;
+
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(text);
+  }
+
+  return unique.join(", ");
+}
+
+function splitSuggestionLabel(value) {
+  const cleaned = cleanSuggestionText(value);
+  if (!cleaned) {
+    return { primary: "", secondary: "" };
+  }
+
+  const [primary, ...rest] = cleaned.split(",").map(part => part.trim()).filter(Boolean);
+  return {
+    primary: primary || cleaned,
+    secondary: rest.join(", "),
+  };
+}
+
+function getSuggestionText(suggestion) {
+  const rawName = cleanSuggestionText(suggestion.name || suggestion.title || "");
+  const rawPlaceName = cleanSuggestionText(suggestion.place_name || "");
+  const explicitAddress = joinSuggestionParts([
+    suggestion.full_address,
+    suggestion.address,
+    suggestion.district,
+    suggestion.city,
+    suggestion.cityname,
+    suggestion.adcode && suggestion.address ? "" : suggestion.adname,
+    suggestion.pname,
+  ]);
+
+  if (rawName) {
+    const splitPlaceName = rawPlaceName && rawPlaceName.toLowerCase().startsWith(`${rawName.toLowerCase()},`)
+      ? splitSuggestionLabel(rawPlaceName)
+      : { primary: rawName, secondary: "" };
+    const secondary = explicitAddress || splitPlaceName.secondary;
+    return {
+      primary: splitPlaceName.primary || rawName,
+      secondary: secondary && secondary.toLowerCase() !== rawName.toLowerCase() ? secondary : "",
+    };
+  }
+
+  if (rawPlaceName) {
+    return splitSuggestionLabel(rawPlaceName);
+  }
+
+  if (explicitAddress) {
+    return splitSuggestionLabel(explicitAddress);
+  }
+
+  return { primary: "Unnamed Location", secondary: "" };
+}
+
 let map;
 let destinationMarker;
 let favoriteMarkers = [];
@@ -711,7 +781,7 @@ export function NavDestination() {
                     ${() => (state.favoritesCount > 0 ? html`<button class="favorites-toggle-button" @click="${handleFavoritesClick}">❤️ Favorites</button>` : "")}
                     ${() => (state.canToggleProvider ? html`
                       <div class="search-provider-toggle">
-                        <button class="${() => (state.searchProvider === "amap" ? "active" : "")}" @click="${() => { state.searchProvider = "amap"; state.suggestions = "[]"; }}">AMap</button>
+                        <button class="${() => (state.searchProvider === "amap" ? "active" : "")}" title="AMap / Gaode search provider" @click="${() => { state.searchProvider = "amap"; state.suggestions = "[]"; }}">AMap</button>
                         <button class="${() => (state.searchProvider === "mapbox" ? "active" : "")}" @click="${() => { state.searchProvider = "mapbox"; state.suggestions = "[]"; }}">Mapbox</button>
                       </div>
                     ` : "")}
@@ -789,11 +859,19 @@ function SearchSuggestions({ suggestions, selectSuggestion, removeFavorite, rena
   const isFavorite = s => s.name && s.latitude != null && s.longitude != null && s.routeId;
   const item = s => html`
     <div class="suggestion-item" @click="${() => selectSuggestion(s)}">
-      <p>
-        ${s.is_home ? "🏠 " : ""}
-        ${s.is_work ? "💼 " : ""}
-        ${s.name || s.address}
-      </p>
+      ${(() => {
+        const text = getSuggestionText(s);
+        return html`
+          <div class="suggestion-copy">
+            <p class="suggestion-primary">
+              ${s.is_home ? "🏠 " : ""}
+              ${s.is_work ? "💼 " : ""}
+              ${text.primary}
+            </p>
+            ${text.secondary ? html`<p class="suggestion-secondary">${text.secondary}</p>` : ""}
+          </div>
+        `;
+      })()}
       ${isFavorite(s) ? html`
         <div class="favorite-actions">
           <button class="home-favorite-button ${s.is_home ? "active" : ""}" title="Set as Home" @click="${e => { e.stopPropagation(); setHome(s); }}">🏠</button>

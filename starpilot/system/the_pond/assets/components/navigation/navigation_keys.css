@@ -132,6 +132,13 @@
   text-align: center;
 }
 
+.navkeys-subtitle {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  margin: calc(var(--margin-base) * -1) 0 var(--margin-base);
+  text-align: center;
+}
+
 .navkeys-wrapper {
   align-items: flex-start;
   display: flex;

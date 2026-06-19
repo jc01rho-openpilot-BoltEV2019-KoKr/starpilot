@@ -1993,6 +1993,8 @@ def _recalculate_persistent_stats(stats):
   model_usage = {}
 
   for _, entry in ordered_routes:
+    if not bool(entry.get("analysisComplete", False)):
+      continue
     model_name = _clean_model_label(entry.get("model", ""))
     model_key = canonical_model_key(entry.get("modelKey", "")) or _model_usage_key(model_name)
     if model_key:
@@ -2140,8 +2142,40 @@ def _read_uptime_seconds():
     return None
 
 
-def _read_cpu_temp_c():
-  thermal_root = Path("/sys/class/thermal")
+def _normalize_temp_c(value):
+  try:
+    raw = float(value)
+  except (TypeError, ValueError):
+    return None
+  if raw > 1000:
+    raw /= 1000.0
+  return raw if 0 < raw < 150 else None
+
+
+def _read_hardware_cpu_temps():
+  try:
+    from openpilot.system.hardware import HARDWARE
+    thermal_config = HARDWARE.get_thermal_config()
+    thermal_msg = thermal_config.get_msg()
+  except Exception:
+    return []
+
+  cpu_temps = thermal_msg.get("cpuTempC", [])
+  if not isinstance(cpu_temps, (list, tuple)):
+    cpu_temps = [cpu_temps]
+  return [
+    temp for temp in (_normalize_temp_c(value) for value in cpu_temps)
+    if temp is not None
+  ]
+
+
+def _read_cpu_temp_c(thermal_root=None):
+  if thermal_root is None:
+    hardware_temps = _read_hardware_cpu_temps()
+    if hardware_temps:
+      return round(max(hardware_temps))
+    thermal_root = Path("/sys/class/thermal")
+
   try:
     zones = sorted(thermal_root.glob("thermal_zone*/temp"))
   except Exception:
@@ -2150,13 +2184,18 @@ def _read_cpu_temp_c():
   values = []
   for temp_path in zones:
     try:
-      raw = float(temp_path.read_text().strip())
+      zone_type = temp_path.with_name("type").read_text(encoding="utf-8").strip().lower()
+    except Exception:
+      zone_type = ""
+    if "cpu" not in zone_type:
+      continue
+    try:
+      raw = temp_path.read_text().strip()
     except Exception:
       continue
-    if raw > 1000:
-      raw /= 1000.0
-    if 0 < raw < 150:
-      values.append(raw)
+    temp = _normalize_temp_c(raw)
+    if temp is not None:
+      values.append(temp)
 
   return round(max(values)) if values else None
 

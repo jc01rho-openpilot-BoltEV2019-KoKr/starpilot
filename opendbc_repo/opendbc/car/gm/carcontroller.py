@@ -54,6 +54,10 @@ VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_DOWN = 0.8 * DT_CTRL * 4
 VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_BP = [4.0, 8.0]
 VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_V = [0.4, 1.0]
 VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_INCLINE_V = [0.2, 1.0]
+TRUCK_LONG_SMOOTH_CARS = {
+  CAR.CHEVROLET_SILVERADO,
+  CAR.CHEVROLET_SILVERADO_CC,
+}
 
 
 def get_stock_cc_active_for_cancel(CP, CS):
@@ -149,6 +153,22 @@ def get_testing_ground_1_brake_switch_bias(v_ego: float) -> int:
   return int(round(np.interp(v_ego, [0.0, 6.0, 15.0, 30.0], [40.0, 85.0, 130.0, 170.0])))
 
 
+def shape_truck_positive_accel(accel: float, v_ego: float, enabled: bool) -> float:
+  if not enabled or accel <= 0.0 or v_ego < 8.0:
+    return accel
+
+  low_scale = float(np.interp(v_ego, [8.0, 15.0, 25.0, 35.0], [0.60, 0.45, 0.32, 0.25]))
+  mid_scale = float(np.interp(v_ego, [8.0, 15.0, 25.0, 35.0], [0.82, 0.72, 0.60, 0.52]))
+
+  if accel <= 0.18:
+    return accel * low_scale
+  if accel <= 0.45:
+    return float(np.interp(accel, [0.18, 0.45], [0.18 * low_scale, 0.45 * mid_scale]))
+  if accel <= 0.8:
+    return float(np.interp(accel, [0.45, 0.8], [0.45 * mid_scale, 0.8]))
+  return accel
+
+
 def get_lka_steering_cmd_counter(next_counter: int, CS) -> int:
   if getattr(CS, "loopback_lka_steering_cmd_updated", False):
     return (getattr(CS, "loopback_lka_steering_cmd_counter", next_counter) + 1) % 4
@@ -197,17 +217,18 @@ def get_volt_one_pedal_target_decel(v_ego: float) -> float:
 
 def should_activate_volt_one_pedal(one_pedal_ready: bool, cruise_main: bool, long_active: bool,
                                    gas_pressed: bool, brake_pressed: bool, regen_braking: bool,
-                                   single_pedal_mode: bool, gear_shifter, moving_backward: bool) -> bool:
+                                   single_pedal_mode: bool, gear_shifter, drive_time_s: float) -> bool:
+  # Volt rear wheel direction bits can falsely report reverse while stopping in L.
   return (
     one_pedal_ready and
     cruise_main and
     single_pedal_mode and
     gear_shifter in AUTO_HOLD_DRIVE_GEARS and
+    drive_time_s >= AUTO_HOLD_MIN_DRIVE_TIME_S and
     not long_active and
     not gas_pressed and
     not brake_pressed and
-    not regen_braking and
-    not moving_backward
+    not regen_braking
   )
 
 
@@ -505,7 +526,7 @@ class CarController(CarControllerBase):
       CS.out.regenBraking,
       bool(getattr(CS, "single_pedal_mode", False)),
       CS.out.gearShifter,
-      bool(getattr(CS, "moving_backward", False)),
+      float(getattr(CS, "one_pedal_drive_time", 0.0)),
     )
 
     if self.frame % 4 == 0:
@@ -638,7 +659,7 @@ class CarController(CarControllerBase):
     volt_one_pedal_hold_active = (
       volt_one_pedal_braking and
       not auto_hold_active and
-      CS.auto_hold_drive_time >= AUTO_HOLD_MIN_DRIVE_TIME_S and
+      CS.one_pedal_drive_time >= AUTO_HOLD_MIN_DRIVE_TIME_S and
       (CS.out.standstill or CS.out.vEgo < 0.02)
     )
 
@@ -745,7 +766,16 @@ class CarController(CarControllerBase):
             if testing_ground.use_1:
               accel_max = min(accel_max, np.interp(CS.out.vEgo, [0.0, 4.0, 12.0], [1.25, 1.6, self.params.ACCEL_MAX]))
 
-            accel_cmd = float(np.clip(actuators.accel + accel_due_to_pitch, self.params.ACCEL_MIN, accel_max))
+            accel_input = actuators.accel + accel_due_to_pitch
+            if (
+              getattr(starpilot_toggles, "truck_tuning", False) and
+              self.CP.carFingerprint in TRUCK_LONG_SMOOTH_CARS and
+              getattr(self.CP, "transmissionType", None) == TransmissionType.automatic and
+              not self.CP.enableGasInterceptorDEPRECATED
+            ):
+              accel_input = shape_truck_positive_accel(accel_input, CS.out.vEgo, True)
+
+            accel_cmd = float(np.clip(accel_input, self.params.ACCEL_MIN, accel_max))
             torque = self.tireRadius * ((self.mass * accel_cmd) + (0.5 * self.coeffDrag * self.frontalArea * self.airDensity * CS.out.vEgo ** 2))
             scaled_torque = torque + self.params.ZERO_GAS
             apply_gas_torque = np.clip(scaled_torque, self.params.MAX_ACC_REGEN, gas_max)

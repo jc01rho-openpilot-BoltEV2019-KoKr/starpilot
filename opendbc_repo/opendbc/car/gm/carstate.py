@@ -78,6 +78,7 @@ class CarState(CarStateBase):
     self.auto_hold_armed = False
     self.auto_hold_engaged = False
     self.auto_hold_drive_time = 0.0
+    self.one_pedal_drive_time = 0.0
     self.auto_hold_fault_suppression_timer = 0.0
     self.regen_release_timer = 0.0
     self.user_regen_paddle_pressed = False
@@ -215,8 +216,10 @@ class CarState(CarStateBase):
         self.auto_hold_drive_time = AUTO_HOLD_MIN_DRIVE_TIME_S
       else:
         self.auto_hold_drive_time = min(self.auto_hold_drive_time + DT_CTRL, AUTO_HOLD_MIN_DRIVE_TIME_S)
+      self.one_pedal_drive_time = min(self.one_pedal_drive_time + DT_CTRL, AUTO_HOLD_MIN_DRIVE_TIME_S)
     else:
       self.auto_hold_drive_time = 0.0
+      self.one_pedal_drive_time = 0.0
       self.auto_hold_armed = False
       self.auto_hold_engaged = False
 

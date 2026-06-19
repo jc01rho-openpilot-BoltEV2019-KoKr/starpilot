@@ -186,6 +186,24 @@ class TestGMInterface:
     assert car_params.openpilotLongitudinalControl
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
 
+  def test_volt_one_pedal_sets_stock_hold_safety_bit_without_auto_hold(self):
+    CarInterface = interfaces[CAR.CHEVROLET_VOLT_ASCM]
+    fingerprint = _empty_fingerprint()
+    fingerprint[0][0x2FF] = 8
+
+    params = Params()
+    try:
+      params.put_bool("GMAutoHold", False)
+      params.put_bool("VoltOnePedalMode", True)
+      car_params = CarInterface.get_params(CAR.CHEVROLET_VOLT_ASCM, fingerprint, [], alpha_long=True, is_release=False,
+                                           docs=False, starpilot_toggles=_test_starpilot_toggles())
+    finally:
+      params.remove("GMAutoHold")
+      params.remove("VoltOnePedalMode")
+
+    assert car_params.openpilotLongitudinalControl
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
+
   @parameterized.expand(VOLT_CARS)
   def test_volt_bsm_is_enabled_without_fingerprint_match(self, car_model):
     CarInterface = interfaces[car_model]

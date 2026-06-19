@@ -478,8 +478,8 @@ except TypeError:
   ]
 
 KEYS = {
-  "amap1": ("amap1", "", "AMapKey1", "Amap key #1", 39),
-  "amap2": ("amap2", "", "AMapKey2", "Amap key #2", 39),
+  "amap1": ("amap1", "", "AMapKey1", "AMap / Gaode key #1", 39),
+  "amap2": ("amap2", "", "AMapKey2", "AMap / Gaode key #2", 39),
   "public": ("public", "pk.", "MapboxPublicKey", "Public key", 80),
   "secret": ("secret", "sk.", "MapboxSecretKey", "Secret key", 80),
 }
@@ -5176,18 +5176,16 @@ def setup(app):
     build_metadata = get_build_metadata()
 
     short_branch = build_metadata.channel
-    if build_metadata.release_channel:
-      env = "Release"
-    elif short_branch in ("StarPilot-Development", "StarPilot-Testing"):
-      env = "Testing"
-    elif build_metadata.tested_channel:
-      env = "Staging"
+    if short_branch == "StarPilot":
+      galaxy_label = "Stable"
+    elif short_branch == "Dom":
+      galaxy_label = "Testing"
     else:
-      env = short_branch
+      galaxy_label = "Experimental"
 
     software_info = {
       "branchName": build_metadata.channel,
-      "buildEnvironment": env,
+      "buildEnvironment": galaxy_label,
       "changelogUrl": utilities.get_github_changelog_url(build_metadata.openpilot.git_normalized_origin, build_metadata.channel),
       "commitHash": build_metadata.openpilot.git_commit,
       "commitUrl": utilities.get_github_commit_url(build_metadata.openpilot.git_normalized_origin, build_metadata.openpilot.git_commit),

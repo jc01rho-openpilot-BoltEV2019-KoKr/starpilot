@@ -43,6 +43,7 @@ from opendbc.car.gm.carcontroller import (
   get_volt_one_pedal_target_decel,
   get_testing_ground_1_brake_switch_bias,
   get_stock_cc_active_for_cancel,
+  shape_truck_positive_accel,
   should_activate_auto_hold,
   should_activate_volt_one_pedal,
   should_send_stock_long_cancel,
@@ -109,7 +110,7 @@ def test_stock_cancel_is_suppressed_when_acc_is_faulted():
   cs = _cs(True, AccState.FAULTED)
   cs.out.accFaulted = True
 
-  assert not get_stock_cc_active_for_cancel(CP, cs)
+  assert get_stock_cc_active_for_cancel(CP, cs)
   assert not should_send_stock_long_cancel(11, cs)
 
 
@@ -328,6 +329,7 @@ def test_auto_hold_activation_blocks_when_long_is_active_or_motion_is_above_thre
     False,
     False,
     False,
+    False,
     0.03,
   )
 
@@ -370,7 +372,7 @@ def test_volt_one_pedal_activation_requires_main_l_mode_and_no_driver_input():
     False,
     True,
     structs.CarState.GearShifter.low,
-    False,
+    3.0,
   )
   assert not should_activate_volt_one_pedal(
     True,
@@ -381,7 +383,7 @@ def test_volt_one_pedal_activation_requires_main_l_mode_and_no_driver_input():
     False,
     True,
     structs.CarState.GearShifter.low,
-    False,
+    3.0,
   )
   assert not should_activate_volt_one_pedal(
     True,
@@ -392,7 +394,7 @@ def test_volt_one_pedal_activation_requires_main_l_mode_and_no_driver_input():
     False,
     True,
     structs.CarState.GearShifter.low,
-    False,
+    3.0,
   )
   assert not should_activate_volt_one_pedal(
     True,
@@ -403,7 +405,7 @@ def test_volt_one_pedal_activation_requires_main_l_mode_and_no_driver_input():
     False,
     True,
     structs.CarState.GearShifter.low,
-    False,
+    3.0,
   )
   assert not should_activate_volt_one_pedal(
     True,
@@ -414,7 +416,7 @@ def test_volt_one_pedal_activation_requires_main_l_mode_and_no_driver_input():
     True,
     True,
     structs.CarState.GearShifter.low,
-    False,
+    3.0,
   )
   assert not should_activate_volt_one_pedal(
     True,
@@ -425,7 +427,7 @@ def test_volt_one_pedal_activation_requires_main_l_mode_and_no_driver_input():
     False,
     False,
     structs.CarState.GearShifter.drive,
-    False,
+    3.0,
   )
 
 
@@ -433,6 +435,34 @@ def test_volt_one_pedal_target_decel_stays_active_above_low_speed_band():
   assert get_volt_one_pedal_target_decel(0.5 * CV.MPH_TO_MS) == -1.0
   assert get_volt_one_pedal_target_decel(6.0 * CV.MPH_TO_MS) == -1.1
   assert get_volt_one_pedal_target_decel(20.0 * CV.MPH_TO_MS) == -1.1
+
+
+def test_volt_one_pedal_regression_ignores_noisy_wheel_direction_bits():
+  assert should_activate_volt_one_pedal(
+    True,
+    True,
+    False,
+    False,
+    False,
+    False,
+    True,
+    structs.CarState.GearShifter.low,
+    3.0,
+  )
+
+
+def test_volt_one_pedal_requires_time_in_drive_before_arming():
+  assert not should_activate_volt_one_pedal(
+    True,
+    True,
+    False,
+    False,
+    False,
+    False,
+    True,
+    structs.CarState.GearShifter.low,
+    2.5,
+  )
 
 
 def test_friction_brake_mode_keeps_near_stop_disabled_for_regular_long_braking():
@@ -492,6 +522,27 @@ def test_calc_pedal_command_keeps_strong_positive_requests_responsive():
 
   assert not press_regen
   assert pedal_gas - 0.18 > 0.04
+
+
+def test_shape_truck_positive_accel_softens_small_highway_requests():
+  shaped = shape_truck_positive_accel(0.12, 26.0, True)
+
+  assert shaped < 0.05
+
+
+def test_shape_truck_positive_accel_keeps_mid_follow_requests_available():
+  shaped = shape_truck_positive_accel(0.45, 13.5, True)
+
+  assert 0.30 < shaped < 0.35
+
+
+def test_shape_truck_positive_accel_leaves_large_requests_alone():
+  assert shape_truck_positive_accel(1.0, 26.0, True) == 1.0
+
+
+def test_shape_truck_positive_accel_is_inactive_when_disabled_or_low_speed():
+  assert shape_truck_positive_accel(0.12, 26.0, False) == 0.12
+  assert shape_truck_positive_accel(0.12, 6.0, True) == 0.12
 
 
 def test_use_interceptor_sng_launch_requires_actual_near_stop():

@@ -461,6 +461,7 @@ def test_persistent_personal_records_and_model_usage_survive_empty_routes():
       "distractedMoments": 0,
       "unresponsiveMoments": 0,
       "routeModifiedAt": 100,
+      "analysisComplete": True,
     },
     {
       "name": "route-2",
@@ -472,6 +473,7 @@ def test_persistent_personal_records_and_model_usage_survive_empty_routes():
       "distractedMoments": 1,
       "unresponsiveMoments": 0,
       "routeModifiedAt": 100,
+      "analysisComplete": True,
     },
     {
       "name": "route-3",
@@ -483,6 +485,7 @@ def test_persistent_personal_records_and_model_usage_survive_empty_routes():
       "distractedMoments": 0,
       "unresponsiveMoments": 0,
       "routeModifiedAt": 100,
+      "analysisComplete": True,
     },
   ]
 
@@ -507,6 +510,67 @@ def test_persistent_personal_records_and_model_usage_survive_empty_routes():
   assert restored_records["highestStreak"]["value"] == "3 days"
   assert restored_records["longestUndistractedDrive"]["value"] == "0.5 hours"
   assert restored_records["cleanDriveStreak"]["value"] == "3 drives"
+
+
+def test_model_usage_ignores_pending_route_shells():
+  params = FakeParams({"AvailableModels": "orion,vega", "AvailableModelNames": "Orion,Vega"})
+  drives = [
+    {
+      "name": "route-1",
+      "date": "2026-06-15T08:00:00",
+      "distanceMeters": 10000.0,
+      "duration": 1200,
+      "engagedSeconds": 900.0,
+      "model": "Orion",
+      "routeModifiedAt": 100,
+      "analysisComplete": True,
+    },
+    {
+      "name": "route-2",
+      "date": "2026-06-16T08:00:00",
+      "distanceMeters": 0.0,
+      "duration": 600,
+      "engagedSeconds": 0.0,
+      "model": "Vega",
+      "routeModifiedAt": 100,
+      "analysisComplete": False,
+      "attentionKnown": False,
+    },
+  ]
+
+  persistent = utilities._update_dashboard_persistent_stats(params, drives, wall_now=1000)
+  favorites = utilities._build_favorite_models(params, persistent)
+
+  assert [model["name"] for model in favorites] == ["Orion"]
+  assert favorites[0]["drives"] == 1
+
+
+def test_cpu_temp_reader_uses_hardware_cpu_values(monkeypatch):
+  hardware_module = _simple_module(
+    "openpilot.system.hardware",
+    HARDWARE=SimpleNamespace(
+      get_thermal_config=lambda: SimpleNamespace(
+        get_msg=lambda: {"cpuTempC": [55.1, 56.6], "memoryTempC": 75.0}
+      )
+    ),
+  )
+  monkeypatch.setitem(sys.modules, "openpilot.system.hardware", hardware_module)
+
+  assert utilities._read_cpu_temp_c() == 57
+
+
+def test_cpu_temp_reader_ignores_non_cpu_thermal_zones(tmp_path):
+  cpu_zone = tmp_path / "thermal_zone0"
+  cpu_zone.mkdir()
+  (cpu_zone / "type").write_text("cpu0-silver-usr", encoding="utf-8")
+  (cpu_zone / "temp").write_text("61000", encoding="utf-8")
+
+  pmic_zone = tmp_path / "thermal_zone1"
+  pmic_zone.mkdir()
+  (pmic_zone / "type").write_text("pm8998_tz", encoding="utf-8")
+  (pmic_zone / "temp").write_text("75000", encoding="utf-8")
+
+  assert utilities._read_cpu_temp_c(tmp_path) == 61
 
 
 def test_persistent_loader_accepts_decoded_param_dict():
@@ -587,8 +651,7 @@ def test_lightweight_routes_surface_recent_drives_without_log_analysis(monkeypat
   assert [drive["name"] for drive in dashboard["recentDrives"]] == ["route-new", "route-old"]
   assert dashboard["lastDrive"]["model"] == "Orion"
   assert dashboard["week"]["drives"] == 2
-  assert dashboard["favoriteModels"][0]["name"] == "Orion"
-  assert dashboard["favoriteModels"][0]["drives"] == 2
+  assert dashboard["favoriteModels"] == []
   assert dashboard["analysis"]["pendingRoutes"] == 2
   assert dashboard["analysis"]["batchSize"] == 2
   utilities._invalidate_dashboard_cache()
@@ -948,4 +1011,5 @@ def test_stats_endpoint_keeps_existing_keys_and_adds_dashboard(monkeypatch):
   assert "diskUsage" in payload
   assert "driveStats" in payload
   assert "softwareInfo" in payload
+  assert payload["softwareInfo"]["buildEnvironment"] == "Experimental"
   assert payload["dashboard"]["recentDrives"] == []

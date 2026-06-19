@@ -28,15 +28,6 @@
   color: var(--text-muted);
 }
 
-#searchSuggestions p {
-  font-size: var(--font-size-sm);
-  margin: 0;
-  max-width: calc(100% - 8rem);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 #searchSuggestions .suggestion-item {
   align-items: center;
   background-color: var(--input-bg);
@@ -48,6 +39,32 @@
   padding: var(--border-radius-xl);
   position: relative;
   width: 100%;
+}
+
+#searchSuggestions .suggestion-copy {
+  flex: 1;
+  min-width: 0;
+  padding-right: 1rem;
+}
+
+#searchSuggestions .suggestion-primary,
+#searchSuggestions .suggestion-secondary {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#searchSuggestions .suggestion-primary {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-demi-bold);
+  white-space: nowrap;
+}
+
+#searchSuggestions .suggestion-secondary {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  margin-top: 0.25rem;
+  white-space: nowrap;
 }
 
 #searchSuggestions .suggestion-item:first-child {

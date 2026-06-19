@@ -217,6 +217,10 @@ class CarInterface(CarInterfaceBase):
       gm_auto_hold = params.get_bool("GMAutoHold")
     except UnknownKeyName:
       gm_auto_hold = False
+    try:
+      volt_one_pedal_mode = params.get_bool("VoltOnePedalMode")
+    except UnknownKeyName:
+      volt_one_pedal_mode = False
 
     ret.brand = "gm"
     ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.gm)]
@@ -671,8 +675,8 @@ class CarInterface(CarInterfaceBase):
     if remote_start_boots_comma:
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_REMOTE_START_BOOTS_COMMA.value
 
-    volt_stock_auto_hold_safety = (
-      gm_auto_hold and
+    volt_stock_friction_brake_safety = (
+      (gm_auto_hold or volt_one_pedal_mode) and
       candidate in {
         CAR.CHEVROLET_VOLT,
         CAR.CHEVROLET_VOLT_2019,
@@ -680,11 +684,11 @@ class CarInterface(CarInterfaceBase):
         CAR.CHEVROLET_VOLT_CAMERA,
       }
     )
-    if volt_stock_auto_hold_safety:
-      # Reuse the paddle-scheduler safety bit as a Volt auto-hold marker on
-      # non-pedal paths. Hold can run while OP longitudinal is configured but
-      # not currently active, so the bit must be present regardless of the
-      # current long-control mode.
+    if volt_stock_friction_brake_safety:
+      # Reuse the paddle-scheduler safety bit as a Volt stock friction-brake
+      # marker on non-pedal paths. Both auto hold and one-pedal can run while
+      # OP longitudinal is configured but not currently active, so the bit must
+      # be present regardless of the current long-control mode.
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
 
     use_panda_3d1_sched = (
