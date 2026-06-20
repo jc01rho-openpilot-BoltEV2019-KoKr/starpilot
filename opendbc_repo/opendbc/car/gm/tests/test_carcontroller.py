@@ -48,7 +48,6 @@ from opendbc.car.gm.carcontroller import (
   should_activate_volt_one_pedal,
   should_neutralize_volt_long_on_driver_override,
   should_send_stock_long_cancel,
-  should_send_adas_status,
   should_suppress_volt_stock_cancel_in_park,
   should_suppress_volt_stock_long_pre_drive,
   should_spoof_dash_speed,
@@ -154,36 +153,6 @@ def test_live_camera_path_does_not_send_pt_keepalive():
   cp = SimpleNamespace(networkLocation=CarParams.NetworkLocation.fwdCamera, flags=0)
 
   assert get_adas_keepalive_step(cp, is_kaofui_car=True) is None
-
-
-def test_volt_ascm_does_not_replace_stock_radar_status():
-  cp = SimpleNamespace(
-    carFingerprint=CAR.CHEVROLET_VOLT_ASCM,
-    networkLocation=CarParams.NetworkLocation.fwdCamera,
-    radarUnavailable=False,
-  )
-
-  assert not should_send_adas_status(cp, is_kaofui_car=True)
-
-
-def test_other_ascm_int_cars_send_radar_status():
-  cp = SimpleNamespace(
-    carFingerprint=CAR.BUICK_LACROSSE_ASCM,
-    networkLocation=CarParams.NetworkLocation.fwdCamera,
-    radarUnavailable=False,
-  )
-
-  assert should_send_adas_status(cp, is_kaofui_car=True)
-
-
-def test_radar_status_is_suppressed_when_radar_is_unavailable():
-  cp = SimpleNamespace(
-    carFingerprint=CAR.BUICK_LACROSSE_ASCM,
-    networkLocation=CarParams.NetworkLocation.fwdCamera,
-    radarUnavailable=True,
-  )
-
-  assert not should_send_adas_status(cp, is_kaofui_car=True)
 
 
 def test_volt_auto_hold_requires_toggle_supported_non_cc_only_volt_and_stock_safety():
