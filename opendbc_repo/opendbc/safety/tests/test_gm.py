@@ -307,35 +307,6 @@ def test_gm_ascm_int_long_no_accel_pos_uses_stock_cam_rx_checks():
   assert safety.safety_config_valid()
 
 
-def test_gm_ascm_int_allows_radar_status_tx_only_on_ascm_int_paths():
-  safety = libsafety_py.libsafety
-  radar_status_msgs = (
-    (0xA1, 7),
-    (0x306, 8),
-    (0x308, 7),
-    (0x310, 2),
-  )
-  camera_modes = (
-    GMSafetyFlags.HW_CAM,
-    GMSafetyFlags.HW_CAM | GMSafetyFlags.FLAG_GM_NO_CAMERA,
-    GMSafetyFlags.HW_CAM | GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED,
-    GMSafetyFlags.HW_CAM | GMSafetyFlags.FLAG_GM_NO_CAMERA | GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED,
-    GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_CAM_LONG,
-    GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_CAM_LONG | GMSafetyFlags.FLAG_GM_NO_CAMERA,
-  )
-
-  for mode in camera_modes:
-    safety.set_safety_hooks(CarParams.SafetyModel.gm, mode)
-    safety.init_tests()
-    for addr, length in radar_status_msgs:
-      assert not safety.safety_tx_hook(common.make_msg(1, addr, length))
-
-    safety.set_safety_hooks(CarParams.SafetyModel.gm, mode | GMSafetyFlags.HW_ASCM_INT)
-    safety.init_tests()
-    for addr, length in radar_status_msgs:
-      assert safety.safety_tx_hook(common.make_msg(1, addr, length))
-
-
 class TestGmCameraEVSafety(GmCameraAccEVRegenMixin, TestGmCameraSafety, TestGmEVSafetyBase):
   pass
 

@@ -587,17 +587,6 @@ static safety_config gm_init(uint16_t param) {
                                                          {0x184, 2, 8, .check_relay = false},  // camera bus
                                                          {0x200, 0, 6, .check_relay = false}, {0x1E1, 0, 7, .check_relay = false},
                                                          {0xBD, 0, 7, .check_relay = false}, {0x1F5, 0, 8, .check_relay = false}};  // pt bus
-  static const CanMsg GM_CAM_LONG_ASCM_INT_TX_MSGS[] = {{0x180, 0, 4, .check_relay = true}, {0x315, 0, 5, .check_relay = true}, {0x2CB, 0, 8, .check_relay = true}, {0x370, 0, 6, .check_relay = true}, {0x3D1, 0, 8, .check_relay = false},  // pt bus
-                                                        {0xA1, 1, 7, .check_relay = false}, {0x306, 1, 8, .check_relay = false}, {0x308, 1, 7, .check_relay = false}, {0x310, 1, 2, .check_relay = false},  // obs bus
-                                                        {0x184, 2, 8, .check_relay = true},  // camera bus
-                                                        {0x200, 0, 6, .check_relay = false}, {0x1E1, 0, 7, .check_relay = false},
-                                                        {0xBD, 0, 7, .check_relay = false}, {0x1F5, 0, 8, .check_relay = false}};  // pt bus
-  static const CanMsg GM_CAM_LONG_NO_CAMERA_ASCM_INT_TX_MSGS[] = {{0x180, 0, 4, .check_relay = false}, {0x315, 0, 5, .check_relay = false}, {0x2CB, 0, 8, .check_relay = false}, {0x370, 0, 6, .check_relay = false}, {0x3D1, 0, 8, .check_relay = false},  // pt bus
-                                                                  {0x409, 0, 7, .check_relay = false}, {0x40A, 0, 7, .check_relay = false},
-                                                                  {0xA1, 1, 7, .check_relay = false}, {0x306, 1, 8, .check_relay = false}, {0x308, 1, 7, .check_relay = false}, {0x310, 1, 2, .check_relay = false},  // obs bus
-                                                                  {0x184, 2, 8, .check_relay = false},  // camera bus
-                                                                  {0x200, 0, 6, .check_relay = false}, {0x1E1, 0, 7, .check_relay = false},
-                                                                  {0xBD, 0, 7, .check_relay = false}, {0x1F5, 0, 8, .check_relay = false}};  // pt bus
 
 
   static RxCheck gm_rx_checks[] = {
@@ -628,18 +617,6 @@ static safety_config gm_init(uint16_t param) {
                                                          {0x200, 0, 6, .check_relay = false},
                                                          {0x1E1, 0, 7, .check_relay = false},
                                                          {0xBD, 0, 7, .check_relay = false}, {0x1F5, 0, 8, .check_relay = false}};  // pt bus
-  static const CanMsg GM_CAM_ASCM_INT_TX_MSGS[] = {{0x180, 0, 4, .check_relay = true}, {0x370, 0, 6, .check_relay = false}, {0x3D1, 0, 8, .check_relay = false},  // pt bus
-                                                   {0xA1, 1, 7, .check_relay = false}, {0x306, 1, 8, .check_relay = false}, {0x308, 1, 7, .check_relay = false}, {0x310, 1, 2, .check_relay = false},  // obs bus
-                                                   {0x1E1, 2, 7, .check_relay = false}, {0x184, 2, 8, .check_relay = true},  // camera bus
-                                                   {0x200, 0, 6, .check_relay = false},
-                                                   {0x1E1, 0, 7, .check_relay = false},
-                                                   {0xBD, 0, 7, .check_relay = false}, {0x1F5, 0, 8, .check_relay = false}};  // pt bus
-  static const CanMsg GM_CAM_VOLT_AUTO_HOLD_ASCM_INT_TX_MSGS[] = {{0x180, 0, 4, .check_relay = true}, {0x370, 0, 6, .check_relay = false}, {0x3D1, 0, 8, .check_relay = false}, {0x315, 0, 5, .check_relay = true},  // pt bus
-                                                                  {0xA1, 1, 7, .check_relay = false}, {0x306, 1, 8, .check_relay = false}, {0x308, 1, 7, .check_relay = false}, {0x310, 1, 2, .check_relay = false},  // obs bus
-                                                                  {0x1E1, 2, 7, .check_relay = false}, {0x184, 2, 8, .check_relay = true},  // camera bus
-                                                                  {0x200, 0, 6, .check_relay = false},
-                                                                  {0x1E1, 0, 7, .check_relay = false},
-                                                                  {0xBD, 0, 7, .check_relay = false}, {0x1F5, 0, 8, .check_relay = false}};  // pt bus
 
   static const CanMsg GM_SDGM_TX_MSGS[] = {{0x180, 0, 4, .check_relay = true}, {0x370, 0, 6, .check_relay = false}, {0x3D1, 0, 8, .check_relay = false},  // pt bus
                                            {0x1E1, 2, 7, .check_relay = false}, {0x184, 2, 8, .check_relay = false},  // camera bus
@@ -664,20 +641,6 @@ static safety_config gm_init(uint16_t param) {
                                                                    {0x200, 0, 6, .check_relay = false},
                                                                    {0x1E1, 0, 7, .check_relay = false},
                                                                    {0xBD, 0, 7, .check_relay = false}, {0x1F5, 0, 8, .check_relay = false}};  // pt bus
-  static const CanMsg GM_CAM_NO_CAMERA_ASCM_INT_TX_MSGS[] = {{0x180, 0, 4, .check_relay = false}, {0x370, 0, 6, .check_relay = false}, {0x3D1, 0, 8, .check_relay = false},  // pt bus
-                                                             {0x409, 0, 7, .check_relay = false}, {0x40A, 0, 7, .check_relay = false},
-                                                             {0xA1, 1, 7, .check_relay = false}, {0x306, 1, 8, .check_relay = false}, {0x308, 1, 7, .check_relay = false}, {0x310, 1, 2, .check_relay = false},  // obs bus
-                                                             {0x1E1, 2, 7, .check_relay = false}, {0x184, 2, 8, .check_relay = false},  // camera bus
-                                                             {0x200, 0, 6, .check_relay = false},
-                                                             {0x1E1, 0, 7, .check_relay = false},
-                                                             {0xBD, 0, 7, .check_relay = false}, {0x1F5, 0, 8, .check_relay = false}};  // pt bus
-  static const CanMsg GM_CAM_NO_CAMERA_VOLT_AUTO_HOLD_ASCM_INT_TX_MSGS[] = {{0x180, 0, 4, .check_relay = false}, {0x370, 0, 6, .check_relay = false}, {0x3D1, 0, 8, .check_relay = false}, {0x315, 0, 5, .check_relay = false},  // pt bus
-                                                                            {0x409, 0, 7, .check_relay = false}, {0x40A, 0, 7, .check_relay = false},
-                                                                            {0xA1, 1, 7, .check_relay = false}, {0x306, 1, 8, .check_relay = false}, {0x308, 1, 7, .check_relay = false}, {0x310, 1, 2, .check_relay = false},  // obs bus
-                                                                            {0x1E1, 2, 7, .check_relay = false}, {0x184, 2, 8, .check_relay = false},  // camera bus
-                                                                            {0x200, 0, 6, .check_relay = false},
-                                                                            {0x1E1, 0, 7, .check_relay = false},
-                                                                            {0xBD, 0, 7, .check_relay = false}, {0x1F5, 0, 8, .check_relay = false}};  // pt bus
 
   static RxCheck gm_no_acc_rx_checks[] = {
     GM_COMMON_RX_CHECKS
@@ -796,42 +759,22 @@ static safety_config gm_init(uint16_t param) {
       }
     } else if (gm_cam_long) {
       if (gm_no_camera) {
-        if (gm_ascm_int) {
-          ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_LONG_NO_CAMERA_ASCM_INT_TX_MSGS);
-        } else {
-          ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_LONG_NO_CAMERA_TX_MSGS);
-        }
+        ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_LONG_NO_CAMERA_TX_MSGS);
       } else {
-        if (gm_ascm_int) {
-          ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_LONG_ASCM_INT_TX_MSGS);
-        } else {
-          ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_LONG_TX_MSGS);
-        }
+        ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_LONG_TX_MSGS);
       }
     } else {
       if (gm_volt_auto_hold && gm_sdgm) {
         ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_SDGM_VOLT_AUTO_HOLD_TX_MSGS);
       } else if (gm_no_camera) {
         if (gm_volt_auto_hold) {
-          if (gm_ascm_int) {
-            ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_NO_CAMERA_VOLT_AUTO_HOLD_ASCM_INT_TX_MSGS);
-          } else {
-            ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_NO_CAMERA_VOLT_AUTO_HOLD_TX_MSGS);
-          }
-        } else if (gm_ascm_int) {
-          ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_NO_CAMERA_ASCM_INT_TX_MSGS);
+          ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_NO_CAMERA_VOLT_AUTO_HOLD_TX_MSGS);
         } else {
           ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_NO_CAMERA_TX_MSGS);
         }
       } else {
         if (gm_volt_auto_hold) {
-          if (gm_ascm_int) {
-            ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_VOLT_AUTO_HOLD_ASCM_INT_TX_MSGS);
-          } else {
-            ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_VOLT_AUTO_HOLD_TX_MSGS);
-          }
-        } else if (gm_ascm_int) {
-          ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_ASCM_INT_TX_MSGS);
+          ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_VOLT_AUTO_HOLD_TX_MSGS);
         } else {
           ret = BUILD_SAFETY_CFG(gm_rx_checks, GM_CAM_TX_MSGS);
         }
