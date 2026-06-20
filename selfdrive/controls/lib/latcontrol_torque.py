@@ -111,6 +111,10 @@ VOLT_STANDARD_CARS = (
   GM_CAR.CHEVROLET_VOLT_CAMERA,
   GM_CAR.CHEVROLET_VOLT_CC,
 )
+SILVERADO_CARS = (
+  GM_CAR.CHEVROLET_SILVERADO,
+  GM_CAR.CHEVROLET_SILVERADO_CC,
+)
 GENESIS_G90_CARS = (
   HYUNDAI_CAR.GENESIS_G90,
 )
@@ -262,6 +266,12 @@ VOLT_STANDARD_CENTER_TAPER_LAT = 0.10
 VOLT_STANDARD_CENTER_TAPER_LAT_WIDTH = 0.018
 VOLT_STANDARD_CENTER_TAPER_SPEED = 20.0
 VOLT_STANDARD_CENTER_TAPER_SPEED_WIDTH = 2.5
+
+SILVERADO_CENTER_TAPER_MAX = 0.22
+SILVERADO_CENTER_TAPER_LAT = 0.18
+SILVERADO_CENTER_TAPER_LAT_WIDTH = 0.05
+SILVERADO_CENTER_TAPER_SPEED = 12.0
+SILVERADO_CENTER_TAPER_SPEED_WIDTH = 2.5
 
 SONATA_HYBRID_BASE_LAT_ACCEL_FACTOR_MULT = 1.05
 SONATA_HYBRID_FF_REDUCTION_LEFT = 0.09
@@ -547,13 +557,15 @@ IONIQ_6_CRAWL_TURN_IN_FF_SPEED = 4.5
 IONIQ_6_CRAWL_TURN_IN_FF_SPEED_WIDTH = 0.8
 IONIQ_6_CRAWL_TURN_IN_FF_LAT = 0.10
 IONIQ_6_CRAWL_TURN_IN_FF_LAT_WIDTH = 0.05
-IONIQ_6_LOW_SPEED_ANGLE_ASSIST_MAX_TORQUE = 0.34
-IONIQ_6_LOW_SPEED_ANGLE_ASSIST_SPEED = 3.6
-IONIQ_6_LOW_SPEED_ANGLE_ASSIST_SPEED_WIDTH = 0.45
-IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ERROR = 4.0
-IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ERROR_WIDTH = 1.8
-IONIQ_6_LOW_SPEED_ANGLE_ASSIST_DESIRED_ANGLE = 10.0
-IONIQ_6_LOW_SPEED_ANGLE_ASSIST_DESIRED_ANGLE_WIDTH = 4.0
+IONIQ_6_LOW_SPEED_ANGLE_ASSIST_MAX_TORQUE = 0.38
+IONIQ_6_LOW_SPEED_ANGLE_ASSIST_SPEED = 4.0
+IONIQ_6_LOW_SPEED_ANGLE_ASSIST_SPEED_WIDTH = 0.55
+IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ERROR = 3.0
+IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ERROR_WIDTH = 1.5
+IONIQ_6_LOW_SPEED_ANGLE_ASSIST_DESIRED_ANGLE = 8.0
+IONIQ_6_LOW_SPEED_ANGLE_ASSIST_DESIRED_ANGLE_WIDTH = 3.0
+IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ADD_BP = [0.0, 0.4, 0.7, 1.0]
+IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ADD_V = [1.0, 1.0, 0.75, 0.0]
 IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_BOOST = 0.10
 IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_SPEED = 18.0
 IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_SPEED_WIDTH = 2.5
@@ -574,16 +586,16 @@ IONIQ_6_OUTPUT_DIRECTIONAL_TAPER_BLEND = 0.97
 
 KIA_EV6_LATERAL_TESTING_GROUND_ID = testing_ground.id_6
 KIA_EV6_LATERAL_TESTING_GROUND_VARIANT = "C"
-KIA_EV6_FF_GAIN_LEFT = 0.06
-KIA_EV6_FF_GAIN_RIGHT = 0.10
+KIA_EV6_FF_GAIN_LEFT = 0.08
+KIA_EV6_FF_GAIN_RIGHT = 0.12
 KIA_EV6_FF_ONSET = 0.08
 KIA_EV6_FF_ONSET_WIDTH = 0.04
-KIA_EV6_FF_CUTOFF = 0.60
-KIA_EV6_FF_CUTOFF_WIDTH = 0.14
+KIA_EV6_FF_CUTOFF = 0.82
+KIA_EV6_FF_CUTOFF_WIDTH = 0.18
 KIA_EV6_TRANSITION_SPEED = 11.0
 KIA_EV6_PHASE_SCALE = 0.09
-KIA_EV6_TURN_IN_BOOST_LEFT = 0.18
-KIA_EV6_TURN_IN_BOOST_RIGHT = 0.26
+KIA_EV6_TURN_IN_BOOST_LEFT = 0.22
+KIA_EV6_TURN_IN_BOOST_RIGHT = 0.34
 KIA_EV6_UNWIND_TAPER_LEFT = 0.48
 KIA_EV6_UNWIND_TAPER_RIGHT = 0.46
 KIA_EV6_FRICTION_MULT = 1.01
@@ -597,11 +609,11 @@ KIA_EV6_TURN_IN_FRICTION_BOOST_LEFT = 0.04
 KIA_EV6_TURN_IN_FRICTION_BOOST_RIGHT = 0.12
 KIA_EV6_UNWIND_FRICTION_REDUCTION_LEFT = 0.28
 KIA_EV6_UNWIND_FRICTION_REDUCTION_RIGHT = 0.22
-KIA_EV6_CENTER_TAPER_MAX = 0.09
-KIA_EV6_CENTER_TAPER_LAT = 0.14
-KIA_EV6_CENTER_TAPER_LAT_WIDTH = 0.035
-KIA_EV6_CENTER_TAPER_SPEED = 18.0
-KIA_EV6_CENTER_TAPER_SPEED_WIDTH = 3.0
+KIA_EV6_CENTER_TAPER_MAX = 0.12
+KIA_EV6_CENTER_TAPER_LAT = 0.16
+KIA_EV6_CENTER_TAPER_LAT_WIDTH = 0.04
+KIA_EV6_CENTER_TAPER_SPEED = 17.0
+KIA_EV6_CENTER_TAPER_SPEED_WIDTH = 2.8
 
 VOLT_PLEXY_LATERAL_TESTING_GROUND_ID = testing_ground.id_7
 VOLT_PLEXY_FF_GAIN_LEFT = 0.12
@@ -1180,6 +1192,13 @@ def get_volt_standard_center_taper_scale(desired_lateral_accel: float, v_ego: fl
   speed_weight = _volt_standard_sigmoid((v_ego - VOLT_STANDARD_CENTER_TAPER_SPEED) / VOLT_STANDARD_CENTER_TAPER_SPEED_WIDTH)
   center_weight = _volt_standard_sigmoid((VOLT_STANDARD_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / VOLT_STANDARD_CENTER_TAPER_LAT_WIDTH)
   reduction = VOLT_STANDARD_CENTER_TAPER_MAX * speed_weight * center_weight
+  return 1.0 - reduction
+
+
+def get_silverado_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _sigmoid((v_ego - SILVERADO_CENTER_TAPER_SPEED) / SILVERADO_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _sigmoid((SILVERADO_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / SILVERADO_CENTER_TAPER_LAT_WIDTH)
+  reduction = SILVERADO_CENTER_TAPER_MAX * speed_weight * center_weight
   return 1.0 - reduction
 
 
@@ -1868,12 +1887,15 @@ def get_ioniq_6_low_speed_angle_assist_torque(desired_angle_deg: float, actual_a
                                   IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ERROR_WIDTH)
   desired_angle_weight = _ioniq_6_sigmoid((abs(desired_angle_deg) - IONIQ_6_LOW_SPEED_ANGLE_ASSIST_DESIRED_ANGLE) /
                                           IONIQ_6_LOW_SPEED_ANGLE_ASSIST_DESIRED_ANGLE_WIDTH)
-  assist_torque = math.copysign(IONIQ_6_LOW_SPEED_ANGLE_ASSIST_MAX_TORQUE * speed_weight * error_weight * desired_angle_weight, angle_error)
+  assist_torque = math.copysign(IONIQ_6_LOW_SPEED_ANGLE_ASSIST_MAX_TORQUE * speed_weight * error_weight * desired_angle_weight, -angle_error)
   if abs(assist_torque) < 1e-4:
     return current_output_torque
 
   if current_output_torque * assist_torque >= 0.0:
-    return float(np.clip(math.copysign(max(abs(current_output_torque), abs(assist_torque)), assist_torque), -1.0, 1.0))
+    add_scale = float(np.interp(abs(current_output_torque),
+                                IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ADD_BP,
+                                IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ADD_V))
+    return float(np.clip(current_output_torque + (assist_torque * add_scale), -1.0, 1.0))
 
   return float(np.clip(current_output_torque + assist_torque, -1.0, 1.0))
 
@@ -2070,7 +2092,7 @@ class LatControlTorque(LatControl):
     self.is_kia_ev6 = CP.carFingerprint in KIA_EV6_CARS
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA_CAR.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_volt_cc = CP.carFingerprint == GM_CAR.CHEVROLET_VOLT_CC
-    self.is_silverado = CP.carFingerprint == GM_CAR.CHEVROLET_SILVERADO
+    self.is_silverado = CP.carFingerprint in SILVERADO_CARS
     if self.is_ioniq_6:
       self.low_speed_reset_threshold = min(self.low_speed_reset_threshold, IONIQ_6_LOW_SPEED_PID_RESET_SPEED)
     self.use_bolt_ff_scaling = self.is_bolt_2022_2023 or self.is_bolt_2018_2021 or self.is_bolt_2017
@@ -2217,6 +2239,7 @@ class LatControlTorque(LatControl):
       kia_niro_phev_2022_center_taper = get_kia_niro_phev_2022_center_taper_scale(setpoint, CS.vEgo) if kia_niro_phev_2022_active else 1.0
       kia_forte_center_taper = get_kia_forte_center_taper_scale(setpoint, CS.vEgo) if kia_forte_active else 1.0
       kia_ev6_center_taper = get_kia_ev6_center_taper_scale(setpoint, CS.vEgo) if kia_ev6_test_active else 1.0
+      silverado_center_taper = get_silverado_center_taper_scale(setpoint, CS.vEgo) if self.is_silverado else 1.0
       civic_bosch_modified_a_center_taper = get_civic_bosch_modified_a_center_taper_scale(setpoint, CS.vEgo) if (
         self.is_civic_bosch_modified and civic_bosch_modified_a_lateral_testing_ground_active()
       ) else 1.0
@@ -2277,6 +2300,8 @@ class LatControlTorque(LatControl):
         friction_threshold = get_kia_ev6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = get_kia_ev6_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = 1.0 + ((friction_scale - 1.0) * kia_ev6_center_taper)
+      elif self.is_silverado:
+        ff *= silverado_center_taper
       elif volt_plexy_test_active:
         ff *= get_volt_plexy_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         friction_threshold = get_volt_plexy_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
@@ -2306,13 +2331,15 @@ class LatControlTorque(LatControl):
         output_torque *= get_bolt_2017_torque_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif bolt_2018_2021_tuned_path_active:
         output_torque *= get_bolt_2018_2021_dynamic_torque_scale(setpoint, desired_lateral_jerk, CS.vEgo)
-      elif ioniq_6_active:
+      elif ioniq_6_active and not CS.steeringPressed:
         desired_angle_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
         actual_angle_no_offset = CS.steeringAngleDeg - params.angleOffsetDeg
         output_torque = get_ioniq_6_low_speed_angle_assist_torque(desired_angle_no_offset, actual_angle_no_offset,
                                                                   output_torque, CS.vEgo)
       elif volt_standard_test_active:
         output_torque *= volt_standard_center_taper
+      elif self.is_silverado:
+        output_torque *= silverado_center_taper
       elif kia_niro_phev_2022_active:
         output_torque *= kia_niro_phev_2022_center_taper
       elif self.is_civic_bosch_modified and civic_bosch_modified_a_lateral_testing_ground_active():
