@@ -48,8 +48,6 @@ from opendbc.car.gm.carcontroller import (
   should_activate_volt_one_pedal,
   should_neutralize_volt_long_on_driver_override,
   should_send_stock_long_cancel,
-  should_suppress_volt_stock_cancel_in_park,
-  should_suppress_volt_stock_long_pre_drive,
   should_spoof_dash_speed,
   should_spoof_ecm_cruise_status,
   supports_volt_auto_hold,
@@ -410,7 +408,7 @@ def test_volt_one_pedal_activation_requires_main_l_mode_and_no_driver_input():
     structs.CarState.GearShifter.low,
     3.0,
   )
-  assert should_activate_volt_one_pedal(
+  assert not should_activate_volt_one_pedal(
     True,
     True,
     False,
@@ -450,20 +448,6 @@ def test_volt_one_pedal_regression_ignores_noisy_wheel_direction_bits():
     False,
     True,
     structs.CarState.GearShifter.low,
-    3.0,
-  )
-
-
-def test_volt_one_pedal_regression_stays_active_through_l_mode_regen_state():
-  assert should_activate_volt_one_pedal(
-    True,
-    True,
-    False,
-    False,
-    False,
-    True,
-    True,
-    structs.CarState.GearShifter.manumatic,
     3.0,
   )
 
@@ -518,21 +502,6 @@ def test_volt_driver_override_neutralization_skips_pedal_and_non_volt_paths():
     True,
     False,
   )
-
-
-def test_volt_stock_long_pre_drive_is_suppressed_outside_drive_gears():
-  CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_VOLT_2019)
-
-  assert should_suppress_volt_stock_long_pre_drive(CP, structs.CarState.GearShifter.park, False)
-  assert not should_suppress_volt_stock_long_pre_drive(CP, structs.CarState.GearShifter.drive, False)
-  assert not should_suppress_volt_stock_long_pre_drive(CP, structs.CarState.GearShifter.park, True)
-
-
-def test_volt_stock_cancel_is_suppressed_outside_drive_gears():
-  CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_VOLT_2019)
-
-  assert should_suppress_volt_stock_cancel_in_park(CP, structs.CarState.GearShifter.park)
-  assert not should_suppress_volt_stock_cancel_in_park(CP, structs.CarState.GearShifter.low)
 
 
 def test_friction_brake_mode_keeps_near_stop_disabled_for_regular_long_braking():

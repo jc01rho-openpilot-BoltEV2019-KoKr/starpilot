@@ -218,7 +218,7 @@ def get_volt_one_pedal_target_decel(v_ego: float) -> float:
 def should_activate_volt_one_pedal(one_pedal_ready: bool, cruise_main: bool, long_active: bool,
                                    gas_pressed: bool, brake_pressed: bool, regen_braking: bool,
                                    single_pedal_mode: bool, gear_shifter, drive_time_s: float) -> bool:
-
+  # Volt rear wheel direction bits can falsely report reverse while stopping in L.
   return (
     one_pedal_ready and
     cruise_main and
@@ -227,22 +227,8 @@ def should_activate_volt_one_pedal(one_pedal_ready: bool, cruise_main: bool, lon
     drive_time_s >= AUTO_HOLD_MIN_DRIVE_TIME_S and
     not long_active and
     not gas_pressed and
-    not brake_pressed
-  )
-
-
-def should_suppress_volt_stock_long_pre_drive(CP, gear_shifter, enabled: bool) -> bool:
-  return (
-    CP.carFingerprint in AUTO_HOLD_VOLT_CARS and
-    gear_shifter not in AUTO_HOLD_DRIVE_GEARS and
-    not enabled
-  )
-
-
-def should_suppress_volt_stock_cancel_in_park(CP, gear_shifter) -> bool:
-  return (
-    CP.carFingerprint in AUTO_HOLD_VOLT_CARS and
-    gear_shifter not in AUTO_HOLD_DRIVE_GEARS
+    not brake_pressed and
+    not regen_braking
   )
 
 
@@ -884,13 +870,7 @@ class CarController(CarControllerBase):
           else:
             acc_engaged = CC.enabled
 
-          skip_volt_stock_long_pre_drive = should_suppress_volt_stock_long_pre_drive(
-            self.CP, CS.out.gearShifter, CC.enabled
-          )
-
-          if skip_volt_stock_long_pre_drive:
-            CS.auto_hold_engaged = False
-          elif auto_hold_active:
+          if auto_hold_active:
             hold_brake = max(self.volt_one_pedal_brake, self.auto_hold_brake or estimate_auto_hold_brake(CS.out.brake, self.apply_brake))
             hold_standstill = CS.pcm_acc_status == AccState.STANDSTILL
             hold_near_stop = CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE
@@ -1011,10 +991,7 @@ class CarController(CarControllerBase):
 
       # While car is braking, cancel button causes ECM to enter a soft disable state with a fault status.
       # A delayed cancellation allows camera to cancel and avoids a fault when user depresses brake quickly
-      if should_suppress_volt_stock_cancel_in_park(self.CP, CS.out.gearShifter):
-        self.cancel_counter = 0
-      else:
-        self.cancel_counter = self.cancel_counter + 1 if CC.cruiseControl.cancel else 0
+      self.cancel_counter = self.cancel_counter + 1 if CC.cruiseControl.cancel else 0
 
       # Stock longitudinal, integrated at camera
       if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC and self.cancel_counter > CAMERA_CANCEL_DELAY_FRAMES:
