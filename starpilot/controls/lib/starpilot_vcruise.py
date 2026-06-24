@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
+import json
 import math
 
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
-from openpilot.selfdrive.road_speed_limiter import SpeedLimiter
+
 from openpilot.starpilot.common.starpilot_variables import CITY_SPEED_LIMIT, CRUISING_SPEED, PLANNER_TIME
 from openpilot.starpilot.controls.lib.curve_speed_controller import CurveSpeedController
 from openpilot.starpilot.controls.lib.speed_limit_controller import SpeedLimitController
 
 CSC_MIN_SPEED = CITY_SPEED_LIMIT * CV.MPH_TO_MS
 OVERRIDE_FORCE_STOP_TIMER = 10
-CAMERA_SPEED_FACTOR = 0.9
+STANDSTILL_FORCE_STOP_CLEAR_TIME = 0.75
+NAV_TURN_COMFORT_DECEL = 1.25
+NAV_TURN_DISTANCE_BUFFER = 8.0
+NAV_TURN_MIN_TARGET_DELTA = 0.25
+NAV_TURN_TARGET_SPEEDS = {
+  "uturn": 5.0 * CV.MPH_TO_MS,
+  "sharpLeft": 10.0 * CV.MPH_TO_MS,
+  "sharpRight": 10.0 * CV.MPH_TO_MS,
+  "left": 14.0 * CV.MPH_TO_MS,
+  "right": 14.0 * CV.MPH_TO_MS,
+}
 
 # Force-stop kinematic profile. The user tunes one signed knob (ForceStopDistanceOffset,
 # in feet); positive = stop later/longer, negative = stop sooner/shorter. All other
@@ -48,24 +59,122 @@ class StarPilotVCruise:
     self.csc = CurveSpeedController(self)
     self.slc = SpeedLimitController(self)
 
-    self.speed_limiter = SpeedLimiter.instance()
-    self.current_road_limit_ms = 0.0
-    self.v_cruise_kph_limit = 0
-    self.slowing_down = False
-    self.last_nda_limit_speed = 0.0
-    self.last_nda_left_dist = 0.0
-
     self.forcing_stop = False
     self.override_force_stop = False
     self.override_force_standstill = False
 
     self.override_force_stop_timer = 0
     self.force_stop_timer = 0.0
+    self.standstill_force_stop_hold = False
+    self.standstill_force_stop_clear_since = 0.0
     # Kinematic distance estimator. Same attribute also published as
     # starpilotPlan.forcingStopLength, so the existing reader keeps working.
     self.tracked_model_length = 0.0
 
     self.stop_sign_confirmed = False
+    self.nav_turn_target = 0.0
+    self._nav_instruction_state_raw = None
+    self._nav_instruction_state = {}
+
+  def _update_nav_instruction_state(self):
+    raw = self.starpilot_planner.params_memory.get("NavInstructionState") or {}
+    if raw == self._nav_instruction_state_raw:
+      return
+
+    self._nav_instruction_state_raw = raw
+    if not raw:
+      self._nav_instruction_state = {}
+      return
+
+    if isinstance(raw, dict):
+      self._nav_instruction_state = raw
+      return
+
+    if isinstance(raw, str):
+      try:
+        parsed = json.loads(raw)
+        self._nav_instruction_state = parsed if isinstance(parsed, dict) else {}
+        return
+      except Exception:
+        pass
+
+    self._nav_instruction_state = {}
+
+  @staticmethod
+  def _elapsed_seconds(now, since):
+    delta = now - since
+    return delta.total_seconds() if hasattr(delta, "total_seconds") else float(delta)
+
+  @staticmethod
+  def _nav_maneuver_target_speed(maneuver_type, maneuver_modifier):
+    maneuver_type = str(maneuver_type or "").strip().lower()
+    maneuver_modifier = str(maneuver_modifier or "").strip()
+
+    if not maneuver_modifier and not maneuver_type:
+      return None
+
+    if maneuver_modifier == "uturn" or "uturn" in maneuver_type or "u-turn" in maneuver_type:
+      return NAV_TURN_TARGET_SPEEDS["uturn"]
+
+    if "roundabout" in maneuver_type or "rotary" in maneuver_type:
+      return 12.0 * CV.MPH_TO_MS
+
+    if maneuver_type == "turn":
+      return NAV_TURN_TARGET_SPEEDS.get(maneuver_modifier)
+
+    return None
+
+  @staticmethod
+  def _nav_target_for_distance(target_speed, maneuver_distance):
+    try:
+      remaining_distance = max(float(maneuver_distance) - NAV_TURN_DISTANCE_BUFFER, 0.0)
+    except (TypeError, ValueError):
+      return 0.0
+
+    return math.sqrt(max(target_speed * target_speed + (2.0 * NAV_TURN_COMFORT_DECEL * remaining_distance), 0.0))
+
+  @staticmethod
+  def _get_nav_long_min_target_speed(sm):
+    car_params = None
+    try:
+      car_params = sm["carParams"]
+    except Exception:
+      if hasattr(sm, "get"):
+        car_params = sm.get("carParams")
+    return max(float(getattr(car_params, "minSteerSpeed", 0.0) or 0.0), 0.0)
+
+  def _get_nav_turn_control_target(self, v_cruise, sm, starpilot_toggles):
+    self._update_nav_instruction_state()
+    if not getattr(starpilot_toggles, "nav_longitudinal_allowed", False):
+      return 0.0
+    if not bool(self._nav_instruction_state.get("valid", False)):
+      return 0.0
+
+    nav_long_min_target_speed = self._get_nav_long_min_target_speed(sm)
+
+    candidates = [
+      (
+        self._nav_instruction_state.get("maneuverType"),
+        self._nav_instruction_state.get("maneuverModifier"),
+        self._nav_instruction_state.get("maneuverDistance"),
+      ),
+      (
+        self._nav_instruction_state.get("nextManeuverType"),
+        self._nav_instruction_state.get("nextManeuverModifier"),
+        self._nav_instruction_state.get("nextManeuverDistance"),
+      ),
+    ]
+    for maneuver_type, maneuver_modifier, maneuver_distance in candidates:
+      target_speed = self._nav_maneuver_target_speed(maneuver_type, maneuver_modifier)
+      if target_speed is None:
+        continue
+      target_speed = max(target_speed, nav_long_min_target_speed)
+
+      target = max(target_speed, self._nav_target_for_distance(target_speed, maneuver_distance))
+      if target + NAV_TURN_MIN_TARGET_DELTA < v_cruise:
+        return target
+
+    return 0.0
 
   # ===== Main update =====
 
@@ -112,11 +221,41 @@ class StarPilotVCruise:
       self.stop_sign_confirmed = True
 
     raw_model_stopped = bool(getattr(self.starpilot_planner, "raw_model_stopped", False))
+    standstill_force_stop_scene_active = bool(force_stop_active or raw_model_stopped)
+
+    # If the driver engages while already stopped at a red light / stop sign, seed
+    # the same stop-hold path openpilot would have had if it made the stop itself.
+    # Without this, a brief model-clear dropout can release the stop immediately.
+    if (
+      controls_enabled and
+      sm["carState"].standstill and
+      standstill_force_stop_scene_active and
+      not self.forcing_stop and
+      self.force_stop_timer < 0.5
+    ):
+      self.standstill_force_stop_hold = True
+      self.standstill_force_stop_clear_since = 0.0
+      self.tracked_model_length = 0.0
+
+    if self.standstill_force_stop_hold:
+      pedal_override = bool(sm["carState"].gasPressed or sm["starpilotCarState"].accelPressed)
+      if (not controls_enabled) or (not sm["carState"].standstill) or lead_present or pedal_override:
+        self.standstill_force_stop_hold = False
+        self.standstill_force_stop_clear_since = 0.0
+      elif standstill_force_stop_scene_active:
+        self.standstill_force_stop_clear_since = 0.0
+      elif self.standstill_force_stop_clear_since == 0.0:
+        self.standstill_force_stop_clear_since = now
+      elif self._elapsed_seconds(now, self.standstill_force_stop_clear_since) >= STANDSTILL_FORCE_STOP_CLEAR_TIME:
+        self.standstill_force_stop_hold = False
+        self.standstill_force_stop_clear_since = 0.0
 
     # Timer ramp. Faster commitment when the dashboard confirms.
     if force_stop_active and not sm["carState"].standstill:
       rate = DT_MDL * 2 if dash_active else DT_MDL
       self.force_stop_timer = min(self.force_stop_timer + rate, 2.0)
+    elif self.standstill_force_stop_hold:
+      self.force_stop_timer = max(self.force_stop_timer, 0.5)
     elif (self.forcing_stop and sm["carState"].standstill and not dash_active and
           not self.starpilot_planner.starpilot_cem.stop_light_detected and not raw_model_stopped):
       self.force_stop_timer = 0.0
@@ -126,6 +265,7 @@ class StarPilotVCruise:
     force_stop_enabled = self.force_stop_timer >= 0.5
     # Stay committed across model dropouts until standstill
     force_stop_enabled |= self.forcing_stop and not sm["carState"].standstill
+    force_stop_enabled |= self.standstill_force_stop_hold
 
     # Override: gas/accel pedal during an active force stop
     self.override_force_stop |= sm["carState"].gasPressed
@@ -184,21 +324,7 @@ class StarPilotVCruise:
       self.slc_offset = 0
       self.slc_target = 0
 
-    # NDA speed limiter - direct SpeedLimiter.get_max_speed() call, independent of SLC
-    v_cruise_kph = v_cruise * CV.MS_TO_KPH
-    apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = self.speed_limiter.get_max_speed(
-      sm["carState"], v_cruise_kph
-    )
-    self.current_road_limit_ms = max(float(self.speed_limiter.get_road_limit_speed() or 0.0), 0.0) * CV.KPH_TO_MS
-    self.last_nda_limit_speed = float(road_limit_speed)
-    self.last_nda_left_dist = float(left_dist)
-
-    if apply_limit_speed >= 20:
-      self.v_cruise_kph_limit = min(apply_limit_speed, v_cruise_kph)
-      self.slowing_down = True
-    else:
-      self.slowing_down = False
-      self.v_cruise_kph_limit = v_cruise_kph
+    self.nav_turn_target = self._get_nav_turn_control_target(v_cruise, sm, starpilot_toggles)
 
     # Single tuning knob (signed feet -> meters). Defense clamp on top of UI bounds.
     offset_ft_raw = int(getattr(starpilot_toggles, 'force_stop_distance_offset', 0) or 0)
@@ -211,35 +337,43 @@ class StarPilotVCruise:
       v_cruise = 0.0
 
     elif force_stop_enabled and not self.override_force_stop:
-      self.forcing_stop |= not sm["carState"].standstill
+      self.forcing_stop |= not sm["carState"].standstill or self.standstill_force_stop_hold
 
-      # Kinematic distance estimator (also published as forcingStopLength).
-      # Decay one-to-one with motion, clamp by current model_length so we adopt
-      # the model's view when it regains sight, and snap closer to DASH_SEED_M
-      # whenever the dashboard signal is active.
-      self.tracked_model_length = max(self.tracked_model_length - (v_ego * DT_MDL), 0.0)
-      self.tracked_model_length = min(self.tracked_model_length, self.starpilot_planner.model_length)
-      if dash_active:
-        self.tracked_model_length = min(self.tracked_model_length, DASH_SEED_M)
-
-      # Kinematic profile with user offset. Positive offset shifts the perceived
-      # line further down the road -> car rolls further before commanding 0.
-      effective_d = self.tracked_model_length + offset_m
-      if effective_d <= MPC_HANDOFF_M:
-        v_target = 0.0
+      if self.standstill_force_stop_hold:
+        self.tracked_model_length = 0.0
+        v_cruise = 0.0
       else:
-        v_target = math.sqrt(2.0 * COMFORT_DECEL * (effective_d - MPC_HANDOFF_M))
+        # Kinematic distance estimator (also published as forcingStopLength).
+        # Decay one-to-one with motion, clamp by current model_length so we adopt
+        # the model's view when it regains sight, and snap closer to DASH_SEED_M
+        # whenever the dashboard signal is active.
+        self.tracked_model_length = max(self.tracked_model_length - (v_ego * DT_MDL), 0.0)
+        self.tracked_model_length = min(self.tracked_model_length, self.starpilot_planner.model_length)
+        if dash_active:
+          self.tracked_model_length = min(self.tracked_model_length, DASH_SEED_M)
 
-      v_cruise = min(v_target, v_cruise)
+        # Kinematic profile with user offset. Positive offset shifts the perceived
+        # line further down the road -> car rolls further before commanding 0.
+        effective_d = self.tracked_model_length + offset_m
+        if effective_d <= MPC_HANDOFF_M:
+          v_target = 0.0
+        else:
+          v_target = math.sqrt(2.0 * COMFORT_DECEL * (effective_d - MPC_HANDOFF_M))
+
+        v_cruise = min(v_target, v_cruise)
 
     else:
       self.forcing_stop = False
+      self.standstill_force_stop_hold = False
+      self.standstill_force_stop_clear_since = 0.0
       # Latch is only meaningful during an active force-stop cycle
       self.stop_sign_confirmed = False
 
       self.tracked_model_length = self.starpilot_planner.model_length
 
-      targets = [self.csc_target, v_cruise]
+      targets = [v_cruise]
+      if self.csc_target >= CSC_MIN_SPEED:
+        targets.append(self.csc_target)
       slc_control_target = get_active_slc_control_target(
         starpilot_toggles.speed_limit_controller,
         getattr(starpilot_toggles, "set_speed_limit", False),
@@ -248,11 +382,10 @@ class StarPilotVCruise:
         self.slc.overridden_speed,
         v_ego_diff,
       )
-      if slc_control_target > 0.0:
+      if slc_control_target >= CSC_MIN_SPEED:
         targets.append(slc_control_target)
-      v_cruise = min([target if target >= CSC_MIN_SPEED else v_cruise for target in targets])
-
-      if self.v_cruise_kph_limit > 0:
-        v_cruise = min(v_cruise, self.v_cruise_kph_limit * CV.KPH_TO_MS)
+      if self.nav_turn_target > 0.0:
+        targets.append(self.nav_turn_target)
+      v_cruise = min(targets)
 
     return v_cruise

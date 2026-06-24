@@ -52,6 +52,9 @@ ACTION_OPTIONS = [
   {"id": 8, "name": tr_noop("Create Bookmark")},
   {"id": 9, "name": tr_noop("Toggle Always On Lateral")},
   {"id": 10, "name": tr_noop("Adopt Current Speed Limit")},
+  {"id": 11, "name": tr_noop("Favorite #1")},
+  {"id": 12, "name": tr_noop("Favorite #2")},
+  {"id": 13, "name": tr_noop("Favorite #3")},
 ]
 ACTION_NAMES = [o["name"] for o in ACTION_OPTIONS]
 ACTION_IDS = {o["name"]: o["id"] for o in ACTION_OPTIONS}
@@ -100,8 +103,7 @@ class VehicleSettingsManagerView(PanelManagerView):
     self._shell_rect = rl.Rectangle(0, 0, 0, 0)
 
     self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_width=100)
-    self._toggle_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
-    self._child(self._toggle_grid)
+    self.register_page_grid(self._toggle_grid)
 
     self._last_make = ""
     self._last_model = ""
@@ -209,20 +211,8 @@ class VehicleSettingsManagerView(PanelManagerView):
     return toggles
 
   def _rebuild_toggle_grid(self):
-    self._toggle_grid.clear()
-    toggles = self._build_driving_toggles()
-    self._toggle_grid._columns = len(toggles)
-    for toggle_def in toggles:
-      tile = ToggleTile(
-        title=toggle_def["title"],
-        get_state=toggle_def["get_state"],
-        set_state=toggle_def["set_state"],
-        bg_color=PANEL_STYLE.accent,
-        desc=toggle_def.get("subtitle", ""),
-        is_enabled=toggle_def.get("is_enabled"),
-        disabled_label=toggle_def.get("disabled_label", ""),
-      )
-      self._toggle_grid.add_tile(tile)
+    defs = self._build_driving_toggles()
+    self._set_toggle_pages([defs[i:i+6] for i in range(0, len(defs), 6)])
 
   def _check_rebuild_grid(self):
     current_make = self._controller._get_display_make()
@@ -335,25 +325,14 @@ class VehicleSettingsManagerView(PanelManagerView):
     # Right Column/Features height
     tiles_height = 0.0
     if self._toggle_grid.tiles:
-      N = len(self._toggle_grid.tiles)
-      gap = self._toggle_grid.gap
-      if self._uses_two_columns(width):
-        cols = 2
-        tile_rows = (N + cols - 1) // cols
-        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
-        tiles_content_h = tile_rows * 130 + tile_gaps
-        tiles_height = self._section_block_height(tiles_content_h + 24)
-      else:
+      if not self._uses_two_columns(width):
+        self._toggle_grid._columns = 3
         avail_w = width - 24
-        cols = 3
-        tile_rows = (N + cols - 1) // cols
-        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
-        tiles_content_h = tile_rows * 130 + tile_gaps
+        tiles_content_h = self.measure_page_grid_height(self._toggle_grid, avail_w)
         tiles_height = SECTION_GAP + self._section_block_height(tiles_content_h + 24)
 
     if self._uses_two_columns(width):
-      vh = self._scroll_rect.height if self._scroll_rect and self._scroll_rect.height > 0 else tiles_height
-      return max(left_h, vh)
+      return self._compute_two_column_height(left_h)
     return left_h + tiles_height
 
   def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
@@ -411,24 +390,8 @@ class VehicleSettingsManagerView(PanelManagerView):
       # Right Column: Features
       if self._toggle_grid.tiles:
         rx = x + column_w + self.COLUMN_GAP
-        draw_section_header(rl.Rectangle(rx, y, column_w, SECTION_HEADER_HEIGHT), tr("Features"), style=PANEL_STYLE)
-        right_container_y = y + SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-
-        N = len(self._toggle_grid.tiles)
-        cols = 2
-        self._toggle_grid._columns = cols
-        gap = self._toggle_grid.gap
-        tile_rows = (N + cols - 1) // cols
-        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
-        tiles_content_h = tile_rows * 130 + tile_gaps
-
-        needed_height = tiles_content_h + 24
-        viewport_remaining = (self._scroll_rect.y + self._scroll_rect.height) - right_container_y
-        container_h = max(needed_height, viewport_remaining)
-
-        draw_list_group_shell(rl.Rectangle(rx, right_container_y, column_w, container_h), style=PANEL_STYLE)
-        self._toggle_grid.set_parent_rect(self._scroll_rect)
-        self._toggle_grid.render(rl.Rectangle(rx + 12, right_container_y + 12, column_w - 24, container_h - 24))
+        left_h = curr_y - y
+        self._draw_two_column_tile_grid(self._toggle_grid, rx, y, column_w, left_h, title=tr("Features"), style=PANEL_STYLE)
     else:
       # Single Column Stacked Layout
       draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), tr("Vehicle Identity"), style=PANEL_STYLE)
@@ -455,18 +418,12 @@ class VehicleSettingsManagerView(PanelManagerView):
         draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), tr("Features"), style=PANEL_STYLE)
         y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
-        N = len(self._toggle_grid.tiles)
-        cols = 3
-        self._toggle_grid._columns = cols
-        gap = self._toggle_grid.gap
+        self._toggle_grid._columns = 3
         avail_w = width - 24
-        tile_rows = (N + cols - 1) // cols
-        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
-        tiles_content_h = tile_rows * 130 + tile_gaps
+        tiles_content_h = self.measure_page_grid_height(self._toggle_grid, avail_w)
 
         draw_list_group_shell(rl.Rectangle(x, y, width, tiles_content_h + 24), style=PANEL_STYLE)
-        self._toggle_grid.set_parent_rect(self._scroll_rect)
-        self._toggle_grid.render(rl.Rectangle(x + 12, y + 12, avail_w, tiles_content_h))
+        self._render_page_grid(self._toggle_grid, rl.Rectangle(x + 12, y + 12, avail_w, tiles_content_h))
 
   def _draw_row(self, rect: rl.Rectangle, row: dict, is_last: bool):
     target_id = row["target_id"]
@@ -558,9 +515,9 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
   def _get_available_actions(self, key: str | None = None) -> list[str]:
     cs = starpilot_state.car_state
     if key == "MainCruiseButtonControl":
-      allowed_ids = {0, 9, 10}
+      allowed_ids = {0, 9, 10, 11, 12, 13}
       return [tr(o["name"]) for o in ACTION_OPTIONS if o["id"] in allowed_ids]
-    allowed_ids = set(range(9))
+    allowed_ids = set(range(9)) | {11, 12, 13}
     if key == "LKASButtonControl":
       allowed_ids.add(9)
     return [tr(o["name"]) for o in ACTION_OPTIONS

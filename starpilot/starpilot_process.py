@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import datetime
 import hashlib
+import importlib
 import json
 import requests
 import time
@@ -12,6 +13,7 @@ from openpilot.common.realtime import DT_MDL, Priority, Ratekeeper, config_realt
 from openpilot.common.time_helpers import system_time_valid
 from openpilot.system.sentry import capture_report
 from openpilot.system.athena.registration import UNREGISTERED_DONGLE_ID
+from openpilot.system.hardware.hw import Paths
 
 from openpilot.starpilot.assets.model_manager import MODEL_DOWNLOAD_ALL_PARAM, MODEL_DOWNLOAD_PARAM, ModelManager
 from openpilot.starpilot.assets.theme_manager import THEME_COMPONENT_PARAMS, ThemeManager
@@ -29,9 +31,12 @@ from openpilot.starpilot.system.starpilot_stats import send_stats
 from openpilot.starpilot.system.starpilot_tracking import StarPilotTracking
 
 ASSET_CHECK_RATE = (1 / DT_MDL)
+DASHBOARD_ANALYSIS_REFRESH_RATE = 60
 DRIVE_STATS_SYNC_RATE = 30
 TOGGLE_BROADCAST_INTERVAL_FRAMES = int(1 / DT_MDL)
 UPDATE_CHECK_INTERVAL_SECONDS = 60 * 60
+
+_DASHBOARD_UTILITIES = None
 
 
 def get_update_check_phase_seconds(params_raw):
@@ -115,8 +120,33 @@ def sync_drive_stats(params, session):
   except Exception as exception:
     print(f"Failed to sync drive stats: {exception}")
 
+def get_dashboard_utilities():
+  global _DASHBOARD_UTILITIES
+
+  if _DASHBOARD_UTILITIES is None:
+    _DASHBOARD_UTILITIES = importlib.import_module("openpilot.starpilot.system.the_galaxy.utilities")
+  return _DASHBOARD_UTILITIES
+
+def get_dashboard_footage_paths():
+  try:
+    return [
+      Paths.log_root(HD=True, raw=True),
+      Paths.log_root(konik=True, raw=True),
+      Paths.log_root(raw=True),
+    ]
+  except TypeError:
+    return [
+      "/data/media/0/realdata_HD/",
+      "/data/media/0/realdata_konik/",
+      str(Paths.log_root()),
+    ]
+
+def refresh_dashboard_analysis():
+  get_dashboard_utilities().get_dashboard_stats(get_dashboard_footage_paths())
+
 def transition_offroad(starpilot_planner, model_manager, theme_manager, thread_manager, time_validated, sm, params, starpilot_toggles):
-  params.put("LastGPSPosition", json.dumps(starpilot_planner.gps_position))
+  if gps_position_valid(starpilot_planner.gps_position):
+    params.put("LastGPSPosition", json.dumps(starpilot_planner.gps_position))
 
   if starpilot_toggles.lock_doors_timer != 0:
     thread_manager.run_with_lock(lock_doors, (starpilot_toggles.lock_doors_timer, sm, params), report=False)
@@ -188,6 +218,7 @@ def starpilot_thread():
   toggle_broadcast_pending = True
 
   drive_stats_session = requests.Session()
+  next_dashboard_analysis_refresh = 0.0
   next_drive_stats_sync = 0.0
   periodic_update_phase = get_update_check_phase_seconds(params_raw)
   next_periodic_update_check = get_next_periodic_update_check(time.monotonic(), periodic_update_phase)
@@ -251,6 +282,13 @@ def starpilot_thread():
         next_drive_stats_sync = monotonic_now + DRIVE_STATS_SYNC_RATE
     elif started:
       next_drive_stats_sync = 0.0
+
+    if not started and time_validated:
+      if monotonic_now >= next_dashboard_analysis_refresh:
+        thread_manager.run_with_lock(refresh_dashboard_analysis, report=False)
+        next_dashboard_analysis_refresh = monotonic_now + DASHBOARD_ANALYSIS_REFRESH_RATE
+    elif started:
+      next_dashboard_analysis_refresh = 0.0
 
     if rate_keeper.frame % ASSET_CHECK_RATE == 0:
       check_assets(now, model_manager, theme_manager, thread_manager, params, params_memory, starpilot_toggles)

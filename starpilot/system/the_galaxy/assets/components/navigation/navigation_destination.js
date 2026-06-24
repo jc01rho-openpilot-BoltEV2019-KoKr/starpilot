@@ -140,38 +140,114 @@ function parseCoordinatePair(value) {
   return { latitude, longitude };
 }
 
+function cleanSuggestionText(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function joinSuggestionParts(parts) {
+  const seen = new Set();
+  const unique = [];
+
+  for (const part of parts) {
+    const text = cleanSuggestionText(part);
+    if (!text) continue;
+
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(text);
+  }
+
+  return unique.join(", ");
+}
+
+function splitSuggestionLabel(value) {
+  const cleaned = cleanSuggestionText(value);
+  if (!cleaned) {
+    return { primary: "", secondary: "" };
+  }
+
+  const [primary, ...rest] = cleaned.split(",").map(part => part.trim()).filter(Boolean);
+  return {
+    primary: primary || cleaned,
+    secondary: rest.join(", "),
+  };
+}
+
+function getSuggestionText(suggestion) {
+  const rawName = cleanSuggestionText(suggestion.name || suggestion.title || "");
+  const rawPlaceName = cleanSuggestionText(suggestion.place_name || "");
+  const explicitAddress = joinSuggestionParts([
+    suggestion.full_address,
+    suggestion.address,
+    suggestion.district,
+    suggestion.city,
+    suggestion.cityname,
+    suggestion.adcode && suggestion.address ? "" : suggestion.adname,
+    suggestion.pname,
+  ]);
+
+  if (rawName) {
+    const splitPlaceName = rawPlaceName && rawPlaceName.toLowerCase().startsWith(`${rawName.toLowerCase()},`)
+      ? splitSuggestionLabel(rawPlaceName)
+      : { primary: rawName, secondary: "" };
+    const secondary = explicitAddress || splitPlaceName.secondary;
+    return {
+      primary: splitPlaceName.primary || rawName,
+      secondary: secondary && secondary.toLowerCase() !== rawName.toLowerCase() ? secondary : "",
+    };
+  }
+
+  if (rawPlaceName) {
+    return splitSuggestionLabel(rawPlaceName);
+  }
+
+  if (explicitAddress) {
+    return splitSuggestionLabel(explicitAddress);
+  }
+
+  return { primary: "Unnamed Location", secondary: "" };
+}
+
+let map;
+let destinationMarker;
+let favoriteMarkers = [];
+let sessionToken = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
+let remountCheckScheduled = false;
+
+const state = reactive({
+  amap1Key: undefined,
+  amap2Key: undefined,
+  canToggleProvider: false,
+  confirmedRoute: null,
+  confirmedRouteRefresh: 0,
+  destination: undefined,
+  favoriteRoutes: [],
+  favoriteToRemove: null,
+  favoriteToRename: null,
+  favoritesCount: 0,
+  favoritesVisible: false,
+  fetched: false,
+  initialized: false,
+  isMetric: true,
+  lastPosition: undefined,
+  loadingRoute: false,
+  mapboxPublic: undefined,
+  mapboxSecret: undefined,
+  missingKeys: null,
+  newFavoriteName: "",
+  previousDestinations: "[]",
+  searchProvider: "mapbox",
+  selectedRoute: null,
+  showRemoveFavoriteModal: false,
+  showRenameFavoriteModal: false,
+  suggestions: "[]"
+});
+
+const searchFieldState = reactive({ value: "" });
+
 export function NavDestination() {
-  let map;
-  let destinationMarker;
-  let favoriteMarkers = [];
-  const state = reactive({
-    amap1Key: undefined,
-    amap2Key: undefined,
-    canToggleProvider: false,
-    confirmedRoute: null,
-    confirmedRouteRefresh: 0,
-    destination: undefined,
-    favoriteToRemove: null,
-    favoriteToRename: null,
-    favoritesCount: 0,
-    favoritesVisible: false,
-    initialized: false,
-    isMetric: true,
-    lastPosition: undefined,
-    loadingRoute: false,
-    mapboxPublic: undefined,
-    mapboxSecret: undefined,
-    missingKeys: null,
-    newFavoriteName: "",
-    previousDestinations: "[]",
-    searchProvider: "mapbox",
-    selectedRoute: null,
-    showRemoveFavoriteModal: false,
-    showRenameFavoriteModal: false,
-    suggestions: "[]"
-  });
-  const searchFieldState = reactive({ value: "" });
-  const sessionToken = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
 
   function areRoutesEqual(a, b) {
     return a?.routeHash && b?.routeHash && a.routeHash === b.routeHash;
@@ -370,7 +446,12 @@ export function NavDestination() {
   }
 
   function isRouteFavorited(route, favorites) {
-    return favorites.some(fav =>
+    if (!route || !Array.isArray(route.destinationCoordinates) || route.destinationCoordinates.length !== 2) {
+      return false;
+    }
+
+    const favoriteRoutes = Array.isArray(favorites) ? favorites : [];
+    return favoriteRoutes.some(fav =>
       fav.latitude === route.destinationCoordinates[1] &&
       fav.longitude === route.destinationCoordinates[0]
     );
@@ -413,8 +494,13 @@ export function NavDestination() {
   async function loadFavoritesAlphabetically() {
     try {
       const res = await fetch("/api/navigation/favorite");
+      if (!res.ok) {
+        throw new Error(`Failed to load favorites: ${res.status}`);
+      }
+
       const json = await res.json();
-      const sorted = json.favorites.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+      const favorites = Array.isArray(json?.favorites) ? [...json.favorites] : [];
+      const sorted = favorites.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
       state.favoritesCount = sorted.length;
       state.favoriteRoutes = sorted;
       addFavoriteMarkers(sorted);
@@ -574,18 +660,31 @@ export function NavDestination() {
   }
 
   const setupMap = async (retries = 0) => {
-    if (!state.mapboxPublic || state.initialized) return;
+    if (!state.mapboxPublic) return false;
+
+    const container = document.getElementById("map");
+    if (!container) {
+      if (retries >= 50) return false;
+      await new Promise(r => requestAnimationFrame(r));
+      return setupMap(retries + 1);
+    }
+
+    if (map?.getContainer?.() && map.getContainer() !== container) {
+      favoriteMarkers.forEach(marker => marker.remove());
+      favoriteMarkers = [];
+      destinationMarker?.remove();
+      destinationMarker = undefined;
+      map.remove();
+      map = undefined;
+      state.initialized = false;
+    }
+
+    if (state.initialized) return false;
 
     if (typeof mapboxgl === "undefined") {
       await loadMapboxGL();
     }
 
-    const container = document.getElementById("map");
-    if (!container) {
-      if (retries >= 50) return;
-      await new Promise(r => requestAnimationFrame(r));
-      return setupMap(retries + 1);
-    }
     state.initialized = true;
     mapboxgl.accessToken = state.mapboxPublic;
     const initialCenter = state.lastPosition
@@ -643,9 +742,22 @@ export function NavDestination() {
         labelLayer
       );
     });
+    return true;
   };
 
-  getNavigationData();
+  if (!state.fetched) {
+    state.fetched = true;
+    void getNavigationData();
+  } else if (!remountCheckScheduled && !state.missingKeys) {
+    remountCheckScheduled = true;
+    queueMicrotask(async () => {
+      remountCheckScheduled = false;
+      const recreated = await setupMap();
+      if (recreated) {
+        await loadFavoritesAlphabetically();
+      }
+    });
+  }
 
   return html`
     <div class="navigation-container">
@@ -669,7 +781,7 @@ export function NavDestination() {
                     ${() => (state.favoritesCount > 0 ? html`<button class="favorites-toggle-button" @click="${handleFavoritesClick}">❤️ Favorites</button>` : "")}
                     ${() => (state.canToggleProvider ? html`
                       <div class="search-provider-toggle">
-                        <button class="${() => (state.searchProvider === "amap" ? "active" : "")}" @click="${() => { state.searchProvider = "amap"; state.suggestions = "[]"; }}">AMap</button>
+                        <button class="${() => (state.searchProvider === "amap" ? "active" : "")}" title="AMap / Gaode search provider" @click="${() => { state.searchProvider = "amap"; state.suggestions = "[]"; }}">AMap</button>
                         <button class="${() => (state.searchProvider === "mapbox" ? "active" : "")}" @click="${() => { state.searchProvider = "mapbox"; state.suggestions = "[]"; }}">Mapbox</button>
                       </div>
                     ` : "")}
@@ -747,11 +859,19 @@ function SearchSuggestions({ suggestions, selectSuggestion, removeFavorite, rena
   const isFavorite = s => s.name && s.latitude != null && s.longitude != null && s.routeId;
   const item = s => html`
     <div class="suggestion-item" @click="${() => selectSuggestion(s)}">
-      <p>
-        ${s.is_home ? "🏠 " : ""}
-        ${s.is_work ? "💼 " : ""}
-        ${s.name || s.address}
-      </p>
+      ${(() => {
+        const text = getSuggestionText(s);
+        return html`
+          <div class="suggestion-copy">
+            <p class="suggestion-primary">
+              ${s.is_home ? "🏠 " : ""}
+              ${s.is_work ? "💼 " : ""}
+              ${text.primary}
+            </p>
+            ${text.secondary ? html`<p class="suggestion-secondary">${text.secondary}</p>` : ""}
+          </div>
+        `;
+      })()}
       ${isFavorite(s) ? html`
         <div class="favorite-actions">
           <button class="home-favorite-button ${s.is_home ? "active" : ""}" title="Set as Home" @click="${e => { e.stopPropagation(); setHome(s); }}">🏠</button>
@@ -834,6 +954,11 @@ function NavigationDestination({
           routeId
         })
       });
+
+      if (!res.ok) {
+        throw new Error(`Failed to add favorite: ${res.status}`);
+      }
+
       const { message } = await res.json();
       showSnackbar(message || "Added to favorites!");
       await loadFavorites();

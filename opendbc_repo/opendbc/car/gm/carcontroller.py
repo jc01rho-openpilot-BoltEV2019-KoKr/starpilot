@@ -10,11 +10,13 @@ from opendbc.car.gm.values import (
   CruiseButtons, GMFlags, GMSafetyFlags,
 )
 from opendbc.car.interfaces import CarControllerBase
+from openpilot.common.pid import PIDController
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.starpilot.common.testing_grounds import testing_ground
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 NetworkLocation = structs.CarParams.NetworkLocation
+TransmissionType = structs.CarParams.TransmissionType
 LongCtrlState = structs.CarControl.Actuators.LongControlState
 GearShifter = structs.CarState.GearShifter
 
@@ -28,14 +30,34 @@ AUTO_HOLD_VOLT_CARS = {
   CAR.CHEVROLET_VOLT_ASCM,
   CAR.CHEVROLET_VOLT_CAMERA,
 }
-AUTO_HOLD_DRIVE_GEARS = {
+AUTO_HOLD_DRIVE_GEARS = (
   GearShifter.drive,
   GearShifter.low,
   GearShifter.manumatic,
-}
+)
 AUTO_HOLD_MIN_BRAKE = 80
 AUTO_HOLD_MAX_BRAKE = 240
 AUTO_HOLD_MIN_DRIVE_TIME_S = 3.0
+VOLT_ONE_PEDAL_DECEL_BP = [0.5 * CV.MPH_TO_MS, 6.0 * CV.MPH_TO_MS]
+VOLT_ONE_PEDAL_DECEL_V = [-1.0, -1.1]
+VOLT_ONE_PEDAL_REGEN_PADDLE_DECEL_V = [-1.5, -1.6]
+VOLT_ONE_PEDAL_MAX_DECEL = min((*VOLT_ONE_PEDAL_DECEL_V, *VOLT_ONE_PEDAL_REGEN_PADDLE_DECEL_V)) - 0.5
+VOLT_ONE_PEDAL_PID_NEG_LIMIT = -3.5
+VOLT_ONE_PEDAL_SPEED_ERROR_FACTOR_BP = [1.5, 20.0]
+VOLT_ONE_PEDAL_SPEED_ERROR_FACTOR_V = [0.4, 0.2]
+VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_SPEED_FACTOR_BP = [0.0, 10.0 * CV.MPH_TO_MS]
+VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_SPEED_FACTOR_V = [0.2, 1.0]
+VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_STEER_FACTOR_BP = [20.0, 120.0]
+VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_STEER_FACTOR_V = [1.0, 0.2]
+VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_UP = 0.8 * DT_CTRL * 4
+VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_DOWN = 0.8 * DT_CTRL * 4
+VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_BP = [4.0, 8.0]
+VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_V = [0.4, 1.0]
+VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_INCLINE_V = [0.2, 1.0]
+TRUCK_LONG_SMOOTH_CARS = {
+  CAR.CHEVROLET_SILVERADO,
+  CAR.CHEVROLET_SILVERADO_CC,
+}
 
 
 def get_stock_cc_active_for_cancel(CP, CS):
@@ -127,8 +149,50 @@ def get_adas_keepalive_step(CP, is_kaofui_car):
   return None
 
 
+def should_send_adas_status(CP, is_kaofui_car):
+  if CP.radarUnavailable:
+    return False
+
+  if not is_kaofui_car:
+    return True
+
+  if CP.carFingerprint in ASCM_INT:
+    return False
+
+  return CP.networkLocation != NetworkLocation.fwdCamera and CP.carFingerprint not in SDGM_CAR
+
+
 def get_testing_ground_1_brake_switch_bias(v_ego: float) -> int:
   return int(round(np.interp(v_ego, [0.0, 6.0, 15.0, 30.0], [40.0, 85.0, 130.0, 170.0])))
+
+
+def shape_truck_positive_accel(accel: float, v_ego: float, enabled: bool) -> float:
+  if not enabled or accel <= 0.0 or v_ego < 12.0:
+    return accel
+
+  low_scale = float(np.interp(v_ego, [12.0, 18.0, 25.0, 35.0], [0.95, 0.88, 0.82, 0.76]))
+  mid_scale = float(np.interp(v_ego, [12.0, 18.0, 25.0, 35.0], [0.98, 0.94, 0.89, 0.84]))
+
+  if accel <= 0.12:
+    return accel * low_scale
+  if accel <= 0.35:
+    return float(np.interp(accel, [0.12, 0.35], [0.12 * low_scale, 0.35 * mid_scale]))
+  if accel <= 0.65:
+    return float(np.interp(accel, [0.35, 0.65], [0.35 * mid_scale, 0.65]))
+  return accel
+
+
+def get_lka_steering_cmd_counter(next_counter: int, CS) -> int:
+  if getattr(CS, "loopback_lka_steering_cmd_updated", False):
+    return (getattr(CS, "loopback_lka_steering_cmd_counter", next_counter) + 1) % 4
+  if next_counter < 0 and getattr(CS, "loopback_lka_steering_cmd_ts_nanos", 0) == 0:
+    return (getattr(CS, "pt_lka_steering_cmd_counter", next_counter) + 1) % 4
+  return next_counter
+
+
+def should_send_stock_long_cancel(cancel_counter: int, CS) -> bool:
+  cs_out = getattr(CS, "out", None)
+  return cancel_counter > CAMERA_CANCEL_DELAY_FRAMES and not bool(getattr(cs_out, "accFaulted", False))
 
 
 def supports_volt_auto_hold(CP, auto_hold_enabled: bool):
@@ -142,19 +206,53 @@ def supports_volt_auto_hold(CP, auto_hold_enabled: bool):
   )
 
 
+def supports_volt_one_pedal(CP, one_pedal_enabled: bool):
+  safety_cfg = getattr(CP, "safetyConfigs", ())
+  safety_param = safety_cfg[0].safetyParam if safety_cfg else 0
+  stock_hold_safety_ready = bool(safety_param & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value)
+  return (
+    one_pedal_enabled and
+    stock_hold_safety_ready and
+    getattr(CP, "transmissionType", None) == TransmissionType.direct and
+    CP.carFingerprint in AUTO_HOLD_VOLT_CARS
+  )
+
+
 def estimate_auto_hold_brake(driver_brake: float, op_brake: float) -> int:
   driver_hold = np.interp(float(driver_brake), [8.0, 20.0, 40.0, 80.0], [80.0, 110.0, 150.0, 220.0])
   hold_brake = max(float(op_brake), float(driver_hold))
   return int(round(np.clip(hold_brake, AUTO_HOLD_MIN_BRAKE, AUTO_HOLD_MAX_BRAKE)))
 
 
+def get_volt_one_pedal_target_decel(v_ego: float) -> float:
+  return float(np.interp(v_ego, VOLT_ONE_PEDAL_DECEL_BP, VOLT_ONE_PEDAL_DECEL_V))
+
+
+def should_activate_volt_one_pedal(one_pedal_ready: bool, cruise_main: bool, long_active: bool,
+                                   gas_pressed: bool, brake_pressed: bool, regen_braking: bool,
+                                   single_pedal_mode: bool, gear_shifter, drive_time_s: float) -> bool:
+  # Volt rear wheel direction bits can falsely report reverse while stopping in L.
+  return (
+    one_pedal_ready and
+    cruise_main and
+    single_pedal_mode and
+    gear_shifter in AUTO_HOLD_DRIVE_GEARS and
+    drive_time_s >= AUTO_HOLD_MIN_DRIVE_TIME_S and
+    not long_active and
+    not gas_pressed and
+    not brake_pressed and
+    not regen_braking
+  )
+
+
 def should_activate_auto_hold(hold_ready: bool, auto_hold_armed: bool, auto_hold_engaged: bool,
-                              brake_pressed: bool, standstill: bool, long_active: bool,
+                              brake_pressed: bool, gas_pressed: bool, standstill: bool, long_active: bool,
                               regen_braking: bool, v_ego: float) -> bool:
   stopped = standstill or v_ego < 0.02
   return (
     hold_ready and
     (auto_hold_armed or auto_hold_engaged or brake_pressed) and
+    not gas_pressed and
     stopped and
     not long_active and
     not regen_braking
@@ -231,10 +329,51 @@ class CarController(CarControllerBase):
     self.malibu_button_phase = 0
     self.malibu_last_button_ts_nanos = 0
     self.auto_hold_brake = 0
+    self.volt_one_pedal_pid = PIDController(
+      (CP.longitudinalTuning.kpBP, CP.longitudinalTuning.kpV),
+      (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
+      rate=1 / (DT_CTRL * 4),
+      pos_limit=0.0,
+      neg_limit=VOLT_ONE_PEDAL_PID_NEG_LIMIT,
+    )
+    self.volt_one_pedal_decel = 0.0
+    self.volt_one_pedal_brake = 0
     try:
       self.gm_auto_hold_enabled = self.params_.get_bool("GMAutoHold")
     except UnknownKeyName:
       self.gm_auto_hold_enabled = False
+
+  def _reset_volt_one_pedal(self):
+    self.volt_one_pedal_pid.reset()
+    self.volt_one_pedal_decel = min(0.0, float(self.aego))
+    self.volt_one_pedal_brake = 0
+
+  def _update_volt_one_pedal_brake(self, CC, CS):
+    pitch_accel = 0.0
+    if len(CC.orientationNED) == 3 and CS.out.vEgo > self.CP.vEgoStopping:
+      pitch_accel = math.sin(CC.orientationNED[1]) * ACCELERATION_DUE_TO_GRAVITY
+      pitch_factor_values = VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_V if pitch_accel <= 0.0 else VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_INCLINE_V
+      pitch_accel *= float(np.interp(CS.out.vEgo, VOLT_ONE_PEDAL_ACCEL_PITCH_FACTOR_BP, pitch_factor_values))
+
+    target_decel = get_volt_one_pedal_target_decel(CS.out.vEgo)
+    measured_decel = min(0.0, CS.out.aEgo + pitch_accel)
+    error_factor = float(np.interp(CS.out.vEgo, VOLT_ONE_PEDAL_SPEED_ERROR_FACTOR_BP, VOLT_ONE_PEDAL_SPEED_ERROR_FACTOR_V))
+    error = (target_decel - measured_decel) * error_factor
+
+    raw_decel = float(self.volt_one_pedal_pid.update(error, speed=CS.out.vEgo, feedforward=target_decel))
+    rate_limit_factor = min(
+      float(np.interp(CS.out.vEgo, VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_SPEED_FACTOR_BP, VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_SPEED_FACTOR_V)),
+      float(np.interp(abs(CS.out.steeringAngleDeg), VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_STEER_FACTOR_BP, VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_STEER_FACTOR_V)),
+    )
+    lower = min(self.volt_one_pedal_decel, measured_decel) - VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_UP * rate_limit_factor
+    upper = max(self.volt_one_pedal_decel, measured_decel) + VOLT_ONE_PEDAL_DECEL_RATE_LIMIT_DOWN + rate_limit_factor
+    self.volt_one_pedal_decel = float(np.clip(raw_decel, lower, upper))
+    self.volt_one_pedal_decel = max(self.volt_one_pedal_decel, VOLT_ONE_PEDAL_MAX_DECEL)
+    self.volt_one_pedal_brake = int(round(np.clip(
+      np.interp(self.volt_one_pedal_decel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V),
+      0,
+      self.params.MAX_BRAKE,
+    )))
 
   def calc_pedal_command(self, accel: float, long_active: bool, v_ego: float):
     if not long_active:
@@ -388,7 +527,31 @@ class CarController(CarControllerBase):
     accel = actuators.accel
     press_regen_paddle = False
     auto_hold_enabled = supports_volt_auto_hold(self.CP, self.gm_auto_hold_enabled)
-    stock_hold_apply_brake = self.apply_brake if self.CP.openpilotLongitudinalControl else 0
+    volt_one_pedal_supported = supports_volt_one_pedal(
+      self.CP, bool(getattr(starpilot_toggles, "volt_one_pedal_mode", False))
+    )
+    volt_one_pedal_active = should_activate_volt_one_pedal(
+      volt_one_pedal_supported,
+      CS.out.cruiseState.available,
+      CC.longActive,
+      CS.out.gasPressed,
+      CS.out.brakePressed,
+      CS.out.regenBraking,
+      bool(getattr(CS, "single_pedal_mode", False)),
+      CS.out.gearShifter,
+      float(getattr(CS, "one_pedal_drive_time", 0.0)),
+    )
+
+    if self.frame % 4 == 0:
+      if volt_one_pedal_active:
+        self._update_volt_one_pedal_brake(CC, CS)
+      else:
+        self._reset_volt_one_pedal()
+      if not self.CP.openpilotLongitudinalControl:
+        self.apply_gas = 0
+        self.apply_brake = self.volt_one_pedal_brake if volt_one_pedal_active else 0
+
+    stock_hold_apply_brake = max(self.apply_brake if self.CP.openpilotLongitudinalControl else 0, self.volt_one_pedal_brake)
 
     hold_ready = (
       auto_hold_enabled and
@@ -398,6 +561,8 @@ class CarController(CarControllerBase):
     )
     if not hold_ready or CS.out.gasPressed:
       CS.auto_hold_armed = False
+      if CS.out.gasPressed:
+        CS.auto_hold_engaged = False
     elif CS.regen_release_timer > 0.0:
       CS.auto_hold_armed = False
     elif not CS.auto_hold_armed and (CS.out.vEgo > 0.03 or ((CS.out.standstill or CS.out.vEgo < 0.02) and CS.out.brakePressed)):
@@ -497,10 +662,18 @@ class CarController(CarControllerBase):
       CS.auto_hold_armed,
       CS.auto_hold_engaged,
       CS.out.brakePressed,
+      CS.out.gasPressed,
       CS.out.standstill,
       CC.longActive,
       CS.out.regenBraking,
       CS.out.vEgo,
+    )
+    volt_one_pedal_braking = volt_one_pedal_active and self.volt_one_pedal_brake > 0
+    volt_one_pedal_hold_active = (
+      volt_one_pedal_braking and
+      not auto_hold_active and
+      CS.one_pedal_drive_time >= AUTO_HOLD_MIN_DRIVE_TIME_S and
+      (CS.out.standstill or CS.out.vEgo < 0.02)
     )
 
     # Steering (Active: 50Hz, inactive: 10Hz)
@@ -606,7 +779,16 @@ class CarController(CarControllerBase):
             if testing_ground.use_1:
               accel_max = min(accel_max, np.interp(CS.out.vEgo, [0.0, 4.0, 12.0], [1.25, 1.6, self.params.ACCEL_MAX]))
 
-            accel_cmd = float(np.clip(actuators.accel + accel_due_to_pitch, self.params.ACCEL_MIN, accel_max))
+            accel_input = actuators.accel + accel_due_to_pitch
+            if (
+              getattr(starpilot_toggles, "truck_tuning", False) and
+              self.CP.carFingerprint in TRUCK_LONG_SMOOTH_CARS and
+              getattr(self.CP, "transmissionType", None) == TransmissionType.automatic and
+              not self.CP.enableGasInterceptorDEPRECATED
+            ):
+              accel_input = shape_truck_positive_accel(accel_input, CS.out.vEgo, True)
+
+            accel_cmd = float(np.clip(accel_input, self.params.ACCEL_MIN, accel_max))
             torque = self.tireRadius * ((self.mass * accel_cmd) + (0.5 * self.coeffDrag * self.frontalArea * self.airDensity * CS.out.vEgo ** 2))
             scaled_torque = torque + self.params.ZERO_GAS
             apply_gas_torque = np.clip(scaled_torque, self.params.MAX_ACC_REGEN, gas_max)
@@ -626,6 +808,10 @@ class CarController(CarControllerBase):
           if self.CP.carFingerprint in CC_ONLY_CAR:
             # gas interceptor only used for full long control on cars without ACC
             interceptor_gas_cmd, press_regen_paddle = self.calc_pedal_command(actuators.accel, CC.longActive, CS.out.vEgo)
+
+        if volt_one_pedal_braking:
+          self.apply_gas = self.params.INACTIVE_REGEN
+          self.apply_brake = max(self.apply_brake, self.volt_one_pedal_brake)
 
         maneuver_sng_launch = self.longitudinal_maneuver_mode and self.is_volt
         if (
@@ -686,20 +872,34 @@ class CarController(CarControllerBase):
             acc_engaged = CC.enabled
 
           if auto_hold_active:
-            hold_brake = self.auto_hold_brake or estimate_auto_hold_brake(CS.out.brake, self.apply_brake)
+            hold_brake = max(self.volt_one_pedal_brake, self.auto_hold_brake or estimate_auto_hold_brake(CS.out.brake, self.apply_brake))
             hold_standstill = CS.pcm_acc_status == AccState.STANDSTILL
             hold_near_stop = CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE
             can_sends.append(gmcan.create_friction_brake_command(
-              self.packer_ch, friction_brake_bus, hold_brake, idx, False, hold_near_stop, hold_standstill, self.CP))
+              self.packer_ch, friction_brake_bus, hold_brake, idx, False, hold_near_stop, hold_standstill,
+              self.CP, allow_near_stop_mode=True))
+            CS.auto_hold_engaged = True
+            CS.auto_hold_fault_suppression_timer = 1.0
+          elif volt_one_pedal_hold_active:
+            hold_brake = max(self.volt_one_pedal_brake, self.auto_hold_brake or estimate_auto_hold_brake(0.0, self.volt_one_pedal_brake))
+            hold_standstill = CS.pcm_acc_status == AccState.STANDSTILL
+            hold_near_stop = CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE
+            can_sends.append(gmcan.create_friction_brake_command(
+              self.packer_ch, friction_brake_bus, hold_brake, idx, False, hold_near_stop, hold_standstill,
+              self.CP, allow_near_stop_mode=True))
             CS.auto_hold_engaged = True
             CS.auto_hold_fault_suppression_timer = 1.0
           else:
+            if volt_one_pedal_braking:
+              at_full_stop = at_full_stop or CS.pcm_acc_status == AccState.STANDSTILL
+              near_stop = near_stop or (CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE)
             # GasRegenCmdActive needs to be 1 to avoid cruise faults. It describes the ACC state, not actuation
             can_sends.append(gmcan.create_gas_regen_command(
               self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx, acc_engaged, at_full_stop,
               include_always_one3=self.CP.carFingerprint in kaofui_cars, use_volt_layout=self.is_volt))
             can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
-                                                               idx, CC.enabled, near_stop, at_full_stop, self.CP))
+                                                               idx, CC.enabled, near_stop, at_full_stop, self.CP,
+                                                               allow_near_stop_mode=volt_one_pedal_braking))
             CS.auto_hold_engaged = False
 
         if should_send_acc_dashboard_status(self.CP, dash_speed_spoof_active):
@@ -709,33 +909,27 @@ class CarController(CarControllerBase):
 
       # Radar needs to know current speed and yaw rate (50hz),
       # and that ADAS is alive (10hz)
-      if not self.CP.radarUnavailable:
-        send_adas = True
+      if should_send_adas_status(self.CP, self.CP.carFingerprint in kaofui_cars):
+        tt = self.frame * DT_CTRL
         if self.CP.carFingerprint in kaofui_cars:
-          if self.CP.carFingerprint not in ASCM_INT:
-            send_adas = (self.CP.networkLocation != NetworkLocation.fwdCamera) and (self.CP.carFingerprint not in SDGM_CAR)
-
-        if send_adas:
-          tt = self.frame * DT_CTRL
-          if self.CP.carFingerprint in kaofui_cars:
-            time_and_headlights_step = 10
-            speed_and_accelerometer_step = 2
-            if self.frame % time_and_headlights_step == 0:
-              idx = (self.frame // time_and_headlights_step) % 4
-              can_sends.append(gmcan.create_adas_time_status(CanBus.OBSTACLE, int((tt - self.start_time) * 60), idx))
-              can_sends.append(gmcan.create_adas_headlights_status(self.packer_obj, CanBus.OBSTACLE))
-            if self.frame % speed_and_accelerometer_step == 0:
-              idx = (self.frame // speed_and_accelerometer_step) % 4
-              can_sends.append(gmcan.create_adas_steering_status(CanBus.OBSTACLE, idx))
-              can_sends.append(gmcan.create_adas_accelerometer_speed_status(CanBus.OBSTACLE, CS.out.vEgo, idx))
-          else:
-            time_and_headlights_step = 20
-            if self.frame % time_and_headlights_step == 0:
-              idx = (self.frame // time_and_headlights_step) % 4
-              can_sends.append(gmcan.create_adas_time_status(CanBus.OBSTACLE, int((tt - self.start_time) * 60), idx))
-              can_sends.append(gmcan.create_adas_headlights_status(self.packer_obj, CanBus.OBSTACLE))
-              can_sends.append(gmcan.create_adas_steering_status(CanBus.OBSTACLE, idx))
-              can_sends.append(gmcan.create_adas_accelerometer_speed_status(CanBus.OBSTACLE, CS.out.vEgo, idx))
+          time_and_headlights_step = 10
+          speed_and_accelerometer_step = 2
+          if self.frame % time_and_headlights_step == 0:
+            idx = (self.frame // time_and_headlights_step) % 4
+            can_sends.append(gmcan.create_adas_time_status(CanBus.OBSTACLE, int((tt - self.start_time) * 60), idx))
+            can_sends.append(gmcan.create_adas_headlights_status(self.packer_obj, CanBus.OBSTACLE))
+          if self.frame % speed_and_accelerometer_step == 0:
+            idx = (self.frame // speed_and_accelerometer_step) % 4
+            can_sends.append(gmcan.create_adas_steering_status(CanBus.OBSTACLE, idx))
+            can_sends.append(gmcan.create_adas_accelerometer_speed_status(CanBus.OBSTACLE, CS.out.vEgo, idx))
+        else:
+          time_and_headlights_step = 20
+          if self.frame % time_and_headlights_step == 0:
+            idx = (self.frame // time_and_headlights_step) % 4
+            can_sends.append(gmcan.create_adas_time_status(CanBus.OBSTACLE, int((tt - self.start_time) * 60), idx))
+            can_sends.append(gmcan.create_adas_headlights_status(self.packer_obj, CanBus.OBSTACLE))
+            can_sends.append(gmcan.create_adas_steering_status(CanBus.OBSTACLE, idx))
+            can_sends.append(gmcan.create_adas_accelerometer_speed_status(CanBus.OBSTACLE, CS.out.vEgo, idx))
 
       keepalive_step = get_adas_keepalive_step(self.CP, self.CP.carFingerprint in kaofui_cars)
       if keepalive_step is not None and self.frame % keepalive_step == 0:
@@ -761,14 +955,33 @@ class CarController(CarControllerBase):
     else:
       if self.frame % 4 == 0 and auto_hold_active:
         idx = (self.frame // 4) % 4
-        hold_brake = self.auto_hold_brake or estimate_auto_hold_brake(CS.out.brake, stock_hold_apply_brake)
+        hold_brake = max(self.volt_one_pedal_brake, self.auto_hold_brake or estimate_auto_hold_brake(CS.out.brake, stock_hold_apply_brake))
         hold_standstill = CS.pcm_acc_status == AccState.STANDSTILL
         hold_near_stop = CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE
         can_sends.append(gmcan.create_friction_brake_command(
-          self.packer_ch, get_friction_brake_bus(self.CP), hold_brake, idx, False, hold_near_stop, hold_standstill, self.CP))
+          self.packer_ch, get_friction_brake_bus(self.CP), hold_brake, idx, False, hold_near_stop, hold_standstill,
+          self.CP, allow_near_stop_mode=True))
         CS.auto_hold_engaged = True
         CS.auto_hold_fault_suppression_timer = 1.0
+      elif self.frame % 4 == 0 and volt_one_pedal_hold_active:
+        idx = (self.frame // 4) % 4
+        hold_brake = max(self.volt_one_pedal_brake, self.auto_hold_brake or estimate_auto_hold_brake(0.0, self.volt_one_pedal_brake))
+        hold_standstill = CS.pcm_acc_status == AccState.STANDSTILL
+        hold_near_stop = CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE
+        can_sends.append(gmcan.create_friction_brake_command(
+          self.packer_ch, get_friction_brake_bus(self.CP), hold_brake, idx, False, hold_near_stop, hold_standstill,
+          self.CP, allow_near_stop_mode=True))
+        CS.auto_hold_engaged = True
+        CS.auto_hold_fault_suppression_timer = 1.0
+      elif self.frame % 4 == 0 and volt_one_pedal_braking:
+        idx = (self.frame // 4) % 4
+        near_stop = CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE
+        can_sends.append(gmcan.create_friction_brake_command(
+          self.packer_ch, get_friction_brake_bus(self.CP), self.volt_one_pedal_brake, idx, False, near_stop, False,
+          self.CP, allow_near_stop_mode=True))
+        CS.auto_hold_engaged = False
       elif self.frame % 4 == 0:
+        self.apply_brake = 0
         CS.auto_hold_engaged = False
 
       # While car is braking, cancel button causes ECM to enter a soft disable state with a fault status.

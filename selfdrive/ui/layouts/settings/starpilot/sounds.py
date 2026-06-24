@@ -53,6 +53,10 @@ SOUNDS_PANEL_METRICS = replace(
 class SoundsManagerView(PanelManagerView):
   METRICS = SOUNDS_PANEL_METRICS
 
+  @property
+  def vertical_scrolling_disabled(self) -> bool:
+    return True
+
   def __init__(self, controller: StarPilotSoundsLayout):
     super().__init__()
     self._controller = controller
@@ -74,19 +78,22 @@ class SoundsManagerView(PanelManagerView):
 
   def _init_toggles(self):
     self._toggle_grid = TileGrid(columns=2, padding=12)
+    self._child(self._toggle_grid)
+    self._page_grid = self._toggle_grid
+
+    toggle_defs = []
     for key in self._controller.CUSTOM_ALERTS_KEYS:
       info = self._controller.ALERT_INFO[key]
-      tile = ToggleTile(
-        title=tr(info["title"]),
-        get_state=lambda k=key: self._controller._params.get_bool(k),
-        set_state=lambda state, k=key: self._controller._params.put_bool(k, state),
-        bg_color=PANEL_STYLE.accent,
-        desc=tr(info.get("subtitle", "")),
-        is_enabled=info.get("is_enabled"),
-        disabled_label=tr(info.get("disabled_label", "")) if info.get("disabled_label") else "",
-      )
-      self._toggle_grid.add_tile(tile)
-    self._child(self._toggle_grid)
+      toggle_defs.append({
+        "title": tr(info["title"]),
+        "subtitle": tr(info.get("subtitle", "")),
+        "get": lambda k=key: self._controller._params.get_bool(k),
+        "set": lambda state, k=key: self._controller._params.put_bool(k, state),
+        "is_enabled": info.get("is_enabled"),
+        "disabled_label": tr(info.get("disabled_label", "")) if info.get("disabled_label") else "",
+      })
+
+    self._set_toggle_pages([toggle_defs[i:i+6] for i in range(0, len(toggle_defs), 6)])
 
   def _set_active_adjustor(self, key: str, active: bool):
     if active:
@@ -195,8 +202,7 @@ class SoundsManagerView(PanelManagerView):
     )
 
   def _handle_mouse_press(self, mouse_pos: MousePos):
-    self._pressed_target = self._target_at(mouse_pos)
-    self._can_click = True
+    super()._handle_mouse_press(mouse_pos)
     for adjustor in self._adjustor_rows.values():
       adjustor._handle_mouse_press(mouse_pos)
     self._toggle_grid._handle_mouse_press(mouse_pos)
@@ -205,17 +211,10 @@ class SoundsManagerView(PanelManagerView):
     for adjustor in self._adjustor_rows.values():
       adjustor._handle_mouse_release(mouse_pos)
     self._toggle_grid._handle_mouse_release(mouse_pos)
-
-    target = self._target_at(mouse_pos) if self._scroll_panel.is_touch_valid() else None
-    if self._pressed_target is not None and self._pressed_target == target and self._can_click:
-      self._activate_target(target)
-    self._pressed_target = None
-    self._can_click = True
+    super()._handle_mouse_release(mouse_pos)
 
   def _handle_mouse_event(self, mouse_event: MouseEvent):
-    if not self._scroll_panel.is_touch_valid():
-      self._can_click = False
-      return
+    super()._handle_mouse_event(mouse_event)
     for adjustor in self._adjustor_rows.values():
       adjustor._handle_mouse_event(mouse_event)
     self._toggle_grid._handle_mouse_event(mouse_event)
@@ -251,17 +250,11 @@ class SoundsManagerView(PanelManagerView):
 
     cd_h = self._adjustor_rows[self._controller.COOLDOWN_KEY].measure_height(col_width)
 
-    tile_rows = self._toggle_grid.get_row_count(len(self._toggle_grid.tiles), available_width=col_width)
-    tile_gaps = self._toggle_grid.get_internal_gap_height(len(self._toggle_grid.tiles), available_width=col_width)
-    tiles_content_h = tile_rows * 130 + tile_gaps
-
-    self._tile_grid_h = max(tiles_content_h, left_column_total_h - cd_h - SECTION_GAP - (GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP) - 16.0)
-
-    right_column_total_h = cd_h + SECTION_GAP + (GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP) + (self._tile_grid_h + 16.0)
+    tiles_container_h = left_column_total_h - cd_h - SECTION_GAP
+    self._tiles_container_h = max(130.0, tiles_container_h)
 
     section_overhead = SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-    min_h = self._scroll_rect.height if self._scroll_rect else 0.0
-    return max(min_h, section_overhead + max(left_column_total_h, right_column_total_h))
+    return self._compute_two_column_height(section_overhead + max(left_column_total_h, cd_h + SECTION_GAP + self._tiles_container_h))
 
   def _draw_header(self, rect: rl.Rectangle):
     draw_settings_panel_header(rect, tr("Sounds & Alerts"), tr("Manage system volumes and custom alert toggles."), subtitle_size=24)
@@ -349,10 +342,8 @@ class SoundsManagerView(PanelManagerView):
 
     current_y = self._draw_group_header(x + 24, current_y, width - 48, tr("CUSTOM ALERTS"))
 
-    draw_list_group_shell(rl.Rectangle(x, current_y, width, self._tile_grid_h + 16), style=PANEL_STYLE)
-
-    self._toggle_grid.set_parent_rect(self._scroll_rect)
-    self._toggle_grid.render(rl.Rectangle(x + 12, current_y + 8, width - 24, self._tile_grid_h))
+    grid_container_h = self._tiles_container_h - (GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP)
+    self._draw_two_column_tile_grid(self._toggle_grid, x, current_y, width, grid_container_h, title=None, style=PANEL_STYLE)
 
 
 class StarPilotSoundsLayout(_SettingsPage):

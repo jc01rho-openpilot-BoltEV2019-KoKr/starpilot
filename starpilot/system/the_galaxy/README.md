@@ -1,12 +1,12 @@
-# The Pond
+# The Galaxy
 
-**The Pond** is a lightweight web-based interface for managing your device. It allows you to adjust settings remotely, view video streams, and download logs—all from your browser.
+**The Galaxy** is a lightweight web-based interface for managing your device. It allows you to adjust settings remotely, view video streams, and download logs—all from your browser.
 
 ---
 
 # Architecture
 
-The Pond has two main components:  
+The Galaxy has two main components:  
 - A **Python Flask API**  
 - A **frontend built with Arrow.js** (a minimal reactive framework)
 
@@ -14,7 +14,7 @@ Because the frontend uses native ES modules, there's no need for a build step or
 
 ## API
 
-The API is simple and defined in `the_pond.py`. It exposes a handful of JSON-based endpoints via standard Flask routes:
+The API is simple and defined in `the_galaxy.py`. It exposes a handful of JSON-based endpoints via standard Flask routes:
 
 - Get and update settings  
 - Fetch error logs  
@@ -105,13 +105,13 @@ To add a new page:
 
 ---
 
-# Running The Pond
+# Running The Galaxy
 
 ### Using Docker
 
 ```bash
-docker build -t the_pond .
-docker run -v $(pwd):/app --rm -ti -p 8084:8084 the_pond
+docker build -t the_galaxy .
+docker run -v $(pwd):/app --rm -ti -p 8084:8084 the_galaxy
 ```
 
 ### Run and debug on comma device (or computer with python)

@@ -17,6 +17,7 @@ NAV_TURN_DISTANCE_BREAKPOINTS = [20.0, 25.0, 30.0]
 NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS = [0.0, 15.0, 30.0]
 NAV_KEEP_DISTANCE_BREAKPOINTS = [25.0, 90.0, 160.0]
 NAV_KEEP_AMBIGUOUS_SPLIT_DISTANCE_SCALE = 0.6
+NAV_KEEP_SMALL_SPLIT_MAX_OTHER_LANES = 2
 
 DESIRES = {
   LaneChangeDirection.none: {
@@ -120,16 +121,54 @@ class DesireHelper:
     return distance <= float(np.interp(carstate.vEgo, NAV_TURN_DISTANCE_SPEED_BREAKPOINTS, NAV_TURN_DISTANCE_BREAKPOINTS))
 
   @staticmethod
-  def _nav_keep_is_imminent(carstate, maneuver_distance, maneuver_type="", same_side_lane_count=0):
+  def _nudgeless_enabled(starpilot_toggles, controls_enabled):
+    nudgeless = bool(getattr(starpilot_toggles, "nudgeless", False))
+    if getattr(starpilot_toggles, "nudgeless_lane_change_only_when_engaged", False):
+      nudgeless &= bool(controls_enabled)
+    return nudgeless
+
+  @staticmethod
+  def _nav_should_delay_ambiguous_split(maneuver_type="", same_side_lane_count=0, lane_count=0):
+    if maneuver_type not in ("off ramp", "fork") or int(same_side_lane_count or 0) <= 1:
+      return False
+
+    total_lanes = int(lane_count or 0)
+    if total_lanes <= 0:
+      return True
+
+    other_lanes = max(total_lanes - int(same_side_lane_count or 0), 0)
+    return other_lanes <= NAV_KEEP_SMALL_SPLIT_MAX_OTHER_LANES
+
+  @staticmethod
+  def _nav_keep_is_imminent(carstate, maneuver_distance, maneuver_type="", same_side_lane_count=0, lane_count=0):
     try:
       distance = float(maneuver_distance)
     except (TypeError, ValueError):
       return False
 
     threshold = float(np.interp(carstate.vEgo, NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS, NAV_KEEP_DISTANCE_BREAKPOINTS))
-    if maneuver_type in ("off ramp", "fork") and int(same_side_lane_count or 0) > 1:
+    if DesireHelper._nav_should_delay_ambiguous_split(maneuver_type, same_side_lane_count, lane_count):
       threshold *= NAV_KEEP_AMBIGUOUS_SPLIT_DISTANCE_SCALE
     return distance <= threshold
+
+  @staticmethod
+  def _nav_should_suppress_edge_lane_keep(nav_instruction_state):
+    maneuver_type = str(nav_instruction_state.get("maneuverType", ""))
+    if maneuver_type not in ("off ramp", "fork"):
+      return False
+
+    active_lane_direction = str(nav_instruction_state.get("activeLaneDirection", ""))
+    if active_lane_direction not in ("slightLeft", "left", "sharpLeft", "slightRight", "right", "sharpRight"):
+      return False
+
+    same_side_lane_count = int(nav_instruction_state.get("sameSideLaneCount", 0) or 0)
+    lane_count = int(nav_instruction_state.get("laneCount", 0) or 0)
+
+    return (
+      DesireHelper._nav_should_delay_ambiguous_split(maneuver_type, same_side_lane_count, lane_count) and
+      bool(nav_instruction_state.get("activeLaneAtRoadEdge", False)) and
+      bool(nav_instruction_state.get("hasSharedSameSideLane", False))
+    )
 
   @staticmethod
   def _nav_effective_modifier(nav_instruction_state, carstate, maneuver_distance):
@@ -137,20 +176,27 @@ class DesireHelper:
     maneuver_type = str(nav_instruction_state.get("maneuverType", ""))
     active_lane_direction = str(nav_instruction_state.get("activeLaneDirection", ""))
     same_side_lane_count = int(nav_instruction_state.get("sameSideLaneCount", 0) or 0)
+    lane_count = int(nav_instruction_state.get("laneCount", 0) or 0)
 
-    if maneuver_type in ("off ramp", "fork") and modifier in ("slightLeft", "slightRight"):
-      if not DesireHelper._nav_keep_is_imminent(carstate, maneuver_distance, maneuver_type, same_side_lane_count):
+    if maneuver_type in ("off ramp", "fork") and modifier in ("slightLeft", "left", "sharpLeft", "slightRight", "right", "sharpRight"):
+      if not DesireHelper._nav_keep_is_imminent(carstate, maneuver_distance, maneuver_type, same_side_lane_count, lane_count):
         return ""
 
-    if modifier in ("left", "right") and maneuver_type in ("off ramp", "fork") and DesireHelper._nav_keep_is_imminent(carstate, maneuver_distance, maneuver_type, same_side_lane_count):
+      if DesireHelper._nav_should_suppress_edge_lane_keep(nav_instruction_state):
+        return ""
+
       if active_lane_direction in ("slightLeft", "left"):
         return "slightLeft"
       if active_lane_direction in ("slightRight", "right"):
         return "slightRight"
 
+      # If lane guidance says the active lane stays straight, don't reinterpret the
+      # broader fork/off-ramp maneuver as a late turn into another branch.
+      return ""
+
     return modifier
 
-  def _navigation_desire(self, carstate, lateral_active, starpilotPlan, starpilot_toggles):
+  def _navigation_desire(self, carstate, lateral_active, starpilotPlan, starpilot_toggles, nudgeless_enabled):
     self._update_nav_params()
     if not self.nav_desires_allowed or not lateral_active or not bool(self._nav_instruction_state.get("valid", False)):
       return log.Desire.none
@@ -163,14 +209,14 @@ class DesireHelper:
     if modifier == "slightLeft":
       lane_change_direction = LaneChangeDirection.left
       desired_lane_width = starpilotPlan.laneWidthLeft
-      nudgeless_allowed = starpilot_toggles.nudgeless and desired_lane_width >= starpilot_toggles.lane_detection_width
+      nudgeless_allowed = nudgeless_enabled and desired_lane_width >= starpilot_toggles.lane_detection_width
       if not carstate.rightBlinker and self._nav_keep_direction_is_clear(carstate, lane_change_direction):
         if self._nav_torque_applied(carstate, lane_change_direction) or nudgeless_allowed:
           return log.Desire.keepLeft
     elif modifier == "slightRight":
       lane_change_direction = LaneChangeDirection.right
       desired_lane_width = starpilotPlan.laneWidthRight
-      nudgeless_allowed = starpilot_toggles.nudgeless and desired_lane_width >= starpilot_toggles.lane_detection_width
+      nudgeless_allowed = nudgeless_enabled and desired_lane_width >= starpilot_toggles.lane_detection_width
       if not carstate.leftBlinker and self._nav_keep_direction_is_clear(carstate, lane_change_direction):
         if self._nav_torque_applied(carstate, lane_change_direction) or nudgeless_allowed:
           return log.Desire.keepRight
@@ -187,11 +233,13 @@ class DesireHelper:
   def get_lane_change_direction(CS):
     return LaneChangeDirection.left if CS.leftBlinker else LaneChangeDirection.right
 
-  def update(self, carstate, lateral_active, lane_change_prob, starpilotPlan, starpilot_toggles):
+  def update(self, carstate, lateral_active, lane_change_prob, starpilotPlan, starpilot_toggles, controls_enabled=None):
     v_ego = carstate.vEgo
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
     below_lane_change_speed = v_ego < starpilot_toggles.minimum_lane_change_speed
     cruise_state = getattr(carstate, "cruiseState", None)
+    controls_enabled = bool(getattr(cruise_state, "enabled", False)) if controls_enabled is None else bool(controls_enabled)
+    nudgeless_enabled = self._nudgeless_enabled(starpilot_toggles, controls_enabled)
     lane_changes_allowed = starpilot_toggles.lane_changes
     lane_changes_allowed &= not getattr(starpilot_toggles, "lane_changes_require_cruise", False) or bool(getattr(cruise_state, "enabled", False))
 
@@ -222,7 +270,7 @@ class DesireHelper:
         if torque_applied:
           self.lane_change_wait_timer = starpilot_toggles.lane_change_delay
         else:
-          torque_applied |= starpilot_toggles.nudgeless
+          torque_applied |= nudgeless_enabled
           torque_applied &= self.lane_change_wait_timer >= starpilot_toggles.lane_change_delay
 
           desired_lane_width = starpilotPlan.laneWidthLeft if self.lane_change_direction == LaneChangeDirection.left else starpilotPlan.laneWidthRight
@@ -290,6 +338,6 @@ class DesireHelper:
 
       self.lane_change_wait_timer = 0.0
 
-    nav_desire = self._navigation_desire(carstate, lateral_active, starpilotPlan, starpilot_toggles)
+    nav_desire = self._navigation_desire(carstate, lateral_active, starpilotPlan, starpilot_toggles, nudgeless_enabled)
     if nav_desire != log.Desire.none and self.lane_change_state == LaneChangeState.off:
       self.desire = nav_desire

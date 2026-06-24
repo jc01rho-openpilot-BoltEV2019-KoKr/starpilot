@@ -35,10 +35,18 @@ def make_cem(*, model_length: float, model_stopped: bool = False, tracking_lead:
     model_length=model_length,
     model_stopped=model_stopped,
     tracking_lead=tracking_lead,
-    starpilot_vcruise=SimpleNamespace(stop_sign_confirmed=stop_sign_confirmed, forcing_stop=forcing_stop),
+    starpilot_vcruise=SimpleNamespace(
+      stop_sign_confirmed=stop_sign_confirmed,
+      forcing_stop=forcing_stop,
+      slc=SimpleNamespace(experimental_mode=False),
+    ),
     starpilot_following=SimpleNamespace(slower_lead=False, following_lead=False),
     lead_one=SimpleNamespace(status=lead_status, dRel=lead_d_rel, vLead=lead_v_lead,
                              modelProb=lead_model_prob, radar=lead_radar),
+    road_curvature_detected=False,
+    driving_in_curve=False,
+    lane_width_left=0.0,
+    lane_width_right=0.0,
   )
   return ConditionalExperimentalMode(planner)
 
@@ -366,6 +374,35 @@ def test_standstill_update_can_activate_exp_from_red_light_detection(monkeypatch
 
   assert cem.experimental_mode
   assert cem.status_value == conditional_experimental_mode_module.CEStatus["STOP_LIGHT"]
+
+
+def test_first_post_standstill_pullaway_frame_does_not_blip_into_exp(monkeypatch):
+  cem = make_cem(
+    model_length=70.0,
+    tracking_lead=True,
+    lead_status=True,
+    lead_d_rel=8.4,
+    lead_v_lead=2.7,
+    lead_model_prob=0.999,
+  )
+  toggles = make_update_toggles()
+  toggles.conditional_lead = True
+  toggles.conditional_slower_lead = True
+  toggles.conditional_stopped_lead = True
+  standstill_sm = make_update_sm(standstill=True)
+  moving_sm = make_update_sm(standstill=False)
+
+  now = [100.0]
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", lambda: now[0])
+
+  cem.update(0.0, standstill_sm, toggles)
+  assert not cem.experimental_mode
+
+  now[0] = 100.1
+  cem.update(0.12, moving_sm, toggles)
+
+  assert not cem.experimental_mode
+  assert cem.status_value == conditional_experimental_mode_module.CEStatus["OFF"]
 
 
 def test_standstill_update_can_activate_exp_from_dashboard_stop_sign(monkeypatch):

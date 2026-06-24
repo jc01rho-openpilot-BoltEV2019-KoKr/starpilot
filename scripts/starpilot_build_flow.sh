@@ -126,7 +126,7 @@ build_mac() {
   python -m compileall -q \
     selfdrive/ui \
     system/ui \
-    starpilot/system/the_pond \
+    starpilot/system/the_galaxy \
     starpilot/system/galaxy
 
   SP_DISABLE_AUTO_DEVICE_SCONS=1 scons -j"${jobs}" selfdrive/ui/ui

@@ -239,18 +239,9 @@ class SteeringManagerView(PanelManagerView):
     return toggles
 
   def _rebuild_toggle_grid(self):
-    self._toggle_grid.clear()
-    for td in self._build_toggle_defs():
-      self._toggle_grid.add_tile(ToggleTile(
-        title=td["title"],
-        get_state=td["get"],
-        set_state=td["set"],
-        bg_color=PANEL_STYLE.accent,
-        desc=td.get("subtitle", ""),
-        is_enabled=td.get("enabled", True),
-        disabled_label=td.get("disabled_label", ""),
-        show_led=True,
-      ))
+    self._page_grid = self._toggle_grid
+    defs = self._build_toggle_defs()
+    self._set_toggle_pages([defs[i:i+6] for i in range(0, len(defs), 6)])
 
   def _measure_content_height(self, width: float) -> float:
     sections = self._build_left_sections()
@@ -258,24 +249,13 @@ class SteeringManagerView(PanelManagerView):
 
     tiles_height = 0.0
     if self._toggle_grid.tiles:
-      N = len(self._toggle_grid.tiles)
-      gap = self._toggle_grid.gap
-      if self._uses_two_columns(width):
-        cols = 2
-        tile_rows = (N + cols - 1) // cols
-        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
-        tiles_content_h = tile_rows * 130 + tile_gaps
-        tiles_height = self._section_block_height(tiles_content_h + 24)
-      else:
-        cols = 3
-        tile_rows = (N + cols - 1) // cols
-        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
-        tiles_content_h = tile_rows * 130 + tile_gaps
+      if not self._uses_two_columns(width):
+        self._toggle_grid._columns = 3
+        tiles_content_h = self._toggle_grid.measure_height(width - 24)
         tiles_height = SECTION_GAP + self._section_block_height(tiles_content_h + 24)
 
     if self._uses_two_columns(width):
-      vh = self._scroll_rect.height if self._scroll_rect and self._scroll_rect.height > 0 else tiles_height
-      return max(left_h, vh)
+      return self._compute_two_column_height(left_h)
     return left_h + tiles_height
 
   def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
@@ -311,25 +291,8 @@ class SteeringManagerView(PanelManagerView):
 
       if self._toggle_grid.tiles:
         rx = x + column_w + self.COLUMN_GAP
-        draw_section_header(rl.Rectangle(rx, y, column_w, SECTION_HEADER_HEIGHT),
-                            tr("Toggles"), style=PANEL_STYLE)
-        right_container_y = y + SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-
-        N = len(self._toggle_grid.tiles)
-        cols = 2
-        self._toggle_grid._columns = cols
-        gap = self._toggle_grid.gap
-        tile_rows = (N + cols - 1) // cols
-        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
-        tiles_content_h = tile_rows * 130 + tile_gaps
-
-        needed_height = tiles_content_h + 24
-        viewport_remaining = (self._scroll_rect.y + self._scroll_rect.height) - right_container_y
-        container_h = max(needed_height, viewport_remaining)
-
-        draw_list_group_shell(rl.Rectangle(rx, right_container_y, column_w, container_h), style=PANEL_STYLE)
-        self._toggle_grid.set_parent_rect(self._scroll_rect)
-        self._toggle_grid.render(rl.Rectangle(rx + 12, right_container_y + 12, column_w - 24, container_h - 24))
+        left_h = curr_y - y
+        self._draw_two_column_tile_grid(self._toggle_grid, rx, y, column_w, left_h, title=tr("Toggles"), style=PANEL_STYLE)
     else:
       curr_y = y
       for section in sections:
@@ -355,18 +318,12 @@ class SteeringManagerView(PanelManagerView):
                             tr("Toggles"), style=PANEL_STYLE)
         curr_y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
-        N = len(self._toggle_grid.tiles)
-        cols = 3
-        self._toggle_grid._columns = cols
-        gap = self._toggle_grid.gap
+        self._toggle_grid._columns = 3
         avail_w = width - 24
-        tile_rows = (N + cols - 1) // cols
-        tile_gaps = gap * (tile_rows - 1) if tile_rows > 0 else 0
-        tiles_content_h = tile_rows * 130 + tile_gaps
+        tiles_content_h = self._toggle_grid.measure_height(avail_w)
 
         draw_list_group_shell(rl.Rectangle(x, curr_y, width, tiles_content_h + 24), style=PANEL_STYLE)
-        self._toggle_grid.set_parent_rect(self._scroll_rect)
-        self._toggle_grid.render(rl.Rectangle(x + 12, curr_y + 12, avail_w, tiles_content_h))
+        self._render_page_grid(self._toggle_grid, rl.Rectangle(x + 12, curr_y + 12, avail_w, tiles_content_h))
 
   def _draw_row(self, rect: rl.Rectangle, row: dict, is_last: bool):
     target_id = row["target_id"]

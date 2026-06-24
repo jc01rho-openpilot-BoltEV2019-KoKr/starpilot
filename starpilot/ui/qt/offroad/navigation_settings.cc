@@ -119,8 +119,8 @@ StarPilotNavigationPanel::StarPilotNavigationPanel(StarPilotSettingsWindow *pare
                                                     tr("<b>Automatically collect missing or incorrect speed limits while you drive</b> using speeds limits sourced from your dashboard (if supported), "
                                                        "Mapbox, and \"Navigate on openpilot\".<br><br>"
                                                        "When you're parked and connected to Wi-Fi, StarPilot will automatically process this data into a file "
-                                                       "to be used with the \"Speed Limit Filler\" tool in \"The Pond\".<br><br>"
-                                                       "You can download this file from \"The Pond\" in the \"Download Speed Limits\" menu.<br><br>"
+                                                       "to be used with the \"Speed Limit Filler\" tool in \"The Galaxy\".<br><br>"
+                                                       "You can download this file from \"The Galaxy\" in the \"Download Speed Limits\" menu.<br><br>"
                                                        "Need a step-by-step guide? Visit <b>#speed-limit-filler</b> in the StarPilot Discord!"),
                                                        "", filterButtonNames);
   QObject::connect(updateSpeedLimitsToggle, &StarPilotButtonControl::buttonClicked, [this](int id) {

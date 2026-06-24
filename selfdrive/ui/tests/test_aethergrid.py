@@ -45,7 +45,7 @@ def _install_aethergrid_stubs():
     draw_triangle=lambda *a, **k: None,
     draw_texture_pro=lambda *a, **k: None,
     draw_text_ex=lambda *a, **k: None,
-    check_collision_point_rec=lambda *a, **k: False,
+    check_collision_point_rec=lambda p, r: (r.x <= p.x <= r.x + r.width) and (r.y <= p.y <= r.y + r.height),
     get_frame_time=lambda: 0.016,
     get_mouse_position=lambda: types.SimpleNamespace(x=0, y=0),
   )
@@ -55,6 +55,7 @@ def _install_aethergrid_stubs():
   app_mod.FontWeight = types.SimpleNamespace(BOLD=700, NORMAL=400, MEDIUM=500, SEMI_BOLD=600)
   app_mod.MousePos = type("MousePos", (), {})
   app_mod.MouseEvent = type("MouseEvent", (), {})
+  app_mod.FONT_SCALE = 1.0
   app_mod.gui_app = types.SimpleNamespace(
     width=1920,
     height=1080,
@@ -99,6 +100,11 @@ def _install_aethergrid_stubs():
       self._parent_rect = None
       self._enabled = True
       self.is_pressed = False
+      self._children = []
+
+    def _child(self, widget):
+      self._children.append(widget)
+      return widget
 
     @property
     def enabled(self):
@@ -116,6 +122,9 @@ def _install_aethergrid_stubs():
 
     def set_click_callback(self, callback):
       self.on_click = callback
+
+    def set_touch_valid_callback(self, callback):
+      self._touch_valid_callback = callback
 
     def set_enabled(self, enabled):
       self._enabled = enabled
@@ -395,6 +404,169 @@ class TestAethergridContracts(unittest.TestCase):
 
     self.assertEqual(dialog._current_val, 6)
     self.assertEqual(captured_changes, [6])
+
+  def test_tile_grid_measure_height_with_explicit_tile_height(self):
+    mod = _import_aethergrid()
+    grid = mod.TileGrid(columns=2, padding=10, tile_height=140)
+    for _ in range(5):
+      grid.add_tile(RenderSpy())
+    
+    h = grid.measure_height(500)
+    self.assertEqual(h, 740)
+
+  def test_tile_grid_measure_height_default_fallback(self):
+    mod = _import_aethergrid()
+    grid = mod.TileGrid(columns=2, padding=10, tile_height=None)
+    for _ in range(5):
+      grid.add_tile(RenderSpy())
+    
+    h = grid.measure_height(500)
+    self.assertEqual(h, 690)
+
+  def test_tile_grid_render_top_left_aligned_with_tile_height(self):
+    mod = _import_aethergrid()
+    grid = mod.TileGrid(columns=2, padding=10, tile_height=140)
+    spy = RenderSpy()
+    grid.add_tile(spy)
+    
+    grid.render(mod.rl.Rectangle(0, 50, 500, 300))
+    self.assertTrue(spy.rects)
+    self.assertEqual(spy.rects[0].y, 50)
+    self.assertEqual(spy.rects[0].x, 0)
+
+  def test_disabled_tiles_hud_mode_rendering(self):
+    mod = _import_aethergrid()
+    
+    # ToggleTile disabled, show_led=True
+    toggle = mod.ToggleTile(
+      title="Test Loud",
+      get_state=lambda: True,
+      set_state=lambda s: None,
+      is_enabled=lambda: False,
+      show_led=True
+    )
+    # Spy on _render_hud_background
+    orig_hud_bg = toggle._render_hud_background
+    spy_called = []
+    def spy_hud_bg(*a, **k):
+      spy_called.append("toggle")
+      return orig_hud_bg(*a, **k)
+    toggle._render_hud_background = spy_hud_bg
+    toggle.render(mod.rl.Rectangle(0, 0, 150, 130))
+    self.assertIn("toggle", spy_called)
+
+    # ValueTile disabled
+    value_tile = mod.ValueTile(
+      title="Test Value",
+      get_value=lambda: "Off",
+      on_click=lambda: None,
+      is_enabled=lambda: False
+    )
+    orig_value_hud_bg = value_tile._render_hud_background
+    def spy_value_hud_bg(*a, **k):
+      spy_called.append("value")
+      return orig_value_hud_bg(*a, **k)
+    value_tile._render_hud_background = spy_value_hud_bg
+    value_tile.render(mod.rl.Rectangle(0, 0, 150, 130))
+    self.assertIn("value", spy_called)
+
+    # SliderTile disabled
+    slider_tile = mod.SliderTile(
+      title="Test Slider",
+      get_value=lambda: 50.0,
+      set_value=lambda v: None,
+      min_val=0.0,
+      max_val=100.0,
+      step=1.0,
+      is_enabled=lambda: False
+    )
+    orig_slider_hud_bg = slider_tile._render_hud_background
+    def spy_slider_hud_bg(*a, **k):
+      spy_called.append("slider")
+      return orig_slider_hud_bg(*a, **k)
+    slider_tile._render_hud_background = spy_slider_hud_bg
+    slider_tile.render(mod.rl.Rectangle(0, 0, 150, 130))
+    self.assertIn("slider", spy_called)
+
+  def test_tile_grid_force_square(self):
+    mod = _import_aethergrid()
+    grid = mod.TileGrid(columns=2, padding=10, min_tile_width=100, force_square=True)
+    spies = [RenderSpy() for _ in range(5)]
+    for spy in spies:
+      grid.add_tile(spy)
+    
+    # col_w = (500 - 10) / 2 = 245
+    # rows = 3, gap_h = 2 * 10 = 20
+    # expected height = 3 * 245 + 20 = 755
+    self.assertEqual(grid.measure_height(500), 755)
+    
+    grid.render(mod.rl.Rectangle(0, 0, 500, 300))
+    self.assertTrue(spies[0].rects)
+    self.assertEqual(spies[0].rects[0].width, 245)
+    self.assertEqual(spies[0].rects[0].height, 245)
+
+  def test_tile_grid_column_preservation_with_single_tile(self):
+    mod = _import_aethergrid()
+    grid = mod.TileGrid(columns=2, padding=10, min_tile_width=100, force_square=True)
+    spy = RenderSpy()
+    grid.add_tile(spy)
+
+    # With only 1 tile in a 2-column layout, it should still calculate the tile size based on 2 columns
+    # col_w = (500 - 10) / 2 = 245
+    grid.render(mod.rl.Rectangle(0, 0, 500, 300))
+    self.assertTrue(spy.rects)
+    self.assertEqual(spy.rects[0].width, 245)
+    self.assertEqual(spy.rects[0].height, 245)
+
+  def test_hud_background_glow_overflow_protection(self):
+    mod = _import_aethergrid()
+    tile = mod.ToggleTile("Test", lambda: True, lambda v: None)
+    # Test with extreme glow values (negative and large positive) to verify no OverflowError occurs
+    try:
+      tile._render_hud_background(mod.rl.Rectangle(0, 0, 150, 130), mod.rl.Color(255, 0, 0, 255), glow=5.0)
+      tile._render_hud_background(mod.rl.Rectangle(0, 0, 150, 130), mod.rl.Color(255, 0, 0, 255), glow=-2.0)
+    except OverflowError:
+      self.fail("OverflowError raised with extreme glow values")
+
+  def test_aether_category_tile_view(self):
+    mod = _import_aethergrid()
+    controller_mock = MagicMock()
+    
+    toggle_visible = True
+    rows = [
+      mod.SettingRow("toggle_row", "toggle", "Toggle Title", subtitle="Toggle Subtitle",
+                     get_state=lambda: True, set_state=lambda v: None,
+                     visible=lambda: toggle_visible),
+      mod.SettingRow("value_row", "value", "Value Title", subtitle="Value Subtitle",
+                     get_value=lambda: "Value", on_click=lambda: None),
+      mod.SettingRow("action_row", "action", "Action Title", action_text="Run", on_click=lambda: None),
+    ]
+
+    view = mod.AetherCategoryTileView(controller_mock, "Category Title", rows, color="#FF0000", subtitle="Category Description")
+    
+    self.assertEqual(len(view._row_to_tile_map), 3)
+    self.assertIsInstance(view._row_to_tile_map["toggle_row"], mod.RowToggleTile)
+    self.assertIsInstance(view._row_to_tile_map["value_row"], mod.RowPanelTile)
+    self.assertIsInstance(view._row_to_tile_map["action_row"], mod.RowPanelTile)
+    
+    view._update_visible_tiles()
+    self.assertEqual(len(view._tile_grid.tiles), 3)
+    
+    toggle_visible = False
+    view._update_visible_tiles()
+    self.assertEqual(len(view._tile_grid.tiles), 2)
+    self.assertNotIn(view._row_to_tile_map["toggle_row"], view._tile_grid.tiles)
+
+    view._back_btn_rect = mod.rl.Rectangle(196, 56, 68, 68)
+    
+    self.assertEqual(view._target_at(mod.rl.Vector2(200, 60)), "static:back")
+    self.assertNotEqual(view._target_at(mod.rl.Vector2(0, 0)), "static:back")
+
+    app_mod = sys.modules["openpilot.system.ui.lib.application"]
+    app_mod.gui_app.pop_widget = MagicMock()
+    
+    view._activate_target("static:back")
+    app_mod.gui_app.pop_widget.assert_called_once()
 
 
 if __name__ == "__main__":

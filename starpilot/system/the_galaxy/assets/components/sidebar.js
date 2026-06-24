@@ -69,8 +69,8 @@ function bindSidebarHandlers() {
 
   if (!menuButton || !underlay) return;
 
-  if (!window.__thePondSidebarMenuBound) {
-    window.__thePondSidebarMenuBound = true;
+  if (!window.__theGalaxySidebarMenuBound) {
+    window.__theGalaxySidebarMenuBound = true;
     menuButton.addEventListener("click", () => {
       const sidebar = document.getElementById("sidebar");
       const currentUnderlay = document.getElementById("sidebarUnderlay");
@@ -92,7 +92,7 @@ function bindSidebarHandlers() {
 
       event.preventDefault();
       const href = anchor.getAttribute("href") || "/";
-      const navigate = window.__thePondNavigate;
+      const navigate = window.__theGalaxyNavigate;
       if (typeof navigate === "function") {
         navigate(href);
       } else {

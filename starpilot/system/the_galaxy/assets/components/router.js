@@ -1,7 +1,7 @@
 import { html, reactive } from "/assets/vendor/arrow-core.js"
 import { createBrowserHistory, createRouter } from "/assets/vendor/remix-router-1.3.1.js"
 import { hideSidebar } from "/assets/js/utils.js"
-import { DeviceSettings } from "/assets/components/tools/device_settings.js"
+import { DeviceSettings } from "/assets/components/tools/device_settings.js?v=favorite-slots-5"
 import { ErrorLogs } from "/assets/components/tools/error_logs.js"
 import { VehicleFeatures } from "/assets/components/tools/vehicle_features.js"
 import { GalaxyPairing } from "/assets/components/tools/galaxy.js"
@@ -9,8 +9,8 @@ import { Home } from "/assets/components/home/home.js"
 import { LateralManeuvers } from "/assets/components/tools/lateral_maneuvers.js"
 import { LongitudinalManeuvers } from "/assets/components/tools/longitudinal_maneuvers.js"
 import { MapsManager } from "/assets/components/tools/maps.js"
-import { NavDestination } from "/assets/components/navigation/navigation_destination.js"
-import { NavKeys } from "/assets/components/navigation/navigation_keys.js"
+import { NavDestination } from "/assets/components/navigation/navigation_destination.js?v=nav-search-context-1"
+import { NavKeys } from "/assets/components/navigation/navigation_keys.js?v=nav-search-context-1"
 import { RouteRecordings } from "/assets/components/recordings/dashcam_routes.js"
 import { SettingsView } from "/assets/components/settings.js"
 import { ScreenRecordings } from "/assets/components/recordings/screen_recordings.js"
@@ -90,7 +90,7 @@ function Root() {
     history: createBrowserHistory(),
   }).initialize()
 
-  window.__thePondNavigate = (href) => {
+  window.__theGalaxyNavigate = (href) => {
     router.navigate(toRouterHref(href))
     window.scrollTo(0, 0)
   }
@@ -169,8 +169,8 @@ function mountRouterWhenReady() {
     return
   }
 
-  if (!window.__thePondRouterMounted) {
-    window.__thePondRouterMounted = true
+  if (!window.__theGalaxyRouterMounted) {
+    window.__theGalaxyRouterMounted = true
     Root()(mountNode)
   } else {
     console.warn("[router] duplicate mount prevented")

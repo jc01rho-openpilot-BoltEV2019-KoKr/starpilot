@@ -3198,8 +3198,8 @@
         <translation>&lt;b&gt;Інструкції щодо налаштування Mapbox&lt;/b&gt; для «Навігації без Prime підписки від comma».</translation>
     </message>
     <message>
-        <source>&lt;b&gt;Automatically collect missing or incorrect speed limits while you drive&lt;/b&gt; using speeds limits sourced from your dashboard (if supported), Mapbox, and "Navigate on openpilot".&lt;br&gt;&lt;br&gt;When you're parked and connected to Wi-Fi, StarPilot will automatically process this data into a file to be used with the "Speed Limit Filler" tool in "The Pond".&lt;br&gt;&lt;br&gt;You can download this file from "The Pond" in the "Download Speed Limits" menu.&lt;br&gt;&lt;br&gt;Need a step-by-step guide? Visit &lt;b&gt;#speed-limit-filler&lt;/b&gt; in the StarPilot Discord!</source>
-        <translation>&lt;b&gt;Автоматично збирайте відсутні або неправильні обмеження швидкості під час руху&lt;/b&gt; за допомогою обмежень швидкості, отриманих з вашої приладової панелі (якщо це підтримується), Mapbox та «Navigate on openpilot».&lt;br&gt;&lt;br&gt;Коли ви припаркувалися і підключилися до Wi-Fi, StarPilot автоматично обробляє ці дані у файл для використання з інструментом «Speed Limit Filler» у «The Pond».&lt;br&gt;&lt;br&gt;Ви можете завантажити цей файл з «The Pond» у меню «Завантажити обмеження швидкості».&lt;br&gt;&lt;br&gt;Потрібна покрокова інструкція? Відвідайте &lt;b&gt;#speed-limit-filler&lt;/b&gt; у StarPilot Discord!</translation>
+        <source>&lt;b&gt;Automatically collect missing or incorrect speed limits while you drive&lt;/b&gt; using speeds limits sourced from your dashboard (if supported), Mapbox, and "Navigate on openpilot".&lt;br&gt;&lt;br&gt;When you're parked and connected to Wi-Fi, StarPilot will automatically process this data into a file to be used with the "Speed Limit Filler" tool in "The Galaxy".&lt;br&gt;&lt;br&gt;You can download this file from "The Galaxy" in the "Download Speed Limits" menu.&lt;br&gt;&lt;br&gt;Need a step-by-step guide? Visit &lt;b&gt;#speed-limit-filler&lt;/b&gt; in the StarPilot Discord!</source>
+        <translation>&lt;b&gt;Автоматично збирайте відсутні або неправильні обмеження швидкості під час руху&lt;/b&gt; за допомогою обмежень швидкості, отриманих з вашої приладової панелі (якщо це підтримується), Mapbox та «Navigate on openpilot».&lt;br&gt;&lt;br&gt;Коли ви припаркувалися і підключилися до Wi-Fi, StarPilot автоматично обробляє ці дані у файл для використання з інструментом «Speed Limit Filler» у «The Galaxy».&lt;br&gt;&lt;br&gt;Ви можете завантажити цей файл з «The Galaxy» у меню «Завантажити обмеження швидкості».&lt;br&gt;&lt;br&gt;Потрібна покрокова інструкція? Відвідайте &lt;b&gt;#speed-limit-filler&lt;/b&gt; у StarPilot Discord!</translation>
     </message>
     <message>
         <source>Cancel the speed-limit update?</source>
@@ -3760,36 +3760,36 @@ Developer - Highly customizable settings for seasoned enthusiasts</source>
         <translation>Користувацькі теми</translation>
     </message>
     <message>
-        <source>&lt;b&gt;The overall look and feel of openpilot.&lt;/b&gt; Use the "Theme Maker" in "The Pond" to create and share your own themes!</source>
-        <translation>&lt;b&gt;Загальний вигляд і відчуття openpilot.&lt;/b&gt; Використовуйте «Theme Maker» в «The Pond», щоб створювати та ділитися власними темами!</translation>
+        <source>&lt;b&gt;The overall look and feel of openpilot.&lt;/b&gt; Use the "Theme Maker" in "The Galaxy" to create and share your own themes!</source>
+        <translation>&lt;b&gt;Загальний вигляд і відчуття openpilot.&lt;/b&gt; Використовуйте «Theme Maker» в «The Galaxy», щоб створювати та ділитися власними темами!</translation>
     </message>
     <message>
-        <source>&lt;b&gt;The color scheme used throughout openpilot.&lt;/b&gt; Use the "Theme Maker" in "The Pond" to create and share your own themes!</source>
-        <translation>&lt;b&gt;Колірна гама, яка використовується в openpilot.&lt;/b&gt; Використовуйте «Theme Maker» в «The Pond», щоб створювати та ділитися власними темами!</translation>
+        <source>&lt;b&gt;The color scheme used throughout openpilot.&lt;/b&gt; Use the "Theme Maker" in "The Galaxy" to create and share your own themes!</source>
+        <translation>&lt;b&gt;Колірна гама, яка використовується в openpilot.&lt;/b&gt; Використовуйте «Theme Maker» в «The Galaxy», щоб створювати та ділитися власними темами!</translation>
     </message>
     <message>
         <source>Distance Button</source>
         <translation>Кнопка відстані</translation>
     </message>
     <message>
-        <source>&lt;b&gt;The distance button icons shown on the driving screen.&lt;/b&gt; Use the "Theme Maker" in "The Pond" to create and share your own themes!</source>
-        <translation>&lt;b&gt;Піктограми кнопок відстані, що відображаються на екрані водіння. Використовуйте «Theme Maker» у «The Pond», щоб створювати та ділитися власними темами!</translation>
+        <source>&lt;b&gt;The distance button icons shown on the driving screen.&lt;/b&gt; Use the "Theme Maker" in "The Galaxy" to create and share your own themes!</source>
+        <translation>&lt;b&gt;Піктограми кнопок відстані, що відображаються на екрані водіння. Використовуйте «Theme Maker» у «The Galaxy», щоб створювати та ділитися власними темами!</translation>
     </message>
     <message>
-        <source>&lt;b&gt;The icon style used across openpilot.&lt;/b&gt; Use the "Theme Maker" in "The Pond" to create and share your own themes!</source>
-        <translation>&lt;b&gt;Стиль іконок, що використовується в openpilot.&lt;/b&gt; Використовуйте «Theme Maker» в «The Pond», щоб створювати та ділитися власними темами!</translation>
+        <source>&lt;b&gt;The icon style used across openpilot.&lt;/b&gt; Use the "Theme Maker" in "The Galaxy" to create and share your own themes!</source>
+        <translation>&lt;b&gt;Стиль іконок, що використовується в openpilot.&lt;/b&gt; Використовуйте «Theme Maker» в «The Galaxy», щоб створювати та ділитися власними темами!</translation>
     </message>
     <message>
-        <source>&lt;b&gt;The sound pack used by openpilot.&lt;/b&gt; Use the "Theme Maker" in "The Pond" to create and share your own themes!</source>
-        <translation>&lt;b&gt;Звуковий пакет, який використовує openpilot.&lt;/b&gt; Використовуйте «Theme Maker» у «The Pond», щоб створювати та ділитися власними темами!</translation>
+        <source>&lt;b&gt;The sound pack used by openpilot.&lt;/b&gt; Use the "Theme Maker" in "The Galaxy" to create and share your own themes!</source>
+        <translation>&lt;b&gt;Звуковий пакет, який використовує openpilot.&lt;/b&gt; Використовуйте «Theme Maker» у «The Galaxy», щоб створювати та ділитися власними темами!</translation>
     </message>
     <message>
-        <source>&lt;b&gt;The steering-wheel icon&lt;/b&gt; shown at the top-right of the driving screen. Use the "Theme Maker" in "The Pond" to create and share your own themes!</source>
-        <translation>&lt;b&gt;Значок керма&lt;/b&gt; відображається у верхньому правому куті екрана водіння. Використовуйте «Theme Maker» у «The Pond», щоб створювати та ділитися власними темами!</translation>
+        <source>&lt;b&gt;The steering-wheel icon&lt;/b&gt; shown at the top-right of the driving screen. Use the "Theme Maker" in "The Galaxy" to create and share your own themes!</source>
+        <translation>&lt;b&gt;Значок керма&lt;/b&gt; відображається у верхньому правому куті екрана водіння. Використовуйте «Theme Maker» у «The Galaxy», щоб створювати та ділитися власними темами!</translation>
     </message>
     <message>
-        <source>&lt;b&gt;Themed turn-signal animations.&lt;/b&gt; Use the "Theme Maker" in "The Pond" to create and share your own themes!</source>
-        <translation>&lt;b&gt;Тематичні анімації поворотників.&lt;/b&gt; Використовуйте «Theme Maker» в «The Pond», щоб створювати та ділитися власними темами!</translation>
+        <source>&lt;b&gt;Themed turn-signal animations.&lt;/b&gt; Use the "Theme Maker" in "The Galaxy" to create and share your own themes!</source>
+        <translation>&lt;b&gt;Тематичні анімації поворотників.&lt;/b&gt; Використовуйте «Theme Maker» в «The Galaxy», щоб створювати та ділитися власними темами!</translation>
     </message>
     <message>
         <source>&lt;b&gt;Themes based on U.S. holidays.&lt;/b&gt; Minor holidays last one day; major holidays (Christmas, Easter, Halloween) run for a full week.</source>

@@ -228,7 +228,7 @@ tls.enable = true
 poolCount = 2
 
 [[proxies]]
-name = "{slug}_pond"
+name = "{slug}_galaxy"
 type = "http"
 localIP = "127.0.0.1"
 localPort = 8082

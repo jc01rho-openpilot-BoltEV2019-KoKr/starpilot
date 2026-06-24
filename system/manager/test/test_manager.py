@@ -93,7 +93,7 @@ class TestManager:
     names = [p.name for p in procs]
     ui_idx = names.index("ui")
 
-    assert names.index("the_pond") < ui_idx
+    assert names.index("the_galaxy") < ui_idx
     assert names.index("galaxy") < ui_idx
 
   def test_blacklisted_procs(self):

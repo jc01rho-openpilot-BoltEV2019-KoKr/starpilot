@@ -199,7 +199,7 @@ def main():
       "uiText2": "Set target speed and let lateral stabilize.",
       "updatedAtSec": time.monotonic(),
     })
-    _append_history(status, "Armed from The Pond. Stabilize on a straight, flat road to start.")
+    _append_history(status, "Armed from The Galaxy. Stabilize on a straight, flat road to start.")
 
   last_status_signature = ""
   last_status_write = 0.0
