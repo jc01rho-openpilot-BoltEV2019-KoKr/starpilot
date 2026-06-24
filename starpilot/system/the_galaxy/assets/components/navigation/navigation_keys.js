@@ -86,8 +86,8 @@ export function NavKeys() {
 
   const getDeleteLabel = (kind) => {
     switch (kind) {
-      case "amap1": return "Amap 1"
-      case "amap2": return "Amap 2"
+      case "amap1": return "AMap / Gaode 1"
+      case "amap2": return "AMap / Gaode 2"
       case "public": return "Public Mapbox"
       case "secret": return "Secret Mapbox"
       default: return kind
@@ -204,6 +204,7 @@ export function NavKeys() {
 
   function renderGroup(title, kinds) {
     const isMapbox = title === "Mapbox Keys"
+    const isAMap = title === "AMap / Gaode Keys"
 
     return html`
       <div class="navkeys-group">
@@ -215,6 +216,7 @@ export function NavKeys() {
             </span>
           ` : ""}
         </div>
+        ${isAMap ? html`<div class="navkeys-subtitle">AMap is the Gaode provider, not Google Maps.</div>` : ""}
 
         ${kinds.map(kind => {
           const keyMeta = meta[kind]
@@ -296,7 +298,7 @@ export function NavKeys() {
   return html`
     <div class="navkeys-wrapper navkeys-offset-top">
       <div class="navkeys-container">
-        ${renderGroup("AMap Keys", ["amap1", "amap2"])}
+          ${renderGroup("AMap / Gaode Keys", ["amap1", "amap2"])}
         ${renderStatus("amap")}
       </div>
       <div class="navkeys-container">

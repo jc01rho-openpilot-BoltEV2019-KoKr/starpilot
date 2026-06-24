@@ -238,14 +238,14 @@ StarPilotThemesPanel::StarPilotThemesPanel(StarPilotSettingsWindow *parent, bool
   themesLayout->addWidget(customThemesPanel);
 
   const std::vector<std::tuple<QString, QString, QString, QString>> themeToggles {
-    {"CustomThemes", tr("Custom Themes"), tr("<b>The overall look and feel of openpilot.</b> Use the \"Theme Maker\" in \"The Pond\" to create and share your own themes!"), "../../starpilot/assets/toggle_icons/icon_frog.png"},
+    {"CustomThemes", tr("Custom Themes"), tr("<b>The overall look and feel of openpilot.</b> Use the \"Theme Maker\" in \"The Galaxy\" to create and share your own themes!"), "../../starpilot/assets/toggle_icons/icon_frog.png"},
     {"BootLogo", tr("Boot Logo"), tr("<b>The boot logo shown while the device starts.</b>"), ""},
-    {"ColorScheme", tr("Color Scheme"), tr("<b>The color scheme used throughout openpilot.</b> Use the \"Theme Maker\" in \"The Pond\" to create and share your own themes!"), ""},
-    {"DistanceIconPack", tr("Distance Button"), tr("<b>The distance button icons shown on the driving screen.</b> Use the \"Theme Maker\" in \"The Pond\" to create and share your own themes!"), ""},
-    {"IconPack", tr("Icon Pack"), tr("<b>The icon style used across openpilot.</b> Use the \"Theme Maker\" in \"The Pond\" to create and share your own themes!"), ""},
-    {"SignalAnimation", tr("Turn Signal"), tr("<b>Themed turn-signal animations.</b> Use the \"Theme Maker\" in \"The Pond\" to create and share your own themes!"), ""},
-    {"SoundPack", tr("Sound Pack"), tr("<b>The sound pack used by openpilot.</b> Use the \"Theme Maker\" in \"The Pond\" to create and share your own themes!"), ""},
-    {"WheelIcon", tr("Steering Wheel"), tr("<b>The steering-wheel icon</b> shown at the top-right of the driving screen. Use the \"Theme Maker\" in \"The Pond\" to create and share your own themes!"), ""},
+    {"ColorScheme", tr("Color Scheme"), tr("<b>The color scheme used throughout openpilot.</b> Use the \"Theme Maker\" in \"The Galaxy\" to create and share your own themes!"), ""},
+    {"DistanceIconPack", tr("Distance Button"), tr("<b>The distance button icons shown on the driving screen.</b> Use the \"Theme Maker\" in \"The Galaxy\" to create and share your own themes!"), ""},
+    {"IconPack", tr("Icon Pack"), tr("<b>The icon style used across openpilot.</b> Use the \"Theme Maker\" in \"The Galaxy\" to create and share your own themes!"), ""},
+    {"SignalAnimation", tr("Turn Signal"), tr("<b>Themed turn-signal animations.</b> Use the \"Theme Maker\" in \"The Galaxy\" to create and share your own themes!"), ""},
+    {"SoundPack", tr("Sound Pack"), tr("<b>The sound pack used by openpilot.</b> Use the \"Theme Maker\" in \"The Galaxy\" to create and share your own themes!"), ""},
+    {"WheelIcon", tr("Steering Wheel"), tr("<b>The steering-wheel icon</b> shown at the top-right of the driving screen. Use the \"Theme Maker\" in \"The Galaxy\" to create and share your own themes!"), ""},
     {"DownloadStatusLabel", tr("Download Status"), "", ""},
 
     {"HolidayThemes", tr("Holiday Themes"), tr("<b>Themes based on U.S. holidays.</b> Minor holidays last one day; major holidays (Christmas, Easter, Halloween) run for a full week."), "../../starpilot/assets/toggle_icons/icon_calendar.png"},

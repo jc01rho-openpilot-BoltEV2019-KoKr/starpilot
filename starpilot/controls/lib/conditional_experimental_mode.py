@@ -120,8 +120,10 @@ class ConditionalExperimentalMode:
       if triggered:
         self.mode_hold_until = now + self.CEM_TRANSITION_GUARD_TIME
         self.mode_false_since = 0.0
-      elif self.mode_false_since == 0.0:
+      elif self.prev_experimental_mode and self.mode_false_since == 0.0:
         self.mode_false_since = now
+      elif not self.prev_experimental_mode:
+        self.mode_false_since = 0.0
 
       hold_active = now < self.mode_hold_until
       transition_buffer_active = self.mode_false_since != 0.0 and (now - self.mode_false_since) < self.CEM_TRANSITION_BUFFER_TIME

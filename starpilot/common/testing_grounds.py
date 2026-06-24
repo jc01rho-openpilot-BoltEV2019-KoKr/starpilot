@@ -27,9 +27,9 @@ TESTING_GROUND_IDS = (
   TESTING_GROUND_8,
 )
 
-TESTING_GROUNDS_STATE_PATH = Path("/tmp/the_pond_testing_grounds_slots.json") if PC else Path("/data/testing_grounds/slots.json")
+TESTING_GROUNDS_STATE_PATH = Path("/tmp/the_galaxy_testing_grounds_slots.json") if PC else Path("/data/testing_grounds/slots.json")
 
-# Edit slot names/descriptions once here. The Pond and runtime checks share this table.
+# Edit slot names/descriptions once here. The Galaxy and runtime checks share this table.
 # Slots named "Unused" are hidden from the dropdown.
 # Adding cLabel/dLabel/etc. automatically adds more mode buttons for that slot in Testing Ground.
 TESTING_GROUNDS_SLOT_DEFINITIONS = (

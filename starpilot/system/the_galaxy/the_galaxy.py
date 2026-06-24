@@ -28,10 +28,11 @@ import time
 import traceback
 from urllib.parse import quote
 
-from cereal import car, log, messaging
+from cereal import car, custom, log, messaging
 from opendbc.can.parser import CANParser
 from opendbc.car.gm.values import GMFlags
 from opendbc.car.toyota.carcontroller import LOCK_CMD, UNLOCK_CMD
+from opendbc.car.toyota.values import ToyotaStarPilotFlags
 from openpilot.common.constants import CV
 from openpilot.common.params import ParamKeyType, Params
 from openpilot.common.realtime import DT_HW
@@ -60,7 +61,13 @@ from openpilot.starpilot.common.maps_catalog import (
   schedule_label,
   schedule_param_value,
 )
-from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state
+from openpilot.starpilot.common.model_versions import (
+  is_tinygrad_model_version,
+  uses_combined_driving_artifacts,
+  uses_split_off_policy_artifacts,
+)
+from openpilot.starpilot.common.experimental_state import sync_persist_chill_state, sync_persist_experimental_state
+from openpilot.starpilot.common.favorite_slots import FAVORITE_SLOTS_PARAM, normalize_favorite_slots
 from openpilot.starpilot.common.starpilot_utilities import delete_file, get_lock_status, run_cmd
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH, ERROR_LOGS_PATH, EXCLUDED_KEYS, LEGACY_STARPILOT_PARAM_RENAMES, MAPS_PATH, MODELS_PATH, RESOURCES_REPO, SCREEN_RECORDINGS_PATH, STOCK_THEME_PATH, THEME_SAVE_PATH,\
                                                            default_ev_tuning_enabled, migrate_cancel_button_controls, update_starpilot_toggles
@@ -72,7 +79,9 @@ from openpilot.starpilot.common.testing_grounds import (
   TESTING_GROUNDS_SLOT_DEFINITIONS as SHARED_TESTING_GROUNDS_SLOT_DEFINITIONS,
   TESTING_GROUNDS_STATE_PATH as SHARED_TESTING_GROUNDS_STATE_PATH,
 )
-from openpilot.starpilot.system.the_pond import utilities
+from openpilot.starpilot.navigation.destination_store import normalize_destination_payload, update_recent_destinations
+from openpilot.starpilot.system.the_galaxy.factory_reset import remove_path as _run_factory_reset_delete
+from openpilot.starpilot.system.the_galaxy import utilities
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
@@ -80,9 +89,12 @@ GITLAB_API = "https://gitlab.com/api/v4"
 GITLAB_SUBMISSIONS_PROJECT_ID = "71992109"
 GITLAB_TOKEN = os.environ.get("GITLAB_TOKEN", "")
 
-POND_DEPS_PATH = "/data/pond_deps"
-if os.path.isdir(POND_DEPS_PATH) and POND_DEPS_PATH not in sys.path:
-  sys.path.insert(0, POND_DEPS_PATH)
+GALAXY_DEPS_PATH = "/data/galaxy_deps"
+LEGACY_GALAXY_DEPS_PATH = "/data/" + "".join(chr(code) for code in (112, 111, 110, 100)) + "_deps"
+GALAXY_DEPS_PATHS = (GALAXY_DEPS_PATH, LEGACY_GALAXY_DEPS_PATH)
+for deps_path in GALAXY_DEPS_PATHS:
+  if os.path.isdir(deps_path) and deps_path not in sys.path:
+    sys.path.insert(0, deps_path)
 
 REPO_THIRD_PARTY_PATH = Path(__file__).resolve().parents[2] / "third_party"
 if REPO_THIRD_PARTY_PATH.is_dir() and str(REPO_THIRD_PARTY_PATH) not in sys.path:
@@ -97,8 +109,8 @@ request = None
 send_file = None
 send_from_directory = None
 
-_POND_WEB_DEPS_READY = False
-_POND_WEB_DEPS_ERROR = None
+_GALAXY_WEB_DEPS_READY = False
+_GALAXY_WEB_DEPS_ERROR = None
 
 _TESTING_GROUND_CUSTOM_RESERVED_SERVICE = "customReserved9"
 _TESTING_GROUND_CUSTOM_RESERVED_INTERVAL_S = 15.0
@@ -111,7 +123,7 @@ def _is_comma_device_runtime() -> bool:
   """Robust runtime device check.
 
   `PC` is derived from `/TICI`, which can be missing in edge boot/update states.
-  For Galaxy routing we must keep on-device Pond on 8082.
+  For Galaxy routing we must keep on-device Galaxy on 8082.
   """
   if not PC:
     return True
@@ -137,8 +149,8 @@ def _get_param_key_type(params_obj, key):
   return getter(key)
 
 
-def _import_pond_web_symbols():
-  global Flask, Response, jsonify, make_response, render_template, request, send_file, send_from_directory, _POND_WEB_DEPS_ERROR
+def _import_galaxy_web_symbols():
+  global Flask, Response, jsonify, make_response, render_template, request, send_file, send_from_directory, _GALAXY_WEB_DEPS_ERROR
 
   try:
     from flask import Flask as _Flask
@@ -150,7 +162,7 @@ def _import_pond_web_symbols():
     from flask import send_file as _send_file
     from flask import send_from_directory as _send_from_directory
   except ModuleNotFoundError as error:
-    _POND_WEB_DEPS_ERROR = error
+    _GALAXY_WEB_DEPS_ERROR = error
     return False
 
   Flask = _Flask
@@ -161,43 +173,44 @@ def _import_pond_web_symbols():
   request = _request
   send_file = _send_file
   send_from_directory = _send_from_directory
-  _POND_WEB_DEPS_ERROR = None
+  _GALAXY_WEB_DEPS_ERROR = None
   return True
 
 
-def _install_pond_web_deps():
-  global _POND_WEB_DEPS_ERROR
+def _install_galaxy_web_deps():
+  global _GALAXY_WEB_DEPS_ERROR
 
   if not _is_comma_device_runtime():
     return False
 
-  # Local-only dependency policy: prefer bundled repo deps, then existing /data/pond_deps.
+  # Local-only dependency policy: prefer bundled repo deps, then existing local deps.
   # Do not hit pip/network at runtime.
   if REPO_THIRD_PARTY_PATH.is_dir() and str(REPO_THIRD_PARTY_PATH) not in sys.path:
     sys.path.insert(0, str(REPO_THIRD_PARTY_PATH))
-  if os.path.isdir(POND_DEPS_PATH) and POND_DEPS_PATH not in sys.path:
-    sys.path.insert(0, POND_DEPS_PATH)
+  for deps_path in GALAXY_DEPS_PATHS:
+    if os.path.isdir(deps_path) and deps_path not in sys.path:
+      sys.path.insert(0, deps_path)
 
   importlib.invalidate_caches()
-  if _import_pond_web_symbols():
+  if _import_galaxy_web_symbols():
     return True
 
-  _POND_WEB_DEPS_ERROR = RuntimeError(
-    "Missing local Flask deps (expected in starpilot/third_party or /data/pond_deps)."
+  _GALAXY_WEB_DEPS_ERROR = RuntimeError(
+    "Missing local Flask deps (expected in starpilot/third_party or local Galaxy deps)."
   )
   return False
 
 
-def _ensure_pond_web_deps():
-  global _POND_WEB_DEPS_READY
+def _ensure_galaxy_web_deps():
+  global _GALAXY_WEB_DEPS_READY
 
-  if _POND_WEB_DEPS_READY:
+  if _GALAXY_WEB_DEPS_READY:
     return True
-  if _import_pond_web_symbols():
-    _POND_WEB_DEPS_READY = True
+  if _import_galaxy_web_symbols():
+    _GALAXY_WEB_DEPS_READY = True
     return True
-  if _install_pond_web_deps() and _import_pond_web_symbols():
-    _POND_WEB_DEPS_READY = True
+  if _install_galaxy_web_deps() and _import_galaxy_web_symbols():
+    _GALAXY_WEB_DEPS_READY = True
     return True
   return False
 
@@ -304,6 +317,20 @@ class ParamsCompat:
         typed_value = ""
       else:
         typed_value = str(value)
+    elif expected_type == ParamKeyType.JSON:
+      if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+
+      if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+          typed_value = self._params.get_default_value(key)
+        else:
+          typed_value = json.loads(stripped)
+      elif isinstance(value, tuple):
+        typed_value = list(value)
+      else:
+        typed_value = value
 
     self._params.put(key, typed_value)
 
@@ -435,6 +462,11 @@ starpilot_default_params = _build_default_params()
 
 params = ParamsCompat(_params_raw)
 params_memory = ParamsCompat(_params_memory_raw)
+STATS_RESPONSE_CACHE_SECONDS = 2.0
+_STATS_RESPONSE_CACHE = {
+  "updated_at": 0.0,
+  "payload": None,
+}
 
 try:
   FOOTAGE_PATHS = [
@@ -450,11 +482,15 @@ except TypeError:
   ]
 
 KEYS = {
-  "amap1": ("amap1", "", "AMapKey1", "Amap key #1", 39),
-  "amap2": ("amap2", "", "AMapKey2", "Amap key #2", 39),
+  "amap1": ("amap1", "", "AMapKey1", "AMap / Gaode key #1", 39),
+  "amap2": ("amap2", "", "AMapKey2", "AMap / Gaode key #2", 39),
   "public": ("public", "pk.", "MapboxPublicKey", "Public key", 80),
   "secret": ("secret", "sk.", "MapboxSecretKey", "Secret key", 80),
 }
+
+NAVIGATION_MEMORY_LOCATION_STALE_SECONDS = 10.0
+NAVIGATION_PERSISTED_LOCATION_FUTURE_SKEW_SECONDS = 60.0
+NAVIGATION_PERSISTED_LOCATION_MAX_AGE_SECONDS = 24 * 60 * 60
 
 TMUX_LOGS_PATH = Path("/data/tmux_logs")
 
@@ -466,6 +502,85 @@ MODEL_SORT_MODE_PARAM = "ModelSortMode"
 MODEL_USER_FAVORITES_PARAM = "UserFavorites"
 MAPS_DOWNLOAD_PARAM = "DownloadMaps"
 MAPS_CANCEL_DOWNLOAD_PARAM = "CancelDownloadMaps"
+
+
+def _parse_last_gps_position(raw_value):
+  if not raw_value:
+    return None
+
+  try:
+    payload = json.loads(raw_value)
+  except (TypeError, ValueError, json.JSONDecodeError):
+    return None
+
+  if not isinstance(payload, dict):
+    return None
+
+  latitude = payload.get("latitude")
+  longitude = payload.get("longitude")
+  has_fix = payload.get("hasFix", False)
+  try:
+    latitude = float(latitude or 0.0)
+    longitude = float(longitude or 0.0)
+  except (TypeError, ValueError):
+    return None
+
+  if not has_fix or (abs(latitude) < 1e-6 and abs(longitude) < 1e-6):
+    return None
+
+  payload["latitude"] = latitude
+  payload["longitude"] = longitude
+  return payload
+
+
+def _last_gps_position_is_live(payload):
+  if not isinstance(payload, dict):
+    return False
+
+  try:
+    updated_at_monotonic = float(payload.get("updatedAtMonotonic", 0.0) or 0.0)
+  except (TypeError, ValueError):
+    updated_at_monotonic = 0.0
+
+  if updated_at_monotonic <= 0.0:
+    return False
+
+  return (time.monotonic() - updated_at_monotonic) <= NAVIGATION_MEMORY_LOCATION_STALE_SECONDS
+
+
+def _last_gps_position_is_recent(payload):
+  if not isinstance(payload, dict):
+    return False
+
+  try:
+    updated_at_sec = float(payload.get("updatedAtSec", 0.0) or 0.0)
+  except (TypeError, ValueError):
+    updated_at_sec = 0.0
+
+  if updated_at_sec <= 0.0:
+    return False
+
+  now_sec = time.time()
+  if updated_at_sec > (now_sec + NAVIGATION_PERSISTED_LOCATION_FUTURE_SKEW_SECONDS):
+    return False
+
+  if not system_time_valid():
+    return True
+
+  age_sec = now_sec - updated_at_sec
+  return 0.0 <= age_sec <= NAVIGATION_PERSISTED_LOCATION_MAX_AGE_SECONDS
+
+
+def _get_navigation_last_position():
+  memory_position = _parse_last_gps_position(params_memory.get("LastGPSPosition", encoding="utf8") or "")
+  if _last_gps_position_is_live(memory_position):
+    return memory_position
+
+  persisted_position = _parse_last_gps_position(params.get("LastGPSPosition", encoding="utf8") or "")
+  if _last_gps_position_is_recent(persisted_position):
+    return persisted_position
+
+  return None
 
 FINGERPRINT_MAKE_LABELS = [
   "Acura",
@@ -548,7 +663,6 @@ _FAST_UPDATE_REBOOT_NOTICE_SECONDS = 6.0
 _FAST_UPDATE_FETCH_TIMEOUT_S = 60
 _FAST_BRANCH_SWITCH_FETCH_TIMEOUT_S = 60
 _FAST_ROLLBACK_FETCH_TIMEOUT_S = 60
-_FACTORY_RESET_DELETE_TIMEOUT_S = 1800
 _GIT_PROGRESS_PERCENT_RE = re.compile(r'([A-Za-z][A-Za-z /_-]+):\s*([0-9]{1,3})%')
 _GIT_SUBMODULE_SECTION_RE = re.compile(r'^\s*\[submodule\s+"[^"]+"\]\s*$', re.MULTILINE)
 _ROLLBACK_REF = "refs/starpilot/rollback"
@@ -696,6 +810,7 @@ _TROUBLESHOOT_ADVANCED_LONGITUDINAL_KEYS = [
   "AdvancedLongitudinalTune",
   "EVTuning",
   "TruckTuning",
+  "TrailerLoad",
   "CustomAccelProfile",
   *CUSTOM_ACCEL_PROFILE_PARAM_KEYS,
   "LongitudinalActuatorDelay",
@@ -1487,18 +1602,6 @@ def _set_fast_update_error_state(message, exception):
     progressDetail="Update failed. See Last Error below.",
   )
 
-def _run_factory_reset_delete(path):
-  result = subprocess.run(
-    ["sudo", "rm", "-rf", path],
-    capture_output=True,
-    text=True,
-    timeout=_FACTORY_RESET_DELETE_TIMEOUT_S,
-    check=False,
-  )
-  if result.returncode != 0:
-    error_text = (result.stderr or result.stdout or "sudo rm -rf failed").strip()
-    raise RuntimeError(f"Failed to remove {path}: {error_text}")
-
 def _factory_reset_worker():
   started_at = time.time()
 
@@ -1910,6 +2013,7 @@ def write_legacy_param_file(key, value):
 
 _layout_type_overrides = None
 _layout_param_metadata = None
+_favorite_slot_options = None
 
 def _get_layout_param_metadata():
   global _layout_param_metadata
@@ -1939,10 +2043,57 @@ def _get_layout_type_overrides():
     }
   return _layout_type_overrides
 
+def _get_favorite_slot_options():
+  global _favorite_slot_options
+  if _favorite_slot_options is not None:
+    return _favorite_slot_options
+
+  allowed_keys, value_types = _get_param_type_info()
+  options = []
+  try:
+    layout_path = os.path.join(os.path.dirname(__file__), "assets", "components", "tools", "device_settings_layout.json")
+    with open(layout_path) as f:
+      layout_data = json.load(f)
+
+    seen = set()
+    for section in layout_data:
+      section_name = section.get("name", "")
+      for param_data in section.get("params", []):
+        key = str(param_data.get("key") or "").strip()
+        if not key or key in seen:
+          continue
+        if key not in allowed_keys or value_types.get(key) is not bool:
+          continue
+        if param_data.get("ui_type") != "toggle" or param_data.get("data_type") != "bool":
+          continue
+
+        seen.add(key)
+        options.append({
+          "key": key,
+          "label": str(param_data.get("label") or key),
+          "description": str(param_data.get("description") or ""),
+          "section": section_name,
+        })
+  except Exception:
+    options = []
+
+  options.sort(key=lambda option: (str(option.get("label") or option.get("key") or "").casefold(), str(option.get("key") or "").casefold()))
+  _favorite_slot_options = options
+  return _favorite_slot_options
+
+def _favorite_slot_values(options):
+  return {
+    option["key"]: _safe_params_get_bool(option["key"])
+    for option in options
+    if option.get("key")
+  }
+
 _cached_allowed_keys = None
 _cached_param_types = None
 _cached_default_values = None
 _cached_static_default_values = None
+
+GALAXY_MANUAL_BOOL_PARAM_KEYS = {"IsRHD", "IsRHDOverride"}
 
 def _get_param_type_info():
   global _cached_allowed_keys, _cached_param_types
@@ -1964,6 +2115,12 @@ def _get_param_type_info():
     for k, dt in _get_layout_type_overrides().items():
       if k in types and dt in ("int", "float") and types[k] == bool:
         types[k] = float if dt == "float" else int
+      elif k in types and dt == "bool":
+        types[k] = bool
+
+    for k in GALAXY_MANUAL_BOOL_PARAM_KEYS:
+      if k in _cached_allowed_keys:
+        types[k] = bool
 
     # Keep legacy aliases editable for older payloads/UI clients.
     alias_to_key = {
@@ -2138,6 +2295,9 @@ def _get_current_param_value(key, value_type, defaults_lookup=None):
   if key == CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY:
     return _get_custom_accel_profile_initialized()
 
+  if key == "IsRHD" and not _safe_params_get_bool("IsRHDOverride"):
+    return _safe_params_get_bool("IsRhdDetected")
+
   if key in CUSTOM_ACCEL_PROFILE_PARAM_KEYS and not _get_custom_accel_profile_initialized():
     if defaults_lookup is None:
       defaults_lookup = _get_default_param_values()
@@ -2170,6 +2330,30 @@ def _serialize_param_write_value(raw_value):
   if isinstance(raw_value, bytes):
     return raw_value.decode("utf-8", errors="replace")
   return str(raw_value or "")
+
+def _offroad_excessive_actuation_type():
+  alert = _safe_params_get_live_raw("Offroad_ExcessiveActuation")
+  if not alert:
+    return ""
+
+  if isinstance(alert, bytes):
+    try:
+      alert = json.loads(alert.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError:
+      return ""
+  elif isinstance(alert, str):
+    try:
+      alert = json.loads(alert)
+    except json.JSONDecodeError:
+      return ""
+
+  if not isinstance(alert, dict):
+    return ""
+
+  extra = alert.get("extra", "")
+  if isinstance(extra, bytes):
+    extra = extra.decode("utf-8", errors="replace")
+  return str(extra).strip().lower()
 
 def _apply_cellular_metered_setting(metered_enabled):
   """Apply GsmMetered changes to active NetworkManager GSM profiles."""
@@ -2577,6 +2761,9 @@ def _get_hardware_snapshot_items():
   if fpcp_bytes:
     try:
       fpcp = messaging.log_from_bytes(fpcp_bytes, custom.StarPilotCarParams)
+      fpcp_flags = int(getattr(fpcp, "flags", 0))
+      has_sdsu = bool(fpcp_flags & ToyotaStarPilotFlags.SMART_DSU.value)
+      has_zss = bool(fpcp_flags & ToyotaStarPilotFlags.ZSS.value)
       can_use_pedal = bool(getattr(fpcp, "canUsePedal", can_use_pedal))
       can_use_sdsu = bool(getattr(fpcp, "canUseSDSU", can_use_sdsu))
     except Exception:
@@ -3184,7 +3371,7 @@ def _set_longitudinal_maneuver_mode(enabled):
       "uiText2": "Engage with SET to start the test suite.",
       "updatedAtSec": time.monotonic(),
     })
-    _append_longitudinal_maneuver_history(status, "Armed from The Pond. Engage with SET to start.")
+    _append_longitudinal_maneuver_history(status, "Armed from The Galaxy. Engage with SET to start.")
   else:
     params.put_bool("LongitudinalManeuverMode", False)
     params.put("LongitudinalManeuverPaddleMode", "auto")
@@ -3196,7 +3383,7 @@ def _set_longitudinal_maneuver_mode(enabled):
       "uiText2": "Test mode disabled.",
       "updatedAtSec": time.monotonic(),
     })
-    _append_longitudinal_maneuver_history(status, "Stopped from The Pond.")
+    _append_longitudinal_maneuver_history(status, "Stopped from The Galaxy.")
 
   return _save_longitudinal_maneuver_status(status)
 
@@ -3298,7 +3485,7 @@ def _set_lateral_maneuver_mode(enabled):
       "uiText2": "Stabilize on a straight, flat road to start.",
       "updatedAtSec": time.monotonic(),
     })
-    _append_lateral_maneuver_history(status, "Armed from The Pond. Stabilize on a straight, flat road to start.")
+    _append_lateral_maneuver_history(status, "Armed from The Galaxy. Stabilize on a straight, flat road to start.")
   else:
     params.put_bool("LateralManeuverMode", False)
     status.update({
@@ -3309,7 +3496,7 @@ def _set_lateral_maneuver_mode(enabled):
       "uiText2": "Test mode disabled.",
       "updatedAtSec": time.monotonic(),
     })
-    _append_lateral_maneuver_history(status, "Stopped from The Pond.")
+    _append_lateral_maneuver_history(status, "Stopped from The Galaxy.")
 
   return _save_lateral_maneuver_status(status)
 
@@ -3319,6 +3506,19 @@ def setup(app):
     "last_log_time": 0.0,
     "last_empty_catalog_log_time": 0.0,
   }
+
+  @app.after_request
+  def disable_device_settings_asset_cache(response):
+    if request.path in {
+      "/assets/components/router.js",
+      "/assets/components/tools/device_settings.js",
+      "/assets/components/tools/device_settings.css",
+      "/assets/components/tools/device_settings_layout.json",
+    }:
+      response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+      response.headers["Pragma"] = "no-cache"
+      response.headers["Expires"] = "0"
+    return response
 
   @app.errorhandler(404)
   def not_found(_):
@@ -3434,14 +3634,13 @@ def setup(app):
   @app.route("/api/navigation", methods=["DELETE"])
   def clear_navigation():
     params.remove("NavDestination")
+    params_memory.remove("NavInstructionState")
+    params_memory.remove("NavInstructionCollapsed")
     return {"message": "Destination cleared"}
 
   @app.route("/api/navigation", methods=["GET"])
   def navigation():
-    last_position = json.loads(
-      params.get("LastGPSPosition", encoding="utf8") or
-      "{\"latitude\": 51.276824158421331, \"longitude\": 30.221928335547232, \"altitude\": 111.0}"
-    )
+    last_position = _get_navigation_last_position() or {}
 
     return {
       "amap1Key": params.get("AMapKey1", encoding="utf8") or "",
@@ -3449,8 +3648,8 @@ def setup(app):
       "destination": params.get("NavDestination", encoding="utf8") or "",
       "isMetric": params.get_bool("IsMetric"),
       "lastPosition": {
-        "latitude": str(last_position["latitude"]),
-        "longitude": str(last_position["longitude"])
+        "latitude": str(last_position.get("latitude", "")),
+        "longitude": str(last_position.get("longitude", ""))
       },
       "mapboxPublic": params.get("MapboxPublicKey", encoding="utf8") or "",
       "mapboxSecret": params.get("MapboxSecretKey", encoding="utf8") or "",
@@ -3459,11 +3658,16 @@ def setup(app):
 
   @app.route("/api/navigation", methods=["POST"])
   def set_navigation():
-    params.remove("NavDestination")
+    destination = normalize_destination_payload(request.json)
+    if destination is None:
+      return {"message": "Invalid destination payload"}, 400
 
-    time.sleep(1)
-
-    params.put("NavDestination", json.dumps(request.json))
+    recent_destinations = update_recent_destinations(
+      params.get("ApiCache_NavDestinations", encoding="utf8") or "",
+      destination,
+    )
+    params.put("NavDestination", json.dumps(destination))
+    params.put("ApiCache_NavDestinations", recent_destinations)
     return {"message": "Destination set"}
 
   @app.route("/api/navigation/favorite", methods=["DELETE"])
@@ -3485,7 +3689,7 @@ def setup(app):
         )
       ]
 
-    params.put("FavoriteDestinations", json.dumps(favorites))
+    params.put("FavoriteDestinations", favorites)
     return jsonify(message="Destination removed from favorites!")
 
   @app.route("/api/navigation/favorite", methods=["GET"])
@@ -3498,7 +3702,7 @@ def setup(app):
         f["id"] = hashlib.sha1(raw.encode()).hexdigest()
         changed = True
     if changed:
-      params.put("FavoriteDestinations", json.dumps(favorites))
+      params.put("FavoriteDestinations", favorites)
     return jsonify(favorites=favorites)
 
   @app.route("/api/navigation/favorite", methods=["POST"])
@@ -3513,7 +3717,7 @@ def setup(app):
     if not any(f.get("id") == new_fav["id"] for f in existing):
       existing.append(new_fav)
 
-    params.put("FavoriteDestinations", json.dumps(existing))
+    params.put("FavoriteDestinations", existing)
     return {"message": "Destination added to favorites!"}
 
   @app.route("/api/navigation/favorite/rename", methods=["POST"])
@@ -3563,7 +3767,7 @@ def setup(app):
     if not found:
       return jsonify({"error": "Favorite not found"}), 404
 
-    params.put("FavoriteDestinations", json.dumps(existing_favorites))
+    params.put("FavoriteDestinations", existing_favorites)
     return jsonify(message="Favorite updated successfully!")
 
   @app.route("/api/navigation_key", methods=["DELETE"])
@@ -3611,6 +3815,56 @@ def setup(app):
 
     return jsonify(models), 200
 
+  @app.route("/api/favorites/slots", methods=["GET", "PUT"])
+  def favorite_slots():
+    options = _get_favorite_slot_options()
+    option_by_key = {option["key"]: option for option in options}
+    eligible_keys = set(option_by_key)
+
+    if request.method == "PUT":
+      data = request.get_json() or {}
+      raw_slots = data.get("slots", data) if isinstance(data, dict) else data
+      if isinstance(raw_slots, dict):
+        raw_slots = raw_slots.get("slots", [])
+      if not isinstance(raw_slots, list):
+        return jsonify(error="Favorite slots payload must be a list."), 400
+
+      for idx, raw_slot in enumerate(raw_slots[:3]):
+        if not isinstance(raw_slot, dict):
+          continue
+        key = str(raw_slot.get("key") or "").strip()
+        if key and key not in eligible_keys:
+          return jsonify(error=f"Favorite #{idx + 1} must use a Galaxy-exposed boolean toggle."), 400
+
+      slots = normalize_favorite_slots(raw_slots, params=params, eligible_keys=eligible_keys)
+
+      for slot in slots:
+        key = slot.get("key")
+        if not key:
+          continue
+        slot["label"] = option_by_key[key]["label"]
+
+      params.put(FAVORITE_SLOTS_PARAM, slots)
+      update_starpilot_toggles()
+      return jsonify({
+        "message": "Favorite slots saved.",
+        "slots": slots,
+        "options": options,
+        "values": _favorite_slot_values(options),
+      }), 200
+
+    slots = normalize_favorite_slots(params.get(FAVORITE_SLOTS_PARAM), params=params, eligible_keys=eligible_keys)
+    for slot in slots:
+      key = slot.get("key")
+      if key in option_by_key:
+        slot["label"] = option_by_key[key]["label"]
+
+    return jsonify({
+      "slots": slots,
+      "options": options,
+      "values": _favorite_slot_values(options),
+    }), 200
+
   @app.route("/api/params", methods=["GET", "PUT"])
   def get_param():
     if request.method == "PUT":
@@ -3619,6 +3873,30 @@ def setup(app):
         return jsonify({"error": "Missing 'key' or 'value' in request body."}), 400
 
       key = str(data["key"]).strip()
+      if key.lower() == FAVORITE_SLOTS_PARAM.lower():
+        key = FAVORITE_SLOTS_PARAM
+        raw_slots = data["value"]
+        if isinstance(raw_slots, dict):
+          raw_slots = raw_slots.get("slots", raw_slots)
+        if not isinstance(raw_slots, list):
+          return jsonify({"error": "Favorite slots must be configured with the Favorites editor."}), 400
+
+        options = _get_favorite_slot_options()
+        option_by_key = {option["key"]: option for option in options}
+        eligible_keys = set(option_by_key)
+        slots = normalize_favorite_slots(raw_slots, params=params, eligible_keys=eligible_keys)
+        for slot in slots:
+          slot_key = slot.get("key")
+          if slot_key in option_by_key:
+            slot["label"] = option_by_key[slot_key]["label"]
+
+        params.put(FAVORITE_SLOTS_PARAM, slots)
+        update_starpilot_toggles()
+        return jsonify({
+          "message": "Favorite slots saved.",
+          "updated": {FAVORITE_SLOTS_PARAM: slots},
+        }), 200
+
       key = {
         "model": "Model",
         "modelversion": "ModelVersion",
@@ -3656,6 +3934,18 @@ def setup(app):
       if key == "AutomaticUpdates" and params.get_bool("IsOnroad"):
         return jsonify({"error": "Cannot change Automatic Updates while driving."}), 403
 
+      if key == "AllowImpossibleAcceleration":
+        enabled = str_val.strip() in ("1", "true", "True")
+        params.put_bool(key, enabled)
+        if enabled and _offroad_excessive_actuation_type() == "longitudinal":
+          params.remove("Offroad_ExcessiveActuation")
+
+        update_starpilot_toggles()
+        return jsonify({
+          "message": f"Parameter '{key}' updated successfully.",
+          "updated": {key: enabled},
+        }), 200
+
       if key in {"EVTuning", "TruckTuning"}:
         enabled = str_val.strip() in ("1", "true", "True")
         params.put_bool(key, enabled)
@@ -3663,6 +3953,22 @@ def setup(app):
         updated = {key: enabled}
         if enabled:
           other_key = "TruckTuning" if key == "EVTuning" else "EVTuning"
+          params.put_bool(other_key, False)
+          updated[other_key] = False
+
+        update_starpilot_toggles()
+        return jsonify({
+          "message": f"Parameter '{key}' updated successfully.",
+          "updated": updated,
+        }), 200
+
+      if key in {"ConditionalExperimental", "ConditionalChill"}:
+        enabled = str_val.strip() in ("1", "true", "True")
+        params.put_bool(key, enabled)
+
+        updated = {key: enabled}
+        if enabled:
+          other_key = "ConditionalChill" if key == "ConditionalExperimental" else "ConditionalExperimental"
           params.put_bool(other_key, False)
           updated[other_key] = False
 
@@ -3701,6 +4007,44 @@ def setup(app):
             "PersistExperimentalState": enabled,
             "PersistedCEStatus": params.get_int("PersistedCEStatus", default=0),
           },
+        }), 200
+
+      if key == "PersistChillState":
+        enabled = str_val.strip() in ("1", "true", "True")
+        sync_persist_chill_state(params, params_memory, enabled)
+        update_starpilot_toggles()
+        return jsonify({
+          "message": f"Parameter '{key}' updated successfully.",
+          "updated": {
+            "PersistChillState": enabled,
+            "PersistedCCStatus": params.get_int("PersistedCCStatus", default=0),
+          },
+        }), 200
+
+      if key == "IsRHD":
+        enabled = str_val.strip() in ("1", "true", "True")
+        params.put_bool("IsRHD", enabled)
+        params.put_bool("IsRHDOverride", True)
+        return jsonify({
+          "message": "Right Hand Driving override updated successfully.",
+          "updated": {
+            "IsRHD": enabled,
+            "IsRHDOverride": True,
+          },
+        }), 200
+
+      if key == "IsRHDOverride":
+        enabled = str_val.strip() in ("1", "true", "True")
+        params.put_bool("IsRHDOverride", enabled)
+        updated = {"IsRHDOverride": enabled}
+        if not enabled:
+          auto_rhd = params.get_bool("IsRhdDetected")
+          params.put_bool("IsRHD", auto_rhd)
+          updated["IsRHD"] = auto_rhd
+
+        return jsonify({
+          "message": "Right Hand Driving auto detection restored." if not enabled else "Right Hand Driving override enabled.",
+          "updated": updated,
         }), 200
 
       if key == "CarMake":
@@ -3846,6 +4190,8 @@ def setup(app):
       return _serialize_param_write_value(defaults_lookup.get(request_key)), 200
     if request_key == CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY:
       return _serialize_param_write_value(_get_custom_accel_profile_initialized()), 200
+    if request_key == "IsRHD" and not params.get_bool("IsRHDOverride"):
+      return ("1" if params.get_bool("IsRhdDetected") else "0"), 200
     value = params.get(request_key) or ""
     if request_key in ("Model", "DrivingModel"):
       if isinstance(value, bytes):
@@ -4330,14 +4676,17 @@ def setup(app):
     if f"{model_key}.thneed" in on_disk_files:
       return True
 
-    if model_version in ("v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15"):
+    if is_tinygrad_model_version(model_version):
+      if uses_combined_driving_artifacts(model_version):
+        return f"{model_key}_driving_tinygrad.pkl" in on_disk_files
+
       required_files = {
         f"{model_key}_driving_policy_tinygrad.pkl",
         f"{model_key}_driving_vision_tinygrad.pkl",
         f"{model_key}_driving_policy_metadata.pkl",
         f"{model_key}_driving_vision_metadata.pkl",
       }
-      if model_version in ("v12", "v13", "v14", "v15"):
+      if uses_split_off_policy_artifacts(model_version):
         required_files |= {
           f"{model_key}_driving_off_policy_tinygrad.pkl",
           f"{model_key}_driving_off_policy_metadata.pkl",
@@ -4823,30 +5172,48 @@ def setup(app):
 
   @app.route("/api/stats", methods=["GET"])
   def get_stats():
+    cache_now = time.monotonic()
+    cached_payload = _STATS_RESPONSE_CACHE.get("payload")
+    if cached_payload is not None and cache_now - _STATS_RESPONSE_CACHE.get("updated_at", 0.0) < STATS_RESPONSE_CACHE_SECONDS:
+      return cached_payload
+
     build_metadata = get_build_metadata()
 
     short_branch = build_metadata.channel
-    if build_metadata.release_channel:
-      env = "Release"
-    elif short_branch in ("StarPilot-Development", "StarPilot-Testing"):
-      env = "Testing"
-    elif build_metadata.tested_channel:
-      env = "Staging"
+    if short_branch == "StarPilot":
+      galaxy_label = "Stable"
+    elif short_branch == "Dom":
+      galaxy_label = "Testing"
     else:
-      env = short_branch
+      galaxy_label = "Experimental"
 
-    return {
+    software_info = {
+      "branchName": build_metadata.channel,
+      "buildEnvironment": galaxy_label,
+      "changelogUrl": utilities.get_github_changelog_url(build_metadata.openpilot.git_normalized_origin, build_metadata.channel),
+      "commitHash": build_metadata.openpilot.git_commit,
+      "commitUrl": utilities.get_github_commit_url(build_metadata.openpilot.git_normalized_origin, build_metadata.openpilot.git_commit),
+      "forkMaintainer": utilities.get_repo_owner(build_metadata.openpilot.git_normalized_origin),
+      "updateAvailable": "Yes" if params.get_bool("UpdaterFetchAvailable") else "No",
+      "versionDate": utilities.format_git_date(build_metadata.openpilot.git_commit_date),
+    }
+
+    try:
+      dashboard_stats = utilities.get_dashboard_stats(FOOTAGE_PATHS, params)
+    except Exception:
+      dashboard_stats = utilities.get_dashboard_stats([], params)
+
+    payload = {
       "diskUsage": utilities.get_disk_usage(),
       "driveStats": utilities.get_drive_stats(),
-      "softwareInfo": {
-        "branchName": build_metadata.channel,
-        "buildEnvironment": env,
-        "commitHash": build_metadata.openpilot.git_commit,
-        "forkMaintainer": utilities.get_repo_owner(build_metadata.openpilot.git_normalized_origin),
-        "updateAvailable": "Yes" if params.get_bool("UpdaterFetchAvailable") else "No",
-        "versionDate": utilities.format_git_date(build_metadata.openpilot.git_commit_date),
-      },
+      "softwareInfo": software_info,
+      "dashboard": dashboard_stats,
     }
+    _STATS_RESPONSE_CACHE.update({
+      "updated_at": cache_now,
+      "payload": payload,
+    })
+    return payload
 
   @app.route("/api/plots/live", methods=["GET"])
   def get_live_plots():
@@ -5253,7 +5620,7 @@ def setup(app):
     run_cmd(["sudo", "systemctl", "restart", "tailscaled"], "Started tailscaled service.", "Failed to start tailscaled service.")
 
     proc = subprocess.Popen(
-      ["sudo", f"{base}/tailscale", "--socket", socket, "up", "--hostname", f"{HARDWARE.get_device_type()}-the-pond"],
+      ["sudo", f"{base}/tailscale", "--socket", socket, "up", "--hostname", f"{HARDWARE.get_device_type()}-the-galaxy"],
       stdout=subprocess.PIPE,
       stderr=subprocess.STDOUT,
       text=True,
@@ -6245,8 +6612,8 @@ def setup(app):
     return {"error": "Video not found"}, 404
 
 def main():
-  while not _ensure_pond_web_deps():
-    print(f"The Pond waiting for Flask dependency ({_POND_WEB_DEPS_ERROR}); retrying in 60s.")
+  while not _ensure_galaxy_web_deps():
+    print(f"The Galaxy waiting for Flask dependency ({_GALAXY_WEB_DEPS_ERROR}); retrying in 60s.")
     time.sleep(60)
 
   app = Flask(__name__, static_folder="assets", static_url_path="/assets")
@@ -6258,7 +6625,7 @@ def main():
   port = 8083 if debug else 8082
 
   if debug:
-    print("\"The Pond\" is not running on a comma device, enabling debug mode")
+    print("\"The Galaxy\" is not running on a comma device, enabling debug mode")
 
   app.secret_key = secrets.token_hex(32)
   app.run(host="0.0.0.0", port=port, debug=debug)

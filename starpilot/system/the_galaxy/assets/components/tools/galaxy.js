@@ -139,7 +139,7 @@ export function GalaxyPairing() {
               <i class="bi bi-x-circle-fill"></i> Not Paired
             </div>
             <p class="galaxy-text">
-              Pair your device with Galaxy to access The Pond remotely from anywhere.
+              Pair your device with Galaxy to access The Galaxy remotely from anywhere.
               Set a password to secure your connection.
             </p>
             <div class="galaxy-input-group">

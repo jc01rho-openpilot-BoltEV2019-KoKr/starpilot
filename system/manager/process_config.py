@@ -136,7 +136,7 @@ procs = [
 
 # StarPilot variables
 procs += [
-  PythonProcess("the_pond", "starpilot.system.the_pond.the_pond", always_run, nice=19),
+  PythonProcess("the_galaxy", "starpilot.system.the_galaxy.the_galaxy", always_run, nice=19),
   PythonProcess("galaxy", "starpilot.system.galaxy.galaxy", always_run, nice=19),
 ]
 

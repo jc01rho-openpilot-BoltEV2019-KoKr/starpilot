@@ -111,7 +111,7 @@ def backup_toggles(params, boot_run=False):
       print("Toggles are identical to the previous backup. Aborting...")
     return
 
-  params.put_bool("PondUploadPending", True)
+  params.put_bool("GalaxyUploadPending", True)
 
   destination = TOGGLE_BACKUPS / f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_auto"
   create_backup(Path(params_backup.get_param_path()), destination, "Successfully backed up toggles!", "Failed to backup toggles...", params)

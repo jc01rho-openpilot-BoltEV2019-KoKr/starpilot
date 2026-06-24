@@ -1,8 +1,19 @@
+import importlib.util
 import subprocess
 
 import pytest
 
-from openpilot.starpilot.system.the_pond import factory_reset
+from pathlib import Path
+
+
+def _load_factory_reset_module():
+  spec = importlib.util.spec_from_file_location("factory_reset_under_test", Path(__file__).resolve().parents[1] / "factory_reset.py")
+  module = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(module)
+  return module
+
+
+factory_reset = _load_factory_reset_module()
 
 
 def test_remove_path_retries_directory_not_empty(monkeypatch):

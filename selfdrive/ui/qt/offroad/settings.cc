@@ -363,7 +363,7 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
     popup.exec();
   };
 
-  pair_galaxy = new ButtonControl(tr("Galaxy"), tr("PAIR"), tr("Pair your device with Galaxy for remote access to The Pond."));
+  pair_galaxy = new ButtonControl(tr("Galaxy"), tr("PAIR"), tr("Pair your device with Galaxy for remote access to The Galaxy."));
   connect(pair_galaxy, &ButtonControl::clicked, [=]() {
     const std::string current_password = util::read_file(galaxy_auth_path);
     if (current_password.empty()) {

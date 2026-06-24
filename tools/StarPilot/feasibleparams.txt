@@ -203,6 +203,7 @@ NoLogging
 NoUploads
 NostalgiaMode
 NudgelessLaneChange
+NudgelessLaneChangeOnlyWhenEngaged
 NumericalTemp
 Offroad_ExcessiveActuation
 Offset1

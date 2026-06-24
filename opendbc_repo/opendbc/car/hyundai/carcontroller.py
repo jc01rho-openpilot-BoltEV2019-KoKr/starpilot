@@ -571,7 +571,7 @@ class CarController(CarControllerBase):
     use_ioniq_6_smoothed_accel = use_ioniq_6_dynamic_long_tuning and CC.actuators.accel >= self._ioniq_6_long_tuning.actual_accel
 
     # steering control
-    preserve_stock_lkas = self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and not self.long_active_ecu
+    preserve_stock_lkas = bool(self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING) and not self.long_active_ecu
     can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled,
                                                            apply_steer_req, apply_torque, apply_angle,
                                                            CS.stock_lfa_msg,

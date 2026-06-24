@@ -24,7 +24,7 @@ DROPDOWN_MAPPING = {
 }
 
 # Custom controls implemented outside the tuple vectors in Qt settings panels.
-# Inject these so regenerated pond layouts retain equivalent functionality.
+# Inject these so regenerated galaxy layouts retain equivalent functionality.
 INJECTED_SECTION_PARAMS = {
     "Vehicle": [
         {
@@ -60,7 +60,7 @@ INJECTED_SECTION_PARAMS = {
     ],
 }
 
-# Keys explicitly hidden from The Pond's generic settings UI.
+# Keys explicitly hidden from The Galaxy's generic settings UI.
 HIDDEN_KEYS = {
     "FrogsGoMoosTweak",
     "LockDoorsTimer",
@@ -472,7 +472,7 @@ def parse_cpp_file(filename):
         if data_type == "float" and step and float(step).is_integer():
              data_type = "int"
 
-        # Generic pond UI can't faithfully represent non-boolean button/multi-option controls.
+        # Generic galaxy UI can't faithfully represent non-boolean button/multi-option controls.
         if widget_type == "toggle" and data_type != "bool":
             continue
 
@@ -609,7 +609,7 @@ def main():
                 "icon": cat["icon"],
                 "params": items
             })
-    output_path = os.path.join(REPO_ROOT, "starpilot/system/the_pond/assets/components/tools/device_settings_layout.json")
+    output_path = os.path.join(REPO_ROOT, "starpilot/system/the_galaxy/assets/components/tools/device_settings_layout.json")
     layout = generated_layout
     if os.path.exists(output_path):
         with open(output_path, 'r', encoding='utf-8') as f:

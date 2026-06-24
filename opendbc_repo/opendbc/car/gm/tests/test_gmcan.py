@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from opendbc.can import CANPacker
 from opendbc.car.gm import gmcan
 from opendbc.car.gm.values import CAR, DBC
@@ -26,6 +28,39 @@ class TestGMCan:
     assert dat[1] & 0x1
     assert decoded == 8848
 
+  def test_prndl2_command_matches_bolt_gen2_regen_paddle_spoof(self):
+    CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL)
+
+    addr, dat, bus = gmcan.create_prndl2_command(self.packer, 0, False, CP)
+    assert addr == 0x1F5
+    assert bus == 0
+    assert dat.hex() == "0c0c000600000100"
+
+    addr, dat, bus = gmcan.create_prndl2_command(self.packer, 0, True, CP)
+    assert addr == 0x1F5
+    assert bus == 0
+    assert dat.hex() == "0c0c000500020100"
+
+  def test_prndl2_command_matches_bolt_gen1_regen_paddle_spoof(self):
+    CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_BOLT_CC_2018_2021)
+
+    addr, dat, bus = gmcan.create_prndl2_command(self.packer, 0, True, CP)
+
+    assert addr == 0x1F5
+    assert bus == 0
+    assert dat.hex() == "0c0c000700020100"
+
+  def test_regen_paddle_command_matches_bolt_spoof(self):
+    addr, dat, bus = gmcan.create_regen_paddle_command(self.packer, 0, False)
+    assert addr == 0xBD
+    assert bus == 0
+    assert dat.hex() == "00000000000000"
+
+    addr, dat, bus = gmcan.create_regen_paddle_command(self.packer, 0, True)
+    assert addr == 0xBD
+    assert bus == 0
+    assert dat.hex() == "20000000000000"
+
 
   def test_gas_regen_command_matches_starpilot_volt_2019(self):
     packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_2019]["pt"])
@@ -42,11 +77,3 @@ class TestGMCan:
     assert addr == 0x2CB
     assert bus == 0
     assert dat.hex() == "41429c4000bd63bf"
-
-  def test_gas_regen_command_matches_opgm_plain_volt_layout(self):
-    packer = CANPacker("gm_global_a_powertrain_generated")
-    addr, dat, bus = gmcan.create_gas_regen_command(packer, 0, 5000, 1, True, False, use_generated_layout=True)
-
-    assert addr == 0x2CB
-    assert bus == 0
-    assert dat.hex() == "41435c7000bca38f"

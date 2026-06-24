@@ -60,6 +60,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_ioniq_6_ff_scale,
   get_ioniq_6_friction_scale,
   get_ioniq_6_friction_threshold,
+  get_ioniq_6_low_speed_angle_assist_torque,
   get_kia_forte_center_taper_scale,
   get_kia_forte_ff_scale,
   get_kia_ev6_center_taper_scale,
@@ -475,6 +476,19 @@ class TestLatControl:
     assert get_ioniq_6_ff_scale(0.30, 0.60, 6.0) > get_ioniq_6_ff_scale(0.30, 0.60, 12.0)
     assert get_ioniq_6_ff_scale(0.30, -0.60, 3.0) < get_ioniq_6_ff_scale(0.30, 0.60, 3.0)
 
+  def test_ioniq_6_low_speed_angle_assist_curve(self):
+    base = 0.05
+    boosted = get_ioniq_6_low_speed_angle_assist_torque(22.0, 0.0, base, 1.0)
+    faded = get_ioniq_6_low_speed_angle_assist_torque(22.0, 0.0, base, 4.5)
+    unwind = get_ioniq_6_low_speed_angle_assist_torque(22.0, 30.0, base, 1.0)
+    opposing = get_ioniq_6_low_speed_angle_assist_torque(-22.0, 0.0, 0.08, 1.0)
+
+    assert boosted > base
+    assert faded < boosted
+    assert abs(faded - base) < 0.04
+    assert unwind == pytest.approx(base)
+    assert opposing < 0.0
+
   def test_ioniq_6_directional_taper_curve(self):
     assert get_ioniq_6_directional_taper_scale(0.0, 0.0) == 1.0
     assert get_ioniq_6_directional_taper_scale(-0.5, 0.0) < get_ioniq_6_directional_taper_scale(0.5, 0.0) < 1.0
@@ -658,6 +672,7 @@ class TestLatControl:
 
     assert lac_log.active
     assert controller.torque_params.latAccelFactor == pytest.approx(3.0 * 1.22)
+    assert controller.low_speed_reset_threshold == pytest.approx(0.1 * 0.44704)
 
   def test_elantra_non_scc_default_update_path(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_ELANTRA_HEV_2022_NON_SCC)

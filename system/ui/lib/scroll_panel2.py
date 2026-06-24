@@ -56,6 +56,8 @@ class GuiScrollPanel2:
     self._velocity = 0.0  # pixels per second
     self._velocity_buffer: deque[float] = deque(maxlen=12 if TICI else 6)
     self._enabled: bool | Callable[[], bool] = True
+    self.snap_interval: float | None = None
+    self._snap_target: float | None = None
 
   def set_enabled(self, enabled: bool | Callable[[], bool]) -> None:
     self._enabled = enabled
@@ -103,29 +105,51 @@ class GuiScrollPanel2:
       # if we find ourselves out of bounds, scroll back in (from external layout dimension changes, etc.)
       if self.get_offset() > max_offset or self.get_offset() < min_offset:
         self._state = ScrollState.AUTO_SCROLL
+      elif self.snap_interval is not None and self.snap_interval > 0:
+        col_step = self.snap_interval
+        current_offset = self.get_offset()
+        idx = -current_offset / col_step
+        rounded_idx = round(idx)
+        if abs(current_offset - (-rounded_idx * col_step)) > 0.1:
+          max_col_idx = int(round(-min_offset / col_step))
+          target_idx = max(0, min(rounded_idx, max_col_idx))
+          self._snap_target = max(min_offset, min(0.0, -target_idx * col_step))
+          self._state = ScrollState.AUTO_SCROLL
 
     elif self._state == ScrollState.AUTO_SCROLL:
-      # simple exponential return if out of bounds
-      out_of_bounds = self.get_offset() > max_offset or self.get_offset() < min_offset
-      if out_of_bounds and self._handle_out_of_bounds:
-        target = max_offset if self.get_offset() > max_offset else min_offset
-
+      if self.snap_interval is not None and self._snap_target is not None:
+        target = self._snap_target
         dt = rl.get_frame_time() or 1e-6
-        factor = 1.0 - math.exp(-BOUNCE_RETURN_RATE * dt)
-
+        factor = 1.0 - math.exp(-12.0 * dt)
         dist = target - self.get_offset()
-        self.set_offset(self.get_offset() + dist * factor)  # ease toward the edge
-        self._velocity *= (1.0 - factor)  # damp any leftover fling
-
-        # Steady once we are close enough to the target
-        if abs(dist) < 1 and abs(self._velocity) < MIN_VELOCITY:
+        self.set_offset(self.get_offset() + dist * factor)
+        self._velocity = 0.0
+        if abs(dist) < 0.5:
           self.set_offset(target)
+          self._snap_target = None
+          self._state = ScrollState.STEADY
+      else:
+        # simple exponential return if out of bounds
+        out_of_bounds = self.get_offset() > max_offset or self.get_offset() < min_offset
+        if out_of_bounds and self._handle_out_of_bounds:
+          target = max_offset if self.get_offset() > max_offset else min_offset
+
+          dt = rl.get_frame_time() or 1e-6
+          factor = 1.0 - math.exp(-BOUNCE_RETURN_RATE * dt)
+
+          dist = target - self.get_offset()
+          self.set_offset(self.get_offset() + dist * factor)  # ease toward the edge
+          self._velocity *= (1.0 - factor)  # damp any leftover fling
+
+          # Steady once we are close enough to the target
+          if abs(dist) < 1 and abs(self._velocity) < MIN_VELOCITY:
+            self.set_offset(target)
+            self._velocity = 0.0
+            self._state = ScrollState.STEADY
+
+        elif abs(self._velocity) < MIN_VELOCITY:
           self._velocity = 0.0
           self._state = ScrollState.STEADY
-
-      elif abs(self._velocity) < MIN_VELOCITY:
-        self._velocity = 0.0
-        self._state = ScrollState.STEADY
 
       # Update the offset based on the current velocity
       dt = rl.get_frame_time()
@@ -135,6 +159,9 @@ class GuiScrollPanel2:
 
   def _handle_mouse_event(self, mouse_event: MouseEvent, bounds: rl.Rectangle, bounds_size: float,
                           content_size: float) -> None:
+    if mouse_event.left_pressed:
+      self._snap_target = None
+
     max_offset, min_offset = self._get_offset_bounds(bounds_size, content_size)
     # simple exponential return if out of bounds
     out_of_bounds = self.get_offset() > max_offset or self.get_offset() < min_offset
@@ -198,16 +225,34 @@ class GuiScrollPanel2:
 
         self._velocity = weighted_velocity(self._velocity_buffer)
 
-        # If final velocity is below some threshold, switch to steady state too
-        low_speed = abs(self._velocity) <= MIN_VELOCITY_FOR_CLICKING * 1.5  # plus some margin
-
-        if out_of_bounds or not (high_decel or low_speed):
+        if self.snap_interval is not None and self.snap_interval > 0:
+          col_step = self.snap_interval
+          current_offset = self.get_offset()
+          idx = -current_offset / col_step
+          fling_threshold = 250.0
+          if self._velocity > fling_threshold:
+            target_idx = math.floor(idx)
+          elif self._velocity < -fling_threshold:
+            target_idx = math.ceil(idx)
+          else:
+            target_idx = round(idx)
+          max_col_idx = int(round(-min_offset / col_step))
+          target_idx = max(0, min(target_idx, max_col_idx))
+          self._snap_target = max(min_offset, min(0.0, -target_idx * col_step))
           self._state = ScrollState.AUTO_SCROLL
-        else:
-          # TODO: we should just set velocity and let autoscroll go back to steady. delays one frame but who cares
           self._velocity = 0.0
-          self._state = ScrollState.STEADY
-        self._velocity_buffer.clear()
+          self._velocity_buffer.clear()
+        else:
+          # If final velocity is below some threshold, switch to steady state too
+          low_speed = abs(self._velocity) <= MIN_VELOCITY_FOR_CLICKING * 1.5  # plus some margin
+
+          if out_of_bounds or not (high_decel or low_speed):
+            self._state = ScrollState.AUTO_SCROLL
+          else:
+            # TODO: we should just set velocity and let autoscroll go back to steady. delays one frame but who cares
+            self._velocity = 0.0
+            self._state = ScrollState.STEADY
+          self._velocity_buffer.clear()
       else:
         # Update velocity for when we release the mouse button.
         # Do not update velocity on the same frame the mouse was released
