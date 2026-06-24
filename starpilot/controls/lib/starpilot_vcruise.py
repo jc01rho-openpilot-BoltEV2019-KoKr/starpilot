@@ -3,6 +3,7 @@ import json
 import math
 
 from openpilot.common.constants import CV
+from openpilot.selfdrive.road_speed_limiter import SpeedLimiter
 from openpilot.common.realtime import DT_MDL
 
 from openpilot.starpilot.common.starpilot_variables import CITY_SPEED_LIMIT, CRUISING_SPEED, PLANNER_TIME
@@ -58,6 +59,12 @@ class StarPilotVCruise:
 
     self.csc = CurveSpeedController(self)
     self.slc = SpeedLimitController(self)
+    self.speed_limiter = SpeedLimiter.instance()
+    self.current_road_limit_ms = 0.0
+    self.v_cruise_kph_limit = 0
+    self.slowing_down = False
+    self.last_nda_limit_speed = 0.0
+    self.last_nda_left_dist = 0.0
 
     self.forcing_stop = False
     self.override_force_stop = False
@@ -324,6 +331,21 @@ class StarPilotVCruise:
       self.slc_offset = 0
       self.slc_target = 0
 
+    # NDA speed limiter - direct SpeedLimiter.get_max_speed() call, independent of SLC
+    v_cruise_kph = v_cruise * CV.MS_TO_KPH
+    apply_limit_speed, road_limit_speed, left_dist, first_started, limit_log = self.speed_limiter.get_max_speed(
+      sm["carState"], v_cruise_kph
+    )
+    self.current_road_limit_ms = max(float(self.speed_limiter.get_road_limit_speed() or 0.0), 0.0) * CV.KPH_TO_MS
+    self.last_nda_limit_speed = float(road_limit_speed)
+    self.last_nda_left_dist = float(left_dist)
+
+    if apply_limit_speed >= 20:
+      self.v_cruise_kph_limit = min(apply_limit_speed, v_cruise_kph)
+      self.slowing_down = True
+    else:
+      self.slowing_down = False
+      self.v_cruise_kph_limit = v_cruise_kph
     self.nav_turn_target = self._get_nav_turn_control_target(v_cruise, sm, starpilot_toggles)
 
     # Single tuning knob (signed feet -> meters). Defense clamp on top of UI bounds.
@@ -387,5 +409,7 @@ class StarPilotVCruise:
       if self.nav_turn_target > 0.0:
         targets.append(self.nav_turn_target)
       v_cruise = min(targets)
+      if self.v_cruise_kph_limit > 0:
+        v_cruise = min(v_cruise, self.v_cruise_kph_limit * CV.KPH_TO_MS)
 
     return v_cruise
