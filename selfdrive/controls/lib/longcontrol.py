@@ -12,6 +12,9 @@ CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 clip = np.clip
 interp = np.interp
 STOPPING_RELEASE_HYSTERESIS = 0.35
+D_TERM_RATE_DEADBAND = 0.08
+D_TERM_OUTPUT_CLAMP = 0.03
+
 STOPPING_RELEASE_MIN_ACCEL = 0.15
 MOVING_STOP_FOLLOW_MIN_GAP = 0.25
 NEGATIVE_TARGET_CREEP_GUARD_SPEED = 0.35
@@ -297,7 +300,10 @@ class LongControl:
     kd = np.interp(v_ego, self.CP.longitudinalTuning.kdBP, self.CP.longitudinalTuning.kdV)
     if kd <= 0.0:
       return 0.0
-    return -kd * aEgo_rate
+    if abs(aEgo_rate) < D_TERM_RATE_DEADBAND:
+      return 0.0
+    d_term = -kd * aEgo_rate
+    return float(np.clip(d_term, -D_TERM_OUTPUT_CLAMP, D_TERM_OUTPUT_CLAMP))
 
   def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
