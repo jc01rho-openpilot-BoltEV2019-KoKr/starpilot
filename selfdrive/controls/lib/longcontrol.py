@@ -20,6 +20,17 @@ MOVING_STOP_FOLLOW_MIN_GAP = 0.25
 NEGATIVE_TARGET_CREEP_GUARD_SPEED = 0.35
 NEGATIVE_TARGET_CREEP_GUARD_DECEL = 0.40
 
+# Steady-state (cruise hold) oscillation suppression.
+# When a_target is near zero (holding a set speed) the PID is tracking an
+# acceleration setpoint of ~0. Raw aEgo sensor noise then leaks straight into
+# the P term and the high cruise ki (0.22 on Bolt pedal-long) integrates tiny
+# alternating-sign errors, which combine with the 0.7s actuator delay to produce
+# a slow throttle hunt felt as surging ("울렁임"). These guards only engage near
+# steady state and leave transient/dynamic response untouched.
+STEADY_STATE_A_TARGET = 0.30      # |a_target| below this is considered cruise-hold
+STEADY_STATE_ERROR_DEADZONE = 0.12  # accel-error deadzone applied to P term only
+STEADY_STATE_I_BLEED = 0.985        # per-frame integrator bleed when hunting
+
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
 def apply_deadzone(error, deadzone):
@@ -305,6 +316,31 @@ class LongControl:
     d_term = -kd * aEgo_rate
     return float(np.clip(d_term, -D_TERM_OUTPUT_CLAMP, D_TERM_OUTPUT_CLAMP))
 
+  def _apply_steady_state_p_deadzone(self, error, a_target):
+    """Reject aEgo sensor noise in the P term while holding a set speed.
+
+    Only active when the planner is requesting near-zero accel (cruise hold) and
+    the accel error itself is small. Outside this window the full error is used so
+    dynamic tracking is unaffected.
+    """
+    if abs(a_target) >= STEADY_STATE_A_TARGET:
+      return error
+    if abs(error) >= STEADY_STATE_A_TARGET:
+      return error
+    return apply_deadzone(error, STEADY_STATE_ERROR_DEADZONE)
+
+  def _bleed_steady_state_integrator(self, error, a_target):
+    """Slowly bleed the integrator during cruise hold to stop slow hunting.
+
+    The high cruise ki keeps accumulating tiny alternating-sign errors near the
+    setpoint. When the stored I and the current error oppose each other while
+    holding speed, decay I a touch so it cannot drive a delayed overshoot.
+    """
+    if abs(a_target) >= STEADY_STATE_A_TARGET:
+      return
+    if self.pid.i * error < 0.0 and abs(error) < STEADY_STATE_ERROR_DEADZONE:
+      self.pid.i *= STEADY_STATE_I_BLEED
+
   def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
     self.pid.neg_limit = accel_limits[0]
@@ -341,11 +377,15 @@ class LongControl:
       self.update_mpc_mode(self.experimental_mode)
       self._shape_volt_test_tune_integrator(error, CS.vEgo)
       self._trim_positive_overshoot_integrator(a_target, error, CS)
+      self._bleed_steady_state_integrator(error, a_target)
       feedforward = a_target * self.feedforward_gain
       freeze_integrator = self._get_pedal_long_freeze(a_target, error, CS.vEgo, accel_limits)
 
+      # Reject aEgo sensor noise in the loop only while holding a set speed.
+      pid_error = self._apply_steady_state_p_deadzone(error, a_target)
+
       d_term = self._compute_d_term(CS.aEgo, CS.vEgo)
-      raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward + d_term,
+      raw_output_accel = self.pid.update(pid_error, speed=CS.vEgo, feedforward=feedforward + d_term,
                                          freeze_integrator=freeze_integrator)
       raw_output_accel = self._cap_positive_output_on_negative_target(raw_output_accel, a_target, error, CS)
       raw_output_accel = self._apply_pedal_long_brake_bias(raw_output_accel, a_target, CS)
