@@ -20,18 +20,13 @@ MOVING_STOP_FOLLOW_MIN_GAP = 0.25
 NEGATIVE_TARGET_CREEP_GUARD_SPEED = 0.35
 NEGATIVE_TARGET_CREEP_GUARD_DECEL = 0.40
 
-# Steady-state (cruise hold) oscillation suppression.
-# When a_target is near zero (holding a set speed) the PID is tracking an
-# acceleration setpoint of ~0. The high cruise ki (0.22 on Bolt pedal-long)
-# integrates tiny alternating-sign accel errors, which combine with the 0.7s
-# actuator delay to produce a slow throttle hunt felt as surging ("울렁임").
-# The bleed below only decays the integrator when it is fighting an opposing
-# error inside a narrow hunting band, so it cancels the hunt WITHOUT erasing a
-# consistent residual error (which the integrator must keep trimming to avoid a
-# steady-state speed offset). It engages only near steady state.
-STEADY_STATE_A_TARGET = 0.30   # |a_target| below this is considered cruise-hold
-STEADY_STATE_HUNT_BAND = 0.06  # only bleed I for tiny alternating-sign errors
-STEADY_STATE_I_BLEED = 0.985   # per-frame integrator bleed when hunting
+# Cruise-hold oscillation suppression (GM pedal-long): close the PID loop on
+# low-pass filtered aEgo near steady state. HF sensor noise is attenuated while
+# the DC residual passes through, so the integrator still trims steady-state
+# speed offsets (earlier deadzone/I-bleed attempts blocked that trim and the
+# car settled ~1km/h high). Blend weight fades to 0 for dynamic maneuvers.
+CRUISE_HOLD_BLEND_BP = [0.20, 0.50]  # |a_target| m/s^2
+CRUISE_HOLD_BLEND_V = [1.0, 0.0]     # filtered-aEgo weight
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
@@ -152,6 +147,7 @@ class LongControl:
     self.aEgo_filter = SecondOrderFilter(0.0, 0.05, 0.02, DT_CTRL)  # 3.2Hz + 8Hz cascade
     self.prev_aEgo_filtered = 0.0
     self.d_term_active = False
+    self.error_aEgo_filter = FirstOrderFilter(0.0, 0.25, DT_CTRL)  # ~0.6Hz for cruise-hold error
 
   def update_mpc_mode(self, experimental_mode):
     new_mode = 'blended' if experimental_mode else 'acc'
@@ -318,17 +314,12 @@ class LongControl:
     d_term = -kd * aEgo_rate
     return float(np.clip(d_term, -D_TERM_OUTPUT_CLAMP, D_TERM_OUTPUT_CLAMP))
 
-  def _bleed_steady_state_integrator(self, error, a_target):
-    """Slowly bleed the integrator during cruise hold to stop slow hunting.
-
-    The high cruise ki keeps accumulating tiny alternating-sign errors near the
-    setpoint. When the stored I and the current error oppose each other while
-    holding speed, decay I a touch so it cannot drive a delayed overshoot.
-    """
-    if abs(a_target) >= STEADY_STATE_A_TARGET:
-      return
-    if self.pid.i * error < 0.0 and abs(error) < STEADY_STATE_HUNT_BAND:
-      self.pid.i *= STEADY_STATE_I_BLEED
+  def _cruise_hold_error_aEgo(self, aEgo_raw, a_target):
+    aEgo_smooth = self.error_aEgo_filter.update(aEgo_raw)
+    if not self.is_gm_pedal_long:
+      return aEgo_raw
+    w = interp(abs(a_target), CRUISE_HOLD_BLEND_BP, CRUISE_HOLD_BLEND_V)
+    return w * aEgo_smooth + (1.0 - w) * aEgo_raw
 
   def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
@@ -362,19 +353,13 @@ class LongControl:
       self.reset()
 
     else:  # LongCtrlState.pid
-      error = a_target - CS.aEgo
+      error = a_target - self._cruise_hold_error_aEgo(CS.aEgo, a_target)
       self.update_mpc_mode(self.experimental_mode)
       self._shape_volt_test_tune_integrator(error, CS.vEgo)
       self._trim_positive_overshoot_integrator(a_target, error, CS)
-      self._bleed_steady_state_integrator(error, a_target)
       feedforward = a_target * self.feedforward_gain
       freeze_integrator = self._get_pedal_long_freeze(a_target, error, CS.vEgo, accel_limits)
 
-      # NOTE: the P term sees the full accel error. An earlier steady-state P-term
-      # deadzone removed cruise oscillation but also blanked the small residual
-      # error near the setpoint, so the integrator could never trim it and the car
-      # settled ~1km/h above target. Noise rejection is handled by the integrator
-      # bleed (hunting-only) and the filtered D term instead.
       d_term = self._compute_d_term(CS.aEgo, CS.vEgo)
       raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward + d_term,
                                          freeze_integrator=freeze_integrator)
