@@ -29,7 +29,7 @@ CRUISE_HOLD_BLEND_BP = [0.20, 0.50]  # |a_target| m/s^2, accel/hold side
 CRUISE_HOLD_BLEND_V = [1.0, 0.0]     # filtered-aEgo weight
 # Lead-following decel keeps aEgo noise out of the P term longer (wider fade),
 # but hands back to raw aEgo for hard braking so stopping authority is intact.
-CRUISE_DECEL_BLEND_BP = [0.50, 1.50]  # |a_target| m/s^2, decel side
+CRUISE_DECEL_BLEND_BP = [0.50, 1.20]  # |a_target| m/s^2, decel side
 CRUISE_DECEL_BLEND_V = [1.0, 0.0]
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
