@@ -25,8 +25,12 @@ NEGATIVE_TARGET_CREEP_GUARD_DECEL = 0.40
 # the DC residual passes through, so the integrator still trims steady-state
 # speed offsets (earlier deadzone/I-bleed attempts blocked that trim and the
 # car settled ~1km/h high). Blend weight fades to 0 for dynamic maneuvers.
-CRUISE_HOLD_BLEND_BP = [0.20, 0.50]  # |a_target| m/s^2
+CRUISE_HOLD_BLEND_BP = [0.20, 0.50]  # |a_target| m/s^2, accel/hold side
 CRUISE_HOLD_BLEND_V = [1.0, 0.0]     # filtered-aEgo weight
+# Lead-following decel keeps aEgo noise out of the P term longer (wider fade),
+# but hands back to raw aEgo for hard braking so stopping authority is intact.
+CRUISE_DECEL_BLEND_BP = [0.50, 1.50]  # |a_target| m/s^2, decel side
+CRUISE_DECEL_BLEND_V = [1.0, 0.0]
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
@@ -318,7 +322,10 @@ class LongControl:
     aEgo_smooth = self.error_aEgo_filter.update(aEgo_raw)
     if not self.is_gm_pedal_long:
       return aEgo_raw
-    w = interp(abs(a_target), CRUISE_HOLD_BLEND_BP, CRUISE_HOLD_BLEND_V)
+    if a_target < 0.0:
+      w = interp(-a_target, CRUISE_DECEL_BLEND_BP, CRUISE_DECEL_BLEND_V)
+    else:
+      w = interp(a_target, CRUISE_HOLD_BLEND_BP, CRUISE_HOLD_BLEND_V)
     return w * aEgo_smooth + (1.0 - w) * aEgo_raw
 
   def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles):
