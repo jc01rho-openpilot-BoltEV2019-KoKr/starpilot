@@ -41,7 +41,6 @@ class DeveloperSidebar:
     self._params = Params()
     self._font_bold = gui_app.font(FontWeight.SEMI_BOLD)
     self._last_toggles_check = 0.0
-    self._cached_sidebar = False
     self._cached_metrics = [0] * 7
     self._cached_force_auto_tune_off = False
     self._cached_force_auto_tune = False
@@ -81,7 +80,6 @@ class DeveloperSidebar:
     if now - self._last_toggles_check < 1.0:
       return
     self._last_toggles_check = now
-    self._cached_sidebar = self._params.get_bool("DeveloperSidebar")
     self._cached_metrics = [self._params.get_int(f"DeveloperSidebarMetric{i}") for i in range(1, 8)]
     self._cached_force_auto_tune_off = self._params.get_bool("ForceAutoTuneOff")
     self._cached_force_auto_tune = self._params.get_bool("ForceAutoTune")
@@ -128,10 +126,10 @@ class DeveloperSidebar:
   def update(self):
     self._refresh_cache()
 
-    self._visible = (
-      self._cached_sidebar or
-      ui_state.starpilot_toggles.get("developer_sidebar", False)
-    )
+    # ---- PC REPLAY FALLBACK (remove the next line when replay gets toggle bridge) ----
+    # self._visible = ui_state.starpilot_toggles.get("developer_sidebar", False)
+    # ---- replace the line below with the one above ---->
+    self._visible = self._params.get("DeveloperSidebar") or False or ui_state.starpilot_toggles.get("developer_sidebar", False)
     if not self._visible:
       return
 

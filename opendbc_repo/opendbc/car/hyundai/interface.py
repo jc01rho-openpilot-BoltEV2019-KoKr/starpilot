@@ -4,12 +4,14 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import HyundaiFlags, CAR, CarControllerParams, \
                                                    CANFD_UNSUPPORTED_LONGITUDINAL_CAR, \
                                                    CANFD_SECURITYACCESS_CAR, \
+                                                   CANFD_ANGLE_LONGITUDINAL_CAR, \
                                                    CANFD_RADAR_LIVE_LONGITUDINAL_CAR, \
                                                    RADAR_LIVE_LONGITUDINAL_CAR, \
                                                    UNSUPPORTED_LONGITUDINAL_CAR, HyundaiSafetyFlags, \
                                                    LEGACY_LONGITUDINAL_CAR, \
                                                    HyundaiStarPilotSafetyFlags, \
-                                                   hyundai_cancel_button_enables_cruise
+                                                   hyundai_cancel_button_enables_cruise, \
+                                                   kia_ev6_gt_line_longitudinal_tuning
 from opendbc.car.hyundai.radar_interface import get_radar_track_config, radar_tracks_available
 from opendbc.car.interfaces import CarInterfaceBase, ACCEL_MIN
 from opendbc.car.disable_ecu import disable_ecu, ecu_log
@@ -38,6 +40,12 @@ def apply_platform_longitudinal_params(ret: structs.CarParams) -> None:
   ret.vEgoStopping = 0.3
   ret.vEgoStarting = 0.1
   ret.stoppingDecelRate = 0.4
+
+
+def apply_kia_ev6_gt_line_longitudinal_params(ret: structs.CarParams) -> None:
+  ret.startAccel = 1.4
+  ret.longitudinalActuatorDelay = 0.35
+  ret.vEgoStarting = 0.5
 
 
 def apply_ecu_disable_failure_fallback(CP: structs.CarParams, params) -> None:
@@ -69,6 +77,11 @@ class CarInterface(CarInterfaceBase):
     return ACCEL_MIN, CarControllerParams.ACCEL_MAX
 
   @staticmethod
+  def apply_post_fingerprint_params(CP: structs.CarParams, candidate, fingerprint, car_fw) -> None:
+    if kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, CP.carVin):
+      apply_kia_ev6_gt_line_longitudinal_params(CP)
+
+  @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
     ret.brand = "hyundai"
 
@@ -87,8 +100,8 @@ class CarInterface(CarInterfaceBase):
         # this needs to be figured out for cars without an ADAS ECU
         # Cars in CANFD_SECURITYACCESS_CAR are known to have ADAS ECUs that work with SecurityAccess
         ret.alphaLongitudinalAvailable = False
-      if lka_steering and ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
-        # Angle-steering LKA platforms still need stock longitudinal validation.
+      if lka_steering and ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING and candidate not in CANFD_ANGLE_LONGITUDINAL_CAR:
+        # Most angle-steering LKA platforms still need stock longitudinal validation.
         ret.alphaLongitudinalAvailable = False
 
       ret.enableBsm = 0x1ba in fingerprint[CAN.ECAN]
@@ -135,6 +148,8 @@ class CarInterface(CarInterfaceBase):
       if ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
         ret.steerControlType = structs.CarParams.SteerControlType.angle
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_ANGLE_STEERING.value
+        if candidate == CAR.KIA_EV9:
+          ret.steerAtStandstill = True
       if ret.flags & HyundaiFlags.CCNC and not ret.flags & HyundaiFlags.CANFD_LKA_STEERING:
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
 

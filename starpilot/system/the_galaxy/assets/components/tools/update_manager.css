@@ -127,6 +127,29 @@
   margin-top: var(--margin-base);
 }
 
+.updateAgnosWarning {
+  background: rgba(212, 160, 96, 0.12);
+  border-left: 3px solid var(--warning-bg);
+  border-radius: var(--border-radius-sm);
+  margin-top: var(--margin-base);
+  padding: var(--padding-sm) var(--padding-base);
+}
+
+.updateAgnosWarning p {
+  font-size: var(--font-size-sm);
+  margin: var(--margin-xs) 0;
+}
+
+.updateAgnosWarning ul {
+  font-size: var(--font-size-sm);
+  margin: var(--margin-sm) 0;
+  padding-left: 1.2rem;
+}
+
+.updateAgnosWarning li {
+  margin-bottom: var(--margin-xs);
+}
+
 .updateHint {
   font-size: var(--font-size-sm);
   margin-top: var(--margin-sm);
@@ -134,6 +157,17 @@
 
 .updateRebootNotice {
   font-weight: var(--font-weight-bold);
+}
+
+.updateRecovery {
+  border-left: 3px solid var(--main-fg);
+  margin-top: var(--margin-base);
+  padding-left: var(--padding-base);
+}
+
+.updateRecovery p {
+  font-size: var(--font-size-sm);
+  margin: var(--margin-xs) 0 var(--margin-sm);
 }
 
 .updateFooter {

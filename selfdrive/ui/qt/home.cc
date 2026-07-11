@@ -337,12 +337,8 @@ void OffroadHome::refresh() {
   date->setVisible(util::system_time_valid() && !simple_mode);
 
   if (simple_mode) {
-    version->setText(getBrand() + " " + QString::fromStdString(params.get("UpdaterCurrentDescription")));
+    version->setText(getBrand() + " " + formatStarPilotDisplayVersionDescription(QString::fromStdString(params.get("UpdaterCurrentDescription"))));
   } else {
-    QString versionText = getVersion().left(14).trimmed();
-    if (!versionText.startsWith("v", Qt::CaseInsensitive)) {
-      versionText.prepend("v");
-    }
-    version->setText(getBrand() + " - " + versionText + " - " + cleanModelName(starpilot_toggles.value("model_name").toString()));
+    version->setText(getBrand() + " - " + getStarPilotDisplayVersion() + " - " + cleanModelName(starpilot_toggles.value("model_name").toString()));
   }
 }

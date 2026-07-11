@@ -19,13 +19,15 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   get_civic_bosch_modified_pid_output_alpha,
   get_civic_bosch_modified_pid_output_scale,
 )
+from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import get_hkg_canfd_base_friction_threshold
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_civic_bosch_modified_a_center_taper_scale,
   LatControlTorque,
   get_civic_bosch_modified_b_ff_scale,
   get_civic_bosch_modified_b_friction_scale,
+  get_gm_base_friction_threshold,
   get_bolt_2017_center_taper_scale,
-  get_friction_threshold,
+  get_standard_friction_threshold,
   get_bolt_2017_base_torque_scale,
   get_bolt_2017_steer_ratio_scale,
   get_bolt_2017_torque_scale,
@@ -156,7 +158,7 @@ class TestLatControl:
     assert get_bolt_2018_2021_dynamic_torque_scale(-0.6, 0.6, 8.0) < get_bolt_2018_2021_dynamic_torque_scale(-0.6, -0.6, 8.0)
 
   def test_bolt_2018_2021_friction_threshold_curve(self):
-    base = get_friction_threshold(6.0)
+    base = get_gm_base_friction_threshold(6.0)
     left_turn_in = get_bolt_2018_2021_friction_threshold(6.0, 0.7, 0.8)
     right_turn_in = get_bolt_2018_2021_friction_threshold(6.0, -0.7, -0.8)
     left_unwind = get_bolt_2018_2021_friction_threshold(6.0, 0.7, -0.8)
@@ -185,7 +187,7 @@ class TestLatControl:
     assert get_bolt_2022_2023_ff_scale(0.14, 0.0, 30.0) < get_bolt_2022_2023_ff_scale(0.14, 0.0, 20.0)
 
   def test_bolt_2022_2023_friction_threshold_curve(self):
-    base = get_friction_threshold(6.0)
+    base = get_gm_base_friction_threshold(6.0)
     left_turn_in = get_bolt_2022_2023_friction_threshold(6.0, 0.7, 0.8)
     right_turn_in = get_bolt_2022_2023_friction_threshold(6.0, -0.7, -0.8)
     left_unwind = get_bolt_2022_2023_friction_threshold(6.0, 0.7, -0.8)
@@ -216,7 +218,7 @@ class TestLatControl:
     assert get_volt_standard_ff_scale(2.0, 0.0, 20.0) < get_volt_standard_ff_scale(0.8, 0.0, 20.0)
 
   def test_volt_standard_friction_threshold_curve(self):
-    base = get_friction_threshold(6.0)
+    base = get_gm_base_friction_threshold(6.0)
     left_turn_in = get_volt_standard_friction_threshold(6.0, 0.7, 0.8)
     right_turn_in = get_volt_standard_friction_threshold(6.0, -0.7, -0.8)
     left_unwind = get_volt_standard_friction_threshold(6.0, 0.7, -0.8)
@@ -328,7 +330,7 @@ class TestLatControl:
     assert get_genesis_g90_ff_scale(2.0, 0.0, 20.0) < get_genesis_g90_ff_scale(0.8, 0.0, 20.0)
 
   def test_genesis_g90_friction_threshold_curve(self):
-    base = get_friction_threshold(6.0)
+    base = get_gm_base_friction_threshold(6.0)
     left_turn_in = get_genesis_g90_friction_threshold(6.0, 0.7, 0.8)
     right_turn_in = get_genesis_g90_friction_threshold(6.0, -0.7, -0.8)
     left_unwind = get_genesis_g90_friction_threshold(6.0, 0.7, -0.8)
@@ -365,7 +367,7 @@ class TestLatControl:
     assert unwind_right < unwind_left
 
   def test_palisade_friction_threshold_curve(self):
-    base = get_friction_threshold(6.0)
+    base = get_gm_base_friction_threshold(6.0)
     left_turn_in = get_palisade_friction_threshold(6.0, 0.7, 0.8)
     right_turn_in = get_palisade_friction_threshold(6.0, -0.7, -0.8)
     left_unwind = get_palisade_friction_threshold(6.0, 0.7, -0.8)
@@ -398,7 +400,7 @@ class TestLatControl:
     assert unwind_right < unwind_left
 
   def test_prius_friction_curves(self):
-    base_threshold = get_friction_threshold(12.0)
+    base_threshold = get_gm_base_friction_threshold(12.0)
     left_turn_in_threshold = get_prius_friction_threshold(6.0, 0.7, 0.8)
     right_turn_in_threshold = get_prius_friction_threshold(6.0, -0.7, -0.8)
     left_unwind_threshold = get_prius_friction_threshold(6.0, 0.7, -0.8)
@@ -416,6 +418,11 @@ class TestLatControl:
     assert right_turn_in_scale > left_turn_in_scale > base_scale
     assert base_scale > left_unwind_scale > right_unwind_scale
 
+  def test_generic_friction_threshold_floor(self):
+    assert get_standard_friction_threshold(0.0) == 0.30
+    assert get_standard_friction_threshold(6.0) == 0.30
+    assert get_standard_friction_threshold(40.0) == 0.30
+
   def test_ioniq_5_ff_scale_curve(self):
     assert get_ioniq_5_ff_scale(0.0, 0.0, 20.0) == 1.0
     steady_left = get_ioniq_5_ff_scale(0.7, 0.0, 12.0)
@@ -432,7 +439,7 @@ class TestLatControl:
     assert unwind_right < unwind_left
 
   def test_ioniq_5_friction_curves(self):
-    base = get_friction_threshold(12.0)
+    base = get_hkg_canfd_base_friction_threshold(12.0)
     turn_in_left_threshold = get_ioniq_5_friction_threshold(12.0, 0.7, 0.8)
     turn_in_right_threshold = get_ioniq_5_friction_threshold(12.0, -0.7, -0.8)
     unwind_left_threshold = get_ioniq_5_friction_threshold(12.0, 0.7, -0.8)
@@ -449,6 +456,7 @@ class TestLatControl:
     assert turn_in_left_scale > turn_in_right_scale > 1.0
     assert unwind_left_scale < 1.0
     assert unwind_right_scale <= unwind_left_scale
+    assert get_ioniq_5_friction_threshold(25.0, 0.0, 0.0) >= get_hkg_canfd_base_friction_threshold(25.0)
 
   def test_ioniq_5_center_taper_curve(self):
     assert get_ioniq_5_center_taper_scale(0.0, 25.0) < get_ioniq_5_center_taper_scale(0.0, 10.0)
@@ -519,7 +527,7 @@ class TestLatControl:
     assert get_ioniq_6_output_taper_scale(-1.2, 0.7, 25.0) <= get_ioniq_6_output_taper_scale(-1.2, 0.0, 25.0)
 
   def test_ioniq_6_friction_threshold_curve(self):
-    base = max(get_friction_threshold(6.0), 0.36)
+    base = get_hkg_canfd_base_friction_threshold(6.0)
     left_turn_in = get_ioniq_6_friction_threshold(6.0, 0.5, 0.8)
     right_turn_in = get_ioniq_6_friction_threshold(6.0, -0.5, -0.8)
     left_unwind = get_ioniq_6_friction_threshold(6.0, 0.5, -0.8)
@@ -527,7 +535,7 @@ class TestLatControl:
     assert max(left_turn_in, right_turn_in) < base
     assert left_unwind >= base
     assert right_unwind >= base
-    assert get_ioniq_6_friction_threshold(25.0, 0.0, 0.0) >= 0.36
+    assert get_ioniq_6_friction_threshold(25.0, 0.0, 0.0) >= get_hkg_canfd_base_friction_threshold(25.0)
 
   def test_ioniq_6_friction_scale_curve(self):
     base = get_ioniq_6_friction_scale(25.0, 0.5, 0.8)
@@ -555,12 +563,13 @@ class TestLatControl:
     assert get_kia_ev6_ff_scale(1.2, 0.0, 20.0) < get_kia_ev6_ff_scale(0.4, 0.0, 20.0)
 
   def test_kia_ev6_friction_threshold_curve(self):
-    base = get_friction_threshold(6.0)
+    base = get_hkg_canfd_base_friction_threshold(6.0)
     left_turn_in = get_kia_ev6_friction_threshold(6.0, 0.5, 0.8)
     right_turn_in = get_kia_ev6_friction_threshold(6.0, -0.5, -0.8)
     left_unwind = get_kia_ev6_friction_threshold(6.0, 0.5, -0.8)
     right_unwind = get_kia_ev6_friction_threshold(6.0, -0.5, 0.8)
     assert right_turn_in < left_turn_in < base < right_unwind <= left_unwind
+    assert get_kia_ev6_friction_threshold(25.0, 0.0, 0.0) >= get_hkg_canfd_base_friction_threshold(25.0)
 
   def test_kia_ev6_friction_scale_curve(self):
     base = get_kia_ev6_friction_scale(25.0, 0.5, 0.8)
@@ -572,7 +581,7 @@ class TestLatControl:
     assert base > left_unwind >= right_unwind
 
   def test_volt_plexy_friction_threshold_curve(self):
-    base = get_friction_threshold(6.0)
+    base = get_gm_base_friction_threshold(6.0)
     left_turn_in = get_volt_plexy_friction_threshold(6.0, 0.7, 0.8)
     right_turn_in = get_volt_plexy_friction_threshold(6.0, -0.7, -0.8)
     left_unwind = get_volt_plexy_friction_threshold(6.0, 0.7, -0.8)
@@ -703,6 +712,24 @@ class TestLatControl:
     tapered_output, _, _ = tapered_controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
 
     assert tapered_output == pytest.approx(base_output)
+
+  def test_honda_pid_gain_scales_update_live_from_opendbc_baseline(self):
+    controller, VM, CS, params, _ = self._build_pid_controller(HONDA.HONDA_ACCORD)
+    base_kp_v = list(controller.base_kp_v)
+    base_ki_v = list(controller.base_ki_v)
+
+    starpilot_toggles = SimpleNamespace(honda_lateral_pid_kp_scale=1.5, honda_lateral_pid_ki_scale=0.75)
+    controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert controller.pid._k_p[1] == pytest.approx([value * 1.5 for value in base_kp_v])
+    assert controller.pid._k_i[1] == pytest.approx([value * 0.75 for value in base_ki_v])
+
+    starpilot_toggles.honda_lateral_pid_kp_scale = 2.0
+    starpilot_toggles.honda_lateral_pid_ki_scale = 1.25
+    controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert controller.pid._k_p[1] == pytest.approx([value * 2.0 for value in base_kp_v])
+    assert controller.pid._k_i[1] == pytest.approx([value * 1.25 for value in base_ki_v])
 
   def test_modified_civic_b_torque_path_uses_fixed_friction_threshold(self, monkeypatch):
     CarInterface = interfaces[HONDA.HONDA_CIVIC_BOSCH]

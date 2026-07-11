@@ -16,18 +16,33 @@ from openpilot.common.constants import CV
 from openpilot.common.realtime import set_core_affinity
 from openpilot.system.hardware import PC
 
-INFERENCE_INTERVAL = 0.2
-FOLLOWUP_INFERENCE_INTERVAL = 0.1
-FOLLOWUP_WINDOW_SECONDS = 1.5
+RUNTIME_LOOP_HZ = 20
+INFERENCE_INTERVAL = 0.15
+FOLLOWUP_INFERENCE_INTERVAL = 0.10
+FOLLOWUP_WINDOW_SECONDS = 2.0
+BUSY_INFERENCE_INTERVAL = 1.0
+LIVE_POSE_RECOVERY_THROTTLE_SECONDS = 2.0
+LIVE_POSE_RECOVERY_INFERENCE_INTERVAL = 1.0
+RUNTIME_TELEMETRY_INTERVAL_SECONDS = 2.0
+DEBUG_HEARTBEAT_INTERVAL_SECONDS = 30.0
+DEFAULT_DETECTOR_INPUT_SIZE = 640
+DETECTOR_INPUT_SIZE_CANDIDATES = (640, 512, 448, 416, 384, 320, 288, 256, 224, 192)
+FULL_FRAME_OCR_FALLBACK_ENABLED = False
+DETECTOR_CLASSIFIER_REGION_MODE = "right_roi"  # full, right_roi, full_and_right_roi
+DEVICE_BUSY_AVG_CPU_USAGE_PERCENT = 78.0
+DEVICE_BUSY_MAX_CPU_USAGE_PERCENT = 92.0
+DEVICE_BUSY_HOT_CORE_COUNT = 4
 MIN_DETECTION_CONFIDENCE = 0.2
 STRONG_DETECTION_CONFIDENCE = 0.72
 OCR_MIN_CONFIDENCE = 0.35
-VALUE_TEMPLATE_MIN_CONFIDENCE = 0.62
+VALUE_TEMPLATE_MIN_CONFIDENCE = 0.55
 HISTORY_SECONDS = 2.0
 CONSISTENT_DETECTIONS = 2
-CHANGE_CONSISTENT_DETECTIONS = 3
+CHANGE_CONSISTENT_DETECTIONS = 10
+LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = 12
+LOW_SPEED_CHANGE_MIN_CONFIDENCE = 0.97
 MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE = 0.65
-PUBLISHED_HOLD_SECONDS = 12.0
+PUBLISHED_HOLD_SECONDS = 300.0
 PUBLISHED_CHANGE_COOLDOWN_SECONDS = 1.4
 PUBLISHED_REVERT_CONFIDENCE = 0.97
 AUTO_BOOKMARK_CONFIRM_DELAY_SECONDS = 0.9
@@ -40,7 +55,7 @@ MAP_NEXT_REVIEW_DISTANCE_METERS = 120.0
 MAP_TRANSITION_MISS_CAPTURE_COOLDOWN_SECONDS = 8.0
 MAP_VISION_MATCH_WINDOW_SECONDS = 2.5
 MODEL_PROPOSAL_MIN_CONFIDENCE = 0.0001
-MODEL_PROPOSAL_MAX_COUNT = 16
+MODEL_PROPOSAL_MAX_COUNT = 4
 MODEL_PROPOSAL_MAX_AREA_RATIO = 0.18
 MODEL_PROPOSAL_MIN_WIDTH = 10
 MODEL_PROPOSAL_MIN_HEIGHT = 18
@@ -55,7 +70,7 @@ ROI_WINDOWS = (
   {"bounds": (0.48, 0.00, 0.98, 0.42), "min_confidence": MIN_DETECTION_CONFIDENCE},
   {"bounds": (0.52, 0.02, 0.97, 0.58), "min_confidence": 0.22},
   {"bounds": (0.62, 0.02, 0.99, 0.68), "min_confidence": 0.18},
-  {"bounds": (0.72, 0.05, 1.00, 0.82), "min_confidence": 0.15},
+  {"bounds": (0.45, 0.00, 1.00, 0.82), "min_confidence": 0.06},
 )
 EDGE_MARGIN_RATIO = 0.03
 MAX_BOX_AREA_RATIO = 0.22
@@ -87,10 +102,18 @@ REGULATORY_RED_LOW_HUE_MAX = 12
 REGULATORY_RED_HIGH_HUE_MIN = 168
 REGULATORY_RED_SAT_MIN = 80
 REGULATORY_RED_VALUE_MIN = 60
+REGULATORY_GREEN_HUE_MIN = 45
+REGULATORY_GREEN_HUE_MAX = 90
+REGULATORY_BLUE_HUE_MIN = 90
+REGULATORY_BLUE_HUE_MAX = 135
+REGULATORY_COLORED_SAT_MIN = 70
+REGULATORY_COLORED_VALUE_MIN = 70
 REGULATORY_MIN_WHITE_RATIO = 0.08
 REGULATORY_MIN_DARK_RATIO = 0.01
 REGULATORY_MAX_YELLOW_RATIO = 0.12
 REGULATORY_MAX_RED_RATIO = 0.10
+REGULATORY_MAX_GREEN_RATIO = 0.35
+REGULATORY_MAX_BLUE_RATIO = 0.35
 REGULATORY_MIN_WHITE_COMPONENT_RATIO = 0.012
 REGULATORY_MIN_COMPONENT_FILL = 0.36
 REGULATORY_MIN_COMPONENT_HEIGHT_RATIO = 0.2
@@ -114,9 +137,11 @@ SPEED_LIMIT_CLASSES = {
 }
 
 VALID_SPEED_LIMITS_MPH = set(range(10, 125, 5))
+MIN_PUBLISHABLE_SPEED_LIMIT_MPH = 20
 LEGACY_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_vision.onnx"
 US_DETECTOR_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_detector.onnx"
 US_CLASSIFIER_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_value_classifier.onnx"
+US_REJECT_CLASSIFIER_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_reject_classifier.onnx"
 US_DETECTOR_CLASSES = {
   0: "regulatory_speed_limit",
   1: "advisory_speed_limit",
@@ -124,8 +149,11 @@ US_DETECTOR_CLASSES = {
 }
 US_CLASSIFIER_SPEED_VALUES = (15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75)
 SCHOOL_ZONE_SPEED_VALUES = frozenset((15, 20, 25))
-US_DETECTOR_MIN_CONFIDENCE = 0.10
-US_CLASSIFIER_MIN_CONFIDENCE = 0.38
+US_DETECTOR_MIN_CONFIDENCE = 0.06
+US_CLASSIFIER_MIN_CONFIDENCE = 0.65
+US_CLASSIFIER_REJECT_MIN_CONFIDENCE = 0.85
+SEPARATE_REJECT_CLASSIFIER_ENABLED = False
+US_REJECT_CLASSIFIER_MIN_CONFIDENCE = 0.85
 DETECTOR_CLASSIFIER_EXPANSIONS = (
   (0.00, 0.00, 0.00, 0.00, 1.10),
   (0.10, 0.06, 0.10, 0.12, 1.00),
@@ -146,24 +174,47 @@ DETECTOR_CLASSIFIER_SUPPORT_BONUS = 0.06
 DETECTOR_CLASSIFIER_REGULATORY_BONUS = 0.05
 DETECTOR_CLASSIFIER_NON_REGULATORY_PENALTY = 0.03
 DETECTOR_CLASSIFIER_SMALL_BOX_AREA_RATIO = 0.004
+DETECTOR_CLASSIFIER_TINY_LOW_CONF_AREA_RATIO = 0.002
+DETECTOR_CLASSIFIER_TINY_LOW_CONF_MIN_CONFIDENCE = 0.16
 DETECTOR_CLASSIFIER_MIN_ACCEPT_WIDTH = 28
 DETECTOR_CLASSIFIER_MIN_ACCEPT_HEIGHT = 40
 DETECTOR_CLASSIFIER_RESCUE_MIN_WIDTH = 14
-DETECTOR_CLASSIFIER_RESCUE_MIN_HEIGHT = 24
+DETECTOR_CLASSIFIER_RESCUE_MIN_HEIGHT = 18
 DETECTOR_CLASSIFIER_RESCUE_MIN_X_RATIO = 0.52
 DETECTOR_CLASSIFIER_RESCUE_MIN_SUPPORT = 2
 DETECTOR_CLASSIFIER_RESCUE_MIN_CONFIDENCE = 0.90
 DETECTOR_CLASSIFIER_RESCUE_MAX_SCORE = 0.64
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_HEIGHT = 55
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_AREA_RATIO = 0.002
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_PROPOSAL_CONFIDENCE = 0.18
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_X_RATIO = 0.52
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = 0.98
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT = 2
+DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE = 0.60
+DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_READ_CONFIDENCE = 0.995
 SCHOOL_ZONE_SPEED_PRIOR = 0.12
 SCHOOL_ZONE_SUPPORT_BONUS = 0.08
 SCHOOL_ZONE_MIN_SUPPORT = 2
 SCHOOL_ZONE_MIN_CONFIDENCE = 0.70
 SCHOOL_ZONE_SINGLE_READ_CONFIDENCE = 0.975
 SCHOOL_ZONE_SHORT_CIRCUIT_CONFIDENCE = 0.78
+SCHOOL_ZONE_FALLBACK_MIN_CONFIDENCE = 0.35
+NON_SCHOOL_LOW_SPEED_COMPETING_MIN_CONFIDENCE = 0.95
 DEBUG_BASE_DIR = Path("/data/media/0/vision_speed_limit_debug")
+DEBUG_RUNTIME_STATUS_PATH = DEBUG_BASE_DIR / "runtime_status.json"
 DEBUG_CAPTURE_DIRNAME = "captures"
 SNAPSHOT_JPEG_QUALITY = 85
-SPEED_LIMIT_VISION_AFFINITY_CORES = [0, 1, 2, 3]
+SPEED_LIMIT_VISION_AFFINITY_CORES = [0, 1, 2]
+
+
+def device_cpu_usage_busy(cpu_usage):
+  usage = list(cpu_usage)
+  if not usage:
+    return False
+  return (
+    sum(usage) / len(usage) >= DEVICE_BUSY_AVG_CPU_USAGE_PERCENT or
+    sum(core_usage >= DEVICE_BUSY_MAX_CPU_USAGE_PERCENT for core_usage in usage) >= DEVICE_BUSY_HOT_CORE_COUNT
+  )
 
 
 @dataclass
@@ -204,7 +255,7 @@ class SpeedLimitVisionDaemon:
       self.Ratekeeper = Ratekeeper
       self.VisionIpcClient = VisionIpcClient
       self.VisionStreamType = VisionStreamType
-      self.sm = messaging.SubMaster(["deviceState", "mapdOut", "userBookmark"])
+      self.sm = messaging.SubMaster(["deviceState", "mapdOut", "userBookmark", "livePose"])
 
     self.client = None
     self.stream_name = ""
@@ -213,9 +264,11 @@ class SpeedLimitVisionDaemon:
     self.net = None
     self.classifier_net = None
     self.model_mode = "legacy"
+    self.detector_input_size = DEFAULT_DETECTOR_INPUT_SIZE
     self.last_error = ""
-    self.last_inference_at = 0.0
+    self.last_inference_at = -float("inf")
     self.last_detection_at = 0.0
+    self.last_live_pose_inputs_not_ok_at = -float("inf")
     self.last_road_name = ""
     self.followup_until = 0.0
     self.started_prev = False
@@ -225,6 +278,7 @@ class SpeedLimitVisionDaemon:
     self.published_confidence = 0.0
     self.previous_published_speed_limit_mph = 0
     self.last_publish_change_at = 0.0
+    self.last_published_support_at = 0.0
     self.last_candidate_speed_limit_mph = 0
     self.last_candidate_confidence = 0.0
     self.last_candidate_at = 0.0
@@ -249,6 +303,23 @@ class SpeedLimitVisionDaemon:
     self.debug_session_started_at = 0.0
     self.last_logged_status = ""
     self.last_logged_candidate = None
+    self.last_runtime_telemetry_at = 0.0
+    self.last_debug_heartbeat_at = 0.0
+    self.loop_count = 0
+    self.inference_count = 0
+    self.interval_skip_count = 0
+    self.busy_skip_count = 0
+    self.camera_unavailable_count = 0
+    self.empty_frame_count = 0
+    self.detection_count = 0
+    self.last_inference_interval = INFERENCE_INTERVAL
+    self.last_inference_interval_reason = "steady"
+    self.last_cpu_busy = False
+    self.last_frame_process_duration_s = 0.0
+    self.last_detector_forward_count = 0
+    self.last_detector_forward_duration_s = 0.0
+    self.last_classifier_forward_count = 0
+    self.last_classifier_forward_duration_s = 0.0
 
     self.digit_templates = self._build_digit_templates()
     self.speed_value_templates = self._build_speed_value_templates()
@@ -294,6 +365,7 @@ class SpeedLimitVisionDaemon:
     self.debug_session_started_at = 0.0
     self.last_logged_status = ""
     self.last_logged_candidate = None
+    self.last_debug_heartbeat_at = 0.0
 
   def _read_next_map_speed_limit(self):
     if self.params_memory is None:
@@ -667,27 +739,89 @@ class SpeedLimitVisionDaemon:
     self._record_map_transition_miss(current_speed_limit_mph, previous_speed_limit_mph)
 
   def _published_detection_stale(self, now):
-    return self.published_speed_limit_mph > 0 and now - self.last_detection_at > PUBLISHED_HOLD_SECONDS
+    support_at = self.last_published_support_at or self.last_detection_at
+    return self.published_speed_limit_mph > 0 and now - support_at > PUBLISHED_HOLD_SECONDS
+
+  def _clear_published_detection_if_stale(self, now, reason):
+    if not self._published_detection_stale(now):
+      return False
+    stale_speed_limit_mph = self.published_speed_limit_mph
+    self._write_debug_event("stale_clear", reason=reason, speedLimitMph=stale_speed_limit_mph)
+    self._clear_detection()
+    return True
+
+  def _device_cpu_busy(self):
+    if self.sm is None:
+      return False
+    return device_cpu_usage_busy(self.sm["deviceState"].cpuUsagePercent)
+
+  def _inference_interval(self, now):
+    in_followup = now < self.followup_until
+    interval = FOLLOWUP_INFERENCE_INTERVAL if in_followup else INFERENCE_INTERVAL
+    reason = "followup" if in_followup else "steady"
+    self.last_cpu_busy = False
+    if now - self.last_live_pose_inputs_not_ok_at < LIVE_POSE_RECOVERY_THROTTLE_SECONDS:
+      interval = max(interval, LIVE_POSE_RECOVERY_INFERENCE_INTERVAL)
+      reason = "live_pose_recovery"
+    elif self._device_cpu_busy():
+      self.last_cpu_busy = True
+      interval = max(interval, BUSY_INFERENCE_INTERVAL)
+      reason = "cpu_busy"
+    self.last_inference_interval = interval
+    self.last_inference_interval_reason = reason
+    return interval
+
+  @staticmethod
+  def _read_onnx_square_input_size(model_path):
+    try:
+      import onnx
+
+      model = onnx.load(str(model_path), load_external_data=False)
+      if not model.graph.input:
+        return DEFAULT_DETECTOR_INPUT_SIZE
+
+      shape = model.graph.input[0].type.tensor_type.shape.dim
+      if len(shape) < 4:
+        return DEFAULT_DETECTOR_INPUT_SIZE
+
+      height = int(shape[2].dim_value)
+      width = int(shape[3].dim_value)
+      if height == width and height in DETECTOR_INPUT_SIZE_CANDIDATES:
+        return height
+    except Exception:
+      pass
+    return DEFAULT_DETECTOR_INPUT_SIZE
 
   def _load_model(self):
     self.net = None
     self.classifier_net = None
+    self.reject_classifier_net = None
     self.model_mode = "legacy"
+    self.detector_input_size = DEFAULT_DETECTOR_INPUT_SIZE
 
     if US_DETECTOR_MODEL_PATH.is_file() and US_CLASSIFIER_MODEL_PATH.is_file():
       try:
+        self.detector_input_size = self._read_onnx_square_input_size(US_DETECTOR_MODEL_PATH)
         self.net = cv2.dnn.readNetFromONNX(str(US_DETECTOR_MODEL_PATH))
         self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
         self.classifier_net = cv2.dnn.readNetFromONNX(str(US_CLASSIFIER_MODEL_PATH))
         self.classifier_net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         self.classifier_net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        if SEPARATE_REJECT_CLASSIFIER_ENABLED and US_REJECT_CLASSIFIER_MODEL_PATH.is_file():
+          try:
+            self.reject_classifier_net = cv2.dnn.readNetFromONNX(str(US_REJECT_CLASSIFIER_MODEL_PATH))
+            self.reject_classifier_net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            self.reject_classifier_net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+          except Exception:
+            self.reject_classifier_net = None
         self.model_mode = "detector_classifier"
         self.last_error = ""
         return
       except Exception as exc:
         self.net = None
         self.classifier_net = None
+        self.reject_classifier_net = None
         self.model_mode = "legacy"
         self.last_error = f"Failed to load U.S. vision models: {exc}"
 
@@ -698,6 +832,7 @@ class SpeedLimitVisionDaemon:
       return
 
     try:
+      self.detector_input_size = self._read_onnx_square_input_size(LEGACY_MODEL_PATH)
       self.net = cv2.dnn.readNetFromONNX(str(LEGACY_MODEL_PATH))
       self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
       self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
@@ -828,23 +963,35 @@ class SpeedLimitVisionDaemon:
 
   def _detect_sign(self, frame_bgr):
     if self.net is None:
-      return self._detect_sign_from_ocr_candidates(frame_bgr)
+      if FULL_FRAME_OCR_FALLBACK_ENABLED:
+        return self._publishable_detection(self._detect_sign_from_ocr_candidates(frame_bgr))
+      return None
 
     if self.model_mode == "detector_classifier" and self.classifier_net is not None:
       detector_detection = self._detect_sign_from_detector_classifier(frame_bgr)
       if detector_detection is not None:
-        return detector_detection
-      return self._detect_sign_from_ocr_candidates(frame_bgr)
+        return self._publishable_detection(detector_detection)
+      if FULL_FRAME_OCR_FALLBACK_ENABLED:
+        return self._publishable_detection(self._detect_sign_from_ocr_candidates(frame_bgr))
+      return None
 
     model_detection = self._detect_sign_from_model_proposals(frame_bgr)
     if model_detection is not None and model_detection.confidence >= MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE:
-      return model_detection
+      return self._publishable_detection(model_detection)
 
-    ocr_detection = self._detect_sign_from_ocr_candidates(frame_bgr)
-    if ocr_detection is not None and (model_detection is None or ocr_detection.confidence > model_detection.confidence):
-      return ocr_detection
+    if FULL_FRAME_OCR_FALLBACK_ENABLED:
+      ocr_detection = self._detect_sign_from_ocr_candidates(frame_bgr)
+      if ocr_detection is not None and (model_detection is None or ocr_detection.confidence > model_detection.confidence):
+        return self._publishable_detection(ocr_detection)
 
-    return model_detection
+    return self._publishable_detection(model_detection)
+
+  def _publishable_detection(self, detection):
+    if detection is None:
+      return None
+    if detection.speed_limit_mph < MIN_PUBLISHABLE_SPEED_LIMIT_MPH:
+      return None
+    return detection
 
   def _is_regulatory_speed_sign(self, sign_crop):
     if sign_crop.size == 0:
@@ -873,17 +1020,35 @@ class SpeedLimitVisionDaemon:
       (saturation >= REGULATORY_RED_SAT_MIN) &
       (value >= REGULATORY_RED_VALUE_MIN)
     ).astype(np.uint8)
+    green_mask = (
+      (hue >= REGULATORY_GREEN_HUE_MIN) &
+      (hue <= REGULATORY_GREEN_HUE_MAX) &
+      (saturation >= REGULATORY_COLORED_SAT_MIN) &
+      (value >= REGULATORY_COLORED_VALUE_MIN)
+    ).astype(np.uint8)
+    blue_mask = (
+      (hue >= REGULATORY_BLUE_HUE_MIN) &
+      (hue <= REGULATORY_BLUE_HUE_MAX) &
+      (saturation >= REGULATORY_COLORED_SAT_MIN) &
+      (value >= REGULATORY_COLORED_VALUE_MIN)
+    ).astype(np.uint8)
 
     white_ratio = float(white_mask.mean())
     dark_ratio = float(dark_mask.mean())
     yellow_ratio = float(yellow_mask.mean())
     red_ratio = float(red_mask.mean())
+    green_ratio = float(green_mask.mean())
+    blue_ratio = float(blue_mask.mean())
 
     if white_ratio < REGULATORY_MIN_WHITE_RATIO or dark_ratio < REGULATORY_MIN_DARK_RATIO:
       return False
     if yellow_ratio > REGULATORY_MAX_YELLOW_RATIO and yellow_ratio > white_ratio * 0.45:
       return False
     if red_ratio > REGULATORY_MAX_RED_RATIO and red_ratio > white_ratio * 0.35:
+      return False
+    if green_ratio > REGULATORY_MAX_GREEN_RATIO and green_ratio > white_ratio * 0.60:
+      return False
+    if blue_ratio > REGULATORY_MAX_BLUE_RATIO and blue_ratio > white_ratio * 0.60:
       return False
 
     white_binary = (white_mask * 255).astype(np.uint8)
@@ -980,8 +1145,9 @@ class SpeedLimitVisionDaemon:
       return []
 
     frame_height, frame_width = frame_bgr.shape[:2]
-    letterboxed, ratio, pad_width, pad_height = self._letterbox(frame_bgr)
-    blob = cv2.dnn.blobFromImage(letterboxed, scalefactor=1 / 255.0, size=(640, 640), swapRB=True, crop=False)
+    detector_shape = (self.detector_input_size, self.detector_input_size)
+    letterboxed, ratio, pad_width, pad_height = self._letterbox(frame_bgr, shape=detector_shape)
+    blob = cv2.dnn.blobFromImage(letterboxed, scalefactor=1 / 255.0, size=detector_shape, swapRB=True, crop=False)
     self.net.setInput(blob)
 
     predictions = np.squeeze(self.net.forward())
@@ -1029,11 +1195,15 @@ class SpeedLimitVisionDaemon:
       return []
 
     region_height, region_width = frame_bgr.shape[:2]
-    letterboxed, ratio, pad_width, pad_height = self._letterbox(frame_bgr)
-    blob = cv2.dnn.blobFromImage(letterboxed, scalefactor=1 / 255.0, size=(640, 640), swapRB=True, crop=False)
+    detector_shape = (self.detector_input_size, self.detector_input_size)
+    letterboxed, ratio, pad_width, pad_height = self._letterbox(frame_bgr, shape=detector_shape)
+    blob = cv2.dnn.blobFromImage(letterboxed, scalefactor=1 / 255.0, size=detector_shape, swapRB=True, crop=False)
     self.net.setInput(blob)
 
+    forward_started_at = time.monotonic()
     predictions = np.squeeze(self.net.forward())
+    self.last_detector_forward_count += 1
+    self.last_detector_forward_duration_s += time.monotonic() - forward_started_at
     if predictions.ndim != 2:
       return []
     if predictions.shape[0] < predictions.shape[1]:
@@ -1082,17 +1252,19 @@ class SpeedLimitVisionDaemon:
       return []
 
     frame_height, frame_width = frame_bgr.shape[:2]
-    candidates = self._collect_detector_classifier_proposals_from_region(
-      frame_bgr,
-      0,
-      0,
-      frame_width,
-      frame_height,
-      US_DETECTOR_MIN_CONFIDENCE,
-    )
+    candidates = []
+    if DETECTOR_CLASSIFIER_REGION_MODE in ("full", "full_and_right_roi"):
+      candidates.extend(self._collect_detector_classifier_proposals_from_region(
+        frame_bgr,
+        0,
+        0,
+        frame_width,
+        frame_height,
+        US_DETECTOR_MIN_CONFIDENCE,
+      ))
 
     # A second pass on a focused right-side ROI materially improves small U.S. sign reads.
-    if ROI_WINDOWS:
+    if DETECTOR_CLASSIFIER_REGION_MODE in ("right_roi", "full_and_right_roi") and ROI_WINDOWS:
       left_ratio, top_ratio, right_ratio, bottom_ratio = ROI_WINDOWS[-1]["bounds"]
       left = int(frame_width * left_ratio)
       top = int(frame_height * top_ratio)
@@ -1115,22 +1287,39 @@ class SpeedLimitVisionDaemon:
     if self.classifier_net is None or sign_crop.size == 0:
       return None
 
-    normalized_mask = self._extract_value_template_mask(sign_crop)
-    if normalized_mask is None:
-      return None
+    speed_class_count = len(US_CLASSIFIER_SPEED_VALUES)
 
-    classifier_input = cv2.cvtColor(normalized_mask, cv2.COLOR_GRAY2BGR)
-    padded_crop = self._square_resize(classifier_input, size=128)
+    if self.reject_classifier_net is not None:
+      normalized_mask = self._extract_value_template_mask(sign_crop)
+      if normalized_mask is not None:
+        reject_input = cv2.cvtColor(normalized_mask, cv2.COLOR_GRAY2BGR)
+        reject_crop = self._square_resize(reject_input, size=128)
+        reject_blob = cv2.dnn.blobFromImage(reject_crop, scalefactor=1 / 255.0, size=(128, 128), swapRB=True, crop=False)
+        self.reject_classifier_net.setInput(reject_blob)
+        reject_scores = np.array(self.reject_classifier_net.forward()).reshape(-1)
+        if reject_scores.size == speed_class_count + 1:
+          reject_probabilities = self._normalize_classifier_output(reject_scores)
+          if float(reject_probabilities[speed_class_count]) >= US_REJECT_CLASSIFIER_MIN_CONFIDENCE:
+            return None
+
+    padded_crop = self._square_resize(sign_crop, size=128)
     blob = cv2.dnn.blobFromImage(padded_crop, scalefactor=1 / 255.0, size=(128, 128), swapRB=True, crop=False)
     self.classifier_net.setInput(blob)
 
+    forward_started_at = time.monotonic()
     scores = np.array(self.classifier_net.forward()).reshape(-1)
-    if scores.size != len(US_CLASSIFIER_SPEED_VALUES):
+    self.last_classifier_forward_count += 1
+    self.last_classifier_forward_duration_s += time.monotonic() - forward_started_at
+    has_reject_class = scores.size == speed_class_count + 1
+    if scores.size != speed_class_count and not has_reject_class:
       return None
 
     probabilities = self._normalize_classifier_output(scores)
-    class_index = int(np.argmax(probabilities))
-    confidence = float(probabilities[class_index])
+    speed_probabilities = probabilities[:speed_class_count]
+    class_index = int(np.argmax(speed_probabilities))
+    confidence = float(speed_probabilities[class_index])
+    if has_reject_class and float(probabilities[speed_class_count]) >= max(confidence, US_CLASSIFIER_REJECT_MIN_CONFIDENCE):
+      return None
     if confidence < US_CLASSIFIER_MIN_CONFIDENCE:
       return None
 
@@ -1151,7 +1340,7 @@ class SpeedLimitVisionDaemon:
         continue
       is_small_box = box_width < DETECTOR_CLASSIFIER_MIN_ACCEPT_WIDTH or box_height < DETECTOR_CLASSIFIER_MIN_ACCEPT_HEIGHT
       # Tiny far-away proposals are the main nighttime false-positive source.
-      # Keep a narrow rescue path for right-side proposals with strong repeated reads,
+      # Keep a narrow rescue path for right-side high-confidence reads,
       # then let temporal confirmation decide whether they are real.
       if is_small_box and (
         box_width < DETECTOR_CLASSIFIER_RESCUE_MIN_WIDTH or
@@ -1160,8 +1349,16 @@ class SpeedLimitVisionDaemon:
       ):
         continue
 
+      proposal_area_ratio = (box_width * box_height) / max(frame_width * frame_height, 1)
+      is_tiny_low_conf_box = (
+        class_id != 2 and
+        proposal_area_ratio < DETECTOR_CLASSIFIER_TINY_LOW_CONF_AREA_RATIO and
+        proposal_confidence < DETECTOR_CLASSIFIER_TINY_LOW_CONF_MIN_CONFIDENCE
+      )
+
       if class_id == 2:
         school_scores: dict[int, float] = {}
+        competing_scores: dict[int, float] = {}
         school_best_confidences: dict[int, float] = {}
         school_support_counts: dict[int, int] = {}
         for expand_left, expand_top, expand_right, expand_bottom in SCHOOL_ZONE_DIRECT_EXPANSIONS:
@@ -1182,6 +1379,7 @@ class SpeedLimitVisionDaemon:
 
             speed_limit_mph, read_confidence = read_result
             if speed_limit_mph not in SCHOOL_ZONE_SPEED_VALUES:
+              competing_scores[speed_limit_mph] = competing_scores.get(speed_limit_mph, 0.0) + read_confidence * crop_weight
               continue
 
             school_scores[speed_limit_mph] = school_scores.get(speed_limit_mph, 0.0) + read_confidence * crop_weight
@@ -1198,25 +1396,26 @@ class SpeedLimitVisionDaemon:
           )
           read_confidence = school_best_confidences[speed_limit_mph]
           support_count = school_support_counts[speed_limit_mph]
-          if (
-            (support_count >= SCHOOL_ZONE_MIN_SUPPORT and read_confidence >= SCHOOL_ZONE_MIN_CONFIDENCE) or
-            read_confidence >= SCHOOL_ZONE_SINGLE_READ_CONFIDENCE
-          ):
-            score = min(
-              read_confidence * 0.72 +
-              proposal_confidence * 0.22 +
-              max(support_count - 1, 0) * SCHOOL_ZONE_SUPPORT_BONUS +
-              0.04,
-              0.95,
-            )
-            if score >= SCHOOL_ZONE_SHORT_CIRCUIT_CONFIDENCE:
-              return Detection(speed_limit_mph, score)
+          if school_scores[speed_limit_mph] > max(competing_scores.values(), default=0.0):
+            if (
+              (support_count >= SCHOOL_ZONE_MIN_SUPPORT and read_confidence >= SCHOOL_ZONE_MIN_CONFIDENCE) or
+              read_confidence >= SCHOOL_ZONE_SINGLE_READ_CONFIDENCE
+            ):
+              score = min(
+                read_confidence * 0.72 +
+                proposal_confidence * 0.22 +
+                max(support_count - 1, 0) * SCHOOL_ZONE_SUPPORT_BONUS +
+                0.04,
+                0.95,
+              )
+              if score >= SCHOOL_ZONE_SHORT_CIRCUIT_CONFIDENCE:
+                return Detection(speed_limit_mph, score)
 
-      proposal_area_ratio = (box_width * box_height) / max(frame_width * frame_height, 1)
       speed_scores: dict[int, float] = {}
       speed_best_confidences: dict[int, float] = {}
       speed_support_counts: dict[int, int] = {}
       speed_regulatory_support: dict[int, int] = {}
+      speed_trusted_model_support: dict[int, int] = {}
 
       for expand_left, expand_top, expand_right, expand_bottom, expansion_weight in DETECTOR_CLASSIFIER_EXPANSIONS:
         expanded_x1 = max(int(x1 - box_width * expand_left), 0)
@@ -1227,24 +1426,57 @@ class SpeedLimitVisionDaemon:
         if sign_crop.size == 0:
           continue
 
-        is_regulatory = self._is_regulatory_speed_sign(sign_crop)
+        raw_is_regulatory = self._is_regulatory_speed_sign(sign_crop)
+        is_regulatory = raw_is_regulatory
         if class_id == 2:
           is_regulatory = True
 
         model_read = self._classify_speed_limit_from_model(sign_crop)
-        ocr_read = self._read_speed_limit_from_crop(sign_crop)
+        ocr_read = None
+        trusted_model_read = (
+          class_id == 0 and
+          model_read is not None and
+          x1 >= frame_width * DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_X_RATIO and
+          box_height <= DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_HEIGHT and
+          proposal_area_ratio <= DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_AREA_RATIO and
+          proposal_confidence >= DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_PROPOSAL_CONFIDENCE and
+          model_read[1] >= DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE
+        )
+        strong_model_read = (
+          class_id == 0 and
+          model_read is not None and
+          not is_small_box and
+          proposal_confidence >= DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE and
+          model_read[1] >= DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_READ_CONFIDENCE
+        )
+        needs_ocr_confirmation = (
+          class_id != 2 and
+          (not is_regulatory or is_tiny_low_conf_box) and
+          not trusted_model_read and
+          not strong_model_read
+        )
+        if model_read is None or needs_ocr_confirmation:
+          ocr_read = self._read_speed_limit_from_crop(sign_crop)
         read_result = model_read or ocr_read
         if read_result is None:
           continue
 
-        if class_id != 2 and not is_regulatory:
+        if needs_ocr_confirmation:
           if model_read is None or ocr_read is None or model_read[0] != ocr_read[0]:
             continue
           read_result = (model_read[0], min(model_read[1], ocr_read[1]))
 
         speed_limit_mph, read_confidence = read_result
+        score_is_regulatory = is_regulatory or trusted_model_read or strong_model_read
+        if (
+          class_id == 2 and
+          proposal_confidence < SCHOOL_ZONE_FALLBACK_MIN_CONFIDENCE and
+          not raw_is_regulatory
+        ):
+          continue
+
         score = read_confidence * expansion_weight
-        if is_regulatory:
+        if score_is_regulatory:
           score += DETECTOR_CLASSIFIER_REGULATORY_BONUS
         elif proposal_area_ratio >= DETECTOR_CLASSIFIER_SMALL_BOX_AREA_RATIO:
           score -= DETECTOR_CLASSIFIER_NON_REGULATORY_PENALTY
@@ -1254,8 +1486,10 @@ class SpeedLimitVisionDaemon:
         speed_scores[speed_limit_mph] = speed_scores.get(speed_limit_mph, 0.0) + score
         speed_best_confidences[speed_limit_mph] = max(speed_best_confidences.get(speed_limit_mph, 0.0), read_confidence)
         speed_support_counts[speed_limit_mph] = speed_support_counts.get(speed_limit_mph, 0) + 1
-        if is_regulatory or class_id == 2:
+        if is_regulatory or class_id == 2 or strong_model_read:
           speed_regulatory_support[speed_limit_mph] = speed_regulatory_support.get(speed_limit_mph, 0) + 1
+        if trusted_model_read:
+          speed_trusted_model_support[speed_limit_mph] = speed_trusted_model_support.get(speed_limit_mph, 0) + 1
 
       if not speed_scores:
         continue
@@ -1269,6 +1503,25 @@ class SpeedLimitVisionDaemon:
       )
       if class_id == 2 and speed_limit_mph not in SCHOOL_ZONE_SPEED_VALUES:
         continue
+      if (
+        speed_regulatory_support.get(speed_limit_mph, 0) < 1 and
+        0 < speed_trusted_model_support.get(speed_limit_mph, 0) < DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT
+      ):
+        continue
+      if class_id != 2 and speed_limit_mph in SCHOOL_ZONE_SPEED_VALUES:
+        competing_speed_limit_mph = max(
+          (speed for speed in speed_scores if speed not in SCHOOL_ZONE_SPEED_VALUES),
+          key=lambda speed: (speed_best_confidences[speed], speed_scores[speed]),
+          default=None,
+        )
+        if competing_speed_limit_mph is not None:
+          read_confidence = speed_best_confidences[speed_limit_mph]
+          competing_confidence = speed_best_confidences[competing_speed_limit_mph]
+          if (
+            competing_confidence >= NON_SCHOOL_LOW_SPEED_COMPETING_MIN_CONFIDENCE and
+            competing_confidence >= read_confidence
+          ):
+            speed_limit_mph = competing_speed_limit_mph
       read_confidence = speed_best_confidences[speed_limit_mph]
       support_count = speed_support_counts[speed_limit_mph]
       score = min(
@@ -1277,23 +1530,32 @@ class SpeedLimitVisionDaemon:
         max(support_count - 1, 0) * DETECTOR_CLASSIFIER_SUPPORT_BONUS,
         0.95,
       )
+      selection_score = score
+      published_score = score
       if class_id == 2:
         if speed_limit_mph in SCHOOL_ZONE_SPEED_VALUES:
-          score = min(score + 0.06, 0.95)
+          selection_score = min(score + 0.06, 0.95)
+          published_score = selection_score
         else:
-          score = max(score - 0.06, 0.0)
+          selection_score = max(score - 0.06, 0.0)
+          published_score = selection_score
       elif is_small_box:
-        if speed_regulatory_support.get(speed_limit_mph, 0) < 1:
+        if (
+          speed_regulatory_support.get(speed_limit_mph, 0) < 1 and
+          speed_trusted_model_support.get(speed_limit_mph, 0) < DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT
+        ):
           continue
         if support_count < DETECTOR_CLASSIFIER_RESCUE_MIN_SUPPORT:
           continue
         if read_confidence < DETECTOR_CLASSIFIER_RESCUE_MIN_CONFIDENCE:
           continue
-        score = min(score, DETECTOR_CLASSIFIER_RESCUE_MAX_SCORE)
-      if score > best_score:
-        best_score = score
-        best_detection = Detection(speed_limit_mph, score)
-      if best_score >= MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE:
+        published_score = min(score, DETECTOR_CLASSIFIER_RESCUE_MAX_SCORE)
+        if speed_trusted_model_support.get(speed_limit_mph, 0) < DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT:
+          selection_score = published_score
+      if selection_score > best_score:
+        best_score = selection_score
+        best_detection = Detection(speed_limit_mph, published_score)
+      if best_detection is not None and best_detection.confidence >= MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE:
         return best_detection
 
     return best_detection
@@ -1570,7 +1832,12 @@ class SpeedLimitVisionDaemon:
     current_count = counts.get(current_speed_limit, 0) if current_speed_limit > 0 else 0
 
     if current_speed_limit > 0 and candidate_speed_limit != current_speed_limit:
-      if candidate_count < CHANGE_CONSISTENT_DETECTIONS:
+      required_count = CHANGE_CONSISTENT_DETECTIONS
+      if current_speed_limit >= 30 and candidate_speed_limit < 30:
+        required_count = LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS
+        if best_confidence < LOW_SPEED_CHANGE_MIN_CONFIDENCE:
+          return None
+      if candidate_count < required_count:
         return None
       if candidate_count <= current_count:
         return None
@@ -1589,6 +1856,7 @@ class SpeedLimitVisionDaemon:
     self.published_speed_limit_mph = 0
     self.published_confidence = 0.0
     self.last_publish_change_at = 0.0
+    self.last_published_support_at = 0.0
     self.last_candidate_speed_limit_mph = 0
     self.last_candidate_confidence = 0.0
     self.last_candidate_at = 0.0
@@ -1611,12 +1879,122 @@ class SpeedLimitVisionDaemon:
       self.last_logged_status = status
       self._write_debug_event("status", statusText=status)
 
+  def _publish_runtime_telemetry(self, now, phase, force=False, **fields):
+    if not self.use_runtime:
+      return
+    if not force and now - self.last_runtime_telemetry_at < RUNTIME_TELEMETRY_INTERVAL_SECONDS:
+      return
+
+    self.last_runtime_telemetry_at = now
+    try:
+      DEBUG_BASE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+      if self.params_memory is not None:
+        try:
+          self.params_memory.put("VisionSpeedLimitLastEvent", f"runtime telemetry mkdir error: {type(exc).__name__}"[:160])
+        except Exception:
+          pass
+      return
+
+    try:
+      live_pose_inputs_ok = True
+      started = False
+      cpu_usage = []
+      if self.sm is not None:
+        try:
+          started = bool(self.sm["deviceState"].started)
+          cpu_usage = [round(float(value), 1) for value in self.sm["deviceState"].cpuUsagePercent]
+        except Exception:
+          started = False
+          cpu_usage = []
+        try:
+          live_pose_inputs_ok = bool(self.sm["livePose"].inputsOK)
+        except Exception:
+          live_pose_inputs_ok = True
+
+      camera_connected = False
+      try:
+        camera_connected = bool(self.client is not None and self.client.is_connected())
+      except Exception:
+        camera_connected = False
+
+      telemetry = {
+        "phase": phase,
+        "wallTimeNs": time.time_ns(),
+        "monoTimeNs": time.monotonic_ns(),
+        "started": started,
+        "startedPrev": self.started_prev,
+        "modelMode": self.model_mode,
+        "detectorInputSize": self.detector_input_size,
+        "detectorRegionMode": DETECTOR_CLASSIFIER_REGION_MODE,
+        "separateRejectClassifierEnabled": SEPARATE_REJECT_CLASSIFIER_ENABLED,
+        "stream": self.stream_name,
+        "cameraConnected": camera_connected,
+        "debugSession": self.debug_session_id,
+        "loopCount": self.loop_count,
+        "inferenceCount": self.inference_count,
+        "intervalSkipCount": self.interval_skip_count,
+        "busySkipCount": self.busy_skip_count,
+        "cameraUnavailableCount": self.camera_unavailable_count,
+        "emptyFrameCount": self.empty_frame_count,
+        "detectionCount": self.detection_count,
+        "lastInferenceAgeS": round(max(now - self.last_inference_at, 0.0), 3),
+        "lastInferenceIntervalS": round(float(self.last_inference_interval), 3),
+        "lastInferenceIntervalReason": self.last_inference_interval_reason,
+        "cpuBusy": self.last_cpu_busy,
+        "lastFrameProcessDurationS": round(self.last_frame_process_duration_s, 3),
+        "lastDetectorForwardCount": self.last_detector_forward_count,
+        "lastDetectorForwardDurationS": round(self.last_detector_forward_duration_s, 3),
+        "lastClassifierForwardCount": self.last_classifier_forward_count,
+        "lastClassifierForwardDurationS": round(self.last_classifier_forward_duration_s, 3),
+        "cpuUsagePercent": cpu_usage,
+        "livePoseInputsOK": live_pose_inputs_ok,
+        "publishedSpeedLimitMph": self.published_speed_limit_mph,
+        "publishedConfidence": round(self.published_confidence, 4),
+        "lastCandidateSpeedLimitMph": self.last_candidate_speed_limit_mph,
+        "lastCandidateConfidence": round(self.last_candidate_confidence, 4),
+        "lastError": self.last_error,
+      }
+      telemetry.update(fields)
+      encoded = json.dumps(telemetry, separators=(",", ":")) + "\n"
+    except Exception as exc:
+      telemetry = {
+        "phase": phase,
+        "wallTimeNs": time.time_ns(),
+        "monoTimeNs": time.monotonic_ns(),
+        "loopCount": self.loop_count,
+        "telemetryError": f"{type(exc).__name__}: {exc}",
+      }
+      encoded = json.dumps(telemetry, separators=(",", ":")) + "\n"
+      if self.params_memory is not None:
+        try:
+          self.params_memory.put("VisionSpeedLimitLastEvent", f"runtime telemetry error: {type(exc).__name__}"[:160])
+        except Exception:
+          pass
+
+    try:
+      tmp_path = DEBUG_RUNTIME_STATUS_PATH.with_name(f"{DEBUG_RUNTIME_STATUS_PATH.name}.tmp")
+      tmp_path.write_text(encoded, encoding="utf-8")
+      tmp_path.replace(DEBUG_RUNTIME_STATUS_PATH)
+    except Exception as exc:
+      if self.params_memory is not None:
+        try:
+          self.params_memory.put("VisionSpeedLimitLastEvent", f"runtime telemetry write error: {type(exc).__name__}"[:160])
+        except Exception:
+          pass
+      return
+
+    if self.debug_log_path and now - self.last_debug_heartbeat_at >= DEBUG_HEARTBEAT_INTERVAL_SECONDS:
+      self.last_debug_heartbeat_at = now
+      self._write_debug_event("heartbeat", runtime=telemetry)
+
   def _publish_detection(self, speed_limit_mph, confidence, status_prefix):
     if speed_limit_mph != self.published_speed_limit_mph or abs(confidence - self.published_confidence) >= 0.05:
       published_changed = speed_limit_mph != self.published_speed_limit_mph
       if speed_limit_mph != self.published_speed_limit_mph:
         self.previous_published_speed_limit_mph = self.published_speed_limit_mph
         self.last_publish_change_at = time.monotonic()
+        self.last_published_support_at = self.last_publish_change_at
       self.published_speed_limit_mph = speed_limit_mph
       self.published_confidence = confidence
       self._write_debug_event(
@@ -1655,6 +2033,8 @@ class SpeedLimitVisionDaemon:
     self.last_candidate_speed_limit_mph = detection.speed_limit_mph
     self.last_candidate_confidence = detection.confidence
     self.last_candidate_at = now
+    if detection.speed_limit_mph == self.published_speed_limit_mph:
+      self.last_published_support_at = now
     self._schedule_training_capture(detection.speed_limit_mph, detection.confidence, now)
 
     candidate_signature = (detection.speed_limit_mph, round(detection.confidence, 2))
@@ -1686,9 +2066,11 @@ class SpeedLimitVisionDaemon:
     if not self.use_runtime or self.sm is None:
       raise RuntimeError("SpeedLimitVisionDaemon runtime loop requires use_runtime=True")
 
-    ratekeeper = self.Ratekeeper(5, None)
+    ratekeeper = self.Ratekeeper(RUNTIME_LOOP_HZ, None)
 
     while True:
+      now = time.monotonic()
+      self.loop_count += 1
       self.sm.update(0)
 
       if self.sm.updated["userBookmark"]:
@@ -1699,6 +2081,7 @@ class SpeedLimitVisionDaemon:
 
       if self.net is None:
         self._publish_status(self.last_error or "Vision model unavailable", clear_speed=True)
+        self._publish_runtime_telemetry(now, "model_unavailable")
         ratekeeper.keep_time()
         continue
 
@@ -1711,11 +2094,21 @@ class SpeedLimitVisionDaemon:
         self.current_frame_bgr = None
         self.pending_auto_bookmark = None
         self._publish_status("Idle - offroad", clear_speed=True)
+        self._publish_runtime_telemetry(now, "offroad")
         ratekeeper.keep_time()
         continue
-      elif not self.started_prev:
+
+      if self.sm.updated["livePose"] and not self.sm["livePose"].inputsOK:
+        self.last_live_pose_inputs_not_ok_at = now
+
+      if not self.started_prev:
         self.started_prev = True
         self._start_debug_session()
+        self._publish_runtime_telemetry(now, "onroad_start", force=True)
+      elif not self.debug_session_id:
+        self._start_debug_session()
+        self._write_debug_event("session_recovered", reason="missing_debug_session_while_onroad")
+        self._publish_runtime_telemetry(now, "session_recovered", force=True)
 
       road_name = self.sm["mapdOut"].roadName
       if self.last_road_name and road_name and road_name != self.last_road_name:
@@ -1724,41 +2117,47 @@ class SpeedLimitVisionDaemon:
       self.last_road_name = road_name or self.last_road_name
 
       if not self._connect_camera():
+        self.camera_unavailable_count += 1
+        stale_cleared = self._clear_published_detection_if_stale(now, "camera_unavailable")
         status = "Waiting for camera stream"
-        if self.published_speed_limit_mph > 0:
-          now = time.monotonic()
-          if self._published_detection_stale(now):
-            self._write_debug_event("stale_clear", reason="stream_unavailable")
-            self._publish_status("Waiting for camera stream", clear_speed=True)
-            ratekeeper.keep_time()
-            continue
+        if self.published_speed_limit_mph > 0 and not stale_cleared:
           status = f"{status}, holding {self.published_speed_limit_mph} mph"
         self._publish_status(status, clear_speed=False)
+        self._publish_runtime_telemetry(now, "camera_unavailable")
         ratekeeper.keep_time()
         continue
 
-      now = time.monotonic()
-      inference_interval = FOLLOWUP_INFERENCE_INTERVAL if now < self.followup_until else INFERENCE_INTERVAL
+      inference_interval = self._inference_interval(now)
       if now - self.last_inference_at < inference_interval:
-        if self.published_speed_limit_mph > 0:
-          if self._published_detection_stale(now):
-            self._write_debug_event("stale_clear", reason="hold_timeout")
-            self._publish_status(f"Scanning {self.stream_name}", clear_speed=True)
-          else:
-            self._publish_detection(self.published_speed_limit_mph, self.published_confidence, "Holding")
+        self.interval_skip_count += 1
+        if self.last_inference_interval_reason == "cpu_busy":
+          self.busy_skip_count += 1
+        stale_cleared = self._clear_published_detection_if_stale(now, "inference_interval")
+        if self.published_speed_limit_mph > 0 and not stale_cleared:
+          self._publish_detection(self.published_speed_limit_mph, self.published_confidence, "Holding")
         else:
           self._publish_status(f"Scanning {self.stream_name}", clear_speed=False)
+        self._publish_runtime_telemetry(now, "interval_skip")
         ratekeeper.keep_time()
         continue
 
       buffer = self.client.recv() if self.client is not None else None
+      self.inference_count += 1
       self.last_inference_at = now
+      inference_started_at = time.monotonic()
+      self.last_frame_process_duration_s = 0.0
+      self.last_detector_forward_count = 0
+      self.last_detector_forward_duration_s = 0.0
+      self.last_classifier_forward_count = 0
+      self.last_classifier_forward_duration_s = 0.0
       if buffer is None or not buffer.data.any():
-        if self._published_detection_stale(now):
-          self._write_debug_event("stale_clear", reason="empty_frame")
-          self._publish_status(f"Waiting for {self.stream_name}", clear_speed=True)
+        self.empty_frame_count += 1
+        stale_cleared = self._clear_published_detection_if_stale(now, "empty_frame")
+        if self.published_speed_limit_mph > 0 and not stale_cleared:
+          self._publish_status(f"Waiting for {self.stream_name}, holding {self.published_speed_limit_mph} mph", clear_speed=False)
         else:
           self._publish_status(f"Waiting for {self.stream_name}", clear_speed=False)
+        self._publish_runtime_telemetry(now, "empty_frame")
         ratekeeper.keep_time()
         continue
 
@@ -1767,16 +2166,20 @@ class SpeedLimitVisionDaemon:
       self.current_frame_bgr = frame_bgr
 
       detection = self._detect_sign(frame_bgr)
+      self.last_frame_process_duration_s = time.monotonic() - inference_started_at
       if detection is not None:
+        self.detection_count += 1
         self._update_detection(detection)
+        self._publish_runtime_telemetry(now, "detection")
+      elif self._clear_published_detection_if_stale(now, "no_detection"):
+        self._publish_status(f"Scanning {self.stream_name}", clear_speed=False)
+        self._publish_runtime_telemetry(now, "stale_clear")
       elif self.published_speed_limit_mph > 0:
-        if self._published_detection_stale(now):
-          self._write_debug_event("stale_clear", reason="no_detection")
-          self._publish_status(f"Scanning {self.stream_name}", clear_speed=True)
-        else:
-          self._publish_detection(self.published_speed_limit_mph, self.published_confidence, "Holding")
+        self._publish_detection(self.published_speed_limit_mph, self.published_confidence, "Holding")
+        self._publish_runtime_telemetry(now, "holding")
       else:
         self._publish_status(f"Scanning {self.stream_name}", clear_speed=False)
+        self._publish_runtime_telemetry(now, "scanning")
 
       self._maybe_commit_auto_bookmark(now)
       self._maybe_commit_training_capture(now)

@@ -73,6 +73,21 @@ def create_cruise_buttons(packer, frame, bus, button_message, cancel=False, resu
   return packer.make_can_msg(button_message, bus, values)
 
 
+def create_das_3_command(packer, counter_offset, brake_decel, das_3):
+  values = das_3.copy()
+  values["ACC_AVAILABLE"] = 1
+  values["ACC_ACTIVE"] = 1
+  values["ACC_GO"] = 0
+  values["ACC_STANDSTILL"] = 0
+  values["ACC_DECEL_REQ"] = 1
+  values["ACC_DECEL"] = brake_decel
+  values["ACC_BRK_PREP"] = 0
+  values["ENGINE_TORQUE_REQUEST_MAX"] = 0
+  values["GR_MAX_REQ"] = 2
+  values["COUNTER"] = (das_3["COUNTER"] + counter_offset) % 0x10
+  return packer.make_can_msg("DAS_3", 0, values)
+
+
 def chrysler_checksum(address: int, sig, d: bytearray) -> int:
   checksum = 0xFF
   for j in range(len(d) - 1):

@@ -177,19 +177,6 @@ class CarSpecificEvents:
     elif self.CP.brand == 'tesla':
       events = self.create_common_events(CS, CS_prev, extra_gears=extra_gears)
 
-      if self.CP.carFingerprint == "TESLA_MODEL_S_PREAP":
-        if self.CP.pcmCruise:
-          if getattr(CS, 'teslaCCEngaged', False):
-            events.add(EventName.teslaCCEngaged)
-          if getattr(CS, 'teslaCCDisengaged', False):
-            events.add(EventName.teslaCCDisengaged)
-          if getattr(CS, 'teslaCCNotArmed', False):
-            events.add(EventName.teslaCCNotArmed)
-        else:
-          from opendbc.car.tesla.preap.nap_conf import nap_conf
-          if not nap_conf.pedal_calibrated:
-            events.add(EventName.pedalNotCalibrated)
-
     elif self.CP.brand == 'hyundai':
       events = self.create_common_events(CS, CS_prev, extra_gears=extra_gears, pcm_enable=self.CP.pcmCruise, allow_button_cancel=False)
 

@@ -28,7 +28,7 @@ class TestSpeedLimitUtils(unittest.TestCase):
 
     self.assertEqual(speed_limit, 24.6)
 
-  def test_resolve_display_speed_limit_uses_active_source_when_display_only(self):
+  def test_resolve_display_speed_limit_ignores_unconfigured_active_source(self):
     speed_limit = resolve_display_speed_limit_ms(
       slc_speed_limit=0.0,
       speed_limit_source="Dashboard",
@@ -40,6 +40,22 @@ class TestSpeedLimitUtils(unittest.TestCase):
       },
       primary_priority="Map Data",
       secondary_priority="Vision",
+    )
+
+    self.assertEqual(speed_limit, 20.1)
+
+  def test_resolve_display_speed_limit_uses_configured_active_source_when_display_only(self):
+    speed_limit = resolve_display_speed_limit_ms(
+      slc_speed_limit=0.0,
+      speed_limit_source="Dashboard",
+      source_limits={
+        "Dashboard": 22.4,
+        "Map Data": 20.1,
+        "Vision": 0.0,
+        "Mapbox": 0.0,
+      },
+      primary_priority="Map Data",
+      secondary_priority="Dashboard",
     )
 
     self.assertEqual(speed_limit, 22.4)
@@ -75,3 +91,19 @@ class TestSpeedLimitUtils(unittest.TestCase):
     )
 
     self.assertEqual(speed_limit, 17.9)
+
+  def test_resolve_display_speed_limit_does_not_fallback_to_dashboard_when_vision_only(self):
+    speed_limit = resolve_display_speed_limit_ms(
+      slc_speed_limit=0.0,
+      speed_limit_source="None",
+      source_limits={
+        "Dashboard": 22.4,
+        "Map Data": 0.0,
+        "Vision": 0.0,
+        "Mapbox": 0.0,
+      },
+      primary_priority="Vision",
+      secondary_priority="None",
+    )
+
+    self.assertEqual(speed_limit, 0.0)

@@ -32,9 +32,19 @@ VOLUME_BASE = 20
 if HARDWARE.get_device_type() in ("tici", "tizi"):
   VOLUME_BASE = 10
 
-AudibleAlert = car.CarControl.HUDControl.AudibleAlert
+AudibleAlert = log.SelfdriveState.AudibleAlert
 
 StarPilotAudibleAlert = custom.StarPilotCarControl.HUDControl.AudibleAlert
+
+# StarPilot mirrors stock audible alerts at 0-8. Keep those raw values so themed
+# stock sounds still work, and only offset custom random-event sounds.
+STARPILOT_CUSTOM_ALERT_OFFSET = 1000
+STARPILOT_CUSTOM_ALERT_START = int(StarPilotAudibleAlert.angry)
+
+
+def starpilot_alert_key(alert):
+  raw_alert = int(alert)
+  return STARPILOT_CUSTOM_ALERT_OFFSET + raw_alert if raw_alert >= STARPILOT_CUSTOM_ALERT_START else raw_alert
 
 
 sound_list: dict[int, tuple[str, int | None, float]] = {
@@ -47,24 +57,26 @@ sound_list: dict[int, tuple[str, int | None, float]] = {
   AudibleAlert.promptRepeat: ("prompt.wav", None, MAX_VOLUME),
   AudibleAlert.promptDistracted: ("prompt_distracted.wav", None, MAX_VOLUME),
 
+  AudibleAlert.preAlert: ("pre_alert.wav", 1, MAX_VOLUME),
+
   AudibleAlert.warningSoft: ("warning_soft.wav", None, MAX_VOLUME),
   AudibleAlert.warningImmediate: ("warning_immediate.wav", None, MAX_VOLUME),
   AudibleAlert.speedDown: ("speeddown.wav", 3, MAX_VOLUME),
 
-  StarPilotAudibleAlert.angry: ("angry.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.continued: ("continued.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.dejaVu: ("dejaVu.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.doc: ("doc.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.fart: ("fart.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.firefox: ("firefox.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.goat: ("goat.wav", None, MAX_VOLUME),
-  StarPilotAudibleAlert.hal9000: ("hal9000.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.mail: ("mail.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.nessie: ("nessie.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.noice: ("noice.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.startup: ("startup.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.thisIsFine: ("this_is_fine.wav", 1, MAX_VOLUME),
-  StarPilotAudibleAlert.uwu: ("uwu.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.angry): ("angry.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.continued): ("continued.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.dejaVu): ("dejaVu.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.doc): ("doc.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.fart): ("fart.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.firefox): ("firefox.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.goat): ("goat.wav", None, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.hal9000): ("hal9000.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.mail): ("mail.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.nessie): ("nessie.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.noice): ("noice.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.startup): ("startup.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.thisIsFine): ("this_is_fine.wav", 1, MAX_VOLUME),
+  starpilot_alert_key(StarPilotAudibleAlert.uwu): ("uwu.wav", 1, MAX_VOLUME),
 }
 if HARDWARE.get_device_type() in ("tici", "tizi"):
   sound_list.update({
@@ -215,11 +227,11 @@ class Soundd:
       critical_full_alert = sm['selfdriveState'].alertStatus == log.SelfdriveState.AlertStatus.critical
       critical_full_alert &= sm['selfdriveState'].alertSize == log.SelfdriveState.AlertSize.full
       if self.starpilot_toggles.goat_scream_critical_alerts and critical_full_alert:
-        new_alert = StarPilotAudibleAlert.goat
+        new_alert = starpilot_alert_key(StarPilotAudibleAlert.goat)
 
       new_starpilot_alert = sm['starpilotSelfdriveState'].alertSound.raw
       if new_alert == AudibleAlert.none and new_starpilot_alert != StarPilotAudibleAlert.none:
-        new_alert = new_starpilot_alert
+        new_alert = starpilot_alert_key(new_starpilot_alert)
         new_alert_type = sm['starpilotSelfdriveState'].alertType
 
       self.current_alert_type = new_alert_type
@@ -336,8 +348,8 @@ class Soundd:
       AudibleAlert.warningSoft: self.starpilot_toggles.warningSoft_volume / 100.0,
       AudibleAlert.warningImmediate: self.starpilot_toggles.warningImmediate_volume / 100.0,
 
-      StarPilotAudibleAlert.goat: self.starpilot_toggles.prompt_volume / 100.0,
-      StarPilotAudibleAlert.startup: self.starpilot_toggles.engage_volume / 100.0
+      starpilot_alert_key(StarPilotAudibleAlert.goat): self.starpilot_toggles.prompt_volume / 100.0,
+      starpilot_alert_key(StarPilotAudibleAlert.startup): self.starpilot_toggles.engage_volume / 100.0
     }
 
     for sound in sound_list:

@@ -76,7 +76,7 @@
     pointer-events: none;
   }
   label {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: 4px;
     line-height: 1;
@@ -102,16 +102,38 @@
     fill: #FFD700;
     stroke: #B8860B;
   }
+  g.tag.collapsed circle, g.tag.collapsed rect {
+    fill: #5CD68D;
+    stroke: #4a4b57;
+  }
+  g.tag.expanded circle, g.tag.expanded rect {
+    fill: #9FDDE6;
+    stroke: #4a4b57;
+  }
   g.port circle {
     fill: #b3dcc2;
   }
-  g.tag circle, #edge-labels circle {
+  g.tag circle, g.tag rect, #edge-labels circle {
     stroke-width: 0.8;
   }
   g.tag text, #edge-labels text {
+    font-family: monospace;
     text-anchor: middle;
     font-size: 6px;
     fill: #08090e;
+  }
+  g.tag.ref * {
+    cursor: pointer;
+  }
+  g.tag.ref circle {
+    fill: #9FDDE6;
+    stroke: #4a4b57;
+  }
+  g.tag.ref path {
+    fill: none;
+    stroke: #08090e;
+    stroke-width: 0.7;
+    stroke-linejoin: miter;
   }
   .label :is(text, p) {
     font-weight: 350;
@@ -133,6 +155,22 @@
   }
   g.label rect.bg.highlight {
     fill: #5f0059;
+  }
+  #insts .line {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 8px;
+  }
+  #insts .left {
+    width: fit-content;
+    display: flex;
+    gap: 4px;
+  }
+  #insts .left.highlight {
+    background-color: rgba(0, 199, 47, 0.2);
+  }
+  #insts .pc {
+    color: #73daca;
   }
   g.node.highlight rect.node, .edgePath.highlight, g.port circle {
     stroke: #89C9A2;

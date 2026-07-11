@@ -10,6 +10,8 @@
 namespace CommaApi {
 
 const QString BASE_URL = util::getenv("API_HOST", "https://api.commadotai.com").c_str();
+QString normalizeApiHost(const QString &host);
+QString authTokenForHost(const QString &api_host);
 QByteArray rsa_sign(const QByteArray &data);
 QString create_jwt(const QJsonObject &payloads = {}, int expiry = 3600);
 

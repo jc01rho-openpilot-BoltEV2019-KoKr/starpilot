@@ -249,7 +249,7 @@ def test_ccm_immediately_exits_chill_when_scene_turns_into_slow_lead(monkeypatch
   planner, detector, ccm = make_ccm()
   sm = make_sm()
   toggles = make_toggles()
-  monotonic_values = iter([10.0, 10.5, 10.6])
+  monotonic_values = iter([10.0, 11.1, 11.2])
   monkeypatch.setattr("openpilot.starpilot.controls.lib.conditional_chill_mode.time.monotonic", lambda: next(monotonic_values))
 
   planner.tracking_lead = True
@@ -392,6 +392,7 @@ def test_ccm_launch_assist_exits_immediately_if_lead_slows_again(monkeypatch):
   planner.lead_one.dRel = 18.0
   planner.lead_one.vLead = 2.0
   planner.lead_one.vRel = 2.0
+  planner.lead_one.aLeadK = 0.2
   planner.lead_one.radar = True
 
   ccm.update(0.0, 25 * CV.MPH_TO_MS, sm, toggles)

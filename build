@@ -3,4 +3,106 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "${ROOT_DIR}/scripts/laptop_device_build.sh" build "$@"
+original_args=("$@")
+
+shortcut_targets=()
+passthrough_args=()
+shortcut_includes_panda=0
+panda_generated_files=(
+  "panda/board/obj/gitversion.h"
+  "panda/board/obj/version"
+)
+
+add_panda_targets() {
+  local variants=(
+    panda
+    panda_h7
+    panda_remote
+    panda_h7_remote
+    panda_hkg_remote
+    panda_h7_hkg_remote
+    panda_can_ignition_only
+    panda_h7_can_ignition_only
+    panda_remote_can_ignition_only
+    panda_h7_remote_can_ignition_only
+    panda_hkg_remote_can_ignition_only
+    panda_h7_hkg_remote_can_ignition_only
+    panda_jungle_h7
+    body_h7
+  )
+
+  local variant
+  for variant in "${variants[@]}"; do
+    shortcut_targets+=("panda/board/obj/${variant}.bin.signed")
+  done
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --params|-params|-param)
+      shortcut_targets+=("common/params_pyx.so")
+      ;;
+    --panda|-panda)
+      shortcut_includes_panda=1
+      add_panda_targets
+      ;;
+    --ui|-ui)
+      shortcut_targets+=("selfdrive/ui/ui")
+      ;;
+    --cereal|-cereal)
+      shortcut_targets+=(
+        "cereal/libcereal.a"
+        "cereal/libsocketmaster.a"
+        "cereal/messaging/bridge"
+        "cereal/services.h"
+      )
+      ;;
+    *)
+      if [[ "$1" =~ ^[0-9]+$ ]]; then
+        passthrough_args+=("-j$1")
+      else
+        passthrough_args+=("$1")
+      fi
+      ;;
+  esac
+  shift
+done
+
+if [[ "${#shortcut_targets[@]}" -gt 0 ]]; then
+  scons_args=("--no-scrub")
+  scons_args+=("${shortcut_targets[@]}")
+  if [[ "${#passthrough_args[@]}" -gt 0 ]]; then
+    scons_args+=("${passthrough_args[@]}")
+  fi
+
+  if [[ "${shortcut_includes_panda}" -eq 1 ]]; then
+    exec "${ROOT_DIR}/scripts/laptop_device_build.sh" scons "${scons_args[@]}"
+  fi
+
+  tmpdir="$(mktemp -d)"
+  for path in "${panda_generated_files[@]}"; do
+    if [[ -e "${ROOT_DIR}/${path}" ]]; then
+      cp -p "${ROOT_DIR}/${path}" "${tmpdir}/${path//\//__}"
+    else
+      touch "${tmpdir}/${path//\//__}.missing"
+    fi
+  done
+
+  if "${ROOT_DIR}/scripts/laptop_device_build.sh" scons "${scons_args[@]}"; then
+    status=0
+  else
+    status=$?
+  fi
+
+  for path in "${panda_generated_files[@]}"; do
+    if [[ -e "${tmpdir}/${path//\//__}.missing" ]]; then
+      rm -f "${ROOT_DIR}/${path}"
+    else
+      cp -p "${tmpdir}/${path//\//__}" "${ROOT_DIR}/${path}"
+    fi
+  done
+  rm -rf "${tmpdir}"
+  exit "${status}"
+fi
+
+exec "${ROOT_DIR}/scripts/laptop_device_build.sh" build "${original_args[@]}"

@@ -165,7 +165,7 @@ function fallbackDashboard(data, unit) {
 }
 
 function driveStatsReady(drive) {
-  return drive?.attentionKnown !== false;
+  return drive?.ignored === true || drive?.attentionKnown !== false;
 }
 
 function dashboardPendingDriveCount(dashboard) {
@@ -309,26 +309,42 @@ function renderRecentDrives(drives) {
   }
 
   const rows = drives.map(drive => {
+    const ignored = drive?.ignored === true;
     const ready = driveStatsReady(drive);
+    const routeNames = Array.isArray(drive?.routeNames) ? drive.routeNames.filter(Boolean) : [];
     return `
-    <div class="dashboard-drive-row ${ready ? "" : "is-pending"}">
+    <div class="dashboard-drive-row ${ready ? "" : "is-pending"} ${ignored ? "is-ignored" : ""}">
       <div class="dashboard-drive-main">
         <strong>${escapeHtml(formatDriveTimeRange(drive.date, drive.endDate))}</strong>
         <span>${escapeHtml(drive.model || "Unknown model")}</span>
       </div>
       <div class="dashboard-drive-details">
-        <span>${ready ? `${formatOneDecimal(drive.distance)} ${escapeHtml(drive.distanceUnit || "miles")}` : "Analyzing stats"}</span>
+        <span>${ignored && drive.attentionKnown === false ? "Stats excluded" : (ready ? `${formatOneDecimal(drive.distance)} ${escapeHtml(drive.distanceUnit || "miles")}` : "Analyzing stats")}</span>
         <span>${formatDuration(drive.duration)}</span>
       </div>
       <div class="dashboard-attention">
-        ${ready
+        ${ignored
+          ? `<span><i class="bi bi-eye-slash"></i> Ignored from stats</span>`
+          : ready
           ? `<span>${formatInt(drive.distractedMoments)} distracted</span><span>${formatInt(drive.unresponsiveMoments)} unresponsive</span>`
           : `<span>Waiting for full route analysis</span>`}
       </div>
       <div class="dashboard-engaged-cell">
-        <div class="dashboard-mini-bar"><span style="width:${ready ? Math.max(0, Math.min(100, numberValue(drive.engagedPercent))) : 0}%"></span></div>
-        <strong>${ready ? `${formatPercent(drive.engagedPercent)} engaged` : "Pending"}</strong>
+        <div class="dashboard-mini-bar"><span style="width:${ready && !ignored ? Math.max(0, Math.min(100, numberValue(drive.engagedPercent))) : 0}%"></span></div>
+        <strong>${ignored ? "Excluded" : (ready ? `${formatPercent(drive.engagedPercent)} engaged` : "Pending")}</strong>
       </div>
+      ${routeNames.length === 0 ? "" : `
+        <div class="dashboard-drive-actions">
+          <button
+            class="dashboard-drive-stats-action"
+            data-action="${ignored ? "include" : "ignore"}"
+            data-route-names="${escapeHtml(JSON.stringify(routeNames))}"
+            title="${ignored ? "Include this drive in local dashboard statistics" : "Exclude this drive from local dashboard statistics"}">
+            <i class="bi ${ignored ? "bi-arrow-counterclockwise" : "bi-eye-slash"}"></i>
+            <span>${ignored ? "Include drive stats" : "Ignore drive stats"}</span>
+          </button>
+        </div>
+      `}
     </div>
   `;
   }).join("");
@@ -455,6 +471,40 @@ function bindDashboardActions() {
   if (refreshButton) {
     refreshButton.onclick = () => initializeHome(true);
   }
+
+  document.querySelectorAll(".dashboard-drive-stats-action").forEach((button) => {
+    button.onclick = async () => {
+      let routeNames = [];
+      try {
+        routeNames = JSON.parse(button.dataset.routeNames || "[]");
+      } catch {
+        routeNames = [];
+      }
+      if (!Array.isArray(routeNames) || routeNames.length === 0) return;
+
+      const action = button.dataset.action === "include" ? "include" : "ignore";
+      const confirmed = action === "include" || window.confirm(
+        "Ignore this drive's statistics?\n\n" +
+        "It will no longer affect local weekly totals, records, model usage, engagement, or attention streaks."
+      );
+      if (!confirmed) return;
+
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/stats/${action}_drive`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ routeNames }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `Unable to ${action} drive statistics.`);
+        await initializeHome(false);
+      } catch (error) {
+        window.alert(error?.message || `Unable to ${action} drive statistics.`);
+        button.disabled = false;
+      }
+    };
+  });
 }
 
 function renderDashboard(state) {

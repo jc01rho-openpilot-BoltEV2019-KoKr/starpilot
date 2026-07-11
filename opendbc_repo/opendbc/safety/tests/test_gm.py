@@ -346,10 +346,10 @@ class TestGmCameraNoCameraSafety(TestGmCameraSafety):
 
 
 class TestGmCameraLongitudinalSafety(GmLongitudinalBase, TestGmCameraSafetyBase):
-  TX_MSGS = [[0x180, 0], [0x315, 0], [0x2CB, 0], [0x370, 0], [0x200, 0], [0x1E1, 0], [0x3D1, 0], [0xBD, 0], [0x1F5, 0],  # pt bus
+  TX_MSGS = [[0x180, 0], [0x315, 0], [0x2CB, 0], [0x2CD, 0], [0x370, 0], [0x200, 0], [0x1E1, 0], [0x3D1, 0], [0xBD, 0], [0x1F5, 0],  # pt bus
              [0x184, 2]]  # camera bus
-  FWD_BLACKLISTED_ADDRS = {2: [0x180, 0x2CB, 0x370, 0x315], 0: [0x184]}  # block LKAS, ACC messages and PSCMStatus
-  RELAY_MALFUNCTION_ADDRS = {0: (0x180, 0x2CB, 0x370, 0x315), 2: (0x184,)}
+  FWD_BLACKLISTED_ADDRS = {2: [0x180, 0x2CB, 0x2CD, 0x370, 0x315], 0: [0x184]}  # block LKAS, ACC messages and PSCMStatus
+  RELAY_MALFUNCTION_ADDRS = {0: (0x180, 0x2CB, 0x2CD, 0x370, 0x315), 2: (0x184,)}
   BUTTONS_BUS = 0  # rx only
 
   MAX_GAS = 2698
@@ -469,6 +469,71 @@ class TestGmInterceptorSafety(common.GasInterceptorSafetyTest, TestGmCameraSafet
     return to_send
 
 
+class TestGmBolt2022PedalFrictionSafety(TestGmInterceptorSafety):
+  TX_MSGS = TestGmInterceptorSafety.TX_MSGS + [[0x315, 0]]
+  FWD_BLACKLISTED_ADDRS = {2: [0x180, 0x370, 0x315], 0: [0x184, 0x3D1]}
+  RELAY_MALFUNCTION_ADDRS = {0: (0x180, 0x315), 2: (0x184,)}
+  EXTRA_SAFETY_PARAM = GMSafetyFlags.FLAG_GM_BOLT_2022_PEDAL
+
+  def setUp(self):
+    self.packer = CANPackerPanda("gm_global_a_powertrain_generated")
+    self.packer_chassis = CANPackerPanda("gm_global_a_chassis")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(
+      CarParams.SafetyModel.gm,
+      GMSafetyFlags.HW_CAM |
+      GMSafetyFlags.FLAG_GM_NO_ACC |
+      GMSafetyFlags.FLAG_GM_PEDAL_LONG |
+      GMSafetyFlags.FLAG_GM_GAS_INTERCEPTOR |
+      GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED |
+      self.EXTRA_SAFETY_PARAM)
+    self.safety.init_tests()
+
+  def _send_brake_msg(self, brake):
+    values = {"FrictionBrakeCmd": -brake}
+    return self.packer_chassis.make_can_msg_safety("EBCMFrictionBrakeCmd", 0, values)
+
+  def _engage_longitudinal(self):
+    self._rx(self.packer.make_can_msg_panda("ASCMSteeringButton", 0, {"ACCButtons": Buttons.DECEL_SET}))
+    self._rx(self.packer.make_can_msg_panda("ASCMSteeringButton", 0, {"ACCButtons": Buttons.UNPRESS}))
+    self.assertTrue(self.safety.get_controls_allowed())
+    self.assertTrue(self.safety.get_longitudinal_allowed())
+
+  def test_tx_hook_on_wrong_safety_mode(self):
+    self.skipTest("Gen2 Bolt pedal friction experiment intentionally shares the interceptor TX set plus 0x315")
+
+  def test_buttons(self):
+    for controls_allowed in (False, True):
+      self.safety.set_controls_allowed(controls_allowed)
+      for btn in range(8):
+        self.assertEqual(btn == Buttons.CANCEL, self._tx(self._button_msg(btn)))
+
+  def test_brake_allowed_when_controls_allowed(self):
+    self._engage_longitudinal()
+    self.assertTrue(self._tx(self._send_brake_msg(100)))
+
+  def test_brake_blocked_without_controls(self):
+    self.safety.set_controls_allowed(False)
+    self.assertFalse(self._tx(self._send_brake_msg(100)))
+
+  def test_brake_limit_enforced(self):
+    self._engage_longitudinal()
+    self.assertTrue(self._tx(self._send_brake_msg(400)))
+    self.assertFalse(self._tx(self._send_brake_msg(401)))
+
+  def test_brake_whitelist_requires_paddle_scheduler_selector(self):
+    self.safety.set_safety_hooks(
+      CarParams.SafetyModel.gm,
+      GMSafetyFlags.HW_CAM |
+      GMSafetyFlags.FLAG_GM_NO_ACC |
+      GMSafetyFlags.FLAG_GM_PEDAL_LONG |
+      GMSafetyFlags.FLAG_GM_GAS_INTERCEPTOR |
+      self.EXTRA_SAFETY_PARAM)
+    self.safety.init_tests()
+    self._engage_longitudinal()
+    self.assertFalse(self._tx(self._send_brake_msg(100)))
+
+
 class TestGmCcLongitudinalSafety(TestGmCameraSafety):
   TX_MSGS = [[0x180, 0], [0x370, 0], [0x1E1, 0], [0x3D1, 0], [0xBD, 0], [0x1F5, 0], [0x184, 2], [0x1E1, 2]]
   FWD_BLACKLISTED_ADDRS = {2: [0x180], 0: [0x184, 0x3D1]}  # block LKAS, PSCMStatus, and stock cruise status
@@ -568,18 +633,62 @@ class TestGmVoltAutoHoldCameraSafety(TestGmCameraSafetyBase):
     values = {"FrictionBrakeCmd": -brake}
     return self.packer_chassis.make_can_msg_safety("EBCMFrictionBrakeCmd", 0, values)
 
-  def test_standstill_brake_allowed_without_controls(self):
+  def test_standstill_brake_allowed_without_controls_when_main_on(self):
     self._rx(self._speed_msg(0))
+    self._rx(self._toggle_aol(True))
     self.safety.set_controls_allowed(False)
     self.assertTrue(self._tx(self._send_brake_msg(100)))
 
+  def test_standstill_brake_blocked_without_main_on(self):
+    self._rx(self._speed_msg(0))
+    self._rx(self._toggle_aol(False))
+    self.safety.set_controls_allowed(False)
+    self.assertFalse(self._tx(self._send_brake_msg(100)))
+
   def test_moving_brake_blocked_without_controls(self):
     self._rx(self._speed_msg(self.STANDSTILL_THRESHOLD + 1))
+    self._rx(self._toggle_aol(True))
     self.safety.set_controls_allowed(False)
     self.assertFalse(self._tx(self._send_brake_msg(100)))
 
   def test_gas_blocks_standstill_brake_without_controls(self):
     self._rx(self._speed_msg(0))
+    self._rx(self._toggle_aol(True))
+    self._rx(self._user_gas_msg(True))
+    self.safety.set_controls_allowed(False)
+    self.assertFalse(self._tx(self._send_brake_msg(100)))
+
+
+class TestGmVoltOnePedalCameraSafety(TestGmCameraSafetyBase):
+  TX_MSGS = TestGmCameraSafety.TX_MSGS + [[0x315, 0]]
+  EXTRA_SAFETY_PARAM = GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED | GMSafetyFlags.FLAG_GM_PANDA_3D1_SCHED
+
+  def setUp(self):
+    self.packer = CANPackerSafety("gm_global_a_powertrain_generated")
+    self.packer_chassis = CANPackerSafety("gm_global_a_chassis")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.gm, GMSafetyFlags.HW_CAM | self.EXTRA_SAFETY_PARAM)
+    self.safety.init_tests()
+
+  def _send_brake_msg(self, brake):
+    values = {"FrictionBrakeCmd": -brake}
+    return self.packer_chassis.make_can_msg_safety("EBCMFrictionBrakeCmd", 0, values)
+
+  def test_moving_brake_allowed_without_controls_when_main_on(self):
+    self._rx(self._speed_msg(self.STANDSTILL_THRESHOLD + 1))
+    self._rx(self._toggle_aol(True))
+    self.safety.set_controls_allowed(False)
+    self.assertTrue(self._tx(self._send_brake_msg(100)))
+
+  def test_moving_brake_blocked_without_main_on(self):
+    self._rx(self._speed_msg(self.STANDSTILL_THRESHOLD + 1))
+    self._rx(self._toggle_aol(False))
+    self.safety.set_controls_allowed(False)
+    self.assertFalse(self._tx(self._send_brake_msg(100)))
+
+  def test_gas_blocks_moving_brake_without_controls(self):
+    self._rx(self._speed_msg(self.STANDSTILL_THRESHOLD + 1))
+    self._rx(self._toggle_aol(True))
     self._rx(self._user_gas_msg(True))
     self.safety.set_controls_allowed(False)
     self.assertFalse(self._tx(self._send_brake_msg(100)))
@@ -600,13 +709,21 @@ class TestGmVoltAutoHoldSdgmSafety(TestGmSafetyBase):
     values = {"FrictionBrakeCmd": -brake}
     return self.packer_chassis.make_can_msg_safety("EBCMFrictionBrakeCmd", 2, values)
 
-  def test_standstill_brake_allowed_without_controls(self):
+  def test_standstill_brake_allowed_without_controls_when_main_on(self):
     self._rx(self._speed_msg(0))
+    self._rx(self._toggle_aol(True))
     self.safety.set_controls_allowed(False)
     self.assertTrue(self._tx(self._send_brake_msg(100)))
 
+  def test_standstill_brake_blocked_without_main_on(self):
+    self._rx(self._speed_msg(0))
+    self._rx(self._toggle_aol(False))
+    self.safety.set_controls_allowed(False)
+    self.assertFalse(self._tx(self._send_brake_msg(100)))
+
   def test_moving_brake_blocked_without_controls(self):
     self._rx(self._speed_msg(self.STANDSTILL_THRESHOLD + 1))
+    self._rx(self._toggle_aol(True))
     self.safety.set_controls_allowed(False)
     self.assertFalse(self._tx(self._send_brake_msg(100)))
 

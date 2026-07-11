@@ -16,6 +16,11 @@ const state = reactive({
   branchesBusy: false,
   switchBusy: false,
   rollbackBusy: false,
+  recoveryBusy: false,
+  selectedBranchAgnosUpdate: null,
+  selectedBranchAgnosBusy: false,
+  selectedBranchAgnosTarget: "",
+  selectedBranchAgnosError: "",
 })
 
 let initialized = false
@@ -54,6 +59,52 @@ function isSelectedBranchDifferent() {
   const currentBranch = String(state.status?.branch || "").trim()
   const selectedBranch = String(state.selectedBranch || "").trim()
   return !!currentBranch && !!selectedBranch && currentBranch !== selectedBranch
+}
+
+function clearSelectedBranchAgnosStatus() {
+  state.selectedBranchAgnosUpdate = null
+  state.selectedBranchAgnosBusy = false
+  state.selectedBranchAgnosTarget = ""
+  state.selectedBranchAgnosError = ""
+}
+
+function activeAgnosUpdate() {
+  if (isSelectedBranchDifferent()) {
+    return state.selectedBranchAgnosUpdate || null
+  }
+  return state.status?.agnosUpdate || null
+}
+
+function activeAgnosError() {
+  if (isSelectedBranchDifferent()) {
+    return state.selectedBranchAgnosError || ""
+  }
+  return state.status?.agnosUpdate?.error || ""
+}
+
+function agnosWarningItems(update = activeAgnosUpdate()) {
+  const warnings = Array.isArray(update?.warnings) ? update.warnings.filter(Boolean) : []
+  if (warnings.length) return warnings
+  return [
+    "This AGNOS firmware update will take much longer than a normal software update.",
+    "You must be able to physically access the device to press the on-device update button.",
+    "It downloads about 900 MB of data, so Wi-Fi is recommended.",
+  ]
+}
+
+function agnosChangedPartitionsText(update = activeAgnosUpdate()) {
+  const partitions = Array.isArray(update?.changedPartitions) ? update.changedPartitions.filter(Boolean) : []
+  if (!partitions.length) return ""
+  return `Changed AGNOS partitions: ${partitions.join(", ")}`
+}
+
+function agnosConfirmationText(update = activeAgnosUpdate()) {
+  if (!update?.available) return ""
+
+  const warningLines = agnosWarningItems(update)
+    .map((warning) => `- ${warning}`)
+    .join("\n")
+  return `\n\nAGNOS firmware update included:\n\n${warningLines}`
 }
 
 function normalizeGithubRemote(remoteValue, commitsUrlValue = "") {
@@ -128,6 +179,7 @@ function hasRecordedRollbackTarget() {
 
 function shouldShowPrimaryUpdateAction() {
   if (state.status?.running) return true
+  if (state.status?.interruptedUpdateRecovery?.detected) return false
   if (isSelectedBranchDifferent()) return true
   return !!state.checkedForUpdates && !!state.status?.updateAvailable
 }
@@ -137,7 +189,10 @@ function isFactoryResetStatusActive() {
 }
 
 function shouldContinuePolling() {
-  return !!state.status?.running || state.status?.stage === "rebooting" || reconnectPending
+  return !!state.status?.running
+    || state.status?.stage === "rebooting"
+    || !!state.status?.interruptedUpdateRecovery?.detected
+    || reconnectPending
 }
 
 function shouldShowRebootNotice() {
@@ -245,6 +300,12 @@ async function fetchStatus(showToast) {
       state.selectedBranch = payload.branch
     }
 
+    if (isSelectedBranchDifferent()) {
+      fetchSelectedBranchAgnosStatus(false)
+    } else {
+      clearSelectedBranchAgnosStatus()
+    }
+
     if (shouldContinuePolling()) {
       ensurePolling()
     } else {
@@ -253,7 +314,10 @@ async function fetchStatus(showToast) {
 
     if (showToast) {
       state.checkedForUpdates = true
-      showSnackbar(payload.updateAvailable ? "Update available." : "No update available.")
+      const updateMessage = payload.updateAvailable
+        ? (payload.agnosUpdate?.available ? "Update available. AGNOS firmware update included." : "Update available.")
+        : "No update available."
+      showSnackbar(updateMessage)
     }
   } catch (error) {
     const isRebootTransitionError = !showToast
@@ -307,6 +371,12 @@ async function fetchBranches(showToast = false) {
       state.hasManualBranchSelection = false
     }
 
+    if (isSelectedBranchDifferent()) {
+      fetchSelectedBranchAgnosStatus(false)
+    } else {
+      clearSelectedBranchAgnosStatus()
+    }
+
     if (showToast) {
       showSnackbar(branches.length ? `Loaded ${branches.length} branches.` : "No branches found.")
     }
@@ -321,6 +391,56 @@ async function fetchBranches(showToast = false) {
   }
 }
 
+async function fetchSelectedBranchAgnosStatus(showToast = false, force = false) {
+  const targetBranch = String(state.selectedBranch || "").trim()
+  if (!targetBranch || !isSelectedBranchDifferent() || state.status?.running) {
+    clearSelectedBranchAgnosStatus()
+    return null
+  }
+
+  if (!force && state.selectedBranchAgnosUpdate?.targetBranch === targetBranch) {
+    return state.selectedBranchAgnosUpdate
+  }
+  if (state.selectedBranchAgnosBusy && state.selectedBranchAgnosTarget === targetBranch) {
+    return state.selectedBranchAgnosUpdate
+  }
+
+  state.selectedBranchAgnosBusy = true
+  state.selectedBranchAgnosTarget = targetBranch
+  state.selectedBranchAgnosError = ""
+  try {
+    const response = await fetch(`/api/update/agnos_status?branch=${encodeURIComponent(targetBranch)}`)
+    const payload = await readJsonPayload(response)
+    if (!response.ok) {
+      throw new Error(payload.error || response.statusText || "Failed to check AGNOS update status")
+    }
+
+    const agnosUpdate = payload.agnosUpdate || null
+    if (String(state.selectedBranch || "").trim() === targetBranch) {
+      state.selectedBranchAgnosUpdate = agnosUpdate
+      state.selectedBranchAgnosError = agnosUpdate?.error || ""
+    }
+    if (showToast && agnosUpdate?.available) {
+      showSnackbar("Selected branch includes an AGNOS firmware update.")
+    }
+    return agnosUpdate
+  } catch (error) {
+    const message = error?.message || "Failed to check AGNOS update status"
+    if (String(state.selectedBranch || "").trim() === targetBranch) {
+      state.selectedBranchAgnosUpdate = null
+      state.selectedBranchAgnosError = message
+    }
+    if (showToast) {
+      showSnackbar(message, "error")
+    }
+    return null
+  } finally {
+    if (state.selectedBranchAgnosTarget === targetBranch) {
+      state.selectedBranchAgnosBusy = false
+    }
+  }
+}
+
 function setAdvancedOptions(enabled) {
   const next = !!enabled
   state.showAdvancedOptions = next
@@ -331,6 +451,7 @@ function setAdvancedOptions(enabled) {
       state.selectedBranch = currentBranch
     }
     state.hasManualBranchSelection = false
+    clearSelectedBranchAgnosStatus()
   }
 
   try {
@@ -372,7 +493,7 @@ async function setAutomaticUpdates(enabled) {
   }
 }
 
-async function runFastUpdate() {
+async function runFastUpdate(skipConfirmation = false) {
   if (state.updateBusy) return
   if (state.status?.running) {
     showSnackbar("Fast update is already running.")
@@ -383,13 +504,18 @@ async function runFastUpdate() {
     return
   }
 
-  const confirmed = window.confirm(
-    "Fast update warning:\n\n" +
-    "- This update method skips backup creation.\n" +
-    "- Your device will reboot when the update is done.\n\n" +
-    "Continue with fast update?"
-  )
-  if (!confirmed) return
+  if (!skipConfirmation) {
+    const agnosWarning = agnosConfirmationText()
+    const confirmed = window.confirm(
+      "Fast update warning:\n\n" +
+      "- This update method skips backup creation.\n" +
+      "- Your device will reboot when the update is done." +
+      agnosWarning +
+      "\n\n" +
+      "Continue with fast update?"
+    )
+    if (!confirmed) return
+  }
 
   state.updateBusy = true
   try {
@@ -425,7 +551,7 @@ async function runFastUpdate() {
   }
 }
 
-async function runBranchSwitch() {
+async function runBranchSwitch(skipConfirmation = false) {
   if (state.switchBusy) return
   if (state.status?.running) {
     showSnackbar("An update action is already running.")
@@ -444,13 +570,21 @@ async function runBranchSwitch() {
 
   const currentBranch = String(state.status?.branch || "").trim()
   const actionLabel = currentBranch && currentBranch === targetBranch ? "update" : "switch and update"
-  const confirmed = window.confirm(
-    `This will ${actionLabel} to the '${targetBranch}' branch.\n\n` +
-    "- This update method skips backup creation.\n" +
-    "- Your device will reboot when the update is done.\n\n" +
-    "Continue?"
-  )
-  if (!confirmed) return
+  if (!skipConfirmation) {
+    if (isSelectedBranchDifferent()) {
+      await fetchSelectedBranchAgnosStatus(false, true)
+    }
+    const agnosWarning = agnosConfirmationText()
+    const confirmed = window.confirm(
+      `This will ${actionLabel} to the '${targetBranch}' branch.\n\n` +
+      "- This update method skips backup creation.\n" +
+      "- Your device will reboot when the update is done." +
+      agnosWarning +
+      "\n\n" +
+      "Continue?"
+    )
+    if (!confirmed) return
+  }
 
   state.switchBusy = true
   try {
@@ -490,7 +624,7 @@ async function runBranchSwitch() {
   }
 }
 
-async function runRollback() {
+async function runRollback(skipConfirmation = false) {
   if (state.rollbackBusy) return
   if (state.status?.running) {
     showSnackbar("An update action is already running.")
@@ -508,15 +642,17 @@ async function runRollback() {
     return
   }
 
-  const confirmed = window.confirm(
-    "Roll back to the previous installed version?\n\n" +
-    `Target: ${rollbackBranch || "Unknown"} @ ${shortHash(rollbackCommit)}\n\n` +
-    "- This restores the version this device was running before the last Galaxy update.\n" +
-    "- Automatic updates will be turned off.\n" +
-    "- Your device will reboot when the rollback is done.\n\n" +
-    "Continue?"
-  )
-  if (!confirmed) return
+  if (!skipConfirmation) {
+    const confirmed = window.confirm(
+      "Roll back to the previous installed version?\n\n" +
+      `Target: ${rollbackBranch || "Unknown"} @ ${shortHash(rollbackCommit)}\n\n` +
+      "- This restores the version this device was running before the last Galaxy update.\n" +
+      "- Automatic updates will be turned off.\n" +
+      "- Your device will reboot when the rollback is done.\n\n" +
+      "Continue?"
+    )
+    if (!confirmed) return
+  }
 
   state.rollbackBusy = true
   try {
@@ -551,6 +687,70 @@ async function runRollback() {
     showSnackbar(error?.message || "Failed to start rollback", "error")
   } finally {
     state.rollbackBusy = false
+  }
+}
+
+async function retryInterruptedUpdate() {
+  if (state.recoveryBusy) return
+  if (state.status?.isOnroad) {
+    showSnackbar("Actions are blocked while onroad.", "error")
+    return
+  }
+
+  const recovery = state.status?.interruptedUpdateRecovery || {}
+  if (!recovery.canRecover) {
+    showSnackbar(recovery.reason || "This update cannot be recovered safely yet.", "error")
+    return
+  }
+
+  const confirmed = window.confirm(
+    "Retry the interrupted update safely?\n\n" +
+    "Galaxy will verify that the vehicle is parked and no update or Git process is active. " +
+    "It will clear only the abandoned shallow-update lock, then retry the previous update action."
+  )
+  if (!confirmed) return
+
+  const previousMode = String(state.status?.lastMode || "").trim()
+  const previousBranch = String(state.status?.lastBranch || "").trim()
+  state.recoveryBusy = true
+  try {
+    const response = await fetch("/api/update/recover", { method: "POST" })
+    const payload = await readJsonPayload(response)
+    if (!response.ok) {
+      if (payload.interruptedUpdateRecovery) {
+        state.status = {
+          ...(state.status || {}),
+          interruptedUpdateRecovery: payload.interruptedUpdateRecovery,
+        }
+      }
+      throw new Error(payload.error || response.statusText || "Failed to recover interrupted update")
+    }
+
+    state.status = {
+      ...(state.status || {}),
+      running: false,
+      stage: "idle",
+      message: payload.message || "Interrupted update recovered. Retrying now...",
+      lastError: "",
+      interruptedUpdateRecovery: payload.interruptedUpdateRecovery || { detected: false, canRecover: false },
+    }
+    state.error = ""
+    showSnackbar(payload.message || "Interrupted update recovered. Retrying now...")
+
+    if (previousMode === "branch-switch" && previousBranch) {
+      state.selectedBranch = previousBranch
+      state.hasManualBranchSelection = true
+      await runBranchSwitch(true)
+    } else if (previousMode === "rollback" && state.status?.rollbackAvailable) {
+      await runRollback(true)
+    } else {
+      await runFastUpdate(true)
+    }
+  } catch (error) {
+    showSnackbar(error?.message || "Failed to recover interrupted update", "error")
+    await fetchStatus(false)
+  } finally {
+    state.recoveryBusy = false
   }
 }
 
@@ -611,6 +811,23 @@ export function UpdateManager() {
 
           ${() => state.status?.isOnroad ? html`<p class="updateWarning"><strong>Onroad: actions disabled</strong></p>` : ""}
 
+          ${() => isSelectedBranchDifferent() && state.selectedBranchAgnosBusy
+            ? html`<p class="updateHint">Checking AGNOS firmware impact for ${state.selectedBranch}...</p>`
+            : ""}
+
+          ${() => activeAgnosUpdate()?.available ? html`
+            <div class="updateAgnosWarning">
+              <strong>AGNOS firmware update included</strong>
+              <p>This update changes the AGNOS firmware manifest.</p>
+              <ul>
+                ${() => agnosWarningItems(activeAgnosUpdate()).map((warning) => html`<li>${warning}</li>`)}
+              </ul>
+              ${() => agnosChangedPartitionsText(activeAgnosUpdate())
+                ? html`<p>${agnosChangedPartitionsText(activeAgnosUpdate())}</p>`
+                : ""}
+            </div>
+          ` : ""}
+
           <label class="updateToggleRow">
             <span>Automatically install updates</span>
             <input
@@ -648,6 +865,11 @@ export function UpdateManager() {
                   @change="${(event) => {
                     state.selectedBranch = String(event.target.value || "")
                     state.hasManualBranchSelection = true
+                    if (isSelectedBranchDifferent()) {
+                      fetchSelectedBranchAgnosStatus(false, true)
+                    } else {
+                      clearSelectedBranchAgnosStatus()
+                    }
                   }}">
                   ${() => state.branches.length
                     ? state.branches.map((branch) => html`<option value="${branch}" selected="${() => branch === state.selectedBranch || false}">${branch}${branch === state.status?.branch ? " (current)" : ""}</option>`)
@@ -693,8 +915,22 @@ export function UpdateManager() {
 
           ${() => !isFactoryResetStatusActive() && state.status?.message && state.status?.stage !== "rebooting" ? html`<p class="updateMessage">${state.status.message}</p>` : ""}
           ${() => state.status?.remoteError ? html`<p class="updateError"><strong>Remote Check:</strong> ${state.status.remoteError}</p>` : ""}
+          ${() => (state.checkedForUpdates || isSelectedBranchDifferent()) && activeAgnosError() ? html`<p class="updateError"><strong>AGNOS Check:</strong> ${activeAgnosError()}</p>` : ""}
           ${() => !isFactoryResetStatusActive() && state.status?.lastError ? html`<p class="updateError"><strong>Last Error:</strong> ${state.status.lastError}</p>` : ""}
           ${() => state.error ? html`<p class="updateError"><strong>Error:</strong> ${state.error}</p>` : ""}
+
+          ${() => !state.status?.running && state.status?.interruptedUpdateRecovery?.detected ? html`
+            <div class="updateRecovery">
+              <strong>Interrupted update detected</strong>
+              <p>${state.status.interruptedUpdateRecovery.reason || "Galaxy found a shallow-update lock left by an interrupted update."}</p>
+              <button
+                class="updateButton"
+                disabled="${() => !!state.status?.isOnroad || !!state.status?.running || state.recoveryBusy || !state.status?.interruptedUpdateRecovery?.canRecover || false}"
+                @click="${() => retryInterruptedUpdate()}">
+                ${state.recoveryBusy ? "Checking..." : "Retry Update Safely"}
+              </button>
+            </div>
+          ` : ""}
 
           <div class="updateActions">
             ${() => !isSelectedBranchDifferent() ? html`
@@ -715,7 +951,7 @@ export function UpdateManager() {
               </button>
             ` : ""}
           </div>
-          ${() => !state.status?.running && !shouldShowPrimaryUpdateAction()
+          ${() => !state.status?.running && !state.status?.interruptedUpdateRecovery?.detected && !shouldShowPrimaryUpdateAction()
             ? html`<p class="updateHint">Run <strong>Check for Updates</strong> first, or select a different branch in advanced options.</p>`
             : ""}
           ${() => shouldShowRebootNotice()

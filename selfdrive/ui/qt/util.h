@@ -15,6 +15,8 @@
 
 QString getVersion();
 QString getBrand();
+QString getStarPilotDisplayVersion();
+QString formatStarPilotDisplayVersionDescription(const QString &description);
 QString getUserAgent();
 std::optional<QString> getDongleId();
 QMap<QString, QString> getSupportedLanguages();

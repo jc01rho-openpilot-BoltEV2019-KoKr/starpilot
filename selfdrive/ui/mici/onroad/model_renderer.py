@@ -8,6 +8,7 @@ from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.locationd.calibrationd import HEIGHT_INIT
 from openpilot.selfdrive.ui.lib.starpilot_theme import get_param_color, get_theme_color, get_visual_color, is_stock_color_scheme, with_alpha
+from openpilot.selfdrive.ui.onroad.starpilot.rainbow_path import RainbowPath
 from openpilot.selfdrive.ui.lib.starpilot_visuals import lead_indicator_enabled
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.selfdrive.ui.mici.onroad import blend_colors
@@ -19,8 +20,6 @@ from openpilot.system.ui.widgets import Widget
 CLIP_MARGIN = 500
 MIN_DRAW_DISTANCE = 10.0
 MAX_DRAW_DISTANCE = 100.0
-RAINBOW_GRADIENT_COLOR_COUNT = 19
-RAINBOW_SCROLL_SPEED_DEG_PER_SEC = 60.0
 STOCK_LANE_LINES_COLOR = rl.Color(255, 255, 255, 255)
 DEFAULT_LANE_LINES_WIDTH = 4.0
 DEFAULT_PATH_WIDTH = 6.1
@@ -91,6 +90,7 @@ class ModelRenderer(Widget):
       colors=[],
       stops=[],
     )
+    self._rainbow_path = RainbowPath()
 
     # Get longitudinal control setting from car parameters
     self._params = Params()
@@ -147,6 +147,8 @@ class ModelRenderer(Widget):
       self._transform_dirty = False
 
     self._draw_lane_lines()
+    if self._params.get_bool("RainbowPath", default=False) and sm.valid.get('carState', False):
+      self._rainbow_path.update(max(sm['carState'].vEgo, 0.0))
     self._draw_path(sm)
 
     if render_lead_indicator and radar_state:
@@ -261,8 +263,7 @@ class ModelRenderer(Widget):
     """Pre-calculate experimental mode gradient colors"""
     use_rainbow = self._params.get_bool("RainbowPath", default=False)
     if use_rainbow:
-      gradient_bottom, gradient_top = self._get_visible_gradient_bounds()
-      self._exp_gradient = self._build_rainbow_gradient(gradient_bottom, gradient_top)
+      self._exp_gradient = self._rainbow_path.get_gradient(0.0, 1.0)
       return
 
     if not self._experimental_mode or not self._params.get_bool("AccelerationPath", default=True):
@@ -318,24 +319,6 @@ class ModelRenderer(Widget):
     gradient_bottom = np.clip((float(np.max(visible_track_y)) - self._rect.y) / self._rect.height, 0.0, 1.0)
     gradient_top = np.clip((float(np.min(visible_track_y)) - self._rect.y) / self._rect.height, 0.0, 1.0)
     return float(gradient_bottom), float(gradient_top)
-
-  def _build_rainbow_gradient(self, gradient_bottom: float, gradient_top: float) -> Gradient:
-    hue_offset = (rl.get_time() * RAINBOW_SCROLL_SPEED_DEG_PER_SEC) % 360.0
-    stops = [i / (RAINBOW_GRADIENT_COLOR_COUNT - 1) for i in range(RAINBOW_GRADIENT_COLOR_COUNT)]
-    colors = []
-
-    for i, stop in enumerate(stops):
-      hue_progress = i / RAINBOW_GRADIENT_COLOR_COUNT
-      path_hue = (hue_progress * 360.0 - hue_offset) % 360.0
-      alpha = np.interp(stop, [0.0, 1.0], [0.48, 0.18])
-      colors.append(self._hsla_to_color(path_hue / 360.0, 1.0, 0.5, alpha))
-
-    return Gradient(
-      start=(0.0, gradient_bottom),
-      end=(0.0, gradient_top),
-      colors=colors,
-      stops=stops,
-    )
 
   def _update_lead_vehicle(self, d_rel, v_rel, point, rect):
     speed_buff, lead_buff = 10.0, 40.0

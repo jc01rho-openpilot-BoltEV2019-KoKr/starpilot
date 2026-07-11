@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import requests
 
 from datetime import datetime, timezone
@@ -6,8 +7,9 @@ from datetime import datetime, timezone
 from openpilot.starpilot.common.starpilot_utilities import delete_file, is_url_pingable
 from openpilot.starpilot.common.starpilot_variables import RESOURCES_REPO
 
+GITLAB_RESOURCES_REPO = os.getenv("STARPILOT_GITLAB_RESOURCES_REPO", "firestar5683/FrogPilot-Resources")
 GITHUB_URL = f"https://raw.githubusercontent.com/{RESOURCES_REPO}"
-GITLAB_URL = f"https://gitlab.com/{RESOURCES_REPO}/-/raw"
+GITLAB_URL = f"https://gitlab.com/{GITLAB_RESOURCES_REPO}/-/raw"
 
 def download_file(cancel_param, destination, download_param, params_memory, progress_param, session, url, offset_bytes=0, total_bytes=0):
   try:
@@ -83,7 +85,7 @@ def get_remote_file_size(params_memory, session, url):
 
 
 def get_repository_url(session):
-  if is_url_pingable("https://github.com") and not github_rate_limited(session):
+  if (is_url_pingable("https://github.com") or is_url_pingable("https://api.github.com")) and not github_rate_limited(session):
     return GITHUB_URL
   if is_url_pingable("https://gitlab.com"):
     return GITLAB_URL

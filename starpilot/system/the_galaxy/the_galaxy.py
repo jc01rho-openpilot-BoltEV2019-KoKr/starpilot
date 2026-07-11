@@ -61,11 +61,6 @@ from openpilot.starpilot.common.maps_catalog import (
   schedule_label,
   schedule_param_value,
 )
-from openpilot.starpilot.common.model_versions import (
-  is_tinygrad_model_version,
-  uses_combined_driving_artifacts,
-  uses_split_off_policy_artifacts,
-)
 from openpilot.starpilot.common.experimental_state import sync_persist_chill_state, sync_persist_experimental_state
 from openpilot.starpilot.common.favorite_slots import FAVORITE_SLOTS_PARAM, normalize_favorite_slots
 from openpilot.starpilot.common.starpilot_utilities import delete_file, get_lock_status, run_cmd
@@ -82,6 +77,7 @@ from openpilot.starpilot.common.testing_grounds import (
 from openpilot.starpilot.navigation.destination_store import normalize_destination_payload, update_recent_destinations
 from openpilot.starpilot.system.the_galaxy.factory_reset import remove_path as _run_factory_reset_delete
 from openpilot.starpilot.system.the_galaxy import utilities
+from openpilot.starpilot.system.the_galaxy.update_recovery import inspect_interrupted_update, public_recovery_status, recover_interrupted_update
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
@@ -117,6 +113,17 @@ _TESTING_GROUND_CUSTOM_RESERVED_INTERVAL_S = 15.0
 _TESTING_GROUND_CUSTOM_RESERVED_PM = None
 _TESTING_GROUND_CUSTOM_RESERVED_LOCK = threading.Lock()
 _TESTING_GROUND_CUSTOM_RESERVED_LAST_PUBLISH_MONO = 0.0
+PANDA_FIRMWARE_TOGGLE_KEYS = {"IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma"}
+PANDA_FIRMWARE_CONFIRMATION_FIELD = "confirmedPandaFirmwareFlash"
+_PANDA_FLASH_REBOOT_LOCK = threading.Lock()
+
+
+def _flash_panda_then_reboot() -> None:
+  with _PANDA_FLASH_REBOOT_LOCK:
+    params_memory.put_bool("FlashPanda", True)
+    while params_memory.get_bool("FlashPanda"):
+      time.sleep(0.1)
+    HARDWARE.reboot()
 
 
 def _is_comma_device_runtime() -> bool:
@@ -136,6 +143,13 @@ def _is_comma_device_runtime() -> bool:
     with open(model_path) as f:
       model = f.read().strip("\x00").lower()
     return "comma " in model
+  except Exception:
+    return False
+
+
+def _raylib_ui_toggle_affects_device() -> bool:
+  try:
+    return HARDWARE.get_device_type() in ("tici", "tizi")
   except Exception:
     return False
 
@@ -391,6 +405,18 @@ class ParamsCompat:
     self._put_single(self._key(key), value)
 
   def put_bool(self, key, value):
+    if key == "LeadIndicator":
+      enabled = bool(value)
+      self._params.put_bool("LeadIndicator", enabled)
+      self._params.put_bool("HideLeadMarker", not enabled)
+      return
+
+    if key == "HideLeadMarker":
+      hidden = bool(value)
+      self._params.put_bool("HideLeadMarker", hidden)
+      self._params.put_bool("LeadIndicator", not hidden)
+      return
+
     self._params.put_bool(self._key(key), bool(value))
 
   def remove(self, key):
@@ -488,6 +514,9 @@ KEYS = {
   "secret": ("secret", "sk.", "MapboxSecretKey", "Secret key", 80),
 }
 
+GALAXY_COOKIE_NAME = "galaxy_session"
+GALAXY_PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.embaucha.galaxynav&hl=en-US&ah=9FldHJ99kxL8oNbSlO5F4sQqwC4"
+
 NAVIGATION_MEMORY_LOCATION_STALE_SECONDS = 10.0
 NAVIGATION_PERSISTED_LOCATION_FUTURE_SKEW_SECONDS = 60.0
 NAVIGATION_PERSISTED_LOCATION_MAX_AGE_SECONDS = 24 * 60 * 60
@@ -502,6 +531,23 @@ MODEL_SORT_MODE_PARAM = "ModelSortMode"
 MODEL_USER_FAVORITES_PARAM = "UserFavorites"
 MAPS_DOWNLOAD_PARAM = "DownloadMaps"
 MAPS_CANCEL_DOWNLOAD_PARAM = "CancelDownloadMaps"
+
+
+def _get_galaxy_dir():
+  return Path(Paths.comma_home()) / "starpilot" / "data" / "galaxy" if PC else Path("/data/galaxy")
+
+
+def _read_galaxy_text(path):
+  try:
+    return path.read_text().strip() if path.is_file() else ""
+  except Exception:
+    return ""
+
+
+def _build_galaxy_session_value(slug, token):
+  if not slug or not token:
+    return ""
+  return quote(f"{slug}:{token}", safe="")
 
 
 def _parse_last_gps_position(raw_value):
@@ -651,7 +697,7 @@ FINGERPRINT_MAKE_TO_VALUES_DIR = {
 _FINGERPRINT_CARDOCS_RE = re.compile(r'\w*CarDocs\(\s*"([^"]+)"')
 _FINGERPRINT_PLATFORM_RE = re.compile(r'(\w+)\s*=\s*\w+\s*\(\s*\[([\s\S]*?)\]\s*,')
 _FINGERPRINT_PLATFORM_NAME_RE = re.compile(r'^[A-Z0-9_]+$')
-_FINGERPRINT_VALID_NAME_RE = re.compile(r'^[A-Za-z0-9 \u0160.()\-]+$')
+_FINGERPRINT_VALID_NAME_RE = re.compile(r'^[A-Za-z0-9 \u0160.(),&\-]+$')
 
 _openpilot_root_cache = None
 _fingerprint_catalog_cache = None
@@ -663,6 +709,9 @@ _FAST_UPDATE_REBOOT_NOTICE_SECONDS = 6.0
 _FAST_UPDATE_FETCH_TIMEOUT_S = 60
 _FAST_BRANCH_SWITCH_FETCH_TIMEOUT_S = 60
 _FAST_ROLLBACK_FETCH_TIMEOUT_S = 60
+_AGNOS_MANIFEST_PATH = "system/hardware/tici/agnos.json"
+_AGNOS_REMOTE_MANIFEST_TIMEOUT_S = 8
+_AGNOS_UPDATE_ESTIMATED_DOWNLOAD_MB = 900
 _GIT_PROGRESS_PERCENT_RE = re.compile(r'([A-Za-z][A-Za-z /_-]+):\s*([0-9]{1,3})%')
 _GIT_SUBMODULE_SECTION_RE = re.compile(r'^\s*\[submodule\s+"[^"]+"\]\s*$', re.MULTILINE)
 _ROLLBACK_REF = "refs/starpilot/rollback"
@@ -699,6 +748,7 @@ _fast_update_state = {
 
 _FACTORY_RESET_WIPE_PATHS = [
   "/data/params",
+  "/cache/starpilot/params",
   "/cache/params",
   "/data/media/0/realdata",
   "/data/media/0/realdata_HD",
@@ -1092,6 +1142,15 @@ def _get_fast_update_state():
   with _fast_update_lock:
     return dict(_fast_update_state)
 
+def _get_interrupted_update_recovery(repo_path, state_data):
+  recovery_status = inspect_interrupted_update(
+    repo_path,
+    is_onroad=_safe_params_get_bool("IsOnroad"),
+    update_running=bool(state_data.get("running")),
+    updater_state=_safe_params_get("UpdaterState", encoding="utf-8", default=""),
+  )
+  return public_recovery_status(recovery_status)
+
 def _set_fast_update_progress(step, label, step_percent=0.0, detail=""):
   safe_step = max(1, min(_FAST_UPDATE_TOTAL_STEPS, int(step)))
   safe_step_percent = float(max(0.0, min(100.0, step_percent)))
@@ -1215,6 +1274,179 @@ def _is_deferred_tls_error(exception):
     return not _remote_git_check_allowed()
 
   return False
+
+def _get_remote_branch_commit(repo_path, branch):
+  remote_commit = ""
+  remote_error = ""
+  branch_name = str(branch or "").strip()
+  if not branch_name or not _remote_git_check_allowed():
+    return remote_commit, remote_error
+
+  try:
+    remote_raw = _git_stdout(repo_path, ["ls-remote", "--heads", "origin", branch_name], timeout=20)
+    if remote_raw:
+      remote_commit = remote_raw.split()[0]
+  except Exception as exception:
+    if not _is_deferred_tls_error(exception):
+      remote_error = str(exception)
+
+  return remote_commit, remote_error
+
+def _base_agnos_update_status(target_branch="", local_commit="", remote_commit=""):
+  return {
+    "available": False,
+    "checked": False,
+    "targetBranch": str(target_branch or "").strip(),
+    "manifestPath": _AGNOS_MANIFEST_PATH,
+    "localCommit": str(local_commit or "").strip(),
+    "remoteCommit": str(remote_commit or "").strip(),
+    "localManifestHash": "",
+    "remoteManifestHash": "",
+    "changedPartitions": [],
+    "estimatedDownloadMb": _AGNOS_UPDATE_ESTIMATED_DOWNLOAD_MB,
+    "warnings": [
+      "This AGNOS firmware update will take much longer than a normal software update.",
+      "You must be able to physically access the device to press the on-device update button.",
+      "It downloads about 900 MB of data, so Wi-Fi is recommended.",
+    ],
+    "source": "",
+    "error": "",
+  }
+
+def _canonical_agnos_manifest_text(manifest_text):
+  text = str(manifest_text or "").strip()
+  if not text:
+    return ""
+
+  try:
+    return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
+  except Exception:
+    return text
+
+def _agnos_manifest_hash(manifest_text):
+  canonical = _canonical_agnos_manifest_text(manifest_text)
+  if not canonical:
+    return ""
+  return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+def _agnos_partition_fingerprints(manifest_text):
+  try:
+    manifest = json.loads(str(manifest_text or ""))
+  except Exception:
+    return {}
+
+  if not isinstance(manifest, list):
+    return {}
+
+  partitions = {}
+  for item in manifest:
+    if not isinstance(item, dict):
+      continue
+
+    name = str(item.get("name") or "").strip()
+    if not name:
+      continue
+
+    partitions[name] = {
+      "hash": str(item.get("hash") or ""),
+      "hashRaw": str(item.get("hash_raw") or ""),
+      "url": str(item.get("url") or ""),
+      "size": str(item.get("size") or ""),
+    }
+
+  return partitions
+
+def _agnos_changed_partitions(local_manifest_text, remote_manifest_text):
+  local_partitions = _agnos_partition_fingerprints(local_manifest_text)
+  remote_partitions = _agnos_partition_fingerprints(remote_manifest_text)
+  partition_names = sorted(set(local_partitions) | set(remote_partitions))
+  return [
+    name for name in partition_names
+    if local_partitions.get(name) != remote_partitions.get(name)
+  ]
+
+def _git_show_file_text(repo_path, ref, file_path):
+  safe_ref = str(ref or "").strip()
+  if not safe_ref:
+    raise RuntimeError("Missing git ref")
+  return _git_stdout(repo_path, ["show", f"{safe_ref}:{file_path}"], timeout=10)
+
+def _github_raw_file_url(origin_remote, ref, file_path):
+  remote = utilities.normalize_github_remote(origin_remote)
+  if not remote:
+    return ""
+
+  slug = remote.split("https://github.com/", 1)[1]
+  parts = slug.split("/", 1)
+  if len(parts) != 2 or not parts[0] or not parts[1]:
+    return ""
+
+  owner = quote(parts[0], safe="")
+  repo = quote(parts[1], safe="")
+  quoted_ref = quote(str(ref or "").strip(), safe="")
+  quoted_path = "/".join(quote(part, safe="") for part in str(file_path or "").split("/") if part)
+  if not quoted_ref or not quoted_path:
+    return ""
+
+  return f"https://raw.githubusercontent.com/{owner}/{repo}/{quoted_ref}/{quoted_path}"
+
+def _fetch_remote_file_text(origin_remote, ref, file_path):
+  raw_url = _github_raw_file_url(origin_remote, ref, file_path)
+  if not raw_url:
+    raise RuntimeError("AGNOS manifest comparison is only available for GitHub remotes when the remote commit is not available locally.")
+
+  response = requests.get(raw_url, timeout=_AGNOS_REMOTE_MANIFEST_TIMEOUT_S)
+  response.raise_for_status()
+  return response.text, raw_url
+
+def _build_agnos_update_status(repo_path, origin_remote, local_commit, remote_commit, target_branch=""):
+  status = _base_agnos_update_status(target_branch, local_commit, remote_commit)
+  safe_local_commit = str(local_commit or "").strip()
+  safe_remote_commit = str(remote_commit or "").strip()
+
+  if not safe_local_commit or not safe_remote_commit:
+    status["error"] = "Missing commit information for AGNOS manifest comparison."
+    return status
+
+  if safe_local_commit == safe_remote_commit:
+    status["checked"] = True
+    status["source"] = "same-commit"
+    return status
+
+  try:
+    local_manifest_text = _git_show_file_text(repo_path, safe_local_commit, _AGNOS_MANIFEST_PATH)
+  except Exception as exception:
+    status["error"] = f"Unable to read local AGNOS manifest: {exception}"
+    return status
+
+  remote_manifest_text = ""
+  if _git_has_commit(repo_path, safe_remote_commit):
+    try:
+      remote_manifest_text = _git_show_file_text(repo_path, safe_remote_commit, _AGNOS_MANIFEST_PATH)
+      status["source"] = "git"
+    except Exception as exception:
+      status["error"] = f"Unable to read remote AGNOS manifest from git: {exception}"
+      return status
+  else:
+    try:
+      remote_manifest_text, raw_url = _fetch_remote_file_text(origin_remote, safe_remote_commit, _AGNOS_MANIFEST_PATH)
+      status["source"] = raw_url
+    except Exception as exception:
+      status["error"] = f"Unable to fetch remote AGNOS manifest: {exception}"
+      return status
+
+  local_hash = _agnos_manifest_hash(local_manifest_text)
+  remote_hash = _agnos_manifest_hash(remote_manifest_text)
+  changed_partitions = _agnos_changed_partitions(local_manifest_text, remote_manifest_text)
+  status.update({
+    "checked": True,
+    "available": bool(local_hash and remote_hash and local_hash != remote_hash),
+    "localManifestHash": local_hash,
+    "remoteManifestHash": remote_hash,
+    "changedPartitions": changed_partitions,
+    "error": "",
+  })
+  return status
 
 def _build_shallow_fetch_args(branch):
   return [
@@ -1648,6 +1880,7 @@ def _collect_fast_update_info(include_remote=True):
   origin_remote = ""
   commits_url = ""
   rollback_data = _load_rollback_target(repo_path)
+  agnos_update = _base_agnos_update_status()
 
   try:
     branch = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
@@ -1667,7 +1900,11 @@ def _collect_fast_update_info(include_remote=True):
       "originRemote": origin_remote,
       "commitsUrl": commits_url,
       **rollback_data,
+      "agnosUpdate": agnos_update,
     }
+
+  agnos_update["targetBranch"] = branch
+  agnos_update["localCommit"] = local_commit
 
   if origin_remote:
     remote = origin_remote.strip()
@@ -1686,14 +1923,12 @@ def _collect_fast_update_info(include_remote=True):
         commits_url = f"{remote}/commits/{quote(branch, safe='')}/"
 
   if branch and include_remote and _remote_git_check_allowed():
-    try:
-      remote_raw = _git_stdout(repo_path, ["ls-remote", "--heads", "origin", branch], timeout=20)
-      if remote_raw:
-        remote_commit = remote_raw.split()[0]
-        update_available = bool(local_commit and remote_commit and local_commit != remote_commit)
-    except Exception as exception:
-      if not _is_deferred_tls_error(exception):
-        remote_error = str(exception)
+    remote_commit, remote_error = _get_remote_branch_commit(repo_path, branch)
+    update_available = bool(local_commit and remote_commit and local_commit != remote_commit)
+    if remote_commit:
+      agnos_update = _build_agnos_update_status(repo_path, origin_remote, local_commit, remote_commit, branch)
+  elif not include_remote:
+    agnos_update = _base_agnos_update_status(branch, local_commit, "")
 
   return {
     "repoPath": repo_path,
@@ -1704,6 +1939,7 @@ def _collect_fast_update_info(include_remote=True):
     "remoteError": remote_error,
     "originRemote": origin_remote,
     "commitsUrl": commits_url,
+    "agnosUpdate": agnos_update,
     **rollback_data,
   }
 
@@ -2295,6 +2531,9 @@ def _get_current_param_value(key, value_type, defaults_lookup=None):
   if key == CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY:
     return _get_custom_accel_profile_initialized()
 
+  if key == "LeadIndicator":
+    return _get_lead_indicator_enabled(defaults_lookup)
+
   if key == "IsRHD" and not _safe_params_get_bool("IsRHDOverride"):
     return _safe_params_get_bool("IsRhdDetected")
 
@@ -2312,6 +2551,21 @@ def _get_current_param_value(key, value_type, defaults_lookup=None):
   if key in ("Model", "DrivingModel") and isinstance(value, str):
     return canonical_model_key(value)
   return value
+
+
+def _get_lead_indicator_enabled(defaults_lookup=None):
+  if defaults_lookup is None:
+    defaults_lookup = _get_default_param_values()
+
+  lead_raw = _safe_params_get_live_raw("LeadIndicator")
+  if _is_blank_param_raw(lead_raw):
+    lead_raw = defaults_lookup.get("LeadIndicator", "0")
+
+  hide_raw = _safe_params_get_live_raw("HideLeadMarker")
+  if _is_blank_param_raw(hide_raw):
+    hide_raw = defaults_lookup.get("HideLeadMarker", "0")
+
+  return _coerce_param_value(lead_raw, bool) and not _coerce_param_value(hide_raw, bool)
 
 
 def _get_custom_accel_profile_initialized():
@@ -3916,6 +4170,24 @@ def setup(app):
       if key not in allowed_keys:
         return jsonify({"error": f"Parameter '{key}' is not editable."}), 403
 
+      if key == "TryRaylibUI":
+        enabled = str_val.strip() in ("1", "true", "True")
+        if not _raylib_ui_toggle_affects_device():
+          current_enabled = params.get_bool("TryRaylibUI")
+          return jsonify({
+            "message": "Try raylib UI is only available on tici/tizi devices.",
+            "updated": {"TryRaylibUI": current_enabled},
+          }), 200
+
+        if params.get_bool("IsOnroad"):
+          return jsonify({"error": "Cannot change Try raylib UI while driving."}), 403
+
+        params.put_bool("TryRaylibUI", enabled)
+        return jsonify({
+          "message": f"{'Raylib' if enabled else 'Qt'} UI selected. UI will restart shortly.",
+          "updated": {"TryRaylibUI": enabled},
+        }), 200
+
       # 1. Prevent changing the model or reboot-required toggles while the car is actively driving
       reboot_keys = {"Model", "DrivingModel", "AlwaysOnLateral", "DisableOpenpilotLongitudinal", "ForceTorqueController", "NNFF", "NNFFLite"}
       if key in reboot_keys and params.get_bool("IsOnroad"):
@@ -3933,6 +4205,26 @@ def setup(app):
 
       if key == "AutomaticUpdates" and params.get_bool("IsOnroad"):
         return jsonify({"error": "Cannot change Automatic Updates while driving."}), 403
+
+      if key in PANDA_FIRMWARE_TOGGLE_KEYS and params.get_bool("IsOnroad"):
+        return jsonify({"error": "Cannot flash Panda firmware while driving."}), 403
+      if key in PANDA_FIRMWARE_TOGGLE_KEYS and data.get(PANDA_FIRMWARE_CONFIRMATION_FIELD) is not True:
+        return jsonify({"error": "Panda firmware changes require confirmation before flashing."}), 409
+
+      if key in {"LeadIndicator", "HideLeadMarker"}:
+        enabled = str_val.strip() in ("1", "true", "True")
+        if key == "LeadIndicator":
+          params.put_bool("LeadIndicator", enabled)
+          updated = {"LeadIndicator": enabled, "HideLeadMarker": not enabled}
+        else:
+          params.put_bool("HideLeadMarker", enabled)
+          updated = {"HideLeadMarker": enabled, "LeadIndicator": not enabled}
+
+        update_starpilot_toggles()
+        return jsonify({
+          "message": f"Parameter '{key}' updated successfully.",
+          "updated": updated,
+        }), 200
 
       if key == "AllowImpossibleAcceleration":
         enabled = str_val.strip() in ("1", "true", "True")
@@ -3953,6 +4245,22 @@ def setup(app):
         updated = {key: enabled}
         if enabled:
           other_key = "TruckTuning" if key == "EVTuning" else "EVTuning"
+          params.put_bool(other_key, False)
+          updated[other_key] = False
+
+        update_starpilot_toggles()
+        return jsonify({
+          "message": f"Parameter '{key}' updated successfully.",
+          "updated": updated,
+        }), 200
+
+      if key in {"DynamicPedalsOnUI", "StaticPedalsOnUI"}:
+        enabled = str_val.strip() in ("1", "true", "True")
+        params.put_bool(key, enabled)
+
+        updated = {key: enabled}
+        if enabled:
+          other_key = "StaticPedalsOnUI" if key == "DynamicPedalsOnUI" else "DynamicPedalsOnUI"
           params.put_bool(other_key, False)
           updated[other_key] = False
 
@@ -4160,6 +4468,9 @@ def setup(app):
 
       response = {"message": f"Parameter '{key}' updated successfully."}
       updated = {}
+      if key in PANDA_FIRMWARE_TOGGLE_KEYS:
+        threading.Thread(target=_flash_panda_then_reboot, daemon=True).start()
+        response["message"] = f"Parameter '{key}' updated successfully. Panda flashing started; device will reboot when finished."
       if key == "RemapCancelToDistance" and params.get_bool("RemapCancelToDistance"):
         updated["RemapCancelToDistance"] = True
         response["message"] = "Remap Cancel Button enabled."
@@ -4190,6 +4501,8 @@ def setup(app):
       return _serialize_param_write_value(defaults_lookup.get(request_key)), 200
     if request_key == CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY:
       return _serialize_param_write_value(_get_custom_accel_profile_initialized()), 200
+    if request_key == "LeadIndicator":
+      return _serialize_param_write_value(_get_lead_indicator_enabled()), 200
     if request_key == "IsRHD" and not params.get_bool("IsRHDOverride"):
       return ("1" if params.get_bool("IsRhdDetected") else "0"), 200
     value = params.get(request_key) or ""
@@ -4670,40 +4983,18 @@ def setup(app):
     return canonical_model_key(current_model) or _default_model_key()
 
   def is_model_installed(model_key, model_version, on_disk_files):
+    del model_version
     if is_builtin_model_key(model_key):
       return True
 
-    if f"{model_key}.thneed" in on_disk_files:
-      return True
-
-    if is_tinygrad_model_version(model_version):
-      if uses_combined_driving_artifacts(model_version):
-        return f"{model_key}_driving_tinygrad.pkl" in on_disk_files
-
-      required_files = {
-        f"{model_key}_driving_policy_tinygrad.pkl",
-        f"{model_key}_driving_vision_tinygrad.pkl",
-        f"{model_key}_driving_policy_metadata.pkl",
-        f"{model_key}_driving_vision_metadata.pkl",
-      }
-      if uses_split_off_policy_artifacts(model_version):
-        required_files |= {
-          f"{model_key}_driving_off_policy_tinygrad.pkl",
-          f"{model_key}_driving_off_policy_metadata.pkl",
-        }
-      return required_files.issubset(on_disk_files)
-
-    if model_version == "v7":
-      return f"{model_key}.pkl" in on_disk_files
-
-    # Fallback for unknown versions
-    return any(file.startswith(f"{model_key}.") or file.startswith(f"{model_key}_") for file in on_disk_files)
+    return f"{model_key}_driving_tinygrad.pkl" in on_disk_files
 
   def get_model_catalog():
     available = [model.strip() for model in (params.get("AvailableModels", encoding="utf-8") or "").split(",")]
     names = [name.strip() for name in (params.get("AvailableModelNames", encoding="utf-8") or "").split(",")]
     series = [entry.strip() for entry in (params.get("AvailableModelSeries", encoding="utf-8") or "").split(",")]
     versions = [entry.strip() for entry in (params.get("ModelVersions", encoding="utf-8") or "").split(",")]
+    artifact_formats = [entry.strip() for entry in (params.get("AvailableModelArtifactFormats", encoding="utf-8") or "").split(",")]
     released_dates = [entry.strip() for entry in (params.get("ModelReleasedDates", encoding="utf-8") or "").split(",")]
 
     community_favorites = {canonical_model_key(entry.strip()) for entry in (params.get("CommunityFavorites", encoding="utf-8") or "").split(",") if entry.strip()}
@@ -4722,6 +5013,7 @@ def setup(app):
 
       label = names[i] if i < len(names) and names[i] else key
       model_version = versions[i] if i < len(versions) else ""
+      artifact_format = artifact_formats[i] if i < len(artifact_formats) else ""
       model_series = series[i] if i < len(series) and series[i] else "Custom Series"
       released = released_dates[i] if i < len(released_dates) else ""
 
@@ -4732,6 +5024,7 @@ def setup(app):
           "label": label,
           "series": model_series,
           "version": model_version,
+          "artifactFormat": artifact_format,
           "released": released,
           "builtin": is_builtin_model_key(canonical_key),
           "communityFavorite": canonical_key in community_favorites,
@@ -4745,6 +5038,8 @@ def setup(app):
         existing["series"] = model_series
       if not existing["version"] and model_version:
         existing["version"] = model_version
+      if not existing.get("artifactFormat") and artifact_format:
+        existing["artifactFormat"] = artifact_format
       if not existing["released"] and released:
         existing["released"] = released
       existing["builtin"] = existing["builtin"] or is_builtin_model_key(canonical_key)
@@ -4757,6 +5052,7 @@ def setup(app):
       "label": _default_model_name(),
       "series": "Custom Series",
       "version": _default_model_version(),
+      "artifactFormat": "tinygrad_single_v1",
       "released": "",
       "builtin": True,
       "communityFavorite": default_key in community_favorites,
@@ -5215,6 +5511,48 @@ def setup(app):
     })
     return payload
 
+  @app.route("/api/stats/ignore_drive", methods=["POST"])
+  def ignore_drive_stats():
+    request_data = request.get_json() or {}
+    route_names = request_data.get("routeNames", [])
+    if not isinstance(route_names, list):
+      return jsonify({"error": "routeNames must be a list."}), 400
+
+    try:
+      ignored_routes = utilities.ignore_dashboard_routes(params, route_names)
+    except ValueError as exception:
+      return jsonify({"error": str(exception)}), 400
+
+    _STATS_RESPONSE_CACHE.update({
+      "updated_at": 0.0,
+      "payload": None,
+    })
+    return jsonify({
+      "message": "Drive statistics ignored.",
+      "routeNames": ignored_routes,
+    }), 200
+
+  @app.route("/api/stats/include_drive", methods=["POST"])
+  def include_drive_stats():
+    request_data = request.get_json() or {}
+    route_names = request_data.get("routeNames", [])
+    if not isinstance(route_names, list):
+      return jsonify({"error": "routeNames must be a list."}), 400
+
+    try:
+      included_routes = utilities.include_dashboard_routes(params, route_names)
+    except ValueError as exception:
+      return jsonify({"error": str(exception)}), 400
+
+    _STATS_RESPONSE_CACHE.update({
+      "updated_at": 0.0,
+      "payload": None,
+    })
+    return jsonify({
+      "message": "Drive statistics included.",
+      "routeNames": included_routes,
+    }), 200
+
   @app.route("/api/plots/live", methods=["GET"])
   def get_live_plots():
     _ensure_plots_worker()
@@ -5317,13 +5655,56 @@ def setup(app):
   @app.route("/api/update/fast/status", methods=["GET"])
   def get_fast_update_status():
     state_data = _get_fast_update_state()
+    repo_path = str(_get_openpilot_root())
     git_data = _collect_fast_update_info(include_remote=not state_data.get("running", False))
     return jsonify({
       **state_data,
       **git_data,
       "isOnroad": _safe_params_get_bool("IsOnroad"),
       "automaticUpdates": _safe_params_get_bool("AutomaticUpdates"),
+      "interruptedUpdateRecovery": _get_interrupted_update_recovery(repo_path, state_data),
       "warning": "Fast update skips backup creation and finalization safeguards.",
+    }), 200
+
+  @app.route("/api/update/recover", methods=["POST"])
+  def recover_update():
+    if _safe_params_get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot recover an interrupted update while driving."}), 409
+
+    repo_path = str(_get_openpilot_root())
+    with _fast_update_lock:
+      if _fast_update_state.get("running"):
+        return jsonify({"error": "An update action is still in progress."}), 409
+
+      recovered, recovery_status = recover_interrupted_update(
+        repo_path,
+        is_onroad=False,
+        update_running=False,
+        updater_state=_safe_params_get("UpdaterState", encoding="utf-8", default=""),
+      )
+      if not recovered:
+        return jsonify({
+          "error": recovery_status.get("reason") or "The interrupted update could not be recovered safely.",
+          "interruptedUpdateRecovery": recovery_status,
+        }), 409
+
+      _fast_update_state.update({
+        "running": False,
+        "stage": "idle",
+        "message": "Interrupted update recovered. Ready to retry.",
+        "lastError": "",
+        "finishedAt": time.time(),
+        "progressStep": 0,
+        "progressTotalSteps": _FAST_UPDATE_TOTAL_STEPS,
+        "progressStepPercent": 0.0,
+        "progressPercent": 0.0,
+        "progressLabel": "Ready",
+        "progressDetail": "Abandoned update lock cleared safely.",
+      })
+
+    return jsonify({
+      "message": "Interrupted update recovered. Retrying now...",
+      "interruptedUpdateRecovery": recovery_status,
     }), 200
 
   @app.route("/api/update/branches", methods=["GET"])
@@ -5346,6 +5727,51 @@ def setup(app):
       "remoteError": remote_error,
       "isOnroad": _safe_params_get_bool("IsOnroad"),
       "running": state_data.get("running", False),
+    }), 200
+
+  @app.route("/api/update/agnos_status", methods=["GET"])
+  def get_agnos_update_status():
+    state_data = _get_fast_update_state()
+    if state_data.get("running", False):
+      return jsonify({"error": "Cannot check AGNOS update status while an update action is running."}), 409
+
+    repo_path = str(_get_openpilot_root())
+    try:
+      current_branch = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+      local_commit = _git_stdout(repo_path, ["rev-parse", "HEAD"])
+      origin_remote = _git_stdout(repo_path, ["config", "--get", "remote.origin.url"])
+    except Exception as exception:
+      return jsonify({"error": str(exception)}), 500
+
+    target_branch = str(request.args.get("branch") or current_branch or "").strip()
+    if not target_branch:
+      return jsonify({"error": "Missing target branch."}), 400
+    if not _is_valid_git_branch_name(repo_path, target_branch):
+      return jsonify({"error": "Invalid branch name."}), 400
+    if not _remote_git_check_allowed():
+      agnos_update = _base_agnos_update_status(target_branch, local_commit, "")
+      agnos_update["error"] = "Remote checks are deferred until system time is valid."
+      return jsonify({
+        "currentBranch": current_branch,
+        "targetBranch": target_branch,
+        "localCommit": local_commit,
+        "remoteCommit": "",
+        "agnosUpdate": agnos_update,
+      }), 200
+
+    remote_commit, remote_error = _get_remote_branch_commit(repo_path, target_branch)
+    if not remote_commit:
+      agnos_update = _base_agnos_update_status(target_branch, local_commit, "")
+      agnos_update["error"] = remote_error or f"Remote branch '{target_branch}' was not found."
+    else:
+      agnos_update = _build_agnos_update_status(repo_path, origin_remote, local_commit, remote_commit, target_branch)
+
+    return jsonify({
+      "currentBranch": current_branch,
+      "targetBranch": target_branch,
+      "localCommit": local_commit,
+      "remoteCommit": remote_commit,
+      "agnosUpdate": agnos_update,
     }), 200
 
   @app.route("/api/update/fast", methods=["POST"])
@@ -5498,20 +5924,30 @@ def setup(app):
     }), 202
 
   # ── Galaxy pairing (mirrors settings.cc L262-282) ──────────────────
-  GALAXY_DIR = Path("/data/galaxy")
+  GALAXY_DIR = _get_galaxy_dir()
   GALAXY_AUTH_FILE = GALAXY_DIR / "glxyauth"
+  GALAXY_SESSION_FILE = GALAXY_DIR / "glxysession"
+  GALAXY_SLUG_FILE = GALAXY_DIR / "glxyslug"
 
   @app.route("/api/galaxy/status", methods=["GET"])
   def galaxy_status():
-    try:
-      paired = GALAXY_AUTH_FILE.is_file() and len(GALAXY_AUTH_FILE.read_text().strip()) == 64
-    except Exception:
-      paired = False
-    slug_file = GALAXY_DIR / "glxyslug"
-    slug = slug_file.read_text().strip() if slug_file.is_file() else ""
+    paired = len(_read_galaxy_text(GALAXY_AUTH_FILE)) == 64
+    slug = _read_galaxy_text(GALAXY_SLUG_FILE)
     return jsonify({
       "paired": paired,
       "url": f"https://galaxy.firestar.link/{slug}" if slug else "",
+    })
+
+  @app.route("/api/galaxy/session", methods=["GET"])
+  def galaxy_session():
+    slug = _read_galaxy_text(GALAXY_SLUG_FILE)
+    token = _read_galaxy_text(GALAXY_SESSION_FILE)
+    paired = len(_read_galaxy_text(GALAXY_AUTH_FILE)) == 64 and bool(slug and token)
+    return jsonify({
+      "appUrl": GALAXY_PLAY_STORE_URL,
+      "cookieName": GALAXY_COOKIE_NAME,
+      "paired": paired,
+      "sessionToken": _build_galaxy_session_value(slug, token),
     })
 
   @app.route("/api/galaxy/pair", methods=["POST"])
@@ -5526,12 +5962,12 @@ def setup(app):
     GALAXY_AUTH_FILE.write_text(pw_hash)
     
     # Generate 256-bit secure session token
-    (GALAXY_DIR / "glxysession").write_text(secrets.token_hex(32))
+    GALAXY_SESSION_FILE.write_text(secrets.token_hex(32))
     
     # Generate 16-character alphanumeric routing slug
     charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     slug = ''.join(secrets.choice(charset) for _ in range(16))
-    (GALAXY_DIR / "glxyslug").write_text(slug)
+    GALAXY_SLUG_FILE.write_text(slug)
 
     return jsonify({
       "message": "Pairing successful!",

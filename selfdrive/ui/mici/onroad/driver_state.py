@@ -3,7 +3,6 @@ import numpy as np
 import math
 from cereal import log
 from openpilot.common.filter_simple import FirstOrderFilter
-from openpilot.selfdrive.monitoring.helpers import face_orientation_from_net
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import Widget
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -24,7 +23,7 @@ class DriverStateRenderer(Widget):
   BASE_SIZE = 60
   LINES_ANGLE_INCREMENT = 5
   LINES_STALE_ANGLES = 3.0  # seconds
-  AWARENESS_UNFULL_THRESHOLD = 0.95  # ~0.5s
+  AWARENESS_UNFULL_PERCENT = 95  # ~0.5s
 
   def __init__(self, lines: bool = False, inset: bool = False):
     super().__init__()
@@ -39,6 +38,8 @@ class DriverStateRenderer(Widget):
     self._is_active = False
     self._is_rhd = False
     self._face_detected = False
+    self._face_pitch = 0.
+    self._face_yaw = 0.
     self._should_draw = False
     self._force_active = False
     self._looking_center = False
@@ -163,10 +164,12 @@ class DriverStateRenderer(Widget):
     sm = ui_state.sm
 
     dm_state = sm["driverMonitoringState"]
-    self._is_active = dm_state.isActiveMode
+    self._is_active = dm_state.activePolicy == log.DriverMonitoringState.MonitoringPolicy.vision
     self._is_rhd = dm_state.isRHD
-    self._face_detected = dm_state.faceDetected
-    self._awareness_unfull = self.effective_active and dm_state.awarenessStatus < self.AWARENESS_UNFULL_THRESHOLD
+    self._face_detected = dm_state.visionPolicyState.faceDetected
+    self._awareness_unfull = self.effective_active and dm_state.visionPolicyState.awarenessPercent < self.AWARENESS_UNFULL_PERCENT
+    self._face_pitch = dm_state.visionPolicyState.pose.pitch + math.radians(6) # calib or DM pose is not accurate, add a fake upward pitch to bias forward
+    self._face_yaw = -dm_state.visionPolicyState.pose.yaw # undo sign flip in face_orientation_from_model to match UI convention
 
     driverstate = sm["driverStateV2"]
     driver_data = driverstate.rightDriverData if self._is_rhd else driverstate.leftDriverData
@@ -174,26 +177,9 @@ class DriverStateRenderer(Widget):
 
   def _update_state(self):
     # Get monitoring state
-    driver_data = self.get_driver_data()
-    driver_orient = driver_data.faceOrientation
-    driver_position = driver_data.facePosition
-
-    if len(driver_orient) != 3:
-      return
-
-    # Calibrate orientation so looking straight ahead at road (instead of at device) is (0, 0, 0)
-    sm = ui_state.sm
-    if sm.valid['liveCalibration'] and len(sm['liveCalibration'].rpyCalib) == 3:
-      cal_rpy = sm['liveCalibration'].rpyCalib
-    else:
-      cal_rpy = [0.0, 0.0, 0.0]
-
-    _, pitch, yaw = face_orientation_from_net(driver_orient, driver_position, cal_rpy)
-    pitch += math.radians(6)  # calib or DM pose is not accurate, add a fake upward pitch to bias forward
-    yaw = -yaw  # undo sign flip in face_orientation_from_net to match UI convention
-
-    pitch = self._pitch_filter.update(pitch)
-    yaw = self._yaw_filter.update(yaw)
+    _ = self.get_driver_data()
+    pitch = self._pitch_filter.update(self._face_pitch)
+    yaw = self._yaw_filter.update(self._face_yaw)
 
     # hysteresis on looking center
     if abs(pitch) < LOOKING_CENTER_THRESHOLD_LOWER and abs(yaw) < LOOKING_CENTER_THRESHOLD_LOWER:

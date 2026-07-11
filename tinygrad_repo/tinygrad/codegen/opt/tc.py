@@ -94,6 +94,8 @@ cuda_sm75: list[TensorCore] = cuda_8168_f16
 cuda_sm80: list[TensorCore] = cuda_81616 + cuda_8168_f16 + cuda_8168_tf32
 cuda_sm89: list[TensorCore] = cuda_sm80 + cuda_81632_f8
 
+def get_cuda(arch): return cuda_sm89 if (ver:=int(arch[3:])) >= 89 else cuda_sm80 if ver >= 80 else cuda_sm75 if ver >= 75 else []
+
 # ***** AMD *****
 
 # https://gpuopen.com/learn/wmma_on_rdna3/
@@ -131,6 +133,8 @@ amd_cdna3 = amd_cdna_161632[:2] + amd_cdna_161616
 
 amd_cdna4 = amd_cdna_1616128 + amd_cdna_161632 + amd_cdna_161616
 
+def get_amd(arch): return {"gfx942": amd_cdna3, "gfx950": amd_cdna4, "gfx1200": amd_rdna4, "gfx1201": amd_rdna4}.get(arch, amd_rdna3)
+
 # ***** Apple Metal *****
 
 metal = [TensorCore(dims=(8,8,8), threads=32, elements_per_thread=(2,2,2), dtype_in=di, dtype_out=do,
@@ -139,17 +143,3 @@ metal = [TensorCore(dims=(8,8,8), threads=32, elements_per_thread=(2,2,2), dtype
            (('l0', 'r0', 'r1', 'l3', 'r2'), ('u0',), ('l1', 'l2', 'l4'))))
   for di,do in [(dtypes.float,dtypes.float),(dtypes.half,dtypes.float),
                 (dtypes.half,dtypes.half),(dtypes.bfloat16,dtypes.float),(dtypes.bfloat16,dtypes.bfloat16)]]
-
-# ***** Apple AMX *****
-
-amx = [TensorCore(dims=(sz,sz,1), threads=1, elements_per_thread=(sz,sz,sz*sz), dtype_in=dt, dtype_out=dt,
-                  swizzle=(((), ('u0', 'u1', 'u2', 'u3', 'u4', 'u5', 'u6', 'u7'), ()),
-                           ((), ('u4', 'u5', 'u6', 'u7', 'u0', 'u1', 'u2', 'u3'), ())),
-                  opts=("u0","u0","u0","u0","u1","u1","u1","u1")) for dt,sz in [(dt, 64 // dt.itemsize) for dt in [dtypes.float]]]
-
-# ***** Intel ****
-
-intel = [TensorCore(dims=(8,8,16), threads=8, elements_per_thread=(16,16,8), dtype_in=dtypes.half, dtype_out=dtypes.float,
-                    opts=("l0","l0","l0","u1","u1","u1"),
-                    swizzle=((('r1', 'r2', 'r3'), ('u0', 'u1', 'u2'), ('l0', 'l1', 'l2', 'r0')),
-                             (('l0', 'l1', 'l2'), ('r1', 'r2', 'r3'), ('u0', 'u1', 'u2', 'r0'))))]

@@ -5,23 +5,22 @@ import threading
 import time
 from dataclasses import dataclass
 from collections.abc import Callable
+from pathlib import Path
 
 from openpilot.common.params import Params
-from openpilot.starpilot.assets.model_manager import (
-  CANCEL_DOWNLOAD_PARAM,
-  DOWNLOAD_PROGRESS_PARAM,
-  ModelManager,
-  TINYGRAD_VERSIONS,
-)
-from openpilot.starpilot.common.starpilot_variables import MODELS_PATH
 from openpilot.selfdrive.ui.mici.widgets.button import BigButton
 from openpilot.selfdrive.ui.mici.widgets.dialog import BigDialog, BigDialogBase, BigMultiOptionDialog
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.system.hardware import PC
+from openpilot.system.hardware.hw import Paths
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.label import gui_label
 import pyray as rl
 
+CANCEL_DOWNLOAD_PARAM = "CancelModelDownload"
+DOWNLOAD_PROGRESS_PARAM = "ModelDownloadProgress"
+MODELS_PATH = Path(Paths.comma_home()) / "starpilot" / "data" / "models" if PC else Path("/data/models")
 MANIFEST_STALE_SECONDS = 60 * 60
 _PROGRESS_HOLD_SECONDS = 2.5
 _DOWNLOAD_DIALOG_CLOSE_SECONDS = 1.0
@@ -281,7 +280,7 @@ class DrivingModelBigButton(BigButton):
     super().__init__("driving model", "", gui_app.texture("icons_mici/settings/device/lkas.png", 72, 56))
     self._params = Params()
     self._params_memory = Params(memory=True)
-    self._model_manager = ModelManager(self._params, self._params_memory)
+    self._model_manager = None
 
     self._worker_thread: threading.Thread | None = None
     self._active_job = ""
@@ -294,6 +293,13 @@ class DrivingModelBigButton(BigButton):
 
     self.set_click_callback(self._open_manager_menu)
     self.refresh()
+
+  def _get_model_manager(self):
+    if self._model_manager is None:
+      from openpilot.starpilot.assets.model_manager import ModelManager
+
+      self._model_manager = ModelManager(self._params, self._params_memory)
+    return self._model_manager
 
   def show_event(self):
     super().show_event()
@@ -516,7 +522,7 @@ class DrivingModelBigButton(BigButton):
 
   def _run_download_one(self, model_key: str):
     self._params_memory.put_bool(CANCEL_DOWNLOAD_PARAM, False)
-    self._model_manager.download_model(model_key)
+    self._get_model_manager().download_model(model_key)
 
     entries = {entry.key: entry for entry in self._load_model_entries()}
     entry = entries.get(model_key)
@@ -526,10 +532,10 @@ class DrivingModelBigButton(BigButton):
 
   def _run_download_all(self):
     self._params_memory.put_bool(CANCEL_DOWNLOAD_PARAM, False)
-    self._model_manager.download_all_models()
+    self._get_model_manager().download_all_models()
 
   def _run_manifest_refresh(self):
-    self._model_manager.update_models()
+    self._get_model_manager().update_models()
 
   def _switch_model(self, model_key: str):
     entries = {entry.key: entry for entry in self._load_model_entries()}
@@ -688,9 +694,6 @@ class DrivingModelBigButton(BigButton):
     if self._is_builtin_default_model(key):
       return True
 
-    if (MODELS_PATH / f"{key}.thneed").is_file():
-      return True
-
     required_files = self._required_files_for_version(key, version)
     if not required_files:
       return False
@@ -715,23 +718,8 @@ class DrivingModelBigButton(BigButton):
     return False
 
   def _required_files_for_version(self, key: str, version: str) -> list[str]:
-    if version not in TINYGRAD_VERSIONS:
-      return []
-
-    files = [
-      f"{key}_driving_policy_tinygrad.pkl",
-      f"{key}_driving_vision_tinygrad.pkl",
-      f"{key}_driving_policy_metadata.pkl",
-      f"{key}_driving_vision_metadata.pkl",
-    ]
-
-    if version in {"v12", "v13", "v14", "v15"}:
-      files.extend([
-        f"{key}_driving_off_policy_tinygrad.pkl",
-        f"{key}_driving_off_policy_metadata.pkl",
-      ])
-
-    return files
+    del version
+    return [f"{key}_driving_tinygrad.pkl"]
 
   @staticmethod
   def _is_terminal_progress(progress: str) -> bool:

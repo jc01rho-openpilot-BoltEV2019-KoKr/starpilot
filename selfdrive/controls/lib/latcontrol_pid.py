@@ -7,9 +7,26 @@ from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.common.pid import PIDController
 
+HONDA_PID_GAIN_SCALE_MIN = 0.1
+HONDA_PID_GAIN_SCALE_MAX = 4.0
+
 
 def civic_bosch_modified_lateral_testing_ground_active() -> bool:
   return testing_ground.use("8", "B")
+
+
+def get_honda_lateral_pid_gain_scale(value) -> float:
+  try:
+    scale = float(value)
+  except (TypeError, ValueError):
+    return 1.0
+  if not math.isfinite(scale):
+    return 1.0
+  return min(max(scale, HONDA_PID_GAIN_SCALE_MIN), HONDA_PID_GAIN_SCALE_MAX)
+
+
+def scale_lateral_pid_gain_values(values, scale: float) -> list[float]:
+  return [float(value) * scale for value in values]
 
 
 def get_civic_bosch_modified_pid_output_scale(desired_angle_deg: float, desired_angle_delta_deg: float, v_ego: float) -> float:
@@ -67,18 +84,41 @@ def get_civic_bosch_modified_pid_output_alpha(desired_angle_deg: float, desired_
 class LatControlPID(LatControl):
   def __init__(self, CP, CI, dt):
     super().__init__(CP, CI, dt)
-    self.pid = PIDController((CP.lateralTuning.pid.kpBP, CP.lateralTuning.pid.kpV),
-                             (CP.lateralTuning.pid.kiBP, CP.lateralTuning.pid.kiV),
+    self.base_kp_bp = [float(value) for value in CP.lateralTuning.pid.kpBP]
+    self.base_kp_v = [float(value) for value in CP.lateralTuning.pid.kpV]
+    self.base_ki_bp = [float(value) for value in CP.lateralTuning.pid.kiBP]
+    self.base_ki_v = [float(value) for value in CP.lateralTuning.pid.kiV]
+    self.pid = PIDController((self.base_kp_bp, self.base_kp_v),
+                             (self.base_ki_bp, self.base_ki_v),
                              pos_limit=self.steer_max, neg_limit=-self.steer_max)
     self.ff_factor = CP.lateralTuning.pid.kf
     self.get_steer_feedforward = CI.get_steer_feedforward_function()
+    self.is_honda_pid_lateral = CP.brand == "honda"
+    self.honda_lateral_pid_kp_scale = 1.0
+    self.honda_lateral_pid_ki_scale = 1.0
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.prev_angle_steers_des_no_offset = 0.0
     self.modified_civic_steering_pressed_filter_s = 0.0
     self.modified_civic_steering_pressed_prev = False
     self.prev_output_torque = 0.0
 
+  def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
+    if not self.is_honda_pid_lateral:
+      return
+
+    kp_scale = get_honda_lateral_pid_gain_scale(getattr(starpilot_toggles, "honda_lateral_pid_kp_scale", 1.0))
+    ki_scale = get_honda_lateral_pid_gain_scale(getattr(starpilot_toggles, "honda_lateral_pid_ki_scale", 1.0))
+    if math.isclose(kp_scale, self.honda_lateral_pid_kp_scale) and math.isclose(ki_scale, self.honda_lateral_pid_ki_scale):
+      return
+
+    self.honda_lateral_pid_kp_scale = kp_scale
+    self.honda_lateral_pid_ki_scale = ki_scale
+    self.pid._k_p = [self.base_kp_bp, scale_lateral_pid_gain_values(self.base_kp_v, kp_scale)]
+    self.pid._k_i = [self.base_ki_bp, scale_lateral_pid_gain_values(self.base_ki_v, ki_scale)]
+
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited, lat_delay, calibrated_pose, model_data, starpilot_toggles):
+    self.update_honda_lateral_pid_gain_scale(starpilot_toggles)
+
     pid_log = log.ControlsState.LateralPIDState.new_message()
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)

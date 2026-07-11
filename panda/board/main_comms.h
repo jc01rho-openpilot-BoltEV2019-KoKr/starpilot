@@ -12,7 +12,7 @@ static int get_health_pkt(void *dat) {
   health->voltage_pkt = current_board->read_voltage_mV();
   health->current_pkt = current_board->read_current_mA();
 
-  health->ignition_line_pkt = (uint8_t)(harness_check_ignition());
+  health->ignition_line_pkt = (uint8_t)(panda_ignition_line());
   health->ignition_can_pkt = ignition_can;
 
   health->controls_allowed_pkt = controls_allowed;

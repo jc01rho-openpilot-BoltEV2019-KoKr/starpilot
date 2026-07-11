@@ -91,6 +91,8 @@ class Button(Widget):
                icon=None,
                elide_right: bool = False,
                multi_touch: bool = False,
+               long_press_callback: Callable[[], None] | None = None,
+               long_press_threshold: float = 0.8,
                ):
 
     super().__init__()
@@ -103,6 +105,9 @@ class Button(Widget):
 
     self._click_callback = click_callback
     self._multi_touch = multi_touch
+    self._long_press_callback = long_press_callback
+    self._long_press_threshold = long_press_threshold
+    self._press_start_time: float | None = None
 
   def set_text(self, text):
     self._label.set_text(text)
@@ -112,11 +117,35 @@ class Button(Widget):
     self._background_color = BUTTON_BACKGROUND_COLORS[self._button_style]
     self._label.set_text_color(BUTTON_TEXT_COLOR[self._button_style])
 
+  def _handle_mouse_press(self, mouse_pos: MousePos):
+    if self._long_press_callback:
+      self._press_start_time = rl.get_time()
+
+  def _handle_mouse_release(self, mouse_pos: MousePos):
+    is_long_press = False
+    if self._press_start_time is not None and self._long_press_callback:
+      if rl.get_time() - self._press_start_time >= self._long_press_threshold:
+        is_long_press = True
+        self._long_press_callback()
+    self._press_start_time = None
+    if not is_long_press:
+      super()._handle_mouse_release(mouse_pos)
+
   def _update_state(self):
     if self.enabled:
       self._label.set_text_color(BUTTON_TEXT_COLOR[self._button_style])
       if self.is_pressed:
-        self._background_color = BUTTON_PRESSED_BACKGROUND_COLORS[self._button_style]
+        if self._long_press_callback and self._press_start_time is not None:
+          t = min(1.0, (rl.get_time() - self._press_start_time) / self._long_press_threshold)
+          base = BUTTON_PRESSED_BACKGROUND_COLORS[self._button_style]
+          dr, dg, db = 226, 44, 44
+          self._background_color = rl.Color(
+            int(base.r + (dr - base.r) * t),
+            int(base.g + (dg - base.g) * t),
+            int(base.b + (db - base.b) * t),
+            int(base.a + (255 - base.a) * t))
+        else:
+          self._background_color = BUTTON_PRESSED_BACKGROUND_COLORS[self._button_style]
       else:
         self._background_color = BUTTON_BACKGROUND_COLORS[self._button_style]
     elif self._button_style != ButtonStyle.NO_EFFECT:

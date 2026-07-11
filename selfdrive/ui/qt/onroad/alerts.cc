@@ -32,6 +32,7 @@ OnroadAlerts::Alert OnroadAlerts::getAlert(const SubMaster &sm, const SubMaster 
   const uint64_t selfdrive_frame = sm.rcv_frame("selfdriveState");
 
   const cereal::StarPilotSelfdriveState::Reader &fpss = fpsm["starpilotSelfdriveState"].getStarpilotSelfdriveState();
+  const bool starpilot_alert_received = fpsm.rcv_frame("starpilotSelfdriveState") > 0;
 
   Alert a = {};
   static QString crash_log_path = "/data/error_logs/error.txt";
@@ -54,7 +55,7 @@ OnroadAlerts::Alert OnroadAlerts::getAlert(const SubMaster &sm, const SubMaster 
     a = {ss.getAlertText1().cStr(), ss.getAlertText2().cStr(),
          ss.getAlertType().cStr(), ss.getAlertSize(), ss.getAlertStatus()};
 
-    if (a.size == cereal::SelfdriveState::AlertSize::NONE) {
+    if (a.size == cereal::SelfdriveState::AlertSize::NONE && starpilot_alert_received) {
       a = {fpss.getAlertText1().cStr(), fpss.getAlertText2().cStr(),
            fpss.getAlertType().cStr(), static_cast<cereal::SelfdriveState::AlertSize>(fpss.getAlertSize()), static_cast<cereal::SelfdriveState::AlertStatus>(fpss.getAlertStatus())};
     }

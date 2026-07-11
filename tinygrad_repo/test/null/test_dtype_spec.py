@@ -1,7 +1,6 @@
 import unittest, math, struct, operator
-from tinygrad.tensor import Tensor, dtypes
-from tinygrad.dtype import DTYPES_DICT, truncate, float_to_fp16, float_to_bf16, _to_np_dtype, least_upper_dtype, least_upper_float
-from tinygrad.device import is_dtype_supported
+from tinygrad import Tensor, Device
+from tinygrad.dtype import DTYPES_DICT, dtypes, truncate, float_to_fp16, float_to_bf16, _to_np_dtype, least_upper_dtype, least_upper_float
 
 from tinygrad.helpers import getenv
 from hypothesis import given, settings, strategies as strat
@@ -12,8 +11,8 @@ settings.register_profile("my_profile", max_examples=50, deadline=None, derandom
 settings.load_profile("my_profile")
 
 core_dtypes = list(DTYPES_DICT.values())
-dtype_ints = [dt for dt in core_dtypes if dtypes.is_int(dt) and is_dtype_supported(dt)]
-dtype_floats = [dt for dt in core_dtypes if dtypes.is_float(dt) and is_dtype_supported(dt)]
+dtype_ints = [dt for dt in core_dtypes if dtypes.is_int(dt) and dt in Device[Device.DEFAULT].renderer.supported_dtypes()]
+dtype_floats = [dt for dt in core_dtypes if dtypes.is_float(dt) and dt in Device[Device.DEFAULT].renderer.supported_dtypes()]
 
 FP8E4M3_MAX = 448.0
 FP8E5M2_MAX = 57344.0
@@ -75,20 +74,20 @@ class TestHelpers(unittest.TestCase):
   def test_dtype_range(self):
     for dt in core_dtypes:
       if dtypes.is_float(dt):
-        np.testing.assert_equal(dtypes.min(dt), -math.inf)
-        np.testing.assert_equal(dtypes.max(dt), math.inf)
+        np.testing.assert_equal(dt.min, -math.inf)
+        np.testing.assert_equal(dt.max, math.inf)
         np.testing.assert_equal(dt.min, -math.inf)
         np.testing.assert_equal(dt.max, math.inf)
       elif dtypes.is_int(dt):
         info = np.iinfo(_to_np_dtype(dt))
-        np.testing.assert_equal(dtypes.min(dt), info.min)
-        np.testing.assert_equal(dtypes.max(dt), info.max)
+        np.testing.assert_equal(dt.min, info.min)
+        np.testing.assert_equal(dt.max, info.max)
         np.testing.assert_equal(dt.min, info.min)
         np.testing.assert_equal(dt.max, info.max)
       else:
         assert dt == dtypes.bool, dt
-        np.testing.assert_equal(dtypes.min(dt), False)
-        np.testing.assert_equal(dtypes.max(dt), True)
+        np.testing.assert_equal(dt.min, False)
+        np.testing.assert_equal(dt.max, True)
         np.testing.assert_equal(dt.min, False)
         np.testing.assert_equal(dt.max, True)
 
@@ -179,6 +178,12 @@ class TestHelpers(unittest.TestCase):
     elif x < -FP8E5M2_MAX: np.testing.assert_equal(truncate[dtypes.fp8e5m2](x), -FP8E5M2_MAX)
     else: np.testing.assert_equal(truncate[dtypes.fp8e5m2](x), torch.tensor(x, dtype=torch.float8_e5m2).float().item())
 
+  def test_finfo(self):
+    for dt in [dtypes.float16, dtypes.float32, dtypes.float64]:
+      info = np.finfo(_to_np_dtype(dt))
+      self.assertEqual(info.bits, dt.bitsize)
+      self.assertEqual((info.nexp, info.nmant), dtypes.finfo(dt))
+
 class TestTypePromotion(unittest.TestCase):
   @given(strat.sampled_from(core_dtypes))
   def test_self_promo_to_self(self, dtype):
@@ -216,6 +221,23 @@ class TestTypePromotion(unittest.TestCase):
     assert least_upper_dtype(dtypes.fp8e4m3, dtypes.uint64) == dtypes.fp8e4m3
     assert least_upper_dtype(dtypes.fp8e5m2, dtypes.int64) == dtypes.fp8e5m2
     assert least_upper_dtype(dtypes.fp8e5m2, dtypes.uint64) == dtypes.fp8e5m2
+
+  def test_weakint_promo(self):
+    # weakint with itself is weakint
+    assert least_upper_dtype(dtypes.weakint, dtypes.weakint) == dtypes.weakint
+    # weakint is above bool
+    assert least_upper_dtype(dtypes.weakint, dtypes.bool) == dtypes.weakint
+    # weakint defers to any concrete int type
+    assert least_upper_dtype(dtypes.weakint, dtypes.int8) == dtypes.int8
+    assert least_upper_dtype(dtypes.weakint, dtypes.uint8) == dtypes.uint8
+    assert least_upper_dtype(dtypes.weakint, dtypes.int16) == dtypes.int16
+    assert least_upper_dtype(dtypes.weakint, dtypes.int32) == dtypes.int32
+    assert least_upper_dtype(dtypes.weakint, dtypes.int64) == dtypes.int64
+    assert least_upper_dtype(dtypes.weakint, dtypes.uint64) == dtypes.uint64
+    # weakint defers to any float type
+    assert least_upper_dtype(dtypes.weakint, dtypes.float16) == dtypes.float16
+    assert least_upper_dtype(dtypes.weakint, dtypes.float32) == dtypes.float32
+    assert least_upper_dtype(dtypes.weakint, dtypes.float64) == dtypes.float64
 
 class TestTypeSpec(unittest.TestCase):
   def setUp(self):
@@ -345,6 +367,11 @@ class TestAutoCastType(unittest.TestCase):
     assert (Tensor([0, 1], dtype=dtypes.bfloat16)).cumsum(0).dtype == dtypes.bfloat16
     assert (Tensor([0, 1], dtype=dtypes.float32)).cumsum(0).dtype == dtypes.float32
     assert (Tensor([0, 1], dtype=dtypes.float64)).cumsum(0).dtype == dtypes.float64
+
+  def test_cumsum_empty(self):
+    # empty cumsum dtype must match non-empty
+    for d in (dtypes.bool, dtypes.int8, dtypes.uint8, dtypes.float16, dtypes.float32):
+      self.assertEqual(Tensor([], dtype=d).cumsum(0).dtype, Tensor([0, 1], dtype=d).cumsum(0).dtype)
 
   @given(strat.sampled_from(core_dtypes), strat.sampled_from(core_dtypes), strat.sampled_from(core_dtypes))
   def test_matmul(self, dt1, dt2, acc_dt):

@@ -71,6 +71,7 @@ StarPilotVisualsPanel::StarPilotVisualsPanel(StarPilotSettingsWindow *parent, bo
     {"CameraView", tr("Camera View"), tr("<b>Select the active camera view.</b> This is purely a visual change and doesn't impact how openpilot drives!"), ""},
     {"DriverCamera", tr("Show Driver Camera When In Reverse"), tr("<b>Show the driver camera feed</b> when the vehicle is in reverse."), ""},
     {"StoppedTimer", tr("Stopped Timer"), tr("<b>Show a timer when stopped</b> in place of the current speed to indicate how long the vehicle has been stopped."), ""},
+    {"StockConfidenceBallWidget", tr("Stock Confidence Ball Widget"), tr("<b>Use the original moving confidence ball</b> on the small comma 4 UI instead of the fixed confidence, CEM/CCM, and personality sidebar."), ""},
 
     {"DisableWideRoad", tr("Disable Wide Road Camera"), QString("<b>%1</b><br><br>%2").arg(tr("Only enable this if the wide camera is broken or for development!")).arg(tr("<b>Disabling the wide camera may degrade driving performance and cause instability.</b><br><br>Requires a reboot to take effect.")), "../../starpilot/assets/toggle_icons/icon_advanced_device.png"}
   };

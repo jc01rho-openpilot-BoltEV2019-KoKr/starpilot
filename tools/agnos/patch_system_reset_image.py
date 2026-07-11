@@ -15,8 +15,12 @@ from pathlib import Path
 
 
 RESET_PATH_IN_IMAGE = "/usr/comma/reset"
+COMMA_SH_PATH_IN_IMAGE = "/usr/comma/comma.sh"
+MAGIC_PATH_IN_IMAGE = "/usr/comma/magic.py"
 SETUP_PATH_IN_IMAGE = "/usr/comma/setup"
 UPDATER_PATH_IN_IMAGE = "/usr/comma/updater"
+BG_PATH_IN_IMAGE = "/usr/comma/bg.jpg"
+WESTON_SERVICE_PATH_IN_IMAGE = "/lib/systemd/system/weston.service"
 RESET_ENTRY_IN_ZIPAPP = "openpilot/system/ui/reset.py"
 MICI_RESET_ENTRY_IN_ZIPAPP = "openpilot/system/ui/mici_reset.py"
 TICI_RESET_ENTRY_IN_ZIPAPP = "openpilot/system/ui/tici_reset.py"
@@ -27,13 +31,18 @@ TICI_SETUP_ENTRY_IN_SETUP_ZIPAPP = "openpilot/system/ui/tici_setup.py"
 MICI_SETUP_ENTRY_IN_SETUP_ZIPAPP = "openpilot/system/ui/mici_setup.py"
 UPDATER_ENTRY_IN_ZIPAPP = "openpilot/system/ui/updater.py"
 VERSION_PATH_IN_IMAGE = "/VERSION"
+PYTHON_SITE_PACKAGES_PATH_IN_IMAGE = "/usr/local/venv/lib/python3.12/site-packages"
 PATCH_MARKER = "STARPILOT_C4_RESET_LAYOUT_V1"
-MICI_RESET_PATCH_MARKER = "STARPILOT_C4_MICI_RESET_LAYOUT_V1"
-TICI_RESET_PATCH_MARKER = "STARPILOT_C4_TICI_RESET_LAYOUT_V1"
 APP_PATCH_MARKER = "STARPILOT_C4_RESET_APP_DIMENSIONS_V1"
 SETUP_WIFI_PATCH_MARKER = "JEEPNY_AVAILABLE = True"
 SETUP_BRANDING_PATCH_MARKER = "STARPILOT_SETUP_BRANDING_V1"
 SETUP_SSH_RESTORE_PATCH_MARKER = "STARPILOT_SETUP_SSH_RESTORE_V1"
+WESTON_BG_PATCH_MARKER = "STARPILOT_WESTON_BG_ORIENTATION_V2"
+JEEPNY_VERSION = "0.9.0"
+JEEPNY_WHEEL_URL = "https://files.pythonhosted.org/packages/b2/a3/e137168c9c44d18eff0376253da9f1e9234d0239e0ee230d2fee6cea8e55/jeepney-0.9.0-py3-none-any.whl"
+JEEPNY_WHEEL_SHA256 = "97e5714520c16fc0a45695e5365a2e11b81ea79bba796e26f9f1d178cb182683"
+JEEPNY_PACKAGE_DIR = "jeepney"
+JEEPNY_DIST_INFO_DIR = f"jeepney-{JEEPNY_VERSION}.dist-info"
 ANDROID_SPARSE_MAGIC = 0xED26FF3A
 CHUNK_TYPE_RAW = 0xCAC1
 CHUNK_TYPE_FILL = 0xCAC2
@@ -58,183 +67,14 @@ DEFAULT_SYNC_COMMA_FILES = [
 ]
 
 INODE_MODE_TYPE_PREFIX = {
-  "regular": "010",
+  "regular": "100",
   "directory": "040",
-  "symlink": "012",
-  "character": "020",
-  "block": "060",
-  "fifo": "010",
-  "socket": "014",
+  "symlink": "120",
+  "character": "20",
+  "block": "60",
+  "fifo": "10",
+  "socket": "140",
 }
-
-PATCHED_RESET_SCRIPT = f"""#!/usr/bin/env python3
-import os
-import sys
-import threading
-import time
-from enum import IntEnum
-
-import pyray as rl
-
-from openpilot.system.hardware import PC
-from openpilot.system.ui.lib.application import gui_app, FontWeight
-from openpilot.system.ui.widgets import Widget
-from openpilot.system.ui.widgets.button import Button, ButtonStyle
-from openpilot.system.ui.widgets.label import gui_label, gui_text_box
-
-# {PATCH_MARKER}
-
-NVME = "/dev/nvme0n1"
-USERDATA = "/dev/disk/by-partlabel/userdata"
-TIMEOUT = 3 * 60
-
-
-class ResetMode(IntEnum):
-  USER_RESET = 0
-  RECOVER = 1
-  FORMAT = 2
-
-
-class ResetState(IntEnum):
-  NONE = 0
-  CONFIRM = 1
-  RESETTING = 2
-  FAILED = 3
-
-
-def _device_type() -> str:
-  model_path = "/sys/firmware/devicetree/base/model"
-  try:
-    with open(model_path, "r", encoding="utf-8", errors="ignore") as f:
-      model = f.read().replace("\\x00", "")
-    return model.split("comma ")[-1].strip().lower()
-  except Exception:
-    return ""
-
-
-def _small_layout() -> bool:
-  dt = _device_type()
-  return dt not in ("tici", "tizi")
-
-
-class Reset(Widget):
-  def __init__(self, mode):
-    super().__init__()
-    self._mode = mode
-    self._previous_reset_state = None
-    self._reset_state = ResetState.NONE
-    self._cancel_button = Button("Cancel", self._cancel_callback)
-    self._confirm_button = Button("Confirm", self._confirm, button_style=ButtonStyle.PRIMARY)
-    self._reboot_button = Button("Reboot", lambda: os.system("sudo reboot"))
-    self._render_status = True
-    self._small = _small_layout()
-
-  def _cancel_callback(self):
-    self._render_status = False
-
-  def _do_erase(self):
-    if PC:
-      return
-
-    os.system(f"sudo umount {{NVME}}")
-    os.system(f"yes | sudo mkfs.ext4 {{NVME}}")
-    rm = os.system("sudo rm -rf /data/*")
-    os.system(f"sudo umount {{USERDATA}}")
-    fmt = os.system(f"yes | sudo mkfs.ext4 {{USERDATA}}")
-
-    if rm == 0 or fmt == 0:
-      os.system("sudo reboot")
-    else:
-      self._reset_state = ResetState.FAILED
-
-  def start_reset(self):
-    self._reset_state = ResetState.RESETTING
-    threading.Timer(0.1, self._do_erase).start()
-
-  def _update_state(self):
-    if self._reset_state != self._previous_reset_state:
-      self._previous_reset_state = self._reset_state
-      self._timeout_st = time.monotonic()
-    elif self._reset_state != ResetState.RESETTING and (time.monotonic() - self._timeout_st) > TIMEOUT:
-      exit(0)
-
-  def _render(self, rect: rl.Rectangle):
-    self._update_state()
-
-    margin = 24 if self._small else 140
-    title_font = 48 if self._small else 100
-    body_font = 34 if self._small else 90
-    button_height = 100 if self._small else 160
-    button_spacing = 20 if self._small else 50
-    top_margin = 24 if self._small else 0
-    body_gap = 24 if self._small else 40
-    bottom_margin = 24 if self._small else 0
-
-    label_rect = rl.Rectangle(rect.x + margin, rect.y + top_margin, rect.width - margin * 2, title_font + 8)
-    gui_label(label_rect, "System Reset", title_font, font_weight=FontWeight.BOLD)
-
-    body_bottom = rect.y + rect.height - button_height - bottom_margin - body_gap
-    body_top = label_rect.y + label_rect.height + body_gap
-    text_rect = rl.Rectangle(rect.x + margin, body_top, rect.width - margin * 2, max(0, body_bottom - body_top))
-    gui_text_box(text_rect, self._get_body_text(), body_font)
-
-    button_top = rect.y + rect.height - button_height - bottom_margin
-    button_width = (rect.width - button_spacing) / 2.0
-
-    if self._reset_state != ResetState.RESETTING:
-      if self._mode == ResetMode.RECOVER:
-        self._reboot_button.render(rl.Rectangle(rect.x, button_top, button_width, button_height))
-      elif self._mode == ResetMode.USER_RESET:
-        self._cancel_button.render(rl.Rectangle(rect.x, button_top, button_width, button_height))
-
-      if self._reset_state != ResetState.FAILED:
-        self._confirm_button.render(rl.Rectangle(rect.x + button_width + button_spacing, button_top, button_width, button_height))
-      else:
-        self._reboot_button.render(rl.Rectangle(rect.x, button_top, rect.width, button_height))
-
-    return self._render_status
-
-  def _confirm(self):
-    if self._reset_state == ResetState.CONFIRM:
-      self.start_reset()
-    else:
-      self._reset_state = ResetState.CONFIRM
-
-  def _get_body_text(self):
-    if self._reset_state == ResetState.CONFIRM:
-      return "Are you sure you want to reset your device?"
-    if self._reset_state == ResetState.RESETTING:
-      return "Resetting device...\\nThis may take up to a minute."
-    if self._reset_state == ResetState.FAILED:
-      return "Reset failed. Reboot to try again."
-    if self._mode == ResetMode.RECOVER:
-      return "Unable to mount data partition. Press confirm to erase and reset your device."
-    return "System reset triggered. Press confirm to erase all content and settings. Press cancel to resume boot."
-
-
-def main():
-  mode = ResetMode.USER_RESET
-  if len(sys.argv) > 1:
-    if sys.argv[1] == "--recover":
-      mode = ResetMode.RECOVER
-    elif sys.argv[1] == "--format":
-      mode = ResetMode.FORMAT
-
-  gui_app.init_window("System Reset")
-  reset = Reset(mode)
-
-  if mode == ResetMode.FORMAT:
-    reset.start_reset()
-
-  for _ in gui_app.render():
-    if not reset.render(rl.Rectangle(0, 0, gui_app.width, gui_app.height)):
-      break
-
-
-if __name__ == "__main__":
-  main()
-"""
-
 
 def patch_application_script(original: bytes) -> bytes:
   if APP_PATCH_MARKER.encode("utf-8") in original:
@@ -288,6 +128,51 @@ def patch_setup_wifi_manager() -> bytes:
   if SETUP_WIFI_PATCH_MARKER.encode("utf-8") not in data:
     raise RuntimeError("Repo wifi_manager.py does not appear to include jeepney fallback marker")
   return data
+
+
+def patched_weston_bg_python() -> str:
+  som_id_path = "/sys/devices/platform/vendor/vendor:gpio-som-id/som_id"
+  return (
+    "from PIL import Image; "
+    f"som=open(\"{som_id_path}\").read().strip(); "
+    "img=Image.open(\"/usr/comma/bg.jpg\").convert(\"RGB\"); "
+    "img=img.rotate(180) if som == \"1\" else img; "
+    "mask=img.convert(\"L\").point(lambda p: 255 if p > 16 else 0); "
+    "bbox=mask.getbbox(); "
+    "logo=img.crop(bbox) if bbox else img; "
+    # Pillow positive degrees are counter-clockwise; -90 pre-rotates the source clockwise.
+    "logo=logo.rotate(-90, expand=True); "
+    "resample=Image.Resampling.LANCZOS if hasattr(Image, \"Resampling\") else Image.LANCZOS; "
+    "logo=logo.resize((max(1, logo.width//3), max(1, logo.height//3)), resample); "
+    "canvas=Image.new(\"RGB\", img.size, (0, 0, 0)); "
+    "canvas.paste(logo, ((img.width - logo.width)//2, (img.height - logo.height)//2)); "
+    "canvas.save(\"/tmp/bg.jpg\")"
+  )
+
+
+def patched_weston_bg_exec_line() -> str:
+  python_cmd = patched_weston_bg_python().replace('"', '\\"')
+  return f"ExecStartPre=/bin/bash -c \"/usr/local/venv/bin/python -c '{python_cmd}'\""
+
+
+def patch_weston_service(original: bytes) -> bytes:
+  text = original.decode("utf-8")
+  if WESTON_BG_PATCH_MARKER in text:
+    return original
+
+  old = (
+    "ExecStartPre=/bin/bash -c \"/usr/local/venv/bin/python -c 'from PIL import Image; "
+    "img=Image.open(\\\"/usr/comma/bg.jpg\\\"); "
+    "(img.rotate(180) if open(\\\"/sys/devices/platform/vendor/vendor:gpio-som-id/som_id\\\").read().strip() == \\\"1\\\" else img).save(\\\"/tmp/bg.jpg\\\")'\""
+  )
+  new = (
+    f"# {WESTON_BG_PATCH_MARKER}: displayed boot logo was 90 degrees counter-clockwise.\n"
+    f"{patched_weston_bg_exec_line()}"
+  )
+
+  if old not in text:
+    raise RuntimeError("Unable to find weston.service background image generation line")
+  return text.replace(old, new, 1).encode("utf-8")
 
 
 def patch_setup_branding_script(original: bytes, entry_name: str) -> bytes:
@@ -423,48 +308,6 @@ def patch_reset_script() -> bytes:
   return data.encode("utf-8")
 
 
-def patch_mici_reset_script() -> bytes:
-  """
-  Use repo mici_reset.py (slider UX) for C4/tappity reset flow.
-  """
-  repo_root = Path(__file__).resolve().parents[2]
-  src = repo_root / "system/ui/mici_reset.py"
-  if not src.is_file():
-    raise RuntimeError(f"Unable to find repo mici_reset source: {src}")
-  data = src.read_text(encoding="utf-8")
-  if MICI_RESET_PATCH_MARKER not in data:
-    if data.startswith("#!"):
-      first_nl = data.find("\n")
-      if first_nl != -1:
-        data = data[:first_nl + 1] + f"# {MICI_RESET_PATCH_MARKER}\n" + data[first_nl + 1:]
-      else:
-        data = data + f"\n# {MICI_RESET_PATCH_MARKER}\n"
-    else:
-      data = f"# {MICI_RESET_PATCH_MARKER}\n" + data
-  return data.encode("utf-8")
-
-
-def patch_tici_reset_script() -> bytes:
-  """
-  Use repo tici_reset.py so C3/C3X reset behavior remains in sync with repo fixes.
-  """
-  repo_root = Path(__file__).resolve().parents[2]
-  src = repo_root / "system/ui/tici_reset.py"
-  if not src.is_file():
-    raise RuntimeError(f"Unable to find repo tici_reset source: {src}")
-  data = src.read_text(encoding="utf-8")
-  if TICI_RESET_PATCH_MARKER not in data:
-    if data.startswith("#!"):
-      first_nl = data.find("\n")
-      if first_nl != -1:
-        data = data[:first_nl + 1] + f"# {TICI_RESET_PATCH_MARKER}\n" + data[first_nl + 1:]
-      else:
-        data = data + f"\n# {TICI_RESET_PATCH_MARKER}\n"
-    else:
-      data = f"# {TICI_RESET_PATCH_MARKER}\n" + data
-  return data.encode("utf-8")
-
-
 def parse_args() -> argparse.Namespace:
   p = argparse.ArgumentParser(description="Patch AGNOS system image with minimal C4 reset/setup/updater fixes")
   p.add_argument("--manifest", default="system/hardware/tici/agnos.json", help="Path to AGNOS manifest JSON")
@@ -570,6 +413,20 @@ def download(url: str, dst: Path) -> None:
   with urllib.request.urlopen(url) as src, open(tmp, "wb") as out:
     shutil.copyfileobj(src, out, length=1024 * 1024)
   tmp.replace(dst)
+
+
+def download_with_sha256(url: str, dst: Path, expected_sha256: str) -> None:
+  if not dst.exists():
+    download(url, dst)
+
+  actual_sha256 = sha256_file(dst)
+  if actual_sha256 != expected_sha256:
+    dst.unlink(missing_ok=True)
+    download(url, dst)
+    actual_sha256 = sha256_file(dst)
+
+  if actual_sha256 != expected_sha256:
+    raise RuntimeError(f"Downloaded file hash mismatch for {dst}: got {actual_sha256}, expected {expected_sha256}")
 
 
 def run_cmd(cmd: list[str], check: bool = True, capture: bool = True) -> subprocess.CompletedProcess[str]:
@@ -717,12 +574,8 @@ def patch_reset_zipapp(original: bytes) -> bytes:
   changed = False
 
   replacement_reset = patch_reset_script()
-  replacement_tici_reset = patch_tici_reset_script()
-  replacement_mici_reset = patch_mici_reset_script()
   reset_replacements = {
     RESET_ENTRY_IN_ZIPAPP: replacement_reset,
-    TICI_RESET_ENTRY_IN_ZIPAPP: replacement_tici_reset,
-    MICI_RESET_ENTRY_IN_ZIPAPP: replacement_mici_reset,
   }
 
   with zipfile.ZipFile(src_io, "r") as src, zipfile.ZipFile(dst_io, "w", compression=zipfile.ZIP_DEFLATED) as dst:
@@ -750,7 +603,7 @@ def patch_reset_zipapp(original: bytes) -> bytes:
       new_info.create_system = info.create_system
       dst.writestr(new_info, payload)
 
-    # Some reference images may not include both reset variants; add missing entries explicitly.
+    # Some reference images may not include reset.py; add missing entry explicitly.
     default_external_attr = 0o100644 << 16
     for entry, payload in reset_replacements.items():
       if entry in seen_entries:
@@ -858,8 +711,12 @@ def zipapp_has_markers(data: bytes) -> bool:
     app_script = z.read(APPLICATION_ENTRY_IN_ZIPAPP)
   return (
     PATCH_MARKER.encode() in reset_script
-    and TICI_RESET_PATCH_MARKER.encode() in tici_reset_script
-    and MICI_RESET_PATCH_MARKER.encode() in mici_reset_script
+    and b"_device_tree_device_type" in reset_script
+    and b"gui_app.big_ui()" not in reset_script
+    and b"mici_setup" not in mici_reset_script
+    and b"jeepney" not in mici_reset_script
+    and b"mici_setup" not in tici_reset_script
+    and b"jeepney" not in tici_reset_script
     and APP_PATCH_MARKER.encode() in app_script
   )
 
@@ -896,6 +753,17 @@ def updater_zipapp_has_expected_content(data: bytes) -> bool:
   return updater_script == patch_updater_module()
 
 
+def weston_service_has_expected_content(data: bytes) -> bool:
+  return (
+    WESTON_BG_PATCH_MARKER.encode("utf-8") in data
+    and b"displayed boot logo was 90 degrees counter-clockwise" in data
+    and b"logo=img.crop(bbox) if bbox else img" in data
+    and b"logo=logo.rotate(-90, expand=True)" in data
+    and b"logo=logo.resize((max(1, logo.width//3), max(1, logo.height//3)), resample)" in data
+    and b"canvas.save(\\\"/tmp/bg.jpg\\\")" in data
+  )
+
+
 def parse_inode(debugfs_output: str) -> int:
   m = re.search(r"Inode:\s+(\d+)", debugfs_output)
   if not m:
@@ -918,6 +786,115 @@ def write_regular_file_to_image(debugfs: str, image: Path, image_path: str, loca
   run_debugfs(debugfs, image, f"set_inode_field <{inode}> gid {gid}", write=True)
 
 
+def ensure_directory_in_image(debugfs: str, image: Path, image_path: str, mode_octal: str = "040755", uid: int = 0, gid: int = 0) -> None:
+  try:
+    run_debugfs(debugfs, image, f"mkdir {image_path}", write=True)
+  except Exception as e:
+    err = str(e).lower()
+    if "already exists" not in err and "file exists" not in err:
+      raise
+
+  stat_out = run_debugfs(debugfs, image, f"stat {image_path}", write=False)
+  inode = parse_inode(stat_out)
+  run_debugfs(debugfs, image, f"set_inode_field <{inode}> mode {mode_octal}", write=True)
+  run_debugfs(debugfs, image, f"set_inode_field <{inode}> uid {uid}", write=True)
+  run_debugfs(debugfs, image, f"set_inode_field <{inode}> gid {gid}", write=True)
+
+
+def extract_wheel_subset(wheel_path: Path, extract_dir: Path, roots: set[str]) -> dict[Path, str]:
+  if extract_dir.exists():
+    shutil.rmtree(extract_dir)
+  extract_dir.mkdir(parents=True)
+  file_modes: dict[Path, str] = {}
+
+  with zipfile.ZipFile(wheel_path, "r") as wheel:
+    for info in wheel.infolist():
+      parts = Path(info.filename).parts
+      if not parts or parts[0] not in roots:
+        continue
+      if any(part == ".." for part in parts):
+        raise RuntimeError(f"Unsafe wheel entry path: {info.filename}")
+
+      local_path = extract_dir.joinpath(*parts)
+      if info.is_dir():
+        local_path.mkdir(parents=True, exist_ok=True)
+        continue
+
+      local_path.parent.mkdir(parents=True, exist_ok=True)
+      with wheel.open(info, "r") as src, open(local_path, "wb") as dst:
+        shutil.copyfileobj(src, dst)
+
+      perms = (info.external_attr >> 16) & 0o777
+      if not perms:
+        perms = 0o644
+      os.chmod(local_path, perms)
+      file_modes[local_path] = f"100{perms:03o}"
+
+  if not (extract_dir / JEEPNY_PACKAGE_DIR / "__init__.py").is_file():
+    raise RuntimeError("jeepney wheel extraction did not produce jeepney/__init__.py")
+  if not (extract_dir / JEEPNY_DIST_INFO_DIR / "METADATA").is_file():
+    raise RuntimeError("jeepney wheel extraction did not produce dist-info/METADATA")
+
+  return file_modes
+
+
+def install_python_package_tree(debugfs: str, image: Path, source_dir: Path, image_root: str, file_modes: dict[Path, str]) -> None:
+  dirs = sorted((p for p in source_dir.rglob("*") if p.is_dir()), key=lambda p: len(p.relative_to(source_dir).parts))
+  for local_dir in dirs:
+    rel = local_dir.relative_to(source_dir).as_posix()
+    ensure_directory_in_image(debugfs, image, f"{image_root}/{rel}", "040755", 0, 0)
+
+  files = sorted((p for p in source_dir.rglob("*") if p.is_file()), key=lambda p: p.relative_to(source_dir).as_posix())
+  for local_file in files:
+    rel = local_file.relative_to(source_dir).as_posix()
+    mode_octal = file_modes.get(local_file, "100644")
+    write_regular_file_to_image(debugfs, image, f"{image_root}/{rel}", local_file, mode_octal, 0, 0)
+
+
+def install_jeepney_into_image(debugfs: str, image: Path, work_dir: Path) -> None:
+  wheel_dir = work_dir / "python_wheels"
+  wheel_path = wheel_dir / f"jeepney-{JEEPNY_VERSION}-py3-none-any.whl"
+  download_with_sha256(JEEPNY_WHEEL_URL, wheel_path, JEEPNY_WHEEL_SHA256)
+
+  extract_dir = work_dir / "jeepney_wheel"
+  file_modes = extract_wheel_subset(wheel_path, extract_dir, {JEEPNY_PACKAGE_DIR, JEEPNY_DIST_INFO_DIR})
+
+  print(f"Installing jeepney {JEEPNY_VERSION} into AGNOS Python venv", flush=True)
+  install_python_package_tree(debugfs, image, extract_dir, PYTHON_SITE_PACKAGES_PATH_IN_IMAGE, file_modes)
+
+
+def image_has_jeepney(debugfs: str, image: Path, work_dir: Path) -> bool:
+  verify_dir = work_dir / "jeepney_verify"
+  verify_dir.mkdir(parents=True, exist_ok=True)
+  init_file = verify_dir / "__init__.py"
+  wrappers_file = verify_dir / "wrappers.py"
+  metadata_file = verify_dir / "METADATA"
+  init_file.unlink(missing_ok=True)
+  wrappers_file.unlink(missing_ok=True)
+  metadata_file.unlink(missing_ok=True)
+  try:
+    for image_path in (
+      f"{PYTHON_SITE_PACKAGES_PATH_IN_IMAGE}/{JEEPNY_PACKAGE_DIR}/__init__.py",
+      f"{PYTHON_SITE_PACKAGES_PATH_IN_IMAGE}/{JEEPNY_PACKAGE_DIR}/wrappers.py",
+      f"{PYTHON_SITE_PACKAGES_PATH_IN_IMAGE}/{JEEPNY_DIST_INFO_DIR}/METADATA",
+    ):
+      file_type, _mode, _uid, _gid = parse_debugfs_stat(run_debugfs(debugfs, image, f"stat {image_path}", write=False))
+      if file_type != "regular":
+        raise RuntimeError(f"{image_path} has inode type {file_type}, expected regular")
+
+    run_debugfs(debugfs, image, f"dump -p {PYTHON_SITE_PACKAGES_PATH_IN_IMAGE}/{JEEPNY_PACKAGE_DIR}/__init__.py {init_file}", write=False)
+    run_debugfs(debugfs, image, f"dump -p {PYTHON_SITE_PACKAGES_PATH_IN_IMAGE}/{JEEPNY_PACKAGE_DIR}/wrappers.py {wrappers_file}", write=False)
+    run_debugfs(debugfs, image, f"dump -p {PYTHON_SITE_PACKAGES_PATH_IN_IMAGE}/{JEEPNY_DIST_INFO_DIR}/METADATA {metadata_file}", write=False)
+  except Exception:
+    return False
+
+  return (
+    b"from .wrappers import *" in init_file.read_bytes()
+    and b"class DBusAddress" in wrappers_file.read_bytes()
+    and f"Version: {JEEPNY_VERSION}".encode("utf-8") in metadata_file.read_bytes()
+  )
+
+
 def parse_debugfs_stat(debugfs_output: str) -> tuple[str, str, int, int]:
   type_match = re.search(r"Type:\s+([A-Za-z]+)", debugfs_output)
   mode_match = re.search(r"Mode:\s+([0-7]+)", debugfs_output)
@@ -935,11 +912,7 @@ def inode_mode_from_type_and_perms(file_type: str, perms_octal: str) -> str:
   perms = perms_octal.strip()
   if not perms:
     raise RuntimeError("Empty permissions value in inode stat")
-  if not perms.startswith("0"):
-    perms = "0" + perms
-  if len(perms) < 4:
-    perms = perms.rjust(4, "0")
-  return f"{prefix}{perms}"
+  return f"{prefix}{int(perms, 8):03o}"
 
 
 def sync_files_from_reference_image(debugfs: str, reference_img: Path, patched_img: Path, sync_paths: list[str], work_dir: Path) -> list[str]:
@@ -1093,48 +1066,43 @@ def main() -> int:
     synced_files = sync_files_from_reference_image(debugfs, reference_raw, patched_img, sync_paths, work_dir)
     print(f"Synced {len(synced_files)} /usr/comma files from reference image", flush=True)
 
-  original_reset = work_dir / "comma_reset.orig"
-  patched_reset = work_dir / "comma_reset.patched"
-  verify_reset = work_dir / "comma_reset.verify"
-  original_setup = work_dir / "comma_setup.orig"
-  patched_setup = work_dir / "comma_setup.patched"
-  verify_setup = work_dir / "comma_setup.verify"
+  preserved_paths = {
+    RESET_PATH_IN_IMAGE: "comma_reset",
+    SETUP_PATH_IN_IMAGE: "comma_setup",
+    COMMA_SH_PATH_IN_IMAGE: "comma_sh",
+    MAGIC_PATH_IN_IMAGE: "comma_magic",
+    BG_PATH_IN_IMAGE: "comma_bg",
+  }
+  preserved_hashes: dict[str, str] = {}
+  for image_path, label in preserved_paths.items():
+    preserved_file = work_dir / f"{label}.preserved"
+    print(f"Recording existing {image_path} for preservation", flush=True)
+    run_debugfs(debugfs, patched_img, f"dump -p {image_path} {preserved_file}", write=False)
+    preserved_hashes[image_path] = sha256_file(preserved_file)
+
   original_updater = work_dir / "comma_updater.orig"
   patched_updater = work_dir / "comma_updater.patched"
   verify_updater = work_dir / "comma_updater.verify"
-  print("Extracting /usr/comma/reset from image", flush=True)
-  run_debugfs(debugfs, patched_img, f"dump -p {RESET_PATH_IN_IMAGE} {original_reset}", write=False)
+  original_weston = work_dir / "weston_service.orig"
+  patched_weston = work_dir / "weston_service.patched"
+  verify_weston = work_dir / "weston_service.verify"
 
-  original_data = original_reset.read_bytes()
-  patched_data = patch_reset_zipapp(original_data)
-  if patched_data == original_data:
-    print("Reset zipapp already contains patch marker; continuing", flush=True)
-  patched_reset.write_bytes(patched_data)
+  print("Extracting weston.service from image", flush=True)
+  run_debugfs(debugfs, patched_img, f"dump -p {WESTON_SERVICE_PATH_IN_IMAGE} {original_weston}", write=False)
 
-  print("Writing patched /usr/comma/reset back into image", flush=True)
-  write_regular_file_to_image(debugfs, patched_img, RESET_PATH_IN_IMAGE, patched_reset, "0100775", 0, 0)
+  weston_original_data = original_weston.read_bytes()
+  weston_patched_data = patch_weston_service(weston_original_data)
+  if weston_patched_data == weston_original_data:
+    print("weston.service already contains the expected boot-logo patch; continuing", flush=True)
+  patched_weston.write_bytes(weston_patched_data)
 
-  run_debugfs(debugfs, patched_img, f"dump -p {RESET_PATH_IN_IMAGE} {verify_reset}", write=False)
-  verify_data = verify_reset.read_bytes()
-  if not zipapp_has_markers(verify_data):
-    raise RuntimeError("Patched markers missing after writing reset file into image")
+  print("Writing patched weston.service back into image", flush=True)
+  write_regular_file_to_image(debugfs, patched_img, WESTON_SERVICE_PATH_IN_IMAGE, patched_weston, "100644", 0, 0)
 
-  print("Extracting /usr/comma/setup from image", flush=True)
-  run_debugfs(debugfs, patched_img, f"dump -p {SETUP_PATH_IN_IMAGE} {original_setup}", write=False)
-
-  setup_original_data = original_setup.read_bytes()
-  setup_patched_data = patch_setup_zipapp(setup_original_data)
-  if setup_patched_data == setup_original_data:
-    print("Setup zipapp already contains the expected compat patches; continuing", flush=True)
-  patched_setup.write_bytes(setup_patched_data)
-
-  print("Writing patched /usr/comma/setup back into image", flush=True)
-  write_regular_file_to_image(debugfs, patched_img, SETUP_PATH_IN_IMAGE, patched_setup, "0100775", 0, 0)
-
-  run_debugfs(debugfs, patched_img, f"dump -p {SETUP_PATH_IN_IMAGE} {verify_setup}", write=False)
-  verify_setup_data = verify_setup.read_bytes()
-  if not setup_zipapp_has_expected_content(verify_setup_data):
-    raise RuntimeError("Setup zipapp verification failed after writing setup file into image")
+  run_debugfs(debugfs, patched_img, f"dump -p {WESTON_SERVICE_PATH_IN_IMAGE} {verify_weston}", write=False)
+  verify_weston_data = verify_weston.read_bytes()
+  if not weston_service_has_expected_content(verify_weston_data):
+    raise RuntimeError("weston.service verification failed after writing weston.service file into image")
 
   print("Extracting /usr/comma/updater from image", flush=True)
   run_debugfs(debugfs, patched_img, f"dump -p {UPDATER_PATH_IN_IMAGE} {original_updater}", write=False)
@@ -1146,18 +1114,28 @@ def main() -> int:
   patched_updater.write_bytes(updater_patched_data)
 
   print("Writing patched /usr/comma/updater back into image", flush=True)
-  write_regular_file_to_image(debugfs, patched_img, UPDATER_PATH_IN_IMAGE, patched_updater, "0100775", 0, 0)
+  write_regular_file_to_image(debugfs, patched_img, UPDATER_PATH_IN_IMAGE, patched_updater, "100775", 0, 0)
 
   run_debugfs(debugfs, patched_img, f"dump -p {UPDATER_PATH_IN_IMAGE} {verify_updater}", write=False)
   verify_updater_data = verify_updater.read_bytes()
   if not updater_zipapp_has_expected_content(verify_updater_data):
     raise RuntimeError("Updater zipapp verification failed after writing updater file into image")
 
+  install_jeepney_into_image(debugfs, patched_img, work_dir)
+  if not image_has_jeepney(debugfs, patched_img, work_dir):
+    raise RuntimeError("jeepney verification failed after installing package into image")
+
+  for image_path, label in preserved_paths.items():
+    verify_file = work_dir / f"{label}.verify"
+    run_debugfs(debugfs, patched_img, f"dump -p {image_path} {verify_file}", write=False)
+    if sha256_file(verify_file) != preserved_hashes[image_path]:
+      raise RuntimeError(f"{image_path} changed unexpectedly; protected StarPilot payload files must stay byte-identical")
+
   if args.set_version:
     version_file = work_dir / "VERSION.patched"
     version_file.write_text(args.set_version.strip() + "\n", encoding="utf-8")
     print(f"Writing {VERSION_PATH_IN_IMAGE}={args.set_version.strip()}", flush=True)
-    write_regular_file_to_image(debugfs, patched_img, VERSION_PATH_IN_IMAGE, version_file, "0100644", 0, 0)
+    write_regular_file_to_image(debugfs, patched_img, VERSION_PATH_IN_IMAGE, version_file, "100644", 0, 0)
     version_raw = run_debugfs(debugfs, patched_img, f"cat {VERSION_PATH_IN_IMAGE}", write=False)
     version_lines = [ln.strip() for ln in version_raw.splitlines() if ln.strip() and not ln.startswith("debugfs ")]
     version_verify = version_lines[0] if version_lines else ""

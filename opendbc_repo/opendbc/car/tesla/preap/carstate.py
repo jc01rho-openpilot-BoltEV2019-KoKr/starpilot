@@ -126,16 +126,16 @@ def update_preap(cs, can_parsers):
 
   cs.das_control = None
   cs.cruise_enabled_prev = ret.cruiseState.enabled
-  ret.pedalMaxRegen = cs.pccEvent == "pedalMaxRegen"
-  ret.teslaCCEngaged = cs.pccEvent == "teslaCCEngaged"
-  ret.teslaCCDisengaged = cs.pccEvent == "teslaCCDisengaged"
-  ret.teslaCCNotArmed = (
+  fp_ret.pedalMaxRegen = cs.pccEvent == "pedalMaxRegen"
+  fp_ret.teslaCCEngaged = cs.pccEvent == "teslaCCEngaged"
+  fp_ret.teslaCCDisengaged = cs.pccEvent == "teslaCCDisengaged"
+  fp_ret.teslaCCNotArmed = (
     not nap_conf.use_pedal and
     cs.cruiseEnabled and
     cs.enableLongControl and
     cs.di_cruise_state not in ("STANDBY", "ENABLED")
   )
-  ret.pedalLongActive = cs.enableLongControl and nap_conf.use_pedal
+  fp_ret.pedalLongActive = cs.enableLongControl and nap_conf.use_pedal
   return ret, fp_ret
 
 

@@ -11,6 +11,7 @@ from cereal import car, custom, log
 from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper
 from openpilot.common.swaglog import cloudlog, ForwardingHandler
+from openpilot.system.hardware.hw import Paths
 
 from opendbc.car import DT_CTRL, ButtonType, structs
 from opendbc.car.can_definitions import CanData, CanRecvCallable, CanSendCallable
@@ -136,8 +137,9 @@ class Car:
     if self.CP.secOcRequired and not is_release:
       # Copy user key if available
       try:
-        with open("/cache/params/SecOCKey") as f:
-          user_key = f.readline().strip()
+        user_key = Params(Paths.params_cache_root()).get("SecOCKey")
+        if user_key is not None:
+          user_key = user_key.strip()
           if len(user_key) == 32:
             self.params.put("SecOCKey", user_key)
       except Exception:
@@ -236,6 +238,7 @@ class Car:
         self.is_metric,
         self.sm['starpilotPlan'].speedLimitChanged,
         self.starpilot_toggles,
+        FPCS,
       )
     else:
       preap_v_cruise_kph = float(CS.cruiseState.speed * CV.MS_TO_KPH)
@@ -267,9 +270,9 @@ class Car:
     CS.vCruise = float(self.v_cruise_helper.v_cruise_kph)
     CS.vCruiseCluster = float(self.v_cruise_helper.v_cruise_cluster_kph)
 
-    if any(be.type in (ButtonType.accelCruise, ButtonType.accelHardCruise, ButtonType.resumeCruise) for be in CS.buttonEvents):
+    if any(be.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for be in CS.buttonEvents):
       self.resume_prev_button = True
-    elif any(be.type in (ButtonType.decelCruise, ButtonType.decelHardCruise, ButtonType.setCruise) for be in CS.buttonEvents):
+    elif any(be.type in (ButtonType.decelCruise, ButtonType.setCruise) for be in CS.buttonEvents):
       self.resume_prev_button = False
 
     FPCS = self.starpilot_card.update(CS, FPCS, self.sm, self.starpilot_toggles)
@@ -383,6 +386,8 @@ class Car:
     starpilot_target_speed = 0.0
     allow_plan_decrease = False
     lead_present = False
+    lead_distance_m = 0.0
+    lead_rel_speed_ms = 0.0
     lookahead_points = REDNECK_DECREASE_LOOKAHEAD_POINTS
     if self.sm.seen['starpilotPlan'] and self.sm.valid['starpilotPlan']:
       starpilot_target_speed = float(self.sm['starpilotPlan'].vCruise)
@@ -396,6 +401,11 @@ class Car:
                                  str(longitudinal_plan.longitudinalPlanSource) != "cruise")
       if lead_present and len(plan_speeds) > 0:
         lookahead_points = len(plan_speeds)
+        if self.sm.seen['radarState'] and self.sm.valid['radarState']:
+          lead = self.sm['radarState'].leadOne
+          if lead.status:
+            lead_distance_m = max(float(lead.dRel), 0.0)
+            lead_rel_speed_ms = float(lead.vRel)
 
     return select_redneck_target_speed(
       float(getattr(CS, "vCruise", 0.0)),
@@ -405,6 +415,8 @@ class Car:
       lookahead_points,
       allow_plan_decrease=allow_plan_decrease,
       lead_present=lead_present,
+      lead_distance_m=lead_distance_m,
+      lead_rel_speed_ms=lead_rel_speed_ms,
     ), lead_present
 
   def step(self):

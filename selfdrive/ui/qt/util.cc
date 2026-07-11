@@ -14,6 +14,7 @@
 #include <QLayoutItem>
 #include <QStyleOption>
 #include <QPainterPath>
+#include <QStringList>
 #include <QTextStream>
 #include <QtXml/QDomDocument>
 
@@ -28,6 +29,24 @@ QString getVersion() {
 
 QString getBrand() {
   return QObject::tr("StarPilot");
+}
+
+QString getStarPilotDisplayVersion() {
+  return "6.7";
+}
+
+QString formatStarPilotDisplayVersionDescription(const QString &description) {
+  if (description.isEmpty()) {
+    return "";
+  }
+
+  QStringList parts = description.split(" / ");
+  if (parts.isEmpty()) {
+    return getStarPilotDisplayVersion();
+  }
+
+  parts[0] = getStarPilotDisplayVersion();
+  return parts.join(" / ");
 }
 
 QString getUserAgent() {

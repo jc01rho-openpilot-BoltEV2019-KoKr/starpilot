@@ -24,17 +24,12 @@ CRUISE_LONG_PRESS = 50
 CRUISE_NEAREST_FUNC = {
   ButtonType.accelCruise: math.ceil,
   ButtonType.decelCruise: math.floor,
-  ButtonType.accelHardCruise: math.ceil,
-  ButtonType.decelHardCruise: math.floor,
 }
 CRUISE_INTERVAL_SIGN = {
   ButtonType.accelCruise: +1,
   ButtonType.decelCruise: -1,
-  ButtonType.accelHardCruise: +1,
-  ButtonType.decelHardCruise: -1,
 }
-HARD_CRUISE_BUTTONS = (ButtonType.accelHardCruise, ButtonType.decelHardCruise)
-ACCEL_CRUISE_BUTTONS = (ButtonType.accelCruise, ButtonType.accelHardCruise)
+ACCEL_CRUISE_BUTTONS = (ButtonType.accelCruise,)
 
 
 class VCruiseHelper:
@@ -46,9 +41,8 @@ class VCruiseHelper:
     self.button_timers = {
       ButtonType.decelCruise: 0,
       ButtonType.accelCruise: 0,
-      ButtonType.decelHardCruise: 0,
-      ButtonType.accelHardCruise: 0,
     }
+    self.button_hard_states = dict.fromkeys(self.button_timers, False)
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
 
     self.gm_cc_only = self.CP.carFingerprint in CC_ONLY_CAR and self.CP.flags & GMFlags.CC_LONG.value
@@ -77,15 +71,25 @@ class VCruiseHelper:
   def v_cruise_initialized(self):
     return self.v_cruise_kph != V_CRUISE_UNSET
 
-  def update_v_cruise(self, CS, enabled, is_metric, speed_limit_changed, starpilot_toggles):
+  @staticmethod
+  def _is_hard_cruise_button(button_type, starpilot_car_state) -> bool:
+    if starpilot_car_state is None:
+      return False
+    if button_type == ButtonType.accelCruise:
+      return bool(getattr(starpilot_car_state, "accelHardCruise", False))
+    if button_type == ButtonType.decelCruise:
+      return bool(getattr(starpilot_car_state, "decelHardCruise", False))
+    return False
+
+  def update_v_cruise(self, CS, enabled, is_metric, speed_limit_changed, starpilot_toggles, starpilot_car_state=None):
     self.v_cruise_kph_last = self.v_cruise_kph
 
     if CS.cruiseState.available:
       if self.gm_cc_only or self.redneck_non_pcm or not self.CP.pcmCruise:
         # if stock cruise is completely disabled, then we can use our own set speed logic
-        self._update_v_cruise_non_pcm(CS, enabled, is_metric, speed_limit_changed, starpilot_toggles)
+        self._update_v_cruise_non_pcm(CS, enabled, is_metric, speed_limit_changed, starpilot_toggles, starpilot_car_state)
         self.v_cruise_cluster_kph = self.v_cruise_kph
-        self.update_button_timers(CS, enabled)
+        self.update_button_timers(CS, enabled, starpilot_car_state)
       else:
         self.v_cruise_kph = CS.cruiseState.speed * CV.MS_TO_KPH
         self.v_cruise_cluster_kph = CS.cruiseState.speedCluster * CV.MS_TO_KPH
@@ -99,7 +103,7 @@ class VCruiseHelper:
       self.v_cruise_kph = V_CRUISE_UNSET
       self.v_cruise_cluster_kph = V_CRUISE_UNSET
 
-  def _update_v_cruise_non_pcm(self, CS, enabled, is_metric, speed_limit_changed, starpilot_toggles):
+  def _update_v_cruise_non_pcm(self, CS, enabled, is_metric, speed_limit_changed, starpilot_toggles, starpilot_car_state=None):
     # handle button presses. TODO: this should be in state_control, but a decelCruise press
     # would have the effect of both enabling and changing speed is checked after the state transition
     if not enabled:
@@ -107,6 +111,7 @@ class VCruiseHelper:
 
     long_press = False
     button_type = None
+    button_is_hard = False
 
     v_cruise_delta = 1. if is_metric else IMPERIAL_INCREMENT
 
@@ -115,12 +120,14 @@ class VCruiseHelper:
         if self.button_timers[b.type.raw] > CRUISE_LONG_PRESS:
           return  # end long press
         button_type = b.type.raw
+        button_is_hard = self.button_hard_states.get(button_type, False) or self._is_hard_cruise_button(button_type, starpilot_car_state)
         break
     else:
       for k, timer in self.button_timers.items():
         if timer and timer % CRUISE_LONG_PRESS == 0:
           button_type = k
           long_press = True
+          button_is_hard = self.button_hard_states.get(button_type, False)
           break
 
     if button_type is None:
@@ -140,7 +147,7 @@ class VCruiseHelper:
       return
 
     short_interval, long_interval = self._get_cruise_delta_intervals(starpilot_toggles)
-    v_cruise_delta_interval = long_interval if long_press or button_type in HARD_CRUISE_BUTTONS else short_interval
+    v_cruise_delta_interval = long_interval if long_press or button_is_hard else short_interval
     v_cruise_delta = v_cruise_delta * v_cruise_delta_interval
     if v_cruise_delta_interval % 5 == 0 and self.v_cruise_kph % v_cruise_delta != 0:  # partial interval
       self.v_cruise_kph = CRUISE_NEAREST_FUNC[button_type](self.v_cruise_kph / v_cruise_delta) * v_cruise_delta
@@ -148,12 +155,12 @@ class VCruiseHelper:
       self.v_cruise_kph += v_cruise_delta * CRUISE_INTERVAL_SIGN[button_type]
 
     # If set is pressed while overriding, clip cruise speed to minimum of vEgo
-    if CS.gasPressed and button_type in (ButtonType.decelCruise, ButtonType.decelHardCruise, ButtonType.setCruise):
+    if CS.gasPressed and button_type in (ButtonType.decelCruise, ButtonType.setCruise):
       self.v_cruise_kph = max(self.v_cruise_kph, CS.vEgo * CV.MS_TO_KPH)
 
     self.v_cruise_kph = np.clip(round(self.v_cruise_kph, 1), V_CRUISE_MIN, V_CRUISE_MAX)
 
-  def update_button_timers(self, CS, enabled):
+  def update_button_timers(self, CS, enabled, starpilot_car_state=None):
     # increment timer for buttons still pressed
     for k in self.button_timers:
       if self.button_timers[k] > 0:
@@ -162,8 +169,10 @@ class VCruiseHelper:
     for b in CS.buttonEvents:
       if b.type.raw in self.button_timers:
         # Start/end timer and store current state on change of button pressed
-        self.button_timers[b.type.raw] = 1 if b.pressed else 0
-        self.button_change_states[b.type.raw] = {"standstill": CS.cruiseState.standstill, "enabled": enabled}
+        button_type = b.type.raw
+        self.button_timers[button_type] = 1 if b.pressed else 0
+        self.button_change_states[button_type] = {"standstill": CS.cruiseState.standstill, "enabled": enabled}
+        self.button_hard_states[button_type] = self._is_hard_cruise_button(button_type, starpilot_car_state) if b.pressed else False
 
   def initialize_v_cruise(self, CS, experimental_mode: bool, resume_prev_button: bool,
                           starpilot_toggles: SimpleNamespace, desired_speed_limit: float = 0.0) -> None:
@@ -172,7 +181,7 @@ class VCruiseHelper:
       return
 
     engage_floor_kph = max(V_CRUISE_MIN, 7.0 * CV.MPH_TO_KPH)
-    resume_pressed = any(b.type in (ButtonType.accelCruise, ButtonType.accelHardCruise, ButtonType.resumeCruise) for b in CS.buttonEvents)
+    resume_pressed = any(b.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for b in CS.buttonEvents)
     remembered_resume = resume_prev_button and (self.gm_cc_only or self.redneck_non_pcm)
 
     if self.v_cruise_initialized and (resume_pressed or remembered_resume):

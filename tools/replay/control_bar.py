@@ -267,7 +267,7 @@ def main():
     else:
       # Waiting state
       msg = "Waiting for replay..."
-      tw  = rl.measure_text_ex(font, msg, 12)
+      tw  = rl.measure_text_ex(font, msg, 12, 0)
       rl.draw_text_ex(font, msg, rl.Vector2((W - tw.x) / 2, H / 2 - 6), 12, 0, TXT_DIM)
 
     rl.end_drawing()

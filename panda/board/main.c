@@ -27,7 +27,19 @@
 #include "board/obj/gitversion.h"
 
 #include "board/can_comms.h"
+
+static bool panda_ignition_line(void);
+
 #include "board/main_comms.h"
+
+
+static bool panda_ignition_line(void) {
+  #ifdef PANDA_IGNORE_IGNITION_LINE
+  return false;
+  #else
+  return harness_check_ignition();
+  #endif
+}
 
 
 // ********************* Serial debugging *********************
@@ -176,7 +188,10 @@ static void tick_handler(void) {
       const bool recent_heartbeat = heartbeat_counter == 0U;
 
       // tick drivers at 1Hz
-      bool started = harness_check_ignition() || ignition_can;
+      bool started = panda_ignition_line() || ignition_can;
+      #ifdef PANDA_HKG_REMOTE_START
+      started = started || hkg_remote_climate_wake;
+      #endif
       bootkick_tick(started, recent_heartbeat);
 
       // increase heartbeat counter and cap it at the uint32 limit
@@ -255,11 +270,19 @@ static void tick_handler(void) {
       if (ignition_can_cnt > 2U) {
         ignition_can = false;
       }
+      #ifdef PANDA_HKG_REMOTE_START
+      if (hkg_remote_climate_wake_cnt > 2U) {
+        hkg_remote_climate_wake = false;
+      }
+      #endif
 
       // on to the next one
       uptime_cnt += 1U;
       safety_mode_cnt += 1U;
       ignition_can_cnt += 1U;
+      #ifdef PANDA_HKG_REMOTE_START
+      hkg_remote_climate_wake_cnt += 1U;
+      #endif
 
       // synchronous safety check
       safety_tick(&current_safety_config);

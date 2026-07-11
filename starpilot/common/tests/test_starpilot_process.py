@@ -54,6 +54,44 @@ def test_transition_offroad_skips_invalid_gps_persist():
   assert params.writes == []
 
 
+def test_transition_offroad_skips_missing_gps_persist():
+  params = FakeParams()
+  planner = SimpleNamespace(gps_position=None)
+  toggles = SimpleNamespace(lock_doors_timer=0, random_themes=False)
+
+  starpilot_process.transition_offroad(
+    planner,
+    FakeModelManager(),
+    FakeThemeManager(),
+    FakeThreadManager(),
+    False,
+    None,
+    params,
+    toggles,
+  )
+
+  assert params.writes == []
+
+
+def test_transition_offroad_skips_malformed_gps_persist():
+  params = FakeParams()
+  planner = SimpleNamespace(gps_position={"hasFix": True})
+  toggles = SimpleNamespace(lock_doors_timer=0, random_themes=False)
+
+  starpilot_process.transition_offroad(
+    planner,
+    FakeModelManager(),
+    FakeThemeManager(),
+    FakeThreadManager(),
+    False,
+    None,
+    params,
+    toggles,
+  )
+
+  assert params.writes == []
+
+
 def test_transition_offroad_persists_valid_gps():
   params = FakeParams()
   gps_position = {

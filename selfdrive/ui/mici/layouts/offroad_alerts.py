@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from openpilot.common.params import Params
 from openpilot.selfdrive.selfdrived.alertmanager import OFFROAD_ALERTS
+from openpilot.selfdrive.ui.lib.starpilot_version import STARPILOT_DISPLAY_VERSION
 from openpilot.system.hardware import HARDWARE
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.label import UnifiedLabel
@@ -252,7 +253,8 @@ class MiciOffroadAlerts(Scroller):
           # format: "version / branch / commit / date"
           parts = new_desc.split(" / ")
           if len(parts) > 3:
-            version, date = parts[0], parts[3]
+            date = parts[3]
+            version = STARPILOT_DISPLAY_VERSION
             version_string = f"\nopenpilot {version}, {date}\n"
 
         update_alert_data.text = f"Update available {version_string}. Click to update. Read the release notes at blog.comma.ai."

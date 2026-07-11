@@ -1,15 +1,14 @@
-import ctypes, ctypes.util, time, os, builtins, fcntl
+import ctypes, time, os, builtins, fcntl
+from tinygrad.helpers import DEV
 from tinygrad.runtime.support.hcq import FileIOInterface
+from tinygrad.runtime.autogen import libc
 from test.mockgpu.nv.nvdriver import NVDriver
 from test.mockgpu.amd.amddriver import AMDDriver
+from test.mockgpu.am.amdriver import AMDriver, AMUSBDriver
 start = time.perf_counter()
 
-# *** ioctl lib ***
-libc = ctypes.CDLL(ctypes.util.find_library("c"))
-libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
-libc.mmap.restype = ctypes.c_void_p
-
-drivers = [AMDDriver(), NVDriver()]
+drivers = [cls() for t in DEV.value if (cls:={"MOCKPCI+AMD": AMDriver, "MOCKKFD+AMD": AMDDriver, "MOCK+AMD": AMDDriver, "MOCKUSB+AMD": AMUSBDriver,
+                                              "MOCK+NV": NVDriver}.get(f"{t.interface}+{t.device}"))]
 tracked_fds = {}
 
 original_memoryview = builtins.memoryview
@@ -64,7 +63,7 @@ class MockFileIOInterface(FileIOInterface):
     if self.fd in tracked_fds:
       tracked_fds[self.fd].close(self.fd)
       tracked_fds.pop(self.fd)
-    else: os.close(self.fd)
+    elif self.fd is not None: os.close(self.fd)
 
   def ioctl(self, request, arg):
     if self.fd in tracked_fds:
@@ -77,9 +76,10 @@ class MockFileIOInterface(FileIOInterface):
     return libc.mmap(start, sz, prot, flags, self.fd, offset)
 
   def read(self, size=None, binary=False, offset=None):
-    if binary: raise NotImplementedError()
     if self.fd in tracked_fds:
+      if offset is not None: tracked_fds[self.fd].seek(offset)
       return tracked_fds[self.fd].read_contents(size)
+    if binary: raise NotImplementedError()
     with open(self.fd, "rb" if binary else "r", closefd=False) as file:
       if file.tell() >= os.fstat(self.fd).st_size: file.seek(0)
       return file.read(size)
@@ -89,12 +89,19 @@ class MockFileIOInterface(FileIOInterface):
       return tracked_fds[self.fd].list_contents()
     return os.listdir(self.path)
 
-  def write(self, content, binary=False, offset=None): raise NotImplementedError()
+  def write(self, content, binary=False, offset=None):
+    if self.fd in tracked_fds:
+      if offset is not None: tracked_fds[self.fd].seek(offset)
+      return tracked_fds[self.fd].write_contents(content)
+    raise NotImplementedError()
   def seek(self, offset):
     if self.fd in tracked_fds:
       tracked_fds[self.fd].seek(offset)
     else:
       os.lseek(self.fd, offset, os.SEEK_CUR)
+  @staticmethod
+  def anon_mmap(start, sz, prot, flags, offset):
+    return FileIOInterface._mmap(start, sz, prot, flags & ~0x4a000, -1, offset)  # strip MAP_LOCKED|MAP_POPULATE|MAP_HUGETLB
   @staticmethod
   def exists(path): return _open(path, os.O_RDONLY) is not None
   @staticmethod

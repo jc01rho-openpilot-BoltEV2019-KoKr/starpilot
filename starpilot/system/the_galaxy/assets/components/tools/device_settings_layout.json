@@ -1779,12 +1779,11 @@
         "parent_key": "AdvancedCustomUI"
       },
       {
-        "key": "HideLeadMarker",
-        "label": "Hide Lead Marker",
-        "description": "Hide the lead-vehicle marker from the driving screen.",
+        "key": "LeadIndicator",
+        "label": "Lead Indicator",
+        "description": "Show the lead-vehicle marker on the driving screen.",
         "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedCustomUI"
+        "ui_type": "toggle"
       },
       {
         "key": "HideMaxSpeed",
@@ -1903,7 +1902,24 @@
         "description": "On-screen gas and brake indicators.\n\nDynamic: Opacity changes according to how much openpilot is accelerating or braking\nStatic: Full when active, dim when not",
         "data_type": "bool",
         "ui_type": "toggle",
+        "is_parent_toggle": true,
         "parent_key": "CustomUI"
+      },
+      {
+        "key": "DynamicPedalsOnUI",
+        "label": "Dynamic",
+        "description": "Fade the gas and brake indicators based on how much openpilot is accelerating or braking.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "PedalsOnUI"
+      },
+      {
+        "key": "StaticPedalsOnUI",
+        "label": "Static",
+        "description": "Show full-strength gas and brake indicators when active, and dim them when inactive.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "PedalsOnUI"
       },
       {
         "key": "RotatingWheel",
@@ -2024,6 +2040,17 @@
         "ui_type": "toggle"
       },
       {
+        "key": "ClearNavOnOffroadTimeoutMinutes",
+        "label": "Clear Route Delay",
+        "description": "How long the device can stay offroad before clearing the active route. Set to 0 for immediate clearing.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0,
+        "max": 180,
+        "step": 1,
+        "parent_key": "ClearNavOnOffroad"
+      },
+      {
         "key": "RoadNameUI",
         "label": "Road Name",
         "description": "Display the road name at the bottom of the driving screen using data from \"OpenStreetMap (OSM)\".",
@@ -2101,6 +2128,14 @@
         "key": "StoppedTimer",
         "label": "Stopped Timer",
         "description": "Show a timer when stopped in place of the current speed to indicate how long the vehicle has been stopped.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "QOLVisuals"
+      },
+      {
+        "key": "StockConfidenceBallWidget",
+        "label": "Stock Confidence Ball Widget",
+        "description": "Use the original moving confidence ball on the small comma 4 UI instead of the fixed confidence, CEM/CCM, and personality sidebar.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "QOLVisuals"
@@ -2481,6 +2516,13 @@
         "ui_type": "toggle"
       },
       {
+        "key": "IgnoreIgnitionLine",
+        "label": "Use CAN Ignition Only",
+        "description": "Use Panda firmware that ignores the physical ignition line and starts from CAN ignition only.\n\nRequires a Panda flash. Use this only on vehicles with reliable CAN ignition when the harness box reports false ignition.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
         "key": "LongPitch",
         "label": "Smooth Pedal Response on Hills",
         "description": "Smoothen acceleration and braking when driving downhill/uphill.",
@@ -2489,8 +2531,15 @@
       },
       {
         "key": "RemoteStartBootsComma",
-        "label": "Remote Start Boots comma",
+        "label": "Remote Start Boots Comma (GM)",
         "description": "Use the remote-start GM panda firmware at boot.\n\nRequired for GM remote-start startup signal behavior.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
+        "key": "HKGRemoteStartBootsComma",
+        "label": "Remote Start Boots Comma (HKG)",
+        "description": "Use the remote-climate Hyundai/Kia/Genesis CAN-FD panda firmware at boot.\n\nRequired for EV remote-climate startup signal behavior.",
         "data_type": "bool",
         "ui_type": "toggle"
       },
@@ -3584,6 +3633,13 @@
     "icon": "bi-exclamation-triangle",
     "params": [
       {
+        "key": "TryRaylibUI",
+        "label": "Try raylib UI",
+        "description": "Use the beta raylib UI instead of the default Qt UI on tici/tizi devices. This setting has no effect on C4/mici devices.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
         "key": "DisableWideRoad",
         "label": "Disable Wide Road Camera",
         "description": "Only enable this if the wide camera is broken or for development!\n\nDisabling the wide camera may degrade driving performance and cause instability.\n\nRequires a reboot to take effect.",
@@ -3599,6 +3655,28 @@
         "min": -0.35,
         "max": 0.35,
         "step": 0.01,
+        "precision": 2
+      },
+      {
+        "key": "HondaLateralPidKpScale",
+        "label": "Honda PID Kp Scale",
+        "description": "Scale the active Honda lateralTuning.pid.kpV values from openDBC. Applies live to Honda PID lateral only.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.1,
+        "max": 4.0,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "key": "HondaLateralPidKiScale",
+        "label": "Honda PID Ki Scale",
+        "description": "Scale the active Honda lateralTuning.pid.kiV values from openDBC. Applies live to Honda PID lateral only.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.1,
+        "max": 4.0,
+        "step": 0.05,
         "precision": 2
       },
       {

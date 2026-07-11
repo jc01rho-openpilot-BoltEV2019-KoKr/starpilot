@@ -13,7 +13,7 @@ from openpilot.selfdrive.selfdrived.alertmanager import set_offroad_alert
 from openpilot.selfdrive.test.process_replay.process_replay import CONFIGS
 
 AlertSize = log.SelfdriveState.AlertSize
-AudibleAlert = car.CarControl.HUDControl.AudibleAlert
+AudibleAlert = log.SelfdriveState.AudibleAlert
 EventName = log.OnroadEvent.EventName
 
 OFFROAD_ALERTS_PATH = os.path.join(BASEDIR, "selfdrive/selfdrived/alerts_offroad.json")

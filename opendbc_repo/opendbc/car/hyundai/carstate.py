@@ -75,6 +75,12 @@ class CarState(CarStateBase):
     self.cruise_buttons: deque = deque([Buttons.NONE] * PREV_BUTTON_SAMPLES, maxlen=PREV_BUTTON_SAMPLES)
     self.main_buttons: deque = deque([Buttons.NONE] * PREV_BUTTON_SAMPLES, maxlen=PREV_BUTTON_SAMPLES)
     self.lda_button = 0
+    self.sonata_hybrid_lkas_source = None
+    self.sonata_hybrid_lkas_sources = {
+      "bcm": 0,
+      "clu13": 0,
+      "swl_stat": 0,
+    }
     self.lda_button_raw = 0
     self.lda_button_raw_initialized = False
     self.lda_button_last_raw_rise_ts_nanos = 0
@@ -204,10 +210,8 @@ class CarState(CarStateBase):
     return button_events
 
   def create_lkas_button_events(self, cp: CANParser, prev_lda_button: int) -> list[structs.CarState.ButtonEvent]:
-    if self.CP.carFingerprint == CAR.HYUNDAI_SONATA_HYBRID and cp.ts_nanos["BCM_PO_11"]["LDA_BTN"] > 0:
-      # Route-proven: late-model Sonata Hybrid publishes a live LKAS button on BCM_PO_11
-      # while CLU13 is present on the main bus but does not carry the LKAS state.
-      self.lda_button = int(cp.vl["BCM_PO_11"]["LDA_BTN"])
+    if self.CP.carFingerprint == CAR.HYUNDAI_SONATA_HYBRID:
+      self.lda_button = self.get_sonata_hybrid_lkas_button_state(cp)
     # Some classic HKG platforms publish the LKAS button on the cluster bus instead of BCM_PO_11.
     elif cp.ts_nanos["CLU13"]["CF_Clu_LdwsLkasSW"] > 0:
       self.lda_button = int(cp.vl["CLU13"]["CF_Clu_LdwsLkasSW"])
@@ -217,6 +221,32 @@ class CarState(CarStateBase):
       self.lda_button = 0
 
     return create_button_events(self.lda_button, prev_lda_button, {1: ButtonType.lkas})
+
+  def get_sonata_hybrid_lkas_button_state(self, cp: CANParser) -> int:
+    source_states = {
+      "bcm": int(cp.vl["BCM_PO_11"]["LDA_BTN"]) if cp.ts_nanos["BCM_PO_11"]["LDA_BTN"] > 0 else 0,
+      "clu13": int(cp.vl["CLU13"]["CF_Clu_LdwsLkasSW"]) if cp.ts_nanos["CLU13"]["CF_Clu_LdwsLkasSW"] > 0 else 0,
+      "swl_stat": int(cp.vl["CLU13"]["CF_Clu_SWL_Stat"] == 4) if cp.ts_nanos["CLU13"]["CF_Clu_SWL_Stat"] > 0 else 0,
+    }
+
+    changed_sources = [source for source, state in source_states.items() if state != self.sonata_hybrid_lkas_sources[source]]
+    active_sources = [source for source, state in source_states.items() if state]
+
+    selected_source = None
+    if self.sonata_hybrid_lkas_source in changed_sources:
+      selected_source = self.sonata_hybrid_lkas_source
+    elif active_sources:
+      selected_source = active_sources[0]
+    elif changed_sources:
+      selected_source = changed_sources[0]
+    elif self.sonata_hybrid_lkas_source is not None:
+      selected_source = self.sonata_hybrid_lkas_source
+
+    self.sonata_hybrid_lkas_sources.update(source_states)
+    if selected_source is not None:
+      self.sonata_hybrid_lkas_source = selected_source
+      return source_states[selected_source]
+    return 0
 
   def update(self, can_parsers, starpilot_toggles) -> structs.CarState:
     cp = can_parsers[Bus.pt]

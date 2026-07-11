@@ -92,7 +92,7 @@ void LogReader::migrateOldEvents() {
 
       new_state.setActive(old_state.getActiveDEPRECATED());
       new_state.setAlertSize(old_state.getAlertSizeDEPRECATED());
-      new_state.setAlertSound(old_state.getAlertSound2DEPRECATED());
+      new_state.setAlertSound(static_cast<cereal::SelfdriveState::AudibleAlert>(old_state.getAlertSound2DEPRECATED()));
       new_state.setAlertStatus(old_state.getAlertStatusDEPRECATED());
       new_state.setAlertText1(old_state.getAlertText1DEPRECATED());
       new_state.setAlertText2(old_state.getAlertText2DEPRECATED());

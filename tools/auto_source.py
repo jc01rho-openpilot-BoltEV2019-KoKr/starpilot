@@ -1,5 +1,19 @@
-#!/usr/bin/env python3
+#!/bin/sh
+""":"
+REPO_ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
+
+if [ -x "$PYTHON_BIN" ]; then
+  exec "$PYTHON_BIN" "$0" "$@"
+fi
+
+exec python3 "$0" "$@"
+":"""
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from openpilot.tools.lib.logreader import LogReader, ReadMode
 
 

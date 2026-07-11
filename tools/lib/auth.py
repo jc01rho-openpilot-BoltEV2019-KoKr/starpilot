@@ -1,4 +1,14 @@
-#!/usr/bin/env python3
+#!/bin/sh
+""":"
+REPO_ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
+PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
+
+if [ -x "$PYTHON_BIN" ]; then
+  exec "$PYTHON_BIN" "$0" "$@"
+fi
+
+exec python3 "$0" "$@"
+":"""
 """
 Usage::
 
@@ -27,12 +37,15 @@ import pprint
 import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from openpilot.common.params import Params
 from openpilot.tools.lib.api import APIError, CommaApi, UnauthorizedError
-from openpilot.tools.lib.auth_config import set_token, get_token
+from openpilot.tools.lib.auth_config import DEFAULT_API_HOST, KONIK_API_HOST, get_token, normalize_api_host, set_token
 
 
 def _use_konik_server():
@@ -42,7 +55,7 @@ def _use_konik_server():
     return False
 
 
-API_HOST = os.getenv('API_HOST', f"https://api.{'konik.ai' if _use_konik_server() else 'comma.ai'}")
+API_HOST = normalize_api_host(os.getenv('API_HOST', KONIK_API_HOST if _use_konik_server() else DEFAULT_API_HOST))
 PORT = 3000
 
 
@@ -69,7 +82,19 @@ class ClientRedirectHandler(BaseHTTPRequestHandler):
     pass  # this prevent http server from dumping messages to stdout
 
 
-def auth_redirect_link(method):
+def resolve_api_host(host: str) -> str:
+  if host in ("comma", "commaai", "commadotai"):
+    return DEFAULT_API_HOST
+  if host == "konik":
+    return KONIK_API_HOST
+  return normalize_api_host(host)
+
+
+def auth_redirect_api_host(api_host: str) -> str:
+  return "https://api.comma.ai" if normalize_api_host(api_host) == DEFAULT_API_HOST else normalize_api_host(api_host)
+
+
+def auth_redirect_link(method, api_host=API_HOST):
   provider_id = {
     'google': 'g',
     'apple': 'a',
@@ -77,7 +102,7 @@ def auth_redirect_link(method):
   }[method]
 
   params = {
-    'redirect_uri': f"{API_HOST}/v2/auth/{provider_id}/redirect/",
+    'redirect_uri': f"{auth_redirect_api_host(api_host)}/v2/auth/{provider_id}/redirect/",
     'state': f'service,localhost:{PORT}',
   }
 
@@ -92,7 +117,7 @@ def auth_redirect_link(method):
     return 'https://accounts.google.com/o/oauth2/auth?' + urlencode(params)
   elif method == 'github':
     params.update({
-      'client_id': '28c4ecb54bb7272cb5a4',
+      'client_id': 'Ov23liy0AI1YCd15pypf' if normalize_api_host(api_host) == KONIK_API_HOST else '28c4ecb54bb7272cb5a4',
       'scope': 'read:user',
     })
     return 'https://github.com/login/oauth/authorize?' + urlencode(params)
@@ -108,8 +133,8 @@ def auth_redirect_link(method):
     raise NotImplementedError(f"no redirect implemented for method {method}")
 
 
-def login(method):
-  oauth_uri = auth_redirect_link(method)
+def login(method, api_host=API_HOST):
+  oauth_uri = auth_redirect_link(method, api_host)
 
   web_server = ClientRedirectServer(('localhost', PORT), ClientRedirectHandler)
   print(f'To sign in, use your browser and navigate to {oauth_uri}')
@@ -126,29 +151,35 @@ def login(method):
       break
 
   try:
-    auth_resp = CommaApi().post('v2/auth/', data={'code': web_server.query_params['code'], 'provider': web_server.query_params['provider']})
-    set_token(auth_resp['access_token'])
+    auth_resp = CommaApi(host=api_host).post('v2/auth/', data={'code': web_server.query_params['code'], 'provider': web_server.query_params['provider']})
+    return auth_resp['access_token']
   except APIError as e:
     print(f'Authentication Error: {e}', file=sys.stderr)
+    return None
 
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Login to your comma account')
+  parser.add_argument('--host', default=API_HOST, help='API host to authenticate with: comma, konik, or a URL')
   parser.add_argument('method', default='google', const='google', nargs='?', choices=['google', 'apple', 'github', 'jwt'])
   parser.add_argument('jwt', nargs='?')
 
   args = parser.parse_args()
+  api_host = resolve_api_host(args.host)
   if args.method == 'jwt':
     if args.jwt is None:
       print("method JWT selected, but no JWT was provided")
       exit(1)
 
-    set_token(args.jwt)
+    token = args.jwt
   else:
-    login(args.method)
+    token = login(args.method, api_host)
+    if token is None:
+      exit(1)
 
   try:
-    me = CommaApi(token=get_token()).get('/v1/me')
+    me = CommaApi(token=token, host=api_host).get('/v1/me')
+    set_token(token, api_host)
     print("Authenticated!")
     pprint.pprint(me)
   except UnauthorizedError:

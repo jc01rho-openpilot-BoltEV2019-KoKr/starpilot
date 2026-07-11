@@ -34,9 +34,11 @@ import requests
 import zstandard
 
 from cereal import log
+from openpilot.tools.lib.auth_config import DEFAULT_API_HOST, KONIK_API_HOST, get_token, normalize_api_host
 
 
-API_HOST = os.getenv("COMMA_API_HOST", "https://api.commadotai.com").rstrip("/")
+API_HOST = normalize_api_host(os.getenv("COMMA_API_HOST") or os.getenv("API_HOST") or DEFAULT_API_HOST)
+API_HOSTS = [API_HOST] if os.getenv("COMMA_API_HOST") or os.getenv("API_HOST") else [DEFAULT_API_HOST, KONIK_API_HOST]
 ROUTE_ID_RE = re.compile(r"([0-9a-f]{16})/([^/]+)")
 
 
@@ -146,12 +148,12 @@ def parse_route_id(raw: str) -> RouteId:
   return RouteId(dongle_id=dongle_id, log_id=log_id)
 
 
-def route_url(route: RouteId) -> str:
-  return f"{API_HOST}/v1/route/{quote(route.canonical_name, safe='')}/"
+def route_url(route: RouteId, api_host: str) -> str:
+  return f"{api_host}/v1/route/{quote(route.canonical_name, safe='')}/"
 
 
-def route_files_url(route: RouteId) -> str:
-  return f"{API_HOST}/v1/route/{quote(route.canonical_name, safe='')}/files"
+def route_files_url(route: RouteId, api_host: str) -> str:
+  return f"{api_host}/v1/route/{quote(route.canonical_name, safe='')}/files"
 
 
 def format_segments(segments: list[int]) -> str:
@@ -184,8 +186,13 @@ def relative_posix(path: Path, root: Path) -> str:
   return path.relative_to(root).as_posix()
 
 
-def fetch_json(session: requests.Session, url: str, timeout: float) -> Any:
-  response = session.get(url, timeout=timeout, allow_redirects=True)
+def api_headers(api_host: str) -> dict[str, str] | None:
+  token = get_token(api_host)
+  return {"Authorization": f"JWT {token}"} if token else None
+
+
+def fetch_json(session: requests.Session, url: str, timeout: float, api_host: str | None = None) -> Any:
+  response = session.get(url, timeout=timeout, allow_redirects=True, headers=api_headers(api_host) if api_host else None)
   response.raise_for_status()
   return response.json()
 
@@ -312,24 +319,42 @@ def filename_from_url(url: str) -> str:
 
 
 def validate_route(route: RouteId, session: requests.Session, timeout: float) -> dict[str, Any]:
-  try:
-    route_meta = fetch_json(session, route_url(route), timeout)
-  except requests.HTTPError as exc:
-    status_code = exc.response.status_code if exc.response is not None else "unknown"
-    raise ValidationError(route, [f"route is not publicly accessible from comma connect (HTTP {status_code})."]) from exc
+  route_meta = None
+  files_payload = None
+  api_host = None
+  not_found_hosts = []
+
+  for candidate_host in API_HOSTS:
+    try:
+      route_meta = fetch_json(session, route_url(route, candidate_host), timeout, candidate_host)
+    except requests.HTTPError as exc:
+      status_code = exc.response.status_code if exc.response is not None else "unknown"
+      if status_code == 404 and len(API_HOSTS) > 1:
+        not_found_hosts.append(candidate_host)
+        continue
+      raise ValidationError(route, [f"route is not publicly accessible from {candidate_host} (HTTP {status_code})."]) from exc
+
+    try:
+      files_payload = fetch_json(session, route_files_url(route, candidate_host), timeout, candidate_host)
+    except requests.HTTPError as exc:
+      status_code = exc.response.status_code if exc.response is not None else "unknown"
+      if status_code == 404 and len(API_HOSTS) > 1:
+        not_found_hosts.append(candidate_host)
+        continue
+      raise ValidationError(route, [f"public route files could not be fetched from {candidate_host} (HTTP {status_code})."]) from exc
+
+    api_host = candidate_host
+    break
+
+  if route_meta is None or files_payload is None or api_host is None:
+    raise ValidationError(route, [f"route was not found on: {', '.join(not_found_hosts) or ', '.join(API_HOSTS)}."])
 
   if not route_meta.get("is_public", False):
     raise ValidationError(route, ["route metadata loaded, but `is_public` was false."])
 
-  try:
-    files_payload = fetch_json(session, route_files_url(route), timeout)
-  except requests.HTTPError as exc:
-    status_code = exc.response.status_code if exc.response is not None else "unknown"
-    raise ValidationError(route, [f"public route files could not be fetched from comma connect (HTTP {status_code})."]) from exc
-
   expected_segments = expected_segment_count(route_meta, files_payload)
   if expected_segments <= 0:
-    raise ValidationError(route, ["could not determine any route segments from comma connect."])
+    raise ValidationError(route, ["could not determine any route segments from the route API."])
 
   failures: list[str] = []
   stream_urls: dict[str, list[Any]] = {}
@@ -384,6 +409,7 @@ def validate_route(route: RouteId, session: requests.Session, timeout: float) ->
     raise ValidationError(route, failures)
 
   return {
+    "api_host": api_host,
     "route_meta": route_meta,
     "files_payload": files_payload,
     "expected_segments": expected_segments,
@@ -532,6 +558,7 @@ def print_validation_summary(route: RouteId, validation: dict[str, Any]) -> None
   params = validation["params"]
   map_tiles: MapTileSummary = validation["map_tiles"]
   print(f"Validated {route.cli_name}")
+  print(f"  route API: {validation['api_host']}")
   print(f"  public route: yes")
   print(f"  segments: {validation['expected_segments']}")
   print(f"  VisionSpeedLimitDetection: {params.get('VisionSpeedLimitDetection', '')}")

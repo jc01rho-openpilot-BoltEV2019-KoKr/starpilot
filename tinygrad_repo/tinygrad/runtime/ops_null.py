@@ -1,21 +1,24 @@
-import functools
-from tinygrad.device import Compiled, Allocator, CompilerSet
+import inspect, functools, math
+from tinygrad.device import Compiled, Allocator, ProfileGraphEntry, ProfileGraphEvent
 from tinygrad.engine.jit import MultiGraphRunner
-from tinygrad.renderer.cstyle import Renderer, CStyleLanguage, AMDHIPRenderer
-from tinygrad.uop.ops import Ops
-from tinygrad.helpers import cpu_profile, EMULATE, NULL_IR3, NULL_NAK, NULL_ALLOW_COPYOUT
-from tinygrad.renderer.nir import IR3Renderer, NAKRenderer
+from tinygrad.renderer import Renderer, cstyle, nir, ptx, llvmir, wgsl
+from tinygrad.renderer.cstyle import CStyleLanguage
+from tinygrad.uop.ops import UOp, Ops
+from tinygrad.helpers import cpu_profile, getenv, dedup, NULL_ALLOW_COPYOUT, PROFILE, cpu_events, perf_counter_us
 
 class NullRenderer(CStyleLanguage):
-  device = "NULL"
   has_local = False
   float4 = "float4"
   barrier = "// BARRIER"
   code_for_op = {**CStyleLanguage.code_for_op, Ops.THREEFRY: lambda a,b,dtype: f"threefry({a},{b})", Ops.MAX: lambda a,b,dtype: f"max({a},{b})"}
+  def asm(self, prg: UOp, lin: UOp) -> bytes:
+    assert self.target.arch.startswith("gfx"), "only amd supports assembly"
+    from tinygrad.renderer.amd.elf import assemble_linear
+    return assemble_linear(prg, lin, self.target.arch)
 
 class NullProgram:
   def __init__(self, device:str, name:str, lib:bytes, *args, **kwargs): self.device, self.name = device, name
-  def __call__(self, *bufs, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1), vals:tuple[int, ...]=(), wait=False):
+  def __call__(self, *bufs, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1), vals:tuple[int, ...]=(), wait=False, **kw):
     with cpu_profile(self.name, self.device): return 1e-3
 
 class NullAllocator(Allocator['NullDevice']):
@@ -24,21 +27,31 @@ class NullAllocator(Allocator['NullDevice']):
   def _copyout(self, dest:memoryview, src):
     if not NULL_ALLOW_COPYOUT: raise RuntimeError("no copyout on NULL")
   def _transfer(self, dest, src, sz:int, src_dev, dest_dev):
-    with cpu_profile(f"{src_dev.device} -> {dest_dev.device}", self.dev.device): pass
+    with cpu_profile(f"{src_dev.device} -> {dest_dev.device}", f"{src_dev.device}:SDMA:0"): pass
   def _offset(self, buf, offset:int, size:int): pass
 
 class NullGraph(MultiGraphRunner):
-  def __call__(self, input_buffers, var_vals, wait=False) -> float|None: return 1e-1
+  def __call__(self, input_uops:tuple[UOp, ...], var_vals:dict[str, int], wait=False) -> float|None:
+    if PROFILE:
+      st, descs = perf_counter_us(), []
+      event_count:dict[str, int] = {}
+      for (_,_,bufs,_),runtime in zip(self.calls, self.runtimes):
+        # description based on command, copied from HCQ graph
+        device = runtime.device if runtime is not None else f"{bufs[1].device}:SDMA:0"
+        descs.append((device, runtime.name if runtime is not None else f"{bufs[1].device} -> {bufs[0].device}", count:=event_count.get(device, 0)))
+        event_count[device] = count+1
+      # pack events evenly per device
+      dur, sigs, ents = max(1, math.ceil((perf_counter_us()-st)/max(event_count.values()))), [], []
+      for i,(device,name,count) in enumerate(descs):
+        sigs += [st+count*dur, st+(count+1)*dur]
+        ents.append(ProfileGraphEntry(device, name, 2*i, 2*i+1))
+      cpu_events.append(ProfileGraphEvent(ents, [], sigs))
+    return 1e-1
 
 class NullDevice(Compiled):
   def __init__(self, device:str):
-    renderer:functools.partial|type[Renderer]
-    match str(EMULATE.value):
-      case "AMD": renderer = functools.partial(AMDHIPRenderer, "gfx1100")
-      case "AMD_RDNA4": renderer = functools.partial(AMDHIPRenderer, "gfx1201")
-      case "AMD_CDNA4": renderer = functools.partial(AMDHIPRenderer, "gfx950")
-      case "": renderer = NullRenderer
-      case _: raise RuntimeError(f"can't EMULATE device: {EMULATE.value}")
-    compilers = CompilerSet([(renderer, None), (functools.partial(IR3Renderer, 0x6030001), NULL_IR3), # adreno 630
-                             (functools.partial(NAKRenderer, "sm_120", 48), NULL_NAK)]) # 5090
-    super().__init__(device, NullAllocator(self), compilers, functools.partial(NullProgram, device), NullGraph)
+    assert (emu:=getenv("EMULATE", "")) == "", \
+      "EMULATE is deprecated, use DEV=NULL:HIP:"+{"AMD":"gfx1100", "AMD_RDNA4":"gfx1201", "AMD_CDNA4":"gfx950"}.get(emu, "<arch>")
+    renderers = [NullRenderer] + [r for m in [cstyle, nir, ptx, llvmir, wgsl] for r in m.__dict__.values()
+                                  if inspect.isclass(r) and issubclass(r, Renderer)]
+    super().__init__(device, NullAllocator(self), dedup(renderers), functools.partial(NullProgram, device), NullGraph)

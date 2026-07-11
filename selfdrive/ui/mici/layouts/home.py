@@ -10,6 +10,7 @@ from openpilot.system.ui.widgets.layouts import HBoxLayout
 from openpilot.system.ui.widgets.icon_widget import IconWidget
 from openpilot.system.ui.widgets.label import UnifiedLabel
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
+from openpilot.selfdrive.ui.lib.starpilot_version import STARPILOT_DISPLAY_VERSION
 from openpilot.selfdrive.ui.ui_state import ui_state
 
 HEAD_BUTTON_FONT_SIZE = 40
@@ -166,11 +167,10 @@ class MiciHomeLayout(Widget):
     self._did_long_press = False
 
   def _get_version_text(self) -> tuple[str, str, str, str] | None:
-    version = ui_state.params.get("Version")
     branch = ui_state.params.get("GitBranch")
     commit = ui_state.params.get("GitCommit")
 
-    if not all((version, branch, commit)):
+    if not all((branch, commit)):
       return None
 
     commit_date_raw = ui_state.params.get("GitCommitDate")
@@ -181,7 +181,7 @@ class MiciHomeLayout(Widget):
     except (ValueError, IndexError, TypeError, AttributeError):
       date_str = ""
 
-    return version, branch, commit[:7], date_str
+    return STARPILOT_DISPLAY_VERSION, branch, commit[:7], date_str
 
   def _render(self, _):
     # TODO: why is there extra space here to get it to be flush?

@@ -15,23 +15,20 @@ import pyray as rl
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     AetherSliderDialog,
     DEFAULT_PANEL_STYLE,
+    ParentToggle,
     SettingRow,
     SettingSection,
     AetherSettingsView,
-    AetherCategoryTileView,
+    AetherCategoryDrawer,
     TileGrid,
     HubTile,
     draw_list_group_shell,
-    _draw_rounded_fill,
-    _draw_rounded_stroke,
-    _point_hits,
-    _snap_rect,
-    _mix_colors,
-    _with_alpha,
     hex_to_color,
     PLATE_TAU,
     AetherListColors,
 )
+from openpilot.selfdrive.ui.layouts.settings.starpilot.simple_download_manager import SimpleDownloadManager
+from openpilot.starpilot.common.starpilot_variables import THEME_SAVE_PATH
 
 PANEL_STYLE = DEFAULT_PANEL_STYLE
 
@@ -79,13 +76,9 @@ class AppearanceManagerView(AetherSettingsView):
 
     def __init__(self, controller, sections, **kwargs):
         super().__init__(controller, sections, **kwargs)
-        self._hero_grid = TileGrid(columns=3, padding=12)
-        self._hero_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
-        self._child(self._hero_grid)
-
-        self._standard_grid = TileGrid(columns=3, padding=12)
-        self._standard_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
-        self._child(self._standard_grid)
+        self._main_grid = TileGrid(columns=3, padding=12)
+        self._main_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
+        self._child(self._main_grid)
 
         self._init_toggles()
 
@@ -96,48 +89,21 @@ class AppearanceManagerView(AetherSettingsView):
                 "desc": tr("Customize dynamic lane paths, road edges, and colors."),
                 "icon": "steering",
                 "color": "#8B5CF6",
-                "on_click": lambda: gui_app.push_widget(
-                    AetherCategoryTileView(
-                        self._controller,
-                        tr("Model & Path Visualization"),
-                        self._controller._model_rows,
-                        color="#8B5CF6",
-                        subtitle=tr("Customize dynamic lane paths, road edges, and colors."),
-                        panel_style=self._panel_style,
-                    )
-                )
+                "on_click": lambda: self._controller._navigate_to("model")
             },
             {
                 "title": tr("Driving Widgets & HUD"),
                 "desc": tr("Configure compass, dynamic pedals, signals, and screen borders."),
                 "icon": "display",
                 "color": "#8B5CF6",
-                "on_click": lambda: gui_app.push_widget(
-                    AetherCategoryTileView(
-                        self._controller,
-                        tr("Driving Widgets & HUD"),
-                        self._controller._hud_rows,
-                        color="#8B5CF6",
-                        subtitle=tr("Configure compass, dynamic pedals, signals, and screen borders."),
-                        panel_style=self._panel_style,
-                    )
-                )
+                "on_click": lambda: self._controller._navigate_to("hud")
             },
             {
                 "title": tr("Screen Declutter & Visibility"),
                 "desc": tr("Toggle speed limits, alert banners, and driver monitoring icon."),
                 "icon": "system",
                 "color": "#8B5CF6",
-                "on_click": lambda: gui_app.push_widget(
-                    AetherCategoryTileView(
-                        self._controller,
-                        tr("Screen Declutter & Visibility"),
-                        self._controller._declutter_rows,
-                        color="#8B5CF6",
-                        subtitle=tr("Toggle speed limits, alert banners, and driver monitoring icon."),
-                        panel_style=self._panel_style,
-                    )
-                )
+                "on_click": lambda: self._controller._navigate_to("declutter")
             },
         ]
 
@@ -147,66 +113,28 @@ class AppearanceManagerView(AetherSettingsView):
                 "desc": tr("Configure road names, Vienna signs, and offroad routes."),
                 "icon": "navigate",
                 "color": "#8B5CF6",
-                "on_click": lambda: gui_app.push_widget(
-                    AetherCategoryTileView(
-                        self._controller,
-                        tr("Navigation & Mapping"),
-                        self._controller._nav_rows,
-                        color="#8B5CF6",
-                        subtitle=tr("Configure road names, Vienna signs, and offroad routes."),
-                        panel_style=self._panel_style,
-                    )
-                )
+                "on_click": lambda: self._controller._navigate_to("nav")
             },
             {
                 "title": tr("Camera & System Startup"),
                 "desc": tr("Manage driver monitoring cameras, boot logos, and startup sounds."),
                 "icon": "vehicle",
                 "color": "#8B5CF6",
-                "on_click": lambda: gui_app.push_widget(
-                    AetherCategoryTileView(
-                        self._controller,
-                        tr("Camera & System Startup"),
-                        self._controller._system_rows,
-                        color="#8B5CF6",
-                        subtitle=tr("Manage driver monitoring cameras, boot logos, and startup sounds."),
-                        panel_style=self._panel_style,
-                    )
-                )
+                "on_click": lambda: self._controller._navigate_to("system")
             },
             {
-                "title": tr("Developer & Beta Metrics"),
+                "title": tr("Advanced Metrics"),
                 "desc": tr("Adjust radar plots, lead vehicle info, and stop sign metrics."),
                 "icon": "sound",
                 "color": "#8B5CF6",
-                "on_click": lambda: gui_app.push_widget(
-                    AetherCategoryTileView(
-                        self._controller,
-                        tr("Developer & Beta Metrics"),
-                        self._controller._dev_rows,
-                        color="#8B5CF6",
-                        subtitle=tr("Adjust radar plots, lead vehicle info, and stop sign metrics."),
-                        panel_style=self._panel_style,
-                    )
-                )
+                "on_click": lambda: self._controller._navigate_to("dev")
             },
         ]
 
-        self._hero_grid.clear()
-        for d in hero_data:
-            self._hero_grid.add_tile(
-                HubTile(
-                    title=d["title"],
-                    desc=d["desc"],
-                    icon_key=d["icon"],
-                    on_click=d["on_click"],
-                    bg_color=d["color"],
-                )
-            )
-
-        self._standard_grid.clear()
-        for d in standard_data:
-            self._standard_grid.add_tile(
+        all_data = hero_data + standard_data
+        self._main_grid.clear()
+        for d in all_data:
+            self._main_grid.add_tile(
                 HubTile(
                     title=d["title"],
                     desc=d["desc"],
@@ -220,67 +148,45 @@ class AppearanceManagerView(AetherSettingsView):
         self.set_rect(rect)
         self._interactive_rects.clear()
 
-        margin_x = 12.0
-        margin_top = 16.0
-        margin_bottom = 16.0
-        header_h = 90.0
-        gap_after_header = 16.0
+        margin_x = 18.0
+        margin_y = 24.0
 
-        # Draw the header at the top of rect:
-        header_rect = rl.Rectangle(rect.x + margin_x, rect.y + margin_top, rect.width - margin_x * 2, header_h)
-        self._draw_header(header_rect)
+        grid_x = rect.x + margin_x
+        grid_y = rect.y + margin_y
+        grid_w = rect.width - margin_x * 2
+        grid_h = rect.y + rect.height - grid_y - margin_y
 
-        # Draw a nice separator line under the header:
-        divider_y = rect.y + margin_top + header_h + 8.0
-        rl.draw_line_ex(
-            rl.Vector2(rect.x + margin_x, divider_y),
-            rl.Vector2(rect.x + rect.width - margin_x, divider_y),
-            2.0,
-            rl.Color(255, 255, 255, 16)
-        )
-
-        # Compute remaining scroll rect:
-        grid_top = divider_y + gap_after_header
-        grid_h = rect.y + rect.height - grid_top - margin_bottom
-
-        self._scroll_rect = rl.Rectangle(rect.x + margin_x, grid_top, rect.width - margin_x * 2, grid_h)
+        self._scroll_rect = rl.Rectangle(grid_x, grid_y, grid_w, grid_h)
         self._content_height = grid_h
 
-        # Update scroll panel to maintain touch/click validation:
         self._scroll_panel.set_enabled(self.is_visible)
         self._scroll_offset = self._scroll_panel.update(
             self._scroll_rect, self._scroll_rect.height
         )
 
-        # Draw tiles inside scroll_rect:
+        if self.vertical_scrolling_disabled:
+            self._scroll_offset = 0.0
+
         self._draw_scroll_content(self._scroll_rect, self._scroll_rect.width)
 
     def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
         y = rect.y + self._scroll_offset
-        viewport_h = rect.height
-        
-        gap_y = 12.0
-        padding_bottom = 6.0
-        tile_space = viewport_h - gap_y - padding_bottom
-        
-        # Hero tiles are larger/taller
-        hero_h = tile_space * 0.55
-        standard_h = tile_space * 0.45
-        
-        self._hero_grid._tile_height = hero_h
-        self._standard_grid._tile_height = standard_h
-        
-        self._hero_grid.set_parent_rect(self._scroll_rect)
-        self._hero_grid.render(rl.Rectangle(rect.x, y, width, hero_h))
-        
-        self._standard_grid.set_parent_rect(self._scroll_rect)
-        self._standard_grid.render(rl.Rectangle(rect.x, y + hero_h + gap_y, width, standard_h))
+        self._main_grid.set_parent_rect(self._scroll_rect)
+        self._main_grid.render(rl.Rectangle(rect.x, y, width, rect.height))
 
 
 class StarPilotAppearanceLayout(_SettingsPage):
     def __init__(self):
         super().__init__()
         self._build_view()
+
+    def _make_parent(self, key: str, label: str, subtitle: str = "") -> ParentToggle:
+        return ParentToggle(
+            label=label,
+            subtitle=subtitle,
+            get_state=lambda k=key: self._params.get_bool(k),
+            set_state=lambda s, k=key: self._params.put_bool(k, s),
+        )
 
     def _show_lead_detection_threshold_selector(self):
         def on_close(res, val):
@@ -298,131 +204,160 @@ class StarPilotAppearanceLayout(_SettingsPage):
             )
         )
 
+    def _set_developer_sidebar(self, enabled):
+        self._params.put_bool("DeveloperSidebar", enabled)
+        if enabled:
+            self._params.put_bool("DeveloperUI", True)
+
     def _build_view(self):
         po = lambda: self._params.get_bool("PedalsOnUI")
         ol = lambda: starpilot_state.car_state.hasOpenpilotLongitudinal
         bsm = lambda: starpilot_state.car_state.hasBSM
+        model_on = lambda: self._params.get_bool("ModelUI")
+        hud_on = lambda: self._params.get_bool("CustomUI")
 
         # ═══ 1. Model & Path Visualization ═══
         self._model_rows = [
-            SettingRow("ModelUI", "toggle", tr_noop("Model UI"),
-                       subtitle=tr_noop("Display the driving model path, lanes, and road edges."),
-                       get_state=lambda: self._params.get_bool("ModelUI"),
-                       set_state=lambda s: self._params.put_bool("ModelUI", s)),
             SettingRow("DynamicPathWidth", "toggle", tr_noop("Dynamic Path"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("DynamicPathWidth"),
-                       set_state=lambda s: self._params.put_bool("DynamicPathWidth", s)),
+                       set_state=lambda s: self._params.put_bool("DynamicPathWidth", s),
+                       visible=model_on),
             SettingRow("LaneLinesWidth", "value", tr_noop("Lane Line Width"),
                        subtitle="",
                        get_value=self._get_lane_lines_display,
-                       on_click=lambda: self._show_int_selector("LaneLinesWidth", 0, 24, self._get_lane_lines_unit())),
+                       on_click=lambda: self._show_int_selector("LaneLinesWidth", 0, 24, self._get_lane_lines_unit()),
+                       visible=model_on),
             SettingRow("LaneLinesColor", "value", tr_noop("Lane Line Color"),
                        subtitle="",
                        get_value=lambda: self._get_color_display("LaneLinesColor"),
-                       on_click=lambda: self._show_color_selector("LaneLinesColor")),
+                       on_click=lambda: self._show_color_selector("LaneLinesColor"),
+                       visible=model_on),
             SettingRow("PathWidth", "value", tr_noop("Path Width"),
                        subtitle="",
                        get_value=self._get_path_width_display,
-                       on_click=self._show_path_width_selector),
+                       on_click=self._show_path_width_selector,
+                       visible=model_on),
             SettingRow("PathEdgeWidth", "value", tr_noop("Path Edge Width"),
                        subtitle="",
                        get_value=lambda: f"{self._params.get_int('PathEdgeWidth')}%",
-                       on_click=lambda: self._show_int_selector("PathEdgeWidth", 0, 100, "%")),
+                       on_click=lambda: self._show_int_selector("PathEdgeWidth", 0, 100, "%"),
+                       visible=model_on),
             SettingRow("PathEdgesColor", "value", tr_noop("Path Edge Color"),
                        subtitle="",
                        get_value=lambda: self._get_color_display("PathEdgesColor"),
-                       on_click=lambda: self._show_color_selector("PathEdgesColor")),
+                       on_click=lambda: self._show_color_selector("PathEdgesColor"),
+                       visible=model_on),
             SettingRow("PathColor", "value", tr_noop("Path Color"),
                        subtitle="",
                        get_value=lambda: self._get_color_display("PathColor"),
-                       on_click=lambda: self._show_color_selector("PathColor")),
+                       on_click=lambda: self._show_color_selector("PathColor"),
+                       visible=model_on),
             SettingRow("RoadEdgesWidth", "value", tr_noop("Road Edge Width"),
                        subtitle="",
                        get_value=self._get_road_edges_display,
-                       on_click=lambda: self._show_int_selector("RoadEdgesWidth", 0, 24, self._get_road_edges_unit())),
+                       on_click=lambda: self._show_int_selector("RoadEdgesWidth", 0, 24, self._get_road_edges_unit()),
+                       visible=model_on),
             SettingRow("RainbowPath", "toggle", tr_noop("Rainbow Path"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("RainbowPath"),
-                       set_state=lambda s: self._params.put_bool("RainbowPath", s)),
+                       set_state=lambda s: self._params.put_bool("RainbowPath", s),
+                       visible=model_on),
             SettingRow("AccelerationPath", "toggle", tr_noop("Acceleration Path"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("AccelerationPath"),
                        set_state=lambda s: self._params.put_bool("AccelerationPath", s),
-                       enabled=ol),
+                       enabled=ol,
+                       visible=model_on),
             SettingRow("AdjacentPath", "toggle", tr_noop("Adjacent Lanes"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("AdjacentPath"),
-                       set_state=lambda s: self._params.put_bool("AdjacentPath", s)),
+                       set_state=lambda s: self._params.put_bool("AdjacentPath", s),
+                       visible=model_on),
             SettingRow("AdjacentPathMetrics", "toggle", tr_noop("Adjacent Lane Metrics"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("AdjacentPathMetrics"),
-                       set_state=lambda s: self._params.put_bool("AdjacentPathMetrics", s)),
+                       set_state=lambda s: self._params.put_bool("AdjacentPathMetrics", s),
+                       visible=model_on),
             SettingRow("BlindSpotPath", "toggle", tr_noop("Blind Spot Path"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("BlindSpotPath"),
                        set_state=lambda s: self._params.put_bool("BlindSpotPath", s),
-                       enabled=bsm),
+                       enabled=bsm,
+                       visible=model_on),
         ]
 
         # ═══ 2. Driving Widgets & HUD ═══
         self._hud_rows = [
-            SettingRow("CustomUI", "toggle", tr_noop("Driving Screen Widgets"),
-                       subtitle=tr_noop("Show interactive indicators on the driving screen."),
-                       get_state=lambda: self._params.get_bool("CustomUI"),
-                       set_state=lambda s: self._params.put_bool("CustomUI", s)),
             SettingRow("Compass", "toggle", tr_noop("Compass"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("Compass"),
-                       set_state=lambda s: self._params.put_bool("Compass", s)),
+                       set_state=lambda s: self._params.put_bool("Compass", s),
+                       visible=hud_on),
             SettingRow("OnroadDistanceButton", "toggle", tr_noop("Personality Button"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("OnroadDistanceButton"),
-                       set_state=lambda s: self._params.put_bool("OnroadDistanceButton", s)),
+                       set_state=lambda s: self._params.put_bool("OnroadDistanceButton", s),
+                       visible=hud_on),
             SettingRow("RotatingWheel", "toggle", tr_noop("Rotating Wheel"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("RotatingWheel"),
-                       set_state=lambda s: self._params.put_bool("RotatingWheel", s)),
+                       set_state=lambda s: self._params.put_bool("RotatingWheel", s),
+                       visible=hud_on),
             SettingRow("ShowSteering", "toggle", tr_noop("Steering Torque Indicator"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("ShowSteering"),
-                       set_state=lambda s: self._params.put_bool("ShowSteering", s)),
+                       set_state=lambda s: self._params.put_bool("ShowSteering", s),
+                       visible=hud_on),
             SettingRow("SignalMetrics", "toggle", tr_noop("Turn Signal Borders"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("SignalMetrics"),
-                       set_state=lambda s: self._params.put_bool("SignalMetrics", s)),
+                       set_state=lambda s: self._params.put_bool("SignalMetrics", s),
+                       visible=hud_on),
             SettingRow("BlindSpotMetrics", "toggle", tr_noop("Blind Spot Borders"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("BlindSpotMetrics"),
                        set_state=lambda s: self._params.put_bool("BlindSpotMetrics", s),
-                       enabled=bsm),
+                       enabled=bsm,
+                       visible=hud_on),
             SettingRow("WheelSpeed", "toggle", tr_noop("Wheel Speed"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("WheelSpeed"),
-                       set_state=lambda s: self._params.put_bool("WheelSpeed", s)),
+                       set_state=lambda s: self._params.put_bool("WheelSpeed", s),
+                       visible=hud_on),
             SettingRow("BorderWidth", "value", tr_noop("Border Width"),
                        subtitle="",
                        get_value=lambda: f"{int(round(self._params.get_float('BorderWidth')))}%",
-                       on_click=lambda: self._show_float_selector("BorderWidth", 25, 250, 5, "%")),
+                       on_click=lambda: self._show_float_selector("BorderWidth", 25, 250, 5, "%"),
+                       visible=hud_on),
             SettingRow("PedalsOnUI", "toggle", tr_noop("Pedal Indicators"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("PedalsOnUI"),
                        set_state=lambda s: self._params.put_bool("PedalsOnUI", s),
-                       enabled=ol),
+                       enabled=ol,
+                       visible=hud_on),
             SettingRow("DynamicPedalsOnUI", "toggle", tr_noop("Dynamic Pedals"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("DynamicPedalsOnUI"),
                        set_state=lambda s: self._set_exclusive_pedal("DynamicPedalsOnUI", "StaticPedalsOnUI", s),
-                       enabled=lambda: po() and ol()),
+                       enabled=lambda: po() and ol(),
+                       visible=hud_on),
             SettingRow("StaticPedalsOnUI", "toggle", tr_noop("Static Pedals"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("StaticPedalsOnUI"),
                        set_state=lambda s: self._set_exclusive_pedal("StaticPedalsOnUI", "DynamicPedalsOnUI", s),
-                       enabled=lambda: po() and ol()),
+                       enabled=lambda: po() and ol(),
+                       visible=hud_on),
             SettingRow("StoppedTimer", "toggle", tr_noop("Stopped Timer"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("StoppedTimer"),
-                       set_state=lambda s: self._params.put_bool("StoppedTimer", s)),
+                       set_state=lambda s: self._params.put_bool("StoppedTimer", s),
+                       visible=hud_on),
+            SettingRow("ShowCSCStatus", "toggle", tr_noop("CSC Status Widget"),
+                       subtitle=tr_noop("Show the Curve Speed Controller target speed and ambient border glow."),
+                       get_state=lambda: self._params.get_bool("ShowCSCStatus"),
+                       set_state=lambda s: self._params.put_bool("ShowCSCStatus", s),
+                       visible=hud_on),
         ]
 
         # ═══ 3. Screen Declutter & Visibility ═══
@@ -442,7 +377,8 @@ class StarPilotAppearanceLayout(_SettingsPage):
             SettingRow("HideSpeedLimit", "toggle", tr_noop("Hide Speed Limit"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("HideSpeedLimit"),
-                       set_state=lambda s: self._params.put_bool("HideSpeedLimit", s)),
+                       set_state=lambda s: self._params.put_bool("HideSpeedLimit", s),
+                       visible=lambda: ol() and self._params.get_bool("SpeedLimitController")),
             SettingRow("HideAlerts", "toggle", tr_noop("Hide Alerts"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("HideAlerts"),
@@ -491,11 +427,13 @@ class StarPilotAppearanceLayout(_SettingsPage):
             SettingRow("ShowSpeedLimits", "toggle", tr_noop("Speed Limits"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("ShowSpeedLimits"),
-                       set_state=lambda s: self._params.put_bool("ShowSpeedLimits", s)),
+                       set_state=lambda s: self._params.put_bool("ShowSpeedLimits", s),
+                       visible=lambda: not (self._params.get_bool("SpeedLimitController") and ol())),
             SettingRow("UseVienna", "toggle", tr_noop("Vienna Signs"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("UseVienna"),
-                       set_state=lambda s: self._params.put_bool("UseVienna", s)),
+                       set_state=lambda s: self._params.put_bool("UseVienna", s),
+                       visible=lambda: self._params.get_bool("ShowSpeedLimits") or self._params.get_bool("SpeedLimitController")),
             SettingRow("QOLVisuals", "toggle", tr_noop("Quality of Life"),
                        subtitle=tr_noop("Convenience features for everyday driving."),
                        get_state=lambda: self._params.get_bool("QOLVisuals"),
@@ -512,22 +450,26 @@ class StarPilotAppearanceLayout(_SettingsPage):
                        subtitle="",
                        get_state=lambda: self._params.get_bool("DriverCamera"),
                        set_state=lambda s: self._params.put_bool("DriverCamera", s)),
+            SettingRow("StockConfidenceBallWidget", "toggle", tr_noop("Stock Confidence Ball"),
+                       subtitle=tr_noop("Use the original moving confidence ball on the small comma 4 UI."),
+                       get_state=lambda: self._params.get_bool("StockConfidenceBallWidget"),
+                       set_state=lambda s: self._params.put_bool("StockConfidenceBallWidget", s)),
             SettingRow("BootLogo", "value", tr_noop("Boot Logo"),
                        subtitle="",
                        get_value=lambda: self._get_theme_value("BootLogo"),
-                       on_click=lambda: self._show_theme_selector("BootLogo")),
+                       on_click=self._show_boot_logo_manager),
             SettingRow("StartupAlert", "value", tr_noop("Startup Alert"),
                        subtitle="",
                        get_value=self._get_startup_alert_display,
                        on_click=self._show_startup_alert_selector),
         ]
 
-        # ═══ 6. Developer & Beta Metrics ═══
+        # ═══ 6. Advanced Metrics ═══
         self._dev_rows = [
             SettingRow("DeveloperSidebar", "toggle", tr_noop("Developer Sidebar"),
                        subtitle=tr_noop("Driving metrics panel on the right"),
-                       get_state=lambda: self._params.get_bool("DeveloperSidebar"),
-                       set_state=lambda s: self._params.put_bool("DeveloperSidebar", s)),
+                       get_state=lambda: bool(self._params.get("DeveloperSidebar") or False),
+                       set_state=lambda s: self._set_developer_sidebar(s)),
             SettingRow("LeadDetectionThreshold", "value", tr_noop("Lead Detection Threshold"),
                        subtitle="",
                        get_value=lambda: f"{self._params.get_int('LeadDetectionThreshold', return_default=True, default=35)}%",
@@ -561,6 +503,58 @@ class StarPilotAppearanceLayout(_SettingsPage):
             tab_defs=None,
             panel_style=PANEL_STYLE,
         )
+
+        pt_model = self._make_parent("ModelUI", "Model UI",
+            "Display the driving model path, lanes, and road edges.")
+        pt_hud = self._make_parent("CustomUI", "Driving Screen Widgets",
+            "Show interactive indicators on the driving screen.")
+
+        # Register subpanels for Level 2 slide transitions
+        self._sub_panels["model"] = AetherSettingsView(
+            self,
+            [SettingSection(title="", rows=self._model_rows)],
+            header_title=tr_noop("Model & Path Visualization"),
+            header_subtitle=tr_noop("Customize dynamic lane paths, road edges, and colors."),
+            parent_toggle=pt_model,
+            panel_style=PANEL_STYLE,
+        )
+        self._sub_panels["hud"] = AetherSettingsView(
+            self,
+            [SettingSection(title="", rows=self._hud_rows)],
+            header_title=tr_noop("Driving Widgets & HUD"),
+            header_subtitle=tr_noop("Configure compass, dynamic pedals, signals, and screen borders."),
+            parent_toggle=pt_hud,
+            panel_style=PANEL_STYLE,
+        )
+        self._sub_panels["declutter"] = AetherSettingsView(
+            self,
+            [SettingSection(title="", rows=self._declutter_rows)],
+            header_title=tr_noop("Screen Declutter & Visibility"),
+            header_subtitle=tr_noop("Toggle speed limits, alert banners, and driver monitoring icon."),
+            panel_style=PANEL_STYLE,
+        )
+        self._sub_panels["nav"] = AetherSettingsView(
+            self,
+            [SettingSection(title="", rows=self._nav_rows)],
+            header_title=tr_noop("Navigation & Mapping"),
+            header_subtitle=tr_noop("Configure road names, Vienna signs, and offroad routes."),
+            panel_style=PANEL_STYLE,
+        )
+        self._sub_panels["system"] = AetherSettingsView(
+            self,
+            [SettingSection(title="", rows=self._system_rows)],
+            header_title=tr_noop("Camera & System Startup"),
+            header_subtitle=tr_noop("Manage driver monitoring cameras, boot logos, and startup sounds."),
+            panel_style=PANEL_STYLE,
+        )
+        self._sub_panels["dev"] = AetherSettingsView(
+            self,
+            [SettingSection(title="", rows=self._dev_rows)],
+            header_title=tr_noop("Advanced Metrics"),
+            header_subtitle=tr_noop("Adjust radar plots, lead vehicle info, and stop sign metrics."),
+            panel_style=PANEL_STYLE,
+        )
+        self._wire_sub_panels()
 
     # ── Theme helpers ──
 
@@ -721,3 +715,21 @@ class StarPilotAppearanceLayout(_SettingsPage):
 
         dialog = MultiOptionDialog(tr("Startup Alert"), options, current, callback=on_select)
         gui_app.push_widget(dialog)
+
+    # ── Boot logo manager ──
+
+    def _show_boot_logo_manager(self):
+        def on_close(res, val):
+            pass
+
+        gui_app.push_widget(SimpleDownloadManager(
+            title=tr("Boot Logo"),
+            asset_type="boot logo",
+            directory=THEME_SAVE_PATH / "bootlogos",
+            asset_param="BootLogo",
+            download_param="BootLogoToDownload",
+            downloadable_list_param="DownloadableBootLogos",
+            params=self._params,
+            params_memory=self._params_memory,
+            on_close=on_close,
+        ))

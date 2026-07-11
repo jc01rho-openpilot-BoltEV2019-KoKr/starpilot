@@ -51,6 +51,7 @@ ROUTE_TIME_LOG_CANDIDATES = [
 ]
 
 SEGMENT_RE = re.compile(r"^[0-9a-fA-F]{8}--[0-9a-fA-F]{10}--\d+$")
+ROUTE_RE = re.compile(r"^[0-9a-fA-F]{8}--[0-9a-fA-F]{10}$")
 
 TARGET_LOUDNESS = -15.0
 METER_TO_MILE = 1.0 / 1609.344
@@ -74,8 +75,8 @@ DASHBOARD_ANALYZER_LOG_PATH = "/tmp/galaxy_dashboard_analyzer.log"
 DASHBOARD_ANALYZER_STATUS_PATH = Path("/tmp/galaxy_dashboard_analyzer_status.json")
 DASHBOARD_ANALYZER_STATUS_MAX_AGE_SECONDS = 30 * 60
 DASHBOARD_TOP_MODEL_LIMIT = 3
-DASHBOARD_EVENT_DISTRACTED = "promptDriverDistracted"
-DASHBOARD_EVENT_UNRESPONSIVE = "driverUnresponsive"
+DASHBOARD_EVENT_DISTRACTED = "driverDistracted2"
+DASHBOARD_EVENT_UNRESPONSIVE = "driverUnresponsive3"
 DASHBOARD_TIME_SOURCE_LOG = "log"
 DASHBOARD_TIME_SOURCE_FILESYSTEM = "filesystem"
 DASHBOARD_MIN_VALID_ROUTE_TIME = datetime(2026, 1, 1)
@@ -1144,6 +1145,7 @@ def _analyze_route_messages(messages, route_info, model_names, is_metric, deadli
 
   return {
     "name": route_info.get("name", ""),
+    "routeNames": [route_info.get("name", "")],
     "date": start_date,
     "endDate": end_date,
     "distance": round(distance, 1),
@@ -1189,6 +1191,8 @@ def _iter_route_log_messages(route_info, deadline=None):
 def _empty_drive(is_metric):
   return {
     "name": "",
+    "routeNames": [],
+    "ignored": False,
     "date": "",
     "endDate": "",
     "distance": 0,
@@ -1250,6 +1254,8 @@ def _route_shell_drive(route_info, params_obj, model_names, is_metric):
   start_date, end_date = _route_time_range(route_info, duration_seconds)
   return {
     "name": route_info.get("name", ""),
+    "routeNames": [route_info.get("name", "")],
+    "ignored": False,
     "date": start_date,
     "endDate": end_date,
     "distance": 0,
@@ -1278,6 +1284,8 @@ def _drive_from_persistent_route(route_name, entry, is_metric):
   avg_speed = (distance_m / duration) * (CV.MS_TO_KPH if is_metric else METER_PER_SECOND_TO_MPH) if duration > 0 else 0.0
   return {
     "name": route_name,
+    "routeNames": [route_name],
+    "ignored": False,
     "date": entry.get("date", ""),
     "endDate": entry.get("endDate", ""),
     "distance": round(_distance_from_meters(distance_m, is_metric), 1),
@@ -1302,11 +1310,15 @@ def _persistent_drives(stats, is_metric):
   routes = stats.get("routes", {}) if isinstance(stats, dict) else {}
   if not isinstance(routes, dict):
     return []
-  return [
+  ignored_routes = set(stats.get("ignoredRoutes", [])) if isinstance(stats.get("ignoredRoutes", []), list) else set()
+  drives = [
     _drive_from_persistent_route(route_name, entry, is_metric)
     for route_name, entry in routes.items()
     if isinstance(entry, dict) and _dashboard_time_is_valid(entry.get("date", ""))
   ]
+  for drive in drives:
+    drive["ignored"] = drive["name"] in ignored_routes
+  return drives
 
 
 def _merge_dashboard_drives(*drive_lists):
@@ -1365,7 +1377,15 @@ def _coalesced_drive_group(group, is_metric):
   primary["routeModifiedAt"] = max(_safe_float(drive.get("routeModifiedAt", 0.0), 0.0) for drive in ordered)
   primary["attentionKnown"] = any(bool(drive.get("attentionKnown", True)) for drive in ordered)
   primary["analysisComplete"] = all(bool(drive.get("analysisComplete", False)) for drive in ordered)
-  primary["name"] = ",".join(str(drive.get("name", "")).strip() for drive in ordered if str(drive.get("name", "")).strip())
+  route_names = []
+  for drive in ordered:
+    for route_name in drive.get("routeNames", [drive.get("name", "")]):
+      route_name = str(route_name or "").strip()
+      if route_name and route_name not in route_names:
+        route_names.append(route_name)
+  primary["routeNames"] = route_names
+  primary["name"] = ",".join(route_names)
+  primary["ignored"] = bool(route_names) and all(bool(drive.get("ignored", False)) for drive in ordered)
   return primary
 
 
@@ -1413,6 +1433,7 @@ def _persistent_route_needs_time_refresh(entry):
 def _analysis_candidates(route_infos, persistent_stats):
   routes = persistent_stats.get("routes", {}) if isinstance(persistent_stats, dict) else {}
   routes = routes if isinstance(routes, dict) else {}
+  ignored_routes = set(persistent_stats.get("ignoredRoutes", [])) if isinstance(persistent_stats, dict) else set()
 
   def needs_analysis(route_info):
     route_name = route_info.get("name", "")
@@ -1427,8 +1448,21 @@ def _analysis_candidates(route_infos, persistent_stats):
       return True
     return not bool(entry.get("attentionKnown", True)) or not bool(entry.get("analysisComplete", False))
 
-  missing = [route_info for route_info in route_infos if needs_analysis(route_info)]
+  missing = [
+    route_info for route_info in route_infos
+    if route_info.get("name", "") not in ignored_routes and needs_analysis(route_info)
+  ]
   return missing
+
+
+def _mark_ignored_drives(drives, persistent_stats):
+  ignored_routes = set(persistent_stats.get("ignoredRoutes", [])) if isinstance(persistent_stats, dict) else set()
+  for drive in drives or []:
+    route_names = drive.get("routeNames", [drive.get("name", "")])
+    route_names = [str(route_name or "").strip() for route_name in route_names if str(route_name or "").strip()]
+    drive["routeNames"] = route_names
+    drive["ignored"] = bool(route_names) and all(route_name in ignored_routes for route_name in route_names)
+  return drives
 
 
 def _invalidate_dashboard_cache():
@@ -1911,6 +1945,12 @@ def _load_dashboard_persistent_stats(params_obj):
     data = {}
   data["version"] = 1
   data["routes"] = _normalize_persistent_routes(data.get("routes", {}))
+  ignored_routes = data.get("ignoredRoutes", [])
+  data["ignoredRoutes"] = sorted({
+    str(route_name).strip()
+    for route_name in ignored_routes
+    if ROUTE_RE.fullmatch(str(route_name).strip())
+  }) if isinstance(ignored_routes, list) else []
   attention = data.get("attentionRecords", {})
   data["attentionRecords"] = attention if isinstance(attention, dict) else {}
   personal_records = data.get("personalRecords", {})
@@ -2089,7 +2129,7 @@ def _merge_personal_records(current, previous, legacy_attention=None):
   return merged
 
 
-def _recalculate_persistent_stats(stats):
+def _recalculate_persistent_stats(stats, reset_personal_records=False):
   routes = stats.get("routes", {})
   ordered_routes = sorted(routes.items(), key=_route_entry_sort_key)
   if len(ordered_routes) > DASHBOARD_PERSISTED_ROUTE_LIMIT:
@@ -2097,9 +2137,20 @@ def _recalculate_persistent_stats(stats):
     routes = dict(ordered_routes)
     stats["routes"] = routes
 
+  ignored_routes = set(stats.get("ignoredRoutes", []))
+  included_routes = {
+    route_name: entry
+    for route_name, entry in routes.items()
+    if route_name not in ignored_routes
+  }
+  included_ordered_routes = [
+    (route_name, entry)
+    for route_name, entry in ordered_routes
+    if route_name not in ignored_routes
+  ]
   model_usage = {}
 
-  for _, entry in ordered_routes:
+  for _, entry in included_ordered_routes:
     if not _dashboard_time_is_valid(entry.get("date", "")):
       continue
     if not bool(entry.get("analysisComplete", False)):
@@ -2119,8 +2170,11 @@ def _recalculate_persistent_stats(stats):
         usage["name"] = model_name
 
   previous_attention = stats.get("attentionRecords", {}) if isinstance(stats.get("attentionRecords", {}), dict) else {}
-  current_records = _build_personal_records_raw(routes)
-  stats["personalRecords"] = _merge_personal_records(current_records, stats.get("personalRecords", {}), previous_attention)
+  current_records = _build_personal_records_raw(included_routes)
+  if reset_personal_records:
+    stats["personalRecords"] = current_records
+  else:
+    stats["personalRecords"] = _merge_personal_records(current_records, stats.get("personalRecords", {}), previous_attention)
 
   stats["attentionRecords"] = {
     "longestUndistractedDrive": stats["personalRecords"]["longestUndistractedDrive"],
@@ -2128,6 +2182,36 @@ def _recalculate_persistent_stats(stats):
   }
   stats["modelUsage"] = model_usage
   return stats
+
+
+def set_dashboard_routes_ignored(params_obj, route_names, ignored):
+  normalized_names = {
+    str(route_name or "").strip()
+    for route_name in (route_names or [])
+    if ROUTE_RE.fullmatch(str(route_name or "").strip())
+  }
+  if not normalized_names:
+    raise ValueError("No valid dashboard routes were provided.")
+
+  stats = _load_dashboard_persistent_stats(params_obj)
+  ignored_routes = set(stats.get("ignoredRoutes", []))
+  if ignored:
+    ignored_routes.update(normalized_names)
+  else:
+    ignored_routes.difference_update(normalized_names)
+  stats["ignoredRoutes"] = sorted(ignored_routes)
+  stats = _recalculate_persistent_stats(stats, reset_personal_records=True)
+  _params_put_text(params_obj, DASHBOARD_PERSISTENT_STATS_PARAM, json.dumps(stats, separators=(",", ":")))
+  _invalidate_dashboard_cache()
+  return sorted(normalized_names)
+
+
+def ignore_dashboard_routes(params_obj, route_names):
+  return set_dashboard_routes_ignored(params_obj, route_names, True)
+
+
+def include_dashboard_routes(params_obj, route_names):
+  return set_dashboard_routes_ignored(params_obj, route_names, False)
 
 
 def _drive_stable_for_persistence(drive, wall_now):
@@ -2432,10 +2516,13 @@ def get_dashboard_stats(footage_paths, params_obj=None, now=None):
 
   persisted_drives = _persistent_drives(persistent_stats, is_metric)
   combined_drives = _merge_dashboard_drives(shell_drives, persisted_drives, analyzed_drives)
+  _mark_ignored_drives(combined_drives, persistent_stats)
   display_drives = _coalesce_display_drives(combined_drives, is_metric)
+  included_display_drives = [drive for drive in display_drives if not bool(drive.get("ignored", False))]
   pending_candidates = _analysis_candidates(route_infos, persistent_stats)
   pending_route_names = {str(route.get("name", "")).strip() for route in pending_candidates}
-  week_drives = _week_summary_drives(combined_drives, pending_route_names)
+  included_drives = [drive for drive in combined_drives if not bool(drive.get("ignored", False))]
+  week_drives = _week_summary_drives(included_drives, pending_route_names)
   _start_dashboard_background_analysis(footage_paths, route_infos, persistent_stats, pending_candidates)
   analysis_status = _dashboard_analysis_status(pending_candidates)
 
@@ -2444,7 +2531,7 @@ def get_dashboard_stats(footage_paths, params_obj=None, now=None):
   else:
     records = _display_personal_records(persistent_stats, is_metric)
     dashboard = {
-      "lastDrive": _public_drive(display_drives[0], is_metric),
+      "lastDrive": _public_drive(included_display_drives[0], is_metric) if included_display_drives else _empty_drive(is_metric),
       "recentDrives": [_public_drive(drive, is_metric) for drive in display_drives[:DASHBOARD_RECENT_DRIVE_LIMIT]],
       "week": _build_week_summary(week_drives, now, is_metric),
       "records": records,

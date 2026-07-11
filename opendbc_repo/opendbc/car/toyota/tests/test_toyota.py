@@ -7,7 +7,8 @@ from opendbc.can import CANPacker, CANParser
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
 from opendbc.car.toyota import toyotacan
-from opendbc.car.toyota.carcontroller import CarController, limit_interceptor_pcm_accel, limit_interceptor_stopping_accel, \
+from opendbc.car.toyota.carcontroller import CarController, get_prius_positive_feedforward_scale, limit_interceptor_pcm_accel, \
+                                             limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
                                              limit_prius_stopping_accel, update_permit_braking
 from opendbc.car.toyota.carstate import calculate_interceptor_gas_pressed
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
@@ -60,6 +61,24 @@ class TestToyotaInterfaces:
 
     assert car_params.flags & ToyotaFlags.AUTO_BRAKE_HOLD.value
     assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALLOW_AEB
+
+  def test_prius_openpilot_long_uses_hybrid_long_defaults(self):
+    car_params = CarInterface.get_params(
+      CAR.TOYOTA_PRIUS,
+      {0: {0x2FF: 8}},
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+
+    assert car_params.openpilotLongitudinalControl
+    assert car_params.flags & ToyotaFlags.HYBRID.value
+    assert car_params.flags & ToyotaFlags.RAISED_ACCEL_LIMIT.value
+    assert abs(car_params.longitudinalActuatorDelay - 0.05) < 1e-6
+    assert abs(car_params.vEgoStopping - 0.25) < 1e-6
+    assert abs(car_params.vEgoStarting - 0.25) < 1e-6
 
   def test_essential_ecus(self, subtests):
     # Asserts standard ECUs exist for each platform
@@ -274,6 +293,18 @@ class TestToyotaCarController:
     assert update_permit_braking(False, 0.10, True, True, 25.0, False) is True
     assert update_permit_braking(False, 0.10, False, False, 25.0, False) is True
 
+  def test_no_lead_cruise_sign_flip_clamps_negative_pulse_when_set_speed_is_ahead(self):
+    limited = limit_no_lead_cruise_sign_flip(-0.44, 0.0, False, 23.3, 25.0, False)
+    assert limited == 0.0
+
+  def test_no_lead_cruise_sign_flip_keeps_real_decel_requests(self):
+    limited = limit_no_lead_cruise_sign_flip(-0.44, -0.15, False, 23.3, 25.0, False)
+    assert limited == -0.44
+
+  def test_no_lead_cruise_sign_flip_keeps_lead_follow_brake(self):
+    limited = limit_no_lead_cruise_sign_flip(-0.44, 0.0, False, 23.3, 25.0, True)
+    assert limited == -0.44
+
   def test_prius_stopping_accel_unwinds_stale_stop_hold(self):
     limited = limit_prius_stopping_accel(-3.28, -0.05, True, 0.0, True)
     assert -1.5 < limited < 0.0
@@ -281,6 +312,14 @@ class TestToyotaCarController:
   def test_prius_stopping_accel_keeps_hard_stop_commands(self):
     limited = limit_prius_stopping_accel(-3.28, -2.0, True, 0.0, True)
     assert limited == -3.28
+
+  def test_prius_positive_feedforward_scale_stays_soft_at_launch_speed(self):
+    assert abs(get_prius_positive_feedforward_scale(0.0) - 0.7) < 1e-6
+    assert abs(get_prius_positive_feedforward_scale(8.0) - 0.7) < 1e-6
+
+  def test_prius_positive_feedforward_scale_restores_cruise_authority(self):
+    assert get_prius_positive_feedforward_scale(20.0) > get_prius_positive_feedforward_scale(8.0)
+    assert abs(get_prius_positive_feedforward_scale(20.0) - 1.0) < 1e-6
 
   def test_sng_hack_clears_existing_standstill_latch(self):
     controller = self._make_controller(standstill_req=True, last_standstill=True)

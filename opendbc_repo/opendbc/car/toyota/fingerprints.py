@@ -4,6 +4,10 @@ from opendbc.car.toyota.values import CAR
 
 Ecu = CarParams.Ecu
 
+FINGERPRINTS = {
+  CAR.TOYOTA_MATRIX_RETROFIT: [{}],
+}
+
 FW_VERSIONS = {
   CAR.TOYOTA_AVALON: {
     (Ecu.abs, 0x7b0, None): [

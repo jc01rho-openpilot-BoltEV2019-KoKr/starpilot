@@ -306,10 +306,15 @@ GalaxyQRPopup::GalaxyQRPopup(const QString &url, QWidget *parent) : DialogBase(p
 
   auto qr = qrcodegen::QrCode::encodeText(url.toUtf8().constData(), qrcodegen::QrCode::Ecc::LOW);
   const int qr_size = qr.getSize();
-  QImage image(qr_size, qr_size, QImage::Format_RGB32);
+  const int quiet_zone_modules = 4;
+  const int qr_display_size = 520;
+  const int image_size = qr_size + 2 * quiet_zone_modules;
+  QImage image(image_size, image_size, QImage::Format_RGB32);
+  image.fill(qRgb(255, 255, 255));
   for (int y = 0; y < qr_size; ++y) {
     for (int x = 0; x < qr_size; ++x) {
-      image.setPixel(x, y, qr.getModule(x, y) ? qRgb(0, 0, 0) : qRgb(255, 255, 255));
+      image.setPixel(x + quiet_zone_modules, y + quiet_zone_modules,
+                     qr.getModule(x, y) ? qRgb(0, 0, 0) : qRgb(255, 255, 255));
     }
   }
 
@@ -319,7 +324,8 @@ GalaxyQRPopup::GalaxyQRPopup(const QString &url, QWidget *parent) : DialogBase(p
   layout->addWidget(title);
 
   QLabel *qr_label = new QLabel(this);
-  qr_label->setPixmap(QPixmap::fromImage(image.scaled(400, 400, Qt::KeepAspectRatio), Qt::MonoOnly));
+  qr_label->setPixmap(QPixmap::fromImage(
+      image.scaled(qr_display_size, qr_display_size, Qt::KeepAspectRatio), Qt::MonoOnly));
   qr_label->setAlignment(Qt::AlignCenter);
   layout->addWidget(qr_label);
 

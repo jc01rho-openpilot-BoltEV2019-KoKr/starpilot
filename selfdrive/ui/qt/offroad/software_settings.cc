@@ -191,11 +191,11 @@ void SoftwarePanel::updateLabels() {
   targetBranchBtn->setValue(QString::fromStdString(params.get("UpdaterTargetBranch")));
 
   // current + new versions
-  versionLbl->setText(QString::fromStdString(params.get("UpdaterCurrentDescription")));
+  versionLbl->setText(formatStarPilotDisplayVersionDescription(QString::fromStdString(params.get("UpdaterCurrentDescription"))));
   versionLbl->setDescription(QString::fromStdString(params.get("UpdaterCurrentReleaseNotes")));
 
   installBtn->setVisible((!is_onroad || parked) && params.getBool("UpdateAvailable"));
-  installBtn->setValue(QString::fromStdString(params.get("UpdaterNewDescription")));
+  installBtn->setValue(formatStarPilotDisplayVersionDescription(QString::fromStdString(params.get("UpdaterNewDescription"))));
   installBtn->setDescription(QString::fromStdString(params.get("UpdaterNewReleaseNotes")));
 
   update();

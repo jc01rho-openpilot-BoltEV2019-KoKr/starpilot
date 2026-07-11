@@ -187,7 +187,8 @@ def main() -> int:
         continue
 
       class_id = int(row["class_id"])
-      stem_base = f"real_localized_{row['session_id']}_{int(row['bookmark_number']):03d}"
+      frame_stem = Path(row["frame_path"]).stem
+      stem_base = f"real_localized_{frame_stem}"
       source_video_path = Path(row["source_video_path"]) if row.get("source_video_path") else None
       relative_time_s = float(row["relative_time_s"]) if row.get("relative_time_s") else 0.0
 

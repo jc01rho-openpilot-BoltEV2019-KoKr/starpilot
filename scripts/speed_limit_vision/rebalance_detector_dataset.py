@@ -20,6 +20,8 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE, help="Training workspace root.")
   parser.add_argument("--output-root", type=Path, help="Output dataset root. Defaults to <workspace>/detector_rebalanced.")
   parser.add_argument("--max-other-train", type=int, default=4000, help="Maximum number of non-real train images to keep.")
+  parser.add_argument("--max-real-negative-train", type=int, default=0, help="Maximum number of empty-label real train images to keep. 0 keeps all.")
+  parser.add_argument("--max-real-positive-train", type=int, default=0, help="Maximum number of labeled real train images to keep. 0 keeps all.")
   parser.add_argument("--real-val-count", type=int, default=0, help="Hold out this many real train images as extra validation examples.")
   parser.add_argument(
     "--source-cap",
@@ -100,6 +102,12 @@ def prefix_for_path(path: Path) -> str:
   return name.split("_", 1)[0]
 
 
+def has_detector_label(label_path: Path) -> bool:
+  if not label_path.is_file():
+    return False
+  return bool(label_path.read_text(encoding="utf-8").strip())
+
+
 def main() -> int:
   args = parse_args()
   workspace = resolve_workspace(args.workspace)
@@ -117,7 +125,24 @@ def main() -> int:
   other_images = [path for path in train_images if not path.name.startswith("real_")]
   rng.shuffle(real_images)
   heldout_real_images = sorted(real_images[:max(args.real_val_count, 0)], key=lambda path: path.name)
-  target_real_train_images = sorted(real_images[max(args.real_val_count, 0):], key=lambda path: path.name)
+  candidate_real_train_images = real_images[max(args.real_val_count, 0):]
+  real_positive_images = []
+  real_negative_images = []
+  for image_path in candidate_real_train_images:
+    label_path = train_labels / f"{image_path.stem}.txt"
+    if has_detector_label(label_path):
+      real_positive_images.append(image_path)
+    else:
+      real_negative_images.append(image_path)
+
+  rng.shuffle(real_positive_images)
+  rng.shuffle(real_negative_images)
+  if args.max_real_positive_train > 0:
+    real_positive_images = real_positive_images[:args.max_real_positive_train]
+  if args.max_real_negative_train > 0:
+    real_negative_images = real_negative_images[:args.max_real_negative_train]
+
+  target_real_train_images = sorted(real_positive_images + real_negative_images, key=lambda path: path.name)
 
   grouped_other_images: dict[str, list[Path]] = defaultdict(list)
   for image_path in other_images:
@@ -180,6 +205,8 @@ def main() -> int:
   print(f"Dataset YAML: {dataset_yaml}")
   print(f"Train images: {visible_file_count(output_train_image_dir)}")
   print(f"  real train: {len(target_real_train_images)}")
+  print(f"    real positive train: {len(real_positive_images)}")
+  print(f"    real negative train: {len(real_negative_images)}")
   print(f"  real held out to val: {len(heldout_real_images)}")
   print(f"  sampled other: {len(sampled_other_images)}")
   if source_caps:

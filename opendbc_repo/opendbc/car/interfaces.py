@@ -134,6 +134,7 @@ class CarInterfaceBase(ABC):
 
     dbc_names = {bus: cp.dbc_name for bus, cp in self.can_parsers.items()}
     self.CC: CarControllerBase = self.CarController(dbc_names, CP)
+    self.CC.FPCP = FPCP
 
     self.FPCP = FPCP
 
@@ -215,6 +216,9 @@ class CarInterfaceBase(ABC):
         if candidate == CHRYSLER.RAM_HD_5TH_GEN:
           if 570 not in fingerprint[0]:
             fp_ret.flags |= ChryslerStarPilotFlags.RAM_HD_ALT_BUTTONS.value
+        if 0x4FF in fingerprint[0]:
+          fp_ret.flags |= ChryslerStarPilotFlags.NO_MIN_STEERING_SPEED.value
+          CP.minSteerSpeed = 0.
 
       elif platform in GM:
         fp_ret.canUsePedal = True
@@ -505,6 +509,7 @@ class CarStateBase(ABC):
 class CarControllerBase(ABC):
   def __init__(self, dbc_names: dict[StrEnum, str], CP: structs.CarParams):
     self.CP = CP
+    self.FPCP: custom.StarPilotCarParams | None = None
     self.frame = 0
     self.secoc_key: bytes = b"00" * 16
 

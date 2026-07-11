@@ -38,6 +38,7 @@ OFFSET_MAP_METRIC = [
 
 CAMERA_SPEED_FACTOR = 1.00
 
+SLC_OVERRIDE_DISABLE_CLEAR_TIME = 0.75
 
 class SpeedLimitController:
   def __init__(self, StarPilotVCruise):
@@ -47,6 +48,7 @@ class SpeedLimitController:
     self.calling_mapbox = False
     self.override_slc = False
     self.override_requires_gas_release = False
+    self.override_disable_timer = 0.0
 
     self.denied_target = 0
     self.map_speed_limit = 0
@@ -440,8 +442,13 @@ class SpeedLimitController:
                    custom.WaySelectionType.extended):
       self.map_speed_limit = sm["mapdOut"].speedLimit
       self.next_speed_limit = sm["mapdOut"].nextSpeedLimit
+    elif way_sel in (custom.WaySelectionType.predicted,
+                     custom.WaySelectionType.possible):
+      speed = sm["mapdOut"].speedLimit
+      if speed > 0 and (self.map_speed_limit == 0 or speed < self.map_speed_limit):
+        self.map_speed_limit = speed
+      self.next_speed_limit = 0
     else:
-      self.map_speed_limit = 0
       self.next_speed_limit = 0
 
     if self.next_speed_limit > 0:
@@ -458,10 +465,14 @@ class SpeedLimitController:
 
   def update_override(self, v_cruise, v_cruise_diff, v_ego, v_ego_diff, sm):
     if not sm["selfdriveState"].enabled:
-      self.override_slc = False
-      self.overridden_speed = 0
-      self.override_requires_gas_release = False
+      self.override_disable_timer += DT_MDL
+      if self.override_disable_timer >= SLC_OVERRIDE_DISABLE_CLEAR_TIME:
+        self.override_slc = False
+        self.overridden_speed = 0
+        self.override_requires_gas_release = False
       return
+
+    self.override_disable_timer = 0.0
 
     if not sm["carState"].gasPressed:
       self.override_requires_gas_release = False

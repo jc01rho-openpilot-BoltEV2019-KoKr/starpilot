@@ -3,8 +3,20 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
+SOURCE_PRIORITY_MODES = {"Highest", "Lowest"}
+NO_SOURCE = {"", "None"}
+
+
 def _normalize_limit(limit: float) -> float:
   return limit if limit >= 1.0 else 0.0
+
+
+def _source_allowed(source: str, primary_priority: str, secondary_priority: str) -> bool:
+  if source in NO_SOURCE:
+    return False
+  if primary_priority in SOURCE_PRIORITY_MODES:
+    return True
+  return source in (primary_priority, secondary_priority, "Mapbox")
 
 
 def resolve_display_speed_limit_ms(
@@ -15,13 +27,13 @@ def resolve_display_speed_limit_ms(
   secondary_priority: str,
 ) -> float:
   slc_speed_limit = _normalize_limit(slc_speed_limit)
-  if slc_speed_limit > 0.0:
+  if slc_speed_limit > 0.0 and _source_allowed(speed_limit_source, primary_priority, secondary_priority):
     return slc_speed_limit
 
   normalized_limits = {source: _normalize_limit(limit) for source, limit in source_limits.items()}
 
   active_source_limit = normalized_limits.get(speed_limit_source, 0.0)
-  if active_source_limit > 0.0:
+  if active_source_limit > 0.0 and _source_allowed(speed_limit_source, primary_priority, secondary_priority):
     return active_source_limit
 
   available_limits = {source: limit for source, limit in normalized_limits.items() if limit > 0.0}
@@ -38,4 +50,4 @@ def resolve_display_speed_limit_ms(
     if limit > 0.0:
       return limit
 
-  return next(iter(available_limits.values()))
+  return 0.0

@@ -7,6 +7,16 @@ VISION_LEAD_TRACK_MIN_DISTANCE = 25.0
 VISION_LEAD_TRACK_BASE_TIME_GAP = 1.75
 VISION_LEAD_TRACK_CLOSING_GAIN = 0.20
 VISION_LEAD_TRACK_CLOSING_CAP = 2.50
+TRACKED_LEAD_CATCHUP_BIAS_MIN_HEADWAY_MARGIN = 0.35
+TRACKED_LEAD_CATCHUP_BIAS_FULL_HEADWAY_MARGIN = 0.65
+TRACKED_LEAD_CATCHUP_BIAS_MIN_FADE_START_MARGIN = 0.75
+TRACKED_LEAD_CATCHUP_BIAS_MIN_FADE_END_MARGIN = 1.05
+TRACKED_LEAD_CATCHUP_BIAS_ABSOLUTE_FADE_START = 2.75
+TRACKED_LEAD_CATCHUP_BIAS_ABSOLUTE_FADE_END = 3.10
+TRACKED_LEAD_CATCHUP_BIAS_FULL_LATERAL_OFFSET = 0.90
+TRACKED_LEAD_CATCHUP_BIAS_MAX_LATERAL_OFFSET = 1.60
+TRACKED_LEAD_CATCHUP_BIAS_GAIN = 0.65
+TRACKED_LEAD_CATCHUP_BIAS_SPEED_FACTOR = 0.75
 RADARLESS_MATCHED_FOLLOW_MIN_SPEED = 22.0
 RADARLESS_MATCHED_FOLLOW_MAX_REL_SPEED = 2.0
 RADARLESS_MATCHED_FOLLOW_MIN_HEADWAY = 0.95
@@ -56,10 +66,11 @@ def is_radarless_matched_follow_window(v_ego: float, lead_distance: float, v_lea
 
 
 def get_tracked_lead_catchup_bias(v_ego: float, lead_distance: float, desired_gap: float, closing_speed: float,
-                                  v_cruise: float | None = None) -> float:
+                                  v_cruise: float | None = None, y_rel: float | None = None) -> float:
   gap_error = lead_distance - desired_gap
   actual_hw = lead_distance / max(v_ego, 1e-3)
   desired_hw = desired_gap / max(v_ego, 1e-3)
+  headway_margin = actual_hw - desired_hw
 
   if v_ego <= HIGHWAY_LEAD_BEHAVIOR_MIN_SPEED:
     return 0.0
@@ -71,14 +82,34 @@ def get_tracked_lead_catchup_bias(v_ego: float, lead_distance: float, desired_ga
   # Encourage ACC to treat a tracked lead as the active constraint when we're
   # hanging far above the requested time gap, but don't override cruise for a
   # truly distant lead or one we're already closing on decisively.
-  if actual_hw <= max(desired_hw + 0.3, 1.72):
+  if headway_margin <= TRACKED_LEAD_CATCHUP_BIAS_MIN_HEADWAY_MARGIN:
     return 0.0
-  if actual_hw >= max(desired_hw + 1.6, 3.0):
+  fade_start_margin = max(TRACKED_LEAD_CATCHUP_BIAS_MIN_FADE_START_MARGIN,
+                          TRACKED_LEAD_CATCHUP_BIAS_ABSOLUTE_FADE_START - desired_hw)
+  fade_end_margin = max(TRACKED_LEAD_CATCHUP_BIAS_MIN_FADE_END_MARGIN,
+                        TRACKED_LEAD_CATCHUP_BIAS_ABSOLUTE_FADE_END - desired_hw)
+  if headway_margin >= fade_end_margin:
     return 0.0
   if closing_speed > max(2.5, 0.12 * v_ego):
     return 0.0
 
-  return min(gap_error * 0.65, max(14.0, 0.75 * v_ego))
+  entry_factor = min(1.0, max(0.0, (headway_margin - TRACKED_LEAD_CATCHUP_BIAS_MIN_HEADWAY_MARGIN) /
+                                     max(TRACKED_LEAD_CATCHUP_BIAS_FULL_HEADWAY_MARGIN - TRACKED_LEAD_CATCHUP_BIAS_MIN_HEADWAY_MARGIN, 1e-3)))
+  exit_factor = 1.0
+  if headway_margin > fade_start_margin:
+    exit_factor = min(1.0, max(0.0, (fade_end_margin - headway_margin) / max(fade_end_margin - fade_start_margin, 1e-3)))
+
+  lateral_factor = 1.0
+  if y_rel is not None:
+    lateral_offset = abs(float(y_rel))
+    if lateral_offset >= TRACKED_LEAD_CATCHUP_BIAS_MAX_LATERAL_OFFSET:
+      return 0.0
+    if lateral_offset > TRACKED_LEAD_CATCHUP_BIAS_FULL_LATERAL_OFFSET:
+      lateral_factor = min(1.0, max(0.0, (TRACKED_LEAD_CATCHUP_BIAS_MAX_LATERAL_OFFSET - lateral_offset) /
+                                           max(TRACKED_LEAD_CATCHUP_BIAS_MAX_LATERAL_OFFSET - TRACKED_LEAD_CATCHUP_BIAS_FULL_LATERAL_OFFSET, 1e-3)))
+
+  bias_cap = max(14.0, TRACKED_LEAD_CATCHUP_BIAS_SPEED_FACTOR * v_ego)
+  return min(gap_error * TRACKED_LEAD_CATCHUP_BIAS_GAIN, bias_cap) * entry_factor * exit_factor * lateral_factor
 
 
 def should_disable_far_lead_throttle(v_ego: float, lead_distance: float, desired_gap: float,

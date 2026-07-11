@@ -3,18 +3,16 @@ import numpy as np
 import pyray as rl
 from cereal import log, messaging
 from msgq.visionipc import VisionStreamType
-from openpilot.common.constants import CV
 from openpilot.selfdrive.ui import UI_BORDER_SIZE
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.selfdrive.ui.lib.starpilot_visuals import get_border_width
-from openpilot.selfdrive.ui.onroad.alert_renderer import AlertRenderer, ALERT_COLORS, AlertStatus
+from openpilot.selfdrive.ui.onroad.alert_renderer import AlertRenderer
 from openpilot.selfdrive.ui.onroad.driver_state import DriverStateRenderer
 from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.onroad.cameraview import CameraView
 from openpilot.selfdrive.ui.lib.starpilot_status import get_screen_edge_color
-from openpilot.system.ui.lib.application import gui_app, FontWeight
-from openpilot.system.ui.lib.text_measure import measure_text_cached
+from openpilot.system.ui.lib.application import gui_app
 from openpilot.common.transformations.camera import DEVICE_CAMERAS, DeviceCameraConfig, view_frame_from_device_frame
 from openpilot.common.transformations.orientation import rot_from_euler
 
@@ -35,104 +33,6 @@ ROAD_CAM_MIN_SPEED = 15.0  # m/s (34 mph)
 INF_POINT = np.array([1000.0, 0.0, 0.0])
 
 
-class MinSteerSpeedBanner:
-  """One-shot-per-drive banner that stays visible for the first below-min-steer interval."""
-
-  def __init__(self):
-    self._shown_this_drive = False
-    self._showing_interval = False
-    self._has_been_above_min = False
-    self._was_under_min = False
-    self._last_started_frame = -1
-    self._font = gui_app.font(FontWeight.BOLD)
-
-  def _reset(self):
-    self._shown_this_drive = False
-    self._showing_interval = False
-    self._has_been_above_min = False
-    self._was_under_min = False
-
-  def _get_message(self, min_steer_speed: float) -> str:
-    speed_units = CV.MS_TO_KPH if ui_state.is_metric else CV.MS_TO_MPH
-    speed = int(round(min_steer_speed * speed_units))
-    unit = "km/h" if ui_state.is_metric else "mph"
-    return f"Steer Unavailable Under {speed} {unit}"
-
-  def _update_state(self):
-    if not ui_state.started:
-      self._last_started_frame = -1
-      self._reset()
-      return
-
-    if ui_state.started_frame != self._last_started_frame:
-      self._last_started_frame = ui_state.started_frame
-      self._reset()
-
-    sm = ui_state.sm
-    if sm.recv_frame["carParams"] < ui_state.started_frame or sm.recv_frame["carState"] < ui_state.started_frame:
-      return
-
-    min_steer_speed = float(sm["carParams"].minSteerSpeed)
-    if min_steer_speed <= 0:
-      self._showing_interval = False
-      self._was_under_min = False
-      return
-
-    under_min = float(sm["carState"].vEgo) < min_steer_speed
-    if not under_min:
-      self._has_been_above_min = True
-
-    crossed_below = under_min and not self._was_under_min
-    if (not self._shown_this_drive) and crossed_below and self._has_been_above_min:
-      self._showing_interval = True
-      self._shown_this_drive = True
-
-    if self._showing_interval and not under_min:
-      self._showing_interval = False
-
-    self._was_under_min = under_min
-
-  def render(self, rect: rl.Rectangle):
-    self._update_state()
-
-    if not self._showing_interval:
-      return
-
-    min_steer_speed = float(ui_state.sm["carParams"].minSteerSpeed)
-    if min_steer_speed <= 0:
-      return
-
-    color = ALERT_COLORS[AlertStatus.userPrompt]
-    color = rl.Color(color.r, color.g, color.b, int(255 * 0.93))
-    translucent = rl.Color(color.r, color.g, color.b, 0)
-    dropdown_height = min(200, int(rect.height * 0.38))
-    solid_height = max(34, int(dropdown_height * 0.22))
-
-    rl.draw_rectangle(int(rect.x), int(rect.y), int(rect.width), solid_height, color)
-    rl.draw_rectangle_gradient_v(
-      int(rect.x),
-      int(rect.y + solid_height),
-      int(rect.width),
-      int(dropdown_height - solid_height),
-      color,
-      translucent,
-    )
-
-    text = self._get_message(min_steer_speed)
-    font_size = 52
-    max_text_width = rect.width - 100
-    text_size = measure_text_cached(self._font, text, font_size)
-    while font_size > 36 and text_size.x > max_text_width:
-      font_size -= 2
-      text_size = measure_text_cached(self._font, text, font_size)
-
-    text_pos = rl.Vector2(
-      rect.x + (rect.width - text_size.x) / 2,
-      rect.y + max(12, (dropdown_height * 0.34) - (text_size.y / 2)),
-    )
-    rl.draw_text_ex(self._font, text, text_pos, font_size, 0, rl.Color(255, 255, 255, 242))
-
-
 class AugmentedRoadView(CameraView):
   def __init__(self, stream_type: VisionStreamType = VisionStreamType.VISION_STREAM_ROAD):
     super().__init__("camerad", stream_type)
@@ -150,7 +50,6 @@ class AugmentedRoadView(CameraView):
     self._hud_renderer = HudRenderer()
     self.alert_renderer = AlertRenderer()
     self.driver_state_renderer = DriverStateRenderer()
-    self._min_steer_speed_banner = MinSteerSpeedBanner()
 
     # debug
     self._pm = messaging.PubMaster(['uiDebug'])
@@ -189,12 +88,10 @@ class AugmentedRoadView(CameraView):
     super()._render(self._content_rect)
 
     # Draw all UI overlays
-    current_alert = self.alert_renderer.get_alert(ui_state.sm)
     self.model_renderer.render(self._content_rect)
     self._hud_renderer.render(self._content_rect)
     self.alert_renderer.render(self._content_rect)
     self.driver_state_renderer.render(self._content_rect)
-    self._min_steer_speed_banner.render(self._content_rect)
 
     # Custom UI extension point - add custom overlays here
     # Use self._content_rect for positioning within camera bounds

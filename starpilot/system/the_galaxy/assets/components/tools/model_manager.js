@@ -7,6 +7,7 @@ const state = reactive({
   actionBusy: false,
   sortMode: "alphabetical",
   communityFavoriteFilter: "all",
+  userFavoriteFilter: "all",
   models: [],
   currentModel: "",
   summary: { installed: 0, missing: 0, total: 0 },
@@ -91,6 +92,12 @@ function modelSortCompare(a, b) {
 function getFilteredModels() {
   let rows = [...state.models].filter(model => model && typeof model === "object");
 
+  if (state.userFavoriteFilter === "yes") {
+    rows = rows.filter(model => !!model.userFavorite);
+  } else if (state.userFavoriteFilter === "no") {
+    rows = rows.filter(model => !model.userFavorite);
+  }
+
   if (state.communityFavoriteFilter === "yes") {
     rows = rows.filter(model => !!model.communityFavorite);
   } else if (state.communityFavoriteFilter === "no") {
@@ -143,8 +150,15 @@ function getReleaseOrderedModels() {
 }
 
 function getInstalledModels() {
-  const rows = state.sortMode === "release_date" ? getReleaseOrderedModels() : getVisibleModels();
-  return rows.filter(model => !!model.installed);
+  return state.models
+    .filter(model => model && typeof model === "object" && !!model.installed)
+    .sort(modelSortCompare);
+}
+
+function getUserFavoriteModels(installedOnly = false) {
+  const rows = state.models.filter(model => model && typeof model === "object" && !!model.userFavorite);
+  const filtered = installedOnly ? rows.filter(model => !!model.installed) : rows;
+  return filtered.sort(modelSortCompare);
 }
 
 function getCurrentModelName() {
@@ -317,6 +331,28 @@ async function deleteModel(modelKey) {
   notify(payload.message || `Deleted files for "${modelKey}".`);
 }
 
+async function setUserFavorite(modelKey, shouldFavorite) {
+  const key = safeText(modelKey, "");
+  if (!key) return;
+
+  const favorites = getUserFavoriteModels(false)
+    .map(model => safeText(model.value, ""))
+    .filter(Boolean)
+    .filter(value => value !== key);
+
+  if (shouldFavorite) {
+    favorites.push(key);
+  }
+
+  const payload = await fetchJson("/api/models/preferences", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userFavorites: favorites }),
+  });
+
+  notify(payload.message || (shouldFavorite ? "Model added to your favorites." : "Model removed from your favorites."));
+}
+
 async function refreshManifest() {
   const payload = await fetchJson("/api/models/refresh_manifest", { method: "POST" });
   notify(payload.message || "Model manifest refreshed.");
@@ -336,7 +372,8 @@ async function runAction(action, modelKey = "") {
       return;
     }
 
-    if (state.status.isOnroad && action !== "refresh") {
+    const allowedOnroadActions = new Set(["refresh", "favorite", "unfavorite"]);
+    if (state.status.isOnroad && !allowedOnroadActions.has(action)) {
       notify("Actions are blocked while onroad.", "error");
       return;
     }
@@ -356,6 +393,12 @@ async function runAction(action, modelKey = "") {
       const confirmed = window.confirm(`Delete local files for model \"${modelKey}\"?`);
       if (!confirmed) return;
       await deleteModel(modelKey);
+    } else if (action === "favorite") {
+      if (!modelKey) return;
+      await setUserFavorite(modelKey, true);
+    } else if (action === "unfavorite") {
+      if (!modelKey) return;
+      await setUserFavorite(modelKey, false);
     }
 
     await fetchStatus();
@@ -397,6 +440,14 @@ function bindDomHandlers() {
       return;
     }
 
+    if (target.id === "mm-favorite-model-select") {
+      const modelKey = safeText(target.value, "");
+      if (!modelKey) return;
+      runAction("select", modelKey).catch(() => {});
+      target.value = "";
+      return;
+    }
+
     if (target.id === "mm-sort-mode-select") {
       const value = safeText(target.value, "alphabetical");
       state.sortMode = value === "release_date" ? "release_date" : "alphabetical";
@@ -409,6 +460,15 @@ function bindDomHandlers() {
         state.communityFavoriteFilter = value;
       } else {
         state.communityFavoriteFilter = "all";
+      }
+    }
+
+    if (target.id === "mm-user-filter-select") {
+      const value = safeText(target.value, "all");
+      if (value === "yes" || value === "no" || value === "all") {
+        state.userFavoriteFilter = value;
+      } else {
+        state.userFavoriteFilter = "all";
       }
     }
   });
@@ -444,6 +504,8 @@ function renderActions(model) {
 function renderModelRow(model) {
   const label = safeText(model.label, safeText(model.value, "Unnamed"));
   const key = safeText(model.value, "");
+  const favoriteAction = model.userFavorite ? "unfavorite" : "favorite";
+  const favoriteTitle = model.userFavorite ? "Remove from your favorites" : "Add to your favorites";
 
   return html`
     <div class="mm-row">
@@ -457,11 +519,20 @@ function renderModelRow(model) {
           ${state.sortMode === "release_date" ? "" : model.series ? html`<span class="mm-chip">${safeText(model.series)}</span>` : ""}
           ${model.version ? html`<span class="mm-chip">Version ${safeText(model.version)}</span>` : ""}
           ${model.released ? html`<span class="mm-chip">Released ${safeText(model.released)}</span>` : ""}
+          ${model.userFavorite ? html`<span class="mm-chip mm-chip-user-favorite">Your Favorite</span>` : ""}
           ${model.communityFavorite ? html`<span class="mm-chip mm-chip-favorite">Community Favorite</span>` : ""}
           ${model.partial ? html`<span class="mm-chip mm-chip-warning">Partial Files</span>` : ""}
         </div>
       </div>
       <div class="mm-row-actions">
+        <button
+          class="mm-icon-btn ${model.userFavorite ? "is-active" : ""}"
+          data-mm-action="${favoriteAction}"
+          data-model="${key}"
+          title="${favoriteTitle}"
+          aria-label="${favoriteTitle}">
+          <i class="bi ${model.userFavorite ? "bi-star-fill" : "bi-star"}"></i>
+        </button>
         ${renderActions(model)}
       </div>
     </div>
@@ -525,6 +596,7 @@ export function ModelManager() {
       <div class="mm-status">
         <span class="mm-chip">Current: ${getCurrentModelName()}</span>
         <span class="mm-chip">Progress: ${safeText(state.status.progress, "Idle")}</span>
+        <span class="mm-chip">${() => getUserFavoriteModels(false).length} personal favorites</span>
         ${() => state.status.isOnroad ? html`<span class="mm-chip mm-chip-warning">Onroad: actions disabled</span>` : ""}
       </div>
 
@@ -548,6 +620,23 @@ export function ModelManager() {
           })()}
         </select>
 
+        <label class="mm-filter-label" for="mm-favorite-model-select">Favorite Models</label>
+        <select class="mm-select" id="mm-favorite-model-select" disabled="${() => getUserFavoriteModels(true).length === 0}">
+          ${(() => {
+            const favorites = getUserFavoriteModels(true);
+            return favorites.length > 0
+              ? html`
+                <option value="">Choose a favorite</option>
+                ${favorites.map(model => html`
+                  <option value="${safeText(model.value)}">
+                    ${safeText(model.label, model.value)}
+                  </option>
+                `)}
+              `
+              : html`<option value="">No installed favorites</option>`;
+          })()}
+        </select>
+
         <label class="mm-filter-label" for="mm-sort-mode-select">Sort</label>
         <select class="mm-select" id="mm-sort-mode-select">
           <option value="alphabetical" selected="${() => state.sortMode === "alphabetical" || false}">Alphabetical</option>
@@ -555,6 +644,13 @@ export function ModelManager() {
         </select>
 
         <div class="mm-filter-break"></div>
+
+        <label class="mm-filter-label" for="mm-user-filter-select">Your Favorite</label>
+        <select class="mm-select" id="mm-user-filter-select">
+          <option value="all" selected="${() => state.userFavoriteFilter === "all" || false}">All</option>
+          <option value="yes" selected="${() => state.userFavoriteFilter === "yes" || false}">Yes</option>
+          <option value="no" selected="${() => state.userFavoriteFilter === "no"}">No</option>
+        </select>
 
         <label class="mm-filter-label" for="mm-community-filter-select">Community Favorite</label>
         <select class="mm-select" id="mm-community-filter-select">

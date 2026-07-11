@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 import os
 from openpilot.system.hardware import TICI
+os.environ['GMMU'] = '0'
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
 from tinygrad.tensor import Tensor
-from tinygrad.dtype import dtypes
 import time
 import pickle
 import numpy as np
@@ -16,9 +16,11 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType, VisionBuf
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
 from openpilot.common.filter_simple import FirstOrderFilter
+from openpilot.common.file_chunker import read_file_chunked
 from openpilot.common.realtime import config_realtime_process, DT_MDL
 from openpilot.common.transformations.camera import DEVICE_CAMERAS
 from openpilot.common.transformations.model import get_warp_matrix
+from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 from openpilot.system import sentry
 from opendbc.car.car_helpers import get_demo_car_params
 from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
@@ -27,8 +29,18 @@ from openpilot.selfdrive.modeld.camera_offset import CameraOffset, DEFAULT_CAMER
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_pose_msg, PublishState, get_curvature_from_output
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
-from openpilot.selfdrive.modeld.models.commonmodel_pyx import DrivingModelFrame, CLContext
-from openpilot.selfdrive.modeld.runners.tinygrad_helpers import qcom_tensor_from_opencl_address
+from openpilot.selfdrive.modeld.compile_modeld import (
+  ARTIFACT_FORMAT_VERSION,
+  IMAGE_HISTORY_IN_POLICY,
+  IMAGE_HISTORY_IN_WARP,
+  LEGACY_WARP_INPUTS,
+  _detect_vision_keys,
+  make_split_input_queues,
+  make_supercombo_input_queues,
+)
+from openpilot.selfdrive.modeld.helpers import get_tg_input_devices
+from openpilot.starpilot.assets.model_manager import ModelManager
+from openpilot.starpilot.common.model_versions import is_tinygrad_model_version
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles, MODELS_PATH, params_memory
 
 
@@ -160,330 +172,239 @@ class FrameMeta:
       self.frame_id, self.timestamp_sof, self.timestamp_eof = vipc.frame_id, vipc.timestamp_sof, vipc.timestamp_eof
 
 class ModelState:
-  frames: dict[str, DrivingModelFrame]
-  inputs: dict[str, np.ndarray]
-  output: np.ndarray
-  prev_desire: np.ndarray  # for tracking the rising edge of the pulse
+  prev_desire: np.ndarray
 
   def _build_policy_inputs(self, input_shapes: dict[str, tuple[int, ...]]) -> tuple[dict[str, np.ndarray], str | None]:
     numpy_inputs: dict[str, np.ndarray] = {}
+    desire_key = next((key for key in input_shapes if key.startswith("desire")), None)
+    if desire_key is not None:
+      numpy_inputs[desire_key] = np.zeros(input_shapes[desire_key], dtype=np.float32)
+    for key, shape in input_shapes.items():
+      if key == desire_key or key == "features_buffer" or "img" in key:
+        continue
+      numpy_inputs[key] = np.zeros(shape, dtype=np.float32)
 
-    # Always-supported inputs (if model expects them)
-    desire_key_init = next((k for k in input_shapes if k.startswith('desire')), None)
-    if desire_key_init:
-      numpy_inputs[desire_key_init] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.DESIRE_LEN), dtype=np.float32)
-    if 'traffic_convention' in input_shapes:
-      numpy_inputs['traffic_convention'] = np.zeros((1, ModelConstants.TRAFFIC_CONVENTION_LEN), dtype=np.float32)
-    if 'features_buffer' in input_shapes:
-      numpy_inputs['features_buffer'] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN,  ModelConstants.FEATURE_LEN), dtype=np.float32)
-    if 'action_t' in input_shapes:
-      numpy_inputs['action_t'] = np.zeros(input_shapes['action_t'], dtype=np.float32)
-    if 'prev_action' in input_shapes:
-      numpy_inputs['prev_action'] = np.zeros(input_shapes['prev_action'], dtype=np.float32)
-
-    # Optional inputs for non-v11 (and some v10/v9 variants)
-    # Lateral control params
-    if 'lateral_control_params' in input_shapes:
-      numpy_inputs['lateral_control_params'] = np.zeros((1, ModelConstants.LATERAL_CONTROL_PARAMS_LEN), dtype=np.float32)
-
-    # Previous desired curvature: handle both singular and plural key names across model versions
-    prev_desired_curv_key = None
-    if 'prev_desired_curv' in input_shapes:
-      prev_desired_curv_key = 'prev_desired_curv'
-      numpy_inputs['prev_desired_curv'] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32)
-    elif 'prev_desired_curvs' in input_shapes:
-      prev_desired_curv_key = 'prev_desired_curvs'
-      numpy_inputs['prev_desired_curvs'] = np.zeros((1, ModelConstants.INPUT_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32)
-
+    prev_desired_curv_key = next(
+      (key for key in ("prev_desired_curv", "prev_desired_curvs") if key in input_shapes),
+      None,
+    )
     return numpy_inputs, prev_desired_curv_key
 
-  def __init__(self, context: CLContext):
-    # Dynamically build paths based on current model ID
+  def __init__(self, cam_w: int, cam_h: int):
     params = Params()
-    model_id_raw = _resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY
-    model_id = _canonical_model_id(model_id_raw)
+    model_id = _canonical_model_id(_resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY)
+    use_builtin = model_id == BUILTIN_MODEL_KEY
+    loaded_builtin = use_builtin
+    if use_builtin:
+      model_path = Path(__file__).parent / "models" / "driving_tinygrad.pkl"
+    else:
+      model_path = MODELS_PATH / f"{model_id}_driving_tinygrad.pkl"
+
+    if not model_path.is_file() and not use_builtin:
+      cloudlog.error(f"Missing model artifact {model_path}, downloading {model_id}...")
+      try:
+        ModelManager(params, params_memory).download_model(model_id)
+      except Exception:
+        cloudlog.exception(f"Failed to download model {model_id}")
+    if not model_path.is_file() and not use_builtin:
+      fallback_path = Path(__file__).parent / "models" / "driving_tinygrad.pkl"
+      if fallback_path.is_file():
+        cloudlog.error(f"Falling back to builtin model artifact after {model_id} download failed")
+        model_path = fallback_path
+        loaded_builtin = True
+    if not model_path.is_file():
+      raise FileNotFoundError(model_path)
+
+    artifact = pickle.loads(read_file_chunked(str(model_path)))
+    if artifact.get("format_version") != ARTIFACT_FORMAT_VERSION:
+      raise ValueError(
+        f"Unsupported model artifact format {artifact.get('format_version')!r}; "
+        f"expected {ARTIFACT_FORMAT_VERSION}"
+      )
+
+    self.model_type = artifact["model_type"]
+    self.metadata = artifact["metadata"]
+    self.policy_order = artifact.get("policy_order", [])
+    self.frame_skip = int(artifact["frame_skip"])
+    self.image_history_pipeline = artifact.get("image_history_pipeline", IMAGE_HISTORY_IN_WARP)
+    self.warp_input_keys = tuple(artifact.get("warp_input_keys", LEGACY_WARP_INPUTS))
+    self.policy_input_keys = tuple(artifact["policy_input_keys"])
+    self.run_policy = artifact["run_policy"]
+    self.warp_enqueue = artifact[(cam_w, cam_h)]
+    self.can_prepare_only = self.image_history_pipeline == IMAGE_HISTORY_IN_WARP
+
+    if self.model_type == "supercombo":
+      input_shapes = self.metadata["model"]["input_shapes"]
+      self.output_slices = self.metadata["model"]["output_slices"]
+      self.input_queues, self.npy = make_supercombo_input_queues(input_shapes, self.frame_skip, self.QUEUE_DEV)
+      self.policy_input_shapes = input_shapes
+    else:
+      vision_shapes = self.metadata["vision"]["input_shapes"]
+      primary_policy = "on_policy" if "on_policy" in self.policy_order else "policy"
+      self.policy_input_shapes = self.metadata[primary_policy]["input_shapes"]
+      self.input_queues, self.npy = make_split_input_queues(
+        vision_shapes, self.policy_input_shapes, self.frame_skip, self.QUEUE_DEV,
+      )
+      input_shapes = vision_shapes
+
+    self.road_key, self.wide_key = _detect_vision_keys(input_shapes)
+    self.vision_input_names = [self.road_key, self.wide_key]
+    self.numpy_inputs, self.prev_desired_curv_key = self._build_policy_inputs(self.policy_input_shapes)
+    self.desire_key = next(key for key in self.numpy_inputs if key.startswith("desire"))
+    self.off_policy_enabled = "off_policy" in self.policy_order
+    self.off_policy_numpy_inputs = dict(self.numpy_inputs) if self.off_policy_enabled else {}
+    self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
+    self.parser = Parser()
+    self.aux_parser = Parser(ignore_missing=True)
+    self.frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
+    self._blob_cache: dict[tuple[str, int], Tensor] = {}
 
     model_version = _resolve_mirrored_param(params, "ModelVersion", "DrivingModelVersion")
-
-    model_dir = MODELS_PATH
-    use_builtin_model = model_id == BUILTIN_MODEL_KEY
-    model_download_id = model_id
-    if use_builtin_model and (_canonical_model_id(_get_param_str(params, "Model")) != model_id or
-                              _canonical_model_id(_get_param_str(params, "DrivingModel")) != model_id):
-      params.put("Model", model_id)
-      params.put("DrivingModel", model_id)
-
-    if use_builtin_model and not model_version:
-      model_version = "v11"
-      params.put("ModelVersion", model_version)
-      params.put("DrivingModelVersion", model_version)
-    # Use built-in files for defaults when a custom model isn't selected.
-    if use_builtin_model:
-        models_dir = Path(__file__).parent / "models"
-        VISION_PKL_PATH = models_dir / "driving_vision_tinygrad.pkl"
-        POLICY_PKL_PATH = models_dir / "driving_policy_tinygrad.pkl"
-        OFF_POLICY_PKL_PATH = models_dir / "driving_off_policy_tinygrad.pkl"
-        VISION_METADATA_PATH = models_dir / "driving_vision_metadata.pkl"
-        POLICY_METADATA_PATH = models_dir / "driving_policy_metadata.pkl"
-        OFF_POLICY_METADATA_PATH = models_dir / "driving_off_policy_metadata.pkl"
-    else:
-        VISION_PKL_PATH = model_dir / f"{model_id}_driving_vision_tinygrad.pkl"
-        POLICY_PKL_PATH = model_dir / f"{model_id}_driving_policy_tinygrad.pkl"
-        OFF_POLICY_PKL_PATH = model_dir / f"{model_id}_driving_off_policy_tinygrad.pkl"
-        VISION_METADATA_PATH = model_dir / f"{model_id}_driving_vision_metadata.pkl"
-        POLICY_METADATA_PATH = model_dir / f"{model_id}_driving_policy_metadata.pkl"
-        OFF_POLICY_METADATA_PATH = model_dir / f"{model_id}_driving_off_policy_metadata.pkl"
-
-    def ensure_artifact(path: Path, suffix: str | None = None, optional: bool = False) -> Path | None:
-      if path.is_file():
-        return path
-
-      if use_builtin_model:
-        if optional:
-          cloudlog.warning(f"Optional builtin model artifact missing: {path}")
-          return None
-        raise FileNotFoundError(
-          f"Missing builtin model artifact: {path}. "
-          "Rebuild model artifacts locally (./build or scons target) and deploy them."
-        )
-
-      cloudlog.error(f"Missing model artifact {path}, downloading {model_download_id}...")
-      from openpilot.starpilot.assets.model_manager import ModelManager
-      ModelManager(params, params_memory).download_model(model_download_id)
-
-      if path.is_file():
-        return path
-
-      if optional:
-        cloudlog.warning(f"Optional model artifact missing: {path}")
-        return None
-
-      raise FileNotFoundError(path)
-
-    # If ModelVersion is not set or not available, try to determine it from available model data
     if not model_version:
-      cloudlog.warning(f"ModelVersion not available for model {model_id}, attempting to determine from model data")
-      try:
-        # Try to get version from the model versions JSON file
-        versions_file = model_dir / ".model_versions.json"
-        if versions_file.is_file():
+      model_version = str(artifact.get("behavior_version") or "")
+    if not model_version:
+      versions_path = MODELS_PATH / ".model_versions.json"
+      if versions_path.is_file():
+        try:
           import json
-          with open(versions_file, "r") as f:
-            version_map = json.load(f)
-          version_lookup_keys = [model_id]
-          if model_id and not model_id.endswith("2"):
-            version_lookup_keys.append(f"{model_id}2")
-          for key in version_lookup_keys:
-            if key in version_map:
-              model_version = version_map[key]
-              cloudlog.warning(f"Determined model version from JSON: {model_version} ({key})")
-              params.put("ModelVersion", model_version)
-              params.put("DrivingModelVersion", model_version)
-              break
-        else:
-          cloudlog.error("Model versions JSON file not found, defaulting to v8")
-          model_version = "v8"
-      except Exception as e:
-        cloudlog.error(f"Failed to determine model version: {e}, defaulting to v8")
-        model_version = "v8"
+          model_version = str(json.loads(versions_path.read_text()).get(model_id) or "")
+        except Exception:
+          pass
+    if loaded_builtin and not use_builtin:
+      model_version = str(artifact.get("behavior_version") or "v11")
+    self.policy_generation = model_version or ("v11" if loaded_builtin else "v8")
+    self.is_v9 = self.policy_generation == "v9"
+    self.is_v14 = self.policy_generation == "v14"
+    self.is_v15 = self.policy_generation == "v15"
+    self.mlsim = is_tinygrad_model_version(self.policy_generation)
+    params.put("ModelVersion", self.policy_generation)
+    params.put("DrivingModelVersion", self.policy_generation)
 
-    VISION_METADATA_PATH = ensure_artifact(VISION_METADATA_PATH, "driving_vision_metadata.pkl")
-    with open(VISION_METADATA_PATH, 'rb') as f:
-      vision_metadata = pickle.load(f)
-    self.vision_input_shapes =  vision_metadata['input_shapes']
-    self.vision_input_names = list(self.vision_input_shapes.keys())
-    self.vision_output_slices = vision_metadata['output_slices']
-    vision_output_size = vision_metadata['output_shapes']['outputs'][1]
-
-    POLICY_METADATA_PATH = ensure_artifact(POLICY_METADATA_PATH, "driving_policy_metadata.pkl")
-    with open(POLICY_METADATA_PATH, 'rb') as f:
-      policy_metadata = pickle.load(f)
-    self.policy_input_shapes =  policy_metadata['input_shapes']
-    self.policy_output_slices = policy_metadata['output_slices']
-    policy_output_size = policy_metadata['output_shapes']['outputs'][1]
-    # Add policy_generation attribute after loading policy_metadata
-    self.policy_generation = model_version or "v8"
-    self.is_v11 = (self.policy_generation == "v11")
-    self.is_v10 = (self.policy_generation == "v10")
-    self.is_v12 = (self.policy_generation == "v12")
-    self.is_v13 = (self.policy_generation == "v13")
-    self.is_v14 = (self.policy_generation == "v14")
-    self.is_v15 = (self.policy_generation == "v15")
-    self.is_v9 = (self.policy_generation == "v9")
-    self.mlsim = (self.policy_generation in ("v8", "v10", "v11", "v12", "v13", "v14", "v15"))
-    self.policy_has_plan = 'plan' in self.policy_output_slices
-
-    self.frames = {name: DrivingModelFrame(context, ModelConstants.TEMPORAL_SKIP) for name in self.vision_input_names}
-    self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
-
-    self.full_features_buffer = np.zeros((1, ModelConstants.FULL_HISTORY_BUFFER_LEN,  ModelConstants.FEATURE_LEN), dtype=np.float32)
-    self.full_desire = np.zeros((1, ModelConstants.FULL_HISTORY_BUFFER_LEN, ModelConstants.DESIRE_LEN), dtype=np.float32)
-    self.temporal_idxs = slice(-1-(ModelConstants.TEMPORAL_SKIP*(ModelConstants.INPUT_HISTORY_BUFFER_LEN-1)), None, ModelConstants.TEMPORAL_SKIP)
-
-
-    # policy inputs (built dynamically to support all generations)
-    self.numpy_inputs, self.prev_desired_curv_key = self._build_policy_inputs(self.policy_input_shapes)
-
-    # Off-policy model (optional)
-    self.off_policy_enabled = False
-    self.off_policy_input_shapes: dict[str, tuple[int, ...]] = {}
-    self.off_policy_output_slices: dict[str, slice] = {}
-    self.off_policy_numpy_inputs: dict[str, np.ndarray] = {}
-    self.off_policy_prev_desired_curv_key: str | None = None
-    self.off_policy_desire_key: str | None = None
-    self.off_policy_inputs: dict[str, Tensor] | None = None
-    self.off_policy_output: np.ndarray | None = None
-
-    off_policy_metadata = None
-    if self.policy_generation in ("v12", "v13", "v14", "v15") or OFF_POLICY_METADATA_PATH.is_file() or OFF_POLICY_PKL_PATH.is_file():
-      resolved_off_policy_meta = ensure_artifact(OFF_POLICY_METADATA_PATH, "driving_off_policy_metadata.pkl", optional=True)
-      if resolved_off_policy_meta is not None:
-        with open(resolved_off_policy_meta, 'rb') as f:
-          off_policy_metadata = pickle.load(f)
-
-    if off_policy_metadata is not None:
-      self.off_policy_input_shapes = off_policy_metadata['input_shapes']
-      self.off_policy_output_slices = off_policy_metadata['output_slices']
-      self.off_policy_has_plan = 'plan' in self.off_policy_output_slices
-      off_policy_output_size = off_policy_metadata['output_shapes']['outputs'][1]
-      self.off_policy_numpy_inputs, self.off_policy_prev_desired_curv_key = self._build_policy_inputs(self.off_policy_input_shapes)
-      self.off_policy_desire_key = next((k for k in self.off_policy_numpy_inputs if k.startswith('desire')), None)
-      self.off_policy_inputs = {k: Tensor(v, device='NPY').realize() for k, v in self.off_policy_numpy_inputs.items()}
-      self.off_policy_output = np.zeros(off_policy_output_size, dtype=np.float32)
-      resolved_off_policy_pkl = ensure_artifact(OFF_POLICY_PKL_PATH, "driving_off_policy_tinygrad.pkl", optional=True)
-      if resolved_off_policy_pkl is not None:
-        with open(resolved_off_policy_pkl, "rb") as f:
-          self.off_policy_run = pickle.load(f)
-        self.off_policy_enabled = True
-    else:
-      self.off_policy_has_plan = False
-
-    # Optional temporal buffer for previous desired curvature (allocate only if any model expects it)
-    if self.prev_desired_curv_key is not None or self.off_policy_prev_desired_curv_key is not None:
-      self.full_prev_desired_curv = np.zeros((1, ModelConstants.FULL_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN), dtype=np.float32)
-
-
-    # img buffers are managed in openCL transform code
-    self.vision_inputs: dict[str, Tensor] = {}
-    self.vision_output = np.zeros(vision_output_size, dtype=np.float32)
-    self.policy_inputs = {k: Tensor(v, device='NPY').realize() for k,v in self.numpy_inputs.items()}
-    self.policy_output = np.zeros(policy_output_size, dtype=np.float32)
-    self.parser = Parser()
-    self.off_policy_parser = Parser(ignore_missing=True)
-
-    VISION_PKL_PATH = ensure_artifact(VISION_PKL_PATH, "driving_vision_tinygrad.pkl")
-    with open(VISION_PKL_PATH, "rb") as f:
-      self.vision_run = pickle.load(f)
-
-    POLICY_PKL_PATH = ensure_artifact(POLICY_PKL_PATH, "driving_policy_tinygrad.pkl")
-    with open(POLICY_PKL_PATH, "rb") as f:
-      self.policy_run = pickle.load(f)
+    if self.prev_desired_curv_key is not None:
+      self.full_prev_desired_curv = np.zeros(
+        (1, ModelConstants.FULL_HISTORY_BUFFER_LEN, ModelConstants.PREV_DESIRED_CURV_LEN),
+        dtype=np.float32,
+      )
+    self.temporal_idxs = slice(
+      -1 - (ModelConstants.TEMPORAL_SKIP * (ModelConstants.INPUT_HISTORY_BUFFER_LEN - 1)),
+      None,
+      ModelConstants.TEMPORAL_SKIP,
+    )
 
   @property
-  def desire_key(self) -> str:
-    return next(key for key in self.numpy_inputs if key.startswith('desire'))
+  def QUEUE_DEV(self) -> str:
+    if not hasattr(self, "_queue_dev"):
+      devices = get_tg_input_devices(PROCESS_NAME, usbgpu=False)
+      self._warp_dev = devices["WARP_DEV"]
+      self._queue_dev = devices["QUEUE_DEV"]
+    return self._queue_dev
 
-  def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
-    parsed_model_outputs = {k: model_outputs[np.newaxis, v] for k,v in output_slices.items()}
-    return parsed_model_outputs
+  @property
+  def WARP_DEV(self) -> str:
+    if not hasattr(self, "_warp_dev"):
+      _ = self.QUEUE_DEV
+    return self._warp_dev
+
+  @staticmethod
+  def slice_outputs(model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
+    return {key: model_outputs[np.newaxis, value] for key, value in output_slices.items()}
+
+  def _set_optional_input(self, name: str, inputs: dict[str, np.ndarray]) -> None:
+    if name not in self.numpy_inputs or name not in inputs:
+      return
+    self.numpy_inputs[name][:] = inputs[name]
+    if name in self.npy:
+      self.npy[name][:] = self.numpy_inputs[name]
+
+  def _parse_split_outputs(self, outputs: list[np.ndarray]) -> dict[str, np.ndarray]:
+    vision_output, *policy_outputs = outputs
+    parsed = self.parser.parse_vision_outputs(
+      self.slice_outputs(vision_output, self.metadata["vision"]["output_slices"])
+    )
+    policy_results: dict[str, dict[str, np.ndarray]] = {}
+    for key, output in zip(self.policy_order, policy_outputs, strict=True):
+      sliced = self.slice_outputs(output, self.metadata[key]["output_slices"])
+      policy_results[key] = (
+        self.aux_parser.parse_off_policy_outputs(sliced)
+        if key == "off_policy"
+        else self.parser.parse_policy_outputs(sliced)
+      )
+
+    for key in self.policy_order:
+      if key not in ("on_policy", "policy"):
+        parsed.update(policy_results[key])
+    primary_key = "on_policy" if "on_policy" in policy_results else "policy"
+    parsed.update(policy_results[primary_key])
+    return parsed
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
-                inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
-    # Model decides when action is completed, so desire input is just a pulse triggered on rising edge
+          inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
+    frames: dict[str, Tensor] = {}
+    for key, buf in bufs.items():
+      ptr = np.frombuffer(buf.data, dtype=np.uint8).ctypes.data
+      cache_key = (key, ptr)
+      if cache_key not in self._blob_cache:
+        self._blob_cache[cache_key] = Tensor.from_blob(
+          ptr, (self.frame_buf_size,), dtype="uint8", device=self.WARP_DEV,
+        )
+      frames[key] = self._blob_cache[cache_key]
+
     inputs[self.desire_key][0] = 0
-    new_desire = np.where(inputs[self.desire_key] - self.prev_desire > .99, inputs[self.desire_key], 0)
+    self.numpy_inputs[self.desire_key].fill(0)
+    self.numpy_inputs[self.desire_key].reshape(-1, ModelConstants.DESIRE_LEN)[-1] = inputs[self.desire_key]
+    self.npy["desire"][:] = np.where(
+      inputs[self.desire_key] - self.prev_desire > 0.99,
+      inputs[self.desire_key],
+      0,
+    )
     self.prev_desire[:] = inputs[self.desire_key]
+    for name in self.numpy_inputs:
+      if name not in (self.desire_key, self.prev_desired_curv_key):
+        self._set_optional_input(name, inputs)
+    self.npy["tfm"][:] = transforms[self.road_key]
+    self.npy["big_tfm"][:] = transforms[self.wide_key]
 
-    self.full_desire[0,:-1] = self.full_desire[0,1:]
-    self.full_desire[0,-1] = new_desire
-    self.numpy_inputs[self.desire_key][:] = self.full_desire.reshape((1,ModelConstants.INPUT_HISTORY_BUFFER_LEN,ModelConstants.TEMPORAL_SKIP,-1)).max(axis=2)
-    if self.off_policy_enabled and self.off_policy_desire_key is not None:
-      self.off_policy_numpy_inputs[self.off_policy_desire_key][:] = self.numpy_inputs[self.desire_key]
+    warp_output = self.warp_enqueue(
+      **{key: self.input_queues[key] for key in self.warp_input_keys},
+      frame=frames[self.road_key],
+      big_frame=frames[self.wide_key],
+    )
 
-    if 'traffic_convention' in self.numpy_inputs:
-      self.numpy_inputs['traffic_convention'][:] = inputs['traffic_convention']
-    if self.off_policy_enabled and 'traffic_convention' in self.off_policy_numpy_inputs:
-      self.off_policy_numpy_inputs['traffic_convention'][:] = inputs['traffic_convention']
-
-    if 'action_t' in self.numpy_inputs:
-      self.numpy_inputs['action_t'][:] = inputs['action_t']
-    if self.off_policy_enabled and 'action_t' in self.off_policy_numpy_inputs:
-      self.off_policy_numpy_inputs['action_t'][:] = inputs['action_t']
-
-    if 'prev_action' in self.numpy_inputs:
-      self.numpy_inputs['prev_action'][:] = inputs['prev_action']
-    if self.off_policy_enabled and 'prev_action' in self.off_policy_numpy_inputs:
-      self.off_policy_numpy_inputs['prev_action'][:] = inputs['prev_action']
-
-    if 'lateral_control_params' in self.numpy_inputs:
-      self.numpy_inputs['lateral_control_params'][:] = inputs['lateral_control_params']
-    if self.off_policy_enabled and 'lateral_control_params' in self.off_policy_numpy_inputs:
-      self.off_policy_numpy_inputs['lateral_control_params'][:] = inputs['lateral_control_params']
-
-    if prepare_only:
-      return None
-
-    imgs_cl = {name: self.frames[name].prepare(bufs[name], transforms[name].flatten()) for name in self.vision_input_names}
-
-    if TICI:
-      # The imgs tensors are backed by opencl memory, only need init once
-      for key in imgs_cl:
-        if key not in self.vision_inputs:
-          self.vision_inputs[key] = qcom_tensor_from_opencl_address(imgs_cl[key].mem_address, self.vision_input_shapes[key], dtype=dtypes.uint8)
-    else:
-      for key in imgs_cl:
-        frame_input = self.frames[key].buffer_from_cl(imgs_cl[key]).reshape(self.vision_input_shapes[key])
-        self.vision_inputs[key] = Tensor(frame_input, dtype=dtypes.uint8).realize()
-
-    self.vision_output = self.vision_run(**self.vision_inputs).contiguous().realize().uop.base.buffer.numpy()
-    vision_outputs_dict = self.parser.parse_vision_outputs(self.slice_outputs(self.vision_output, self.vision_output_slices))
-
-    self.full_features_buffer[0,:-1] = self.full_features_buffer[0,1:]
-    self.full_features_buffer[0,-1] = vision_outputs_dict['hidden_state'][0, :]
-    if 'features_buffer' in self.numpy_inputs:
-      self.numpy_inputs['features_buffer'][:] = self.full_features_buffer[0, self.temporal_idxs]
-    if self.off_policy_enabled and 'features_buffer' in self.off_policy_numpy_inputs:
-      self.off_policy_numpy_inputs['features_buffer'][:] = self.full_features_buffer[0, self.temporal_idxs]
-
-    self.policy_output = self.policy_run(**self.policy_inputs).contiguous().realize().uop.base.buffer.numpy()
-    policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(self.policy_output, self.policy_output_slices))
-
-    # TODO model only uses last value now
-    if hasattr(self, 'full_prev_desired_curv') and 'desired_curvature' in policy_outputs_dict:
-      self.full_prev_desired_curv[0,:-1] = self.full_prev_desired_curv[0,1:]
-      self.full_prev_desired_curv[0,-1,:] = policy_outputs_dict['desired_curvature'][0, :]
-
-      if self.prev_desired_curv_key is not None:
-        # v9/v10/v11/v12/v13/v14/v15 models expect zeros for prev_desired_curv(s); others use history
-        if self.is_v9 or self.is_v10 or self.is_v11 or self.is_v12 or self.is_v13 or self.is_v14 or self.is_v15:
-          self.numpy_inputs[self.prev_desired_curv_key][:] = 0 * self.full_prev_desired_curv[0, self.temporal_idxs]
-        else:
-          self.numpy_inputs[self.prev_desired_curv_key][:] = self.full_prev_desired_curv[0, self.temporal_idxs]
-
-      if self.off_policy_enabled and self.off_policy_prev_desired_curv_key is not None:
-        if self.is_v9 or self.is_v12 or self.is_v13 or self.is_v14 or self.is_v15:
-          self.off_policy_numpy_inputs[self.off_policy_prev_desired_curv_key][:] = 0 * self.full_prev_desired_curv[0, self.temporal_idxs]
-        else:
-          self.off_policy_numpy_inputs[self.off_policy_prev_desired_curv_key][:] = self.full_prev_desired_curv[0, self.temporal_idxs]
-
-    combined_outputs_dict = {**vision_outputs_dict}
-    if self.off_policy_enabled:
-      self.off_policy_output = self.off_policy_run(**self.off_policy_inputs).contiguous().realize().uop.base.buffer.numpy()
-      off_policy_outputs_dict = self.off_policy_parser.parse_policy_outputs(
-        self.slice_outputs(self.off_policy_output, self.off_policy_output_slices)
+    if self.image_history_pipeline == IMAGE_HISTORY_IN_POLICY:
+      output_tensors = self.run_policy(
+        **{key: self.input_queues[key] for key in self.policy_input_keys},
+        warped=warp_output,
       )
-      if self.policy_has_plan:
-        off_policy_outputs_dict.pop('plan', None)
-      combined_outputs_dict = {**combined_outputs_dict, **off_policy_outputs_dict, **policy_outputs_dict}
     else:
-      combined_outputs_dict = {**combined_outputs_dict, **policy_outputs_dict}
-    if SEND_RAW_PRED:
-      raw_pred = [self.vision_output.copy(), self.policy_output.copy()]
-      if self.off_policy_enabled and self.off_policy_output is not None:
-        raw_pred.append(self.off_policy_output.copy())
-      combined_outputs_dict['raw_pred'] = np.concatenate(raw_pred)
+      img, big_img = warp_output
+      if prepare_only:
+        return None
+      output_tensors = self.run_policy(
+        **{key: self.input_queues[key] for key in self.policy_input_keys},
+        img=img,
+        big_img=big_img,
+      )
+    outputs = [output.numpy().flatten() for output in output_tensors]
 
-    return combined_outputs_dict
+    if self.model_type == "supercombo":
+      model_output = outputs[0]
+      parsed = self.parser.parse_outputs(self.slice_outputs(model_output, self.output_slices))
+      if "prev_feat" in self.npy and "hidden_state" in self.output_slices:
+        self.npy["prev_feat"][:] = model_output[self.output_slices["hidden_state"]]
+    else:
+      parsed = self._parse_split_outputs(outputs)
+
+    if self.prev_desired_curv_key is not None and "desired_curvature" in parsed:
+      self.full_prev_desired_curv[0, :-1] = self.full_prev_desired_curv[0, 1:]
+      self.full_prev_desired_curv[0, -1, :] = parsed["desired_curvature"][0, :]
+      history = self.full_prev_desired_curv[0, self.temporal_idxs]
+      self.numpy_inputs[self.prev_desired_curv_key][:] = 0 * history if self.mlsim else history
+      if self.prev_desired_curv_key in self.npy:
+        self.npy[self.prev_desired_curv_key][:] = self.numpy_inputs[self.prev_desired_curv_key]
+
+    if SEND_RAW_PRED:
+      parsed["raw_pred"] = np.concatenate([output.copy() for output in outputs])
+    return parsed
 
 
 def main(demo=False):
@@ -493,12 +414,6 @@ def main(demo=False):
   cloudlog.bind(daemon=PROCESS_NAME)
   setproctitle(PROCESS_NAME)
   config_realtime_process(7, 54)
-
-  cloudlog.warning("setting up CL context")
-  cl_context = CLContext()
-  cloudlog.warning("CL context ready; loading model")
-  model = ModelState(cl_context)
-  cloudlog.warning("models loaded, modeld starting")
 
   # visionipc clients
   while True:
@@ -510,8 +425,8 @@ def main(demo=False):
     time.sleep(.1)
 
   vipc_client_main_stream = VisionStreamType.VISION_STREAM_WIDE_ROAD if main_wide_camera else VisionStreamType.VISION_STREAM_ROAD
-  vipc_client_main = VisionIpcClient("camerad", vipc_client_main_stream, True, cl_context)
-  vipc_client_extra = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_WIDE_ROAD, False, cl_context)
+  vipc_client_main = VisionIpcClient("camerad", vipc_client_main_stream, True)
+  vipc_client_extra = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_WIDE_ROAD, False)
   cloudlog.warning(f"vision stream set up, main_wide_camera: {main_wide_camera}, use_extra_client: {use_extra_client}")
 
   while not vipc_client_main.connect(False):
@@ -523,13 +438,17 @@ def main(demo=False):
   if use_extra_client:
     cloudlog.warning(f"connected extra cam with buffer size: {vipc_client_extra.buffer_len} ({vipc_client_extra.width} x {vipc_client_extra.height})")
 
+  start_time = time.monotonic()
+  cloudlog.warning("loading model")
+  model = ModelState(vipc_client_main.width, vipc_client_main.height)
+  cloudlog.warning(f"model loaded in {time.monotonic() - start_time:.1f}s, modeld starting")
+
   # messaging
   pm = PubMaster(["modelV2", "drivingModelData", "cameraOdometry", "starpilotModelV2"])
   sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay", "starpilotPlan"])
 
   publish_state = PublishState()
   params = Params()
-
   # setup filter to track dropped frames
   frame_dropped_filter = FirstOrderFilter(0., 10., 1. / ModelConstants.MODEL_FREQ)
   frame_id = 0
@@ -636,12 +555,18 @@ def main(demo=False):
     run_count = run_count + 1
 
     frame_drop_ratio = frames_dropped / (1 + frames_dropped)
-    prepare_only = vipc_dropped_frames > 0
+    prepare_only = model.can_prepare_only and vipc_dropped_frames > 0
     if prepare_only:
       cloudlog.error(f"skipping model eval. Dropped {vipc_dropped_frames} frames")
 
-    bufs = {name: buf_extra if 'big' in name else buf_main for name in model.vision_input_names}
-    transforms = {name: model_transform_extra if 'big' in name else model_transform_main for name in model.vision_input_names}
+    bufs = {
+      model.road_key: buf_main,
+      model.wide_key: buf_extra,
+    }
+    transforms = {
+      model.road_key: model_transform_main,
+      model.wide_key: model_transform_extra,
+    }
 
     frame_delay = DT_MDL  # Average time elapsed since the current frame finished exposing.
     action_delay = DT_MDL / 2  # Target the midpoint between current output and the next model step.

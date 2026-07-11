@@ -96,6 +96,7 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
                              lfa_base_values=None, lkas_base_values=None, lka_icon=None):
   if lka_icon is None:
     lka_icon = 2 if enabled else 1
+  angle_lkas_alt = CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT
 
   control_values = {
     "LKA_MODE": 2,
@@ -128,6 +129,59 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
     lkas_values["ADAS_StrAnglReqVal"] = apply_angle
     lkas_values["LKAS_ANGLE_ACTIVE"] = 2 if lat_active else 1
     lkas_values["ADAS_ACIAnglTqRedcGainVal"] = apply_torque if lat_active else 0.0
+    if angle_lkas_alt:
+      if lat_active:
+        lkas_values = {
+          "LKA_OptUsmSta": 0,
+          "LKA_RcgSta": 3,
+          "LKA_LHLnWrnSta": 0,
+          "LKA_RHLnWrnSta": 0,
+          "LKA_HndsoffSnd": 0,
+          "LKA_StrSnd": 0,
+          "LKA_SysIndReq": 2,
+          "StrTqReqVal": 0,
+          "ActToiSta": 0,
+          "ToiFltSta": 0,
+          "LFA_BUTTON": 0,
+          "LKA_SysWrn": 0,
+          "Damping_Gain": 100,
+          "LKAS_ANGLE_ACTIVE": 2,
+          "LKA_UsmMod": 0,
+          "ADAS_StrAnglReqVal": apply_angle,
+          "ADAS_ACIAnglTqRedcGainVal": apply_torque,
+        }
+      else:
+        lkas_values.update({
+          "LKA_OptUsmSta": 0,
+          "LKA_MODE": 0,
+          "LKA_RcgSta": 0,
+          "LKA_AVAILABLE": 0,
+          "LKA_LHLnWrnSta": 0,
+          "LKA_RHLnWrnSta": 0,
+          "LKA_WARNING": 0,
+          "LKA_HndsoffSnd": 0,
+          "LKA_StrSnd": 2,
+          "LKA_SysIndReq": 1,
+          "LKA_ICON": 1,
+          "FCA_SYSWARN": 0,
+          "StrTqReqVal": 0,
+          "TORQUE_REQUEST": 0,
+          "ActToiSta": 0,
+          "STEER_REQ": 0,
+          "ToiFltSta": 0,
+          "LFA_BUTTON": 0,
+          "LKA_SysWrn": 0,
+          "LKA_ASSIST": 0,
+          "Damping_Gain": 0,
+          "STEER_MODE": 0,
+          "NEW_SIGNAL_2": 0,
+          "LKAS_ANGLE_ACTIVE": 1,
+          "LKA_UsmMod": 0,
+          "HAS_LANE_SAFETY": 0,
+          "ADAS_ACIAnglTqRedcGainVal": 0.0,
+          "DAMP_FACTOR": 0,
+        })
+        lkas_values["ADAS_StrAnglReqVal"] = lkas_base_values.get("ADAS_StrAnglReqVal", apply_angle) if lkas_base_values else apply_angle
 
   ret = []
   if CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
@@ -709,11 +763,15 @@ def hkg_can_fd_checksum(address: int, sig, d: bytearray) -> int:
 # radar stops publishing real object tracks. Spoof this message ourselves with valid CRC
 # and current pedal state so the radar keeps tracking.
 # Length is 24 bytes on Ioniq 6 (DBC declares 32 for ICE Hyundais, but EV firmware uses 24).
-# Byte template captured from a real ADAS broadcast; bytes 6-23 appear static / config.
+# Byte templates captured from real ADAS broadcasts; only checksum, counter,
+# brake, and accelerator bits are updated for the radar heartbeat.
 _ACCEL_BRAKE_ALT_TEMPLATE = bytes.fromhex("000000020000fcff000000000020000055ff000068000000")
+_KIA_EV9_ACCEL_BRAKE_ALT_TEMPLATE = bytes.fromhex("00000000ff006f00e80400001201030055ffff0000000000")
 
-def create_accelerator_brake_alt_spoof(bus: int, counter: int, brake_pressed: bool, accelerator_pressed: bool) -> CanData:
-  d = bytearray(_ACCEL_BRAKE_ALT_TEMPLATE)
+def create_accelerator_brake_alt_spoof(bus: int, counter: int, brake_pressed: bool, accelerator_pressed: bool,
+                                       car_fingerprint=None) -> CanData:
+  template = _KIA_EV9_ACCEL_BRAKE_ALT_TEMPLATE if str(car_fingerprint) == "KIA_EV9" else _ACCEL_BRAKE_ALT_TEMPLATE
+  d = bytearray(template)
   d[2] = counter & 0xFF                              # COUNTER (bit 16, 8-bit)
   d[4] = (d[4] & ~0x01) | (0x01 if brake_pressed else 0x00)         # BRAKE_PRESSED (bit 32)
   d[22] = (d[22] & ~0x01) | (0x01 if accelerator_pressed else 0x00) # ACCELERATOR_PEDAL_PRESSED (bit 176)

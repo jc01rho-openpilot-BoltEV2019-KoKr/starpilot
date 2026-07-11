@@ -93,9 +93,17 @@ class SimulatedSensors:
     # dmonitoringd output
     dat = messaging.new_message('driverMonitoringState', valid=True)
     dat.driverMonitoringState = {
-      "faceDetected": True,
-      "isDistracted": False,
-      "awarenessStatus": 1.,
+      "alertLevel": log.DriverMonitoringState.AlertLevel.none,
+      "activePolicy": log.DriverMonitoringState.MonitoringPolicy.vision,
+      "isRHD": False,
+      "visionPolicyState": {
+        "awarenessPercent": 100,
+        "isDistracted": False,
+        "faceDetected": True,
+      },
+      "wheeltouchPolicyState": {
+        "awarenessPercent": 100,
+      },
     }
     self.pm.send('driverMonitoringState', dat)
 

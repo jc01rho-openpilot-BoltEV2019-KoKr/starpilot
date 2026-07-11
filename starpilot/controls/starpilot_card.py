@@ -37,6 +37,7 @@ class StarPilotCard:
       getattr(self.CP, "carFingerprint", None) in (HYUNDAI_CAR.KIA_FORTE_2019_NON_SCC, HYUNDAI_CAR.KIA_FORTE_2021_NON_SCC) and
       bool(hyundai_flags & HyundaiFlags.NON_SCC)
     )
+    self.hyundai_preserve_aol_across_reverse = getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.HYUNDAI_SONATA_HYBRID
     self.hyundai_aol_needs_engagement = self.CP.brand == "hyundai" and not (hyundai_flags & HyundaiFlags.CANFD) and not kia_forte_non_scc
     self.hyundai_aol_ready = False
     self.prev_active = False
@@ -116,8 +117,10 @@ class StarPilotCard:
 
     if self.hyundai_aol_needs_engagement:
       if carState.gearShifter in NON_DRIVING_GEARS:
-        self.hyundai_aol_ready = False
-        self.always_on_lateral_allowed = False
+        preserve_reverse_latch = self.hyundai_preserve_aol_across_reverse and carState.gearShifter == GearShifter.reverse
+        if not preserve_reverse_latch:
+          self.hyundai_aol_ready = False
+          self.always_on_lateral_allowed = False
       elif sm["selfdriveState"].active or carState.cruiseState.enabled:
         self.hyundai_aol_ready = True
 

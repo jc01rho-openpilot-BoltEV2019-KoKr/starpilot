@@ -7,7 +7,7 @@ from collections import defaultdict
 from itertools import chain
 
 from openpilot.tools.lib.auth_config import get_token
-from openpilot.tools.lib.api import APIError, CommaApi
+from openpilot.tools.lib.api import APIError, CommaApi, route_api_hosts
 from openpilot.tools.lib.helpers import RE
 
 
@@ -23,6 +23,7 @@ class FileName:
 
 class Route:
   def __init__(self, name, data_dir=None):
+    self._api_host = None
     self._metadata = None
     self._name = RouteName(name)
     self.files = None
@@ -35,8 +36,7 @@ class Route:
   @property
   def metadata(self):
     if not self._metadata:
-      api = CommaApi(get_token())
-      self._metadata = api.get('v1/route/' + self.name.canonical_name)
+      self._metadata = self._get_route_metadata()
     return self._metadata
 
   @property
@@ -73,9 +73,9 @@ class Route:
 
   # TODO: refactor this, it's super repetitive
   def _get_segments_remote(self):
-    api = CommaApi(get_token())
-    route_files = api.get('v1/route/' + self.name.canonical_name + '/files')
+    route_files = self._get_route_files()
     self.files = list(chain.from_iterable(route_files.values()))
+    metadata_url = self.metadata['url']
 
     segments = {}
     for url in self.files:
@@ -90,7 +90,7 @@ class Route:
           url if fn in FileName.DCAMERA else segments[segment_name].dcamera_path,
           url if fn in FileName.ECAMERA else segments[segment_name].ecamera_path,
           url if fn in FileName.QCAMERA else segments[segment_name].qcamera_path,
-          self.metadata['url'],
+          metadata_url,
         )
       else:
         segments[segment_name] = Segment(
@@ -101,10 +101,34 @@ class Route:
           url if fn in FileName.DCAMERA else None,
           url if fn in FileName.ECAMERA else None,
           url if fn in FileName.QCAMERA else None,
-          self.metadata['url'],
+          metadata_url,
         )
 
     return sorted(segments.values(), key=lambda seg: seg.name.segment_num)
+
+  def _get_route_metadata(self):
+    return self._get_route_endpoint('v1/route/' + self.name.canonical_name)
+
+  def _get_route_files(self):
+    return self._get_route_endpoint('v1/route/' + self.name.canonical_name + '/files')
+
+  def _get_route_endpoint(self, endpoint: str):
+    hosts = [self._api_host] if self._api_host is not None else route_api_hosts()
+    errors = {}
+
+    for host in hosts:
+      try:
+        api = CommaApi(get_token(host), host=host)
+        response = api.get(endpoint)
+        self._api_host = host
+        return response
+      except APIError as e:
+        errors[host] = e
+        if e.status_code == 404 and self._api_host is None:
+          continue
+        raise
+
+    raise APIError(f"route {self.name.canonical_name} not found on: {', '.join(errors.keys())}", 404)
 
   def _get_segments_local(self, data_dir):
     files = os.listdir(data_dir)
@@ -306,13 +330,20 @@ class SegmentName:
 
 @cache
 def get_max_seg_number_cached(sr: 'SegmentRange') -> int:
-  try:
-    api = CommaApi(get_token())
-    max_seg_number = api.get("/v1/route/" + sr.route_name.replace("/", "|"))["maxqlog"]
-    assert isinstance(max_seg_number, int)
-    return max_seg_number
-  except Exception as e:
-    raise Exception("unable to get max_segment_number. ensure you have access to this route or the route is public.") from e
+  errors = {}
+  for host in route_api_hosts():
+    try:
+      api = CommaApi(get_token(host), host=host)
+      max_seg_number = api.get("/v1/route/" + sr.route_name.replace("/", "|"))["maxqlog"]
+      assert isinstance(max_seg_number, int)
+      return max_seg_number
+    except APIError as e:
+      errors[host] = e
+      if e.status_code == 404:
+        continue
+      raise Exception("unable to get max_segment_number. ensure you have access to this route or the route is public.") from e
+
+  raise Exception("unable to get max_segment_number. ensure you have access to this route or the route is public.") from next(iter(errors.values()), None)
 
 
 class SegmentRange:

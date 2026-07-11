@@ -283,6 +283,10 @@ class CAR(Platforms):
     [GMCarDocs("Buick LaCrosse 2017-19 ASCM Harness")],
     BUICK_LACROSSE.specs,
   )
+  BUICK_LACROSSE_ASCM_19US = GMPlatformConfig(
+    [GMCarDocs("Buick LaCrosse 2019 US ASCM Harness")],
+    BUICK_LACROSSE.specs,
+  )
   BUICK_REGAL = GMASCMPlatformConfig(
     [GMCarDocs("Buick Regal Essence 2018")],
     GMCarSpecs(mass=1714, wheelbase=2.83, steerRatio=14.4, centerToFrontRatio=0.4),
@@ -302,6 +306,10 @@ class CAR(Platforms):
   CADILLAC_ESCALADE_ESV_2019 = GMASCMPlatformConfig(
     [GMCarDocs("Cadillac Escalade ESV 2019", "Adaptive Cruise Control (ACC) & LKAS")],
     CADILLAC_ESCALADE_ESV.specs,
+  )
+  CADILLAC_ESCALADE_ESV_2019_ASCM = GMPlatformConfig(
+    [GMCarDocs("Cadillac Escalade ESV Platinum 2019 ASCM Harness", "Adaptive Cruise Control (ACC) & LKAS")],
+    CADILLAC_ESCALADE_ESV_2019.specs,
   )
   CHEVROLET_BOLT_ACC_2022_2023 = GMPlatformConfig(
     [
@@ -576,7 +584,15 @@ CC_REGEN_PADDLE_CAR = {
 CAMERA_ACC_CAR.update(CC_ONLY_CAR)
 
 # ASCM-INT paths are only enabled when SASCM (0x2FF) is detected at runtime
-ASCM_INT = {CAR.CHEVROLET_VOLT_ASCM, CAR.GMC_ACADIA_ASCM, CAR.CHEVROLET_MALIBU_ASCM, CAR.CADILLAC_ESCALADE_ASCM, CAR.BUICK_LACROSSE_ASCM}
+ASCM_INT = {
+  CAR.CHEVROLET_VOLT_ASCM,
+  CAR.GMC_ACADIA_ASCM,
+  CAR.CHEVROLET_MALIBU_ASCM,
+  CAR.CADILLAC_ESCALADE_ASCM,
+  CAR.CADILLAC_ESCALADE_ESV_2019_ASCM,
+  CAR.BUICK_LACROSSE_ASCM,
+  CAR.BUICK_LACROSSE_ASCM_19US,
+}
 
 STEER_THRESHOLD = 1.0
 

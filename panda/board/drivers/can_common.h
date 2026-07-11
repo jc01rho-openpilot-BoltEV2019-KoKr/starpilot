@@ -10,6 +10,10 @@ can_health_t can_health[PANDA_CAN_CNT] = {{0}, {0}, {0}};
 // Ignition detected from CAN meessages
 bool ignition_can = false;
 uint32_t ignition_can_cnt = 0U;
+#ifdef PANDA_HKG_REMOTE_START
+bool hkg_remote_climate_wake = false;
+uint32_t hkg_remote_climate_wake_cnt = 0U;
+#endif
 
 bool can_silent = true;
 bool can_loopback = false;
@@ -161,9 +165,16 @@ void can_set_forwarding(uint8_t from, uint8_t to) {
 #endif
 
 void ignition_can_hook(CANPacket_t *msg) {
-  if (msg->bus == 0U) {
-    int len = GET_LEN(msg);
+  int len = GET_LEN(msg);
 
+  #ifdef PANDA_HKG_REMOTE_START
+  if ((msg->bus == 1U) && (msg->addr == 0x384U) && (len == 8)) {
+    hkg_remote_climate_wake = msg->data[3] != 0U;
+    hkg_remote_climate_wake_cnt = 0U;
+  }
+  #endif
+
+  if (msg->bus == 0U) {
     // GM exception
     // Remote-start mode uses 0xC9 bit 4 (SystemPowerMode=Run) for ignition detection.
     // Stock mode uses 0x1F1 bit 1 (SystemPowerMode=Run/Crank Request).

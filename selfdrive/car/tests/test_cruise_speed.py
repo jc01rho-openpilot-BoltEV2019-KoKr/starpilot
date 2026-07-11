@@ -107,23 +107,26 @@ class TestVCruiseHelper:
     initial_v_cruise_kph = self.v_cruise_helper.v_cruise_kph
 
     pressed_cs = car.CarState(cruiseState={"available": True})
-    pressed_cs.buttonEvents = [ButtonEvent(type=ButtonType.accelHardCruise, pressed=True)]
+    pressed_cs.buttonEvents = [ButtonEvent(type=ButtonType.accelCruise, pressed=True)]
+    starpilot_car_state = SimpleNamespace(accelHardCruise=True, decelHardCruise=False)
     self.v_cruise_helper.update_v_cruise(
       pressed_cs,
       enabled=True,
       is_metric=False,
       speed_limit_changed=False,
       starpilot_toggles=self.starpilot_toggles,
+      starpilot_car_state=starpilot_car_state,
     )
 
     released_cs = car.CarState(cruiseState={"available": True})
-    released_cs.buttonEvents = [ButtonEvent(type=ButtonType.accelHardCruise, pressed=False)]
+    released_cs.buttonEvents = [ButtonEvent(type=ButtonType.accelCruise, pressed=False)]
     self.v_cruise_helper.update_v_cruise(
       released_cs,
       enabled=True,
       is_metric=False,
       speed_limit_changed=False,
       starpilot_toggles=self.starpilot_toggles,
+      starpilot_car_state=starpilot_car_state,
     )
 
     hard_interval = self.starpilot_toggles.cruise_increase_long * IMPERIAL_INCREMENT
@@ -135,23 +138,26 @@ class TestVCruiseHelper:
     initial_v_cruise_kph = self.v_cruise_helper.v_cruise_kph
 
     pressed_cs = car.CarState(cruiseState={"available": True})
-    pressed_cs.buttonEvents = [ButtonEvent(type=ButtonType.decelHardCruise, pressed=True)]
+    pressed_cs.buttonEvents = [ButtonEvent(type=ButtonType.decelCruise, pressed=True)]
+    starpilot_car_state = SimpleNamespace(accelHardCruise=False, decelHardCruise=True)
     self.v_cruise_helper.update_v_cruise(
       pressed_cs,
       enabled=True,
       is_metric=False,
       speed_limit_changed=False,
       starpilot_toggles=self.starpilot_toggles,
+      starpilot_car_state=starpilot_car_state,
     )
 
     released_cs = car.CarState(cruiseState={"available": True})
-    released_cs.buttonEvents = [ButtonEvent(type=ButtonType.decelHardCruise, pressed=False)]
+    released_cs.buttonEvents = [ButtonEvent(type=ButtonType.decelCruise, pressed=False)]
     self.v_cruise_helper.update_v_cruise(
       released_cs,
       enabled=True,
       is_metric=False,
       speed_limit_changed=False,
       starpilot_toggles=self.starpilot_toggles,
+      starpilot_car_state=starpilot_car_state,
     )
 
     hard_interval = self.starpilot_toggles.cruise_increase_long * IMPERIAL_INCREMENT

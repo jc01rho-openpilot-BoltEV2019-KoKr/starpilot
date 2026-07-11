@@ -31,7 +31,7 @@ void DriverMonitorRenderer::updateState(const UIState &s) {
   if (!is_visible) return;
 
   auto dm_state = sm["driverMonitoringState"].getDriverMonitoringState();
-  is_active = dm_state.getIsActiveMode();
+  is_active = dm_state.getActivePolicy() == cereal::DriverMonitoringState::MonitoringPolicy::VISION;
   is_rhd = dm_state.getIsRHD();
   dm_fade_state = std::clamp(dm_fade_state + 0.2f * (0.5f - is_active), 0.0f, 1.0f);
 

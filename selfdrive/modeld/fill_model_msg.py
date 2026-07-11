@@ -109,7 +109,14 @@ def fill_model_msg(base_msg: capnp._DynamicStructBuilder, extended_msg: capnp._D
 
   # temporal pose
   try:
-    temporal_pose = modelV2.temporalPose
+    temporal_pose = modelV2.temporalPoseDEPRECATED
+  except AttributeError:
+    try:
+      temporal_pose = modelV2.temporalPose
+    except AttributeError:
+      temporal_pose = None
+
+  if temporal_pose is not None:
     if 'sim_pose' in net_output_data:
       temporal_pose.trans = net_output_data['sim_pose'][0,:ModelConstants.POSE_WIDTH//2].tolist()
       temporal_pose.transStd = net_output_data['sim_pose_stds'][0,:ModelConstants.POSE_WIDTH//2].tolist()
@@ -120,8 +127,6 @@ def fill_model_msg(base_msg: capnp._DynamicStructBuilder, extended_msg: capnp._D
       temporal_pose.transStd = plan_stds_arr[0,Plan.VELOCITY].tolist()
       temporal_pose.rot = plan_arr[0,Plan.ORIENTATION_RATE].tolist()
       temporal_pose.rotStd = plan_stds_arr[0,Plan.ORIENTATION_RATE].tolist()
-  except AttributeError:
-    pass
 
   # poly path
   fill_xyz_poly(driving_model_data.path, ModelConstants.POLY_PATH_DEGREE, *plan_arr[:,Plan.POSITION].T)

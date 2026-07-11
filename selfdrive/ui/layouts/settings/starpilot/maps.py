@@ -26,10 +26,12 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherListColors,
   AetherScrollbar,
   DEFAULT_PANEL_STYLE,
+  SPACING,
   build_list_panel_frame,
   draw_action_pill,
   draw_busy_ring,
   draw_empty_state_card,
+  draw_list_group_shell,
   draw_list_panel_shell,
   draw_metric_strip,
   draw_section_header,
@@ -39,7 +41,11 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_settings_panel_header,
   draw_soft_card,
   init_list_panel,
-  _point_hits,
+  point_hits,
+  with_alpha,
+  wrap_text,
+  aether_begin_scissor_mode,
+  aether_end_scissor_mode,
 )
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPanel
 from openpilot.starpilot.common.maps_catalog import (
@@ -85,7 +91,7 @@ STATUS_REMOVE_HEIGHT = 40
 STATUS_METRIC_GAP = 18
 STATUS_SELECTION_CHIP_HEIGHT = 30
 PANEL_STYLE = DEFAULT_PANEL_STYLE
-MAPS_METRICS = replace(AETHER_LIST_METRICS, header_height=240)
+MAPS_METRICS = replace(AETHER_LIST_METRICS, header_height=0)
 
 COUNTRIES_SECTION = next(section for section in MAPS_CATALOG if section["key"] == "countries")
 STATES_SECTION = next(section for section in MAPS_CATALOG if section["key"] == "states")
@@ -163,14 +169,18 @@ class MapStatusCard(Widget):
   def _handle_mouse_press(self, mouse_pos: MousePos):
     if not self._touch_valid():
       return
-    if _point_hits(mouse_pos, self._remove_rect, pad_x=10, pad_y=6) and self._controller._remove_enabled():
+    if point_hits(mouse_pos, self._remove_rect, pad_x=10, pad_y=6) and self._controller._remove_enabled():
       self._pressed_remove = True
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
     if self._pressed_remove:
       self._pressed_remove = False
-      if self._touch_valid() and _point_hits(mouse_pos, self._remove_rect, pad_x=10, pad_y=6) and self._controller._remove_enabled():
+      if self._touch_valid() and point_hits(mouse_pos, self._remove_rect, pad_x=10, pad_y=6) and self._controller._remove_enabled():
         self._controller._on_remove()
+
+  def _handle_mouse_event(self, mouse_event: MouseEvent):
+    if self._pressed_remove and not point_hits(mouse_event.pos, self._remove_rect, pad_x=10, pad_y=6):
+      self._pressed_remove = False
 
   def _render(self, rect: rl.Rectangle):
     draw_soft_card(rect, PANEL_STYLE.surface_fill, PANEL_STYLE.surface_border)
@@ -201,15 +211,15 @@ class MapStatusCard(Widget):
       draw_action_pill(
         selection_chip_rect,
         self._controller._selected_summary_text(),
-        rl.Color(94, 168, 130, 22),
+        with_alpha(AetherListColors.SUCCESS_SOFT, 22),
         AetherListColors.SUCCESS_SOFT,
         AetherListColors.HEADER,
-        font_size=15,
+        font_size=26,
       )
     gui_text_box(
-      rl.Rectangle(content_x, title_y + 28, summary_w, 38),
+      rl.Rectangle(content_x, title_y + 28, summary_w, 44),
       self._controller._progress_body(),
-      17,
+      20,
       AetherListColors.SUBTEXT,
       font_weight=FontWeight.NORMAL,
       line_scale=0.94,
@@ -218,9 +228,9 @@ class MapStatusCard(Widget):
     footer_y = rect.y + rect.height - 28
     footer_text = f"{self._controller._network_label()}  •  {tr('Parked') if self._controller._is_parked() else tr('Not parked')}"
     if metrics_w >= 220.0:
-      gui_label(rl.Rectangle(content_x, footer_y, footer_w, 16), footer_text, 15, AetherListColors.MUTED, FontWeight.MEDIUM)
+      gui_label(rl.Rectangle(content_x, footer_y, footer_w, 16), footer_text, 18, AetherListColors.MUTED, FontWeight.MEDIUM)
       draw_metric_strip(
-        rl.Rectangle(metrics_x, rect.y + 72, metrics_w, 30),
+        rl.Rectangle(metrics_x, rect.y + 82, metrics_w, 30),
         [
           (tr("Storage"), self._controller._storage_text),
           (tr("Last Updated"), self._controller._last_updated_text()),
@@ -234,7 +244,7 @@ class MapStatusCard(Widget):
       )
     else:
       draw_metric_strip(
-        rl.Rectangle(content_x, rect.y + 72, summary_w, 30),
+        rl.Rectangle(content_x, rect.y + 82, summary_w, 30),
         [
           (tr("Storage"), self._controller._storage_text),
           (tr("Last Updated"), self._controller._last_updated_text()),
@@ -250,8 +260,8 @@ class MapStatusCard(Widget):
     action_top = rect.y + 12
     col_gap = 10
     action_h = rect.height - 24
-    left_col_w = actions_w * 0.42
-    right_col_w = actions_w - left_col_w - col_gap
+    left_col_w = (actions_w - col_gap) / 2
+    right_col_w = (actions_w - col_gap) / 2
     left_btn_gap = 6
     left_btn_h = (action_h - left_btn_gap) / 2
 
@@ -266,10 +276,10 @@ class MapStatusCard(Widget):
     draw_action_pill(
       self._remove_rect,
       tr("Remove Maps"),
-      rl.Color(173, 78, 90, 26 if enabled else 12),
-      rl.Color(173, 78, 90, 58 if enabled else 24),
+      with_alpha(AetherListColors.DANGER_SOFT, 26 if enabled else 12),
+      with_alpha(AetherListColors.DANGER, 58 if enabled else 24),
       AetherListColors.HEADER if enabled else AetherListColors.MUTED,
-      font_size=16,
+      font_size=26,
     )
 
     if self._controller._download_state.active:
@@ -310,13 +320,13 @@ class MapBrowserCard(Widget):
     if parent_rect is not None and not rl.check_collision_point_rec(mouse_pos, parent_rect):
       return None
     for source_key, rect in self._source_rects.items():
-      if _point_hits(mouse_pos, rect, parent_rect, pad_x=6, pad_y=6):
+      if point_hits(mouse_pos, rect, parent_rect, pad_x=6, pad_y=6):
         return f"source:{source_key}"
     for group_key, rect in self._context_tab_rects.items():
-      if _point_hits(mouse_pos, rect, parent_rect, pad_x=4, pad_y=4):
+      if point_hits(mouse_pos, rect, parent_rect, pad_x=4, pad_y=4):
         return f"group:{group_key}"
     for token, rect in self._region_row_rects.items():
-      if _point_hits(mouse_pos, rect, parent_rect, pad_x=6, pad_y=0):
+      if point_hits(mouse_pos, rect, parent_rect, pad_x=6, pad_y=0):
         return f"region:{token}"
     return None
 
@@ -343,7 +353,7 @@ class MapBrowserCard(Widget):
     for index, (source_key, title) in enumerate(sources):
       button_rect = rl.Rectangle(rect.x + index * (button_w + BROWSER_TAB_GAP), rect.y, button_w, BROWSER_CONTEXT_TAB_HEIGHT)
       self._source_rects[source_key] = button_rect
-      hovered = _point_hits(mouse_pos, button_rect, self._parent_rect, pad_x=6, pad_y=6)
+      hovered = point_hits(mouse_pos, button_rect, self._parent_rect, pad_x=6, pad_y=6)
       pressed = self._pressed_target == f"source:{source_key}"
       current = self._controller._active_source_key() == source_key
 
@@ -382,7 +392,7 @@ class MapBrowserCard(Widget):
       tab_rect = rl.Rectangle(rect.x + index * (tab_w + tab_gap), rect.y, tab_w, BROWSER_CONTEXT_TAB_HEIGHT)
       self._context_tab_rects[group["key"]] = tab_rect
       current = self._controller._active_tab_key() == group["key"]
-      hovered = _point_hits(mouse_pos, tab_rect, self._parent_rect, pad_x=4, pad_y=4)
+      hovered = point_hits(mouse_pos, tab_rect, self._parent_rect, pad_x=4, pad_y=4)
       pressed = self._pressed_target == f"group:{group['key']}"
 
       draw_tab_card(
@@ -393,7 +403,7 @@ class MapBrowserCard(Widget):
         hovered=hovered,
         pressed=pressed,
         title_size=24,
-        subtitle_size=17,
+        subtitle_size=18,
         show_underline=True,
         style=PANEL_STYLE,
       )
@@ -405,10 +415,7 @@ class MapBrowserCard(Widget):
       body,
       title_size=32,
       body_size=24,
-      body_inset_x=40,
-      title_top_padding=24,
-      body_height=48,
-      border=rl.Color(255, 255, 255, 10),
+      border=with_alpha(PANEL_STYLE.surface_border, 10),
       style=PANEL_STYLE,
     )
 
@@ -425,7 +432,7 @@ class MapBrowserCard(Widget):
       selected = self._controller._get_map_state(token)
       row_rect = rl.Rectangle(rect.x, rect.y + index * BROWSER_REGION_ROW_HEIGHT, rect.width, BROWSER_REGION_ROW_HEIGHT)
       self._region_row_rects[token] = row_rect
-      hovered = _point_hits(mouse_pos, row_rect, self._parent_rect, pad_x=6, pad_y=0)
+      hovered = point_hits(mouse_pos, row_rect, self._parent_rect, pad_x=6, pad_y=0)
       target_key = f"region:{token}"
       action_text = self._controller._region_action_text(token)
       draw_selection_list_row(
@@ -437,18 +444,18 @@ class MapBrowserCard(Widget):
         hovered=hovered,
         pressed=self._pressed_target == target_key,
         is_last=index == len(regions) - 1,
-        action_width=188,
+        action_width=AETHER_LIST_METRICS.action_width,
         action_pill=True,
-        action_text_size=18,
-        action_pill_height=44,
-        action_pill_width=132 if selected else 108,
-        title_size=34,
-        subtitle_size=22,
+        action_text_size=26,
+        action_pill_height=64,
+        action_pill_width=191 if selected else 156,
+        title_size=49,
+        subtitle_size=32,
         row_separator=PANEL_STYLE.divider_color,
         current_bg=PANEL_STYLE.current_fill,
         current_border=PANEL_STYLE.current_border,
-        action_fill=rl.Color(94, 168, 130, 18) if selected else rl.Color(255, 255, 255, 8),
-        action_border=rl.Color(94, 168, 130, 38) if selected else rl.Color(255, 255, 255, 24),
+        action_fill=with_alpha(AetherListColors.SUCCESS_SOFT, 18) if selected else rl.Color(255, 255, 255, 8),
+        action_border=with_alpha(AetherListColors.SUCCESS, 38) if selected else rl.Color(255, 255, 255, 24),
         action_text_color=AetherListColors.HEADER,
       )
 
@@ -456,14 +463,11 @@ class MapBrowserCard(Widget):
     return self._controller._browse_regions_for_active_group()
 
   def _render_section_header(self, rect: rl.Rectangle, title: str, *, count_text: str | None = None):
-    draw_section_header(rect, title, trailing_text=count_text or "", title_size=28, trailing_size=22, style=PANEL_STYLE)
+    draw_section_header(rect, title, trailing_text=count_text or "", title_size=49, trailing_size=32, style=PANEL_STYLE)
 
   def _measure_height(self, width: float) -> float:
-    if self._controller._showing_source_picker():
-      del width
-      return BROWSER_CONTEXT_TAB_HEIGHT + 20
-
     total = 10.0
+    total += BROWSER_CONTEXT_TAB_HEIGHT + BROWSER_SECTION_HEADER_GAP  # source picker
     total += self._measure_context_tabs_height(width) + BROWSER_SECTION_HEADER_GAP
     total += BROWSER_SECTION_HEADER_HEIGHT + BROWSER_SECTION_HEADER_GAP
     region_count = len(self._active_browse_regions())
@@ -474,7 +478,7 @@ class MapBrowserCard(Widget):
     self.set_rect(rect)
     if not self._touch_valid():
       self._pressed_target = None
-    draw_soft_card(rect, PANEL_STYLE.surface_fill, PANEL_STYLE.surface_border)
+    draw_list_group_shell(rect, style=PANEL_STYLE)
     self._source_rects.clear()
     self._context_tab_rects.clear()
     self._region_row_rects.clear()
@@ -483,9 +487,8 @@ class MapBrowserCard(Widget):
     content_w = rect.width - BROWSER_INSET * 2
     y = rect.y + 10
 
-    if self._controller._showing_source_picker():
-      self._render_source_picker(rl.Rectangle(content_x, y, content_w, BROWSER_CONTEXT_TAB_HEIGHT))
-      return
+    self._render_source_picker(rl.Rectangle(content_x, y, content_w, BROWSER_CONTEXT_TAB_HEIGHT))
+    y += BROWSER_CONTEXT_TAB_HEIGHT + BROWSER_SECTION_HEADER_GAP
 
     context_tabs_h = self._measure_context_tabs_height(content_w)
     self._render_context_tabs(rl.Rectangle(content_x, y, content_w, context_tabs_h))
@@ -542,7 +545,6 @@ class StarPilotMapsLayout(StarPilotPanel):
         self._on_primary_action,
         enabled=self._primary_action_enabled,
         emphasized=True,
-        font_size=24,
       )
     )
     self._schedule_button = self._child(
@@ -550,7 +552,6 @@ class StarPilotMapsLayout(StarPilotPanel):
         lambda: tr("Update: {}").format(_localized_schedule_label(self._params.get('PreferredSchedule'))),
         self._on_schedule,
         emphasized=False,
-        font_size=20,
       )
     )
 
@@ -558,7 +559,7 @@ class StarPilotMapsLayout(StarPilotPanel):
     self._browser_card = self._child(MapBrowserCard(self))
 
     self._browser_card.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
-    self._status_card.set_touch_valid_callback(lambda: True)
+    self._status_card.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
 
     self._sync_whole_us_view_state()
     self._refresh_storage_cache(force=True)
@@ -568,6 +569,7 @@ class StarPilotMapsLayout(StarPilotPanel):
     super().show_event()
     self._scroll_offset = 0.0
     self._whole_us_context_initialized = False
+    self._status_card._pressed_remove = False
     self._sync_whole_us_view_state()
     if self._cancel_requested() and self._cancel_requested_at is None:
       self._cancel_requested_at = rl.get_time()
@@ -580,6 +582,7 @@ class StarPilotMapsLayout(StarPilotPanel):
     super().hide_event()
     self._scroll_offset = 0.0
     self._whole_us_context_initialized = False
+    self._status_card._pressed_remove = False
     device.set_override_interactive_timeout(None)
 
   def _update_state(self):
@@ -727,7 +730,7 @@ class StarPilotMapsLayout(StarPilotPanel):
     if self._selected_count() <= 0:
       return None
     text = self._selected_summary_text()
-    text_width = measure_text_cached(gui_app.font(FontWeight.SEMI_BOLD), text, 15, spacing=1).x
+    text_width = measure_text_cached(gui_app.font(FontWeight.SEMI_BOLD), text, 18, spacing=1).x
     chip_w = min(220.0, max(128.0, text_width + 28.0))
     chip_x = content_x + max(0.0, summary_w - chip_w)
     return rl.Rectangle(chip_x, title_y - 2, chip_w, STATUS_SELECTION_CHIP_HEIGHT)
@@ -757,21 +760,17 @@ class StarPilotMapsLayout(StarPilotPanel):
     return self._view_index == self.VIEW_STATES
 
   def _showing_source_picker(self) -> bool:
-    return self._show_source_picker
+    return False
 
   def _active_source_key(self) -> str:
-    if self._showing_source_picker():
-      return self._browse_source_key
-    return "other" if not self._is_states_view() else "us"
+    return self._browse_source_key
 
   def _select_browse_source(self, source_key: str):
     self._browse_source_key = source_key
     if source_key == "us":
-      self._show_source_picker = False
       self._set_active_group("whole_us")
       return
     if source_key == "other":
-      self._show_source_picker = False
       self._set_active_group("countries")
 
   def _is_full_us_mode(self) -> bool:
@@ -957,15 +956,16 @@ class StarPilotMapsLayout(StarPilotPanel):
     return self._has_downloaded_data and self._is_parked() and not self._download_in_flight() and not self._is_visually_cancelling()
 
   def _download_gate_reason(self) -> str:
+    reasons = []
     if self._download_in_flight():
-      return tr("Download in progress")
+      reasons.append(tr("Download in progress"))
     if self._selected_count() == 0:
-      return tr("Choose at least one region")
+      reasons.append(tr("Choose at least one region"))
     if not self._is_online():
-      return tr("Connect to the internet")
+      reasons.append(tr("Connect to the internet"))
     if not self._is_parked():
-      return tr("Park the vehicle to download")
-    return ""
+      reasons.append(tr("Park the vehicle to download"))
+    return "\n".join(reasons) if reasons else ""
 
   def _primary_action_enabled(self) -> bool:
     if self._is_visually_cancelling():
@@ -1079,9 +1079,9 @@ class StarPilotMapsLayout(StarPilotPanel):
     if self._is_visually_cancelling():
       return tr("Cancelling Download")
     if self._download_state.active:
-      return tr("Download Readiness")
+      return tr("Downloading Maps")
     if self._download_requested():
-      return tr("Download Readiness")
+      return tr("Starting Download")
     if self._has_downloaded_maps():
       return tr("Offline Maps")
     return tr("Download Readiness")
@@ -1115,38 +1115,41 @@ class StarPilotMapsLayout(StarPilotPanel):
     return tr("Ready to download {}.").format(self._selection_preview_text())
 
   def _measure_content_height(self, width: float) -> float:
-    return self._browser_card._measure_height(width)
+    RELOCATED_HEADER_HEIGHT = 180.0
+    return self._browser_card._measure_height(width) + RELOCATED_HEADER_HEIGHT
 
   def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
     self._browser_card.set_parent_rect(rect)
+    self._status_card.set_parent_rect(rect)
 
     y = rect.y + self._scroll_offset
+
+    # 1. Draw Status Card
+    status_rect = rl.Rectangle(rect.x, y, width, 168.0)
+    self._status_card.render(status_rect)
+
+    RELOCATED_HEADER_HEIGHT = 180.0
+    y += RELOCATED_HEADER_HEIGHT
 
     browser_height = self._browser_card._measure_height(width)
     self._browser_card.render(rl.Rectangle(rect.x, y, width, browser_height))
 
   def _render(self, rect: rl.Rectangle):
+    self._update_state()
     self.set_rect(rect)
     frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE, MAPS_METRICS)
 
-    hdr = frame.header
-    draw_settings_panel_header(hdr, tr("Map Data"), tr("Use offline maps for speed-limit control and keep only the regions you need."),
-                                max_title_width=1.0, max_subtitle_width=0.60)
-
-    header_status_y = hdr.y + 48 + HEADER_SUBTITLE_HEIGHT + 12
-    header_status_rect = rl.Rectangle(hdr.x, header_status_y, hdr.width, hdr.y + hdr.height - header_status_y - HEADER_BOTTOM_GAP)
-    self._status_card.render(header_status_rect)
+    self._status_card.set_parent_rect(scroll_rect)
 
     scroll_content_rect = rl.Rectangle(scroll_rect.x, scroll_rect.y, scroll_rect.width, scroll_rect.height)
     self._content_height = self._measure_content_height(content_width)
     self._scroll_panel.set_enabled(self.is_visible)
     self._scroll_offset = self._scroll_panel.update(scroll_content_rect, max(self._content_height, scroll_content_rect.height))
 
-    rl.begin_scissor_mode(int(scroll_content_rect.x), int(scroll_content_rect.y), int(scroll_content_rect.width), int(scroll_content_rect.height))
+    aether_begin_scissor_mode(int(scroll_content_rect.x), int(scroll_content_rect.y), int(scroll_content_rect.width), int(scroll_content_rect.height))
     self._draw_scroll_content(scroll_content_rect, content_width)
-    rl.end_scissor_mode()
+    aether_end_scissor_mode()
 
     if self._content_height > scroll_content_rect.height:
       self._scrollbar.render(scroll_content_rect, self._content_height, self._scroll_offset)
-
-    draw_list_scroll_fades(scroll_content_rect, self._content_height, self._scroll_offset, AetherListColors.PANEL_BG)
+      draw_list_scroll_fades(scroll_content_rect, self._content_height, self._scroll_offset, AetherListColors.PANEL_BG)

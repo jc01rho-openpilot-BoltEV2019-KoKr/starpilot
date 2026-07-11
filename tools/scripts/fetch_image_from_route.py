@@ -1,7 +1,18 @@
-#!/usr/bin/env python3
-import sys
+#!/bin/sh
+""":"
+REPO_ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
+PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
 
-from openpilot.starpilot.common.starpilot_utilities import use_konik_server
+if [ -x "$PYTHON_BIN" ]; then
+  exec "$PYTHON_BIN" "$0" "$@"
+fi
+
+exec python3 "$0" "$@"
+":"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 if len(sys.argv) < 4:
   print(f"{sys.argv[0]} <route> <segment> <frame number> [front|wide|driver]")
@@ -14,25 +25,22 @@ cameras = {
   "driver": "dcameras"
 }
 
-import requests
 from PIL import Image
-from openpilot.tools.lib.auth_config import get_token
 from openpilot.tools.lib.framereader import FrameReader
-
-jwt = get_token()
+from openpilot.tools.lib.route import Route
 
 route = sys.argv[1]
 segment = int(sys.argv[2])
 frame = int(sys.argv[3])
 camera = cameras[sys.argv[4]] if len(sys.argv) > 4 and sys.argv[4] in cameras else "cameras"
 
-url = f"https://api.{'konik.ai' if use_konik_server() else 'commadotai.com'}/v1/route/{route}/files"
-r = requests.get(url, headers={"Authorization": f"JWT {jwt}"}, timeout=10)
-assert r.status_code == 200
-print("got api response")
-
-segments = r.json()[camera]
-if segment >= len(segments):
+route_files = Route(route)
+segments = {
+  "cameras": route_files.camera_paths(),
+  "ecameras": route_files.ecamera_paths(),
+  "dcameras": route_files.dcamera_paths(),
+}[camera]
+if segment >= len(segments) or segments[segment] is None:
   raise Exception(f"segment {segment} not found, got {len(segments)} segments")
 
 fr = FrameReader(segments[segment])

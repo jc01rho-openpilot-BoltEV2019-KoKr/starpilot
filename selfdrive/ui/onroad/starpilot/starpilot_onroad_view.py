@@ -60,12 +60,15 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._render_standstill_timer()
     self._render_developer_metrics()
     dm = self.driver_state_renderer
-    if dm and dm.is_visible and dm.position_x != 0.0:
-      dm_top = dm.position_y - 96  # top of DM icon
+    if dm and dm.position_x != 0.0:
+      cx = dm.position_x
+      btn = self._personality_button
+      if btn.is_visible and btn.center_x < cx:
+        cx = btn.center_x
       self._aethergauge.render(
         self._content_rect, self._font_bold, self._font_medium,
         current_speed=self._hud_renderer.speed,
-        cx=dm.position_x, bottom=dm_top - 105
+        cx=cx,         bottom=dm.position_y - 96 - 145
       )
     else:
       self._aethergauge.render(self._content_rect, self._font_bold, self._font_medium, current_speed=self._hud_renderer.speed)
@@ -289,10 +292,9 @@ class StarPilotOnroadView(AugmentedRoadView):
 
 
   def _render_bottom_row_widgets(self):
-    # Hide if alerts are active
-    from cereal import log
-    AlertSize = log.SelfdriveState.AlertSize
-    if ui_state.sm["selfdriveState"].alertSize != AlertSize.none:
+    # Hide if any alert (stock or StarPilot) is active
+    alert_showing, _ = self.alert_renderer.will_render()
+    if alert_showing is not None:
       return
 
     dm = self.driver_state_renderer
@@ -377,9 +379,8 @@ class StarPilotOnroadView(AugmentedRoadView):
       render_weather_icon(weather_rect)
 
   def _render_pedals(self):
-    from cereal import log
-    AlertSize = log.SelfdriveState.AlertSize
-    if ui_state.sm["selfdriveState"].alertSize != AlertSize.none:
+    alert_showing, _ = self.alert_renderer.will_render()
+    if alert_showing is not None:
       return
 
     dm = self.driver_state_renderer

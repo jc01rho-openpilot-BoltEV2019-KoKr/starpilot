@@ -28,6 +28,14 @@ class TestGMCan:
     assert dat[1] & 0x1
     assert decoded == 8848
 
+  def test_acc_2cd_command_matches_stock_camera_counter_layout(self):
+    assert [gmcan.create_acc_2cd_command(0, idx)[1].hex() for idx in range(4)] == [
+      "002c03d3fd",
+      "402c03d3fc",
+      "802c03d3fb",
+      "c02c03d3fa",
+    ]
+
   def test_prndl2_command_matches_bolt_gen2_regen_paddle_spoof(self):
     CP = SimpleNamespace(carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL)
 

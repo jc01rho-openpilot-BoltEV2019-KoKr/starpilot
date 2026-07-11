@@ -1,7 +1,7 @@
 from cereal import custom
 from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
-from opendbc.car.chrysler.values import DBC, STEER_THRESHOLD, RAM_CARS, ChryslerStarPilotFlags
+from opendbc.car.chrysler.values import DBC, JEEPS, STEER_THRESHOLD, RAM_CARS, ChryslerStarPilotFlags
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarStateBase
 
@@ -29,6 +29,11 @@ class CarState(CarStateBase):
     self.button_message = "CRUISE_BUTTONS_ALT" if FPCP.flags & ChryslerStarPilotFlags.RAM_HD_ALT_BUTTONS else "CRUISE_BUTTONS"
 
     self.lkas_button = 0
+    self.brake_hold = False
+    self.cruise_active_actual = False
+    self.forward_gear = False
+    self.acc_decelerating = False
+    self.das_3 = {}
 
   @staticmethod
   def get_lkas_button(pt_signals, is_ram: bool) -> bool:
@@ -92,6 +97,13 @@ class CarState(CarStateBase):
     ret.cruiseState.nonAdaptive = cp_cruise.vl["DAS_4"]["ACC_STATE"] in (1, 2)  # 1 NormalCCOn and 2 NormalCCSet
     ret.cruiseState.standstill = cp_cruise.vl["DAS_3"]["ACC_STANDSTILL"] == 1
     ret.accFaulted = cp_cruise.vl["DAS_3"]["ACC_FAULTED"] != 0
+
+    if self.CP.carFingerprint in JEEPS:
+      self.forward_gear = ret.gearShifter == structs.CarState.GearShifter.drive
+      self.cruise_active_actual = ret.cruiseState.enabled
+      self.acc_decelerating = cp_cruise.vl["DAS_3"]["ACC_DECEL"] < -0.5
+      self.das_3 = dict(cp_cruise.vl["DAS_3"])
+      ret.brakeHoldActive = self.brake_hold
 
     if self.CP.carFingerprint in RAM_CARS:
       # Auto High Beam isn't Located in this message on chrysler or jeep currently located in 729 message
