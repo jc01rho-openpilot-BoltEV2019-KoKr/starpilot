@@ -376,6 +376,40 @@ class TestManager:
 
     assert params.get_bool("PrioritizeSmoothFollowing")
 
+  def test_cleanup_inaccessible_msgq_files_removes_only_blocked_files(self, tmp_path, monkeypatch):
+    healthy = tmp_path / "msgq_deviceState"
+    blocked = tmp_path / "msgq_gpsLocation"
+    unrelated = tmp_path / "not_msgq_gpsLocation"
+    healthy.write_bytes(b"healthy")
+    blocked.write_bytes(b"blocked")
+    unrelated.write_bytes(b"unrelated")
+
+    def fake_open_probe(path):
+      if path == blocked:
+        raise PermissionError("blocked")
+      return True
+
+    monkeypatch.setattr(manager, "_msgq_file_is_readwrite_openable", fake_open_probe)
+
+    assert manager.cleanup_inaccessible_msgq_files(tmp_path) == 1
+    assert healthy.read_bytes() == b"healthy"
+    assert not blocked.exists()
+    assert unrelated.read_bytes() == b"unrelated"
+
+  def test_cleanup_inaccessible_msgq_files_ignores_msgq_directories(self, tmp_path, monkeypatch):
+    msgq_dir = tmp_path / "msgq_desktop"
+    msgq_dir.mkdir()
+    child = msgq_dir / "gpsLocation"
+    child.write_bytes(b"child")
+
+    def fake_open_probe(path):
+      raise AssertionError(f"directories and non-msgq children should not be probed: {path}")
+
+    monkeypatch.setattr(manager, "_msgq_file_is_readwrite_openable", fake_open_probe)
+
+    assert manager.cleanup_inaccessible_msgq_files(tmp_path) == 0
+    assert child.read_bytes() == b"child"
+
   @pytest.mark.skip("this test is flaky the way it's currently written, should be moved to test_onroad")
   def test_clean_exit(self, subtests):
     """

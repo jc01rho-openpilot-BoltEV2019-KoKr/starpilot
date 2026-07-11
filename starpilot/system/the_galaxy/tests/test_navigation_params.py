@@ -149,6 +149,34 @@ def test_navigation_last_position_rejects_stale_persisted_fix(monkeypatch):
   assert the_galaxy._get_navigation_last_position() is None
 
 
+def test_save_longitudinal_maneuver_status_writes_json_param_as_dict(monkeypatch):
+  fake_params = WritableFakeParams()
+  monkeypatch.setattr(the_galaxy, "params", fake_params)
+
+  saved = the_galaxy._save_longitudinal_maneuver_status({
+    "state": "armed",
+    "history": ["", "Started"],
+  })
+
+  assert fake_params.writes == [("LongitudinalManeuverStatus", saved)]
+  assert isinstance(fake_params.writes[0][1], dict)
+  assert saved["history"] == ["Started"]
+
+
+def test_save_lateral_maneuver_status_writes_json_param_as_dict(monkeypatch):
+  fake_params = WritableFakeParams()
+  monkeypatch.setattr(the_galaxy, "params", fake_params)
+
+  saved = the_galaxy._save_lateral_maneuver_status({
+    "state": "armed",
+    "history": ["", "Started"],
+  })
+
+  assert fake_params.writes == [("LateralManeuverStatus", saved)]
+  assert isinstance(fake_params.writes[0][1], dict)
+  assert saved["history"] == ["Started"]
+
+
 def test_galaxy_session_value_matches_cookie_format():
   assert the_galaxy._build_galaxy_session_value(
     "testGalaxySlug01",

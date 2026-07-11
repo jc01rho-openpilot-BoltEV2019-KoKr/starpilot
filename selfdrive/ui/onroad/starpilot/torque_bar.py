@@ -6,7 +6,7 @@ from collections import OrderedDict
 import numpy as np
 import pyray as rl
 from opendbc.car import ACCELERATION_DUE_TO_GRAVITY
-from openpilot.selfdrive.ui.mici.onroad import blend_colors
+from openpilot.selfdrive.ui.lib.starpilot_visuals import blend_colors
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.shader_polygon import draw_polygon, Gradient
@@ -189,9 +189,10 @@ class TorqueBar(Widget):
       self._torque_filter.update(-ui_state.sm['carOutput'].actuatorsOutput.torque)
 
   def _render(self, rect: rl.Rectangle) -> None:
+    SCALE = rect.height / 240.0 * (rect.width / gui_app.width)
     # adjust y pos with torque
-    torque_line_offset = np.interp(abs(self._torque_filter.x), [0.5, 1], [22, 26])
-    torque_line_height = np.interp(abs(self._torque_filter.x), [0.5, 1], [14, 56])
+    torque_line_offset = np.interp(abs(self._torque_filter.x), [0.5, 1], [22 * SCALE, 26 * SCALE])
+    torque_line_height = np.interp(abs(self._torque_filter.x), [0.5, 1], [14 * SCALE, 56 * SCALE])
     lateral_ui_active = ui_state.status == UIStatus.ENGAGED or ui_state.always_on_lateral_active
 
     # animate alpha and angle span
@@ -206,7 +207,7 @@ class TorqueBar(Widget):
       torque_line_bg_color = rl.Color(255, 255, 255, int(255 * 0.15 * self._torque_line_alpha_filter.x))
 
     # draw curved line polygon torque bar
-    torque_line_radius = 1200
+    torque_line_radius = 1200 * SCALE
     top_angle = -90
     torque_bg_angle_span = self._torque_line_alpha_filter.x * TORQUE_ANGLE_SPAN
     torque_start_angle = top_angle - torque_bg_angle_span / 2
@@ -263,5 +264,5 @@ class TorqueBar(Widget):
     # draw center torque bar dot
     if abs(self._torque_filter.x) < 0.5:
       dot_y = self._rect.y + self._rect.height - torque_line_offset - torque_line_height / 2
-      rl.draw_circle(int(cx), int(dot_y), 10 // 2,
+      rl.draw_circle(int(cx), int(dot_y), (10 * SCALE) / 2,
                      rl.Color(182, 182, 182, int(255 * 0.9 * self._torque_line_alpha_filter.x)))

@@ -95,11 +95,7 @@ REPORT_CATEGORIES = [
 FADE_HEIGHT = AETHER_LIST_METRICS.fade_height
 PANEL_STYLE = DEFAULT_PANEL_STYLE
 
-SYSTEM_PANEL_METRICS = replace(
-  AETHER_LIST_METRICS,
-  outer_margin_y=14,
-  panel_padding_bottom=14,
-)
+SYSTEM_PANEL_METRICS = AETHER_LIST_METRICS
 
 
 class SystemSettingsManagerView(PanelManagerView):

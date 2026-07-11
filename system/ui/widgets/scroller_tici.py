@@ -40,6 +40,10 @@ class Scroller(Widget):
     item.set_touch_valid_callback(self.scroll_panel.is_touch_valid)
 
   def _render(self, _):
+    padding = 40
+    r = rl.Rectangle(self._rect.x + padding, self._rect.y + padding,
+                     self._rect.width - padding * 2, self._rect.height - padding * 2)
+
     # TODO: don't draw items that are not in the viewport
     visible_items = [item for item in self._items if item.is_visible]
 
@@ -52,10 +56,9 @@ class Scroller(Widget):
     content_height = sum(item.rect.height for item in visible_items) + self._spacing * (len(visible_items))
     if not self._pad_end:
       content_height -= self._spacing
-    scroll = self.scroll_panel.update(self._rect, rl.Rectangle(0, 0, self._rect.width, content_height))
+    scroll = self.scroll_panel.update(r, rl.Rectangle(0, 0, r.width, content_height))
 
-    rl.begin_scissor_mode(int(self._rect.x), int(self._rect.y),
-                          int(self._rect.width), int(self._rect.height))
+    rl.begin_scissor_mode(int(r.x), int(r.y), int(r.width), int(r.height))
 
     cur_height = 0
     for idx, item in enumerate(visible_items):
@@ -63,8 +66,8 @@ class Scroller(Widget):
         continue
 
       # Nicely lay out items vertically
-      x = self._rect.x
-      y = self._rect.y + cur_height + self._spacing * (idx != 0)
+      x = r.x
+      y = r.y + cur_height + self._spacing * (idx != 0)
       cur_height += item.rect.height + self._spacing * (idx != 0)
 
       # Consider scroll
@@ -72,7 +75,7 @@ class Scroller(Widget):
 
       # Update item state
       item.set_position(x, y)
-      item.set_parent_rect(self._rect)
+      item.set_parent_rect(r)
       item.render()
 
     rl.end_scissor_mode()

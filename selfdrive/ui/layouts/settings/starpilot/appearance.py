@@ -148,8 +148,8 @@ class AppearanceManagerView(AetherSettingsView):
         self.set_rect(rect)
         self._interactive_rects.clear()
 
-        margin_x = 18.0
-        margin_y = 24.0
+        margin_x = 10.0
+        margin_y = 10.0
 
         grid_x = rect.x + margin_x
         grid_y = rect.y + margin_y
@@ -308,6 +308,11 @@ class StarPilotAppearanceLayout(_SettingsPage):
                        subtitle="",
                        get_state=lambda: self._params.get_bool("ShowSteering"),
                        set_state=lambda s: self._params.put_bool("ShowSteering", s),
+                       visible=hud_on),
+            SettingRow("EnableTorqueBarWidget", "toggle", tr_noop("Torque Bar"),
+                       subtitle=tr_noop("Show a curved torque-utilization indicator at the bottom of the driving screen."),
+                       get_state=lambda: self._params.get_bool("EnableTorqueBarWidget"),
+                       set_state=lambda s: self._params.put_bool("EnableTorqueBarWidget", s),
                        visible=hud_on),
             SettingRow("SignalMetrics", "toggle", tr_noop("Turn Signal Borders"),
                        subtitle="",

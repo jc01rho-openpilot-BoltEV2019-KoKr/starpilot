@@ -104,8 +104,8 @@ class SteeringManagerView(AetherSettingsView):
     self.set_rect(rect)
     self._interactive_rects.clear()
 
-    margin_x = 18.0
-    margin_y = 24.0
+    margin_x = 10.0
+    margin_y = 10.0
 
     grid_x = rect.x + margin_x
     grid_y = rect.y + margin_y

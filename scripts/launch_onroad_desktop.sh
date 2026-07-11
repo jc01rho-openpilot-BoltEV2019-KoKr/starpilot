@@ -27,7 +27,7 @@ env_var_truthy() {
 usage() {
   cat <<'EOF'
 Usage:
-  ./onroad [jobs] (--c3 | --c4 | --raybig | --all | --replay-only) [-nav] [--cem] [--prefix name] <route-or-replay-args...>
+  ./onroad [jobs] (--c3 | --c4 | --raybig | --all | --replay-only) [-nav] [-alert] [--cem] [--prefix name] <route-or-replay-args...>
 
 Examples:
   ./onroad --c3 <route>
@@ -35,6 +35,7 @@ Examples:
   ./onroad --c4 -nav <route>
   ./onroad --c4 --cem --demo
   ./onroad --raybig --cem --demo
+  ./onroad --raybig --cem -alert --demo --no-loop
   ./onroad --all <route>
   ./onroad --replay-only --demo --no-vipc --no-loop
 
@@ -44,6 +45,7 @@ Notes:
   - Use multiple UI flags together if you want more than one desktop UI at once.
   - -nav injects a fake navigation demo stream and blocks replay from publishing navInstruction/navRoute.
   - --cem publishes fake CEM statuses for desktop visual review in the raylib UIs.
+  - -alert blocks replay from publishing selfdriveState and fires a fake critical full-screen red alert (alertSize=full, alertStatus=critical) 20 seconds after the demo publisher starts (10s for replay route + UI to come up, plus 10s for the user to open Settings). Default alert text mimics a real controlsMismatch event; run tools/replay/fake_alert_demo.py directly to override --text1/--text2/--delay.
 EOF
 }
 
@@ -60,9 +62,11 @@ LEGACY_UI_SELECTION=""
 REPLAY_ONLY=0
 NAV_DEMO=0
 CEM_DEMO=0
+ALERT_DEMO=0
 REPLAY_PID=""
 NAV_PID=""
 CEM_PID=""
+ALERT_PID=""
 UI_PIDS=()
 
 parse_args() {
@@ -98,6 +102,10 @@ parse_args() {
         ;;
       --cem|--mici-widget-demo|--widget-demo)
         CEM_DEMO=1
+        shift
+        ;;
+      -alert|--alert|--alert-demo)
+        ALERT_DEMO=1
         shift
         ;;
       --ui)
@@ -217,6 +225,9 @@ cleanup() {
   if [[ -n "${CEM_PID}" ]]; then
     kill "${CEM_PID}" >/dev/null 2>&1 || true
   fi
+  if [[ -n "${ALERT_PID}" ]]; then
+    kill "${ALERT_PID}" >/dev/null 2>&1 || true
+  fi
 
   for pid in "${UI_PIDS[@]-}"; do
     if [[ -n "${pid}" ]]; then
@@ -231,6 +242,9 @@ cleanup() {
   fi
   if [[ -n "${CEM_PID}" ]]; then
     wait "${CEM_PID}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${ALERT_PID}" ]]; then
+    wait "${ALERT_PID}" >/dev/null 2>&1 || true
   fi
 
   if [[ -n "${OPENPILOT_PREFIX:-}" && "${OPENPILOT_PREFIX}" == desktop-onroad-* ]]; then
@@ -305,6 +319,30 @@ ensure_nav_demo_replay_blocklist() {
   REPLAY_ARGS=(-b "${nav_services}" "${REPLAY_ARGS[@]}")
 }
 
+ensure_alert_demo_replay_blocklist() {
+  local alert_services="selfdriveState"
+  local idx=0
+
+  for ((idx=0; idx<${#REPLAY_ARGS[@]}; idx++)); do
+    case "${REPLAY_ARGS[$idx]}" in
+      -b|--block)
+        if (( idx + 1 >= ${#REPLAY_ARGS[@]} )); then
+          echo "Missing value for ${REPLAY_ARGS[$idx]}" >&2
+          exit 1
+        fi
+        REPLAY_ARGS[$((idx + 1))]="$(append_blocked_service_names "${REPLAY_ARGS[$((idx + 1))]}" "${alert_services}")"
+        return
+        ;;
+      --block=*)
+        REPLAY_ARGS[$idx]="--block=$(append_blocked_service_names "${REPLAY_ARGS[$idx]#*=}" "${alert_services}")"
+        return
+        ;;
+    esac
+  done
+
+  REPLAY_ARGS=(-b "${alert_services}" "${REPLAY_ARGS[@]}")
+}
+
 prepare_env() {
   source .venv/bin/activate
 
@@ -331,6 +369,7 @@ prepare_env() {
   export SP_ALLOW_DESKTOP_FAKE_WIFI=0
   export SP_ONROAD_NAV_DEMO="${NAV_DEMO}"
   export SP_CEM_DEMO="${CEM_DEMO}"
+  export SP_ONROAD_ALERT_DEMO="${ALERT_DEMO}"
 
   if [[ "$(uname -s)" == "Darwin" ]] || env_var_truthy "${ZMQ:-0}"; then
     export OPENPILOT_ZMQ_NAMESPACE="${PREFIX_ARG:-${OPENPILOT_ZMQ_NAMESPACE:-desktop-onroad-$$}}"
@@ -423,6 +462,18 @@ launch_cem_demo() {
   fi
 }
 
+launch_alert_demo() {
+  echo "Starting fake critical alert demo publisher (fires after 20s on-road; blocks replay's selfdriveState)..."
+  "${ROOT_DIR}/.venv/bin/python3" "${ROOT_DIR}/tools/replay/fake_alert_demo.py" &
+  ALERT_PID=$!
+
+  sleep 0.5
+  if ! kill -0 "${ALERT_PID}" >/dev/null 2>&1; then
+    wait "${ALERT_PID}"
+    return 1
+  fi
+}
+
 launch_c3_ui() {
   local os_ext="linux"
   if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -473,6 +524,10 @@ if [[ "${NAV_DEMO}" == "1" ]]; then
   ensure_nav_demo_replay_blocklist
 fi
 
+if [[ "${ALERT_DEMO}" == "1" ]]; then
+  ensure_alert_demo_replay_blocklist
+fi
+
 if [[ ${#REPLAY_ARGS[@]} -eq 0 ]]; then
   usage >&2
   exit 1
@@ -518,6 +573,10 @@ fi
 
 if [[ "${CEM_DEMO}" == "1" ]]; then
   launch_cem_demo
+fi
+
+if [[ "${ALERT_DEMO}" == "1" ]]; then
+  launch_alert_demo
 fi
 
 if [[ ${#UI_TARGETS[@]} -eq 0 ]]; then
