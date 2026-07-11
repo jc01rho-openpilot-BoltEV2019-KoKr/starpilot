@@ -9,6 +9,7 @@
 #include <QDebug>
 #include <QJsonDocument>
 #include <QNetworkRequest>
+#include <QUrl>
 
 #include <memory>
 #include <string>
@@ -38,6 +39,36 @@ std::optional<QString> getDongleId() {
 }
 
 namespace CommaApi {
+
+const QString COMMA_API_HOST = "https://api.commadotai.com";
+const QString COMMA_API_HOST_ALIAS = "https://api.comma.ai";
+
+QString normalizeApiHost(const QString &host) {
+  QUrl url(host);
+  if (url.scheme().isEmpty()) {
+    url = QUrl("https://" + host);
+  }
+  QString normalized = QString("%1://%2").arg(url.scheme().toLower(), url.authority().toLower());
+  while (normalized.endsWith('/')) {
+    normalized.chop(1);
+  }
+  return normalized == COMMA_API_HOST_ALIAS ? COMMA_API_HOST : normalized;
+}
+
+QString authTokenForHost(const QString &api_host) {
+  QString token_json = QString::fromStdString(util::read_file(util::getenv("HOME") + "/.comma/auth.json"));
+  QJsonDocument json_d = QJsonDocument::fromJson(token_json.toUtf8());
+  QJsonObject auth = json_d.object();
+
+  const QString normalized_host = normalizeApiHost(api_host);
+  const QString token = auth["tokens"].toObject()[normalized_host].toString();
+  if (!token.isEmpty()) {
+    return token;
+  }
+
+  const QString env_host = normalizeApiHost(QString::fromStdString(util::getenv("API_HOST", COMMA_API_HOST.toStdString())));
+  return (normalized_host == COMMA_API_HOST || normalized_host == env_host) ? auth["access_token"].toString() : "";
+}
 
 EVP_PKEY *get_private_key() {
   static std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> pkey(nullptr, EVP_PKEY_free);
@@ -117,9 +148,7 @@ void HttpRequest::sendRequest(const QString &requestURL, const HttpRequest::Meth
   if (create_jwt) {
     token = CommaApi::create_jwt();
   } else {
-    QString token_json = QString::fromStdString(util::read_file(util::getenv("HOME") + "/.comma/auth.json"));
-    QJsonDocument json_d = QJsonDocument::fromJson(token_json.toUtf8());
-    token = json_d["access_token"].toString();
+    token = CommaApi::authTokenForHost(requestURL);
   }
 
   QNetworkRequest request;

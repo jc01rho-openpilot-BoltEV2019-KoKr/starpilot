@@ -1,6 +1,8 @@
 import { html, reactive } from "/assets/vendor/arrow-core.js"
 import { Modal } from "/assets/components/modal.js";
 
+const DEFAULT_PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.embaucha.galaxynav&hl=en-US&ah=9FldHJ99kxL8oNbSlO5F4sQqwC4"
+
 export function NavKeys() {
   const state = reactive({
     initialMapboxComplete: false,
@@ -20,6 +22,12 @@ export function NavKeys() {
     publicKey: "", secretKey: "",
     editPublic: false, editSecret: false,
     savedPublic: false, savedSecret: false,
+
+    galaxyCookieName: "galaxy_session",
+    galaxySessionToken: "",
+    galaxyAppUrl: DEFAULT_PLAY_STORE_URL,
+    galaxyPaired: false,
+    galaxySessionVisible: false,
 
     showDeleteModal: false,
     keyToDelete: null,
@@ -60,6 +68,34 @@ export function NavKeys() {
     req: async (url, opts) => {
       const response = await fetch(url, opts)
       return { ok: response.ok, data: await response.json().catch(() => ({})) }
+    },
+
+    copyText: async (text) => {
+      if (!text) {
+        throw new Error("Nothing to copy")
+      }
+
+      if (navigator.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(text)
+        return
+      }
+
+      const textarea = document.createElement("textarea")
+      textarea.value = text
+      textarea.setAttribute("readonly", "")
+      textarea.style.position = "fixed"
+      textarea.style.left = "-9999px"
+      textarea.style.opacity = "0"
+      document.body.appendChild(textarea)
+      textarea.select()
+
+      try {
+        if (!document.execCommand("copy")) {
+          throw new Error("Copy command failed")
+        }
+      } finally {
+        textarea.remove()
+      }
     }
   }
 
@@ -96,6 +132,7 @@ export function NavKeys() {
 
   const api = {
     path: {
+      galaxy: "/api/galaxy/session",
       key: "/api/navigation_key",
       nav: "/api/navigation"
     },
@@ -103,7 +140,9 @@ export function NavKeys() {
     load: async () => {
       const { ok, data } = await util.req(api.path.nav)
       if (!ok) {
-        return showMessage("error", "Failed to load keys...", "")
+        showMessage("error", "Failed to load keys...", "")
+        await api.loadGalaxySession()
+        return
       }
 
       state.amap1Key = data.amap1Key ?? ""
@@ -119,6 +158,29 @@ export function NavKeys() {
       state.initialMapboxComplete = state.savedPublic && state.savedSecret
 
       bumpImageVersion()
+      await api.loadGalaxySession()
+    },
+
+    loadGalaxySession: async () => {
+      const { ok, data } = await util.req(api.path.galaxy)
+      if (!ok) {
+        return showMessage("error", "Failed to load Galaxy session...", "app")
+      }
+
+      state.galaxyAppUrl = data.appUrl || DEFAULT_PLAY_STORE_URL
+      state.galaxyCookieName = data.cookieName || "galaxy_session"
+      state.galaxyPaired = !!data.paired
+      state.galaxySessionToken = data.sessionToken || ""
+      state.galaxySessionVisible = false
+    },
+
+    copyGalaxySession: async () => {
+      try {
+        await util.copyText(state.galaxySessionToken)
+        showMessage("message", "Session token copied!", "app")
+      } catch (e) {
+        showMessage("error", "Copy failed...", "app")
+      }
     },
 
     save: (kind) => async () => {
@@ -295,6 +357,60 @@ export function NavKeys() {
     `
   }
 
+  function renderAppKeys() {
+    return html`
+      <div class="navkeys-title">App Keys</div>
+
+      <div class="navkeys-app-actions">
+        <a
+          class="navkeys-btn navkeys-link-btn"
+          href="${() => state.galaxyAppUrl}"
+          rel="noopener noreferrer"
+          target="_blank">
+          <i class="bi bi-google-play"></i>
+          <span>Install The App</span>
+        </a>
+      </div>
+
+      <label class="navkeys-label" for="galaxy-cookie-name">Cookie Name</label>
+      <div class="navkeys-row">
+        <input
+          class="navkeys-input navkeys-token-input"
+          id="galaxy-cookie-name"
+          readonly
+          value="${() => state.galaxyCookieName}"
+        />
+      </div>
+
+      <label class="navkeys-label" for="galaxy-session-token">Session Token</label>
+      <div class="navkeys-row">
+        <input
+          class="navkeys-input navkeys-token-input"
+          id="galaxy-session-token"
+          placeholder="${() => state.galaxyPaired ? "Session token unavailable..." : "Pair Galaxy to create a session token..."}"
+          readonly
+          type="${() => state.galaxySessionVisible ? "text" : "password"}"
+          value="${() => state.galaxySessionToken}"
+        />
+        <button
+          aria-label="${() => state.galaxySessionVisible ? "Hide session token" : "Show session token"}"
+          class="navkeys-btn navkeys-icon-btn"
+          @click="${() => { state.galaxySessionVisible = !state.galaxySessionVisible }}"
+          disabled="${() => !state.galaxySessionToken}"
+          title="${() => state.galaxySessionVisible ? "Hide session token" : "Show session token"}">
+          <i class="${() => `bi ${state.galaxySessionVisible ? "bi-eye-slash" : "bi-eye"}`}"></i>
+        </button>
+        <button
+          class="navkeys-btn navkeys-copy-btn"
+          @click="${api.copyGalaxySession}"
+          disabled="${() => !state.galaxySessionToken}">
+          <i class="bi bi-copy"></i>
+          <span>Copy</span>
+        </button>
+      </div>
+    `
+  }
+
   return html`
     <div class="navkeys-wrapper navkeys-offset-top">
       <div class="navkeys-container">
@@ -304,6 +420,10 @@ export function NavKeys() {
       <div class="navkeys-container">
         ${renderGroup("Mapbox Keys", ["public", "secret"])}
         ${renderStatus("mapbox")}
+      </div>
+      <div class="navkeys-container navkeys-app-container">
+        ${renderAppKeys()}
+        ${renderStatus("app")}
       </div>
     </div>
     ${() => state.showDeleteModal ? Modal({

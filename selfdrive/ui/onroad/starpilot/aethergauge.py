@@ -1,9 +1,11 @@
 from dataclasses import dataclass
 from enum import Enum
 import math
+import os
 import pyray as rl
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.starpilot.common.experimental_state import CEStatus
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import _csc_state, _intensity, _glow_color
 
@@ -57,6 +59,7 @@ COLOR_STOP_SIGN = rl.Color(196, 30, 58, 255)
 COLOR_STOP_SIGN_OUTLINE = rl.Color(255, 255, 255, 255)
 COLOR_STOP_LINE_GLOW = rl.Color(255, 30, 60, 255)
 COLOR_STOP_LINE_CORE = rl.Color(255, 200, 200, 255)
+COLOR_CEM_SPEED = rl.Color(112, 192, 216, 255)
 
 # Set to True to force test-cycle mode (flip back to False before pushing)
 TEST_CYCLE = False
@@ -69,6 +72,9 @@ def _speed_conversion() -> float:
 
 def _speed_unit() -> str:
   return "km/h" if ui_state.is_metric else "mph"
+
+def _env_truthy(name: str) -> bool:
+  return os.getenv(name, "").lower() in {"1", "true", "yes", "on"}
 
 def _to_display_speed(val: float) -> tuple[int, str]:
   return int(round(val * _speed_conversion())), _speed_unit()
@@ -267,6 +273,7 @@ _TEST_STATES = [
   (IndicatorType.FORCE_STOP, "", COLOR_FORCE_STOP, 12.0, "", ""),
 ]
 _TEST_CYCLE_SEC = 6.0
+CEM_DEMO = _env_truthy("SP_CEM_DEMO") or _env_truthy("SP_MICI_WIDGET_DEMO")
 
 def _test_cycle_active() -> bool:
   return rl.get_time() > 3.0
@@ -299,6 +306,63 @@ def _test_cycle_data() -> AetherGaugeData:
     indicator_extra=extra, reduction_text=reduction, is_numeric=True)
 
 
+def _cem_demo_active() -> bool:
+  return CEM_DEMO and ui_state.conditional_status in {
+    CEStatus["CURVATURE"],
+    CEStatus["LEAD"],
+    CEStatus["STOP_LIGHT"],
+    CEStatus["SPEED"],
+    CEStatus["SPEED_LIMIT"],
+  }
+
+
+def _cem_demo_data() -> AetherGaugeData:
+  status = ui_state.conditional_status
+
+  if status == CEStatus["CURVATURE"]:
+    v_ego = _get_val("carState", "vEgo", 18.0)
+    target_speed = max(8.0, v_ego * 0.72)
+    v_cruise = max(target_speed + 4.0, _get_val("starpilotPlan", "vCruise", target_speed + 4.0))
+    return _build_curve_gauge_data(0.005, target_speed, v_cruise)
+
+  if status == CEStatus["LEAD"]:
+    if _sm_valid("radarState") and ui_state.sm["radarState"].leadOne.status:
+      return _lead_data()
+    is_stopped = int(rl.get_time() / 1.0) % 2 == 0
+    return AetherGaugeData(
+      text="STOPPED" if is_stopped else "SLOW",
+      color=COLOR_LEAD_STOPPED if is_stopped else COLOR_LEAD_SLOWER,
+      indicator_type=IndicatorType.LEAD,
+      indicator_value=12.0 if is_stopped else 24.0,
+      indicator_extra="stopped" if is_stopped else "slower",
+    )
+
+  if status == CEStatus["STOP_LIGHT"]:
+    phase = rl.get_time() % 2.0
+    distance = max(6.0, 35.0 - phase * 12.0)
+    v_ego = max(0.1, _get_val("carState", "vEgo", 10.0))
+    return AetherGaugeData(
+      text=_time_to_stop(distance, v_ego),
+      unit="s",
+      color=COLOR_FORCE_STOP,
+      indicator_type=IndicatorType.STOP_LIGHT,
+      indicator_value=distance,
+      indicator_extra="red",
+      is_numeric=True,
+    )
+
+  v_ego = _get_val("carState", "vEgo", 20.0)
+  display_speed, unit = _to_display_speed(max(8.0, v_ego * 0.85))
+  return AetherGaugeData(
+    text=str(display_speed),
+    unit=unit,
+    color=COLOR_CEM_SPEED,
+    indicator_type=IndicatorType.ROAD_CURVE,
+    indicator_value=0.0,
+    is_numeric=True,
+  )
+
+
 # --- Main widget ---
 
 class AetherGauge:
@@ -312,6 +376,8 @@ class AetherGauge:
     ]
     if TEST_CYCLE:
       self._sources.insert(0, (_test_cycle_active, _test_cycle_data))
+    if CEM_DEMO:
+      self._sources.insert(0, (_cem_demo_active, _cem_demo_data))
     self._chevron_accum = 0.0
     self._lead_chevron_accum = 0.0
 

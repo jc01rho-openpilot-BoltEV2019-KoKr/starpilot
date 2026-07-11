@@ -3,8 +3,9 @@ from opendbc.car import get_safety_config, structs
 from opendbc.car.chrysler.carcontroller import CarController
 from opendbc.car.chrysler.carstate import CarState
 from opendbc.car.chrysler.radar_interface import RadarInterface
-from opendbc.car.chrysler.values import CAR, RAM_HD, RAM_DT, RAM_CARS, ChryslerFlags, ChryslerSafetyFlags
+from opendbc.car.chrysler.values import CAR, JEEPS, RAM_HD, RAM_DT, RAM_CARS, ChryslerFlags, ChryslerSafetyFlags
 from opendbc.car.interfaces import CarInterfaceBase
+from openpilot.common.params import Params, UnknownKeyName
 
 
 class CarInterface(CarInterfaceBase):
@@ -14,6 +15,12 @@ class CarInterface(CarInterfaceBase):
 
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
+    params = Params()
+    try:
+      jeep_brake_hold = params.get_bool("JeepBrakeHold")
+    except UnknownKeyName:
+      jeep_brake_hold = False
+
     ret.brand = "chrysler"
     ret.dashcamOnly = candidate in RAM_HD
 
@@ -28,6 +35,8 @@ class CarInterface(CarInterfaceBase):
       ret.safetyConfigs[0].safetyParam |= ChryslerSafetyFlags.RAM_HD.value
     elif candidate in RAM_DT:
       ret.safetyConfigs[0].safetyParam |= ChryslerSafetyFlags.RAM_DT.value
+    elif candidate in JEEPS and jeep_brake_hold:
+      ret.safetyConfigs[0].safetyParam |= ChryslerSafetyFlags.JEEP_BRAKE_HOLD.value
 
     CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
     if candidate not in RAM_CARS:

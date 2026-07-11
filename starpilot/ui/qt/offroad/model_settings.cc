@@ -614,15 +614,7 @@ bool StarPilotModelPanel::isModelInstalled(const QString &key) const {
     return true;
   }
 
-  bool has_thneed = false;
   bool has_combined_tg = false;
-  bool has_policy_meta = false;
-  bool has_policy_tg = false;
-  bool has_vision_meta = false;
-  bool has_vision_tg = false;
-  bool has_off_policy_meta = false;
-  bool has_off_policy_tg = false;
-  bool foundAny = false;
 
   for (const QString &file : modelDir.entryList(QDir::Files)) {
     QFileInfo fi(modelDir.filePath(file));
@@ -630,46 +622,12 @@ bool StarPilotModelPanel::isModelInstalled(const QString &key) const {
     const QString ext = fi.suffix();
 
     if (!(base.startsWith(key) || base.startsWith(key + "_"))) continue;
-
-    foundAny = true;
-
-    if (ext == "thneed") {
-      has_thneed = true;
-    } else if (ext == "pkl") {
-      if (base.contains("_driving_tinygrad")) {
-        has_combined_tg = true;
-      } else if (base.contains("_driving_policy_metadata")) {
-        has_policy_meta = true;
-      } else if (base.contains("_driving_policy_tinygrad")) {
-        has_policy_tg = true;
-      } else if (base.contains("_driving_off_policy_metadata")) {
-        has_off_policy_meta = true;
-      } else if (base.contains("_driving_off_policy_tinygrad")) {
-        has_off_policy_tg = true;
-      } else if (base.contains("_driving_vision_metadata")) {
-        has_vision_meta = true;
-      } else if (base.contains("_driving_vision_tinygrad")) {
-        has_vision_tg = true;
-      }
+    if (ext == "pkl" && base == key + "_driving_tinygrad") {
+      has_combined_tg = true;
     }
   }
 
-  if (has_thneed) {
-    return true;
-  }
-
-  if (has_combined_tg) {
-    return true;
-  }
-
-  if (has_policy_meta && has_policy_tg && has_vision_meta && has_vision_tg) {
-    if (has_off_policy_meta || has_off_policy_tg) {
-      return has_off_policy_meta && has_off_policy_tg;
-    }
-    return true;
-  }
-
-  return foundAny;
+  return has_combined_tg;
 }
 
 QMap<QString, QString> StarPilotModelPanel::getDeletableModelDisplayNames() {

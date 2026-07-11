@@ -13,6 +13,7 @@ const FAVORITE_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, s
 let syncScheduled = false
 let lastParams = null
 const DYNAMIC_DEFAULT_DEP_KEYS = new Set(["AccelerationProfile", "EVTuning", "TruckTuning"])
+const PANDA_FIRMWARE_TOGGLE_KEYS = new Set(["IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma"])
 
 // Module-level state (persists across route changes)
 const state = reactive({
@@ -574,7 +575,13 @@ function updateFavoriteFilter(index, event) {
   scheduleSyncInputs()
 }
 
-async function updateFavoriteValue(key, checked) {
+async function updateFavoriteValue(key, checked, sourceEl = null) {
+  if (!confirmPandaFirmwareToggle(key, checked)) {
+    if (sourceEl) sourceEl.checked = !!state.values[key]
+    scheduleSyncInputs()
+    return
+  }
+
   const current = state.values[key]
   state.values = { ...state.values, [key]: checked }
   state.favoriteValues = { ...state.favoriteValues, [key]: checked }
@@ -583,7 +590,7 @@ async function updateFavoriteValue(key, checked) {
     const res = await fetch("/api/params", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value: checked }),
+      body: JSON.stringify({ key, value: checked, ...pandaFirmwareConfirmationPayload(key) }),
     })
     const data = await res.json()
 
@@ -671,6 +678,25 @@ function showParamSnackbar(message, level, timeout = 2200) {
     key: "device-settings-param-update",
     replace: true,
   })
+}
+
+function getParamDisplayLabel(key) {
+  return state.paramMetaByKey[key]?.label || key
+}
+
+function confirmPandaFirmwareToggle(key, enabled) {
+  if (!PANDA_FIRMWARE_TOGGLE_KEYS.has(key)) return true
+
+  const label = getParamDisplayLabel(key)
+  const action = enabled ? "Enable" : "Disable"
+  return window.confirm(
+    `${label} requires a Panda firmware update.\n\n` +
+    `${action} ${label} and flash the Panda now?`
+  )
+}
+
+function pandaFirmwareConfirmationPayload(key) {
+  return PANDA_FIRMWARE_TOGGLE_KEYS.has(key) ? { confirmedPandaFirmwareFlash: true } : {}
 }
 
 function syncNumericDisplay(param, rawValue) {
@@ -831,11 +857,16 @@ async function updateParam(key, elType) {
     formattedVal = coerceValueByType(el.value, param.data_type)
   }
 
+  if (elType === "checkbox" && !confirmPandaFirmwareToggle(key, formattedVal)) {
+    revertInput(key, current, elType)
+    return
+  }
+
   try {
     const res = await fetch("/api/params", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value: formattedVal, label: selectedLabel }),
+      body: JSON.stringify({ key, value: formattedVal, label: selectedLabel, ...pandaFirmwareConfirmationPayload(key) }),
     })
     const data = await res.json()
 
@@ -1025,7 +1056,7 @@ function renderFavoriteSlotsPanel() {
                   class="ds-toggle ds-favorite-quick-toggle"
                   data-favorite-value-key="${selectedKey}"
                   checked="${() => selectedValue}"
-                  @change="${(e) => updateFavoriteValue(selectedKey, !!e.currentTarget.checked)}" />
+                  @change="${(e) => updateFavoriteValue(selectedKey, !!e.currentTarget.checked, e.currentTarget)}" />
               </label>
             `
           })}

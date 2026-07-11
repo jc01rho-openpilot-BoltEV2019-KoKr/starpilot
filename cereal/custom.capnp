@@ -91,6 +91,13 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   cancelPressed @20 :Bool;
   cancelLongPressed @21 :Bool;
   cancelVeryLongPressed @22 :Bool;
+  pedalMaxRegen @23 :Bool;  # pedal at max regen, driver should use brake for more decel
+  pedalLongActive @24 :Bool;  # Pre-AP pedal longitudinal mode is active (enableLongControl)
+  teslaCCEngaged @25 :Bool;  # rising edge of stock Tesla CC engaging (no-pedal mode)
+  teslaCCDisengaged @26 :Bool;  # falling edge of stock Tesla CC
+  teslaCCNotArmed @27 :Bool;  # lateral engaged but DI_cruiseState != STANDBY/ENABLED
+  accelHardCruise @28 :Bool;  # current/releasing accel cruise button came from GM hard-press signal
+  decelHardCruise @29 :Bool;  # current/releasing decel cruise button came from GM hard-press signal
 }
 
 struct StarPilotDeviceState @0xda96579883444c35 {
@@ -108,7 +115,11 @@ struct StarPilotModelDataV2 @0x80ae746ee2596b11 {
   }
 }
 
-struct StarPilotOnroadEvent @0xa5cd762cd951a455 {
+struct StarPilotOnroadEvents @0xa5cd762cd951a455 {
+  events @0 :List(StarPilotOnroadEvent);
+}
+
+struct StarPilotOnroadEvent @0xe344718567f9ce71 {
   name @0 :EventName;
 
   enable @1 :Bool;
@@ -158,6 +169,14 @@ struct StarPilotOnroadEvent @0xa5cd762cd951a455 {
     switchbackModeInactive @30;
     lkasEnable @31;
     lkasDisable @32;
+    lateralManeuver @33;
+    pedalCruiseEnabled @34;
+    pedalCruiseDisabled @35;
+    pedalMaxRegen @36;
+    teslaCCEngaged @37;
+    teslaCCDisengaged @38;
+    teslaCCNotArmed @39;
+    pedalNotCalibrated @40;
   }
 }
 
@@ -259,7 +278,8 @@ struct CustomReserved9 @0xa1680744031fdb2d {
   wallTimeNanos @5 :UInt64;
 }
 
-struct CustomReserved10 @0xcb9fd56c7057593a {
+struct StarPilotLateralManeuverPlanDEPRECATED @0xcb9fd56c7057593a {
+  desiredCurvature @0 :Float32;  # 1/m
 }
 
 struct CustomReserved11 @0xc2243c65e0340384 {

@@ -148,6 +148,22 @@ class Parser:
     return outs
 
   def parse_outputs(self, outs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    outs = self.parse_vision_outputs(outs)
-    outs = self.parse_policy_outputs(outs)
+    # Combined supercombo outputs contain both vision and policy slices in the
+    # same dictionary. Parse shared MDN outputs once; the split runtime keeps
+    # using parse_vision_outputs/parse_policy_outputs independently.
+    self.parse_mdn('pose', outs, in_N=0, out_N=0, out_shape=(ModelConstants.POSE_WIDTH,))
+    self.parse_mdn('wide_from_device_euler', outs, in_N=0, out_N=0, out_shape=(ModelConstants.WIDE_FROM_DEVICE_WIDTH,))
+    self.parse_mdn('road_transform', outs, in_N=0, out_N=0, out_shape=(ModelConstants.POSE_WIDTH,))
+    self.split_outputs(outs)
+    self.parse_categorical_crossentropy('desire_pred', outs, out_shape=(ModelConstants.DESIRE_PRED_LEN, ModelConstants.DESIRE_PRED_WIDTH))
+    self.parse_binary_crossentropy('meta', outs)
+    if 'action' in outs:
+      self.parse_mdn('action', outs, in_N=0, out_N=0, out_shape=(ModelConstants.ACTION_WIDTH,))
+    if 'lat_planner_solution' in outs:
+      self.parse_mdn('lat_planner_solution', outs, in_N=0, out_N=0,
+                     out_shape=(ModelConstants.IDX_N, ModelConstants.LAT_PLANNER_SOLUTION_WIDTH))
+    if 'desired_curvature' in outs:
+      self.parse_mdn('desired_curvature', outs, in_N=0, out_N=0, out_shape=(ModelConstants.DESIRED_CURV_WIDTH,))
+    if 'desire_state' in outs:
+      self.parse_categorical_crossentropy('desire_state', outs, out_shape=(ModelConstants.DESIRE_PRED_WIDTH,))
     return outs

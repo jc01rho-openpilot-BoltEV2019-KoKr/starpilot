@@ -128,6 +128,26 @@ seed_desktop_theme_assets()
 PY
 }
 
+starpilot_theme_runtime_ok() {
+  "${ROOT_DIR}/.venv/bin/python3" - <<'PY'
+import openpilot.selfdrive.controls.lib.lateral_mpc_lib.c_generated_code.acados_ocp_solver_pyx  # noqa: F401
+import openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.c_generated_code.acados_ocp_solver_pyx  # noqa: F401
+PY
+}
+
+ensure_starpilot_theme_runtime() {
+  if starpilot_theme_runtime_ok >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "Preparing C3 StarPilot theme runtime extensions..."
+  remove_if_elf "selfdrive/controls/lib/lateral_mpc_lib/c_generated_code/acados_ocp_solver_pyx.so"
+  remove_if_elf "selfdrive/controls/lib/longitudinal_mpc_lib/c_generated_code/acados_ocp_solver_pyx.so"
+  scons -j"${jobs}" \
+    selfdrive/controls/lib/lateral_mpc_lib/c_generated_code/acados_ocp_solver_pyx.so \
+    selfdrive/controls/lib/longitudinal_mpc_lib/c_generated_code/acados_ocp_solver_pyx.so
+}
+
 stop_fake_wifi() {
   if [[ -n "${FAKE_WIFI_PID}" ]]; then
     kill "${FAKE_WIFI_PID}" >/dev/null 2>&1 || true
@@ -234,6 +254,7 @@ if [[ "${SP_C3_COMPILE_ONLY:-0}" == "1" ]]; then
   exit 0
 fi
 
+ensure_starpilot_theme_runtime
 seed_starpilot_theme
 start_fake_wifi
 trap stop_fake_wifi EXIT

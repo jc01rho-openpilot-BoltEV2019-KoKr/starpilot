@@ -33,7 +33,7 @@ AUTO_HOLD_REGEN_RELEASE_COOLDOWN_S = 1.0
 
 BUTTONS_DICT = {CruiseButtons.RES_ACCEL: ButtonType.accelCruise, CruiseButtons.DECEL_SET: ButtonType.decelCruise,
                 CruiseButtons.MAIN: ButtonType.mainCruise, CruiseButtons.CANCEL: ButtonType.cancel}
-HARD_BUTTONS_DICT = {CruiseButtons.RES_ACCEL: ButtonType.accelHardCruise, CruiseButtons.DECEL_SET: ButtonType.decelHardCruise}
+HARD_BUTTONS_DICT = {CruiseButtons.RES_ACCEL: ButtonType.accelCruise, CruiseButtons.DECEL_SET: ButtonType.decelCruise}
 NORMAL_CRUISE_BUTTONS = (CruiseButtons.RES_ACCEL, CruiseButtons.DECEL_SET)
 
 
@@ -50,6 +50,19 @@ BOLT_CANCEL_BUTTON_CARS = BOLT_GEN1_CANCEL_PERSONALITY_CARS | {
   CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
   CAR.CHEVROLET_BOLT_CC_2022_2023,
 }
+
+
+def update_auto_hold_drive_timers(in_drive_for_hold: bool, moving_for_hold: bool,
+                                  auto_hold_drive_time: float, one_pedal_drive_time: float) -> tuple[float, float]:
+  if in_drive_for_hold:
+    if moving_for_hold:
+      auto_hold_drive_time = min(auto_hold_drive_time + DT_CTRL, AUTO_HOLD_MIN_DRIVE_TIME_S)
+      one_pedal_drive_time = min(one_pedal_drive_time + DT_CTRL, AUTO_HOLD_MIN_DRIVE_TIME_S)
+  else:
+    auto_hold_drive_time = 0.0
+    one_pedal_drive_time = 0.0
+
+  return auto_hold_drive_time, one_pedal_drive_time
 
 
 class CarState(CarStateBase):
@@ -96,8 +109,8 @@ class CarState(CarStateBase):
     if not self.CP.pcmCruise:
       for b in buttonEvents:
         # The ECM allows enabling on falling edge of set, but only rising edge of resume
-        if (b.type in (ButtonType.accelCruise, ButtonType.accelHardCruise) and b.pressed) or \
-          (b.type in (ButtonType.decelCruise, ButtonType.decelHardCruise) and not b.pressed):
+        if (b.type == ButtonType.accelCruise and b.pressed) or \
+          (b.type == ButtonType.decelCruise and not b.pressed):
           return True
     return False
 
@@ -211,15 +224,10 @@ class CarState(CarStateBase):
       ret.brakePressed = ret.brake >= analog_thresh
 
     in_drive_for_hold = ret.gearShifter in (GearShifter.drive, GearShifter.low, GearShifter.manumatic)
-    if in_drive_for_hold:
-      if ret.brakePressed:
-        self.auto_hold_drive_time = AUTO_HOLD_MIN_DRIVE_TIME_S
-      else:
-        self.auto_hold_drive_time = min(self.auto_hold_drive_time + DT_CTRL, AUTO_HOLD_MIN_DRIVE_TIME_S)
-      self.one_pedal_drive_time = min(self.one_pedal_drive_time + DT_CTRL, AUTO_HOLD_MIN_DRIVE_TIME_S)
-    else:
-      self.auto_hold_drive_time = 0.0
-      self.one_pedal_drive_time = 0.0
+    self.auto_hold_drive_time, self.one_pedal_drive_time = update_auto_hold_drive_timers(
+      in_drive_for_hold, ret.vEgo > 0.1, self.auto_hold_drive_time, self.one_pedal_drive_time
+    )
+    if not in_drive_for_hold:
       self.auto_hold_armed = False
       self.auto_hold_engaged = False
 
@@ -410,6 +418,8 @@ class CarState(CarStateBase):
       ret.lowSpeedAlert = True
 
     fp_ret = custom.StarPilotCarState.new_message()
+    fp_ret.accelHardCruise = self.hard_cruise_buttons == CruiseButtons.RES_ACCEL or prev_hard_cruise_buttons == CruiseButtons.RES_ACCEL
+    fp_ret.decelHardCruise = self.hard_cruise_buttons == CruiseButtons.DECEL_SET or prev_hard_cruise_buttons == CruiseButtons.DECEL_SET
     if bolt_cancel_button and self.cruise_buttons == CruiseButtons.CANCEL:
       fp_ret.cancelPressed = True
     fp_ret.sportGear = pt_cp.vl["SportMode"]["SportMode"] == 1

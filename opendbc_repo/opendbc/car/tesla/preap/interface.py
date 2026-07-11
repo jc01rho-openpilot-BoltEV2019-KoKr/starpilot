@@ -7,6 +7,7 @@ from opendbc.car.tesla.preap.nap_conf import nap_conf
 PREAP_FLAG_ENABLE_PEDAL = 1
 PREAP_FLAG_RADAR_EMULATION = 2
 PREAP_FLAG_RADAR_BEHIND_NOSECONE = 4
+SAFETY_TESLA_PREAP = 35
 
 
 def get_preap_accel_limits(current_speed: float) -> tuple[float, float]:
@@ -29,7 +30,7 @@ def get_preap_params(ret: structs.CarParams) -> structs.CarParams:
     safety_flags |= PREAP_FLAG_RADAR_BEHIND_NOSECONE
 
   use_pedal = nap_conf.use_pedal and nap_conf.pedal_calibrated
-  ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.teslaPreap, safety_flags)]
+  ret.safetyConfigs = [get_safety_config(SAFETY_TESLA_PREAP, safety_flags)]
   ret.radarUnavailable = not nap_conf.radar_enabled
   ret.steerControlType = structs.CarParams.SteerControlType.angle
   ret.openpilotLongitudinalControl = use_pedal

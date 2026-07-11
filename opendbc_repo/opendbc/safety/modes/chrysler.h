@@ -23,6 +23,7 @@ typedef enum {
 } ChryslerPlatform;
 static ChryslerPlatform chrysler_platform;
 static const ChryslerAddrs *chrysler_addrs;
+static bool chrysler_jeep_brake_hold;
 
 static uint32_t chrysler_get_checksum(const CANPacket_t *msg) {
   int checksum_byte = GET_LEN(msg) - 1U;
@@ -153,8 +154,16 @@ static bool chrysler_tx_hook(const CANPacket_t *msg) {
   if (msg->addr == chrysler_addrs->CRUISE_BUTTONS || msg->addr == chrysler_addrs->CRUISE_BUTTONS_ALT) {
     const bool is_cancel = msg->data[0] == 1U;
     const bool is_resume = msg->data[0] == 0x10U;
-    const bool allowed = is_cancel || (is_resume && controls_allowed);
+    const bool allow_resume_standstill = chrysler_jeep_brake_hold && is_resume && acc_main_on &&
+                                         !vehicle_moving && !gas_pressed && !brake_pressed;
+    const bool allowed = is_cancel || (is_resume && (controls_allowed || allow_resume_standstill));
     if (!allowed) {
+      tx = false;
+    }
+  }
+
+  if (msg->addr == chrysler_addrs->DAS_3) {
+    if (!chrysler_jeep_brake_hold || !acc_main_on || vehicle_moving || gas_pressed || brake_pressed) {
       tx = false;
     }
   }
@@ -165,6 +174,7 @@ static bool chrysler_tx_hook(const CANPacket_t *msg) {
 static safety_config chrysler_init(uint16_t param) {
 
   const uint32_t CHRYSLER_PARAM_RAM_DT = 1U;  // set for Ram DT platform
+  const uint32_t CHRYSLER_PARAM_JEEP_BRAKE_HOLD = 4U;
 
   // CAN messages for Chrysler/Jeep platforms
   static const ChryslerAddrs CHRYSLER_ADDRS = {
@@ -217,6 +227,7 @@ static safety_config chrysler_init(uint16_t param) {
     {CHRYSLER_ADDRS.CRUISE_BUTTONS, 0, 3, .check_relay = false},
     {CHRYSLER_ADDRS.LKAS_COMMAND, 0, 6, .check_relay = true},
     {CHRYSLER_ADDRS.DAS_6, 0, 8, .check_relay = true},
+    {CHRYSLER_ADDRS.DAS_3, 0, 8, .check_relay = false},
 
     // RealFast variables
     {CHRYSLER_ADDRS.CRUISE_BUTTONS_ALT, 2, 3, .check_relay = false},
@@ -287,6 +298,7 @@ static safety_config chrysler_init(uint16_t param) {
     chrysler_addrs = &CHRYSLER_ADDRS;
     ret = BUILD_SAFETY_CFG(chrysler_rx_checks, CHRYSLER_TX_MSGS);
   }
+  chrysler_jeep_brake_hold = GET_FLAG(param, CHRYSLER_PARAM_JEEP_BRAKE_HOLD) && (chrysler_platform == CHRYSLER_PACIFICA);
   return ret;
 }
 

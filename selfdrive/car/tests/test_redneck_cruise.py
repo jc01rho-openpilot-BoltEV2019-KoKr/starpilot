@@ -13,6 +13,8 @@ from openpilot.selfdrive.car.redneck_cruise import (
   SEND_BUTTON_DECREASE,
   SEND_BUTTON_INCREASE,
   SEND_BUTTON_NONE,
+  get_lead_coast_buffer_ms,
+  get_lead_departure_boost_ms,
   select_redneck_target_speed,
 )
 
@@ -191,6 +193,41 @@ class TestRedneckCruise(unittest.TestCase):
     )
     self.assertLess(target_speed, 71.4 * CV.MPH_TO_MS)
 
+  def test_lead_coast_buffer_grows_with_closing_speed_and_tighter_headway(self):
+    base_buffer = get_lead_coast_buffer_ms(
+      75.0 * CV.MPH_TO_MS,
+      0.0,
+      0.0,
+    )
+    fast_closing_far_buffer = get_lead_coast_buffer_ms(
+      75.0 * CV.MPH_TO_MS,
+      70.0,
+      -5.0 * CV.MPH_TO_MS,
+    )
+    fast_closing_near_buffer = get_lead_coast_buffer_ms(
+      75.0 * CV.MPH_TO_MS,
+      35.0,
+      -5.0 * CV.MPH_TO_MS,
+    )
+
+    self.assertGreater(fast_closing_far_buffer, base_buffer)
+    self.assertGreater(fast_closing_near_buffer, fast_closing_far_buffer)
+
+  def test_target_speed_uses_extra_lead_buffer_when_closing_on_slower_car(self):
+    target_speed = select_redneck_target_speed(
+      120.0,
+      56.0 * CV.MPH_TO_MS,
+      0.0,
+      [55.9 * CV.MPH_TO_MS, 55.7 * CV.MPH_TO_MS, 55.3 * CV.MPH_TO_MS, 55.0 * CV.MPH_TO_MS,
+       54.8 * CV.MPH_TO_MS],
+      5,
+      allow_plan_decrease=True,
+      lead_present=True,
+      lead_distance_m=60.0,
+      lead_rel_speed_ms=-4.5 * CV.MPH_TO_MS,
+    )
+    self.assertLess(target_speed, 53.0 * CV.MPH_TO_MS)
+
   def test_target_speed_uses_near_term_recovery_for_lead_speedup(self):
     target_speed = select_redneck_target_speed(
       120.0,
@@ -203,6 +240,44 @@ class TestRedneckCruise(unittest.TestCase):
       lead_present=True,
     )
     self.assertAlmostEqual(55.8 * CV.MPH_TO_MS, target_speed)
+
+  def test_lead_departure_boost_requires_positive_rel_speed_and_stable_plan(self):
+    boost = get_lead_departure_boost_ms(
+      77.0 * CV.MPH_TO_MS,
+      63.0,
+      2.0 * CV.MPH_TO_MS,
+      [77.4 * CV.MPH_TO_MS, 77.5 * CV.MPH_TO_MS, 77.6 * CV.MPH_TO_MS],
+    )
+    blocked_by_plan = get_lead_departure_boost_ms(
+      77.0 * CV.MPH_TO_MS,
+      63.0,
+      2.0 * CV.MPH_TO_MS,
+      [77.4 * CV.MPH_TO_MS, 76.9 * CV.MPH_TO_MS, 77.6 * CV.MPH_TO_MS],
+    )
+    blocked_by_headway = get_lead_departure_boost_ms(
+      77.0 * CV.MPH_TO_MS,
+      35.0,
+      2.0 * CV.MPH_TO_MS,
+      [77.4 * CV.MPH_TO_MS, 77.5 * CV.MPH_TO_MS, 77.6 * CV.MPH_TO_MS],
+    )
+
+    self.assertGreater(boost, 0.0)
+    self.assertEqual(blocked_by_plan, 0.0)
+    self.assertEqual(blocked_by_headway, 0.0)
+
+  def test_target_speed_gets_small_departure_boost_for_opening_lead(self):
+    target_speed = select_redneck_target_speed(
+      128.0,
+      77.0 * CV.MPH_TO_MS,
+      0.0,
+      [77.4 * CV.MPH_TO_MS, 77.5 * CV.MPH_TO_MS, 77.6 * CV.MPH_TO_MS, 77.8 * CV.MPH_TO_MS],
+      10,
+      allow_plan_decrease=True,
+      lead_present=True,
+      lead_distance_m=63.0,
+      lead_rel_speed_ms=2.0 * CV.MPH_TO_MS,
+    )
+    self.assertGreater(target_speed, 77.5 * CV.MPH_TO_MS)
 
   def test_target_speed_holds_current_step_during_lead_recovery(self):
     target_speed = select_redneck_target_speed(

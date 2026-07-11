@@ -20,7 +20,7 @@ from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, EV_CAR as HYUNDAI_EV_
 from opendbc.car.interfaces import TORQUE_SUBSTITUTE_PATH, CarInterfaceBase, GearShifter
 from opendbc.car.mock.values import CAR as MOCK
 from opendbc.car.subaru.values import SubaruFlags
-from opendbc.car.toyota.values import ToyotaStarPilotFlags
+from opendbc.car.toyota.values import CAR as TOYOTA_CAR, ToyotaStarPilotFlags
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
@@ -83,6 +83,14 @@ LEGACY_VOLT_STOCK_ACC_CARS = {
   GM_CAR.CHEVROLET_VOLT_2019,
   GM_CAR.CHEVROLET_VOLT_ASCM,
   GM_CAR.CHEVROLET_VOLT_CAMERA,
+}
+
+PRIUS_CLUSTER_OFFSET_DEFAULT = 1.015
+PRIUS_CLUSTER_OFFSET_MIGRATION_KEY = "PriusClusterOffsetMigrated"
+PRIUS_CLUSTER_OFFSET_CARS = {
+  str(TOYOTA_CAR.TOYOTA_PRIUS),
+  str(TOYOTA_CAR.TOYOTA_PRIUS_V),
+  str(TOYOTA_CAR.TOYOTA_PRIUS_TSS2),
 }
 
 RESOURCES_REPO = os.getenv("STARPILOT_RESOURCES_REPO", "firestar5683/StarPilot-Resources")
@@ -211,6 +219,7 @@ DEVICE_SHUTDOWN_TIMES = {
 
 EXCLUDED_KEYS = {
   "AvailableModelSeries",
+  "AvailableModelArtifactFormats",
   "AvailableModelNames",
   "AvailableModels",
   "CalibratedLateralAcceleration",
@@ -229,6 +238,7 @@ EXCLUDED_KEYS = {
   "ModelReleasedDates",
   "ModelSortMode",
   "ModelVersions",
+  "ModelManifestVersion",
   "openpilotMinutes",
   "OverpassRequests",
   "PandaSignatures",
@@ -485,6 +495,21 @@ class StarPilotVariables:
     # runtime behavior to defaults after the driver has configured them.
     return self.get_value(key, cast=float, condition=condition, respect_tuning_level=False)
 
+  def migrate_prius_cluster_offset(self, car_model):
+    if car_model not in PRIUS_CLUSTER_OFFSET_CARS or self.params_raw.get_bool(PRIUS_CLUSTER_OFFSET_MIGRATION_KEY):
+      return
+
+    cluster_offset_raw = self.params_raw.get("ClusterOffset")
+    try:
+      cluster_offset = float(cluster_offset_raw) if cluster_offset_raw not in (None, b"") else 1.0
+    except (TypeError, ValueError):
+      cluster_offset = 1.0
+
+    if math.isclose(cluster_offset, 1.0, abs_tol=1e-6):
+      self.params.put_float("ClusterOffset", PRIUS_CLUSTER_OFFSET_DEFAULT)
+
+    self.params.put_bool(PRIUS_CLUSTER_OFFSET_MIGRATION_KEY, True)
+
   @staticmethod
   def set_favorite_button_flags(toggle, suffix, button_control):
     for slot_number in range(1, 4):
@@ -661,6 +686,9 @@ class StarPilotVariables:
     toggle.use_custom_latAccelFactor = bool(round(toggle.latAccelFactor, 2) != round(latAccelFactor, 2)) and is_torque_car and not toggle.force_auto_tune or toggle.force_auto_tune_off
     toggle.steerRatio = self.get_value("SteerRatio", cast=float, condition=advanced_lateral_tuning, default=steerRatio, min=steerRatio * 0.5, max=steerRatio * 1.5)
     toggle.use_custom_steerRatio = bool(round(toggle.steerRatio, 2) != round(steerRatio, 2)) and not toggle.force_auto_tune or toggle.force_auto_tune_off
+    honda_pid_lateral = toggle.car_make == "honda" and CP.lateralTuning.which() == "pid" and not is_angle_car
+    toggle.honda_lateral_pid_kp_scale = self.get_value("HondaLateralPidKpScale", cast=float, condition=honda_pid_lateral, default=1.0, min=0.1, max=4.0)
+    toggle.honda_lateral_pid_ki_scale = self.get_value("HondaLateralPidKiScale", cast=float, condition=honda_pid_lateral, default=1.0, min=0.1, max=4.0)
 
     toggle.use_custom_steerRatio = bool(round(toggle.steerRatio, 2) != round(steerRatio, 2)) and not toggle.force_auto_tune or toggle.force_auto_tune_off
 
@@ -727,6 +755,7 @@ class StarPilotVariables:
     if toggle.force_fingerprint:
       toggle.car_model = car_model
 
+    self.migrate_prius_cluster_offset(str(toggle.car_model))
     toggle.cluster_offset = self.get_value("ClusterOffset", cast=float, condition=toggle.car_make == "toyota")
 
     toggle.conditional_experimental_mode = toggle.openpilot_longitudinal and self.get_value("ConditionalExperimental")
@@ -1199,6 +1228,7 @@ class StarPilotVariables:
     toggle.driver_camera_in_reverse = self.get_value("DriverCamera", condition=quality_of_life_visuals)
     toggle.onroad_distance_button = toggle.openpilot_longitudinal and (self.get_value("OnroadDistanceButton", condition=quality_of_life_visuals) or toggle.debug_mode)
     toggle.stopped_timer = self.get_value("StoppedTimer", condition=quality_of_life_visuals)
+    toggle.stock_confidence_ball_widget = self.get_value("StockConfidenceBallWidget", condition=quality_of_life_visuals)
 
     toggle.rainbow_path = self.get_value("RainbowPath", condition=not toggle.debug_mode)
 
@@ -1332,6 +1362,8 @@ class StarPilotVariables:
       toggle.radar_tracks = False
       toggle.show_stopping_point = False
       toggle.show_stopping_point_metrics = False
+      toggle.honda_lateral_pid_kp_scale = 1.0
+      toggle.honda_lateral_pid_ki_scale = 1.0
 
       toggle.goat_scream_alert = False
       toggle.goat_scream_critical_alerts = False
@@ -1360,6 +1392,11 @@ class StarPilotVariables:
     toggle.gm_dash_spoof_offsets = self.get_value(
       "GMDashSpoofOffsets",
       condition=toggle.car_make == "gm" and toggle.has_pedal,
+    )
+    toggle.ignore_ignition_line = self.get_value("IgnoreIgnitionLine", condition=toggle.car_make == "gm")
+    toggle.hkg_remote_start_boots_comma = self.get_value(
+      "HKGRemoteStartBootsComma",
+      condition=toggle.car_make == "hyundai" and toggle.openpilot_longitudinal and bool(CP.flags & HyundaiFlags.CANFD),
     )
     toggle.long_pitch = self.get_value(
       "LongPitch",

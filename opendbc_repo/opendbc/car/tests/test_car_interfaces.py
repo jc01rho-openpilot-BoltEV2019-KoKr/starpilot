@@ -8,9 +8,13 @@ from collections.abc import Callable
 from typing import Any
 
 from cereal import custom
-from opendbc.car import DT_CTRL, CanData, structs
+from opendbc.can import CANParser
+from opendbc.car import Bus, DT_CTRL, CanData, structs
 from opendbc.car.car_helpers import _apply_disable_openpilot_long, interfaces
+from opendbc.car.chrysler.carcontroller import CarController as ChryslerCarController
 from opendbc.car.chrysler.carstate import CarState as ChryslerCarState
+from opendbc.car.chrysler.interface import CarInterface as ChryslerCarInterface
+from opendbc.car.chrysler.values import CAR as CHRYSLER_CAR, DBC as CHRYSLER_DBC, ChryslerStarPilotFlags
 from opendbc.car.fingerprints import FW_VERSIONS
 from opendbc.car.fw_versions import FW_QUERY_CONFIGS
 from opendbc.car.hyundai.interface import CarInterface as HyundaiCarInterface
@@ -160,6 +164,53 @@ class TestCarInterfaces:
       "Center_Stack_1": {"LKAS_Button": 0},
       "Center_Stack_2": {"LKAS_Button": 1},
     }, is_ram=True)
+
+  def test_chrysler_wd_mod_enables_steer_to_zero(self):
+    fingerprint = {bus: {} for bus in range(8)}
+    fingerprint[0][0x4FF] = 8
+    toggles = get_test_starpilot_toggles()
+
+    car_params = ChryslerCarInterface.get_params(
+      CHRYSLER_CAR.CHRYSLER_PACIFICA_2020,
+      fingerprint,
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=toggles,
+    )
+    assert car_params.minSteerSpeed > 0.
+
+    fp_car_params = ChryslerCarInterface.get_starpilot_params(
+      CHRYSLER_CAR.CHRYSLER_PACIFICA_2020,
+      fingerprint,
+      [],
+      car_params,
+      toggles,
+    )
+    assert fp_car_params.flags & ChryslerStarPilotFlags.NO_MIN_STEERING_SPEED
+    assert car_params.minSteerSpeed == 0.
+
+    controller = ChryslerCarController({Bus.pt: CHRYSLER_DBC[car_params.carFingerprint][Bus.pt]}, car_params)
+    controller.FPCP = fp_car_params
+    controller.frame = 202
+
+    CC = structs.CarControl()
+    CC.latActive = True
+    CC.actuators.torque = 0.1
+    CC = CC.as_reader()
+    CS = SimpleNamespace(
+      out=SimpleNamespace(vEgo=0.0, steeringTorqueEps=0.0, gearShifter=structs.CarState.GearShifter.drive),
+      lkas_car_model=-1,
+      button_counter=0,
+      button_message="CRUISE_BUTTONS",
+      auto_high_beam=0,
+    )
+    _, can_sends = controller.update(CC, CS, 0, toggles)
+
+    lkas_parser = CANParser(CHRYSLER_DBC[car_params.carFingerprint][Bus.pt], [("LKAS_COMMAND", 50)], 0)
+    lkas_parser.update([0, can_sends])
+    assert lkas_parser.vl["LKAS_COMMAND"]["LKAS_CONTROL_BIT"] == 1
 
   def test_gm_bolt_gen2_pedal_safety_flags(self):
     CarInterface = interfaces[GM_CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL]

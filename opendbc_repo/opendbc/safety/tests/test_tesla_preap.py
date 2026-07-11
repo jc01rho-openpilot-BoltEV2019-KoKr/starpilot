@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import unittest
 
-from opendbc.car.structs import CarParams
+from opendbc.car.tesla.preap.interface import SAFETY_TESLA_PREAP
 from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
 
@@ -14,7 +14,7 @@ class TestTeslaPreAPSafety(common.SafetyTestBase):
     self._set_mode(0)
 
   def _set_mode(self, param: int) -> None:
-    self.safety.set_safety_hooks(CarParams.SafetyModel.teslaPreap, param)
+    self.safety.set_safety_hooks(SAFETY_TESLA_PREAP, param)
     self.safety.init_tests()
 
   @staticmethod

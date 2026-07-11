@@ -87,7 +87,13 @@ class HudRenderer(Widget):
     car_state = sm['carState']
 
     v_cruise_cluster = car_state.vCruiseCluster
-    v_cruise = controls_state.deprecated.vCruise if v_cruise_cluster == 0.0 else v_cruise_cluster
+    if v_cruise_cluster == 0.0:
+      try:
+        v_cruise = controls_state.vCruiseDEPRECATED
+      except AttributeError:
+        v_cruise = controls_state.deprecated.vCruise
+    else:
+      v_cruise = v_cruise_cluster
     offset = ui_state.starpilot_toggles.get("set_speed_offset", 0.0)
     self.set_speed = v_cruise + offset if (0 < v_cruise < SET_SPEED_NA) else v_cruise
     self.is_cruise_set = 0 < v_cruise < SET_SPEED_NA

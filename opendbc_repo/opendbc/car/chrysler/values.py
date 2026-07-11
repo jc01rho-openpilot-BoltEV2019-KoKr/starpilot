@@ -12,6 +12,7 @@ Ecu = CarParams.Ecu
 class ChryslerSafetyFlags(IntFlag):
   RAM_DT = 1
   RAM_HD = 2
+  JEEP_BRAKE_HOLD = 4
 
 
 class ChryslerFlags(IntFlag):
@@ -21,6 +22,7 @@ class ChryslerFlags(IntFlag):
 
 class ChryslerStarPilotFlags(IntFlag):
   RAM_HD_ALT_BUTTONS = 1
+  NO_MIN_STEERING_SPEED = 2
 
 
 @dataclass
@@ -139,6 +141,7 @@ STEER_THRESHOLD = 120
 RAM_DT = {CAR.RAM_1500_5TH_GEN, }
 RAM_HD = {CAR.RAM_HD_5TH_GEN, }
 RAM_CARS = RAM_DT | RAM_HD
+JEEPS = {CAR.JEEP_GRAND_CHEROKEE, CAR.JEEP_GRAND_CHEROKEE_2019}
 
 
 CHRYSLER_VERSION_REQUEST = bytes([uds.SERVICE_TYPE.READ_DATA_BY_IDENTIFIER]) + \

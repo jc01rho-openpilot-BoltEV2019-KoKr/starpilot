@@ -521,7 +521,7 @@ class GuiApplication:
       self._render_texture_width = max(1, int(round(self._scaled_width * self._pixel_scale_x)))
       self._render_texture_height = max(1, int(round(self._scaled_height * self._pixel_scale_y)))
 
-      needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD or MICI_FORCE_RENDER_TEXTURE
+      needs_render_texture = (self._scale != 1.0 and not PC) or BURN_IN_MODE or RECORD or MICI_FORCE_RENDER_TEXTURE
       if PC and self._scale != 1.0:
         rl.set_mouse_scale(1 / self._scale, 1 / self._scale)
       if PC:
@@ -720,7 +720,7 @@ class GuiApplication:
       texture_obj = self._load_texture_from_image(image_obj)
 
     # Set logical size so widget layout math stays at 1x coordinates.
-    if self._render_texture is not None and width is not None and height is not None:
+    if width is not None and height is not None:
       texture_obj.width = width
       texture_obj.height = height
 
@@ -736,7 +736,7 @@ class GuiApplication:
       rl.image_alpha_premultiply(image)
 
     # Scale up load size for sharper rendering, capped at source resolution.
-    if self._render_texture is not None and width is not None and height is not None:
+    if width is not None and height is not None:
       width = min(int(width * self._scale * self._pixel_scale_x), image.width)
       height = min(int(height * self._scale * self._pixel_scale_y), image.height)
 

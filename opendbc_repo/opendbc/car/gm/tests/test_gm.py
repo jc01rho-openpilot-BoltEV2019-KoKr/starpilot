@@ -1,4 +1,5 @@
 import pytest
+import numpy as np
 from types import SimpleNamespace
 from parameterized import parameterized
 
@@ -7,10 +8,12 @@ from opendbc.can import CANPacker, CANParser
 from opendbc.car import Bus, DT_CTRL, structs
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.gm import gmcan
-from opendbc.car.gm.carstate import CarState as GMCarState, get_hard_cruise_buttons
+from opendbc.car.gm.carstate import CarState as GMCarState, get_hard_cruise_buttons, update_auto_hold_drive_timers
 from opendbc.car.gm.carcontroller import (
   VisualAlert,
+  get_acc_dashboard_always_one,
   get_acc_dashboard_fcw_alert,
+  get_volt_one_pedal_lift_brake,
   should_send_acc_dashboard_status,
   should_send_cc_button_spam,
   should_spoof_dash_speed,
@@ -18,7 +21,7 @@ from opendbc.car.gm.carcontroller import (
 import opendbc.car.gm.interface as gm_interface
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.fingerprints import FINGERPRINTS
-from opendbc.car.gm.values import CAMERA_ACC_CAR, CAR, CC_ONLY_CAR, DBC, GM_RX_OFFSET, CruiseButtons, GMFlags, GMSafetyFlags
+from opendbc.car.gm.values import ASCM_INT, CAMERA_ACC_CAR, CAR, CC_ONLY_CAR, DBC, GM_RX_OFFSET, CarControllerParams, CruiseButtons, GMFlags, GMSafetyFlags
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.common.params import Params
 
@@ -63,9 +66,51 @@ class TestGMFingerprint:
 
 
 class TestGMInterface:
+  def test_bolt_acc_pedal_pid_accel_limits_keep_full_negative_authority(self):
+    cp = SimpleNamespace(
+      enableGasInterceptorDEPRECATED=True,
+      flags=GMFlags.PEDAL_LONG.value,
+      carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+    )
+
+    accel_min, accel_max = gm_interface.CarInterface.get_pid_accel_limits(cp, 4.73, 0.0)
+
+    assert accel_min == pytest.approx(CarControllerParams.ACCEL_MIN)
+    assert accel_max == pytest.approx(np.interp(4.73, [0.0, 1.5, 4.0, 8.0, 15.0],
+                                                [0.54, 0.74, 1.03, 1.46, CarControllerParams.ACCEL_MAX]))
+
+  def test_bolt_cc_pedal_pid_accel_limits_remain_regen_limited(self):
+    cp = SimpleNamespace(
+      enableGasInterceptorDEPRECATED=True,
+      flags=GMFlags.PEDAL_LONG.value,
+      carFingerprint=CAR.CHEVROLET_BOLT_CC_2022_2023,
+    )
+
+    accel_min, _ = gm_interface.CarInterface.get_pid_accel_limits(cp, 4.73, 0.0)
+
+    assert accel_min == pytest.approx(np.interp(4.73, [0.0, 1.5, 4.0, 8.0, 15.0, 30.0],
+                                                [-0.93, -1.28, -1.98, -2.58, -2.86, -2.95]))
+
   def test_missing_hard_cruise_signal_defaults_to_init(self):
     assert get_hard_cruise_buttons({"ACCButtons": CruiseButtons.RES_ACCEL}) == CruiseButtons.INIT
     assert get_hard_cruise_buttons({"ACCButtonsHard": CruiseButtons.DECEL_SET}) == CruiseButtons.DECEL_SET
+
+  def test_volt_auto_hold_drive_timer_requires_motion_before_startup_arming(self):
+    auto_hold_time, one_pedal_time = update_auto_hold_drive_timers(True, False, 0.0, 0.0)
+
+    assert auto_hold_time == 0.0
+    assert one_pedal_time == 0.0
+
+  def test_volt_auto_hold_drive_timer_accumulates_only_while_moving(self):
+    auto_hold_time, one_pedal_time = update_auto_hold_drive_timers(True, True, 0.0, 0.0)
+
+    assert auto_hold_time == pytest.approx(DT_CTRL)
+    assert one_pedal_time == pytest.approx(DT_CTRL)
+
+    auto_hold_time, one_pedal_time = update_auto_hold_drive_timers(True, False, auto_hold_time, one_pedal_time)
+
+    assert auto_hold_time == pytest.approx(DT_CTRL)
+    assert one_pedal_time == pytest.approx(DT_CTRL)
 
   @parameterized.expand(VOLT_CARS)
   def test_volt_min_steer_speed_is_7_mph(self, car_model):
@@ -124,6 +169,21 @@ class TestGMInterface:
     assert car_params.flags & GMFlags.NO_CAMERA.value
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_CAMERA.value
 
+  def test_volt_ascm_sparse_fingerprint_without_camera_does_not_set_no_camera(self):
+    CarInterface = interfaces[CAR.CHEVROLET_VOLT_ASCM]
+    fingerprint = {
+      0: FINGERPRINTS[CAR.CHEVROLET_VOLT][0].copy(),
+      1: {},
+    }
+    fingerprint[0][0x2FF] = 8  # SASCM detected
+
+    car_params = CarInterface.get_params(CAR.CHEVROLET_VOLT_ASCM, fingerprint, [], alpha_long=False, is_release=False,
+                                         docs=False, starpilot_toggles=_test_starpilot_toggles())
+
+    assert not (car_params.flags & GMFlags.NO_CAMERA.value)
+    assert not (car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_CAMERA.value)
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.HW_ASCM_INT.value
+
   def test_silverado_alpha_long_uses_trimmed_longitudinal_tune(self):
     CarInterface = interfaces[CAR.CHEVROLET_SILVERADO]
     fingerprint = _empty_fingerprint()
@@ -139,7 +199,7 @@ class TestGMInterface:
     assert list(car_params.longitudinalTuning.kiBP) == pytest.approx([0.0, 5.0, 15.0, 35.0])
     assert list(car_params.longitudinalTuning.kiV) == pytest.approx([0.28, 0.26, 0.20, 0.16])
 
-  def test_blazer_uses_earlier_stronger_low_speed_stop_tune(self):
+  def test_blazer_uses_softer_low_speed_stop_hold_tune(self):
     CarInterface = interfaces[CAR.CHEVROLET_BLAZER]
     fingerprint = _empty_fingerprint()
     fingerprint[0] = FINGERPRINTS[CAR.CHEVROLET_BLAZER][0].copy()
@@ -149,11 +209,16 @@ class TestGMInterface:
                                          docs=False, starpilot_toggles=_test_starpilot_toggles())
 
     assert car_params.openpilotLongitudinalControl
+    assert list(car_params.longitudinalTuning.kpBP) == pytest.approx([0.0, 4.0, 12.0, 35.0])
+    assert list(car_params.longitudinalTuning.kpV) == pytest.approx([0.09, 0.075, 0.055, 0.04])
+    assert list(car_params.longitudinalTuning.kiBP) == pytest.approx([0.0, 4.0, 12.0, 35.0])
+    assert list(car_params.longitudinalTuning.kiV) == pytest.approx([0.03, 0.04, 0.055, 0.07])
+    assert car_params.longitudinalActuatorDelay == pytest.approx(0.7)
     assert car_params.minEnableSpeed == pytest.approx(5 * CV.KPH_TO_MS)
-    assert car_params.stoppingDecelRate == pytest.approx(1.2)
+    assert car_params.stoppingDecelRate == pytest.approx(1.0)
     assert car_params.vEgoStopping == pytest.approx(0.35)
     assert car_params.vEgoStarting == pytest.approx(0.35)
-    assert car_params.stopAccel == pytest.approx(-0.40)
+    assert car_params.stopAccel == pytest.approx(-0.30)
 
   def test_volt_gateway_without_accel_pos_uses_brake_pedal_message(self):
     CarInterface = interfaces[CAR.CHEVROLET_VOLT]
@@ -186,6 +251,22 @@ class TestGMInterface:
     assert car_params.openpilotLongitudinalControl
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
 
+  def test_volt_auto_hold_does_not_set_stock_hold_safety_bit_with_op_long_disabled(self):
+    CarInterface = interfaces[CAR.CHEVROLET_VOLT_ASCM]
+    fingerprint = _empty_fingerprint()
+    fingerprint[0][0x2FF] = 8
+
+    params = Params()
+    try:
+      params.put_bool("GMAutoHold", True)
+      car_params = CarInterface.get_params(CAR.CHEVROLET_VOLT_ASCM, fingerprint, [], alpha_long=False, is_release=False,
+                                           docs=False, starpilot_toggles=_test_starpilot_toggles())
+    finally:
+      params.remove("GMAutoHold")
+
+    assert not car_params.openpilotLongitudinalControl
+    assert not (car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value)
+
   def test_volt_one_pedal_sets_stock_hold_safety_bit_without_auto_hold(self):
     CarInterface = interfaces[CAR.CHEVROLET_VOLT_ASCM]
     fingerprint = _empty_fingerprint()
@@ -203,6 +284,26 @@ class TestGMInterface:
 
     assert car_params.openpilotLongitudinalControl
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_PANDA_3D1_SCHED.value
+
+  def test_volt_one_pedal_does_not_set_stock_hold_safety_bits_with_op_long_disabled(self):
+    CarInterface = interfaces[CAR.CHEVROLET_VOLT_ASCM]
+    fingerprint = _empty_fingerprint()
+    fingerprint[0][0x2FF] = 8
+
+    params = Params()
+    try:
+      params.put_bool("GMAutoHold", False)
+      params.put_bool("VoltOnePedalMode", True)
+      car_params = CarInterface.get_params(CAR.CHEVROLET_VOLT_ASCM, fingerprint, [], alpha_long=False, is_release=False,
+                                           docs=False, starpilot_toggles=_test_starpilot_toggles())
+    finally:
+      params.remove("GMAutoHold")
+      params.remove("VoltOnePedalMode")
+
+    assert not car_params.openpilotLongitudinalControl
+    assert not (car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value)
+    assert not (car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_PANDA_3D1_SCHED.value)
 
   @parameterized.expand(VOLT_CARS)
   def test_volt_bsm_is_enabled_without_fingerprint_match(self, car_model):
@@ -260,6 +361,7 @@ class TestGMInterface:
 
     assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_BOLT_2022_PEDAL.value
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
 
   def test_cadillac_xt5_sdgm_sascm_gates_alpha_long(self):
     CarInterface = interfaces[CAR.CADILLAC_XT5]
@@ -284,6 +386,30 @@ class TestGMInterface:
     assert sascm_params.openpilotLongitudinalControl
     assert not sascm_params.pcmCruise
     assert sascm_params.safetyConfigs[0].safetyParam & GMSafetyFlags.HW_CAM_LONG.value
+
+  def test_cadillac_escalade_esv_2019_ascm_uses_sascm_and_2019_tune(self):
+    base_fingerprint = FINGERPRINTS[CAR.CADILLAC_ESCALADE_ESV_2019][0]
+    ascm_fingerprint = FINGERPRINTS[CAR.CADILLAC_ESCALADE_ESV_2019_ASCM][0]
+
+    assert CAR.CADILLAC_ESCALADE_ESV_2019_ASCM in ASCM_INT
+    assert ascm_fingerprint[0x2FF] == 8
+    assert {addr: length for addr, length in ascm_fingerprint.items() if addr != 0x2FF} == base_fingerprint
+
+    CarInterface = interfaces[CAR.CADILLAC_ESCALADE_ESV_2019_ASCM]
+    fingerprint = _empty_fingerprint()
+    fingerprint[0] = ascm_fingerprint.copy()
+
+    car_params = CarInterface.get_params(CAR.CADILLAC_ESCALADE_ESV_2019_ASCM, fingerprint, [], alpha_long=True, is_release=False,
+                                         docs=False, starpilot_toggles=_test_starpilot_toggles())
+
+    assert car_params.flags & GMFlags.SASCM.value
+    assert car_params.networkLocation == structs.CarParams.NetworkLocation.fwdCamera
+    assert car_params.openpilotLongitudinalControl
+    assert not car_params.pcmCruise
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.HW_ASCM_INT.value
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.HW_CAM_LONG.value
+    assert car_params.lateralTuning.torque.latAccelFactor == pytest.approx(1.15)
+    assert car_params.lateralTuning.torque.friction == pytest.approx(0.2)
 
   def test_cadillac_xt4_uses_nonlinear_torque_curve_with_center_boost(self):
     CarInterface = interfaces[CAR.CADILLAC_XT4]
@@ -317,6 +443,11 @@ class TestGMCarController:
     cp = SimpleNamespace(openpilotLongitudinalControl=True, enableGasInterceptorDEPRECATED=False)
 
     assert should_spoof_dash_speed(cp, SimpleNamespace(disable_openpilot_long=False))
+
+  def test_volt_one_pedal_lift_brake_seeds_low_speed_braking(self):
+    assert get_volt_one_pedal_lift_brake(2.1 * CV.MPH_TO_MS) == 0
+    assert get_volt_one_pedal_lift_brake(2.0 * CV.MPH_TO_MS) == 20
+    assert get_volt_one_pedal_lift_brake(0.10) == 80
 
   def test_volt_camera_no_camera_sends_acc_dashboard_without_dash_spoof(self):
     cp = SimpleNamespace(carFingerprint=CAR.CHEVROLET_VOLT_CAMERA, flags=GMFlags.NO_CAMERA.value)
@@ -424,7 +555,39 @@ class TestGMCarController:
 
     parser.update([0, [msg]])
 
-    assert parser.vl["ASCMActiveCruiseControlStatus"]["FCWAlert"] == 2
+    values = parser.vl["ASCMActiveCruiseControlStatus"]
+
+    assert values["ACCAlwaysOne"] == 1
+    assert values["ACCAlwaysOne2"] == 1
+    assert values["ACCCruiseState"] == 2
+    assert values["ACCCmdActive"] == 1
+    assert values["FCWAlert"] == 2
+
+  def test_acc_dashboard_command_allows_camera_acc_zero_reserved_bits(self):
+    packer = CANPacker(DBC[CAR.CHEVROLET_TRAILBLAZER][Bus.pt])
+    parser = CANParser(DBC[CAR.CHEVROLET_TRAILBLAZER][Bus.pt], [("ASCMActiveCruiseControlStatus", 0)], 0)
+    msg = gmcan.create_acc_dashboard_command(
+      packer,
+      0,
+      True,
+      67.1875,
+      SimpleNamespace(leadDistanceBars=1, leadVisible=False),
+      0,
+      acc_always_one=0,
+    )
+
+    parser.update([0, [msg]])
+    values = parser.vl["ASCMActiveCruiseControlStatus"]
+
+    assert msg[1] == b"\x00\x02\x94\x33\x00\x00"
+    assert values["ACCAlwaysOne"] == 0
+    assert values["ACCAlwaysOne2"] == 0
+    assert values["ACCCruiseState"] == 2
+    assert values["ACCCmdActive"] == 1
+
+  def test_acc_dashboard_always_one_matches_camera_acc_platforms(self):
+    assert get_acc_dashboard_always_one(SimpleNamespace(carFingerprint=CAR.CHEVROLET_TRAILBLAZER)) == 0
+    assert get_acc_dashboard_always_one(SimpleNamespace(carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023)) == 1
 
   def test_acc_dashboard_command_uses_openpilot_hud_when_disengaged(self):
     packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_ASCM][Bus.pt])
@@ -442,6 +605,7 @@ class TestGMCarController:
     values = parser.vl["ASCMActiveCruiseControlStatus"]
 
     assert values["ACCSpeedSetpoint"] == 50
+    assert values["ACCCruiseState"] == 2
     assert values["ACCGapLevel"] == 0
     assert values["ACCCmdActive"] == 0
     assert values["ACCLeadCar"] == 1

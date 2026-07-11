@@ -15,6 +15,7 @@ from openpilot.system.ui.widgets import Widget
 ASSETS_PATH = Path(__file__).resolve().parents[4] / "starpilot" / "assets" / "navigation"
 FALLBACK_ICON = "direction_turn_straight.png"
 NAV_CANCEL_HOLD_SECONDS = 0.65
+_LEFT_UI_EXTENT = 424  # left UI (DM icon + personality button) extent from content_rect.x: offset(126) + x_shift(202) + radius(96)
 
 
 def _format_distance(distance_m: float, is_metric: bool) -> str:
@@ -278,11 +279,11 @@ class NavigationCardRenderer(Widget):
       rl.draw_text_ex(self._font_bold, line, rl.Vector2(x, line_y), font_size, 0, rl.WHITE)
 
   def _render_default(self, rect: rl.Rectangle) -> None:
-    container_width = min(int(rect.width - 120), 1080)
+    container_width = min(int(rect.width - 2 * _LEFT_UI_EXTENT - 20), 1080)
     container_width = max(container_width, 760)
     container_height = 225 if rect.width >= 1200 else 195
     container_x = int(rect.x + (rect.width - container_width) / 2)
-    container_y = int(rect.y + 62)
+    container_y = int(rect.y + rect.height - container_height - 80)
     border_radius = 42 if container_height == 225 else 34
     icon_size = 150 if container_height == 225 else 122
     icon_padding = 30 if container_height == 225 else 24
@@ -297,14 +298,16 @@ class NavigationCardRenderer(Widget):
     rl.draw_rectangle_rounded(container, border_radius / container_height, 10, rl.Color(0, 0, 0, 192))
 
     icon_x = container_x + icon_padding
-    icon_y = container_y + (container_height - icon_size - 38) // 2
     icon = self._get_icon(self._maneuver_type, self._modifier)
+
+    distance_size = measure_text_cached(self._font_bold, self._distance, distance_font_size)
+    icon_block_height = icon_size + 8 + int(distance_size.y)
+    icon_y = container_y + (container_height - icon_block_height) // 2
     dest_rect = rl.Rectangle(icon_x, icon_y, icon_size, icon_size)
     rl.draw_texture_pro(icon, rl.Rectangle(0, 0, icon.width, icon.height), dest_rect, rl.Vector2(0, 0), 0, rl.WHITE)
 
-    distance_size = measure_text_cached(self._font_bold, self._distance, distance_font_size)
     distance_x = icon_x + (icon_size - distance_size.x) / 2
-    distance_y = icon_y + icon_size + 5
+    distance_y = icon_y + icon_size + 8
     rl.draw_text_ex(self._font_bold, self._distance, rl.Vector2(distance_x, distance_y), distance_font_size, 0, rl.WHITE)
 
     show_next = self._has_next
@@ -312,13 +315,19 @@ class NavigationCardRenderer(Widget):
     right_gutter = icon_padding + (then_section_width if show_next else 0)
     text_area_width = container_width - (text_x - container_x) - right_gutter
     title_lines, title_font_size = self._fit_title(self._primary_text, text_area_width, preferred_font_size, minimum_font_size)
-    title_y = container_y + (container_height - title_font_size) / 2
-    self._draw_wrapped_lines(title_lines, text_x, title_y, title_font_size)
+
+    secondary_font_size = 38 if container_height == 225 else 30
+    text_block_h = len(title_lines) * title_font_size
+    if self._secondary_text:
+      text_block_h += 8 + secondary_font_size
+    text_block_y = container_y + (container_height - text_block_h) // 2
+
+    for index, line in enumerate(title_lines[:2]):
+      rl.draw_text_ex(self._font_bold, line, rl.Vector2(text_x, text_block_y + index * title_font_size), title_font_size, 0, rl.WHITE)
 
     if self._secondary_text:
-      secondary_font_size = 38 if container_height == 225 else 30
       secondary_text = self._truncate_text(self._secondary_text, text_area_width, secondary_font_size)
-      secondary_y = container_y + container_height - (42 if container_height == 225 else 30)
+      secondary_y = text_block_y + len(title_lines) * title_font_size + 8
       rl.draw_text_ex(
         self._font_medium,
         secondary_text,
@@ -360,8 +369,8 @@ class NavigationCardRenderer(Widget):
 
   def _render_collapsed_default(self, rect: rl.Rectangle) -> None:
     chip_size = 94
-    chip_x = int(rect.x + rect.width - chip_size - 32)
-    chip_y = int(rect.y + 82)
+    chip_x = int(rect.x + rect.width - 126 - chip_size / 2)  # center-aligned with steering wheel icon horizontally
+    chip_y = int(rect.y + (rect.height - chip_size) / 2)  # half way down vertically
     chip_rect = rl.Rectangle(chip_x, chip_y, chip_size, chip_size)
     self._interactive_rect = chip_rect
 

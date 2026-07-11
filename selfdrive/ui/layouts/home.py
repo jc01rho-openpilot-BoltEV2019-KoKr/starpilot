@@ -7,6 +7,7 @@ from openpilot.selfdrive.ui.widgets.offroad_alerts import UpdateAlert, OffroadAl
 from openpilot.selfdrive.ui.widgets.exp_mode_button import ExperimentalModeButton
 from openpilot.selfdrive.ui.widgets.prime import PrimeWidget
 from openpilot.selfdrive.ui.widgets.setup import SetupWidget
+from openpilot.selfdrive.ui.lib.starpilot_version import starpilot_display_description
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
 from openpilot.system.ui.lib.multilang import tr, trn
@@ -228,5 +229,5 @@ class HomeLayout(Widget):
 
   def _get_version_text(self) -> str:
     brand = "openpilot"
-    description = self.params.get("UpdaterCurrentDescription")
+    description = starpilot_display_description(self.params.get("UpdaterCurrentDescription"))
     return f"{brand} {description}" if description else brand

@@ -217,7 +217,8 @@ void fill_panda_can_state(cereal::PandaState::PandaCanState::Builder &cs, const 
   cs.setCanCoreResetCnt(can_health.can_core_reset_cnt);
 }
 
-std::optional<bool> send_panda_states(PubMaster *pm, const std::vector<Panda *> &pandas, bool is_onroad, bool spoofing_started) {
+std::optional<bool> send_panda_states(PubMaster *pm, const std::vector<Panda *> &pandas, bool is_onroad,
+                                      bool spoofing_started, bool ignore_ignition_line) {
   bool ignition_local = false;
   const uint32_t pandas_cnt = pandas.size();
 
@@ -262,6 +263,12 @@ std::optional<bool> send_panda_states(PubMaster *pm, const std::vector<Panda *> 
     // get false positive ignitions due to the harness box
     // without a harness connector, so ignore it
     if (red_panda_comma_three && (panda->hw_type == cereal::PandaState::PandaType::DOS)) {
+      health.ignition_line_pkt = 0;
+    }
+
+    // Work around harness-box false ignition by relying only on CAN ignition.
+    // This is only appropriate for vehicles with reliable panda CAN ignition support.
+    if (ignore_ignition_line) {
       health.ignition_line_pkt = 0;
     }
 
@@ -353,14 +360,15 @@ void send_peripheral_state(Panda *panda, PubMaster *pm) {
   pm->send("peripheralState", msg);
 }
 
-void process_panda_state(std::vector<Panda *> &pandas, PubMaster *pm, bool engaged, bool is_onroad, bool spoofing_started) {
+void process_panda_state(std::vector<Panda *> &pandas, PubMaster *pm, bool engaged, bool is_onroad,
+                         bool spoofing_started, bool ignore_ignition_line) {
   std::vector<std::string> connected_serials;
   for (Panda *p : pandas) {
     connected_serials.push_back(p->hw_serial());
   }
 
   {
-    auto ignition_opt = send_panda_states(pm, pandas, is_onroad, spoofing_started);
+    auto ignition_opt = send_panda_states(pm, pandas, is_onroad, spoofing_started, ignore_ignition_line);
     if (!ignition_opt) {
       LOGE("Failed to get ignition_opt");
       return;
@@ -494,7 +502,8 @@ void pandad_run(std::vector<Panda *> &pandas) {
         sm["selfdriveState"].getSelfdriveState().getEnabled() || preap_aol_engaged
       );
       is_onroad = params.getBool("IsOnroad");
-      process_panda_state(pandas, &pm, engaged, is_onroad, spoofing_started);
+      const bool ignore_ignition_line = params.getBool("IgnoreIgnitionLine");
+      process_panda_state(pandas, &pm, engaged, is_onroad, spoofing_started, ignore_ignition_line);
       panda_safety.configureSafetyMode(is_onroad);
     }
 

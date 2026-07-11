@@ -26,6 +26,20 @@ def test_tracked_lead_catchup_bias_applies_to_two_second_highway_gap():
   assert bias > 14.0
 
 
+def test_tracked_lead_catchup_bias_reduces_for_laterally_offset_lead():
+  centered = get_tracked_lead_catchup_bias(34.0, 103.0, 73.0, 1.9, y_rel=0.2)
+  offset = get_tracked_lead_catchup_bias(34.0, 103.0, 73.0, 1.9, y_rel=1.95)
+  assert centered > 0.0
+  assert offset == 0.0
+
+
+def test_tracked_lead_catchup_bias_fades_before_very_far_gap_cutoff():
+  near_upper = get_tracked_lead_catchup_bias(34.0, 103.0, 73.0, 1.9)
+  smaller_gap = get_tracked_lead_catchup_bias(34.0, 96.0, 73.0, 1.9)
+  assert near_upper > 0.0
+  assert near_upper < smaller_gap
+
+
 def test_tracked_lead_catchup_bias_stays_off_once_at_set_speed():
   bias = get_tracked_lead_catchup_bias(31.4, 78.7, 38.0, 0.1, v_cruise=31.4)
   assert bias == 0.0

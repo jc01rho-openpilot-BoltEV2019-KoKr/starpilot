@@ -1,7 +1,6 @@
 import os, pathlib, tempfile, unittest
 import numpy as np
 from tinygrad import Tensor, Device, dtypes
-from tinygrad.device import is_dtype_supported
 from tinygrad.dtype import DType, DTYPES_DICT
 from tinygrad.nn.state import safe_load, safe_save, get_state_dict, torch_load
 from tinygrad.helpers import Timing, fetch, OSX, dedup
@@ -28,7 +27,7 @@ def compare_weights_both(url):
     np.testing.assert_equal(tg_weights[k].numpy(), torch_weights[k].numpy(), err_msg=f"mismatch at {k}, {tg_weights[k].shape}")
   print(f"compared {len(tg_weights)} weights")
 
-class TestTorchLoad(unittest.TestCase):
+class TestTorchLoad(TempDirTestCase):
   # pytorch pkl format
   def test_load_enet(self): compare_weights_both("https://github.com/lukemelas/EfficientNet-PyTorch/releases/download/1.0/efficientnet-b0-355c32eb.pth")
   # pytorch zip format
@@ -36,11 +35,17 @@ class TestTorchLoad(unittest.TestCase):
   # pytorch zip format
   def test_load_convnext(self): compare_weights_both('https://dl.fbaipublicfiles.com/convnext/convnext_tiny_1k_224_ema.pth')
 
-  @unittest.skipUnless(is_dtype_supported(dtypes.float16), "need float16 support")
   def test_load_llama2bfloat(self): compare_weights_both("https://huggingface.co/qazalin/bf16-lightweight/resolve/main/consolidated.00.pth?download=true")
 
   # pytorch tar format
   def test_load_resnet(self): compare_weights_both('https://download.pytorch.org/models/resnet50-19c8e357.pth')
+
+  # shared storage (mixtral-8x7b-32kseqlen)
+  def test_shared_storage(self):
+    import torch
+    fn = self.tmp("shared_storage.pth")
+    torch.save({"a": (a := torch.randn(100)), "b": a[5:]}, fn)
+    compare_weights_both(fn)
 
 test_fn = pathlib.Path(__file__).parents[2] / "weights/LLaMA/7B/consolidated.00.pth"
 #test_size = test_fn.stat().st_size
@@ -67,31 +72,26 @@ class TestRawDiskBuffer(unittest.TestCase):
     _test_bitcasted(t, dtypes.float32, 0.0)
     _test_bitcasted(t, dtypes.uint32, 0)
     # pi in float16 stored via int16
-    t.assign(Tensor.full((128, 64), 0x4248, dtype=dtypes.uint16).bitcast(dtypes.uint8)).realize()
+    t.bitcast(dtypes.uint16).assign(Tensor.full((128, 64), 0x4248, dtype=dtypes.uint16)).realize()
     _test_bitcasted(t, dtypes.float16, 3.140625)
     _test_bitcasted(t, dtypes.float32, 50.064727)
     _test_bitcasted(t, dtypes.uint16, 0x4248)
     _test_bitcasted(t, dtypes.uint32, 0x42484248)
     # pi in float32 stored via float32
-    t.assign(Tensor.full((128, 32), 3.1415927, dtype=dtypes.float32).bitcast(dtypes.uint8)).realize()
+    t.bitcast(dtypes.float32).assign(Tensor.full((128, 32), 3.1415927, dtype=dtypes.float32)).realize()
     _test_bitcasted(t, dtypes.float32, 3.1415927)
     _test_bitcasted(t, dtypes.uint32, 0x40490FDB)
     # doesn't suport normal cast
     with self.assertRaises(NotImplementedError):
-      Tensor.empty((4,), dtype=dtypes.int16, device=f"disk:{tmp}").cast(dtypes.float16).realize()
+      Tensor.empty((4,), dtype=dtypes.int16, device=f"disk:{tmp}").cast(dtypes.float16).to(None).realize()
 
     # Those two should be moved to test_dtype.py:test_shape_change_bitcast after bitcast works on non-disk
     with self.assertRaises(RuntimeError):
       # should fail because 3 int8 is 3 bytes but float16 is two and 3 isn't a multiple of 2
       Tensor.empty((3,), dtype=dtypes.int8, device=f"DISK:{tmp}").bitcast(dtypes.float16)
 
-    with self.assertRaises(RuntimeError):
-      # should fail because backprop through bitcast is undefined
-      Tensor.empty((4,), dtype=dtypes.int8, requires_grad=True, device=f"DISK:{tmp}").bitcast(dtypes.float16)
-
     pathlib.Path(tmp).unlink()
 
-@unittest.skipUnless(is_dtype_supported(dtypes.uint8), "need uint8")
 class TestSafetensors(TempDirTestCase):
   def test_real_safetensors(self):
     import torch
@@ -171,10 +171,16 @@ class TestSafetensors(TempDirTestCase):
     import json
     assert json.loads(dat[8:8+sz])['__metadata__']['hello'] == 'world'
 
+  def test_safe_save_only_copy(self):
+    from tinygrad.helpers import GlobalCounters
+    t = Tensor.rand(10, 10).realize()
+    GlobalCounters.reset()
+    safe_save({"t": t}, self.tmp("test_copy.safetensors"))
+    assert GlobalCounters.global_ops == 0, f"safe_save should have no compute, got {GlobalCounters.global_ops} ops"
+
   def test_save_all_dtypes(self):
     for dtype in dedup(DTYPES_DICT.values()):
       if dtype in [dtypes.bfloat16]: continue # not supported in numpy
-      if not is_dtype_supported(dtype): continue
       path = self.tmp(f"ones.{dtype}.safetensors")
       ones = Tensor(np.random.rand(10,10), dtype=dtype)
       safe_save(get_state_dict(ones), path)
@@ -197,9 +203,9 @@ class TestSafetensors(TempDirTestCase):
       "weight_I16": torch.tensor([127, 64], dtype=torch.short),
       "weight_BF16": torch.randn((2, 2), dtype=torch.bfloat16),
     }
-    save_file(tensors, self.tmp("dtypes.safetensors"))
+    save_file(tensors, self.tmp("dtypes_torch.safetensors"))
 
-    loaded = safe_load(self.tmp("dtypes.safetensors"))
+    loaded = safe_load(self.tmp("dtypes_torch.safetensors"))
     for k,v in loaded.items():
       if v.dtype != dtypes.bfloat16:
         assert v.numpy().dtype == tensors[k].numpy().dtype
@@ -211,9 +217,9 @@ class TestSafetensors(TempDirTestCase):
       "weight_U32": np.array([1, 2, 3], dtype=np.uint32),
       "weight_U64": np.array([1, 2, 3], dtype=np.uint64),
     }
-    np_save_file(tensors, self.tmp("dtypes.safetensors"))
+    np_save_file(tensors, self.tmp("dtypes_numpy.safetensors"))
 
-    loaded = safe_load(self.tmp("dtypes.safetensors"))
+    loaded = safe_load(self.tmp("dtypes_numpy.safetensors"))
     for k,v in loaded.items():
       assert v.numpy().dtype == tensors[k].dtype
       np.testing.assert_allclose(v.numpy(), tensors[k])
@@ -255,20 +261,16 @@ class TestDiskTensor(TempDirTestCase):
     assert tout == list([(x+1,x) for x in range(32,64,2)])
 
   def test_strided_read(self):
-    # test non-contiguous (strided) read - should read elements at indices 0, 2, 4
+    # test non-contiguous (strided) read raises
     dt = Tensor([0, 1, 2, 3, 4, 5]).to(f"disk:{self.tmp('dt_strided_read')}")
-    result = dt[::2].tolist()
-    # TODO: dt[::2] selects indices 0, 2, 4, so result should be [0, 2, 4]
-    # self.assertEqual(result, [0, 2, 4])
-    self.assertEqual(result, [0, 1, 2])  # wrong!
+    with self.assertRaisesRegex(RuntimeError, "non-contiguous view is not supported"):
+      dt[::2].tolist()
 
   def test_permuted_read(self):
-    # test non-contiguous (permuted) read - should read transposed
+    # test non-contiguous (permuted) read raises
     dt = Tensor([[0, 1, 2], [3, 4, 5]]).to(f"disk:{self.tmp('dt_permuted_read')}")
-    result = dt.T.tolist()
-    # TODO: transpose should give [[0, 3], [1, 4], [2, 5]]
-    # self.assertEqual(result, [[0, 3], [1, 4], [2, 5]])
-    self.assertEqual(result, [[0, 1], [2, 3], [4, 5]])  # wrong!
+    with self.assertRaisesRegex(RuntimeError, "non-contiguous view is not supported"):
+      dt.T.tolist()
 
   def test_write_ones(self):
     out = Tensor.ones(10, 10, device="CPU").contiguous()
@@ -294,15 +296,13 @@ class TestDiskTensor(TempDirTestCase):
     self.assertEqual(dt.tolist(), [[1], [3]])
 
   def test_strided_setitem(self):
-    # test non-contiguous (strided) setitem - should set elements at indices 0, 2, 4
+    # test non-contiguous (strided) setitem raises
     dt = Tensor([1, 2, 3, 4, 5, 6]).to(f"disk:{self.tmp('dt_strided_setitem')}")
-    dt[::2] = Tensor([10, 20, 30])
-    # TODO: dt[::2] selects indices 0, 2, 4, so result should be [10, 2, 20, 4, 30, 6]
-    # self.assertEqual(dt.tolist(), [10, 2, 20, 4, 30, 6])
-    self.assertEqual(dt.tolist(), [10, 20, 30, 4, 5, 6])  # wrong!
+    with self.assertRaisesRegex(RuntimeError, "non-contiguous view is not supported"):
+      dt[::2] = Tensor([10, 20, 30])
 
   def test_advanced_setitem_not_supported(self):
-    dt = Tensor.arange(12).reshape(3, 4).to(f"disk:{self.tmp('dt_advanced_setitem')}")
+    dt = Tensor.arange(12).reshape(3, 4).clone().to(f"disk:{self.tmp('dt_advanced_setitem')}")
     with self.assertRaises(RuntimeError, msg="advanced setitem is not supported for DISK tensors"):
       dt[Tensor([0, 2]), Tensor([1, 3])] = 99
 
@@ -347,15 +347,10 @@ class TestDiskTensor(TempDirTestCase):
 
   def test_assign_with_bitcast(self):
     # bitcast assign is used in safe_save for writing header length
-    # bitcast on source side works, bitcast on target side raises
     t = Tensor.empty(16, device=f"disk:{self.tmp('dt_assign_bitcast')}", dtype=dtypes.uint8)
-    # correct way: bitcast the source to match target dtype
-    t[0:8].assign(Tensor([12345], dtype=dtypes.int64, device="CPU").bitcast(dtypes.uint8))
+    t[0:8].bitcast(dtypes.int64).assign([12345])
     val = int.from_bytes(t[0:8].data(), 'little')
     self.assertEqual(val, 12345)
-    # bitcast on target with non-broadcastable dtype raises
-    with self.assertRaises(RuntimeError):
-      t[0:4].bitcast(dtypes.int32).assign(Tensor([12345], dtype=dtypes.int64))
 
   def test_assign_to_bitcast_view(self):
     # assign float values to a float32 view of a uint8 disk buffer (used by safe_save)
@@ -384,8 +379,7 @@ class TestDiskTensor(TempDirTestCase):
     ret = t.bitcast(dtypes.uint16).to("CPU") + 1
     assert ret.tolist() == [2827, 3341, 3855, 4369]
 
-  @unittest.skipIf(OSX or Device.DEFAULT == "CL", "new LLVM has an issue on OSX, CL=1 gives the wrong output")
-  @unittest.skipUnless(is_dtype_supported(dtypes.bfloat16), "bfloat16 not supported")
+  @unittest.skipIf(OSX or Device.DEFAULT == "CL", "new LLVM has an issue on OSX, DEV=CL gives the wrong output")
   def test_bf16_disk_write_read(self):
     t = Tensor([10000, -1, -1000, -10000, 20], dtype=dtypes.float32)
     t.to(f"disk:{self.tmp('dt_bf16_disk_write_read_f32')}").realize()
@@ -444,18 +438,19 @@ class TestDiskTensor(TempDirTestCase):
     # get the DiskDevice and check internal state
     disk_device = Device[f"DISK:{fn}"]
     assert isinstance(disk_device, DiskDevice)
-    assert disk_device.count == 1
+    assert disk_device.refcount == 1
     assert hasattr(disk_device, "mem")
     first_fd = disk_device.fd
     # create second tensor on same file - should reuse the device, not re-open
     t2 = Tensor.empty(64, device=f"disk:{fn}", dtype=dtypes.uint8)
     t2.to("CPU").realize()
-    assert disk_device.count == 2
+    assert disk_device.refcount == 2
     assert disk_device.fd == first_fd, "file descriptor changed - file was unnecessarily re-opened"
     # verify data is correct
     np.testing.assert_equal(t1.numpy(), np.arange(128, dtype=np.uint8))
     np.testing.assert_equal(t2.numpy(), np.arange(64, dtype=np.uint8))
 
+  @unittest.skip("fails with setup_python_cap run")
   def test_disk_open_failure_state(self):
     from tinygrad.runtime.ops_disk import DiskDevice
     fn = pathlib.Path(self.tmp("dt_open_failure"))
@@ -476,6 +471,7 @@ class TestDiskTensor(TempDirTestCase):
     t2.to("CPU").realize()
     assert disk_device.size == 200
 
+  @unittest.skip("fails with setup_python_cap run")
   def test_disk_permission_error(self):
     fn = pathlib.Path(self.tmp("dt_permission"))
     fn.write_bytes(bytes(range(256)))
@@ -548,7 +544,7 @@ class TestDiskTensorMovement(TempDirTestCase):
   def setUp(self):
     super().setUp()
     self.fn = pathlib.Path(self.tmp("custom_disk_range"))
-    Tensor.arange(100, dtype=dtypes.uint8).to(f"disk:{str(self.fn)}").realize()
+    Tensor.arange(100, dtype=dtypes.uint8).clone().to(f"disk:{str(self.fn)}").realize()
 
   def test_simple_read(self):
     t = Tensor(self.fn)

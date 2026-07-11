@@ -58,6 +58,36 @@ def get_next_periodic_update_check(monotonic_now, phase_seconds):
     next_check += UPDATE_CHECK_INTERVAL_SECONDS
   return next_check
 
+
+def build_gps_position(gps_location, speed):
+  return {
+    "latitude": gps_location.latitude,
+    "longitude": gps_location.longitude,
+    "bearing": gps_location.bearingDeg,
+    "speed": max(float(speed), 0.0),
+    "hasFix": bool(getattr(gps_location, "hasFix", False)),
+    "updatedAtMonotonic": time.monotonic(),
+    "updatedAtSec": time.time(),
+  }
+
+
+def gps_position_valid(gps_position):
+  if not gps_position:
+    return False
+  latitude = gps_position.get("latitude")
+  longitude = gps_position.get("longitude")
+  return bool(gps_position.get("hasFix")) and latitude is not None and longitude is not None and (latitude != 0 or longitude != 0)
+
+
+def gps_position_signature(gps_position):
+  return (
+    round(float(gps_position["latitude"]), 6),
+    round(float(gps_position["longitude"]), 6),
+    round(float(gps_position["bearing"]), 1),
+    bool(gps_position["hasFix"]),
+  )
+
+
 def check_assets(now, model_manager, theme_manager, thread_manager, params, params_memory, starpilot_toggles):
   if params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM):
     thread_manager.run_with_lock(model_manager.download_all_models)

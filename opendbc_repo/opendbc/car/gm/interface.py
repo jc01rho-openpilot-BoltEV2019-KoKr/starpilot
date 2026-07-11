@@ -141,7 +141,11 @@ class CarInterface(CarInterfaceBase):
   @staticmethod
   def get_pid_accel_limits(CP, current_speed, cruise_speed):
     if CP.enableGasInterceptorDEPRECATED and bool(CP.flags & GMFlags.PEDAL_LONG.value):
-      if CP.carFingerprint in BOLT_PEDAL_LONG_CARS:
+      if CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
+        accel_min = CarControllerParams.ACCEL_MIN
+        accel_max = np.interp(current_speed, [0.0, 1.5, 4.0, 8.0, 15.0],
+                              [0.54, 0.74, 1.03, 1.46, CarControllerParams.ACCEL_MAX])
+      elif CP.carFingerprint in BOLT_PEDAL_LONG_CARS:
         accel_min = np.interp(current_speed, [0.0, 1.5, 4.0, 8.0, 15.0, 30.0],
                               [-0.93, -1.28, -1.98, -2.58, -2.86, -2.95])
         accel_max = np.interp(current_speed, [0.0, 1.5, 4.0, 8.0, 15.0],
@@ -430,8 +434,10 @@ class CarInterface(CarInterfaceBase):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    elif candidate in (CAR.BUICK_LACROSSE, CAR.BUICK_LACROSSE_ASCM):
+    elif candidate in (CAR.BUICK_LACROSSE, CAR.BUICK_LACROSSE_ASCM, CAR.BUICK_LACROSSE_ASCM_19US):
       CarInterfaceBase.configure_torque_tune(CAR.BUICK_LACROSSE, ret.lateralTuning)
+      if candidate == CAR.BUICK_LACROSSE_ASCM_19US:
+        ret.minSteerSpeed = 37 * CV.MPH_TO_MS
 
     elif candidate == CAR.CADILLAC_ESCALADE:
       ret.minEnableSpeed = -1.  # engage speed is decided by pcm
@@ -440,7 +446,7 @@ class CarInterface(CarInterfaceBase):
     elif candidate == CAR.CADILLAC_ESCALADE_ASCM:
       CarInterfaceBase.configure_torque_tune(CAR.CADILLAC_ESCALADE, ret.lateralTuning)
 
-    elif candidate in (CAR.CADILLAC_ESCALADE_ESV, CAR.CADILLAC_ESCALADE_ESV_2019):
+    elif candidate in (CAR.CADILLAC_ESCALADE_ESV, CAR.CADILLAC_ESCALADE_ESV_2019, CAR.CADILLAC_ESCALADE_ESV_2019_ASCM):
       ret.minEnableSpeed = -1.  # engage speed is decided by pcm
 
       if candidate == CAR.CADILLAC_ESCALADE_ESV:
@@ -449,7 +455,8 @@ class CarInterface(CarInterfaceBase):
         ret.lateralTuning.pid.kf = 0.000045
       else:
         ret.steerActuatorDelay = 0.2
-        CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+        torque_candidate = CAR.CADILLAC_ESCALADE_ESV_2019 if candidate == CAR.CADILLAC_ESCALADE_ESV_2019_ASCM else candidate
+        CarInterfaceBase.configure_torque_tune(torque_candidate, ret.lateralTuning)
 
     elif candidate in (
       CAR.CHEVROLET_BOLT_ACC_2022_2023,
@@ -535,11 +542,19 @@ class CarInterface(CarInterfaceBase):
       if not ret.openpilotLongitudinalControl:
         ret.minEnableSpeed = -1.
       if candidate == CAR.CHEVROLET_BLAZER:
+        # The Blazer builds brake torque noticeably later than the rest of the GM set.
+        # A slightly larger planner delay estimate starts the request earlier and keeps
+        # stopped-lead approaches from turning into a late, harsh max-brake catch-up.
+        ret.longitudinalActuatorDelay = 0.7
+        ret.longitudinalTuning.kpBP = [0.0, 4.0, 12.0, 35.0]
+        ret.longitudinalTuning.kpV = [0.09, 0.075, 0.055, 0.040]
+        ret.longitudinalTuning.kiBP = [0.0, 4.0, 12.0, 35.0]
+        ret.longitudinalTuning.kiV = [0.03, 0.04, 0.055, 0.07]
         ret.minEnableSpeed = 5 * CV.KPH_TO_MS
-        ret.stoppingDecelRate = 1.2
+        ret.stoppingDecelRate = 1.0
         ret.vEgoStopping = 0.35
         ret.vEgoStarting = 0.35
-        ret.stopAccel = -0.40
+        ret.stopAccel = -0.30
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
     elif candidate == CAR.BUICK_BABYENCLAVE:
@@ -694,6 +709,7 @@ class CarInterface(CarInterfaceBase):
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_REMOTE_START_BOOTS_COMMA.value
 
     volt_stock_friction_brake_safety = (
+      ret.openpilotLongitudinalControl and
       (gm_auto_hold or volt_one_pedal_mode) and
       candidate in {
         CAR.CHEVROLET_VOLT,
@@ -704,10 +720,28 @@ class CarInterface(CarInterfaceBase):
     )
     if volt_stock_friction_brake_safety:
       # Reuse the paddle-scheduler safety bit as a Volt stock friction-brake
-      # marker on non-pedal paths. Both auto hold and one-pedal can run while
-      # OP longitudinal is configured but not currently active, so the bit must
-      # be present regardless of the current long-control mode.
+      # marker on non-pedal paths. Auto hold and one-pedal can run while OP
+      # longitudinal is configured but not currently active, so the bit must
+      # be present regardless of the current long-control mode. Do not expose
+      # the path at all when OP long is disabled in CarParams.
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
+
+    volt_stock_one_pedal_safety = (
+      ret.openpilotLongitudinalControl and
+      volt_one_pedal_mode and
+      candidate in {
+        CAR.CHEVROLET_VOLT,
+        CAR.CHEVROLET_VOLT_2019,
+        CAR.CHEVROLET_VOLT_ASCM,
+        CAR.CHEVROLET_VOLT_CAMERA,
+      }
+    )
+    if volt_stock_one_pedal_safety:
+      # Reuse the 3D1 scheduler bit as a Volt one-pedal marker on non-pedal
+      # ACC paths. The bit is ignored by the actual 3D1 scheduler unless the
+      # car is on a pedal-long CC-only path, so this stays isolated from Bolt.
+      # Do not expose the path at all when OP long is disabled in CarParams.
+      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PANDA_3D1_SCHED.value
 
     use_panda_3d1_sched = (
       ret.openpilotLongitudinalControl and

@@ -21,9 +21,9 @@ class TileSection:
 
 
 class SectionedTileLayout(Widget):
-  def __init__(self, section_gap: int = 28, title_height: int = 34, title_gap: int = 12,
-               min_row_height: int = 150, max_row_height: int = 280, top_padding: int = 0,
-               horizontal_padding: int = SPACING.xl, max_content_width: int | None = 1440):
+  def __init__(self, section_gap: int = 28, title_height: int = 49, title_gap: int = 17,
+               min_row_height: int = 218, max_row_height: int = 406, top_padding: int = 0,
+               horizontal_padding: int = SPACING.xl, max_content_width: int | None = 1560):
     super().__init__()
     self._sections: list[TileSection] = []
     self._section_gap = section_gap
@@ -34,7 +34,7 @@ class SectionedTileLayout(Widget):
     self._top_padding = top_padding
     self._horizontal_padding = horizontal_padding
     self._max_content_width = max_content_width
-    self._title_font_size = 26
+    self._title_font_size = 38
     self._font_title = gui_app.font(FontWeight.BOLD)
     self._is_active = False
     self._scroll_panel = GuiScrollPanel2(horizontal=False)
@@ -109,12 +109,12 @@ class SectionedTileLayout(Widget):
       total_title_height = sum(self._title_block_height(section, title_height, title_gap) for section in sections)
       total_section_gaps = section_gap * max(0, len(sections) - 1)
       fit_row_height = max(0.0, (rect.height - self._top_padding - total_title_height - total_section_gaps - total_internal_gaps) / total_rows)
-      min_row_height = min(self._min_row_height, 124) if rect.width < 960 or compact_pass else self._min_row_height
+      min_row_height = min(self._min_row_height, 180) if rect.width < 960 or compact_pass else self._min_row_height
       if fit_row_height >= min_row_height:
         return title_height, title_gap, section_gap, min(fit_row_height, self._max_row_height)
-      title_height = max(24, min(title_height, 28))
-      title_gap = max(4, min(title_gap, 6))
-      section_gap = max(12, min(section_gap, 16))
+      title_height = max(35, min(title_height, 41))
+      title_gap = max(6, min(title_gap, 9))
+      section_gap = max(17, min(section_gap, 23))
 
     return title_height, title_gap, section_gap, fit_row_height
 

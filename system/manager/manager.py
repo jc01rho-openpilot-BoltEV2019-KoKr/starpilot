@@ -9,6 +9,18 @@ import sys
 import time
 import traceback
 
+_MANAGER_IMPORT_START = time.monotonic()
+_BOOT_TIMING_LOG_PATH = os.environ.get("SP_BOOT_TIMING_LOG", "/tmp/starpilot_boot_timing.log")
+
+
+def _append_boot_timing_line(line: str) -> None:
+  try:
+    with open(_BOOT_TIMING_LOG_PATH, "a") as f:
+      f.write(line + "\n")
+  except OSError:
+    pass
+
+
 from cereal import car, log
 import cereal.messaging as messaging
 import openpilot.system.sentry as sentry
@@ -24,12 +36,24 @@ from openpilot.common.swaglog import cloudlog, add_file_handler
 from openpilot.system.version import get_build_metadata, terms_version, training_version
 from openpilot.system.hardware.hw import Paths
 
+_MANAGER_CORE_IMPORT_DONE = time.monotonic()
+
 from openpilot.starpilot.common.starpilot_functions import starpilot_boot_functions, install_starpilot, uninstall_starpilot
 from openpilot.starpilot.common.starpilot_variables import (
   LEGACY_STARPILOT_PARAM_RENAMES,
   LEGACY_STARPILOT_STATS_KEY_RENAMES,
   get_starpilot_toggles,
 )
+
+_MANAGER_IMPORT_DONE = time.monotonic()
+_manager_import_timing_line = (
+  "SP_BOOT_TIMING manager_import "
+  f"core={_MANAGER_CORE_IMPORT_DONE - _MANAGER_IMPORT_START:.3f}s "
+  f"starpilot={_MANAGER_IMPORT_DONE - _MANAGER_CORE_IMPORT_DONE:.3f}s "
+  f"total={_MANAGER_IMPORT_DONE - _MANAGER_IMPORT_START:.3f}s"
+)
+print(_manager_import_timing_line, flush=True)
+_append_boot_timing_line(_manager_import_timing_line)
 
 
 LEGACY_BOLT_FP_MIGRATION_FLAG = Path("/data") / "legacy_bolt_fp_migration_v1"
@@ -40,12 +64,23 @@ STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG = Path("/data") / "starpilo
 STARPILOT_PARAM_RENAME_MIGRATION_FLAG = Path("/data") / "starpilot_param_rename_v1"
 STARPILOT_PARAM_CANONICALIZATION_MIGRATION_FLAG = Path("/data") / "starpilot_param_canonicalization_v1"
 STARPILOT_PC_ROOT_MIGRATION_FLAG = Path("/data") / "starpilot_pc_root_v1"
+STARPILOT_PARAMS_CACHE_MIGRATION_FLAG = Path("/data") / "starpilot_params_cache_v1"
+STARPILOT_LEGACY_CACHE_MARKER_KEYS = ("RemapCancelToDistance",)
 STARPILOT_REMOVED_PARAM_KEYS = ("HumanFollowing",)
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
 }
 STARPILOT_STATS_DROP_KEYS = {"CurrentMonthsKilometers", "ResetStats"}
 STARPILOT_STATS_MAX_KEYS = {"LongestDistanceWithoutOverride", "MaxAcceleration"}
+
+
+def _log_boot_timing(scope: str, label: str, start: float, previous: float | None = None) -> float:
+  now = time.monotonic()
+  base = previous if previous is not None else start
+  line = f"SP_BOOT_TIMING {scope} {label} +{now - base:.3f}s total={now - start:.3f}s"
+  _append_boot_timing_line(line)
+  cloudlog.warning(line)
+  return now
 
 
 def _to_text(value):
@@ -68,6 +103,46 @@ def _has_meaningful_param_value(value) -> bool:
 
 def _is_numeric_stat_value(value) -> bool:
   return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _get_int_param_value(params, key: str, default: int = 0) -> int:
+  getter = getattr(params, "get_int", None)
+  if callable(getter):
+    try:
+      return int(getter(key))
+    except Exception:
+      pass
+
+  value = params.get(key)
+  if value is None:
+    return default
+  if isinstance(value, bytes):
+    value = value.decode("utf-8", errors="ignore")
+
+  try:
+    return int(float(str(value).strip()))
+  except (TypeError, ValueError):
+    return default
+
+
+def get_nav_offroad_clear_timeout_seconds(params) -> int:
+  return max(_get_int_param_value(params, "ClearNavOnOffroadTimeoutMinutes", 0), 0) * 60
+
+
+def update_nav_offroad_clear_state(params, started: bool, tracked_destination, tracked_started_at, now: float):
+  nav_destination = params.get("NavDestination")
+  if started or not params.get_bool("ClearNavOnOffroad") or not nav_destination:
+    return None, None
+
+  if nav_destination != tracked_destination or tracked_started_at is None:
+    tracked_destination = nav_destination
+    tracked_started_at = now
+
+  if now - tracked_started_at >= get_nav_offroad_clear_timeout_seconds(params):
+    params.remove("NavDestination")
+    return None, None
+
+  return tracked_destination, tracked_started_at
 
 
 def _merge_starpilot_stat_values(existing, incoming, key=None):
@@ -164,6 +239,68 @@ def _remove_persisted_param_file(params: Params, key: str | bytes) -> bool:
   except Exception:
     cloudlog.exception(f"Failed to remove deprecated param file: {key}")
     return False
+
+
+def _params_store_path(root: str | Path) -> Path:
+  return Path(root) / os.environ.get("OPENPILOT_PREFIX", "d")
+
+
+def _cache_store_has_starpilot_marker(cache_root: str | Path) -> bool:
+  store_path = _params_store_path(cache_root)
+  return any((store_path / key).is_file() for key in STARPILOT_LEGACY_CACHE_MARKER_KEYS)
+
+
+def _copy_param_store_without_overwrite(source: Path, destination: Path) -> int:
+  if not source.is_dir():
+    return 0
+
+  destination.mkdir(parents=True, exist_ok=True)
+  copied_entries = 0
+  for path in source.iterdir():
+    if not path.is_file() or path.name == ".lock" or path.name.startswith(".tmp_"):
+      continue
+
+    target = destination / path.name
+    if target.exists():
+      continue
+
+    shutil.copy2(path, target)
+    copied_entries += 1
+
+  return copied_entries
+
+
+def migrate_legacy_starpilot_params_cache(params: Params, legacy_cache_root: str | Path, cache_root: str | Path) -> None:
+  if STARPILOT_PARAMS_CACHE_MIGRATION_FLAG.exists():
+    return
+
+  legacy_store = _params_store_path(legacy_cache_root)
+  cache_store = _params_store_path(cache_root)
+  active_marker = any(_has_persisted_param_file(params, key) for key in STARPILOT_LEGACY_CACHE_MARKER_KEYS)
+  cache_marker = _cache_store_has_starpilot_marker(legacy_cache_root)
+
+  migration_succeeded = True
+  copied_entries = 0
+  if active_marker or cache_marker:
+    try:
+      copied_entries = _copy_param_store_without_overwrite(legacy_store, cache_store)
+    except Exception:
+      migration_succeeded = False
+      cloudlog.exception(f"Failed to migrate legacy StarPilot params cache from {legacy_store} to {cache_store}")
+  elif legacy_store.exists():
+    cloudlog.warning(f"Skipped legacy params cache import without StarPilot marker: {legacy_store}")
+
+  if not migration_succeeded:
+    return
+
+  if copied_entries:
+    cloudlog.warning(f"Migrated {copied_entries} legacy StarPilot params cache entries from {legacy_store} to {cache_store}")
+
+  try:
+    STARPILOT_PARAMS_CACHE_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    STARPILOT_PARAMS_CACHE_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+  except Exception:
+    cloudlog.exception(f"Failed to write migration flag: {STARPILOT_PARAMS_CACHE_MIGRATION_FLAG}")
 
 
 def cleanup_removed_starpilot_params(params: Params, params_cache: Params) -> None:
@@ -623,19 +760,25 @@ def migrate_legacy_experimental_longitudinal(params: Params, params_cache: Param
 
 
 def manager_init() -> None:
+  manager_init_start = time.monotonic()
+  last_timing = _log_boot_timing("manager_init", "start", manager_init_start, manager_init_start)
+
   save_bootlog()
+  last_timing = _log_boot_timing("manager_init", "save_bootlog", manager_init_start, last_timing)
 
   build_metadata = get_build_metadata()
+  last_timing = _log_boot_timing("manager_init", "build_metadata", manager_init_start, last_timing)
 
   params = Params()
-  cache_params_path = "/cache/params"
-  if HARDWARE.get_device_type() == "pc":
-    cache_params_path = os.path.join(Paths.comma_home(), "cache", "params")
+  cache_params_path = Paths.params_cache_root()
+  migrate_legacy_starpilot_params_cache(params, Paths.legacy_params_cache_root(), cache_params_path)
   params_cache = Params(cache_params_path, return_defaults=True)
+  last_timing = _log_boot_timing("manager_init", "params_cache", manager_init_start, last_timing)
 
   # Legacy FrogPilot params are unknown to the renamed schema and would be
   # deleted by clear_all() if we do not migrate them first.
   migrate_starpilot_param_renames(params, params_cache)
+  last_timing = _log_boot_timing("manager_init", "param_renames", manager_init_start, last_timing)
 
   params.clear_all(ParamKeyFlag.CLEAR_ON_MANAGER_START)
   params.clear_all(ParamKeyFlag.CLEAR_ON_ONROAD_TRANSITION)
@@ -643,8 +786,10 @@ def manager_init() -> None:
   params.clear_all(ParamKeyFlag.CLEAR_ON_IGNITION_ON)
   if build_metadata.release_channel:
     params.clear_all(ParamKeyFlag.DEVELOPMENT_ONLY)
+  last_timing = _log_boot_timing("manager_init", "clear_params", manager_init_start, last_timing)
 
   migrate_starpilot_pc_root()
+  last_timing = _log_boot_timing("manager_init", "pc_root_migration", manager_init_start, last_timing)
 
   if params.get_bool("RecordFrontLock"):
     params.put_bool("RecordFront", True)
@@ -662,6 +807,7 @@ def manager_init() -> None:
   migrate_disable_humanlike_defaults(params, params_cache)
   migrate_cluster_offset_default(params, params_cache)
   migrate_prioritize_smooth_following_default(params, params_cache)
+  last_timing = _log_boot_timing("manager_init", "starpilot_migrations", manager_init_start, last_timing)
 
   # set unset params to their default value
   for k in params.all_keys():
@@ -672,6 +818,7 @@ def manager_init() -> None:
         params.put(k, cached_value)
     else:
       params_cache.put(k, current_value)
+  last_timing = _log_boot_timing("manager_init", "params_defaults_cache_sync", manager_init_start, last_timing)
 
   # Create folders needed for msgq
   try:
@@ -680,6 +827,7 @@ def manager_init() -> None:
     pass
   except PermissionError:
     print(f"WARNING: failed to make {Paths.shm_path()}")
+  last_timing = _log_boot_timing("manager_init", "shm_path", manager_init_start, last_timing)
 
   # set params
   serial = HARDWARE.get_serial()
@@ -696,6 +844,7 @@ def manager_init() -> None:
 
   # Branch migration: rename legacy Bolt fingerprint persisted in CarParams.
   migrate_legacy_bolt_fingerprint(params)
+  last_timing = _log_boot_timing("manager_init", "version_params", manager_init_start, last_timing)
 
   # set dongle id
   reg_res = register(show_spinner=True)
@@ -703,6 +852,7 @@ def manager_init() -> None:
     dongle_id = reg_res
   else:
     raise Exception(f"Registration failed for device {serial}")
+  last_timing = _log_boot_timing("manager_init", "register", manager_init_start, last_timing)
   os.environ['DONGLE_ID'] = dongle_id  # Needed for swaglog
   os.environ['GIT_ORIGIN'] = build_metadata.openpilot.git_normalized_origin # Needed for swaglog
   os.environ['GIT_BRANCH'] = build_metadata.channel # Needed for swaglog
@@ -720,14 +870,18 @@ def manager_init() -> None:
                        commit=build_metadata.openpilot.git_commit,
                        dirty=build_metadata.openpilot.is_dirty,
                        device=HARDWARE.get_device_type())
+  last_timing = _log_boot_timing("manager_init", "logging_ready", manager_init_start, last_timing)
 
   # preimport all processes
   for p in managed_processes.values():
     p.prepare()
+  last_timing = _log_boot_timing("manager_init", "preimport_processes", manager_init_start, last_timing)
 
   # StarPilot variables
   install_starpilot(build_metadata, params)
+  last_timing = _log_boot_timing("manager_init", "install_starpilot", manager_init_start, last_timing)
   starpilot_boot_functions(build_metadata, params)
+  _log_boot_timing("manager_init", "starpilot_boot_functions", manager_init_start, last_timing)
 
 
 def manager_cleanup() -> None:
@@ -743,11 +897,14 @@ def manager_cleanup() -> None:
 
 
 def manager_thread() -> None:
+  manager_thread_start = time.monotonic()
+  last_timing = _log_boot_timing("manager_thread", "start", manager_thread_start, manager_thread_start)
   cloudlog.bind(daemon="manager")
   cloudlog.info("manager start")
   cloudlog.info({"environ": os.environ})
 
   params = Params()
+  last_timing = _log_boot_timing("manager_thread", "params", manager_thread_start, last_timing)
 
   ignore: list[str] = []
   if params.get("DongleId") in (None, UNREGISTERED_DONGLE_ID):
@@ -755,16 +912,23 @@ def manager_thread() -> None:
   if os.getenv("NOBOARD") is not None:
     ignore.append("pandad")
   ignore += [x for x in os.getenv("BLOCK", "").split(",") if len(x) > 0]
+  last_timing = _log_boot_timing("manager_thread", "ignore_list", manager_thread_start, last_timing)
 
   sm = messaging.SubMaster(['deviceState', 'carParams', 'pandaStates'], poll='deviceState')
   pm = messaging.PubMaster(['managerState'])
+  last_timing = _log_boot_timing("manager_thread", "messaging", manager_thread_start, last_timing)
 
   write_onroad_params(False, params)
-  ensure_running(managed_processes.values(), False, params=params, CP=sm['carParams'], not_run=ignore, starpilot_toggles=get_starpilot_toggles())
+  initial_toggles = get_starpilot_toggles()
+  last_timing = _log_boot_timing("manager_thread", "initial_toggles", manager_thread_start, last_timing)
+  ensure_running(managed_processes.values(), False, params=params, CP=sm['carParams'], not_run=ignore, starpilot_toggles=initial_toggles)
+  last_timing = _log_boot_timing("manager_thread", "initial_ensure_running", manager_thread_start, last_timing)
 
   started_prev = False
   ignition_prev = False
   warned_onroad_reboot = False
+  offroad_nav_destination = None
+  offroad_nav_started_at = None
 
   # StarPilot variables
   sm = sm.extend(['starpilotPlan'])
@@ -772,6 +936,8 @@ def manager_thread() -> None:
   params_memory = Params(memory=True)
 
   starpilot_toggles = get_starpilot_toggles()
+  last_timing = _log_boot_timing("manager_thread", "loop_toggles", manager_thread_start, last_timing)
+  _log_boot_timing("manager_thread", "loop_ready", manager_thread_start, last_timing)
 
   while True:
     sm.update(1000)
@@ -788,8 +954,10 @@ def manager_thread() -> None:
 
       # StarPilot variables
       params_memory.clear_all(ParamKeyFlag.CLEAR_ON_OFFROAD_TRANSITION)
-      if params.get_bool("ClearNavOnOffroad"):
-        params.remove("NavDestination")
+
+    offroad_nav_destination, offroad_nav_started_at = update_nav_offroad_clear_state(
+      params, started, offroad_nav_destination, offroad_nav_started_at, time.monotonic()
+    )
 
     ignition = any(ps.ignitionLine or ps.ignitionCan for ps in sm['pandaStates'] if ps.pandaType != log.PandaState.PandaType.unknown)
     if ignition and not ignition_prev:

@@ -10,8 +10,83 @@ from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import DialogResult, Widget
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
-from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import TileGrid, HubTile, ToggleTile, ValueTile, SliderTile, SPACING, AetherSliderDialog
+from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import TileGrid, HubTile, ToggleTile, ValueTile, SliderTile, SPACING, AetherSliderDialog, AetherTransitionManager
 from openpilot.selfdrive.ui.layouts.settings.starpilot.sectioned_panel import SectionedTileLayout, TileSection
+import time
+
+
+class FrameCachedParams:
+  def __init__(self):
+    self._params = Params()
+    self._cache = {}
+    self._last_frame_time = 0.0
+
+  def _check_clear_cache(self):
+    now = time.monotonic()
+    if now != self._last_frame_time:
+      self._cache.clear()
+      self._last_frame_time = now
+
+  def get(self, key, **kwargs):
+    self._check_clear_cache()
+    cache_key = (key, "get", tuple(kwargs.items()))
+    if cache_key not in self._cache:
+      self._cache[cache_key] = self._params.get(key, **kwargs)
+    return self._cache[cache_key]
+
+  def get_bool(self, key, **kwargs):
+    self._check_clear_cache()
+    cache_key = (key, "get_bool", tuple(kwargs.items()))
+    if cache_key not in self._cache:
+      self._cache[cache_key] = self._params.get_bool(key, **kwargs)
+    return self._cache[cache_key]
+
+  def get_int(self, key, **kwargs):
+    self._check_clear_cache()
+    cache_key = (key, "get_int", tuple(kwargs.items()))
+    if cache_key not in self._cache:
+      self._cache[cache_key] = self._params.get_int(key, **kwargs)
+    return self._cache[cache_key]
+
+  def get_float(self, key, **kwargs):
+    self._check_clear_cache()
+    cache_key = (key, "get_float", tuple(kwargs.items()))
+    if cache_key not in self._cache:
+      self._cache[cache_key] = self._params.get_float(key, **kwargs)
+    return self._cache[cache_key]
+
+  def put(self, key, val, **kwargs):
+    self._params.put(key, val, **kwargs)
+    self._cache.clear()
+    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
+    update_starpilot_toggles()
+
+  def put_bool(self, key, val, **kwargs):
+    self._params.put_bool(key, val, **kwargs)
+    self._cache.clear()
+    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
+    update_starpilot_toggles()
+
+  def put_int(self, key, val, **kwargs):
+    self._params.put_int(key, val, **kwargs)
+    self._cache.clear()
+    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
+    update_starpilot_toggles()
+
+  def put_float(self, key, val, **kwargs):
+    self._params.put_float(key, val, **kwargs)
+    self._cache.clear()
+    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
+    update_starpilot_toggles()
+
+  def remove(self, key):
+    self._params.remove(key)
+    self._cache.clear()
+    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
+    update_starpilot_toggles()
+
+  def __getattr__(self, name):
+    return getattr(self._params, name)
 
 
 class StarPilotPanelType(IntEnum):
@@ -41,7 +116,7 @@ class StarPilotPanel(Widget):
     def __init__(self):
         super().__init__()
         self._params_memory = Params(memory=True)
-        self._params = Params()
+        self._params = FrameCachedParams()
         self._navigate_callback: Callable | None = None
         self._back_callback: Callable | None = None
         self._current_sub_panel = ""
@@ -51,6 +126,7 @@ class StarPilotPanel(Widget):
         self._sectioned_grid = None
         self.CATEGORIES = []
         self.SECTIONS = []
+        self._transition_manager = AetherTransitionManager()
 
     def set_navigate_callback(self, callback: Callable):
         self._navigate_callback = callback
@@ -159,17 +235,50 @@ class StarPilotPanel(Widget):
             if tile is not None:
                 self._tile_grid.add_tile(tile)
 
+    def _make_render_fn(self, sub_panel: str) -> Callable[[rl.Rectangle], None]:
+        if sub_panel and sub_panel in self._sub_panels:
+            panel = self._sub_panels[sub_panel]
+            return lambda r: panel.render(r)
+        else:
+            def render_base(rect: rl.Rectangle):
+                if self.SECTIONS and self._sectioned_grid:
+                    self._sectioned_grid.render(rect)
+                elif self.CATEGORIES and self._tile_grid:
+                    self._tile_grid.render(rect)
+                elif self._scroller:
+                    self._scroller.render(rect)
+            return render_base
+
     def _navigate_to(self, sub_panel: str):
-        self._current_sub_panel = sub_panel
-        if self._navigate_callback:
-            self._navigate_callback(sub_panel)
+        if sub_panel != self._current_sub_panel:
+            old_sub = self._current_sub_panel
+            self._transition_manager.start(
+                self._make_render_fn(old_sub),
+                self._make_render_fn(sub_panel),
+                1
+            )
+            self._current_sub_panel = sub_panel
+            if self._navigate_callback:
+                self._navigate_callback(sub_panel)
 
     def _go_back(self):
-        self._current_sub_panel = ""
-        if self._back_callback:
-            self._back_callback()
+        if self._current_sub_panel:
+            old_sub = self._current_sub_panel
+            self._transition_manager.start(
+                self._make_render_fn(old_sub),
+                self._make_render_fn(""),
+                -1
+            )
+            self._current_sub_panel = ""
+            if self._back_callback:
+                self._back_callback()
 
     def _render(self, rect: rl.Rectangle):
+        self._transition_manager.update(rl.get_frame_time())
+        if self._transition_manager.is_animating():
+            self._transition_manager.render(rect)
+            return
+
         if self._current_sub_panel and self._current_sub_panel in self._sub_panels:
             self._sub_panels[self._current_sub_panel].render(rect)
         elif self.SECTIONS and self._sectioned_grid:
@@ -179,9 +288,27 @@ class StarPilotPanel(Widget):
         elif self._scroller:
             self._scroller.render(rect)
 
+    def _handle_mouse_press(self, mouse_pos):
+        if self._transition_manager.is_animating():
+            return
+        super()._handle_mouse_press(mouse_pos)
+
+    def _handle_mouse_release(self, mouse_pos):
+        if self._transition_manager.is_animating():
+            return
+        super()._handle_mouse_release(mouse_pos)
+
+    def _handle_mouse_event(self, mouse_event):
+        if self._transition_manager.is_animating():
+            return
+        super()._handle_mouse_event(mouse_event)
+
     def show_event(self):
         super().show_event()
-        self._rebuild_grid()
+        if self.SECTIONS and self._sectioned_grid is None:
+            self._rebuild_grid()
+        elif self.CATEGORIES and self._tile_grid is None:
+            self._rebuild_grid()
         if self._current_sub_panel and self._current_sub_panel in self._sub_panels:
             self._sub_panels[self._current_sub_panel].show_event()
         elif self.SECTIONS and self._sectioned_grid:

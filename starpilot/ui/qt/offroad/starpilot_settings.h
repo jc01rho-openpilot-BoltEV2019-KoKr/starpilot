@@ -39,6 +39,7 @@ public:
   bool isGM = true;
   bool isHKG = true;
   bool isHKGCanFd = true;
+  bool isJeep = false;
   bool isSubaru = false;
   bool isTorqueCar = false;
   bool isToyota = true;

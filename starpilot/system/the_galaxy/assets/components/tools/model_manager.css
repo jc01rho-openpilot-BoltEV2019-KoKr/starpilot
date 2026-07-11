@@ -207,19 +207,42 @@
   color: var(--warning-bg);
 }
 
+.mm-chip-user-favorite {
+  background: rgba(142, 108, 211, 0.18);
+  border-color: rgba(142, 108, 211, 0.55);
+  color: var(--accent-color);
+}
+
 .mm-chip-warning {
   background: rgba(224, 85, 119, 0.12);
   border-color: rgba(224, 85, 119, 0.45);
   color: var(--danger-fg);
 }
 
+.mm-icon-btn,
 .mm-star {
   background: transparent;
-  border: none;
-  color: #e0b45a;
+  border: 1px solid var(--sidebar-border-color);
+  border-radius: var(--border-radius-base);
+  color: var(--text-muted);
+  display: inline-flex;
   font-size: 1rem;
+  justify-content: center;
   line-height: 1;
-  padding: 0;
+  min-height: 2.2rem;
+  min-width: 2.45rem;
+  padding: 0.45rem;
+}
+
+.mm-icon-btn:hover:not(:disabled) {
+  background: var(--secondary-bg);
+  color: var(--text-color);
+}
+
+.mm-icon-btn.is-active {
+  background: rgba(142, 108, 211, 0.18);
+  border-color: rgba(142, 108, 211, 0.55);
+  color: var(--accent-color);
 }
 
 .mm-empty {
@@ -238,7 +261,12 @@
   }
 
   .mm-btn {
-    width: 100%;
+    flex: 1 1 auto;
+    width: auto;
+  }
+
+  .mm-icon-btn {
+    flex: 0 0 2.6rem;
   }
 
   .mm-search {

@@ -48,6 +48,14 @@ namespace Path {
     return util::getenv("PARAMS_ROOT", Hardware::PC() ? (Path::comma_home() + "/params") : "/data/params");
   }
 
+  inline std::string params_cache() {
+    return Hardware::PC() ? Path::comma_home() + "/cache/starpilot/params" : "/cache/starpilot/params";
+  }
+
+  inline std::string legacy_params_cache() {
+    return Hardware::PC() ? Path::comma_home() + "/cache/params" : "/cache/params";
+  }
+
   inline std::string rsa_file() {
     return Hardware::PC() ? Path::comma_home() + "/persist/comma/id_rsa" : "/persist/comma/id_rsa";
   }

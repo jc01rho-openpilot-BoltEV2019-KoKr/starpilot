@@ -1,7 +1,6 @@
 import pyray as rl
 import cereal.messaging as messaging
 from openpilot.selfdrive.ui.mici.layouts.home import MiciHomeLayout
-from openpilot.selfdrive.ui.mici.layouts.settings.settings import SettingsLayout
 from openpilot.selfdrive.ui.mici.layouts.offroad_alerts import MiciOffroadAlerts
 from openpilot.selfdrive.ui.mici.onroad.augmented_road_view import AugmentedRoadView
 from openpilot.selfdrive.ui.ui_state import device, ui_state
@@ -28,11 +27,11 @@ class MiciMainLayout(Scroller):
     # Initialize widgets
     self._home_layout = MiciHomeLayout()
     self._alerts_layout = MiciOffroadAlerts()
-    self._settings_layout = SettingsLayout()
+    self._settings_layout = None
     self._onroad_layout = AugmentedRoadView(bookmark_callback=self._on_bookmark_clicked)
 
     # Initialize widget rects
-    for widget in (self._home_layout, self._settings_layout, self._alerts_layout, self._onroad_layout):
+    for widget in (self._home_layout, self._alerts_layout, self._onroad_layout):
       # TODO: set parent rect and use it if never passed rect from render (like in Scroller)
       widget.set_rect(rl.Rectangle(0, 0, gui_app.width, gui_app.height))
 
@@ -58,9 +57,17 @@ class MiciMainLayout(Scroller):
       gui_app.push_widget(self._onboarding_window)
 
   def _setup_callbacks(self):
-    self._home_layout.set_callbacks(on_settings=lambda: gui_app.push_widget(self._settings_layout))
+    self._home_layout.set_callbacks(on_settings=self._open_settings)
     self._onroad_layout.set_click_callback(lambda: self._scroll_to(self._home_layout))
     device.add_interactive_timeout_callback(self._on_interactive_timeout)
+
+  def _open_settings(self):
+    if self._settings_layout is None:
+      from openpilot.selfdrive.ui.mici.layouts.settings.settings import SettingsLayout
+
+      self._settings_layout = SettingsLayout()
+      self._settings_layout.set_rect(rl.Rectangle(0, 0, gui_app.width, gui_app.height))
+    gui_app.push_widget(self._settings_layout)
 
   def _scroll_to(self, layout: Widget):
     layout_x = int(layout.rect.x)

@@ -1,7 +1,39 @@
 import contextlib
 import gc
 import os
+import platform
+import sys
+from pathlib import Path
+
 import pytest
+
+
+def _prepend_host_pytest_runtime() -> None:
+  if platform.system() != "Darwin" or os.getenv("SP_DISABLE_HOST_PYTEST_REDIRECT") == "1":
+    return
+
+  root_dir = Path(__file__).resolve().parent
+  work_dir = root_dir / ".host_runtime" / "darwin" / "worktree"
+  required_extension = work_dir / "msgq_repo" / "msgq" / "ipc_pyx.so"
+  if not required_extension.exists():
+    return
+
+  extra_paths = [work_dir, work_dir / "starpilot" / "third_party"]
+  extra_paths.extend(sorted(work_dir.glob("*_repo")))
+  acados_dir = work_dir / "third_party" / "acados"
+  if acados_dir.is_dir():
+    extra_paths.append(acados_dir)
+
+  existing = set(sys.path)
+  insert_at = 0
+  for path in [str(p) for p in extra_paths if p.exists()]:
+    if path in existing:
+      continue
+    sys.path.insert(insert_at, path)
+    insert_at += 1
+
+
+_prepend_host_pytest_runtime()
 
 from openpilot.common.prefix import OpenpilotPrefix
 from openpilot.system.manager import manager

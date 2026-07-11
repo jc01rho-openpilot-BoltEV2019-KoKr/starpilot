@@ -186,6 +186,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "SubaruSNG",
   "SubaruSNGManualParkingBrake",
   "VoltSNG",
+  "JeepBrakeHold",
   "GMAutoHold",
   "VoltOnePedalMode",
   "GMPedalLongitudinal",

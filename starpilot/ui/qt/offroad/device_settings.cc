@@ -4,7 +4,7 @@
 namespace {
 
 std::string cacheParamsPath() {
-  return Hardware::PC() ? Path::comma_home() + "/cache/params" : "/cache/params";
+  return Path::params_cache();
 }
 
 void prepareKonikServerSwitch(bool use_konik) {

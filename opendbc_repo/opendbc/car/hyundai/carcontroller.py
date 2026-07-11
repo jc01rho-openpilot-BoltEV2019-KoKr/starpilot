@@ -8,7 +8,8 @@ from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_steer_an
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CANFD_RADAR_LIVE_LONGITUDINAL_CAR
+from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CANFD_RADAR_LIVE_LONGITUDINAL_CAR, \
+                                        kia_ev6_gt_line_longitudinal_tuning
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.common.params import Params
@@ -52,6 +53,7 @@ IONIQ_6_LAUNCH_HOLD_SPEED_V = [0.75, 0.6, 0.4, 0.0]
 IONIQ_6_STOP_BRAKE_CAP_MAX_SPEED = 2.0
 IONIQ_6_STOP_BRAKE_CAP_SPEED_BP = [0.0, 0.08, 0.25, 0.6, 1.2, 2.0, 3.0]
 IONIQ_6_STOP_BRAKE_CAP_ACCEL_V = [-0.15, -0.16, -0.22, -0.42, -0.78, -1.15, -1.40]
+EV6_GT_LINE_STOP_BRAKE_CAP_MAX_SPEED = 1.2
 IONIQ_6_STOP_HOLD_JERK_BP = [0.0, 0.15, 0.6, 1.2, 2.0, 3.0]
 IONIQ_6_STOP_HOLD_JERK_V = [0.35, 0.40, 0.48, 0.65, 0.85, 1.10]
 IONIQ_6_STOP_RELEASE_JERK_BP = [0.0, 0.15, 0.5]
@@ -63,6 +65,29 @@ REDNECK_BUTTON_COPIES_TIME = 7
 REDNECK_BUTTON_COPIES_TIME_IMPERIAL = [REDNECK_BUTTON_COPIES_TIME + 3, 70]
 REDNECK_BUTTON_COPIES_TIME_METRIC = [REDNECK_BUTTON_COPIES_TIME, 40]
 ANGLE_SAFETY_BASELINE_MODEL = str(CAR.KIA_SPORTAGE_HEV_2026)
+DEFAULT_ANGLE_SMOOTHING_VEGO_BP = [5.0, 10.0, 20.0]
+DEFAULT_ANGLE_SMOOTHING_ALPHA_V = [0.2, 0.1, 0.0]
+EV9_HIGH_ANGLE_GAIN_BP = [70.0, 120.0, 220.0, 320.0]
+EV9_HIGH_ANGLE_GAIN_CAP_V = [0.85, 0.55, 0.30, 0.16]
+EV9_HIGH_ANGLE_GAIN_MIN = 0.004
+EV9_DRIVER_OVERRIDE_TORQUE_THRESHOLD = 175.0
+EV9_DRIVER_OVERRIDE_GAIN_BP = [0.0, 175.0, 350.0, 525.0]
+EV9_DRIVER_OVERRIDE_GAIN_CAP_V = [0.08, 0.08, 0.04, 0.004]
+EV9_DRIVER_OVERRIDE_RECOVERY_FRAMES = int(0.8 / DT_CTRL)
+EV9_DRIVER_OVERRIDE_RECOVERY_ANGLE_BP = [0, EV9_DRIVER_OVERRIDE_RECOVERY_FRAMES // 2, EV9_DRIVER_OVERRIDE_RECOVERY_FRAMES]
+EV9_DRIVER_OVERRIDE_RECOVERY_ANGLE_V = [0.75, 2.0, 5.0]
+EV9_DRIVER_OVERRIDE_RECOVERY_GAIN_V = [0.08, 0.20, 0.45]
+EV9_DRIVER_OVERRIDE_RECOVERY_ALPHA = 0.02
+
+
+def egmp_dynamic_longitudinal_tuning(CP) -> bool:
+  return CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 or \
+    kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, getattr(CP, "carVin", ""))
+
+
+def should_reset_ev6_gt_line_longitudinal_tuning(CP, long_control_state: LongCtrlState) -> bool:
+  return kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, getattr(CP, "carVin", "")) and \
+    long_control_state == LongCtrlState.off
 
 
 @dataclass
@@ -76,6 +101,13 @@ class Ioniq6LongitudinalTuningState:
   stopping: bool = False
   stopping_count: int = 0
   long_control_state_last: LongCtrlState = LongCtrlState.off
+
+
+def reset_ev6_gt_line_longitudinal_tuning(state: Ioniq6LongitudinalTuningState, CP,
+                                           long_control_state: LongCtrlState) -> Ioniq6LongitudinalTuningState:
+  if should_reset_ev6_gt_line_longitudinal_tuning(CP, long_control_state):
+    return Ioniq6LongitudinalTuningState(long_control_state_last=long_control_state)
+  return state
 
 
 @dataclass
@@ -97,8 +129,14 @@ def _calculate_ioniq_6_dynamic_lower_jerk(accel_error: float) -> float:
   return IONIQ_6_LONG_MIN_JERK
 
 
+def should_use_ev6_gt_line_stop_direct_tracking(ev6_gt_line: bool, stopping: bool, v_ego: float,
+                                                 accel_cmd: float, actual_accel: float) -> bool:
+  return bool(ev6_gt_line and stopping and v_ego > EV6_GT_LINE_STOP_BRAKE_CAP_MAX_SPEED and accel_cmd < actual_accel)
+
+
 def update_ioniq_6_longitudinal_tuning(state: Ioniq6LongitudinalTuningState, accel_cmd: float, v_ego: float, a_ego: float,
-                                       long_control_state: LongCtrlState, long_active: bool) -> Ioniq6LongitudinalTuningState:
+                                       long_control_state: LongCtrlState, long_active: bool,
+                                       ev6_gt_line: bool = False) -> Ioniq6LongitudinalTuningState:
   starting = long_control_state == LongCtrlState.starting
   stopping = long_control_state == LongCtrlState.stopping
   restart_from_stop = state.long_control_state_last in (LongCtrlState.stopping, LongCtrlState.starting) and \
@@ -140,7 +178,8 @@ def update_ioniq_6_longitudinal_tuning(state: Ioniq6LongitudinalTuningState, acc
   state.jerk_lower = min(dynamic_lower_jerk, lower_speed_limit)
 
   if state.stopping:
-    if v_ego <= IONIQ_6_STOP_BRAKE_CAP_MAX_SPEED:
+    stop_brake_cap_max_speed = EV6_GT_LINE_STOP_BRAKE_CAP_MAX_SPEED if ev6_gt_line else IONIQ_6_STOP_BRAKE_CAP_MAX_SPEED
+    if v_ego <= stop_brake_cap_max_speed:
       stop_brake_cap = float(np.interp(v_ego, IONIQ_6_STOP_BRAKE_CAP_SPEED_BP, IONIQ_6_STOP_BRAKE_CAP_ACCEL_V))
       state.desired_accel = min(0.0, max(accel_cmd, stop_brake_cap))
       state.jerk_upper = min(state.jerk_upper, float(np.interp(v_ego, IONIQ_6_STOP_HOLD_JERK_BP, IONIQ_6_STOP_HOLD_JERK_V)) * IONIQ_6_RESPONSE_MULTIPLIER)
@@ -202,6 +241,10 @@ def get_baseline_safety_cp():
   return CarInterface.get_non_essential_params(ANGLE_SAFETY_BASELINE_MODEL)
 
 
+def get_angle_smoothing_alpha(CP, v_ego: float) -> float:
+  return float(np.interp(v_ego, DEFAULT_ANGLE_SMOOTHING_VEGO_BP, DEFAULT_ANGLE_SMOOTHING_ALPHA_V))
+
+
 def compute_torque_reduction_gain(steering_torque, v_ego, lat_active, last_gain):
   if lat_active:
     ceiling = np.interp(v_ego, [0.5, 1.5], [1.0, 0.85])
@@ -217,6 +260,39 @@ def compute_torque_reduction_gain(steering_torque, v_ego, lat_active, last_gain)
 
   gain = rate_limit(target, last_gain, -0.014, 0.004)
   return round(gain / 0.004) * 0.004
+
+
+def apply_ev9_high_angle_gain_cap(CP, gain: float, steering_angle_deg: float, lat_active: bool,
+                                  steering_torque: float = 0.0, steering_pressed: bool = False) -> float:
+  if CP.carFingerprint != CAR.KIA_EV9 or not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING or not lat_active:
+    return gain
+
+  cap = float(np.interp(abs(steering_angle_deg), EV9_HIGH_ANGLE_GAIN_BP, EV9_HIGH_ANGLE_GAIN_CAP_V))
+  gain = max(EV9_HIGH_ANGLE_GAIN_MIN, min(gain, cap))
+
+  if steering_pressed or abs(steering_torque) >= EV9_DRIVER_OVERRIDE_TORQUE_THRESHOLD:
+    driver_override_cap = float(np.interp(abs(steering_torque), EV9_DRIVER_OVERRIDE_GAIN_BP,
+                                          EV9_DRIVER_OVERRIDE_GAIN_CAP_V))
+    gain = min(gain, driver_override_cap)
+
+  return gain
+
+
+def get_ev9_driver_override_recovery_limits(CP, recovery_frames: int) -> tuple[float | None, float | None]:
+  if CP.carFingerprint != CAR.KIA_EV9 or not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING or recovery_frames <= 0:
+    return None, None
+
+  elapsed_frames = EV9_DRIVER_OVERRIDE_RECOVERY_FRAMES - min(recovery_frames, EV9_DRIVER_OVERRIDE_RECOVERY_FRAMES)
+  angle_error_limit = float(np.interp(elapsed_frames, EV9_DRIVER_OVERRIDE_RECOVERY_ANGLE_BP,
+                                      EV9_DRIVER_OVERRIDE_RECOVERY_ANGLE_V))
+  gain_cap = float(np.interp(elapsed_frames, EV9_DRIVER_OVERRIDE_RECOVERY_ANGLE_BP,
+                             EV9_DRIVER_OVERRIDE_RECOVERY_GAIN_V))
+  return angle_error_limit, gain_cap
+
+
+def ev9_driver_override_active(CP, steering_torque: float, steering_pressed: bool, lat_active: bool) -> bool:
+  return CP.carFingerprint == CAR.KIA_EV9 and CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and lat_active and \
+         (steering_pressed or abs(steering_torque) >= EV9_DRIVER_OVERRIDE_TORQUE_THRESHOLD)
 
 
 def process_hud_alert(enabled, fingerprint, hud_control):
@@ -271,6 +347,7 @@ class CarController(CarControllerBase):
     self._dash_lat_disengage_blink_frame = 0
     self._dash_lat_disengage_init = False
     self._dash_prev_lat_active = False
+    self._ev9_driver_override_recovery_frames = 0
 
   def _update_dash_icon_state(self, CC):
     if CC.latActive:
@@ -363,9 +440,29 @@ class CarController(CarControllerBase):
       desired_angle = float(np.clip(actuators.steeringAngleDeg,
                                     -self.params.ANGLE_LIMITS.STEER_ANGLE_MAX,
                                     self.params.ANGLE_LIMITS.STEER_ANGLE_MAX))
+      ev9_driver_override = ev9_driver_override_active(self.CP, CS.out.steeringTorque, CS.out.steeringPressed, CC.latActive)
+      if ev9_driver_override:
+        self._ev9_driver_override_recovery_frames = EV9_DRIVER_OVERRIDE_RECOVERY_FRAMES
+      elif self._ev9_driver_override_recovery_frames > 0:
+        self._ev9_driver_override_recovery_frames -= 1
 
-      self.angle_filter.update_alpha(float(np.interp(CS.out.vEgo, [5.0, 10.0, 20.0], [0.2, 0.1, 0.0])))
-      desired_angle = self.angle_filter.update(desired_angle)
+      if ev9_driver_override:
+        desired_angle = float(np.clip(CS.out.steeringAngleDeg,
+                                      -self.params.ANGLE_LIMITS.STEER_ANGLE_MAX,
+                                      self.params.ANGLE_LIMITS.STEER_ANGLE_MAX))
+        self.angle_filter.x = desired_angle
+      else:
+        angle_alpha = get_angle_smoothing_alpha(self.CP, CS.out.vEgo)
+        if self._ev9_driver_override_recovery_frames > 0 and self.CP.carFingerprint == CAR.KIA_EV9:
+          angle_alpha = min(angle_alpha, EV9_DRIVER_OVERRIDE_RECOVERY_ALPHA)
+        self.angle_filter.update_alpha(angle_alpha)
+        desired_angle = self.angle_filter.update(desired_angle)
+        recovery_angle_error, _ = get_ev9_driver_override_recovery_limits(self.CP, self._ev9_driver_override_recovery_frames)
+        if recovery_angle_error is not None:
+          desired_angle = float(np.clip(desired_angle,
+                                        CS.out.steeringAngleDeg - recovery_angle_error,
+                                        CS.out.steeringAngleDeg + recovery_angle_error))
+          self.angle_filter.x = desired_angle
 
       apply_angle = apply_steer_angle_limits_vm(desired_angle, self.apply_angle_last, v_ego_raw,
                                                 CS.out.steeringAngleDeg, CC.latActive, self.params, self.VM)
@@ -375,6 +472,11 @@ class CarController(CarControllerBase):
                                                   CS.out.steeringAngleDeg, CC.latActive, self.params, self.BASELINE_VM)
 
       apply_torque = compute_torque_reduction_gain(CS.out.steeringTorque, v_ego_raw, CC.latActive, self.apply_torque_last)
+      apply_torque = apply_ev9_high_angle_gain_cap(self.CP, apply_torque, CS.out.steeringAngleDeg, CC.latActive,
+                                                   CS.out.steeringTorque, CS.out.steeringPressed)
+      _, recovery_gain_cap = get_ev9_driver_override_recovery_limits(self.CP, self._ev9_driver_override_recovery_frames)
+      if recovery_gain_cap is not None:
+        apply_torque = min(apply_torque, recovery_gain_cap)
       apply_steer_req = CC.latActive and apply_torque != 0.0
       torque_fault = False
 
@@ -389,6 +491,7 @@ class CarController(CarControllerBase):
                                               -self.params.ANGLE_LIMITS.STEER_ANGLE_MAX,
                                               self.params.ANGLE_LIMITS.STEER_ANGLE_MAX))
         self.angle_filter.x = self.apply_angle_last
+        self._ev9_driver_override_recovery_frames = 0
     else:
       # steering torque
       new_torque = int(round(actuators.torque * self.params.STEER_MAX))
@@ -426,22 +529,30 @@ class CarController(CarControllerBase):
     # longitudinal messages - stock ECU is still active and these would conflict
     self.long_active_ecu = self.CP.openpilotLongitudinalControl and not self.ecu_disable_failed
 
-    use_ioniq_6_dynamic_long_tuning = self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and self.long_active_ecu and \
-                                      actuators.longControlState in (LongCtrlState.starting, LongCtrlState.pid, LongCtrlState.stopping)
-    if use_ioniq_6_dynamic_long_tuning and self.frame % 5 == 0:
+    use_egmp_dynamic_long_tuning = egmp_dynamic_longitudinal_tuning(self.CP) and self.long_active_ecu and \
+                                   actuators.longControlState in (LongCtrlState.starting, LongCtrlState.pid, LongCtrlState.stopping)
+    is_ev6_gt_line = kia_ev6_gt_line_longitudinal_tuning(self.CP.carFingerprint, getattr(self.CP, "carVin", ""))
+    if should_reset_ev6_gt_line_longitudinal_tuning(self.CP, actuators.longControlState):
+      self._ioniq_6_long_tuning = reset_ev6_gt_line_longitudinal_tuning(self._ioniq_6_long_tuning, self.CP,
+                                                                         actuators.longControlState)
+    elif use_egmp_dynamic_long_tuning and self.frame % 5 == 0:
       self._ioniq_6_long_tuning = update_ioniq_6_longitudinal_tuning(self._ioniq_6_long_tuning, accel_cmd,
                                                                       CS.out.vEgo, CS.out.aEgo,
-                                                                      actuators.longControlState, self.long_active_ecu)
-    use_ioniq_6_smoothed_accel = use_ioniq_6_dynamic_long_tuning and (
+                                                                      actuators.longControlState, self.long_active_ecu,
+                                                                      ev6_gt_line=is_ev6_gt_line)
+    use_egmp_smoothed_accel = use_egmp_dynamic_long_tuning and (
       accel_cmd >= self._ioniq_6_long_tuning.actual_accel or
       self._ioniq_6_long_tuning.launch_active or
       self._ioniq_6_long_tuning.stopping
     )
-    if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and self.long_active_ecu:
-      if use_ioniq_6_smoothed_accel:
+    if should_use_ev6_gt_line_stop_direct_tracking(is_ev6_gt_line, self._ioniq_6_long_tuning.stopping,
+                                                   CS.out.vEgo, accel_cmd, self._ioniq_6_long_tuning.actual_accel):
+      use_egmp_smoothed_accel = False
+    if use_egmp_dynamic_long_tuning:
+      if use_egmp_smoothed_accel:
         accel = self._ioniq_6_long_tuning.actual_accel
         stopping = self._ioniq_6_long_tuning.stopping
-      elif use_ioniq_6_dynamic_long_tuning:
+      else:
         accel = float(np.clip(accel_cmd,
                               self.accel_last - IONIQ_6_CANFD_SCC_DECEL_STEP,
                               self.accel_last + IONIQ_6_CANFD_SCC_ACCEL_STEP))
@@ -566,20 +677,41 @@ class CarController(CarControllerBase):
     lka_steering = self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING
     lka_steering_long = lka_steering and self.long_active_ecu
     ccnc_non_hda2 = self.CP.flags & HyundaiFlags.CCNC and not lka_steering
-    use_ioniq_6_dynamic_long_tuning = self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and self.long_active_ecu and \
-                                      CC.actuators.longControlState == LongCtrlState.pid
-    use_ioniq_6_smoothed_accel = use_ioniq_6_dynamic_long_tuning and CC.actuators.accel >= self._ioniq_6_long_tuning.actual_accel
+    use_egmp_dynamic_long_tuning = egmp_dynamic_longitudinal_tuning(self.CP) and self.long_active_ecu and \
+                                   CC.actuators.longControlState in (LongCtrlState.starting, LongCtrlState.pid, LongCtrlState.stopping)
+    use_egmp_smoothed_accel = use_egmp_dynamic_long_tuning and (
+      CC.actuators.accel >= self._ioniq_6_long_tuning.actual_accel or
+      self._ioniq_6_long_tuning.launch_active or
+      self._ioniq_6_long_tuning.stopping
+    )
 
     # steering control
     preserve_stock_lkas = bool(self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING) and not self.long_active_ecu
-    can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled,
-                                                           apply_steer_req, apply_torque, apply_angle,
-                                                           CS.stock_lfa_msg,
-                                                           CS.stock_lkas_msg if preserve_stock_lkas else None,
-                                                           lka_icon=lka_icon))
+    angle_lkas_alt = bool(self.CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and
+                          self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT)
+    steering_msg_active = apply_steer_req
+    if angle_lkas_alt:
+      # Angle LKAS_ALT cars fault if the angle-steering status drops inactive during torque limiting.
+      # Hold the angle status active while lateral is active; VM/safety limits handle actuation.
+      steering_msg_active = CC.latActive
+
+    gear = getattr(getattr(CS, "out", None), "gearShifter", None)
+    drive_gear = gear == structs.CarState.GearShifter.drive
+    if angle_lkas_alt:
+      steering_msg_active = bool(steering_msg_active and drive_gear)
+    forward_stock_lkas = angle_lkas_alt and not (drive_gear and (CC.latActive or CC.enabled))
+    if not forward_stock_lkas:
+      can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled,
+                                                             steering_msg_active, apply_torque, apply_angle,
+                                                             CS.stock_lfa_msg,
+                                                             CS.stock_lkas_msg if preserve_stock_lkas else None,
+                                                             lka_icon=lka_icon))
 
     # prevent LFA from activating on LKA steering cars by sending "no lane lines detected" to ADAS ECU
-    if self.frame % 5 == 0 and lka_steering:
+    suppress_lfa = bool(lka_steering)
+    if angle_lkas_alt:
+      suppress_lfa = bool(lka_steering and CC.latActive and drive_gear)
+    if self.frame % 5 == 0 and suppress_lfa:
       can_sends.append(hyundaicanfd.create_suppress_lfa(self.packer, self.CAN, CS.lfa_block_msg,
                                                         self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT))
 
@@ -625,7 +757,8 @@ class CarController(CarControllerBase):
         # and stops publishing object tracks when it disappears. Spoof it periodically on
         # PT bus so the radar keeps tracking.
         if self.CP.carFingerprint in CANFD_RADAR_LIVE_LONGITUDINAL_CAR and self.frame % 4 == 0:
-          can_sends.append(hyundaicanfd.create_accelerator_brake_alt_spoof(0, self.frame // 4, CS.out.brakePressed, CS.out.gasPressed))
+          can_sends.append(hyundaicanfd.create_accelerator_brake_alt_spoof(0, self.frame // 4, CS.out.brakePressed,
+                                                                            CS.out.gasPressed, self.CP.carFingerprint))
       elif not ccnc_non_hda2:
         can_sends.extend(hyundaicanfd.create_fca_warning_light(self.packer, self.CAN, self.frame))
       if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and self.frame % 5 == 0:
@@ -656,8 +789,8 @@ class CarController(CarControllerBase):
           "lead_rel_speed": lead_rel_speed,
           "lead_visible": lead_visible,
         }
-        if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
-          if use_ioniq_6_smoothed_accel:
+        if use_egmp_dynamic_long_tuning:
+          if use_egmp_smoothed_accel:
             acc_kwargs["jerk_lower"] = self._ioniq_6_long_tuning.jerk_lower
             acc_kwargs["jerk_upper"] = self._ioniq_6_long_tuning.jerk_upper
         can_sends.append(hyundaicanfd.create_acc_control(self.packer, self.CAN, CC.enabled, self.accel_last, accel, stopping, CC.cruiseControl.override,

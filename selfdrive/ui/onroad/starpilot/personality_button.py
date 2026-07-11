@@ -34,6 +34,10 @@ class PersonalityButton(Widget):
     self.set_visible(lambda: ui_state.started and ui_state.has_longitudinal_control)
 
   @property
+  def center_x(self) -> float:
+    return self._rect.x + self._rect.width / 2
+
+  @property
   def is_interacting(self) -> bool:
     return self.is_pressed
 

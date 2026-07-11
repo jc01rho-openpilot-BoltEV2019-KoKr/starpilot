@@ -7,7 +7,10 @@
 #include <openssl/sha.h>
 
 #include <cassert>
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 
 #include "common/params.h"
@@ -15,6 +18,30 @@
 #include "system/hardware/hw.h"
 
 namespace CommaApi2 {
+
+const std::string COMMA_API_HOST = "https://api.commadotai.com";
+const std::string COMMA_API_HOST_ALIAS = "https://api.comma.ai";
+const std::string KONIK_API_HOST = "https://api.konik.ai";
+
+std::string normalize_api_host(const std::string &host) {
+  std::string normalized = host.empty() ? COMMA_API_HOST : host;
+  while (!normalized.empty() && normalized.back() == '/') {
+    normalized.pop_back();
+  }
+  if (normalized.find("://") == std::string::npos) {
+    normalized = "https://" + normalized;
+  }
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) { return std::tolower(c); });
+  return normalized == COMMA_API_HOST_ALIAS ? COMMA_API_HOST : normalized;
+}
+
+std::vector<std::string> route_api_hosts() {
+  const char *api_host = std::getenv("API_HOST");
+  if (api_host != nullptr && api_host[0] != '\0') {
+    return {normalize_api_host(api_host)};
+  }
+  return {COMMA_API_HOST, KONIK_API_HOST};
+}
 
 // Base64 URL-safe character set (uses '-' and '_' instead of '+' and '/')
 static const std::string base64url_chars =
@@ -104,7 +131,25 @@ std::string create_jwt(const json11::Json &extra, int exp_time) {
   return jwt + "." + base64url_encode(signature);
 }
 
-std::string create_token(bool use_jwt, const json11::Json &payloads, int expiry) {
+std::string auth_token_for_host(const json11::Json &json, const std::string &api_host) {
+  const std::string normalized_host = normalize_api_host(api_host);
+
+  const json11::Json tokens = json["tokens"];
+  if (tokens.is_object()) {
+    const std::string token = tokens[normalized_host].string_value();
+    if (!token.empty()) {
+      return token;
+    }
+  }
+
+  const std::string env_host = normalize_api_host(util::getenv("API_HOST", COMMA_API_HOST));
+  if (normalized_host == COMMA_API_HOST || normalized_host == env_host) {
+    return json["access_token"].string_value();
+  }
+  return "";
+}
+
+std::string create_token(bool use_jwt, const json11::Json &payloads, int expiry, const std::string &api_host) {
   if (use_jwt) {
     return create_jwt(payloads, expiry);
   }
@@ -116,15 +161,15 @@ std::string create_token(bool use_jwt, const json11::Json &payloads, int expiry)
     std::cerr << "Error parsing auth.json " << err << std::endl;
     return "";
   }
-  return json["access_token"].string_value();
+  return auth_token_for_host(json, api_host);
 }
 
-std::string httpGet(const std::string &url, long *response_code) {
+std::string httpGet(const std::string &url, long *response_code, const std::string &api_host) {
   CURL *curl = curl_easy_init();
   assert(curl);
 
   std::string readBuffer;
-  const std::string token = CommaApi2::create_token(!Hardware::PC());
+  const std::string token = CommaApi2::create_token(!Hardware::PC(), {}, 3600, api_host);
 
   // Set up the lambda for the write callback
   // The '+' makes the lambda non-capturing, allowing it to be used as a C function pointer

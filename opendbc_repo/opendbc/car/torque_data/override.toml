@@ -17,6 +17,7 @@ legend = ["LAT_ACCEL_FACTOR", "MAX_LAT_ACCEL_MEASURED", "FRICTION"]
 
 # Toyota LTA also has torque
 "TOYOTA_RAV4_TSS2_2023" = [nan, 3.0, nan]
+"TOYOTA_MATRIX_RETROFIT" = [4.05, 1.84, 0.10]
 
 # Tesla angle based controllers
 "TESLA_MODEL_3" = [nan, 2.5, nan]
@@ -97,6 +98,7 @@ legend = ["LAT_ACCEL_FACTOR", "MAX_LAT_ACCEL_MEASURED", "FRICTION"]
 "HYUNDAI_IONIQ_9" = [nan, 2.5, nan]
 "HYUNDAI_AZERA_6TH_GEN" = [1.8, 1.8, 0.1]
 "HYUNDAI_AZERA_HEV_6TH_GEN" = [1.8, 1.8, 0.1]
+"HYUNDAI_AZERA_HEV_7TH_GEN" = [nan, 2.5, nan]
 "KIA_K8_HEV_1ST_GEN" = [2.5, 2.5, 0.1]
 "KIA_K4_2025" = [2.5, 2.5, 0.1]
 "KIA_K5_2025" = [2.5, 2.5, 0.1]

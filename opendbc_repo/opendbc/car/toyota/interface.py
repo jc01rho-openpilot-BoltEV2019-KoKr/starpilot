@@ -68,10 +68,11 @@ class CarInterface(CarInterfaceBase):
 
     if candidate == CAR.TOYOTA_PRIUS:
       stop_and_go = True
+      ret.flags |= ToyotaFlags.HYBRID.value
       # Only give steer angle deadzone to for bad angle sensor prius
       for fw in car_fw:
         if fw.ecu == "eps" and not fw.fwVersion == b'8965B47060\x00\x00\x00\x00\x00\x00':
-          ret.steerActuatorDelay = 0.25
+          ret.steerActuatorDelay = 0.14
           CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning, steering_angle_deadzone_deg=0.3)
 
     elif candidate in (CAR.LEXUS_RX, CAR.LEXUS_RX_TSS2):
@@ -154,7 +155,9 @@ class CarInterface(CarInterfaceBase):
     # to a negative value, so it won't matter.
     ret.minEnableSpeed = -1. if (stop_and_go or ret.enableGasInterceptorDEPRECATED) else MIN_ACC_SPEED
 
-    if candidate in TSS2_CAR or ret.enableGasInterceptorDEPRECATED:
+    prius_long_defaults = candidate == CAR.TOYOTA_PRIUS and ret.openpilotLongitudinalControl
+
+    if candidate in TSS2_CAR or ret.enableGasInterceptorDEPRECATED or prius_long_defaults:
       ret.flags |= ToyotaFlags.RAISED_ACCEL_LIMIT.value
 
       ret.vEgoStopping = 0.25

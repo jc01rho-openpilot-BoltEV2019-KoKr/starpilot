@@ -165,6 +165,10 @@ jobs:
               "panda/board/obj/panda_h7.bin.signed"
               "panda/board/obj/panda_remote.bin.signed"
               "panda/board/obj/panda_h7_remote.bin.signed"
+              "panda/board/obj/panda_can_ignition_only.bin.signed"
+              "panda/board/obj/panda_h7_can_ignition_only.bin.signed"
+              "panda/board/obj/panda_remote_can_ignition_only.bin.signed"
+              "panda/board/obj/panda_h7_remote_can_ignition_only.bin.signed"
               "panda/board/obj/panda_jungle_h7.bin.signed"
               "panda/board/obj/body_h7.bin.signed"
             )

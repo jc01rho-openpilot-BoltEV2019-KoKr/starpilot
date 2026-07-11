@@ -68,6 +68,7 @@ cppcheck_report.txt
 comma*.sh
 
 selfdrive/modeld/models/*.pkl
+!selfdrive/modeld/models/driving_tinygrad.pkl
 !selfdrive/modeld/models/driving_vision_tinygrad.pkl
 !selfdrive/modeld/models/driving_policy_tinygrad.pkl
 !selfdrive/modeld/models/driving_vision_metadata.pkl

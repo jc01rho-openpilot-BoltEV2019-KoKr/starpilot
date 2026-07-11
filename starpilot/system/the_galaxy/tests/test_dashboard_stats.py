@@ -288,12 +288,12 @@ def test_route_metrics_count_selected_attention_events():
     msg("initData", 0, SimpleNamespace(params={"DrivingModelName": b"North Star"})),
     msg("carState", 0, SimpleNamespace(vEgo=10.0)),
     msg("selfdriveState", 0, SimpleNamespace(enabled=True)),
-    msg("onroadEvents", 1, events("promptDriverDistracted")),
-    msg("onroadEvents", 2, events("promptDriverDistracted")),
+    msg("onroadEvents", 1, events("driverDistracted2")),
+    msg("onroadEvents", 2, events("driverDistracted2")),
     msg("onroadEvents", 3, events()),
-    msg("onroadEvents", 4, events("promptDriverDistracted")),
-    msg("onroadEvents", 5, events("driverUnresponsive")),
-    msg("onroadEvents", 6, events("driverUnresponsive")),
+    msg("onroadEvents", 4, events("driverDistracted2")),
+    msg("onroadEvents", 5, events("driverUnresponsive3")),
+    msg("onroadEvents", 6, events("driverUnresponsive3")),
     msg("carState", 10, SimpleNamespace(vEgo=10.0)),
     msg("selfdriveState", 10, SimpleNamespace(enabled=False)),
   ]
@@ -543,6 +543,121 @@ def test_model_usage_ignores_pending_route_shells():
 
   assert [model["name"] for model in favorites] == ["Orion"]
   assert favorites[0]["drives"] == 1
+
+
+def test_ignored_drive_stays_recent_but_is_removed_from_local_stats(monkeypatch):
+  utilities._invalidate_dashboard_cache()
+  first_route = "00000001--abcdef0001"
+  shared_route = "00000002--abcdef0002"
+  third_route = "00000003--abcdef0003"
+  params = FakeParams({
+    "AvailableModels": "orion",
+    "AvailableModelNames": "Orion",
+  })
+  drives = [
+    {
+      "name": first_route,
+      "date": "2026-06-15T08:00:00",
+      "endDate": "2026-06-15T08:20:00",
+      "distanceMeters": 10000.0,
+      "duration": 1200,
+      "engagedSeconds": 900.0,
+      "model": "Orion",
+      "distractedMoments": 0,
+      "unresponsiveMoments": 0,
+      "routeModifiedAt": 100,
+      "attentionKnown": True,
+      "analysisComplete": True,
+    },
+    {
+      "name": shared_route,
+      "date": "2026-06-16T08:00:00",
+      "endDate": "2026-06-16T09:00:00",
+      "distanceMeters": 50000.0,
+      "duration": 3600,
+      "engagedSeconds": 100.0,
+      "model": "Orion",
+      "distractedMoments": 4,
+      "unresponsiveMoments": 1,
+      "routeModifiedAt": 100,
+      "attentionKnown": True,
+      "analysisComplete": True,
+    },
+    {
+      "name": third_route,
+      "date": "2026-06-17T08:00:00",
+      "endDate": "2026-06-17T08:15:00",
+      "distanceMeters": 5000.0,
+      "duration": 900,
+      "engagedSeconds": 800.0,
+      "model": "Orion",
+      "distractedMoments": 0,
+      "unresponsiveMoments": 0,
+      "routeModifiedAt": 100,
+      "attentionKnown": True,
+      "analysisComplete": True,
+    },
+  ]
+  utilities._update_dashboard_persistent_stats(params, drives, wall_now=1000)
+
+  ignored = utilities.ignore_dashboard_routes(params, [shared_route])
+
+  assert ignored == [shared_route]
+  monkeypatch.setattr(utilities, "_list_dashboard_routes", lambda paths: [])
+  monkeypatch.setattr(utilities, "_start_dashboard_background_analysis", lambda *args: False)
+  monkeypatch.setattr(utilities, "_build_storage_summary", lambda paths: {
+    "freeBytes": 0,
+    "usedBytes": 0,
+    "totalBytes": 0,
+    "usedPercent": 0,
+    "segmentCounts": {},
+  })
+
+  dashboard = utilities.get_dashboard_stats([], params, now=utilities.datetime(2026, 6, 18, 12, 0, 0))
+  recent_by_name = {drive["name"]: drive for drive in dashboard["recentDrives"]}
+
+  assert recent_by_name[shared_route]["ignored"] is True
+  assert recent_by_name[first_route]["ignored"] is False
+  assert dashboard["week"]["drives"] == 2
+  assert dashboard["week"]["distance"] == 9.3
+  assert dashboard["records"]["longestDrive"]["value"] == "6.2"
+  assert dashboard["records"]["cleanDriveStreak"]["value"] == "2 drives"
+  assert dashboard["favoriteModels"][0]["drives"] == 2
+
+  utilities.include_dashboard_routes(params, [shared_route])
+  restored = utilities.get_dashboard_stats([], params, now=utilities.datetime(2026, 6, 18, 12, 0, 0))
+  restored_by_name = {drive["name"]: drive for drive in restored["recentDrives"]}
+  assert restored_by_name[shared_route]["ignored"] is False
+  assert restored["week"]["drives"] == 3
+  assert restored["records"]["longestDrive"]["value"] == "31.1"
+  assert restored["favoriteModels"][0]["drives"] == 3
+  utilities._invalidate_dashboard_cache()
+
+
+def test_ignored_route_is_not_queued_for_analysis():
+  ignored_route = "00000001--abcdef0001"
+  active_route = "00000002--abcdef0002"
+  route_infos = [
+    {"name": ignored_route, "modifiedAt": 100, "segmentCount": 1},
+    {"name": active_route, "modifiedAt": 100, "segmentCount": 1},
+  ]
+  stats = {
+    "routes": {},
+    "ignoredRoutes": [ignored_route],
+  }
+
+  assert utilities._analysis_candidates(route_infos, stats) == [route_infos[1]]
+
+
+def test_ignore_dashboard_routes_rejects_arbitrary_names():
+  params = FakeParams()
+
+  try:
+    utilities.ignore_dashboard_routes(params, ["../../data/params"])
+  except ValueError as exception:
+    assert "No valid dashboard routes" in str(exception)
+  else:
+    raise AssertionError("invalid route name was accepted")
 
 
 def test_cpu_temp_reader_uses_hardware_cpu_values(monkeypatch):
@@ -1120,8 +1235,13 @@ def test_stats_endpoint_keeps_existing_keys_and_adds_dashboard(monkeypatch):
   monkeypatch.setattr(server.utilities, "get_disk_usage", lambda: [{"free": "1 GB", "size": "2 GB", "used": "1 GB", "usedPercentage": "50.00%"}])
   monkeypatch.setattr(server.utilities, "get_drive_stats", lambda: {"all": {"drives": 0, "distance": 0, "hours": 0, "unit": "miles"}})
   monkeypatch.setattr(server.utilities, "get_dashboard_stats", lambda footage_paths, params_obj: {"lastDrive": {}, "recentDrives": []})
+  ignored_calls = []
+  included_calls = []
+  monkeypatch.setattr(server.utilities, "ignore_dashboard_routes", lambda params_obj, route_names: ignored_calls.extend(route_names) or route_names)
+  monkeypatch.setattr(server.utilities, "include_dashboard_routes", lambda params_obj, route_names: included_calls.extend(route_names) or route_names)
 
-  response = app.test_client().get("/api/stats")
+  client = app.test_client()
+  response = client.get("/api/stats")
   payload = response.get_json()
 
   assert response.status_code == 200
@@ -1130,3 +1250,12 @@ def test_stats_endpoint_keeps_existing_keys_and_adds_dashboard(monkeypatch):
   assert "softwareInfo" in payload
   assert payload["softwareInfo"]["buildEnvironment"] == "Experimental"
   assert payload["dashboard"]["recentDrives"] == []
+
+  route_name = "00000001--abcdef0001"
+  ignore_response = client.post("/api/stats/ignore_drive", json={"routeNames": [route_name]})
+  include_response = client.post("/api/stats/include_drive", json={"routeNames": [route_name]})
+
+  assert ignore_response.status_code == 200
+  assert include_response.status_code == 200
+  assert ignored_calls == [route_name]
+  assert included_calls == [route_name]

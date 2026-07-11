@@ -2,6 +2,7 @@
   all: unset;
   background-color: var(--main-fg);
   border-radius: var(--border-radius-sm);
+  color: var(--text-on-primary);
   cursor: pointer;
   padding: var(--padding-xs) var(--padding-xs);
   transition: background-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
@@ -41,6 +42,37 @@
   transform: var(--hover-scale-sm);
 }
 
+.navkeys-app-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--margin-base);
+}
+
+.navkeys-app-container {
+  flex-basis: min(100%, calc((var(--width-lg) * 2) + var(--gap-lg)));
+  max-width: calc((var(--width-lg) * 2) + var(--gap-lg));
+}
+
+.navkeys-copy-btn,
+.navkeys-link-btn {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--gap-xs);
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.navkeys-copy-btn {
+  min-width: 5.5rem;
+}
+
+.navkeys-icon-btn {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  min-width: 2.25rem;
+}
+
 .navkeys-error {
   color: var(--danger-bg);
   font-size: var(--font-size-sm);
@@ -72,6 +104,7 @@
   cursor: text;
   flex: 1;
   font-size: var(--font-size-base);
+  min-width: 0;
   padding: var(--padding-xs) var(--padding-sm);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
@@ -87,11 +120,20 @@
   color: var(--text-muted);
 }
 
+.navkeys-token-input {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
 .navkeys-label {
   display: block;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
   margin-bottom: var(--margin-xs);
+}
+
+.navkeys-link-btn {
+  text-decoration: none;
 }
 
 .navkeys-message {

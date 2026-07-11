@@ -15,7 +15,7 @@ Route::Route(const std::string &route, const std::string &data_dir, bool auto_so
 
 RouteIdentifier Route::parseRoute(const std::string &str) {
   RouteIdentifier identifier = {};
-  static const std::regex pattern(R"(^(([a-z0-9]{16})[|_/])?(.{20})((--|/)((-?\d+(:(-?\d+)?)?)|(:-?\d+)))?$)");
+  static const std::regex pattern(R"(^(([a-z0-9]{16})[|_/])?(.{20})((--|/)((-?\d+(:(-?\d+)?)?)|(:-?\d+)))?(/[qra])?$)");
   std::smatch match;
 
   if (std::regex_match(str, match, pattern)) {
@@ -104,30 +104,38 @@ bool Route::loadFromAutoSource() {
 }
 
 bool Route::loadFromServer(int retries) {
-  const std::string url = CommaApi2::BASE_URL + "/v1/route/" + route_.str + "/files";
-  for (int i = 1; i <= retries; ++i) {
-    long response_code = 0;
-    std::string result = CommaApi2::httpGet(url, &response_code);
-    if (response_code == 200) {
-      return loadFromJson(result);
+  const auto api_hosts = CommaApi2::route_api_hosts();
+  for (const auto &api_host : api_hosts) {
+    const std::string url = api_host + "/v1/route/" + route_.str + "/files";
+    for (int i = 1; i <= retries; ++i) {
+      long response_code = 0;
+      std::string result = CommaApi2::httpGet(url, &response_code, api_host);
+      if (response_code == 200) {
+        return loadFromJson(result);
+      }
+
+      if (response_code == 401 || response_code == 403) {
+        rWarning(">> Unauthorized. Authenticate with tools/lib/auth.py <<");
+        err_ = RouteLoadError::Unauthorized;
+        return false;
+      }
+      if (response_code == 404) {
+        err_ = RouteLoadError::FileNotFound;
+        break;
+      }
+
+      err_ = RouteLoadError::NetworkError;
+      rWarning("Retrying %d/%d", i, retries);
+      util::sleep_for(3000);
     }
 
-    if (response_code == 401 || response_code == 403) {
-      rWarning(">> Unauthorized. Authenticate with tools/lib/auth.py <<");
-      err_ = RouteLoadError::Unauthorized;
-      break;
+    if (err_ == RouteLoadError::NetworkError) {
+      return false;
     }
-    if (response_code == 404) {
-      rWarning("The specified route could not be found on the server.");
-      err_ = RouteLoadError::FileNotFound;
-      break;
-    }
-
-    err_ = RouteLoadError::NetworkError;
-    rWarning("Retrying %d/%d", i, retries);
-    util::sleep_for(3000);
   }
 
+  rWarning(api_hosts.size() > 1 ? "The specified route could not be found on comma or Konik." : "The specified route could not be found on the server.");
+  err_ = RouteLoadError::FileNotFound;
   return false;
 }
 

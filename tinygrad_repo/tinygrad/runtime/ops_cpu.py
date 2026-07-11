@@ -1,19 +1,21 @@
 from __future__ import annotations
 import platform, sys, ctypes, functools, time, mmap, threading, queue
-from tinygrad.helpers import to_mv, OSX, WIN, mv_address, wait_cond, suppress_finalizing, unwrap, data64_le
-from tinygrad.helpers import CPU_CC, CPU_LVP, CPU_LLVM
-from tinygrad.device import BufferSpec, DMACPURef, CompilerSet
+from tinygrad.helpers import to_mv, OSX, WIN, mv_address, suppress_finalizing, unwrap, data64_le
+from tinygrad.device import BufferSpec
 from tinygrad.runtime.support.hcq import HCQCompiled, HCQAllocator, HCQBuffer, HWQueue, HCQArgsState, HCQSignal, HCQProgram, MMIOInterface
 from tinygrad.runtime.support.hcq import CLikeArgsState
-from tinygrad.renderer.cstyle import ClangJITRenderer
+from tinygrad.renderer.cstyle import ClangRenderer
 from tinygrad.renderer.llvmir import CPULLVMRenderer
 from tinygrad.renderer.nir import LVPRenderer
+from tinygrad.renderer.isa.x86 import X86Renderer
 from tinygrad.runtime.support.elf import jit_loader
 from tinygrad.uop.ops import sint
 
 class CPUSignal(HCQSignal):
   def _sleep(self, time_spent_since_last_sleep_ms:int):
-    if self.is_timeline and self.owner is not None: self.owner.tasks.join()
+    if self.is_timeline and self.owner is not None:
+      self.owner.tasks.join()
+      if self.owner.error_state is not None: raise self.owner.error_state
 
 class CPUWorker(threading.Thread):
   def __init__(self, dev, tasks, thread_id):
@@ -29,21 +31,25 @@ class CPUWorker(threading.Thread):
   def run(self):
     while True:
       cmd_iter = iter(self.tasks.get())
-      for cmd in cmd_iter:
-        threads, args_cnt = next(cmd_iter), next(cmd_iter)
-        args = [next(cmd_iter) for _ in range(args_cnt)]
-        for th in range(threads - 1): self.push_task(th, cmd, args)
-        cmd(self.thread_id, *args)
-        for th in range(threads - 1): self.pool[th].join()
-      self.tasks.task_done()
+      try:
+        for cmd in cmd_iter:
+          threads, args_cnt = next(cmd_iter), next(cmd_iter)
+          args = [next(cmd_iter) for _ in range(args_cnt)]
+          for th in range(threads - 1): self.push_task(th, cmd, args)
+          cmd(self.thread_id, *args)
+          for th in range(threads - 1): self.pool[th].join()
+      except Exception as e: self.dev.error_state = e
+      finally: self.tasks.task_done()
 
 class CPUComputeQueue(HWQueue):
   def _exec(self, tid, prg, bufs, *args):
     vals = list(args[bufs:])
     if 'core_id' in prg.runtimevars: vals[prg.runtimevars['core_id']] = tid
-    prg.fxn(*map(ctypes.c_uint64, args[:bufs]), *map(ctypes.c_int64 if platform.machine() == "arm64" else ctypes.c_int32, vals))
+    prg.fxn(*map(ctypes.c_uint64, args[:bufs]), *map(ctypes.c_int64 if platform.machine().lower() == "arm64" else ctypes.c_int32, vals))
   def _signal(self, tid, signal_addr, value): to_mv(signal_addr, 4).cast('I')[0] = value
-  def _wait(self, tid, signal_addr, value): wait_cond(lambda: to_mv(signal_addr, 4).cast('I')[0] >= value, timeout_ms=60000)
+  def _wait(self, tid, tmpl_sig, signal_addr, value):
+    tmpl_sig.base_buf = HCQBuffer(signal_addr, 16, view=MMIOInterface(signal_addr, 16))
+    tmpl_sig.wait(value)
   def _timestamp(self, tid, timestamp_addr): to_mv(timestamp_addr, 8).cast('Q')[0] = time.perf_counter_ns()
   def cmd(self, cmd, *args, threads=1):
     self.q(cmd, threads, len(args), *args)
@@ -55,7 +61,7 @@ class CPUComputeQueue(HWQueue):
       self.bind_args_state(args_state)
       return self.cmd(self._exec, prg, 1, args_state.buf.va_addr)
     return self.cmd(self._exec, prg, len(args_state.bufs), *[x.va_addr for x in args_state.bufs], *args_state.vals, threads=(global_size or (1,))[0])
-  def wait(self, signal, value=0): return self.cmd(self._wait, signal.value_addr, value)
+  def wait(self, signal, value=0): return self.cmd(self._wait, type(signal)(signal.base_buf, owner=signal.owner, virt=True), signal.value_addr, value)
   def timestamp(self, signal): return self.cmd(self._timestamp, signal.timestamp_addr)
   def signal(self, signal, value:sint=0): return self.cmd(self._signal, signal.value_addr, value)
   def _submit(self, dev): dev.tasks.put(self._q[:])
@@ -123,15 +129,14 @@ class CPUAllocator(HCQAllocator):
   def _as_buffer(self, src) -> memoryview:
     self.dev.synchronize()
     return to_mv(src.va_addr, src.size)
-  def _as_dmaref(self, buf):
-    self.dev.synchronize()
-    return DMACPURef(buf.va_addr, buf.size)
   def _map(self, buf:HCQBuffer):
     if buf.view is None or not isinstance(buf.view, MMIOInterface): raise RuntimeError("Cannot map buffer without view to cpu")
+    return HCQBuffer(buf.view.addr, buf.size, view=buf.view, owner=buf.owner)
+  def _unmap(self, mb): pass  # CPU _map returns a view wrapper, nothing to release
 
 class CPUDevice(HCQCompiled):
   def __init__(self, device:str=""):
     self.tasks:queue.Queue = queue.Queue()
     CPUWorker(self, self.tasks, thread_id=0).start()
-    compilers = CompilerSet([(ClangJITRenderer, None), (CPULLVMRenderer, CPU_LLVM), (LVPRenderer, CPU_LVP)], ctrl_var=CPU_CC)
-    super().__init__(device, CPUAllocator(self), compilers, functools.partial(CPUProgram, self), CPUSignal, CPUComputeQueue)
+    super().__init__(device, CPUAllocator(self), [ClangRenderer, CPULLVMRenderer, LVPRenderer, X86Renderer], functools.partial(CPUProgram, self),
+                     CPUSignal, CPUComputeQueue, arch={'amd64':'x86_64', 'aarch64':'arm64'}.get(m:=platform.machine().lower(), m)+",native")

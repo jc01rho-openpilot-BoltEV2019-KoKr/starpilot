@@ -2,16 +2,13 @@ from pathlib import Path
 
 from openpilot.common.params import Params
 from openpilot.system.athena.registration import register
-from openpilot.system.hardware import PC
 from openpilot.system.hardware.hw import Paths
 
 from openpilot.starpilot.common.starpilot_utilities import use_konik_server
 
 
 def _cache_params_path() -> str:
-  if PC:
-    return str(Path(Paths.comma_home()) / "cache" / "params")
-  return "/cache/params"
+  return Paths.params_cache_root()
 
 
 def _normalize_dongle_id(value):

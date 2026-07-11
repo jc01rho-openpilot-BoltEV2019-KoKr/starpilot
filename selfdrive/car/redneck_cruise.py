@@ -17,6 +17,17 @@ MANUAL_BUTTON_INACTIVE_TIMER = 0.5
 LEAD_RECOVERY_LOOKAHEAD_POINTS = 4
 LEAD_RECOVERY_HOLD_BUFFER_MS = 0.5 * CV.MPH_TO_MS
 LEAD_COAST_BUFFER_MS = 1.0 * CV.MPH_TO_MS
+LEAD_EXTRA_COAST_BUFFER_FACTOR = 0.6
+LEAD_EXTRA_COAST_BUFFER_MAX_MS = 3.0 * CV.MPH_TO_MS
+LEAD_EXTRA_COAST_HEADWAY_MIN_S = 1.5
+LEAD_EXTRA_COAST_HEADWAY_MAX_S = 3.0
+LEAD_DEPARTURE_REL_SPEED_MIN_MS = 1.0 * CV.MPH_TO_MS
+LEAD_DEPARTURE_HEADWAY_MIN_S = 1.8
+LEAD_DEPARTURE_HEADWAY_MAX_S = 4.5
+LEAD_DEPARTURE_BOOST_MIN_MS = 0.75 * CV.MPH_TO_MS
+LEAD_DEPARTURE_BOOST_MAX_MS = 1.5 * CV.MPH_TO_MS
+LEAD_DEPARTURE_BOOST_FACTOR = 0.35
+LEAD_DEPARTURE_PLAN_POINTS = 3
 
 CRUISE_BUTTON_TIMERS = {
   int(ButtonType.decelCruise): 0,
@@ -31,7 +42,8 @@ CRUISE_BUTTON_TIMERS = {
 def select_redneck_target_speed(v_cruise_kph: float, speed_cluster_ms: float,
                                 starpilot_target_speed_ms: float, plan_speeds_ms: list[float],
                                 lookahead_points: int, allow_plan_decrease: bool = True,
-                                lead_present: bool = False) -> float:
+                                lead_present: bool = False, lead_distance_m: float = 0.0,
+                                lead_rel_speed_ms: float = 0.0) -> float:
   target_speed_ms = float(speed_cluster_ms)
   if v_cruise_kph > 0:
     target_speed_ms = float(v_cruise_kph) * CV.KPH_TO_MS
@@ -42,6 +54,14 @@ def select_redneck_target_speed(v_cruise_kph: float, speed_cluster_ms: float,
     if lead_present and target_speed_ms > speed_cluster_ms and plan_speeds_ms[0] > speed_cluster_ms:
       recovery_lookahead_points = min(len(plan_speeds_ms), LEAD_RECOVERY_LOOKAHEAD_POINTS)
       recovery_target_speed_ms = max(speed_cluster_ms, min(plan_speeds_ms[:recovery_lookahead_points]))
+      departure_boost_ms = get_lead_departure_boost_ms(
+        speed_cluster_ms,
+        lead_distance_m,
+        lead_rel_speed_ms,
+        plan_speeds_ms,
+      )
+      if departure_boost_ms > 0.0:
+        recovery_target_speed_ms = max(recovery_target_speed_ms, speed_cluster_ms + departure_boost_ms)
       return min(target_speed_ms, recovery_target_speed_ms)
 
     decrease_target_speed_ms = min(plan_speeds_ms[:lookahead_points])
@@ -50,12 +70,57 @@ def select_redneck_target_speed(v_cruise_kph: float, speed_cluster_ms: float,
       return speed_cluster_ms
 
     if lead_present and decrease_target_speed_ms < speed_cluster_ms:
-      decrease_target_speed_ms = max(0.0, decrease_target_speed_ms - LEAD_COAST_BUFFER_MS)
+      decrease_target_speed_ms = max(0.0, decrease_target_speed_ms - get_lead_coast_buffer_ms(
+        speed_cluster_ms,
+        lead_distance_m,
+        lead_rel_speed_ms,
+      ))
 
     if decrease_target_speed_ms < target_speed_ms:
       return decrease_target_speed_ms
 
   return target_speed_ms
+
+
+def get_lead_coast_buffer_ms(speed_cluster_ms: float, lead_distance_m: float, lead_rel_speed_ms: float) -> float:
+  lead_closing_speed_ms = max(-float(lead_rel_speed_ms), 0.0)
+  if lead_closing_speed_ms <= 0.0:
+    return LEAD_COAST_BUFFER_MS
+
+  headway_factor = 0.0
+  if lead_distance_m > 0.0 and speed_cluster_ms > 0.1:
+    headway_s = lead_distance_m / speed_cluster_ms
+    headway_factor = min(max(
+      (LEAD_EXTRA_COAST_HEADWAY_MAX_S - headway_s) /
+      (LEAD_EXTRA_COAST_HEADWAY_MAX_S - LEAD_EXTRA_COAST_HEADWAY_MIN_S),
+      0.0,
+    ), 1.0)
+
+  extra_buffer_ms = min(LEAD_EXTRA_COAST_BUFFER_MAX_MS, lead_closing_speed_ms * LEAD_EXTRA_COAST_BUFFER_FACTOR)
+  return LEAD_COAST_BUFFER_MS + extra_buffer_ms * (0.5 + (0.5 * headway_factor))
+
+
+def get_lead_departure_boost_ms(speed_cluster_ms: float, lead_distance_m: float, lead_rel_speed_ms: float,
+                                plan_speeds_ms: list[float]) -> float:
+  if lead_rel_speed_ms < LEAD_DEPARTURE_REL_SPEED_MIN_MS or speed_cluster_ms <= 0.1 or lead_distance_m <= 0.0:
+    return 0.0
+
+  plan_points = min(len(plan_speeds_ms), LEAD_DEPARTURE_PLAN_POINTS)
+  if plan_points <= 0 or min(plan_speeds_ms[:plan_points]) <= speed_cluster_ms:
+    return 0.0
+
+  headway_s = lead_distance_m / speed_cluster_ms
+  if headway_s < LEAD_DEPARTURE_HEADWAY_MIN_S:
+    return 0.0
+
+  headway_factor = min(max(
+    (headway_s - LEAD_DEPARTURE_HEADWAY_MIN_S) /
+    (LEAD_DEPARTURE_HEADWAY_MAX_S - LEAD_DEPARTURE_HEADWAY_MIN_S),
+    0.0,
+  ), 1.0)
+  extra_boost_ms = max(lead_rel_speed_ms - LEAD_DEPARTURE_REL_SPEED_MIN_MS, 0.0) * LEAD_DEPARTURE_BOOST_FACTOR
+  boost_ms = LEAD_DEPARTURE_BOOST_MIN_MS + extra_boost_ms * (0.5 + (0.5 * headway_factor))
+  return min(boost_ms, LEAD_DEPARTURE_BOOST_MAX_MS)
 
 
 def get_minimum_set_speed(is_metric: bool) -> int:

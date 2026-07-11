@@ -56,6 +56,7 @@ class ConditionalChillMode:
     self._chill_hold_until = 0.0
     self._prev_cc_status = None
     self._launch_active = False
+    self._launch_forced_exit = False
 
   def update(self, v_ego, v_cruise, sm, starpilot_toggles):
     now = time.monotonic()
@@ -95,6 +96,16 @@ class ConditionalChillMode:
     else:
       self._candidate_since = 0.0
       if not self.experimental_mode:
+        if self._launch_forced_exit:
+          self.experimental_mode = True
+          self._active_auto_status = CCStatus["OFF"]
+          self.status_value = CCStatus["OFF"]
+          self._soft_exit_since = 0.0
+          self._chill_hold_until = 0.0
+          self._launch_forced_exit = False
+          self._write_status(CCStatus["OFF"])
+          return
+
         if self._soft_exit_since == 0.0:
           self._soft_exit_since = now
 
@@ -118,6 +129,7 @@ class ConditionalChillMode:
     self._soft_exit_since = 0.0
     self._chill_hold_until = 0.0
     self._launch_active = False
+    self._launch_forced_exit = False
 
   def _refresh_detector(self, v_ego, sm):
     detector_toggles = type("DetectorToggles", (), {
@@ -216,6 +228,7 @@ class ConditionalChillMode:
   def _get_launch_status(self, v_ego, sm):
     if self._launch_active and self._launch_exit_required(v_ego, sm):
       self._launch_active = False
+      self._launch_forced_exit = True
       return CCStatus["OFF"]
 
     if self._launch_active:
@@ -224,6 +237,7 @@ class ConditionalChillMode:
     if not self._launch_scene_eligible(v_ego, sm):
       return CCStatus["OFF"]
 
+    self._launch_forced_exit = False
     self._launch_active = True
     return self._get_launch_cc_status()
 

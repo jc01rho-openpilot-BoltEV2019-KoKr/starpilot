@@ -334,6 +334,9 @@ def get_car(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multip
   CP.carFw = car_fw
   CP.fingerprintSource = source
   CP.fuzzyFingerprint = not exact_match
+  post_fingerprint_params = getattr(CarInterface, "apply_post_fingerprint_params", None)
+  if post_fingerprint_params is not None:
+    post_fingerprint_params(CP, candidate, fingerprints, car_fw)
 
   FPCP: StarPilotCarParams = CarInterface.get_starpilot_params(candidate, fingerprints, car_fw, CP, starpilot_toggles)
 

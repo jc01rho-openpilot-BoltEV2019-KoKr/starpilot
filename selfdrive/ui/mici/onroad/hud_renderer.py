@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 
 import pyray as rl
@@ -31,6 +32,8 @@ SPEED_LIMIT_PROMPT_US_SIGN_WIDTH = 132
 SPEED_LIMIT_PROMPT_US_SIGN_HEIGHT = 150
 SPEED_LIMIT_PROMPT_EU_SIGN_SIZE = 148
 SPEED_LIMIT_PROMPT_CENTER_OFFSET_X = -26
+VISION_SPEED_LIMIT_PULSE_SECONDS = 1.0
+VISION_SPEED_LIMIT_PULSE_COLOR = rl.Color(188, 132, 255, 255)
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,9 @@ class HudRenderer(Widget):
     self._show_speed_limit_offset: bool = False
     self._speed_limit_overridden: bool = False
     self._pending_speed_limit: float = 0.0
+    self._vision_speed_limit_active: bool = False
+    self._last_vision_speed_limit: float = 0.0
+    self._vision_speed_limit_pulse_start: float = -VISION_SPEED_LIMIT_PULSE_SECONDS
     self._prompt_visible: bool = False
     self._prompt_card_rect: rl.Rectangle = rl.Rectangle(0, 0, 0, 0)
     self._prompt_sign_rect: rl.Rectangle = rl.Rectangle(0, 0, 0, 0)
@@ -215,6 +221,13 @@ class HudRenderer(Widget):
           primary_priority=primary_priority,
           secondary_priority=secondary_priority,
         )
+        vision_speed_limit_active = starpilot_plan.slcSpeedLimitSource == "Vision" and resolved_speed_limit > 0.0
+        vision_speed_limit_changed = abs(resolved_speed_limit - self._last_vision_speed_limit) >= 0.1
+        if vision_speed_limit_active and (not self._vision_speed_limit_active or vision_speed_limit_changed):
+          self._vision_speed_limit_pulse_start = rl.get_time()
+        self._vision_speed_limit_active = vision_speed_limit_active
+        self._last_vision_speed_limit = resolved_speed_limit if vision_speed_limit_active else 0.0
+
         display_speed_limit = starpilot_plan.slcOverriddenSpeed if starpilot_plan.slcOverriddenSpeed > 0 else resolved_speed_limit
         self._speed_limit = max(0.0, display_speed_limit * speed_conversion)
         self._speed_limit_offset = starpilot_plan.slcSpeedLimitOffset * speed_conversion
@@ -229,6 +242,8 @@ class HudRenderer(Widget):
         self._show_speed_limit_offset = False
         self._speed_limit_overridden = False
         self._pending_speed_limit = 0.0
+        self._vision_speed_limit_active = False
+        self._last_vision_speed_limit = 0.0
       self._prompt_visible = self._pending_speed_limit > 0
     else:
       self._show_speed_limit = False
@@ -237,6 +252,8 @@ class HudRenderer(Widget):
       self._show_speed_limit_offset = False
       self._speed_limit_overridden = False
       self._pending_speed_limit = 0.0
+      self._vision_speed_limit_active = False
+      self._last_vision_speed_limit = 0.0
       self._prompt_visible = False
 
   def prepare(self, rect: rl.Rectangle) -> None:
@@ -366,9 +383,11 @@ class HudRenderer(Widget):
     footer_text: str = "",
     footer_font_size: int = 0,
     footer_top: float = 0.0,
+    border_color = None,
+    text_color = None,
   ) -> None:
-    border_color = rl.Color(255, 255, 255, sign_alpha)
-    text_color = rl.Color(255, 255, 255, sign_alpha)
+    border_color = border_color or rl.Color(255, 255, 255, sign_alpha)
+    text_color = text_color or rl.Color(255, 255, 255, sign_alpha)
 
     inner_border_rect = rl.Rectangle(
       sign_rect.x + 8,
@@ -409,6 +428,21 @@ class HudRenderer(Widget):
       footer_pos = rl.Vector2(sign_rect.x + sign_rect.width / 2 - footer_size.x / 2, sign_rect.y + footer_top)
       rl.draw_text_ex(self._font_semi_bold, footer_text, footer_pos, footer_font_size, 0, text_color)
 
+  def _speed_limit_pulse_color(self, base_color, alpha: int) -> rl.Color:
+    base = rl.Color(base_color.r, base_color.g, base_color.b, alpha)
+    elapsed = rl.get_time() - self._vision_speed_limit_pulse_start
+    if elapsed < 0.0 or elapsed >= VISION_SPEED_LIMIT_PULSE_SECONDS:
+      return base
+
+    progress = elapsed / VISION_SPEED_LIMIT_PULSE_SECONDS
+    pulse = math.sin(math.pi * progress)
+    return rl.Color(
+      round(base.r + (VISION_SPEED_LIMIT_PULSE_COLOR.r - base.r) * pulse),
+      round(base.g + (VISION_SPEED_LIMIT_PULSE_COLOR.g - base.g) * pulse),
+      round(base.b + (VISION_SPEED_LIMIT_PULSE_COLOR.b - base.b) * pulse),
+      alpha,
+    )
+
   def _draw_speed_limit(self, rect: rl.Rectangle) -> None:
     if not self._show_speed_limit:
       return
@@ -430,11 +464,14 @@ class HudRenderer(Widget):
     base_x = rect.x + rect.width - sign_width - 28
     sign_x = base_x
     sign_y = rect.y + (28 if use_vienna_speed_limit else 20)
+    widget_color = self._speed_limit_pulse_color(rl.Color(255, 255, 255, 255), sign_alpha)
 
     if use_vienna_speed_limit:
       center_x = sign_x + sign_width / 2
       center_y = sign_y + sign_height / 2
       radius = sign_width / 2
+      ring_color = self._speed_limit_pulse_color(rl.Color(201, 34, 49, 255), sign_alpha)
+      text_color = self._speed_limit_pulse_color(rl.Color(0, 0, 0, 255), sign_alpha)
 
       rl.draw_circle(int(center_x), int(center_y), radius, rl.Color(255, 255, 255, sign_alpha))
       rl.draw_ring(
@@ -444,18 +481,18 @@ class HudRenderer(Widget):
         0,
         360,
         64,
-        rl.Color(201, 34, 49, sign_alpha),
+        ring_color,
       )
 
       font_size = 58 if len(speed_text) <= 2 else 48
       text_size = measure_text_cached(self._font_bold, speed_text, font_size)
       text_pos = rl.Vector2(center_x - text_size.x / 2, center_y - text_size.y / 2 + (-14 if offset_text else 4))
-      rl.draw_text_ex(self._font_bold, speed_text, text_pos, font_size, 0, rl.Color(0, 0, 0, sign_alpha))
+      rl.draw_text_ex(self._font_bold, speed_text, text_pos, font_size, 0, text_color)
       if offset_text:
         offset_font_size = 34
         offset_size = measure_text_cached(self._font_semi_bold, offset_text, offset_font_size)
         offset_pos = rl.Vector2(center_x - offset_size.x / 2, sign_y + sign_height - 42)
-        rl.draw_text_ex(self._font_semi_bold, offset_text, offset_pos, offset_font_size, 0, rl.Color(0, 0, 0, sign_alpha))
+        rl.draw_text_ex(self._font_semi_bold, offset_text, offset_pos, offset_font_size, 0, text_color)
     else:
       sign_rect = rl.Rectangle(sign_x, sign_y, sign_width, sign_height)
       self._draw_us_speed_limit_sign(
@@ -471,6 +508,8 @@ class HudRenderer(Widget):
         footer_text=offset_text,
         footer_font_size=28 if offset_text else 0,
         footer_top=100,
+        border_color=widget_color,
+        text_color=widget_color,
       )
 
   def _update_prompt_layout(self, rect: rl.Rectangle) -> None:

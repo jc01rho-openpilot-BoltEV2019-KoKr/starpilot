@@ -344,6 +344,7 @@ void StarPilotSettingsWindow::updateVariables() {
     isGM = carMake == "gm";
     isHKG = carMake == "hyundai";
     isHKGCanFd = isHKG && hasModeStarButtons;
+    isJeep = fallbackFingerprint.rfind("JEEP_", 0) == 0;
     isSubaru = carMake == "subaru";
     isToyota = carMake == "toyota";
     isVolt = fallbackFingerprint.rfind("CHEVROLET_VOLT", 0) == 0;
@@ -380,6 +381,7 @@ void StarPilotSettingsWindow::updateVariables() {
     isGM = carMake == "gm";
     isHKG = carMake == "hyundai";
     isHKGCanFd = isHKG && safetyModel == cereal::CarParams::SafetyModel::HYUNDAI_CANFD;
+    isJeep = carMake == "chrysler" && carFingerprint.rfind("JEEP_", 0) == 0;
     isSubaru = carMake == "subaru";
     isTorqueCar = CP.getLateralTuning().which() == cereal::CarParams::LateralTuning::TORQUE;
     isToyota = carMake == "toyota";

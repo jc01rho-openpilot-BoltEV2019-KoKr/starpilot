@@ -4,7 +4,12 @@ from cereal import car
 import pytest
 
 import openpilot.selfdrive.controls.lib.longcontrol as longcontrol
-from openpilot.selfdrive.controls.lib.longcontrol import LongControl, LongCtrlState, long_control_state_trans
+from opendbc.car.gm.values import CAR, GMFlags
+from openpilot.selfdrive.controls.lib.longcontrol import (
+  LongControl,
+  LongCtrlState,
+  long_control_state_trans,
+)
 
 
 def make_toggles(**overrides):
@@ -19,6 +24,20 @@ def make_toggles(**overrides):
   }
   defaults.update(overrides)
   return SimpleNamespace(**defaults)
+
+
+def make_longcontrol_cp(**overrides):
+  CP = car.CarParams.new_message()
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.0]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.0]
+  CP.longitudinalTuning.kfDEPRECATED = 1.0
+
+  for key, value in overrides.items():
+    setattr(CP, key, value)
+
+  return CP
 
 
 class TestLongControlStateTransition:
@@ -151,7 +170,7 @@ def test_starting_accel_obeys_a_target_cap_when_custom_profile_enabled():
   assert output_accel == 0.1
 
 
-def test_update_requires_sustained_positive_target_to_leave_stopping():
+def test_update_requires_sustained_moderate_positive_target_to_leave_stopping():
   CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
   CP.longitudinalTuning.kpBP = [0.0]
   CP.longitudinalTuning.kpV = [0.1]
@@ -168,7 +187,7 @@ def test_update_requires_sustained_positive_target_to_leave_stopping():
     output_accel = lc.update(
       active=True,
       CS=CS,
-      a_target=0.5,
+      a_target=longcontrol.STOPPING_RELEASE_STRONG_ACCEL - 0.01,
       should_stop=False,
       accel_limits=(-3.0, 2.0),
       starpilot_toggles=make_toggles(startAccel=1.5),
@@ -179,13 +198,38 @@ def test_update_requires_sustained_positive_target_to_leave_stopping():
   lc.update(
     active=True,
     CS=CS,
-    a_target=0.5,
+    a_target=longcontrol.STOPPING_RELEASE_STRONG_ACCEL - 0.01,
     should_stop=False,
     accel_limits=(-3.0, 2.0),
     starpilot_toggles=make_toggles(startAccel=1.5),
   )
 
   assert lc.long_control_state == LongCtrlState.starting
+
+
+def test_update_releases_stopping_immediately_on_strong_positive_target():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.stopping
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=longcontrol.STOPPING_RELEASE_STRONG_ACCEL,
+    should_stop=False,
+    accel_limits=(-3.0, 2.0),
+    starpilot_toggles=make_toggles(startAccel=1.5),
+  )
+
+  assert lc.long_control_state == LongCtrlState.starting
+  assert output_accel > 0.0
 
 
 def test_update_releases_stopping_on_small_sustained_positive_target():
@@ -535,3 +579,164 @@ def test_aego_filter_tracks_acceleration():
     # D-term should be approximately -kd * rate = -0.02 * 1.0 = -0.02
     if i > 50:  # After filter settles
       assert abs(d - (-0.02)) < 0.01
+
+
+def test_bolt_acc_pedal_friction_feedforward_preserves_regen_scaling_within_envelope():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    enableGasInterceptorDEPRECATED=True,
+    flags=GMFlags.PEDAL_LONG.value,
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+  )
+  CP.longitudinalTuning.kfDEPRECATED = 0.20
+
+  lc = LongControl(CP)
+
+  assert lc._get_longitudinal_feedforward(-1.8, 4.73) == pytest.approx(-0.36)
+
+
+def test_bolt_acc_pedal_friction_feedforward_restores_full_gain_beyond_regen_envelope():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    enableGasInterceptorDEPRECATED=True,
+    flags=GMFlags.PEDAL_LONG.value,
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+  )
+  CP.longitudinalTuning.kfDEPRECATED = 0.20
+
+  lc = LongControl(CP)
+
+  assert lc._get_longitudinal_feedforward(-3.22, 4.73) == pytest.approx(-3.22)
+
+
+def test_bolt_acc_pedal_friction_feedforward_blends_back_in_for_small_friction_request():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    enableGasInterceptorDEPRECATED=True,
+    flags=GMFlags.PEDAL_LONG.value,
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+  )
+  CP.longitudinalTuning.kfDEPRECATED = 0.20
+
+  lc = LongControl(CP)
+  pedal_regen_limit = float(longcontrol.interp(20.0, longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
+                                               longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
+  a_target = pedal_regen_limit - 0.10
+  expected_gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.20, a_target, 20.0, pedal_regen_limit, 0.0)
+  expected = a_target * expected_gain
+
+  assert lc._get_longitudinal_feedforward(a_target, 20.0) == pytest.approx(expected)
+
+
+def test_bolt_acc_pedal_friction_floor_holds_friction_only_authority():
+  pedal_regen_limit = float(longcontrol.interp(9.85, longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
+                                               longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
+  floor = longcontrol.get_bolt_acc_pedal_friction_floor(-3.47, 9.85, pedal_regen_limit)
+
+  assert floor is not None
+  assert floor < pedal_regen_limit
+  assert floor > -3.47
+
+
+def test_bolt_acc_pedal_friction_bias_applies_floor_only_on_experimental_fingerprint():
+  pedal_cp = make_longcontrol_cp(
+    brand="gm",
+    enableGasInterceptorDEPRECATED=True,
+    flags=GMFlags.PEDAL_LONG.value,
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+  )
+  bolt_cc_cp = make_longcontrol_cp(
+    brand="gm",
+    enableGasInterceptorDEPRECATED=True,
+    flags=GMFlags.PEDAL_LONG.value,
+    carFingerprint=CAR.CHEVROLET_BOLT_CC_2022_2023,
+  )
+
+  pedal_lc = LongControl(pedal_cp)
+  bolt_cc_lc = LongControl(bolt_cc_cp)
+  CS = car.CarState.new_message(vEgo=9.85, aEgo=-2.0, brakePressed=False)
+
+  pedal_regen_limit = float(longcontrol.interp(CS.vEgo, longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
+                                               longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
+  floor = longcontrol.get_bolt_acc_pedal_friction_floor(-3.47, CS.vEgo, pedal_regen_limit)
+  assert floor is not None
+
+  pedal_biased = pedal_lc._apply_pedal_long_brake_bias(-1.85, -3.47, CS)
+  bolt_cc_biased = bolt_cc_lc._apply_pedal_long_brake_bias(-1.85, -3.47, CS)
+
+  assert pedal_biased == pytest.approx(floor)
+  assert bolt_cc_biased > pedal_biased + 0.5
+
+
+def test_bolt_acc_pedal_feedforward_gain_stays_base_for_mild_regen():
+  gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.2, -1.0, 10.0, -2.75, -0.4)
+
+  assert gain == pytest.approx(0.2)
+
+
+def test_bolt_acc_pedal_feedforward_gain_restores_for_authority_gap():
+  gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.2, -1.83, 12.38, -2.79, -0.70)
+
+  assert gain > 0.55
+
+
+def test_bolt_acc_pedal_feedforward_gain_restores_near_friction_handoff():
+  gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.2, -2.63, 9.35, -2.69, -1.30)
+
+  assert gain > 0.45
+
+
+def test_bolt_cc_pedal_friction_feedforward_remains_fully_scaled_by_kf():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    enableGasInterceptorDEPRECATED=True,
+    flags=GMFlags.PEDAL_LONG.value,
+    carFingerprint=CAR.CHEVROLET_BOLT_CC_2022_2023,
+  )
+  CP.longitudinalTuning.kfDEPRECATED = 0.20
+
+  lc = LongControl(CP)
+
+  assert lc._get_longitudinal_feedforward(-3.22, 4.73) == pytest.approx(-0.644)
+
+
+def test_gm_stock_truck_positive_i_bleeds_on_coast_request():
+  CP = car.CarParams.new_message()
+  CP.brand = "gm"
+  CP.carFingerprint = "CHEVROLET_SILVERADO"
+  CP.enableGasInterceptorDEPRECATED = False
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.02]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.28]
+
+  lc = LongControl(CP)
+  lc.pid.i = 0.25
+  lc.last_output_accel = 0.20
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  lc._trim_gm_truck_positive_hold_integrator(-0.02, -0.02, CS)
+
+  assert lc.pid.i < 0.25
+
+
+def test_gm_stock_truck_positive_i_trim_skips_when_planner_still_requests_accel():
+  CP = car.CarParams.new_message()
+  CP.brand = "gm"
+  CP.carFingerprint = "CHEVROLET_SILVERADO"
+  CP.enableGasInterceptorDEPRECATED = False
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.02]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.28]
+
+  lc = LongControl(CP)
+  lc.pid.i = 0.25
+  lc.last_output_accel = 0.20
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  lc._trim_gm_truck_positive_hold_integrator(0.05, 0.05, CS)
+
+  assert lc.pid.i == pytest.approx(0.25, abs=1e-9)

@@ -63,6 +63,18 @@ class Paths:
       return "/tmp/.comma"
 
   @staticmethod
+  def params_cache_root() -> str:
+    if PC:
+      return str(Path(Paths.comma_home()) / "cache" / "starpilot" / "params")
+    return "/cache/starpilot/params"
+
+  @staticmethod
+  def legacy_params_cache_root() -> str:
+    if PC:
+      return str(Path(Paths.comma_home()) / "cache" / "params")
+    return "/cache/params"
+
+  @staticmethod
   def shm_path() -> str:
     if PC and platform.system() == "Darwin":
       return "/tmp"  # This is not really shared memory on macOS, but it's the closest we can get

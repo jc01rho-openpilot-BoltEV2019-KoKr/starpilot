@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from openpilot.common.constants import CV
+from openpilot.common.realtime import DT_MDL
 from openpilot.starpilot.controls.lib.speed_limit_controller import SpeedLimitController
 
 
@@ -294,5 +295,52 @@ def test_higher_limit_does_not_clear_override():
       assert not controller_overridden_below.override_slc
     finally:
       controller_overridden_below.shutdown()
+  finally:
+    controller.shutdown()
+
+
+def test_manual_override_survives_brief_enabled_flicker():
+  controller = make_controller()
+  try:
+    controller.source = "Dashboard"
+    controller.target = mph(45)
+    controller.previous_source = "Dashboard"
+    controller.previous_target = mph(45)
+    controller.overridden_speed = mph(55)
+    controller.override_slc = True
+
+    disabled_sm = make_sm(gas_pressed=False, enabled=False)
+    for _ in range(int(0.5 / DT_MDL)):
+      controller.update_override(mph(75), 0.0, mph(65), 0.0, disabled_sm)
+
+    assert controller.overridden_speed == pytest.approx(mph(55))
+    assert controller.override_slc
+
+    controller.update_override(mph(75), 0.0, mph(65), 0.0, make_sm(gas_pressed=False, enabled=True))
+
+    assert controller.overridden_speed == pytest.approx(mph(55))
+    assert controller.override_slc
+  finally:
+    controller.shutdown()
+
+
+def test_manual_override_clears_after_sustained_disengage():
+  controller = make_controller()
+  try:
+    controller.source = "Dashboard"
+    controller.target = mph(45)
+    controller.previous_source = "Dashboard"
+    controller.previous_target = mph(45)
+    controller.overridden_speed = mph(55)
+    controller.override_slc = True
+    controller.override_requires_gas_release = True
+
+    disabled_sm = make_sm(gas_pressed=False, enabled=False)
+    for _ in range(int(1.0 / DT_MDL) + 1):
+      controller.update_override(mph(75), 0.0, mph(65), 0.0, disabled_sm)
+
+    assert controller.overridden_speed == 0
+    assert not controller.override_slc
+    assert not controller.override_requires_gas_release
   finally:
     controller.shutdown()

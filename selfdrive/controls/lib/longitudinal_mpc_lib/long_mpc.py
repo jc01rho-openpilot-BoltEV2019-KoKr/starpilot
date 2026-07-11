@@ -85,6 +85,10 @@ STABLE_FOLLOW_CRUISE_MIN_HEADWAY = 0.95
 STABLE_FOLLOW_CRUISE_HEADWAY_BELOW_TARGET = 0.35
 STABLE_FOLLOW_CRUISE_HEADWAY_ABOVE_TARGET = 0.90
 STABLE_FOLLOW_CRUISE_MAX_LEAD_BRAKE = 0.35
+STABLE_FOLLOW_CRUISE_PULLAWAY_MAX_REL_SPEED = 2.0
+STABLE_FOLLOW_CRUISE_PULLAWAY_MAX_HEADWAY_MARGIN = 0.35
+STABLE_FOLLOW_CRUISE_PULLAWAY_MIN_HEADWAY_MARGIN = -0.10
+STABLE_FOLLOW_CRUISE_PULLAWAY_HYSTERESIS_MAX = 1.75
 NEAR_DUPLICATE_LEAD_SOURCE_MIN_SPEED = 20.0
 NEAR_DUPLICATE_IDENTICAL_RADAR_SOURCE_MIN_SPEED = 10.0
 NEAR_DUPLICATE_LEAD_SOURCE_MIN_MODEL_PROB = 0.9
@@ -94,6 +98,17 @@ NEAR_DUPLICATE_LEAD_SOURCE_MAX_VREL_DIFF = 0.35
 NEAR_DUPLICATE_LEAD_SOURCE_HYSTERESIS_MIN = 1.25
 NEAR_DUPLICATE_LEAD_SOURCE_HYSTERESIS_MAX = 2.25
 NEAR_DUPLICATE_IDENTICAL_RADAR_SOURCE_KEEP_MARGIN = 0.35
+IDENTICAL_RADAR_DUPLICATE_CRUISE_HOLD_MIN_SPEED = 10.0
+IDENTICAL_RADAR_DUPLICATE_CRUISE_HOLD_MAX_HEADWAY_ABOVE_TARGET = 0.40
+IDENTICAL_RADAR_DUPLICATE_CRUISE_HOLD_MAX_LEAD_BRAKE = 0.25
+IDENTICAL_RADAR_DUPLICATE_CRUISE_HOLD_MAX_PULLAWAY_SPEED = 1.5
+IDENTICAL_RADAR_DUPLICATE_CRUISE_HOLD_MAX_CRUISE_ADVANTAGE = 10.0
+IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MIN_SPEED = 15.0
+IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MAX_HEADWAY_ABOVE_TARGET = 0.55
+IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MIN_HEADWAY_BELOW_TARGET = -0.15
+IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MAX_LEAD_BRAKE = 0.25
+IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MAX_PULLAWAY_SPEED = 0.75
+IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MAX = 10.0
 
 # Function to get parameter value based on current speed
 def get_speed_based_param(speed_mph, param_array):
@@ -585,6 +600,8 @@ class LongitudinalMpc:
       return 0.0
 
     lead_radar = bool(getattr(lead, "radar", False))
+    relative_speed = float(v_ego) - float(lead.vLead)
+    actual_headway = None
     lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
     if lead_brake > STABLE_FOLLOW_CRUISE_MAX_LEAD_BRAKE:
       return 0.0
@@ -592,7 +609,6 @@ class LongitudinalMpc:
     if lead_radar:
       if float(t_follow) <= 0.0 or float(v_ego) < STABLE_FOLLOW_CRUISE_MIN_SPEED:
         return 0.0
-      relative_speed = float(v_ego) - float(lead.vLead)
       if abs(relative_speed) > STABLE_FOLLOW_CRUISE_MAX_REL_SPEED:
         return 0.0
 
@@ -613,9 +629,23 @@ class LongitudinalMpc:
       min_speed=STABLE_FOLLOW_CRUISE_MIN_SPEED,
     ):
       return 0.0
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
 
-    return max(STABLE_FOLLOW_CRUISE_HYSTERESIS_MIN,
-               STABLE_FOLLOW_CRUISE_HYSTERESIS_GAIN * float(v_ego))
+    hysteresis = max(STABLE_FOLLOW_CRUISE_HYSTERESIS_MIN,
+                     STABLE_FOLLOW_CRUISE_HYSTERESIS_GAIN * float(v_ego))
+
+    if relative_speed < 0.0:
+      headway_margin = actual_headway - float(t_follow)
+      if headway_margin <= STABLE_FOLLOW_CRUISE_PULLAWAY_MAX_HEADWAY_MARGIN:
+        rel_speed_factor = float(np.clip((-relative_speed) / STABLE_FOLLOW_CRUISE_PULLAWAY_MAX_REL_SPEED, 0.0, 1.0))
+        headway_factor = float(np.clip(
+          (STABLE_FOLLOW_CRUISE_PULLAWAY_MAX_HEADWAY_MARGIN - headway_margin) /
+          max(STABLE_FOLLOW_CRUISE_PULLAWAY_MAX_HEADWAY_MARGIN - STABLE_FOLLOW_CRUISE_PULLAWAY_MIN_HEADWAY_MARGIN, 1e-3),
+          0.0, 1.0,
+        ))
+        hysteresis += STABLE_FOLLOW_CRUISE_PULLAWAY_HYSTERESIS_MAX * rel_speed_factor * headway_factor
+
+    return hysteresis
 
   @staticmethod
   def leads_share_identical_radar_track(lead_one, lead_two):
@@ -682,6 +712,72 @@ class LongitudinalMpc:
       return None
     return prev_source
 
+  def get_identical_radar_duplicate_cruise_hold(self, prev_source, lead_one, lead_two,
+                                                lead_0_obstacle, lead_1_obstacle, cruise_obstacle,
+                                                v_ego, t_follow):
+    if prev_source not in ("lead0", "lead1"):
+      return None
+    if float(v_ego) < IDENTICAL_RADAR_DUPLICATE_CRUISE_HOLD_MIN_SPEED:
+      return None
+    if not self.leads_share_identical_radar_track(lead_one, lead_two):
+      return None
+    if abs(float(lead_0_obstacle) - float(lead_1_obstacle)) > NEAR_DUPLICATE_IDENTICAL_RADAR_SOURCE_KEEP_MARGIN:
+      return None
+
+    prev_lead = lead_one if prev_source == "lead0" else lead_two
+    if prev_lead is None or not prev_lead.status:
+      return None
+
+    actual_headway = float(prev_lead.dRel) / max(float(v_ego), 1e-3)
+    if actual_headway > float(t_follow) + IDENTICAL_RADAR_DUPLICATE_CRUISE_HOLD_MAX_HEADWAY_ABOVE_TARGET:
+      return None
+
+    lead_brake = max(0.0, -float(getattr(prev_lead, "aLeadK", 0.0)))
+    if lead_brake > IDENTICAL_RADAR_DUPLICATE_CRUISE_HOLD_MAX_LEAD_BRAKE:
+      return None
+
+    lead_delta = float(prev_lead.vLead) - float(v_ego)
+    if lead_delta > IDENTICAL_RADAR_DUPLICATE_CRUISE_HOLD_MAX_PULLAWAY_SPEED:
+      return None
+
+    prev_lead_obstacle = float(lead_0_obstacle if prev_source == "lead0" else lead_1_obstacle)
+    cruise_advantage = prev_lead_obstacle - float(cruise_obstacle)
+    if cruise_advantage > IDENTICAL_RADAR_DUPLICATE_CRUISE_HOLD_MAX_CRUISE_ADVANTAGE:
+      return None
+
+    return prev_source
+
+  def get_identical_radar_duplicate_cruise_bias(self, lead_one, lead_two, v_ego, t_follow):
+    if float(v_ego) < IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MIN_SPEED:
+      return 0.0
+    if not self.leads_share_identical_radar_track(lead_one, lead_two):
+      return 0.0
+
+    lead = lead_one if lead_one.status else lead_two
+    if lead is None or not lead.status:
+      return 0.0
+
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    headway_margin = actual_headway - float(t_follow)
+    if headway_margin < IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MIN_HEADWAY_BELOW_TARGET:
+      return 0.0
+    if headway_margin > IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MAX_HEADWAY_ABOVE_TARGET:
+      return 0.0
+
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    if lead_brake > IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MAX_LEAD_BRAKE:
+      return 0.0
+
+    lead_delta = float(lead.vLead) - float(v_ego)
+    if lead_delta > IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MAX_PULLAWAY_SPEED:
+      return 0.0
+
+    return float(np.interp(
+      headway_margin,
+      [IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MIN_HEADWAY_BELOW_TARGET, 0.0, IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MAX_HEADWAY_ABOVE_TARGET],
+      [IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MAX, IDENTICAL_RADAR_DUPLICATE_CRUISE_BIAS_MAX * 0.85, 0.0],
+    ))
+
   def set_accel_limits(self, min_a, max_a):
     # TODO this sets a max accel limit, but the minimum limit is only for cruise decel
     # needs refactor
@@ -729,7 +825,16 @@ class LongitudinalMpc:
       if optional_far_lead_comfort and tracking_lead and lead_one.status:
         desired_gap = desired_follow_distance(v_ego, lead_one.vLead, t_follow)
         closing_speed = max(0.0, v_ego - lead_one.vLead)
-        cruise_obstacle += get_tracked_lead_catchup_bias(v_ego, lead_one.dRel, desired_gap, closing_speed, v_cruise=v_cruise)
+        cruise_obstacle += get_tracked_lead_catchup_bias(
+          v_ego,
+          lead_one.dRel,
+          desired_gap,
+          closing_speed,
+          v_cruise=v_cruise,
+          y_rel=float(getattr(lead_one, "yRel", 0.0)),
+        )
+      if optional_far_lead_comfort:
+        cruise_obstacle += self.get_identical_radar_duplicate_cruise_bias(lead_one, lead_two, v_ego, t_follow)
       if optional_far_lead_comfort:
         lead_0_bias, lead_1_bias = self.get_near_duplicate_lead_source_hysteresis(prev_source, lead_one, lead_two, v_ego)
         lead_0_obstacle = lead_0_obstacle + lead_0_bias
@@ -737,14 +842,26 @@ class LongitudinalMpc:
       x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle, cruise_obstacle])
       candidate_source = SOURCES[np.argmin(x_obstacles[0])]
       sticky_source = None
-      if optional_far_lead_comfort and candidate_source in ("lead0", "lead1"):
-        sticky_source = self.get_identical_radar_duplicate_source_hold(
-          prev_source,
-          lead_one,
-          lead_two,
-          lead_0_obstacle[0],
-          lead_1_obstacle[0],
-        )
+      if optional_far_lead_comfort:
+        if candidate_source in ("lead0", "lead1"):
+          sticky_source = self.get_identical_radar_duplicate_source_hold(
+            prev_source,
+            lead_one,
+            lead_two,
+            lead_0_obstacle[0],
+            lead_1_obstacle[0],
+          )
+        elif candidate_source == "cruise":
+          sticky_source = self.get_identical_radar_duplicate_cruise_hold(
+            prev_source,
+            lead_one,
+            lead_two,
+            lead_0_obstacle[0],
+            lead_1_obstacle[0],
+            cruise_obstacle[0],
+            v_ego,
+            t_follow,
+          )
       self.source = sticky_source or candidate_source
 
       # These are not used in ACC mode

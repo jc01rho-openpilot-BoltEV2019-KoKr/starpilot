@@ -5,7 +5,7 @@ import pyray as rl
 import random
 import string
 from dataclasses import dataclass
-from cereal import messaging, log, car
+from cereal import messaging, log, car, custom
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.common.filter_simple import BounceFilter, FirstOrderFilter
 from openpilot.system.hardware import TICI
@@ -15,6 +15,7 @@ from openpilot.system.ui.widgets.label import UnifiedLabel
 
 AlertSize = log.SelfdriveState.AlertSize
 AlertStatus = log.SelfdriveState.AlertStatus
+StarPilotAlertStatus = custom.StarPilotSelfdriveState.AlertStatus
 
 ALERT_MARGIN = 18
 
@@ -29,6 +30,7 @@ ALERT_COLORS = {
   AlertStatus.normal: rl.Color(0, 0, 0, 255),
   AlertStatus.userPrompt: rl.Color(255, 115, 0, 255),
   AlertStatus.critical: rl.Color(255, 0, 21, 255),
+  StarPilotAlertStatus.starpilot: rl.Color(23, 134, 68, 255),
 }
 
 TURN_SIGNAL_BLINK_PERIOD = 1 / (80 / 60)  # Mazda heartbeat turn signal BPM
@@ -138,13 +140,17 @@ class AlertRenderer(Widget):
             return ALERT_CRITICAL_TIMEOUT
           return ALERT_CRITICAL_REBOOT
 
-    # No alert if size is none
-    if ss.alertSize == 0:
-      return None
+    if ss.alertSize != AlertSize.none:
+      ret = Alert(text1=ss.alertText1, text2=ss.alertText2, size=ss.alertSize.raw, status=ss.alertStatus.raw,
+                  visual_alert=ss.alertHudVisual, alert_type=ss.alertType)
+    else:
+      starpilot_ss = sm["starpilotSelfdriveState"]
+      if starpilot_ss.alertSize == custom.StarPilotSelfdriveState.AlertSize.none:
+        return None
+      ret = Alert(text1=starpilot_ss.alertText1, text2=starpilot_ss.alertText2,
+                  size=starpilot_ss.alertSize.raw, status=starpilot_ss.alertStatus.raw,
+                  alert_type=starpilot_ss.alertType)
 
-    # Return current alert
-    ret = Alert(text1=ss.alertText1, text2=ss.alertText2, size=ss.alertSize.raw, status=ss.alertStatus.raw,
-                visual_alert=ss.alertHudVisual, alert_type=ss.alertType)
     self._prev_alert = ret
     return ret
 

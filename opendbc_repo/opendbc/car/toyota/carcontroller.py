@@ -26,6 +26,7 @@ ACCEL_WINDDOWN_LIMIT = -4.0 * DT_CTRL * 3  # m/s^2 / frame
 ACCEL_PID_UNWIND = 0.03 * DT_CTRL * 3  # m/s^2 / frame
 PRIUS_INTEGRAL_MISMATCH_UNWIND = 8.0
 PRIUS_POSITIVE_FEEDFORWARD_SCALE = 0.7
+PRIUS_CRUISE_FEEDFORWARD_SCALE = 1.0
 
 MAX_PITCH_COMPENSATION = 1.5  # m/s^2
 TOYOTA_COAST_BRAKE_MIN_SPEED = 15.0  # m/s
@@ -33,6 +34,7 @@ TOYOTA_COAST_BRAKE_ENABLE_ACCEL = -0.10  # m/s^2
 TOYOTA_COAST_BRAKE_DISABLE_ACCEL = -0.06  # m/s^2
 TOYOTA_NO_LEAD_COAST_BRAKE_ACCEL = -0.30  # m/s^2
 TOYOTA_INTERCEPTOR_COMFORT_TARGET_ACCEL = 2.0  # m/s^2
+TOYOTA_NO_LEAD_CRUISE_SIGN_FLIP_MIN_SET_SPEED_ERROR = 0.35  # m/s
 
 # LKA limits
 # EPS faults if you apply torque while the steering rate is above 100 deg/s for too long
@@ -64,6 +66,11 @@ def get_long_tune(CP, params):
   return PIDController(0.0, (kiBP, kiV), k_f=k_f,
                        pos_limit=params.ACCEL_MAX, neg_limit=params.ACCEL_MIN,
                        rate=1 / (DT_CTRL * 3))
+
+
+def get_prius_positive_feedforward_scale(v_ego: float) -> float:
+  return float(np.interp(v_ego, [0.0, 8.0, 20.0],
+                         [PRIUS_POSITIVE_FEEDFORWARD_SCALE, PRIUS_POSITIVE_FEEDFORWARD_SCALE, PRIUS_CRUISE_FEEDFORWARD_SCALE]))
 
 
 def update_permit_braking(current: bool, net_acceleration_request_min: float, stopping: bool,
@@ -162,6 +169,19 @@ def limit_prius_stopping_accel(pcm_accel_cmd: float, target_accel: float, stoppi
   return max(pcm_accel_cmd, max(stop_floor, planner_floor))
 
 
+def limit_no_lead_cruise_sign_flip(pcm_accel_cmd: float, target_accel: float, stopping: bool, v_ego: float,
+                                   set_speed: float, lead_visible: bool) -> float:
+  if stopping or lead_visible or pcm_accel_cmd >= 0.0 or v_ego < TOYOTA_COAST_BRAKE_MIN_SPEED:
+    return pcm_accel_cmd
+  if target_accel < -0.02 or set_speed <= 0.0:
+    return pcm_accel_cmd
+
+  if float(set_speed) - float(v_ego) >= TOYOTA_NO_LEAD_CRUISE_SIGN_FLIP_MIN_SET_SPEED_ERROR:
+    return max(pcm_accel_cmd, 0.0)
+
+  return pcm_accel_cmd
+
+
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -209,7 +229,7 @@ class CarController(CarControllerBase):
     max_interceptor_gas = 0.5
     if self.CP.carFingerprint == CAR.TOYOTA_RAV4:
       pedal_scale = float(np.interp(CS.out.vEgo, [0.0, MIN_ACC_SPEED, MIN_ACC_SPEED + PEDAL_TRANSITION], [0.15, 0.3, 0.0]))
-    elif self.CP.carFingerprint == CAR.TOYOTA_COROLLA:
+    elif self.CP.carFingerprint in (CAR.TOYOTA_COROLLA, CAR.TOYOTA_MATRIX_RETROFIT):
       pedal_scale = float(np.interp(CS.out.vEgo, [0.0, MIN_ACC_SPEED, MIN_ACC_SPEED + PEDAL_TRANSITION], [0.3, 0.4, 0.0]))
     else:
       pedal_scale = float(np.interp(CS.out.vEgo, [0.0, MIN_ACC_SPEED, MIN_ACC_SPEED + PEDAL_TRANSITION], [0.4, 0.5, 0.0]))
@@ -435,9 +455,8 @@ class CarController(CarControllerBase):
 
             feedforward = pcm_accel_cmd
             if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
-              # Keep Prius positive handoffs softer than the stock tune, while restoring some launch authority.
               if feedforward > 0.0:
-                feedforward *= PRIUS_POSITIVE_FEEDFORWARD_SCALE
+                feedforward *= get_prius_positive_feedforward_scale(CS.out.vEgo)
 
             pcm_accel_cmd = self.long_pid.update(error_future,
                                                  speed=CS.out.vEgo,
@@ -459,8 +478,11 @@ class CarController(CarControllerBase):
         if self.CP.enableGasInterceptorDEPRECATED:
           pcm_accel_cmd = limit_interceptor_pcm_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo)
           pcm_accel_cmd = limit_interceptor_stopping_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, bool(hud_control.leadVisible))
-        elif self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
-          pcm_accel_cmd = limit_prius_stopping_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, lead)
+        else:
+          pcm_accel_cmd = limit_no_lead_cruise_sign_flip(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo,
+                                                         CS.out.cruiseState.speed, bool(hud_control.leadVisible))
+          if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
+            pcm_accel_cmd = limit_prius_stopping_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, lead)
 
         pcm_accel_cmd = float(np.clip(pcm_accel_cmd, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
 
