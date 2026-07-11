@@ -105,4 +105,8 @@ if [[ "${#shortcut_targets[@]}" -gt 0 ]]; then
   exit "${status}"
 fi
 
-exec "${ROOT_DIR}/scripts/laptop_device_build.sh" build "${original_args[@]}"
+if [[ "${#original_args[@]}" -gt 0 ]]; then
+  exec "${ROOT_DIR}/scripts/laptop_device_build.sh" build "${original_args[@]}"
+fi
+
+exec "${ROOT_DIR}/scripts/laptop_device_build.sh" build

@@ -37,9 +37,6 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
 PANEL_STYLE = DEFAULT_PANEL_STYLE
 SOUNDS_PANEL_METRICS = replace(
   COMPACT_PANEL_METRICS,
-  outer_margin_y=10,
-  panel_padding_top=12,
-  panel_padding_bottom=14,
   header_height=0,
 )
 

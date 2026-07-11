@@ -23,7 +23,7 @@ class TileSection:
 class SectionedTileLayout(Widget):
   def __init__(self, section_gap: int = 28, title_height: int = 49, title_gap: int = 17,
                min_row_height: int = 218, max_row_height: int = 406, top_padding: int = 0,
-               horizontal_padding: int = SPACING.xl, max_content_width: int | None = 1560):
+                               horizontal_padding: int = 10, max_content_width: int | None = None):
     super().__init__()
     self._sections: list[TileSection] = []
     self._section_gap = section_gap

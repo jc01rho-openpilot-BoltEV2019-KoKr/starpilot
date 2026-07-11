@@ -60,6 +60,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_ioniq_6_directional_taper_scale,
   get_ioniq_6_output_taper_scale,
   get_ioniq_6_ff_scale,
+  get_ioniq_6_friction_center_fade_scale,
   get_ioniq_6_friction_scale,
   get_ioniq_6_friction_threshold,
   get_ioniq_6_low_speed_angle_assist_torque,
@@ -509,7 +510,7 @@ class TestLatControl:
     assert get_ioniq_6_directional_taper_scale(1.2, -0.40) > get_ioniq_6_directional_taper_scale(1.2, -0.7)
     assert get_ioniq_6_directional_taper_scale(-1.2, -0.40, 8.0) > get_ioniq_6_directional_taper_scale(-1.2, -0.40, 25.0)
     assert get_ioniq_6_directional_taper_scale(1.2, 0.40, 8.0) > get_ioniq_6_directional_taper_scale(1.2, 0.40, 25.0)
-    assert get_ioniq_6_directional_taper_scale(-1.2, 0.7, 8.0) == pytest.approx(get_ioniq_6_directional_taper_scale(-1.2, 0.7, 25.0), abs=0.02)
+    assert get_ioniq_6_directional_taper_scale(-1.2, 1.6, 8.0) == pytest.approx(get_ioniq_6_directional_taper_scale(-1.2, 1.6, 25.0), abs=0.02)
     assert get_ioniq_6_directional_taper_scale(-0.18, -0.40, 3.0) > get_ioniq_6_directional_taper_scale(-0.18, -0.40, 9.0)
     assert get_ioniq_6_directional_taper_scale(-0.18, -0.40, 9.0) > get_ioniq_6_directional_taper_scale(-0.18, -0.40, 20.0)
     assert get_ioniq_6_directional_taper_scale(-0.50, -0.40, 3.0) > get_ioniq_6_directional_taper_scale(-0.50, -0.40, 6.0)
@@ -545,6 +546,15 @@ class TestLatControl:
     right_unwind = get_ioniq_6_friction_scale(6.0, -0.5, 0.8)
     assert right_turn_in >= left_turn_in > base
     assert base > left_unwind >= right_unwind
+
+  def test_ioniq_6_friction_center_fade_curve(self):
+    # fades friction near zero lateral accel at highway speed, inactive at city speed and in turns
+    assert get_ioniq_6_friction_center_fade_scale(0.0, 30.0) < get_ioniq_6_friction_center_fade_scale(0.0, 8.0)
+    assert get_ioniq_6_friction_center_fade_scale(0.0, 30.0) < get_ioniq_6_friction_center_fade_scale(0.5, 30.0)
+    assert get_ioniq_6_friction_center_fade_scale(0.0, 30.0) >= 0.5
+    assert get_ioniq_6_friction_center_fade_scale(0.5, 30.0) > 0.95
+    assert get_ioniq_6_friction_center_fade_scale(-0.5, 30.0) > 0.95
+    assert get_ioniq_6_friction_center_fade_scale(0.0, 8.0) > 0.95
 
   def test_ioniq_6_center_taper_curve(self):
     assert get_ioniq_6_center_taper_scale(0.0, 10.0) > get_ioniq_6_center_taper_scale(0.0, 30.0)

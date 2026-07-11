@@ -591,6 +591,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"SteerOffsetStock", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
     {"SteerRatio", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
     {"SteerRatioStock", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
+    {"EnableTorqueBarWidget", {PERSISTENT, BOOL, "1", "0", 0}},
     {"StockConfidenceBallWidget", {PERSISTENT, BOOL, "0", "0", 0}},
     {"StockDongleId", {PERSISTENT, STRING, "", ""}},
     {"StopAccel", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},

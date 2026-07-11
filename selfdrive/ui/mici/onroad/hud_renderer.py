@@ -6,8 +6,8 @@ import pyray as rl
 from cereal import log
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
+from openpilot.selfdrive.ui.onroad.starpilot.torque_bar import TorqueBar
 from openpilot.selfdrive.ui.mici.onroad.speed_limit_utils import resolve_display_speed_limit_ms
-from openpilot.selfdrive.ui.mici.onroad.torque_bar import TorqueBar
 from openpilot.selfdrive.ui.ui_state import UIStatus, ui_state
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.multilang import tr
@@ -268,7 +268,8 @@ class HudRenderer(Widget):
 
   def render_foreground(self) -> None:
     """Draw HUD elements that should sit above alerts."""
-    if ui_state.sm['controlsState'].lateralControlState.which() != 'angleState':
+    if ui_state.sm['controlsState'].lateralControlState.which() != 'angleState' and \
+       ui_state.params.get_bool("EnableTorqueBarWidget", default=True):
       self._torque_bar.render(self._rect)
 
     if self.is_cruise_set:

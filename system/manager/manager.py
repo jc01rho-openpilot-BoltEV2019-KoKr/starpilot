@@ -5,6 +5,7 @@ import os
 import shutil
 from pathlib import Path
 import signal
+import stat
 import sys
 import time
 import traceback
@@ -759,6 +760,48 @@ def migrate_legacy_experimental_longitudinal(params: Params, params_cache: Param
   params_cache.remove("ExperimentalLongitudinalEnabled")
 
 
+def _msgq_file_is_readwrite_openable(path: Path) -> bool:
+  fd = os.open(path, os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
+  try:
+    return True
+  finally:
+    os.close(fd)
+
+
+def cleanup_inaccessible_msgq_files(shm_path: str | Path) -> int:
+  """Remove stale msgq files that would crash SubSocket/PubSocket creation."""
+  shm_root = Path(shm_path)
+  if not shm_root.is_dir():
+    return 0
+
+  removed = 0
+  for path in shm_root.rglob("msgq_*"):
+    try:
+      st = path.lstat()
+    except OSError:
+      continue
+
+    if not stat.S_ISREG(st.st_mode):
+      continue
+
+    try:
+      _msgq_file_is_readwrite_openable(path)
+      continue
+    except PermissionError:
+      pass
+    except OSError:
+      continue
+
+    try:
+      path.unlink()
+      removed += 1
+      cloudlog.warning(f"Removed inaccessible stale msgq file: {path}")
+    except OSError:
+      cloudlog.exception(f"Failed to remove inaccessible stale msgq file: {path}")
+
+  return removed
+
+
 def manager_init() -> None:
   manager_init_start = time.monotonic()
   last_timing = _log_boot_timing("manager_init", "start", manager_init_start, manager_init_start)
@@ -828,6 +871,11 @@ def manager_init() -> None:
   except PermissionError:
     print(f"WARNING: failed to make {Paths.shm_path()}")
   last_timing = _log_boot_timing("manager_init", "shm_path", manager_init_start, last_timing)
+
+  removed_msgq_files = cleanup_inaccessible_msgq_files(Paths.shm_path())
+  if removed_msgq_files:
+    cloudlog.warning(f"Removed {removed_msgq_files} inaccessible stale msgq files before process startup")
+  last_timing = _log_boot_timing("manager_init", "msgq_cleanup", manager_init_start, last_timing)
 
   # set params
   serial = HARDWARE.get_serial()

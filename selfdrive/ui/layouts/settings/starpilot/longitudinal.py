@@ -93,8 +93,8 @@ class AdaptiveSpeedView(Widget):
     ))
 
   def _render(self, rect: rl.Rectangle):
-    margin_x = 18.0
-    margin_y = 24.0
+    margin_x = 10.0
+    margin_y = 10.0
     grid_x = rect.x + margin_x
     grid_y = rect.y + margin_y
     grid_w = rect.width - margin_x * 2
@@ -185,8 +185,8 @@ class LongitudinalManagerView(AetherSettingsView):
     self.set_rect(rect)
     self._interactive_rects.clear()
 
-    margin_x = 18.0
-    margin_y = 24.0
+    margin_x = 10.0
+    margin_y = 10.0
 
     grid_x = rect.x + margin_x
     grid_y = rect.y + margin_y
@@ -213,13 +213,7 @@ class LongitudinalManagerView(AetherSettingsView):
 
 
 class ConditionalDriveModeView(PanelManagerView):
-  METRICS = replace(
-    COMPACT_PANEL_METRICS,
-    outer_margin_y=14,
-    panel_padding_top=16,
-    panel_padding_bottom=14,
-    header_height=0,
-  )
+  METRICS = COMPACT_PANEL_METRICS
   TAB_HEIGHT = 98
   TAB_BOTTOM_GAP = 26
 
@@ -469,7 +463,7 @@ class ConditionalDriveModeView(PanelManagerView):
   def _draw_scroll_content(self, rect: rl.Rectangle, content_width: float):
     y = rect.y + self._scroll_offset
     
-    header_w = content_width - AETHER_LIST_METRICS.content_right_gutter
+    header_w = content_width
     bar_rect = rl.Rectangle(rect.x, y, header_w, self.TAB_HEIGHT)
     draw_list_group_shell(bar_rect, style=PANEL_STYLE)
     self._drive_mode_control.render(bar_rect)

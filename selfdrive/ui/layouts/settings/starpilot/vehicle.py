@@ -71,12 +71,7 @@ PANEL_STYLE = DEFAULT_PANEL_STYLE
 
 
 class VehicleSettingsManagerView(PanelManagerView):
-  METRICS = replace(COMPACT_PANEL_METRICS,
-    header_height=0,
-    outer_margin_y=14,
-    panel_padding_top=16,
-    panel_padding_bottom=14,
-  )
+  METRICS = COMPACT_PANEL_METRICS
 
   def __init__(self, controller: "StarPilotVehicleSettingsLayout"):
     super().__init__()

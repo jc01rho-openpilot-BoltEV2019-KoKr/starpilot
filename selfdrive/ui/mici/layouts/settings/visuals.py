@@ -47,11 +47,10 @@ class LeadIndicatorBigButton(BigToggle):
 
   def _handle_mouse_release(self, mouse_pos):
     super()._handle_mouse_release(mouse_pos)
-    self.params.put_bool("LeadIndicator", self._checked)
     self.params.put_bool("HideLeadMarker", not self._checked)
 
   def refresh(self):
-    self.set_checked(lead_indicator_enabled(self.params))
+    self.set_checked(lead_indicator_enabled(self.params, hide_by_default=True))
 
 
 class VisualsLayoutMici(NavScroller):
@@ -61,6 +60,7 @@ class VisualsLayoutMici(NavScroller):
     self._driver_camera_btn = BigParamControl("driver camera on reverse", "DriverCamera")
     self._stopped_timer_btn = BigParamControl("stopped timer", "StoppedTimer")
     self._stock_confidence_ball_btn = BigParamControl("stock confidence ball", "StockConfidenceBallWidget")
+    self._torque_bar_btn = BigParamControl("torque bar", "EnableTorqueBarWidget")
     self._rainbow_path_btn = BigParamControl("rainbow road", "RainbowPath")
     self._lead_indicator_btn = LeadIndicatorBigButton()
     self._speed_limit_signs_btn = BigParamControl("speed limit signs", "ShowSpeedLimits")
@@ -73,6 +73,7 @@ class VisualsLayoutMici(NavScroller):
       self._driver_camera_btn,
       self._stopped_timer_btn,
       self._stock_confidence_ball_btn,
+      self._torque_bar_btn,
       self._rainbow_path_btn,
       self._lead_indicator_btn,
       self._speed_limit_signs_btn,

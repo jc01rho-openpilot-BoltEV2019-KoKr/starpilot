@@ -15,6 +15,12 @@ class FakeParams:
   def __init__(self, values=None):
     self.values = values or {}
 
+  def get(self, key, block=False, return_default=False, encoding=None, default=None):
+    if key not in self.values:
+      return None
+    v = self.values[key]
+    return v if isinstance(v, bytes) else str(v).encode()
+
   def get_bool(self, key, block=False, default=False):
     value = self.values.get(key, default)
     if isinstance(value, bool):
@@ -23,14 +29,14 @@ class FakeParams:
 
 
 class TestStarPilotVisuals(unittest.TestCase):
-  def test_lead_indicator_disabled_by_default(self):
-    self.assertFalse(lead_indicator_enabled(FakeParams()))
+  def test_lead_indicator_enabled_by_default(self):
+    self.assertTrue(lead_indicator_enabled(FakeParams()))
 
-  def test_lead_indicator_can_be_enabled(self):
-    self.assertTrue(lead_indicator_enabled(FakeParams({"LeadIndicator": True})))
+  def test_hide_lead_marker_disables(self):
+    self.assertFalse(lead_indicator_enabled(FakeParams({"HideLeadMarker": True})))
 
-  def test_hide_lead_marker_suppresses_lead_indicator(self):
-    self.assertFalse(lead_indicator_enabled(FakeParams({"LeadIndicator": True, "HideLeadMarker": True})))
+  def test_hide_by_default_returns_false_when_unset(self):
+    self.assertFalse(lead_indicator_enabled(FakeParams(), hide_by_default=True))
 
 
 if __name__ == "__main__":

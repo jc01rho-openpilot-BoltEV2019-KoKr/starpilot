@@ -273,28 +273,29 @@ class StarPilotLayout(Widget):
     self._commit_navigation()
 
   def _render(self, rect: rl.Rectangle):
-    TOP_BAR_HEIGHT = 160
-    content_rect = rl.Rectangle(rect.x, rect.y + TOP_BAR_HEIGHT, rect.width, rect.height - TOP_BAR_HEIGHT)
+    TOP_BAR_HEIGHT = 72
+    BOTTOM_BAR_HEIGHT = 10
+    content_rect = rl.Rectangle(rect.x, rect.y + TOP_BAR_HEIGHT, rect.width, rect.height - TOP_BAR_HEIGHT + BOTTOM_BAR_HEIGHT)
 
     # Standardize width to perfectly match subpanel shells
     shell_w = min(rect.width - AETHER_LIST_METRICS.outer_margin_x * 2, AETHER_LIST_METRICS.max_content_width)
     shell_x = rect.x + (rect.width - shell_w) / 2
 
     # 0. Draw top bar with HubTile-style purple glow
-    glass_rect = rl.Rectangle(shell_x, rect.y + 20, shell_w, TOP_BAR_HEIGHT - 35)
+    glass_rect = rl.Rectangle(shell_x, rect.y + 2, shell_w, TOP_BAR_HEIGHT - 4)
 
     # 0a. Purple glow rings — 4 concentric, fading outward (HubTile parity)
     for i in range(4, 0, -1):
       off = i * 2.5
       gr = rl.Rectangle(glass_rect.x - off, glass_rect.y - off, glass_rect.width + off * 2, glass_rect.height + off * 2)
       a = int(25 * (1.0 - i / 5))
-      draw_rounded_fill(gr, rl.Color(139, 92, 246, max(0, min(255, a))), radius_px=145)
+      draw_rounded_fill(gr, rl.Color(139, 92, 246, max(0, min(255, a))), radius_px=34)
 
     # 0b. Dark fill — strict parity with HubTile _HUD_BG_ON
-    draw_rounded_fill(glass_rect, rl.Color(12, 10, 18, 255), radius_px=145)
+    draw_rounded_fill(glass_rect, rl.Color(12, 10, 18, 255), radius_px=34)
 
     # 0c. Full bright purple border — strict parity
-    draw_rounded_stroke(glass_rect, rl.Color(139, 92, 246, 255), radius_px=145)
+    draw_rounded_stroke(glass_rect, rl.Color(139, 92, 246, 255), radius_px=34)
 
     # 1. Draw breadcrumbs in top bar
     crumb_rect = rl.Rectangle(glass_rect.x, glass_rect.y, glass_rect.width, glass_rect.height)

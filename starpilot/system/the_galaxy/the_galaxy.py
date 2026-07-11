@@ -2557,15 +2557,11 @@ def _get_lead_indicator_enabled(defaults_lookup=None):
   if defaults_lookup is None:
     defaults_lookup = _get_default_param_values()
 
-  lead_raw = _safe_params_get_live_raw("LeadIndicator")
-  if _is_blank_param_raw(lead_raw):
-    lead_raw = defaults_lookup.get("LeadIndicator", "0")
-
   hide_raw = _safe_params_get_live_raw("HideLeadMarker")
   if _is_blank_param_raw(hide_raw):
     hide_raw = defaults_lookup.get("HideLeadMarker", "0")
 
-  return _coerce_param_value(lead_raw, bool) and not _coerce_param_value(hide_raw, bool)
+  return not _coerce_param_value(hide_raw, bool)
 
 
 def _get_custom_accel_profile_initialized():
@@ -3564,7 +3560,7 @@ def _save_longitudinal_maneuver_status(status):
     history = []
   status_copy["history"] = [str(line) for line in history if str(line).strip()][-120:]
   status_copy["updatedAtSec"] = float(status_copy.get("updatedAtSec") or time.monotonic())
-  params.put("LongitudinalManeuverStatus", json.dumps(status_copy, separators=(",", ":")))
+  params.put("LongitudinalManeuverStatus", status_copy)
   return status_copy
 
 def _append_longitudinal_maneuver_history(status, line):
@@ -3693,7 +3689,7 @@ def _save_lateral_maneuver_status(status):
     history = []
   status_copy["history"] = [str(line) for line in history if str(line).strip()][-120:]
   status_copy["updatedAtSec"] = float(status_copy.get("updatedAtSec") or time.monotonic())
-  params.put("LateralManeuverStatus", json.dumps(status_copy, separators=(",", ":")))
+  params.put("LateralManeuverStatus", status_copy)
   return status_copy
 
 

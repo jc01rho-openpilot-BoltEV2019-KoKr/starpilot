@@ -1,5 +1,6 @@
 import pyray as rl
 from enum import IntEnum
+from cereal import log
 import cereal.messaging as messaging
 from openpilot.system.hardware import PC
 from openpilot.system.ui.lib.application import gui_app
@@ -46,7 +47,18 @@ class MainLayout(Widget):
       if not self._onboarding_window.completed:
         gui_app.push_widget(self._onboarding_window)
 
+  @staticmethod
+  def _critical_full_alert_active() -> bool:
+    if not ui_state.sm.recv_frame['selfdriveState']:
+      return False
+    ss = ui_state.sm['selfdriveState']
+    return ss.alertSize == log.SelfdriveState.AlertSize.full and ss.alertStatus == log.SelfdriveState.AlertStatus.critical
+
   def _render(self, _):
+    if self._current_mode == MainState.SETTINGS and self._critical_full_alert_active():
+      self._set_current_layout(MainState.ONROAD)
+      return
+
     self._handle_onroad_transition()
     self._render_main_content()
 
