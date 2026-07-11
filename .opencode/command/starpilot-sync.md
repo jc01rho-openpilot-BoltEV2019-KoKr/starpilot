@@ -61,6 +61,8 @@ git log --oneline -5
 
 ## 주의사항
 
-- 충돌은 항상 `paddle5` (ours) 기준으로 자동 해결합니다.
+- **Step 1 충돌** (paddle5 ← upstream): 충돌 파일은 양쪽이 같은 영역을 수정한 파일입니다(upstream만 수정한 파일은 auto-merge로 이미 최신 반영). 로컬 튜닝 파일은 superset 확인/`git merge-file` 3-way로 공존, 보존 가치 없는 파일은 `--theirs`(upstream 최신). `--ours`는 로컬을 반드시 지켜야 하는 예외에만 — 맹목적 `--ours` 금지.
+- **Step 2 충돌** (paddle5_215-55-17 ← paddle5): `--ours`로 해결합니다.
+- **충돌 해결 후 커밋 전 반드시 검증**: `grep`으로 마커 잔여 확인, `py_compile`로 편집된 `.py` 문법 검증, `cereal/log.capnp` 수정 시 `capnp.load()` + ordinal 중복/갭 검증 + naviData 런타임 init 확인. 실패 시 push 금지.
 - merge 후 자동으로 push까지 진행합니다.
 - `upstream` remote가 `https://github.com/firestar-link/starpilot` 또는 동일 upstream을 가리키고 있어야 합니다.
