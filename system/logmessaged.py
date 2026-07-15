@@ -8,6 +8,10 @@ from openpilot.system.hardware.hw import Paths
 from openpilot.common.swaglog import get_file_handler
 
 
+def decode_record(data: bytes) -> str:
+  return data.decode("utf-8", errors="replace")
+
+
 def main() -> NoReturn:
   log_handler = get_file_handler()
   log_handler.setFormatter(SwagLogFileFormatter(None))
@@ -25,7 +29,7 @@ def main() -> NoReturn:
     while True:
       dat = b''.join(sock.recv_multipart())
       level = dat[0]
-      record = dat[1:].decode("utf-8")
+      record = decode_record(dat[1:])
       if level >= log_level:
         log_handler.emit(record)
 

@@ -1,3 +1,4 @@
+import json
 import math
 import numpy as np
 
@@ -10,6 +11,8 @@ from openpilot.starpilot.common.testing_grounds import testing_ground
 CIVIC_BOSCH_MODIFIED_B_FIXED_FRICTION_THRESHOLD = 0.30
 STANDARD_FRICTION_THRESHOLD = 0.30
 HKG_CANFD_BASE_FRICTION_THRESHOLD = 0.39
+FLM_SCHEMA_VERSION = 1
+FLM_FRICTION_SPEED_KNOTS = [0.0, 5.0, 10.0, 15.0, 25.0]
 CIVIC_BOSCH_MODIFIED_B_LAT_ACCEL_FACTOR_MULT = 1.20
 CIVIC_BOSCH_MODIFIED_A_VARIANT_LAT_ACCEL_FACTOR_MULT = 1.00
 CIVIC_BOSCH_MODIFIED_B_VARIANT_LAT_ACCEL_FACTOR_MULT = 1.75
@@ -692,6 +695,9 @@ TRAILER_LATERAL_LAT_RISE = 0.30
 TRAILER_LATERAL_FF_GAIN = 0.05
 TRAILER_LATERAL_FRICTION_GAIN = 0.03
 
+_FLM_ACTIVE_OVERRIDES_TEXT = ""
+_FLM_ACTIVE_OVERRIDES = {}
+
 
 def _sigmoid(x: float) -> float:
   if x >= 0.0:
@@ -702,17 +708,123 @@ def _sigmoid(x: float) -> float:
   return z / (1.0 + z)
 
 
-def get_gm_base_friction_threshold(v_ego: float) -> float:
-  # GM's speed-scaled base friction threshold behavior.
+def _gm_base_friction_threshold_default(v_ego: float) -> float:
   return float(np.interp(v_ego, [1 * CV.MPH_TO_MS, 20 * CV.MPH_TO_MS, 75 * CV.MPH_TO_MS], [0.16, 0.19, 0.27]))
 
 
+def _standard_friction_threshold_default(v_ego: float) -> float:
+  return max(_gm_base_friction_threshold_default(v_ego), STANDARD_FRICTION_THRESHOLD)
+
+
+def _hkg_canfd_base_friction_threshold_default(v_ego: float) -> float:
+  return max(_gm_base_friction_threshold_default(v_ego), HKG_CANFD_BASE_FRICTION_THRESHOLD)
+
+
+def _flm_copy_json(value):
+  return json.loads(json.dumps(value))
+
+
+def normalize_flm_overrides(overrides) -> dict:
+  if overrides in (None, "", b""):
+    return {}
+
+  if isinstance(overrides, bytes):
+    overrides = overrides.decode("utf-8", errors="replace")
+
+  if isinstance(overrides, str):
+    stripped = overrides.strip()
+    if not stripped:
+      return {}
+    try:
+      overrides = json.loads(stripped)
+    except Exception:
+      return {}
+
+  if not isinstance(overrides, dict):
+    return {}
+
+  normalized = {
+    "schemaVersion": FLM_SCHEMA_VERSION,
+    "baseFrictionThresholds": {},
+    "vehicleKnobs": {},
+  }
+
+  for family in ("gm", "standard", "hkg_canfd"):
+    payload = overrides.get("baseFrictionThresholds", {}).get(family, {})
+    values = payload.get("values", payload if isinstance(payload, list) else [])
+    if not isinstance(values, (list, tuple)) or len(values) != len(FLM_FRICTION_SPEED_KNOTS):
+      continue
+    try:
+      normalized["baseFrictionThresholds"][family] = {
+        "speedKnots": list(FLM_FRICTION_SPEED_KNOTS),
+        "values": [float(v) for v in values],
+      }
+    except Exception:
+      continue
+
+  vehicle_knobs = overrides.get("vehicleKnobs", {})
+  if isinstance(vehicle_knobs, dict):
+    for key, value in vehicle_knobs.items():
+      try:
+        normalized["vehicleKnobs"][str(key)] = float(value)
+      except Exception:
+        continue
+
+  if not normalized["baseFrictionThresholds"] and not normalized["vehicleKnobs"]:
+    return {}
+
+  return normalized
+
+
+def set_flm_runtime_overrides(overrides) -> None:
+  global _FLM_ACTIVE_OVERRIDES, _FLM_ACTIVE_OVERRIDES_TEXT
+
+  normalized = normalize_flm_overrides(overrides)
+  text = json.dumps(normalized, sort_keys=True, separators=(",", ":")) if normalized else ""
+  if text == _FLM_ACTIVE_OVERRIDES_TEXT:
+    return
+
+  _FLM_ACTIVE_OVERRIDES_TEXT = text
+  _FLM_ACTIVE_OVERRIDES = normalized
+
+
+def clear_flm_runtime_overrides() -> None:
+  set_flm_runtime_overrides({})
+
+
+def get_flm_runtime_overrides() -> dict:
+  return _flm_copy_json(_FLM_ACTIVE_OVERRIDES) if _FLM_ACTIVE_OVERRIDES else {}
+
+
+def flm_runtime_overrides_active() -> bool:
+  return bool(_FLM_ACTIVE_OVERRIDES)
+
+
+def _flm_base_friction_threshold(family: str, v_ego: float, default_fn) -> float:
+  payload = _FLM_ACTIVE_OVERRIDES.get("baseFrictionThresholds", {}).get(family, {})
+  values = payload.get("values", [])
+  if isinstance(values, list) and len(values) == len(FLM_FRICTION_SPEED_KNOTS):
+    return float(np.interp(v_ego, FLM_FRICTION_SPEED_KNOTS, values))
+  return float(default_fn(v_ego))
+
+
+def _flm_vehicle_knob(name: str, default_value: float) -> float:
+  try:
+    return float(_FLM_ACTIVE_OVERRIDES.get("vehicleKnobs", {}).get(name, default_value))
+  except Exception:
+    return float(default_value)
+
+
+def get_gm_base_friction_threshold(v_ego: float) -> float:
+  return _flm_base_friction_threshold("gm", v_ego, _gm_base_friction_threshold_default)
+
+
 def get_standard_friction_threshold(v_ego: float) -> float:
-  return max(get_gm_base_friction_threshold(v_ego), STANDARD_FRICTION_THRESHOLD)
+  return _flm_base_friction_threshold("standard", v_ego, _standard_friction_threshold_default)
 
 
 def get_hkg_canfd_base_friction_threshold(v_ego: float) -> float:
-  return max(get_gm_base_friction_threshold(v_ego), HKG_CANFD_BASE_FRICTION_THRESHOLD)
+  return _flm_base_friction_threshold("hkg_canfd", v_ego, _hkg_canfd_base_friction_threshold_default)
 
 
 def get_trailer_lateral_assist_factor(trailer_load_kg: float, v_ego: float, desired_lateral_accel: float) -> float:
@@ -756,7 +868,11 @@ def get_prius_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float
   if desired_lateral_accel == 0.0:
     return 1.0
 
-  gain = _prius_side_value(desired_lateral_accel, PRIUS_FF_GAIN_LEFT, PRIUS_FF_GAIN_RIGHT)
+  gain = _prius_side_value(
+    desired_lateral_accel,
+    _flm_vehicle_knob("toyota_prius.ff_gain_left", PRIUS_FF_GAIN_LEFT),
+    _flm_vehicle_knob("toyota_prius.ff_gain_right", PRIUS_FF_GAIN_RIGHT),
+  )
   abs_lateral_accel = abs(desired_lateral_accel)
   onset = _prius_sigmoid((abs_lateral_accel - PRIUS_FF_ONSET) / PRIUS_FF_ONSET_WIDTH)
   cutoff = _prius_sigmoid((PRIUS_FF_CUTOFF - abs_lateral_accel) / PRIUS_FF_CUTOFF_WIDTH)
@@ -765,9 +881,17 @@ def get_prius_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
   low_speed_factor = _prius_low_speed_factor(v_ego)
-  turn_in_boost = 1.0 + (_prius_side_value(desired_lateral_accel, PRIUS_TURN_IN_BOOST_LEFT, PRIUS_TURN_IN_BOOST_RIGHT) *
+  turn_in_boost = 1.0 + (_prius_side_value(
+                          desired_lateral_accel,
+                          _flm_vehicle_knob("toyota_prius.turn_in_boost_left", PRIUS_TURN_IN_BOOST_LEFT),
+                          _flm_vehicle_knob("toyota_prius.turn_in_boost_right", PRIUS_TURN_IN_BOOST_RIGHT),
+                        ) *
                           turn_in_weight * (0.35 + 0.65 * low_speed_factor))
-  unwind_taper = 1.0 - (_prius_side_value(desired_lateral_accel, PRIUS_UNWIND_TAPER_LEFT, PRIUS_UNWIND_TAPER_RIGHT) *
+  unwind_taper = 1.0 - (_prius_side_value(
+                         desired_lateral_accel,
+                         _flm_vehicle_knob("toyota_prius.unwind_taper_left", PRIUS_UNWIND_TAPER_LEFT),
+                         _flm_vehicle_knob("toyota_prius.unwind_taper_right", PRIUS_UNWIND_TAPER_RIGHT),
+                       ) *
                          unwind_weight * (0.35 + 0.65 * low_speed_factor))
   return 1.0 + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
 
@@ -778,9 +902,17 @@ def get_prius_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.
   phase = _prius_transition_phase(desired_lateral_accel, desired_lateral_jerk)
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
-  threshold_scale = 1.0 - (_prius_side_value(desired_lateral_accel, PRIUS_TURN_IN_THRESHOLD_REDUCTION_LEFT, PRIUS_TURN_IN_THRESHOLD_REDUCTION_RIGHT) *
+  threshold_scale = 1.0 - (_prius_side_value(
+                           desired_lateral_accel,
+                           _flm_vehicle_knob("toyota_prius.turn_in_threshold_reduction_left", PRIUS_TURN_IN_THRESHOLD_REDUCTION_LEFT),
+                           _flm_vehicle_knob("toyota_prius.turn_in_threshold_reduction_right", PRIUS_TURN_IN_THRESHOLD_REDUCTION_RIGHT),
+                         ) *
                            transition_envelope * turn_in_weight)
-  threshold_scale += (_prius_side_value(desired_lateral_accel, PRIUS_UNWIND_THRESHOLD_INCREASE_LEFT, PRIUS_UNWIND_THRESHOLD_INCREASE_RIGHT) *
+  threshold_scale += (_prius_side_value(
+                      desired_lateral_accel,
+                      _flm_vehicle_knob("toyota_prius.unwind_threshold_increase_left", PRIUS_UNWIND_THRESHOLD_INCREASE_LEFT),
+                      _flm_vehicle_knob("toyota_prius.unwind_threshold_increase_right", PRIUS_UNWIND_THRESHOLD_INCREASE_RIGHT),
+                    ) *
                       transition_envelope * unwind_weight)
   return base_threshold * min(max(threshold_scale, 0.86), 1.16)
 
@@ -801,7 +933,7 @@ def get_prius_friction_scale(v_ego: float, desired_lateral_accel: float, desired
 def get_prius_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
   speed_weight = _prius_sigmoid((v_ego - PRIUS_CENTER_TAPER_SPEED) / PRIUS_CENTER_TAPER_SPEED_WIDTH)
   center_weight = _prius_sigmoid((PRIUS_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / PRIUS_CENTER_TAPER_LAT_WIDTH)
-  reduction = PRIUS_CENTER_TAPER_MAX * speed_weight * center_weight
+  reduction = _flm_vehicle_knob("toyota_prius.center_taper_max", PRIUS_CENTER_TAPER_MAX) * speed_weight * center_weight
   return 1.0 - reduction
 
 
@@ -1107,23 +1239,35 @@ def get_bolt_2022_2023_ff_scale(desired_lateral_accel: float, desired_lateral_je
   if desired_lateral_accel == 0.0:
     return 1.0
 
-  gain = _bolt_2022_2023_side_value(desired_lateral_accel, BOLT_2022_2023_FF_GAIN_LEFT, BOLT_2022_2023_FF_GAIN_RIGHT)
+  gain = _bolt_2022_2023_side_value(
+    desired_lateral_accel,
+    _flm_vehicle_knob("gm_bolt_2022_2023.ff_gain_left", BOLT_2022_2023_FF_GAIN_LEFT),
+    _flm_vehicle_knob("gm_bolt_2022_2023.ff_gain_right", BOLT_2022_2023_FF_GAIN_RIGHT),
+  )
   abs_lateral_accel = abs(desired_lateral_accel)
   onset = _bolt_2022_2023_sigmoid((abs_lateral_accel - BOLT_2022_2023_FF_ONSET) / BOLT_2022_2023_FF_ONSET_WIDTH)
   cutoff = _bolt_2022_2023_sigmoid((BOLT_2022_2023_FF_CUTOFF - abs_lateral_accel) / BOLT_2022_2023_FF_CUTOFF_WIDTH)
   extra_scale = gain * onset * cutoff
   speed_weight = _bolt_2022_2023_sigmoid((v_ego - BOLT_2022_2023_CENTER_TAPER_SPEED) / BOLT_2022_2023_CENTER_TAPER_SPEED_WIDTH)
   center_weight = _bolt_2022_2023_sigmoid((BOLT_2022_2023_CENTER_TAPER_LAT - abs_lateral_accel) / BOLT_2022_2023_CENTER_TAPER_LAT_WIDTH)
-  center_taper = 1.0 - (BOLT_2022_2023_CENTER_TAPER_MAX * speed_weight * center_weight)
+  center_taper = 1.0 - (_flm_vehicle_knob("gm_bolt_2022_2023.center_taper_max", BOLT_2022_2023_CENTER_TAPER_MAX) * speed_weight * center_weight)
   low_speed_factor = _bolt_2022_2023_low_speed_factor(v_ego)
   transition_envelope = _bolt_2022_2023_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
   phase = _bolt_2022_2023_transition_phase(desired_lateral_accel, desired_lateral_jerk)
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
-  turn_in_boost = 1.0 + (_bolt_2022_2023_side_value(desired_lateral_accel, BOLT_2022_2023_TURN_IN_BOOST_LEFT, BOLT_2022_2023_TURN_IN_BOOST_RIGHT) *
+  turn_in_boost = 1.0 + (_bolt_2022_2023_side_value(
+                          desired_lateral_accel,
+                          _flm_vehicle_knob("gm_bolt_2022_2023.turn_in_boost_left", BOLT_2022_2023_TURN_IN_BOOST_LEFT),
+                          _flm_vehicle_knob("gm_bolt_2022_2023.turn_in_boost_right", BOLT_2022_2023_TURN_IN_BOOST_RIGHT),
+                        ) *
                           turn_in_weight * low_speed_factor)
   unwind_envelope = (0.25 + 0.75 * low_speed_factor) * (1.0 + 0.45 * transition_envelope)
-  unwind_taper = 1.0 - (_bolt_2022_2023_side_value(desired_lateral_accel, BOLT_2022_2023_UNWIND_TAPER_LEFT, BOLT_2022_2023_UNWIND_TAPER_RIGHT) *
+  unwind_taper = 1.0 - (_bolt_2022_2023_side_value(
+                         desired_lateral_accel,
+                         _flm_vehicle_knob("gm_bolt_2022_2023.unwind_taper_left", BOLT_2022_2023_UNWIND_TAPER_LEFT),
+                         _flm_vehicle_knob("gm_bolt_2022_2023.unwind_taper_right", BOLT_2022_2023_UNWIND_TAPER_RIGHT),
+                       ) *
                          unwind_weight * unwind_envelope)
   return 1.0 + (extra_scale * center_taper * turn_in_boost * max(unwind_taper, 0.0))
 
@@ -1134,9 +1278,17 @@ def get_bolt_2022_2023_friction_threshold(v_ego: float, desired_lateral_accel: f
   phase = _bolt_2022_2023_transition_phase(desired_lateral_accel, desired_lateral_jerk)
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
-  threshold_scale = 1.0 - (_bolt_2022_2023_side_value(desired_lateral_accel, BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_LEFT, BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_RIGHT) *
+  threshold_scale = 1.0 - (_bolt_2022_2023_side_value(
+                           desired_lateral_accel,
+                           _flm_vehicle_knob("gm_bolt_2022_2023.turn_in_threshold_reduction_left", BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_LEFT),
+                           _flm_vehicle_knob("gm_bolt_2022_2023.turn_in_threshold_reduction_right", BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_RIGHT),
+                         ) *
                            transition_envelope * turn_in_weight)
-  threshold_scale += (_bolt_2022_2023_side_value(desired_lateral_accel, BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_LEFT, BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_RIGHT) *
+  threshold_scale += (_bolt_2022_2023_side_value(
+                      desired_lateral_accel,
+                      _flm_vehicle_knob("gm_bolt_2022_2023.unwind_threshold_increase_left", BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_LEFT),
+                      _flm_vehicle_knob("gm_bolt_2022_2023.unwind_threshold_increase_right", BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_RIGHT),
+                    ) *
                       transition_envelope * unwind_weight)
   return base_threshold * min(max(threshold_scale, 0.84), 1.14)
 
@@ -1802,14 +1954,18 @@ def _ioniq_6_transition_envelope(v_ego: float, desired_lateral_accel: float, des
 
 
 def _ioniq_6_curvy_speed_weight(v_ego: float) -> float:
-  onset = _ioniq_6_sigmoid((max(v_ego, 0.0) - IONIQ_6_CURVY_SPEED_MIN) / IONIQ_6_CURVY_SPEED_MIN_WIDTH)
-  cutoff = _ioniq_6_sigmoid((IONIQ_6_CURVY_SPEED_MAX - max(v_ego, 0.0)) / IONIQ_6_CURVY_SPEED_MAX_WIDTH)
+  curvy_speed_min = _flm_vehicle_knob("hyundai_ioniq_6.curvy_speed_min", IONIQ_6_CURVY_SPEED_MIN)
+  curvy_speed_max = _flm_vehicle_knob("hyundai_ioniq_6.curvy_speed_max", IONIQ_6_CURVY_SPEED_MAX)
+  onset = _ioniq_6_sigmoid((max(v_ego, 0.0) - curvy_speed_min) / IONIQ_6_CURVY_SPEED_MIN_WIDTH)
+  cutoff = _ioniq_6_sigmoid((curvy_speed_max - max(v_ego, 0.0)) / IONIQ_6_CURVY_SPEED_MAX_WIDTH)
   return onset * cutoff
 
 
 def _ioniq_6_curvy_turn_in_trim_speed_weight(v_ego: float) -> float:
-  onset = _ioniq_6_sigmoid((max(v_ego, 0.0) - IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MIN) / IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_WIDTH)
-  cutoff = _ioniq_6_sigmoid((IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MAX - max(v_ego, 0.0)) / IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_WIDTH)
+  curvy_turn_in_speed_min = _flm_vehicle_knob("hyundai_ioniq_6.curvy_turn_in_trim_speed_min", IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MIN)
+  curvy_turn_in_speed_max = _flm_vehicle_knob("hyundai_ioniq_6.curvy_turn_in_trim_speed_max", IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MAX)
+  onset = _ioniq_6_sigmoid((max(v_ego, 0.0) - curvy_turn_in_speed_min) / IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_WIDTH)
+  cutoff = _ioniq_6_sigmoid((curvy_turn_in_speed_max - max(v_ego, 0.0)) / IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_WIDTH)
   return onset * cutoff
 
 
@@ -1818,7 +1974,11 @@ def get_ioniq_6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
   if desired_lateral_accel == 0.0:
     return 1.0
 
-  gain = _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_FF_GAIN_LEFT, IONIQ_6_FF_GAIN_RIGHT)
+  gain = _ioniq_6_side_value(
+    desired_lateral_accel,
+    _flm_vehicle_knob("hyundai_ioniq_6.ff_gain_left", IONIQ_6_FF_GAIN_LEFT),
+    _flm_vehicle_knob("hyundai_ioniq_6.ff_gain_right", IONIQ_6_FF_GAIN_RIGHT),
+  )
   abs_lateral_accel = abs(desired_lateral_accel)
   onset = _ioniq_6_sigmoid((abs_lateral_accel - IONIQ_6_FF_ONSET) / IONIQ_6_FF_ONSET_WIDTH)
   cutoff = _ioniq_6_sigmoid((IONIQ_6_FF_CUTOFF - abs_lateral_accel) / IONIQ_6_FF_CUTOFF_WIDTH)
@@ -1827,9 +1987,17 @@ def get_ioniq_6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
   low_speed_factor = _ioniq_6_low_speed_factor(v_ego)
-  turn_in_boost = 1.0 + (_ioniq_6_side_value(desired_lateral_accel, IONIQ_6_TURN_IN_BOOST_LEFT, IONIQ_6_TURN_IN_BOOST_RIGHT) *
+  turn_in_boost = 1.0 + (_ioniq_6_side_value(
+                          desired_lateral_accel,
+                          _flm_vehicle_knob("hyundai_ioniq_6.turn_in_boost_left", IONIQ_6_TURN_IN_BOOST_LEFT),
+                          _flm_vehicle_knob("hyundai_ioniq_6.turn_in_boost_right", IONIQ_6_TURN_IN_BOOST_RIGHT),
+                        ) *
                           turn_in_weight * low_speed_factor)
-  unwind_taper = 1.0 - (_ioniq_6_side_value(desired_lateral_accel, IONIQ_6_UNWIND_TAPER_LEFT, IONIQ_6_UNWIND_TAPER_RIGHT) *
+  unwind_taper = 1.0 - (_ioniq_6_side_value(
+                         desired_lateral_accel,
+                         _flm_vehicle_knob("hyundai_ioniq_6.unwind_taper_left", IONIQ_6_UNWIND_TAPER_LEFT),
+                         _flm_vehicle_knob("hyundai_ioniq_6.unwind_taper_right", IONIQ_6_UNWIND_TAPER_RIGHT),
+                       ) *
                          unwind_weight * (0.30 + 0.70 * low_speed_factor))
   crawl_turn_in_scale = 0.0
   if desired_lateral_accel * desired_lateral_jerk > 0.0:
@@ -1837,8 +2005,11 @@ def get_ioniq_6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
                                           IONIQ_6_CRAWL_TURN_IN_FF_SPEED_WIDTH)
     crawl_lat_weight = _ioniq_6_sigmoid((abs_lateral_accel - IONIQ_6_CRAWL_TURN_IN_FF_LAT) /
                                         IONIQ_6_CRAWL_TURN_IN_FF_LAT_WIDTH)
-    crawl_turn_in_scale = _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_CRAWL_TURN_IN_FF_BOOST_LEFT,
-                                              IONIQ_6_CRAWL_TURN_IN_FF_BOOST_RIGHT) * crawl_speed_weight * crawl_lat_weight
+    crawl_turn_in_scale = _ioniq_6_side_value(
+      desired_lateral_accel,
+      _flm_vehicle_knob("hyundai_ioniq_6.crawl_turn_in_ff_boost_left", IONIQ_6_CRAWL_TURN_IN_FF_BOOST_LEFT),
+      _flm_vehicle_knob("hyundai_ioniq_6.crawl_turn_in_ff_boost_right", IONIQ_6_CRAWL_TURN_IN_FF_BOOST_RIGHT),
+    ) * crawl_speed_weight * crawl_lat_weight
   high_speed_right_turn_in_scale = 0.0
   if desired_lateral_accel < 0.0 and desired_lateral_accel * desired_lateral_jerk > 0.0:
     high_speed_weight = _ioniq_6_sigmoid((max(v_ego, 0.0) - IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_SPEED) /
@@ -1861,9 +2032,17 @@ def get_ioniq_6_friction_threshold(v_ego: float, desired_lateral_accel: float = 
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
   unwind_speed_weight = _ioniq_6_sigmoid((v_ego - IONIQ_6_UNWIND_HIGH_SPEED_SPEED) / IONIQ_6_UNWIND_HIGH_SPEED_SPEED_WIDTH)
-  threshold_scale = 1.0 - (_ioniq_6_side_value(desired_lateral_accel, IONIQ_6_TURN_IN_THRESHOLD_REDUCTION_LEFT, IONIQ_6_TURN_IN_THRESHOLD_REDUCTION_RIGHT) *
+  threshold_scale = 1.0 - (_ioniq_6_side_value(
+                           desired_lateral_accel,
+                           _flm_vehicle_knob("hyundai_ioniq_6.turn_in_threshold_reduction_left", IONIQ_6_TURN_IN_THRESHOLD_REDUCTION_LEFT),
+                           _flm_vehicle_knob("hyundai_ioniq_6.turn_in_threshold_reduction_right", IONIQ_6_TURN_IN_THRESHOLD_REDUCTION_RIGHT),
+                         ) *
                            transition_envelope * turn_in_weight)
-  threshold_scale += (_ioniq_6_side_value(desired_lateral_accel, IONIQ_6_UNWIND_THRESHOLD_INCREASE_LEFT, IONIQ_6_UNWIND_THRESHOLD_INCREASE_RIGHT) *
+  threshold_scale += (_ioniq_6_side_value(
+                      desired_lateral_accel,
+                      _flm_vehicle_knob("hyundai_ioniq_6.unwind_threshold_increase_left", IONIQ_6_UNWIND_THRESHOLD_INCREASE_LEFT),
+                      _flm_vehicle_knob("hyundai_ioniq_6.unwind_threshold_increase_right", IONIQ_6_UNWIND_THRESHOLD_INCREASE_RIGHT),
+                    ) *
                       transition_envelope * unwind_weight * unwind_speed_weight)
   return base_threshold * min(max(threshold_scale, 0.82), 1.18)
 
@@ -1891,12 +2070,12 @@ def get_ioniq_6_friction_center_fade_scale(desired_lateral_accel: float, v_ego: 
 def get_ioniq_6_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
   speed_weight = _ioniq_6_sigmoid((v_ego - IONIQ_6_CENTER_TAPER_SPEED) / IONIQ_6_CENTER_TAPER_SPEED_WIDTH)
   center_weight = _ioniq_6_sigmoid((IONIQ_6_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / IONIQ_6_CENTER_TAPER_LAT_WIDTH)
-  high_speed_reduction = IONIQ_6_CENTER_TAPER_MAX * speed_weight * center_weight
+  high_speed_reduction = _flm_vehicle_knob("hyundai_ioniq_6.center_taper_max", IONIQ_6_CENTER_TAPER_MAX) * speed_weight * center_weight
 
   highway_speed_weight = _ioniq_6_sigmoid((v_ego - IONIQ_6_HIGHWAY_CENTER_TAPER_SPEED) / IONIQ_6_HIGHWAY_CENTER_TAPER_SPEED_WIDTH)
   highway_center_weight = _ioniq_6_sigmoid((IONIQ_6_HIGHWAY_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
                                            IONIQ_6_HIGHWAY_CENTER_TAPER_LAT_WIDTH)
-  highway_center_reduction = IONIQ_6_HIGHWAY_CENTER_TAPER_MAX * highway_speed_weight * highway_center_weight
+  highway_center_reduction = _flm_vehicle_knob("hyundai_ioniq_6.highway_center_taper_max", IONIQ_6_HIGHWAY_CENTER_TAPER_MAX) * highway_speed_weight * highway_center_weight
 
   low_mid_onset = _ioniq_6_sigmoid((v_ego - IONIQ_6_LOW_MID_CENTER_TAPER_SPEED_MIN) / IONIQ_6_LOW_MID_CENTER_TAPER_SPEED_WIDTH)
   low_mid_cutoff = _ioniq_6_sigmoid((IONIQ_6_LOW_MID_CENTER_TAPER_SPEED_MAX - v_ego) / IONIQ_6_LOW_MID_CENTER_TAPER_SPEED_WIDTH)
@@ -1944,8 +2123,8 @@ def get_ioniq_6_directional_taper_scale(desired_lateral_accel: float, desired_la
   reduction = band_weight * (base_reduction + unwind_reduction * unwind_weight)
   reduction += heavy_band_weight * (heavy_base_reduction + heavy_unwind_reduction * unwind_weight)
   reduction += (_ioniq_6_side_value(desired_lateral_accel,
-                                    IONIQ_6_CURVY_TURN_IN_TRIM_LEFT,
-                                    IONIQ_6_CURVY_TURN_IN_TRIM_RIGHT) *
+                                    _flm_vehicle_knob("hyundai_ioniq_6.curvy_turn_in_trim_left", IONIQ_6_CURVY_TURN_IN_TRIM_LEFT),
+                                    _flm_vehicle_knob("hyundai_ioniq_6.curvy_turn_in_trim_right", IONIQ_6_CURVY_TURN_IN_TRIM_RIGHT)) *
                 curvy_turn_in_trim_weight)
   curvy_unwind_weight = 0.0
   curvy_unwind_floor_relief = 0.0
@@ -1957,12 +2136,12 @@ def get_ioniq_6_directional_taper_scale(desired_lateral_accel: float, desired_la
                                                IONIQ_6_CURVY_UNWIND_LAT_CUTOFF_WIDTH)
     curvy_unwind_weight = curvy_unwind_speed_weight * curvy_unwind_lat_onset * curvy_unwind_lat_cutoff * unwind_weight
     curvy_unwind_floor_relief = (_ioniq_6_side_value(desired_lateral_accel,
-                                                     IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_LEFT,
-                                                     IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_RIGHT) *
+                                                     _flm_vehicle_knob("hyundai_ioniq_6.curvy_unwind_floor_relief_left", IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_LEFT),
+                                                     _flm_vehicle_knob("hyundai_ioniq_6.curvy_unwind_floor_relief_right", IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_RIGHT)) *
                                  curvy_unwind_weight)
   reduction += (_ioniq_6_side_value(desired_lateral_accel,
-                                    IONIQ_6_CURVY_UNWIND_EXTRA_REDUCTION_LEFT,
-                                    IONIQ_6_CURVY_UNWIND_EXTRA_REDUCTION_RIGHT) *
+                                    _flm_vehicle_knob("hyundai_ioniq_6.curvy_unwind_extra_reduction_left", IONIQ_6_CURVY_UNWIND_EXTRA_REDUCTION_LEFT),
+                                    _flm_vehicle_knob("hyundai_ioniq_6.curvy_unwind_extra_reduction_right", IONIQ_6_CURVY_UNWIND_EXTRA_REDUCTION_RIGHT)) *
                 curvy_unwind_weight)
   floor = _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_DIRECTIONAL_TAPER_FLOOR_LEFT, IONIQ_6_DIRECTIONAL_TAPER_FLOOR_RIGHT)
   floor -= _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_DIRECTIONAL_TAPER_UNWIND_FLOOR_LEFT, IONIQ_6_DIRECTIONAL_TAPER_UNWIND_FLOOR_RIGHT) * unwind_weight
@@ -2011,7 +2190,11 @@ def get_ioniq_6_low_speed_angle_assist_torque(desired_angle_deg: float, actual_a
     tracking_taper = _ioniq_6_sigmoid((tracking_ratio - IONIQ_6_LOW_SPEED_ANGLE_ASSIST_TRACK_RATIO_START) /
                                       IONIQ_6_LOW_SPEED_ANGLE_ASSIST_TRACK_RATIO_WIDTH)
     tracking_scale = max(1.0 - tracking_taper, IONIQ_6_LOW_SPEED_ANGLE_ASSIST_TRACK_RATIO_FLOOR)
-    assist_torque = math.copysign(IONIQ_6_LOW_SPEED_ANGLE_ASSIST_MAX_TORQUE * speed_weight * error_weight * desired_angle_weight * tracking_scale, -angle_error)
+    assist_torque = math.copysign(
+      _flm_vehicle_knob("hyundai_ioniq_6.low_speed_angle_assist_max_torque", IONIQ_6_LOW_SPEED_ANGLE_ASSIST_MAX_TORQUE) *
+      speed_weight * error_weight * desired_angle_weight * tracking_scale,
+      -angle_error,
+    )
     if abs(assist_torque) < 1e-4:
       return current_output_torque
 
@@ -2069,7 +2252,11 @@ def get_kia_ev6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
   if desired_lateral_accel == 0.0:
     return 1.0
 
-  gain = _kia_ev6_side_value(desired_lateral_accel, KIA_EV6_FF_GAIN_LEFT, KIA_EV6_FF_GAIN_RIGHT)
+  gain = _kia_ev6_side_value(
+    desired_lateral_accel,
+    _flm_vehicle_knob("hyundai_kia_ev6.ff_gain_left", KIA_EV6_FF_GAIN_LEFT),
+    _flm_vehicle_knob("hyundai_kia_ev6.ff_gain_right", KIA_EV6_FF_GAIN_RIGHT),
+  )
   abs_lateral_accel = abs(desired_lateral_accel)
   onset = _kia_ev6_sigmoid((abs_lateral_accel - KIA_EV6_FF_ONSET) / KIA_EV6_FF_ONSET_WIDTH)
   cutoff = _kia_ev6_sigmoid((KIA_EV6_FF_CUTOFF - abs_lateral_accel) / KIA_EV6_FF_CUTOFF_WIDTH)
@@ -2078,9 +2265,17 @@ def get_kia_ev6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
   low_speed_factor = _kia_ev6_low_speed_factor(v_ego)
-  turn_in_boost = 1.0 + (_kia_ev6_side_value(desired_lateral_accel, KIA_EV6_TURN_IN_BOOST_LEFT, KIA_EV6_TURN_IN_BOOST_RIGHT) *
+  turn_in_boost = 1.0 + (_kia_ev6_side_value(
+                          desired_lateral_accel,
+                          _flm_vehicle_knob("hyundai_kia_ev6.turn_in_boost_left", KIA_EV6_TURN_IN_BOOST_LEFT),
+                          _flm_vehicle_knob("hyundai_kia_ev6.turn_in_boost_right", KIA_EV6_TURN_IN_BOOST_RIGHT),
+                        ) *
                           turn_in_weight * (0.35 + 0.65 * low_speed_factor))
-  unwind_taper = 1.0 - (_kia_ev6_side_value(desired_lateral_accel, KIA_EV6_UNWIND_TAPER_LEFT, KIA_EV6_UNWIND_TAPER_RIGHT) *
+  unwind_taper = 1.0 - (_kia_ev6_side_value(
+                         desired_lateral_accel,
+                         _flm_vehicle_knob("hyundai_kia_ev6.unwind_taper_left", KIA_EV6_UNWIND_TAPER_LEFT),
+                         _flm_vehicle_knob("hyundai_kia_ev6.unwind_taper_right", KIA_EV6_UNWIND_TAPER_RIGHT),
+                       ) *
                          unwind_weight * (0.35 + 0.65 * low_speed_factor))
   return 1.0 + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
 
@@ -2091,9 +2286,17 @@ def get_kia_ev6_friction_threshold(v_ego: float, desired_lateral_accel: float = 
   phase = _kia_ev6_transition_phase(desired_lateral_accel, desired_lateral_jerk)
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
-  threshold_scale = 1.0 - (_kia_ev6_side_value(desired_lateral_accel, KIA_EV6_TURN_IN_THRESHOLD_REDUCTION_LEFT, KIA_EV6_TURN_IN_THRESHOLD_REDUCTION_RIGHT) *
+  threshold_scale = 1.0 - (_kia_ev6_side_value(
+                           desired_lateral_accel,
+                           _flm_vehicle_knob("hyundai_kia_ev6.turn_in_threshold_reduction_left", KIA_EV6_TURN_IN_THRESHOLD_REDUCTION_LEFT),
+                           _flm_vehicle_knob("hyundai_kia_ev6.turn_in_threshold_reduction_right", KIA_EV6_TURN_IN_THRESHOLD_REDUCTION_RIGHT),
+                         ) *
                            transition_envelope * turn_in_weight)
-  threshold_scale += (_kia_ev6_side_value(desired_lateral_accel, KIA_EV6_UNWIND_THRESHOLD_INCREASE_LEFT, KIA_EV6_UNWIND_THRESHOLD_INCREASE_RIGHT) *
+  threshold_scale += (_kia_ev6_side_value(
+                      desired_lateral_accel,
+                      _flm_vehicle_knob("hyundai_kia_ev6.unwind_threshold_increase_left", KIA_EV6_UNWIND_THRESHOLD_INCREASE_LEFT),
+                      _flm_vehicle_knob("hyundai_kia_ev6.unwind_threshold_increase_right", KIA_EV6_UNWIND_THRESHOLD_INCREASE_RIGHT),
+                    ) *
                       transition_envelope * unwind_weight)
   return base_threshold * min(max(threshold_scale, 0.82), 1.16)
 
@@ -2114,7 +2317,7 @@ def get_kia_ev6_friction_scale(v_ego: float, desired_lateral_accel: float, desir
 def get_kia_ev6_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
   speed_weight = _kia_ev6_sigmoid((v_ego - KIA_EV6_CENTER_TAPER_SPEED) / KIA_EV6_CENTER_TAPER_SPEED_WIDTH)
   center_weight = _kia_ev6_sigmoid((KIA_EV6_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / KIA_EV6_CENTER_TAPER_LAT_WIDTH)
-  reduction = KIA_EV6_CENTER_TAPER_MAX * speed_weight * center_weight
+  reduction = _flm_vehicle_knob("hyundai_kia_ev6.center_taper_max", KIA_EV6_CENTER_TAPER_MAX) * speed_weight * center_weight
   return 1.0 - reduction
 
 
@@ -2157,6 +2360,388 @@ def get_volt_plexy_center_taper_scale(desired_lateral_accel: float, v_ego: float
   standard_scale = get_volt_standard_center_taper_scale(desired_lateral_accel, v_ego)
   standard_reduction = 1.0 - standard_scale
   return 1.0 - (standard_reduction * VOLT_PLEXY_CENTER_TAPER_REDUCTION_MULT)
+
+
+FLM_UNIVERSAL_PROFILE_KEY = "torque_universal"
+
+FLM_FULL_SURFACE_SUFFIX_METADATA = {
+  "ff_gain_left": {"min": 0.0, "max": 0.60, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "ff_gain_right": {"min": 0.0, "max": 0.60, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "turn_in_boost_left": {"min": -0.10, "max": 2.80, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "turn_in_boost_right": {"min": -0.10, "max": 2.80, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "unwind_taper_left": {"min": 0.0, "max": 12.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "unwind_taper_right": {"min": 0.0, "max": 12.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "center_taper_max": {"min": 0.0, "max": 0.18, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "highway_center_taper_max": {"min": 0.0, "max": 0.18, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "turn_in_threshold_reduction_left": {"min": 0.0, "max": 2.00, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "turn_in_threshold_reduction_right": {"min": 0.0, "max": 2.00, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "unwind_threshold_increase_left": {"min": 0.0, "max": 12.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "unwind_threshold_increase_right": {"min": 0.0, "max": 12.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "crawl_turn_in_ff_boost_left": {"min": 0.0, "max": 0.50, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "crawl_turn_in_ff_boost_right": {"min": 0.0, "max": 0.50, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "low_speed_angle_assist_max_torque": {"min": 0.0, "max": 0.80, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "curvy_speed_min": {"min": 4.0, "max": 12.0, "precision": 0.1, "deltaType": "absolute", "safeLiveTrial": True},
+  "curvy_speed_max": {"min": 14.0, "max": 25.0, "precision": 0.1, "deltaType": "absolute", "safeLiveTrial": True},
+  "curvy_turn_in_trim_speed_min": {"min": 8.0, "max": 16.0, "precision": 0.1, "deltaType": "absolute", "safeLiveTrial": True},
+  "curvy_turn_in_trim_speed_max": {"min": 14.0, "max": 25.0, "precision": 0.1, "deltaType": "absolute", "safeLiveTrial": True},
+  "curvy_turn_in_trim_left": {"min": 0.0, "max": 0.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "curvy_turn_in_trim_right": {"min": 0.0, "max": 0.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "curvy_unwind_floor_relief_left": {"min": 0.0, "max": 0.45, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "curvy_unwind_floor_relief_right": {"min": 0.0, "max": 0.45, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "curvy_unwind_extra_reduction_left": {"min": 0.0, "max": 0.45, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "curvy_unwind_extra_reduction_right": {"min": 0.0, "max": 0.45, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+}
+
+FLM_FULL_SURFACE_NEUTRAL_DEFAULTS = {
+  "ff_gain_left": 0.0,
+  "ff_gain_right": 0.0,
+  "turn_in_boost_left": 0.0,
+  "turn_in_boost_right": 0.0,
+  "unwind_taper_left": 0.0,
+  "unwind_taper_right": 0.0,
+  "center_taper_max": 0.0,
+  "highway_center_taper_max": 0.0,
+  "turn_in_threshold_reduction_left": 0.0,
+  "turn_in_threshold_reduction_right": 0.0,
+  "unwind_threshold_increase_left": 0.0,
+  "unwind_threshold_increase_right": 0.0,
+  "crawl_turn_in_ff_boost_left": 0.0,
+  "crawl_turn_in_ff_boost_right": 0.0,
+  "low_speed_angle_assist_max_torque": 0.0,
+  "curvy_speed_min": IONIQ_6_CURVY_SPEED_MIN,
+  "curvy_speed_max": IONIQ_6_CURVY_SPEED_MAX,
+  "curvy_turn_in_trim_speed_min": IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MIN,
+  "curvy_turn_in_trim_speed_max": IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MAX,
+  "curvy_turn_in_trim_left": 0.0,
+  "curvy_turn_in_trim_right": 0.0,
+  "curvy_unwind_floor_relief_left": 0.0,
+  "curvy_unwind_floor_relief_right": 0.0,
+  "curvy_unwind_extra_reduction_left": 0.0,
+  "curvy_unwind_extra_reduction_right": 0.0,
+}
+
+
+def _flm_profile_symbol(profile_key: str, suffix: str) -> str:
+  return f"{profile_key}.{suffix}"
+
+
+def flm_profile_supports_knob(profile_key: str | None, suffix: str) -> bool:
+  if not profile_key:
+    return False
+  return _flm_profile_symbol(profile_key, suffix) in FLM_SUPPORTED_VEHICLE_KNOBS
+
+
+def _flm_full_surface_side_value(profile_key: str, desired_lateral_accel: float,
+                                 suffix: str, left_default: float = 0.0, right_default: float = 0.0) -> float:
+  if desired_lateral_accel >= 0.0:
+    return _flm_vehicle_knob(_flm_profile_symbol(profile_key, f"{suffix}_left"), left_default)
+  return _flm_vehicle_knob(_flm_profile_symbol(profile_key, f"{suffix}_right"), right_default)
+
+
+def _flm_full_surface_low_speed_factor(v_ego: float) -> float:
+  return 1.0 / (1.0 + (max(v_ego, 0.0) / IONIQ_6_TRANSITION_SPEED) ** 2)
+
+
+def _flm_full_surface_transition_phase(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  return math.tanh((desired_lateral_accel * desired_lateral_jerk) / IONIQ_6_PHASE_SCALE)
+
+
+def _flm_full_surface_transition_envelope(v_ego: float, desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  lat_factor = 1.0 - math.exp(-abs(desired_lateral_accel) / IONIQ_6_FRICTION_LAT_RISE)
+  jerk_factor = 1.0 - math.exp(-abs(desired_lateral_jerk) / IONIQ_6_FRICTION_JERK_RISE)
+  return _flm_full_surface_low_speed_factor(v_ego) * lat_factor * jerk_factor
+
+
+def _flm_full_surface_curvy_speed_weight(profile_key: str, v_ego: float) -> float:
+  curvy_speed_min = _flm_vehicle_knob(_flm_profile_symbol(profile_key, "curvy_speed_min"), IONIQ_6_CURVY_SPEED_MIN)
+  curvy_speed_max = _flm_vehicle_knob(_flm_profile_symbol(profile_key, "curvy_speed_max"), IONIQ_6_CURVY_SPEED_MAX)
+  onset = _sigmoid((max(v_ego, 0.0) - curvy_speed_min) / IONIQ_6_CURVY_SPEED_MIN_WIDTH)
+  cutoff = _sigmoid((curvy_speed_max - max(v_ego, 0.0)) / IONIQ_6_CURVY_SPEED_MAX_WIDTH)
+  return onset * cutoff
+
+
+def _flm_full_surface_curvy_turn_in_trim_speed_weight(profile_key: str, v_ego: float) -> float:
+  curvy_turn_in_speed_min = _flm_vehicle_knob(_flm_profile_symbol(profile_key, "curvy_turn_in_trim_speed_min"), IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MIN)
+  curvy_turn_in_speed_max = _flm_vehicle_knob(_flm_profile_symbol(profile_key, "curvy_turn_in_trim_speed_max"), IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MAX)
+  onset = _sigmoid((max(v_ego, 0.0) - curvy_turn_in_speed_min) / IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_WIDTH)
+  cutoff = _sigmoid((curvy_turn_in_speed_max - max(v_ego, 0.0)) / IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_WIDTH)
+  return onset * cutoff
+
+
+def get_flm_full_surface_center_taper_scale(profile_key: str | None, desired_lateral_accel: float, v_ego: float,
+                                            include_base_center: bool = False) -> float:
+  if not profile_key:
+    return 1.0
+
+  reduction = 0.0
+  if include_base_center and flm_profile_supports_knob(profile_key, "center_taper_max"):
+    speed_weight = _sigmoid((v_ego - IONIQ_6_CENTER_TAPER_SPEED) / IONIQ_6_CENTER_TAPER_SPEED_WIDTH)
+    center_weight = _sigmoid((IONIQ_6_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / IONIQ_6_CENTER_TAPER_LAT_WIDTH)
+    reduction += _flm_vehicle_knob(_flm_profile_symbol(profile_key, "center_taper_max"), 0.0) * speed_weight * center_weight
+
+  if flm_profile_supports_knob(profile_key, "highway_center_taper_max"):
+    speed_weight = _sigmoid((v_ego - IONIQ_6_HIGHWAY_CENTER_TAPER_SPEED) / IONIQ_6_HIGHWAY_CENTER_TAPER_SPEED_WIDTH)
+    center_weight = _sigmoid((IONIQ_6_HIGHWAY_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / IONIQ_6_HIGHWAY_CENTER_TAPER_LAT_WIDTH)
+    reduction += _flm_vehicle_knob(_flm_profile_symbol(profile_key, "highway_center_taper_max"), 0.0) * speed_weight * center_weight
+
+  return 1.0 - min(reduction, 0.20)
+
+
+def get_flm_full_surface_ff_scale(profile_key: str | None, desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float,
+                                  include_base_ff: bool = False) -> float:
+  if not profile_key or desired_lateral_accel == 0.0:
+    return 1.0
+
+  abs_lateral_accel = abs(desired_lateral_accel)
+  phase = _flm_full_surface_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  low_speed_factor = _flm_full_surface_low_speed_factor(v_ego)
+
+  curvy_turn_in_speed_weight = _flm_full_surface_curvy_turn_in_trim_speed_weight(profile_key, v_ego)
+  curvy_turn_in_lat_onset = _sigmoid((abs_lateral_accel - IONIQ_6_CURVY_TURN_IN_TRIM_LAT_START) / IONIQ_6_CURVY_TURN_IN_TRIM_LAT_ONSET_WIDTH)
+  curvy_turn_in_lat_cutoff = _sigmoid((IONIQ_6_CURVY_TURN_IN_TRIM_LAT_END - abs_lateral_accel) / IONIQ_6_CURVY_TURN_IN_TRIM_LAT_CUTOFF_WIDTH)
+  curvy_turn_in_trim_weight = curvy_turn_in_speed_weight * curvy_turn_in_lat_onset * curvy_turn_in_lat_cutoff * turn_in_weight
+
+  curvy_unwind_speed_weight = _flm_full_surface_curvy_speed_weight(profile_key, v_ego)
+  curvy_unwind_lat_onset = _sigmoid((abs_lateral_accel - IONIQ_6_CURVY_UNWIND_LAT_START) / IONIQ_6_CURVY_UNWIND_LAT_ONSET_WIDTH)
+  curvy_unwind_lat_cutoff = _sigmoid((IONIQ_6_CURVY_UNWIND_LAT_END - abs_lateral_accel) / IONIQ_6_CURVY_UNWIND_LAT_CUTOFF_WIDTH)
+  curvy_unwind_weight = curvy_unwind_speed_weight * curvy_unwind_lat_onset * curvy_unwind_lat_cutoff * unwind_weight
+
+  scale = 1.0
+  if include_base_ff and flm_profile_supports_knob(profile_key, "ff_gain_left"):
+    gain = _flm_full_surface_side_value(profile_key, desired_lateral_accel, "ff_gain")
+    onset = _sigmoid((abs_lateral_accel - IONIQ_6_FF_ONSET) / IONIQ_6_FF_ONSET_WIDTH)
+    cutoff = _sigmoid((IONIQ_6_FF_CUTOFF - abs_lateral_accel) / IONIQ_6_FF_CUTOFF_WIDTH)
+    extra_scale = gain * onset * cutoff
+    turn_in_boost = 1.0 + (_flm_full_surface_side_value(profile_key, desired_lateral_accel, "turn_in_boost") * turn_in_weight * low_speed_factor)
+    unwind_reduction = _flm_full_surface_side_value(profile_key, desired_lateral_accel, "unwind_taper") * unwind_weight * (0.30 + 0.70 * low_speed_factor)
+    curvy_unwind_extra = _flm_full_surface_side_value(profile_key, desired_lateral_accel, "curvy_unwind_extra_reduction") * curvy_unwind_weight
+    curvy_unwind_floor_relief = _flm_full_surface_side_value(profile_key, desired_lateral_accel, "curvy_unwind_floor_relief") * curvy_unwind_weight
+    unwind_floor = 1.0 - (0.55 * unwind_reduction) - curvy_unwind_floor_relief
+    unwind_scale = max(1.0 - unwind_reduction - curvy_unwind_extra, unwind_floor, 0.0)
+    scale *= 1.0 + (extra_scale * turn_in_boost * unwind_scale)
+  else:
+    curvy_unwind_extra = _flm_full_surface_side_value(profile_key, desired_lateral_accel, "curvy_unwind_extra_reduction") * curvy_unwind_weight
+    curvy_unwind_floor_relief = _flm_full_surface_side_value(profile_key, desired_lateral_accel, "curvy_unwind_floor_relief") * curvy_unwind_weight
+    scale *= max(1.0 - curvy_unwind_extra - curvy_unwind_floor_relief, 0.55)
+
+  if flm_profile_supports_knob(profile_key, "curvy_turn_in_trim_left"):
+    curvy_trim = _flm_full_surface_side_value(profile_key, desired_lateral_accel, "curvy_turn_in_trim") * curvy_turn_in_trim_weight
+    scale *= max(1.0 - curvy_trim, 0.55)
+
+  if flm_profile_supports_knob(profile_key, "crawl_turn_in_ff_boost_left") and desired_lateral_accel * desired_lateral_jerk > 0.0:
+    crawl_speed_weight = _sigmoid((IONIQ_6_CRAWL_TURN_IN_FF_SPEED - max(v_ego, 0.0)) / IONIQ_6_CRAWL_TURN_IN_FF_SPEED_WIDTH)
+    crawl_lat_weight = _sigmoid((abs_lateral_accel - IONIQ_6_CRAWL_TURN_IN_FF_LAT) / IONIQ_6_CRAWL_TURN_IN_FF_LAT_WIDTH)
+    scale += _flm_full_surface_side_value(profile_key, desired_lateral_accel, "crawl_turn_in_ff_boost") * crawl_speed_weight * crawl_lat_weight
+
+  return scale
+
+
+def get_flm_full_surface_friction_threshold(profile_key: str | None, base_threshold: float, v_ego: float,
+                                            desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0,
+                                            include_base_threshold: bool = False) -> float:
+  if not profile_key or not include_base_threshold:
+    return base_threshold
+
+  transition_envelope = _flm_full_surface_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
+  phase = _flm_full_surface_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  unwind_speed_weight = _sigmoid((v_ego - IONIQ_6_UNWIND_HIGH_SPEED_SPEED) / IONIQ_6_UNWIND_HIGH_SPEED_SPEED_WIDTH)
+  threshold_scale = 1.0
+  threshold_scale -= (_flm_full_surface_side_value(profile_key, desired_lateral_accel, "turn_in_threshold_reduction") *
+                      transition_envelope * turn_in_weight)
+  threshold_scale += (_flm_full_surface_side_value(profile_key, desired_lateral_accel, "unwind_threshold_increase") *
+                      transition_envelope * unwind_weight * unwind_speed_weight)
+  return base_threshold * min(max(threshold_scale, 0.82), 1.18)
+
+
+def get_flm_full_surface_low_speed_angle_assist_torque(profile_key: str | None, desired_angle_deg: float, actual_angle_deg: float,
+                                                       current_output_torque: float, v_ego: float) -> float:
+  if not profile_key or not flm_profile_supports_knob(profile_key, "low_speed_angle_assist_max_torque"):
+    return current_output_torque
+
+  max_torque = _flm_vehicle_knob(_flm_profile_symbol(profile_key, "low_speed_angle_assist_max_torque"), 0.0)
+  if max_torque <= 1e-4:
+    return current_output_torque
+
+  angle_error = desired_angle_deg - actual_angle_deg
+  if desired_angle_deg * angle_error > 0.0:
+    speed_weight = _sigmoid((IONIQ_6_LOW_SPEED_ANGLE_ASSIST_SPEED - max(v_ego, 0.0)) / IONIQ_6_LOW_SPEED_ANGLE_ASSIST_SPEED_WIDTH)
+    error_weight = _sigmoid((abs(angle_error) - IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ERROR) / IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ERROR_WIDTH)
+    desired_angle_weight = _sigmoid((abs(desired_angle_deg) - IONIQ_6_LOW_SPEED_ANGLE_ASSIST_DESIRED_ANGLE) / IONIQ_6_LOW_SPEED_ANGLE_ASSIST_DESIRED_ANGLE_WIDTH)
+    tracking_ratio = abs(actual_angle_deg) / max(abs(desired_angle_deg), 1e-3)
+    tracking_taper = _sigmoid((tracking_ratio - IONIQ_6_LOW_SPEED_ANGLE_ASSIST_TRACK_RATIO_START) / IONIQ_6_LOW_SPEED_ANGLE_ASSIST_TRACK_RATIO_WIDTH)
+    tracking_scale = max(1.0 - tracking_taper, IONIQ_6_LOW_SPEED_ANGLE_ASSIST_TRACK_RATIO_FLOOR)
+    assist_torque = math.copysign(max_torque * speed_weight * error_weight * desired_angle_weight * tracking_scale, -angle_error)
+    if abs(assist_torque) < 1e-4:
+      return current_output_torque
+    if current_output_torque * assist_torque >= 0.0:
+      add_scale = float(np.interp(abs(current_output_torque), IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ADD_BP, IONIQ_6_LOW_SPEED_ANGLE_ASSIST_ADD_V))
+      return float(np.clip(current_output_torque + (assist_torque * add_scale), -1.0, 1.0))
+    return float(np.clip(current_output_torque + assist_torque, -1.0, 1.0))
+
+  speed_weight = _sigmoid((IONIQ_6_LOW_SPEED_UNWIND_ASSIST_SPEED - max(v_ego, 0.0)) / IONIQ_6_LOW_SPEED_UNWIND_ASSIST_SPEED_WIDTH)
+  error_weight = _sigmoid((abs(angle_error) - IONIQ_6_LOW_SPEED_UNWIND_ASSIST_ERROR) / IONIQ_6_LOW_SPEED_UNWIND_ASSIST_ERROR_WIDTH)
+  actual_angle_weight = _sigmoid((abs(actual_angle_deg) - IONIQ_6_LOW_SPEED_UNWIND_ASSIST_ACTUAL_ANGLE) / IONIQ_6_LOW_SPEED_UNWIND_ASSIST_ACTUAL_ANGLE_WIDTH)
+  assist_torque = math.copysign(IONIQ_6_LOW_SPEED_UNWIND_ASSIST_MAX_TORQUE * speed_weight * error_weight * actual_angle_weight, -angle_error)
+  if abs(assist_torque) < 1e-4:
+    return current_output_torque
+  if current_output_torque * assist_torque >= 0.0:
+    assist_torque *= IONIQ_6_LOW_SPEED_UNWIND_ASSIST_BLEND
+  return float(np.clip(current_output_torque + assist_torque, -1.0, 1.0))
+
+
+FLM_RICH_PROFILE_CARS = {
+  "gm_bolt_2022_2023": set(BOLT_2022_2023_CARS),
+  "hyundai_ioniq_6": set(IONIQ_6_CARS),
+  "hyundai_kia_ev6": set(KIA_EV6_CARS),
+  "toyota_prius": set(PRIUS_CARS),
+}
+
+FLM_RICH_PROFILE_LABELS = {
+  "gm_bolt_2022_2023": "Bolt 2022-2023",
+  "hyundai_ioniq_6": "Ioniq 6",
+  "hyundai_kia_ev6": "EV6",
+  "toyota_prius": "Prius",
+  FLM_UNIVERSAL_PROFILE_KEY: "Torque Controller",
+}
+
+FLM_SUPPORTED_VEHICLE_KNOBS = {
+  "gm_bolt_2022_2023.ff_gain_left": {"profile": "gm_bolt_2022_2023", "min": 0.0, "max": 0.40, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_FF_GAIN_LEFT},
+  "gm_bolt_2022_2023.ff_gain_right": {"profile": "gm_bolt_2022_2023", "min": 0.0, "max": 0.40, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_FF_GAIN_RIGHT},
+  "gm_bolt_2022_2023.turn_in_boost_left": {"profile": "gm_bolt_2022_2023", "min": -0.10, "max": 0.50, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_TURN_IN_BOOST_LEFT},
+  "gm_bolt_2022_2023.turn_in_boost_right": {"profile": "gm_bolt_2022_2023", "min": -0.10, "max": 0.50, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_TURN_IN_BOOST_RIGHT},
+  "gm_bolt_2022_2023.unwind_taper_left": {"profile": "gm_bolt_2022_2023", "min": 0.0, "max": 0.80, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_UNWIND_TAPER_LEFT},
+  "gm_bolt_2022_2023.unwind_taper_right": {"profile": "gm_bolt_2022_2023", "min": 0.0, "max": 0.80, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_UNWIND_TAPER_RIGHT},
+  "gm_bolt_2022_2023.center_taper_max": {"profile": "gm_bolt_2022_2023", "min": 0.0, "max": 0.25, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_CENTER_TAPER_MAX},
+  "gm_bolt_2022_2023.turn_in_threshold_reduction_left": {"profile": "gm_bolt_2022_2023", "min": 0.0, "max": 0.40, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_LEFT},
+  "gm_bolt_2022_2023.turn_in_threshold_reduction_right": {"profile": "gm_bolt_2022_2023", "min": 0.0, "max": 0.40, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_RIGHT},
+  "gm_bolt_2022_2023.unwind_threshold_increase_left": {"profile": "gm_bolt_2022_2023", "min": 0.0, "max": 0.60, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_LEFT},
+  "gm_bolt_2022_2023.unwind_threshold_increase_right": {"profile": "gm_bolt_2022_2023", "min": 0.0, "max": 0.60, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_RIGHT},
+  "hyundai_ioniq_6.ff_gain_left": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.60, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_FF_GAIN_LEFT},
+  "hyundai_ioniq_6.ff_gain_right": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.60, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_FF_GAIN_RIGHT},
+  "hyundai_ioniq_6.turn_in_boost_left": {"profile": "hyundai_ioniq_6", "min": 0.40, "max": 2.80, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_TURN_IN_BOOST_LEFT},
+  "hyundai_ioniq_6.turn_in_boost_right": {"profile": "hyundai_ioniq_6", "min": 0.40, "max": 2.80, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_TURN_IN_BOOST_RIGHT},
+  "hyundai_ioniq_6.unwind_taper_left": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 12.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_UNWIND_TAPER_LEFT},
+  "hyundai_ioniq_6.unwind_taper_right": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 12.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_UNWIND_TAPER_RIGHT},
+  "hyundai_ioniq_6.center_taper_max": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.18, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CENTER_TAPER_MAX},
+  "hyundai_ioniq_6.highway_center_taper_max": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.18, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_HIGHWAY_CENTER_TAPER_MAX},
+  "hyundai_ioniq_6.turn_in_threshold_reduction_left": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 2.00, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_TURN_IN_THRESHOLD_REDUCTION_LEFT},
+  "hyundai_ioniq_6.turn_in_threshold_reduction_right": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 2.00, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_TURN_IN_THRESHOLD_REDUCTION_RIGHT},
+  "hyundai_ioniq_6.unwind_threshold_increase_left": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 12.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_UNWIND_THRESHOLD_INCREASE_LEFT},
+  "hyundai_ioniq_6.unwind_threshold_increase_right": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 12.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_UNWIND_THRESHOLD_INCREASE_RIGHT},
+  "hyundai_ioniq_6.crawl_turn_in_ff_boost_left": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.50, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CRAWL_TURN_IN_FF_BOOST_LEFT},
+  "hyundai_ioniq_6.crawl_turn_in_ff_boost_right": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.50, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CRAWL_TURN_IN_FF_BOOST_RIGHT},
+  "hyundai_ioniq_6.low_speed_angle_assist_max_torque": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.80, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_LOW_SPEED_ANGLE_ASSIST_MAX_TORQUE},
+  "hyundai_ioniq_6.curvy_speed_min": {"profile": "hyundai_ioniq_6", "min": 4.0, "max": 12.0, "precision": 0.1, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CURVY_SPEED_MIN},
+  "hyundai_ioniq_6.curvy_speed_max": {"profile": "hyundai_ioniq_6", "min": 14.0, "max": 25.0, "precision": 0.1, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CURVY_SPEED_MAX},
+  "hyundai_ioniq_6.curvy_turn_in_trim_speed_min": {"profile": "hyundai_ioniq_6", "min": 8.0, "max": 16.0, "precision": 0.1, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MIN},
+  "hyundai_ioniq_6.curvy_turn_in_trim_speed_max": {"profile": "hyundai_ioniq_6", "min": 14.0, "max": 25.0, "precision": 0.1, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MAX},
+  "hyundai_ioniq_6.curvy_turn_in_trim_left": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CURVY_TURN_IN_TRIM_LEFT},
+  "hyundai_ioniq_6.curvy_turn_in_trim_right": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CURVY_TURN_IN_TRIM_RIGHT},
+  "hyundai_ioniq_6.curvy_unwind_floor_relief_left": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.45, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_LEFT},
+  "hyundai_ioniq_6.curvy_unwind_floor_relief_right": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.45, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_RIGHT},
+  "hyundai_ioniq_6.curvy_unwind_extra_reduction_left": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.45, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CURVY_UNWIND_EXTRA_REDUCTION_LEFT},
+  "hyundai_ioniq_6.curvy_unwind_extra_reduction_right": {"profile": "hyundai_ioniq_6", "min": 0.0, "max": 0.45, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": IONIQ_6_CURVY_UNWIND_EXTRA_REDUCTION_RIGHT},
+  "hyundai_kia_ev6.ff_gain_left": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.60, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_FF_GAIN_LEFT},
+  "hyundai_kia_ev6.ff_gain_right": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.60, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_FF_GAIN_RIGHT},
+  "hyundai_kia_ev6.turn_in_boost_left": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 1.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_TURN_IN_BOOST_LEFT},
+  "hyundai_kia_ev6.turn_in_boost_right": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 1.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_TURN_IN_BOOST_RIGHT},
+  "hyundai_kia_ev6.unwind_taper_left": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 1.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_UNWIND_TAPER_LEFT},
+  "hyundai_kia_ev6.unwind_taper_right": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 1.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_UNWIND_TAPER_RIGHT},
+  "hyundai_kia_ev6.center_taper_max": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_CENTER_TAPER_MAX},
+  "hyundai_kia_ev6.turn_in_threshold_reduction_left": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.40, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_TURN_IN_THRESHOLD_REDUCTION_LEFT},
+  "hyundai_kia_ev6.turn_in_threshold_reduction_right": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.40, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_TURN_IN_THRESHOLD_REDUCTION_RIGHT},
+  "hyundai_kia_ev6.unwind_threshold_increase_left": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.80, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_UNWIND_THRESHOLD_INCREASE_LEFT},
+  "hyundai_kia_ev6.unwind_threshold_increase_right": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.80, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_UNWIND_THRESHOLD_INCREASE_RIGHT},
+  "toyota_prius.ff_gain_left": {"profile": "toyota_prius", "min": 0.0, "max": 0.25, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_FF_GAIN_LEFT},
+  "toyota_prius.ff_gain_right": {"profile": "toyota_prius", "min": 0.0, "max": 0.25, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_FF_GAIN_RIGHT},
+  "toyota_prius.turn_in_boost_left": {"profile": "toyota_prius", "min": -0.10, "max": 0.60, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_TURN_IN_BOOST_LEFT},
+  "toyota_prius.turn_in_boost_right": {"profile": "toyota_prius", "min": -0.10, "max": 0.60, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_TURN_IN_BOOST_RIGHT},
+  "toyota_prius.unwind_taper_left": {"profile": "toyota_prius", "min": 0.0, "max": 1.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_UNWIND_TAPER_LEFT},
+  "toyota_prius.unwind_taper_right": {"profile": "toyota_prius", "min": 0.0, "max": 1.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_UNWIND_TAPER_RIGHT},
+  "toyota_prius.center_taper_max": {"profile": "toyota_prius", "min": 0.0, "max": 0.25, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_CENTER_TAPER_MAX},
+  "toyota_prius.turn_in_threshold_reduction_left": {"profile": "toyota_prius", "min": 0.0, "max": 0.50, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_TURN_IN_THRESHOLD_REDUCTION_LEFT},
+  "toyota_prius.turn_in_threshold_reduction_right": {"profile": "toyota_prius", "min": 0.0, "max": 0.50, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_TURN_IN_THRESHOLD_REDUCTION_RIGHT},
+  "toyota_prius.unwind_threshold_increase_left": {"profile": "toyota_prius", "min": 0.0, "max": 0.90, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_UNWIND_THRESHOLD_INCREASE_LEFT},
+  "toyota_prius.unwind_threshold_increase_right": {"profile": "toyota_prius", "min": 0.0, "max": 0.90, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": PRIUS_UNWIND_THRESHOLD_INCREASE_RIGHT},
+}
+
+
+def _add_flm_full_surface_profile_knobs(profile_key: str, defaults: dict[str, float] | None = None) -> None:
+  knob_defaults = dict(FLM_FULL_SURFACE_NEUTRAL_DEFAULTS)
+  if defaults:
+    knob_defaults.update(defaults)
+
+  for suffix, meta in FLM_FULL_SURFACE_SUFFIX_METADATA.items():
+    symbol = _flm_profile_symbol(profile_key, suffix)
+    if symbol in FLM_SUPPORTED_VEHICLE_KNOBS:
+      continue
+    FLM_SUPPORTED_VEHICLE_KNOBS[symbol] = {
+      "profile": profile_key,
+      "min": meta["min"],
+      "max": meta["max"],
+      "precision": meta["precision"],
+      "deltaType": meta["deltaType"],
+      "safeLiveTrial": meta["safeLiveTrial"],
+      "defaultValue": knob_defaults[suffix],
+    }
+
+
+for _flm_profile_key in ("gm_bolt_2022_2023", "hyundai_ioniq_6", "hyundai_kia_ev6", "toyota_prius", FLM_UNIVERSAL_PROFILE_KEY):
+  _add_flm_full_surface_profile_knobs(_flm_profile_key)
+
+
+def get_flm_supported_vehicle_knobs() -> dict:
+  return _flm_copy_json(FLM_SUPPORTED_VEHICLE_KNOBS)
+
+
+def get_flm_rich_profile_key(car_fingerprint) -> str | None:
+  for profile_key, cars in FLM_RICH_PROFILE_CARS.items():
+    if car_fingerprint in cars:
+      return profile_key
+  return None
+
+
+def get_flm_surface_profile_key(car_fingerprint, torque_control: bool = True) -> str | None:
+  profile_key = get_flm_rich_profile_key(car_fingerprint)
+  if profile_key is not None or not torque_control:
+    return profile_key
+  return FLM_UNIVERSAL_PROFILE_KEY
+
+
+def get_flm_capabilities(car_fingerprint, brand: str = "", hyundai_canfd: bool = False, torque_control: bool = True) -> dict:
+  profile_key = get_flm_surface_profile_key(car_fingerprint, torque_control=torque_control)
+  if hyundai_canfd:
+    friction_family = "hkg_canfd"
+  elif brand == "gm":
+    friction_family = "gm"
+  else:
+    friction_family = "standard"
+
+  dedicated_friction = car_fingerprint in (
+    set(BOLT_2022_2023_CARS) | set(BOLT_2018_2021_CARS) | set(VOLT_STANDARD_CARS) | set(PALISADE_CARS) |
+    set(PRIUS_CARS) | set(IONIQ_5_CARS) | set(IONIQ_6_CARS) | set(KIA_EV6_CARS) | set(KIA_FORTE_CARS) |
+    set(KIA_NIRO_PHEV_2022_CARS) | set(GENESIS_G90_CARS)
+  )
+  dedicated_center_taper = car_fingerprint in (
+    set(PRIUS_CARS) | set(BOLT_CARS) | set(VOLT_STANDARD_CARS) | set(IONIQ_5_CARS) |
+    set(IONIQ_EV_OLD_CARS) | set(IONIQ_6_CARS) | set(SONATA_CARS) | set(SONATA_HYBRID_CARS) |
+    set(KIA_XCEED_CARS) | set(KIA_NIRO_PHEV_2022_CARS) | set(KIA_FORTE_CARS) | set(KIA_EV6_CARS) |
+    set(SILVERADO_CARS)
+  )
+  rich_knobs = [name for name, meta in FLM_SUPPORTED_VEHICLE_KNOBS.items() if meta["profile"] == profile_key]
+  return {
+    "torqueControl": bool(torque_control),
+    "frictionFamily": friction_family,
+    "hasDedicatedFrictionThreshold": bool(dedicated_friction),
+    "hasDedicatedCenterTaper": bool(dedicated_center_taper),
+    "richProfileKey": profile_key,
+    "richProfileLabel": FLM_RICH_PROFILE_LABELS.get(profile_key),
+    "richKnobs": rich_knobs,
+  }
 
 
 __all__ = [name for name in globals() if not name.startswith("_") and name not in {

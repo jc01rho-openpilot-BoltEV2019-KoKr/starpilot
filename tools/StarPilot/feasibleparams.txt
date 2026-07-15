@@ -331,6 +331,7 @@ StartupMessageBottom
 StartupMessageTop
 StaticPedalsOnUI
 SteerDelay
+SteerDelayModeMigrated
 SteerDelayStock
 SteerFriction
 SteerFrictionStock
@@ -367,6 +368,7 @@ TuningLevelConfirmed
 TurnDesires
 UnlockDoors
 UpdaterAvailableBranches
+UseAutoSteerDelay
 UseKonikServer
 UsePrebuilt
 UseSI

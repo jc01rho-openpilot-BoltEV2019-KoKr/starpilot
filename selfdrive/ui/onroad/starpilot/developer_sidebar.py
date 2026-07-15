@@ -14,6 +14,7 @@ METRIC_MARGIN = 12
 FONT_SIZE = 35
 METER_TO_FOOT = 3.28084
 _WHITE_DIM = rl.Color(255, 255, 255, 85)
+_FLM_OVERRIDE_COLOR = rl.Color(239, 68, 68, 255)
 
 def parse_hex_color(hex_str: str, default_color=rl.WHITE) -> rl.Color:
   if not hex_str:
@@ -36,6 +37,17 @@ def parse_hex_color(hex_str: str, default_color=rl.WHITE) -> rl.Color:
   return default_color
 
 
+def resolve_effective_torque_value(custom_enabled: bool, custom_value: float,
+                                   live_enabled: bool, live_value: float,
+                                   stock_value: float, configured_value: float) -> float:
+  """Mirror controlsd torque-param precedence for the onroad diagnostics."""
+  if custom_enabled:
+    return custom_value
+  if live_enabled:
+    return live_value
+  return stock_value if stock_value != 0.0 else configured_value
+
+
 class DeveloperSidebar:
   def __init__(self):
     self._params = Params()
@@ -44,6 +56,7 @@ class DeveloperSidebar:
     self._cached_metrics = [0] * 7
     self._cached_force_auto_tune_off = False
     self._cached_force_auto_tune = False
+    self._cached_flm_trial_applied = False
     self._cached_friction_stock = 0.0
     self._cached_friction = 0.0
     self._cached_lat_stock = 0.0
@@ -60,6 +73,7 @@ class DeveloperSidebar:
     self._visible = False
     self._metric_color = rl.WHITE
     self._active_ids: list[int] = []
+    self._flm_override_metric_ids: set[int] = set()
     self._metrics: dict[int, tuple[str, str]] = {}
 
   @property
@@ -83,6 +97,7 @@ class DeveloperSidebar:
     self._cached_metrics = [self._params.get_int(f"DeveloperSidebarMetric{i}") for i in range(1, 8)]
     self._cached_force_auto_tune_off = self._params.get_bool("ForceAutoTuneOff")
     self._cached_force_auto_tune = self._params.get_bool("ForceAutoTune")
+    self._cached_flm_trial_applied = self._params.get_bool("FLMTrialApplied")
     self._cached_friction_stock = self._params.get_float("SteerFrictionStock")
     self._cached_friction = self._params.get_float("SteerFriction")
     self._cached_lat_stock = self._params.get_float("SteerLatAccelStock")
@@ -129,7 +144,7 @@ class DeveloperSidebar:
     # ---- PC REPLAY FALLBACK (remove the next line when replay gets toggle bridge) ----
     # self._visible = ui_state.starpilot_toggles.get("developer_sidebar", False)
     # ---- replace the line below with the one above ---->
-    self._visible = self._params.get("DeveloperSidebar") or False or ui_state.starpilot_toggles.get("developer_sidebar", False)
+    self._visible = self._params.get_bool("DeveloperSidebar") or ui_state.starpilot_toggles.get("developer_sidebar", False)
     if not self._visible:
       return
 
@@ -200,20 +215,39 @@ class DeveloperSidebar:
     force_auto_tune = ui_state.starpilot_toggles.get("force_auto_tune", False) or self._cached_force_auto_tune
     use_params = live_torque_parameters.useParams if (live_torque_parameters and hasattr(live_torque_parameters, 'useParams')) else False
     using_live_torque = not force_auto_tune_off and (use_params or force_auto_tune)
+    live_friction = live_torque_parameters.frictionCoefficientFiltered if (live_torque_parameters and hasattr(live_torque_parameters, 'frictionCoefficientFiltered')) else 0.0
+    live_lat_factor = live_torque_parameters.latAccelFactorFiltered if (live_torque_parameters and hasattr(live_torque_parameters, 'latAccelFactorFiltered')) else 0.0
+    custom_friction = float(ui_state.starpilot_toggles.get("friction", self._cached_friction) or 0.0)
+    custom_lat_factor = float(ui_state.starpilot_toggles.get("latAccelFactor", self._cached_lat) or 0.0)
+    use_custom_friction = bool(ui_state.starpilot_toggles.get("use_custom_friction", force_auto_tune_off))
+    use_custom_lat_factor = bool(ui_state.starpilot_toggles.get("use_custom_latAccelFactor", force_auto_tune_off))
 
-    if not using_live_torque:
-      friction_coeff = self._cached_friction_stock
-    else:
-      friction_coeff = live_torque_parameters.frictionCoefficientFiltered if (live_torque_parameters and hasattr(live_torque_parameters, 'frictionCoefficientFiltered')) else 0.0
-    if friction_coeff == 0.0:
-      friction_coeff = self._cached_friction if force_auto_tune_off else (live_torque_parameters.frictionCoefficientFiltered if (live_torque_parameters and hasattr(live_torque_parameters, 'frictionCoefficientFiltered')) else 0.0)
+    self._flm_override_metric_ids = set()
+    if self._cached_flm_trial_applied:
+      flm_metric_flags = {
+        3: bool(ui_state.starpilot_toggles.get("use_custom_steerActuatorDelay", False)),
+        4: use_custom_friction,
+        5: use_custom_lat_factor,
+        6: bool(ui_state.starpilot_toggles.get("use_custom_steerRatio", False)),
+      }
+      self._flm_override_metric_ids = {metric_id for metric_id, enabled in flm_metric_flags.items() if enabled}
 
-    if not using_live_torque:
-      lat_factor = self._cached_lat_stock
-    else:
-      lat_factor = live_torque_parameters.latAccelFactorFiltered if (live_torque_parameters and hasattr(live_torque_parameters, 'latAccelFactorFiltered')) else 0.0
-    if lat_factor == 0.0:
-      lat_factor = self._cached_lat if force_auto_tune_off else (live_torque_parameters.latAccelFactorFiltered if (live_torque_parameters and hasattr(live_torque_parameters, 'latAccelFactorFiltered')) else 0.0)
+    friction_coeff = resolve_effective_torque_value(
+      use_custom_friction,
+      custom_friction,
+      using_live_torque,
+      live_friction,
+      self._cached_friction_stock,
+      self._cached_friction,
+    )
+    lat_factor = resolve_effective_torque_value(
+      use_custom_lat_factor,
+      custom_lat_factor,
+      using_live_torque,
+      live_lat_factor,
+      self._cached_lat_stock,
+      self._cached_lat,
+    )
 
     lat_delay = live_delay.lateralDelay if live_delay else 0.0
 
@@ -271,5 +305,6 @@ class DeveloperSidebar:
       if metric_id <= 0 or metric_id not in self._metrics:
         continue
       label_first, label_second = self._metrics[metric_id]
-      self._draw_metric(sidebar_rect, label_first, label_second, self._metric_color, y)
+      flm_overridden = metric_id in self._flm_override_metric_ids
+      self._draw_metric(sidebar_rect, label_first, label_second, _FLM_OVERRIDE_COLOR if flm_overridden else self._metric_color, y)
       y += METRIC_HEIGHT + spacing

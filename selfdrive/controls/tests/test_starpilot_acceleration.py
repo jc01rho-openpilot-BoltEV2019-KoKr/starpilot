@@ -152,17 +152,15 @@ def test_slc_coast_window_disabled_when_target_drop_is_not_slc():
   assert accel.min_accel == pytest.approx(A_CRUISE_MIN_ECO)
 
 
-def test_truck_tuning_standard_profile_limits_launch_spike():
-  assert get_max_accel_standard(0.0, ev_tuning=False, truck_tuning=True) < 3.0
+def test_truck_tuning_standard_profile_keeps_non_binding_launch_headroom():
+  assert get_max_accel_standard(0.0, ev_tuning=False, truck_tuning=True) == pytest.approx(6.0)
+  assert get_max_accel_standard(5.0, ev_tuning=False, truck_tuning=True) == pytest.approx(1.10)
 
 
-def test_truck_tuning_standard_profile_keeps_mid_speed_headroom():
-  truck = get_max_accel_standard(15.0, ev_tuning=False, truck_tuning=True)
-  gas = get_max_accel_standard(15.0, ev_tuning=False, truck_tuning=False)
-
-  assert truck >= gas - 0.05
-  assert truck > 1.25
+def test_truck_tuning_standard_profile_uses_proven_cruise_limits():
+  assert get_max_accel_standard(15.0, ev_tuning=False, truck_tuning=True) == pytest.approx(0.60)
+  assert get_max_accel_standard(25.0, ev_tuning=False, truck_tuning=True) == pytest.approx(0.45)
 
 
-def test_truck_tuning_standard_profile_does_not_fall_off_at_highway_speed():
-  assert get_max_accel_standard(25.0, ev_tuning=False, truck_tuning=True) >= 0.85
+def test_truck_tuning_standard_profile_limits_highway_run_up():
+  assert get_max_accel_standard(40.0, ev_tuning=False, truck_tuning=True) == pytest.approx(0.35)

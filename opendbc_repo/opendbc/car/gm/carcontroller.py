@@ -66,6 +66,9 @@ TRUCK_LONG_SMOOTH_CARS = {
   CAR.CHEVROLET_SILVERADO,
   CAR.CHEVROLET_SILVERADO_CC,
 }
+TRUCK_FRICTION_BRAKE_ENGAGE = 25
+TRUCK_FRICTION_BRAKE_RELEASE = 8
+TRUCK_FRICTION_BRAKE_IMMEDIATE_ACCEL = -0.65
 ACC_DASHBOARD_ZERO_RESERVED_CARS = {
   CAR.CHEVROLET_BLAZER,
   CAR.CHEVROLET_EQUINOX,
@@ -212,11 +215,11 @@ def shape_truck_positive_accel(accel: float, v_ego: float, enabled: bool,
   if not enabled or accel <= 0.0 or v_ego < 12.0:
     return accel
 
-  low_scale = float(np.interp(v_ego, [12.0, 18.0, 25.0, 35.0], [0.95, 0.88, 0.82, 0.76]))
-  mid_scale = float(np.interp(v_ego, [12.0, 18.0, 25.0, 35.0], [0.98, 0.94, 0.89, 0.84]))
+  low_scale = float(np.interp(v_ego, [12.0, 18.0, 25.0, 35.0], [0.93, 0.84, 0.76, 0.70]))
+  mid_scale = float(np.interp(v_ego, [12.0, 18.0, 25.0, 35.0], [0.97, 0.91, 0.85, 0.79]))
 
   if lead_visible and set_speed_error > 0.0:
-    follow_relief = float(np.interp(set_speed_error, [0.0, 1.0, 2.5, 4.0, 6.0], [0.0, 0.08, 0.18, 0.35, 0.55]))
+    follow_relief = float(np.interp(set_speed_error, [0.0, 1.0, 2.5, 4.0, 6.0], [0.0, 0.04, 0.10, 0.18, 0.30]))
     low_scale += (1.0 - low_scale) * follow_relief
     mid_scale += (1.0 - mid_scale) * follow_relief
 
@@ -227,6 +230,27 @@ def shape_truck_positive_accel(accel: float, v_ego: float, enabled: bool,
   if accel <= 0.65:
     return float(np.interp(accel, [0.35, 0.65], [0.35 * mid_scale, 0.65]))
   return accel
+
+
+def shape_truck_friction_brake(apply_brake: int, accel_cmd: float, stopping: bool, active: bool) -> tuple[int, bool]:
+  if apply_brake <= 0:
+    return 0, False
+
+  # Preserve full brake response for stop control and meaningful deceleration.
+  if stopping or accel_cmd <= TRUCK_FRICTION_BRAKE_IMMEDIATE_ACCEL:
+    return apply_brake, True
+
+  if active:
+    if apply_brake <= TRUCK_FRICTION_BRAKE_RELEASE:
+      return 0, False
+    return apply_brake, True
+
+  if apply_brake >= TRUCK_FRICTION_BRAKE_ENGAGE:
+    return apply_brake, True
+
+  # Keep tiny corrections in the continuous gas/regen torque path. Switching
+  # to friction also forces max regen, which makes a small request perceptible.
+  return 0, False
 
 
 def get_lka_steering_cmd_counter(next_counter: int, CS) -> int:
@@ -333,6 +357,14 @@ def get_friction_brake_bus(CP):
 
   if CP.networkLocation == NetworkLocation.fwdCamera:
     if CP.carFingerprint in SDGM_CAR:
+      # cam-long: 0x315 goes where the panda whitelist allows it and the EBCM hears it
+      safety_cfg = getattr(CP, "safetyConfigs", ())
+      safety_param = safety_cfg[0].safetyParam if safety_cfg else 0
+      if safety_param & GMSafetyFlags.HW_CAM_LONG.value:
+        # SASCM relays 0x315 to the EBCM off its camera-bus (bus2) leg; bare SDGM uses the pt bus
+        if CP.flags & GMFlags.SASCM.value:
+          return CanBus.CAMERA
+        return CanBus.POWERTRAIN
       return CanBus.CAMERA
     return CanBus.POWERTRAIN
 
@@ -507,6 +539,7 @@ class CarController(CarControllerBase):
       self.gm_auto_hold_enabled = False
     self.bolt_acc_pedal_friction_release_frames = 0
     self.bolt_acc_pedal_friction_low_speed_active = False
+    self.truck_friction_brake_active = False
 
   def _reset_volt_one_pedal(self):
     self.volt_one_pedal_pid.reset()
@@ -960,13 +993,14 @@ class CarController(CarControllerBase):
             if testing_ground.use_1:
               accel_max = min(accel_max, np.interp(CS.out.vEgo, [0.0, 4.0, 12.0], [1.25, 1.6, self.params.ACCEL_MAX]))
 
-            accel_input = actuators.accel + accel_due_to_pitch
-            if (
+            truck_long_smoothing = (
               getattr(starpilot_toggles, "truck_tuning", False) and
               self.CP.carFingerprint in TRUCK_LONG_SMOOTH_CARS and
               getattr(self.CP, "transmissionType", None) == TransmissionType.automatic and
               not self.CP.enableGasInterceptorDEPRECATED
-            ):
+            )
+            accel_input = actuators.accel + accel_due_to_pitch
+            if truck_long_smoothing:
               accel_input = shape_truck_positive_accel(
                 accel_input,
                 CS.out.vEgo,
@@ -991,6 +1025,12 @@ class CarController(CarControllerBase):
             brake_accel = min((scaled_torque - brake_switch) / (self.tireRadius * self.mass), 0)
             self.apply_gas = int(round(apply_gas_torque))
             self.apply_brake = int(round(np.interp(brake_accel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+            if truck_long_smoothing:
+              self.apply_brake, self.truck_friction_brake_active = shape_truck_friction_brake(
+                self.apply_brake, accel_cmd, stopping, self.truck_friction_brake_active,
+              )
+            else:
+              self.truck_friction_brake_active = False
             if bolt_acc_pedal_friction_main_on:
               if self.apply_brake > 0:
                 full_brake_accel = min(

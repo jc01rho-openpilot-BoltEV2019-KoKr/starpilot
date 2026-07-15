@@ -40,8 +40,12 @@ def create_lta_steer_command_2(packer, frame):
   return packer.make_can_msg("STEERING_LTA_2", 0, values)
 
 
-def create_accel_command(packer, accel, pcm_cancel, permit_braking, standstill_req, lead, acc_type, fcw_alert, distance, reverse_cruise_active):
+def create_accel_command(packer, accel, pcm_cancel, permit_braking, standstill_req, lead, acc_type, fcw_alert,
+                         distance, reverse_cruise_active, allow_long_press=None):
   # TODO: find the exact canceling bit that does not create a chime
+  if allow_long_press is None:
+    allow_long_press = 2 if reverse_cruise_active else 1
+
   values = {
     "ACCEL_CMD": accel,
     "ACC_TYPE": acc_type,
@@ -50,7 +54,7 @@ def create_accel_command(packer, accel, pcm_cancel, permit_braking, standstill_r
     "PERMIT_BRAKING": permit_braking,
     "RELEASE_STANDSTILL": not standstill_req,
     "CANCEL_REQ": pcm_cancel,
-    "ALLOW_LONG_PRESS": 2 if reverse_cruise_active else 1,
+    "ALLOW_LONG_PRESS": allow_long_press,
     "ACC_CUT_IN": fcw_alert,  # only shown when ACC enabled
   }
   return packer.make_can_msg("ACC_CONTROL", 0, values)

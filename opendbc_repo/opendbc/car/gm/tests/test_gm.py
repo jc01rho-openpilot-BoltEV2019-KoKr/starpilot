@@ -197,7 +197,7 @@ class TestGMInterface:
     assert list(car_params.longitudinalTuning.kpBP) == pytest.approx([0.0, 5.0, 15.0, 35.0])
     assert list(car_params.longitudinalTuning.kpV) == pytest.approx([0.02, 0.03, 0.028, 0.022])
     assert list(car_params.longitudinalTuning.kiBP) == pytest.approx([0.0, 5.0, 15.0, 35.0])
-    assert list(car_params.longitudinalTuning.kiV) == pytest.approx([0.28, 0.26, 0.20, 0.16])
+    assert list(car_params.longitudinalTuning.kiV) == pytest.approx([0.20, 0.18, 0.13, 0.08])
 
   def test_blazer_uses_softer_low_speed_stop_hold_tune(self):
     CarInterface = interfaces[CAR.CHEVROLET_BLAZER]

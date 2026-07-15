@@ -13,6 +13,7 @@ from openpilot.common.realtime import config_realtime_process
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose, fft_next_good_size, parabolic_peak_interp
 
+from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 
 BLOCK_SIZE = 100
@@ -180,7 +181,7 @@ class LateralLagEstimator:
     self.window_sec = window_sec
     self.okay_window_sec = okay_window_sec
     self.min_recovery_buffer_sec = min_recovery_buffer_sec
-    self.initial_lag = CP.steerActuatorDelay + 0.2
+    self.initial_lag = full_lateral_delay(CP.steerActuatorDelay)
     self.block_size = block_size
     self.block_count = block_count
     self.min_valid_block_count = min_valid_block_count

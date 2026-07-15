@@ -7,9 +7,10 @@ from dataclasses import replace
 import pyray as rl
 
 from openpilot.system.hardware import HARDWARE
-from openpilot.system.ui.lib.application import gui_app
+from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr, tr_noop
-from openpilot.system.ui.widgets import DialogResult
+from openpilot.system.ui.lib.text_measure import measure_text_cached
+from openpilot.system.ui.widgets import DialogResult, Widget
 from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog, alert_dialog
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
@@ -18,14 +19,21 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   COMPACT_PANEL_METRICS,
   DEFAULT_PANEL_STYLE,
   PanelManagerView,
+  SPACING,
   SettingRow,
   TileGrid,
+  TOGGLE_MIN_HEIGHT,
+  TOGGLE_ROW_HEIGHT,
   GROUP_HEADER_GAP,
   GROUP_HEADER_HEIGHT,
   GROUP_HEADER_LINE_GAP,
   draw_group_header,
   draw_list_group_shell,
+  draw_rounded_fill,
+  draw_rounded_stroke,
   draw_settings_list_row,
+  draw_soft_card,
+  mix_colors,
 )
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.lib.fingerprint_catalog import (
@@ -54,7 +62,6 @@ ACTION_OPTIONS = [
   {"id": 13, "name": tr_noop("Favorite #3")},
 ]
 ACTION_NAMES = [o["name"] for o in ACTION_OPTIONS]
-ACTION_IDS = {o["name"]: o["id"] for o in ACTION_OPTIONS}
 ACTION_NAME_BY_ID = {o["id"]: o["name"] for o in ACTION_OPTIONS}
 
 
@@ -77,7 +84,10 @@ class VehicleSettingsManagerView(PanelManagerView):
     super().__init__()
     self._controller = controller
     self._shell_rect = rl.Rectangle(0, 0, 0, 0)
-    self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
+    if PANEL_STYLE.toggle_row_mode:
+      self._toggle_grid = TileGrid(columns=1, padding=SPACING.md, min_tile_height=TOGGLE_MIN_HEIGHT)
+    else:
+      self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
     self.register_page_grid(self._toggle_grid)
     self._last_make = ""
     self._last_model = ""
@@ -123,28 +133,41 @@ class VehicleSettingsManagerView(PanelManagerView):
   def _build_steering_rows(self) -> list[SettingRow]:
     cs = starpilot_state.car_state
     rows = []
-    for key in ("DistanceButtonControl", "LongDistanceButtonControl", "VeryLongDistanceButtonControl"):
-      rows.append(SettingRow(key, "value", tr_noop(self._controller._action_title(key)),
-                 get_value=lambda k=key: self._controller._get_action_name(k),
-                 on_click=lambda k=key: self._controller._on_select(k)))
+
+    rows.append(SettingRow(
+      "combo:distance", "value", tr_noop("Distance Button"),
+      get_value=lambda: self._controller._get_action_name("DistanceButtonControl"),
+      on_click=lambda: self._controller._on_select("combo:distance"),
+    ))
+
     if cs.isBolt and cs.hasPedal and self._controller._params.get_bool("RemapCancelToDistance"):
-      for key in ("CancelButtonControl", "LongCancelButtonControl", "VeryLongCancelButtonControl"):
-        rows.append(SettingRow(key, "value", tr_noop(self._controller._action_title(key)),
-                   get_value=lambda k=key: self._controller._get_action_name(k),
-                   on_click=lambda k=key: self._controller._on_select(k)))
+      rows.append(SettingRow(
+        "combo:cancel", "value", tr_noop("Cancel Button"),
+        get_value=lambda: self._controller._get_action_name("CancelButtonControl"),
+        on_click=lambda: self._controller._on_select("combo:cancel"),
+      ))
+
     if not cs.isSubaru:
       rows.append(SettingRow("LKASButtonControl", "value", tr_noop("LKAS Button"),
-                 get_value=lambda: self._controller._get_action_name("LKASButtonControl"),
-                 on_click=lambda: self._controller._on_select("LKASButtonControl")))
+                   get_value=lambda: self._controller._get_action_name("LKASButtonControl"),
+                   on_click=lambda: self._controller._on_select("LKASButtonControl")))
+
     rows.append(SettingRow("MainCruiseButtonControl", "value", tr_noop("CC Main Button"),
                  get_value=lambda: self._controller._get_action_name("MainCruiseButtonControl"),
                  on_click=lambda: self._controller._on_select("MainCruiseButtonControl")))
+
     if cs.hasModeStarButtons:
-      for key in ("ModeButtonControl", "LongModeButtonControl", "VeryLongModeButtonControl",
-                  "StarButtonControl", "LongStarButtonControl", "VeryLongStarButtonControl"):
-        rows.append(SettingRow(key, "value", tr_noop(self._controller._action_title(key)),
-                   get_value=lambda k=key: self._controller._get_action_name(k),
-                   on_click=lambda k=key: self._controller._on_select(k)))
+      rows.append(SettingRow(
+        "combo:mode", "value", tr_noop("Mode Button"),
+        get_value=lambda: self._controller._get_action_name("ModeButtonControl"),
+        on_click=lambda: self._controller._on_select("combo:mode"),
+      ))
+      rows.append(SettingRow(
+        "combo:star", "value", tr_noop("Star Button"),
+        get_value=lambda: self._controller._get_action_name("StarButtonControl"),
+        on_click=lambda: self._controller._on_select("combo:star"),
+      ))
+
     return rows
 
   def _draw_row(self, rect: rl.Rectangle, row: SettingRow, is_last: bool):
@@ -153,13 +176,21 @@ class VehicleSettingsManagerView(PanelManagerView):
     enabled = row.enabled() if row.enabled is not None else True
     subtitle = row.disabled_label if not enabled and row.disabled_label else (tr(row.subtitle) if row.subtitle else "")
 
+    row_h = rect.height
+    if row_h < 100:
+      title_size = max(26, int(49 * row_h / 100))
+      subtitle = ""
+    else:
+      title_size = 49
+
     if row.type == "value":
+      value_size = max(24, int(44 * row_h / 100)) if row_h < 100 else 44
       value_text = row.get_value() if row.get_value else ""
       draw_settings_list_row(rect, title=tr(row.title), subtitle=subtitle,
                              value=value_text, enabled=enabled,
                              hovered=hovered, pressed=pressed,
                              is_last=is_last, show_chevron=row.on_click is not None,
-                             title_size=49, subtitle_size=38, value_size=44,
+                             title_size=title_size, subtitle_size=38, value_size=value_size,
                                style=PANEL_STYLE)
     elif row.type == "toggle":
       toggle_value = row.get_state() if row.get_state else False
@@ -167,7 +198,7 @@ class VehicleSettingsManagerView(PanelManagerView):
                              toggle_value=toggle_value, enabled=enabled,
                              hovered=hovered, pressed=pressed,
                              is_last=is_last, show_chevron=False,
-                             title_size=49, subtitle_size=38,
+                             title_size=title_size, subtitle_size=38,
                              style=PANEL_STYLE)
 
   def _draw_section(self, y: float, x: float, width: float, title: str, rows: list[SettingRow], row_height: float = ROW_HEIGHT) -> float:
@@ -218,7 +249,8 @@ class VehicleSettingsManagerView(PanelManagerView):
       y += SECTION_GAP
 
       if self._toggle_grid.tiles:
-        self._toggle_grid._columns = 3
+        if not PANEL_STYLE.toggle_row_mode:
+          self._toggle_grid._columns = 3
         avail = width - 24
         th = self.measure_page_grid_height(self._toggle_grid, avail)
         hdr_oh = GROUP_HEADER_HEIGHT + GROUP_HEADER_LINE_GAP + GROUP_HEADER_GAP
@@ -237,11 +269,13 @@ class VehicleSettingsManagerView(PanelManagerView):
     tiles_h = 0.0
     if self._toggle_grid.tiles:
       if self._uses_two_columns(width):
-        self._toggle_grid._columns = 2
+        if not PANEL_STYLE.toggle_row_mode:
+          self._toggle_grid._columns = 2
         col_w = self._column_width(width)
         tiles_h = self.measure_page_grid_height(self._toggle_grid, col_w - 24)
       else:
-        self._toggle_grid._columns = 3
+        if not PANEL_STYLE.toggle_row_mode:
+          self._toggle_grid._columns = 3
         tiles_h = self.measure_page_grid_height(self._toggle_grid, width - 24)
 
     if self._uses_two_columns(width):
@@ -384,7 +418,8 @@ class VehicleSettingsManagerView(PanelManagerView):
 
   def _rebuild_toggle_grid(self):
     defs = self._build_driving_toggles()
-    self._set_toggle_pages([defs[i:i+4] for i in range(0, len(defs), 4)])
+    page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
+    self._set_toggle_pages([defs[i:i+page_size] for i in range(0, len(defs), page_size)])
 
   def _check_rebuild_grid(self):
     current_make = self._controller._get_display_make()
@@ -405,6 +440,137 @@ class VehicleSettingsManagerView(PanelManagerView):
       self._controller._on_toggle(value)
     elif prefix == "value":
       self._controller._on_select(value)
+
+
+class ButtonActionComboDialog(Widget):
+  _DIALOG_W = 660
+  _DIALOG_H = 440
+
+  def __init__(self, controller: "StarPilotVehicleSettingsLayout", title: str,
+               keys: tuple[str, ...], labels: tuple[str, ...]):
+    super().__init__()
+    self._controller = controller
+    self._title = title
+    self._keys = keys
+    self._labels = labels
+    self._pressed_idx: int | None = None
+    self._pressed_close = False
+    self._font_title = gui_app.font(FontWeight.BOLD)
+    self._font_btn = gui_app.font(FontWeight.SEMI_BOLD)
+
+  def _layout(self):
+    sw = gui_app.width
+    sh = gui_app.height
+    dx = (sw - self._DIALOG_W) / 2
+    dy = (sh - self._DIALOG_H) / 2
+    d_rect = rl.Rectangle(int(dx), int(dy), int(self._DIALOG_W), int(self._DIALOG_H))
+
+    rows_area_y = dy + 72
+    rows_area_h = len(self._keys) * 88 + 12
+    rows_area = rl.Rectangle(int(dx + 40), int(rows_area_y), int(self._DIALOG_W - 80), int(rows_area_h))
+
+    row_rects = []
+    for i in range(len(self._keys)):
+      row_rects.append(rl.Rectangle(
+        int(dx + 40), int(rows_area_y + i * 88),
+        int(self._DIALOG_W - 80), 88,
+      ))
+
+    close_w = 320
+    close_h = 64
+    close_rect = rl.Rectangle(
+      int(dx + (self._DIALOG_W - close_w) / 2),
+      int(dy + self._DIALOG_H - 36 - close_h),
+      close_w, close_h,
+    )
+    return d_rect, rows_area, row_rects, close_rect
+
+  def _handle_mouse_press(self, mouse_pos):
+    _, _, row_rects, close_rect = self._layout()
+    if rl.check_collision_point_rec(mouse_pos, close_rect):
+      self._pressed_close = True
+      return
+    for i, rect in enumerate(row_rects):
+      if rl.check_collision_point_rec(mouse_pos, rect):
+        self._pressed_idx = i
+        return
+
+  def _handle_mouse_release(self, mouse_pos):
+    if self._pressed_idx is not None:
+      idx = self._pressed_idx
+      self._pressed_idx = None
+      _, _, row_rects, _ = self._layout()
+      if idx < len(row_rects) and rl.check_collision_point_rec(mouse_pos, row_rects[idx]):
+        self._controller._show_action_picker(self._keys[idx])
+      return
+    if self._pressed_close:
+      self._pressed_close = False
+      _, _, _, close_rect = self._layout()
+      if rl.check_collision_point_rec(mouse_pos, close_rect):
+        gui_app.pop_widget()
+
+  def _render(self, rect):
+    sw = gui_app.width
+    sh = gui_app.height
+    rl.draw_rectangle(0, 0, sw, sh, rl.Color(0, 0, 0, 160))
+
+    d_rect, rows_area, row_rects, close_rect = self._layout()
+    mouse_pos = gui_app.last_mouse_event.pos
+
+    draw_rounded_fill(d_rect, rl.Color(10, 12, 16, 255), radius_px=24)
+    draw_rounded_stroke(d_rect, rl.Color(255, 255, 255, 16), radius_px=24)
+    rl.draw_rectangle_rec(rl.Rectangle(d_rect.x, d_rect.y, d_rect.width, 4), PANEL_STYLE.accent)
+
+    title_size = 32
+    ts = measure_text_cached(self._font_title, self._title, title_size)
+    rl.draw_text_ex(self._font_title, self._title,
+                    rl.Vector2(int(d_rect.x + (d_rect.width - ts.x) / 2),
+                               int(d_rect.y + (64 - title_size) / 2)),
+                    title_size, 0, rl.WHITE)
+
+    draw_list_group_shell(rows_area, style=PANEL_STYLE)
+
+    for i in range(len(self._keys)):
+      row_rect = row_rects[i]
+      hovered = rl.check_collision_point_rec(mouse_pos, row_rect)
+      pressed = self._pressed_idx == i
+
+      draw_settings_list_row(
+        row_rect,
+        title=self._labels[i],
+        value=self._controller._get_action_name(self._keys[i]),
+        enabled=True,
+        hovered=hovered and (self._pressed_idx is None),
+        pressed=pressed,
+        is_last=(i == len(self._keys) - 1),
+        show_chevron=True,
+        title_size=46,
+        value_size=42,
+        style=PANEL_STYLE,
+      )
+
+    close_hovered = rl.check_collision_point_rec(mouse_pos, close_rect)
+    close_pressed = self._pressed_close
+
+    if close_pressed:
+      close_fill = mix_colors(PANEL_STYLE.accent, rl.Color(0, 0, 0, 255), 0.2)
+      close_border = PANEL_STYLE.accent
+    elif close_hovered:
+      close_fill = PANEL_STYLE.accent
+      close_border = PANEL_STYLE.accent
+    else:
+      close_fill = rl.Color(255, 255, 255, 14)
+      close_border = rl.Color(255, 255, 255, 28)
+
+    draw_soft_card(close_rect, close_fill, close_border)
+
+    close_text = tr("Close")
+    close_size = 22
+    cts = measure_text_cached(self._font_btn, close_text, close_size)
+    rl.draw_text_ex(self._font_btn, close_text,
+                    rl.Vector2(int(close_rect.x + (close_rect.width - cts.x) / 2),
+                               int(close_rect.y + (close_rect.height - cts.y) / 2)),
+                    close_size, 0, rl.WHITE)
 
 
 class StarPilotVehicleSettingsLayout(_SettingsPage):
@@ -436,16 +602,6 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
     idx = self._params.get_int(key)
     return tr(ACTION_NAME_BY_ID.get(idx, ACTION_NAMES[0]))
 
-  def _get_available_actions(self, key: str | None = None) -> list[str]:
-    cs = starpilot_state.car_state
-    if key == "MainCruiseButtonControl":
-      allowed_ids = {0, 9, 10, 11, 12, 13}
-      return [tr(o["name"]) for o in ACTION_OPTIONS if o["id"] in allowed_ids]
-    allowed_ids = set(range(9)) | {11, 12, 13}
-    if key == "LKASButtonControl":
-      allowed_ids.add(9)
-    return [tr(o["name"]) for o in ACTION_OPTIONS
-            if o["id"] in allowed_ids and (cs.hasOpenpilotLongitudinal or not o.get("requires_longitudinal", False))]
 
   def _on_toggle(self, param_key: str):
     if param_key == "DisableOpenpilotLongitudinal":
@@ -499,6 +655,9 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
     gui_app.push_widget(ConfirmDialog(prompt, tr("Flash"), callback=on_confirm))
 
   def _on_select(self, key: str):
+    if key.startswith("combo:"):
+      self._show_button_combo_dialog(key)
+      return
     if key in ("CarMake", "CarModel") and not self._params.get_bool("ForceFingerprint"):
       return
     if key == "CarMake":
@@ -511,6 +670,37 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
       self._show_offset_selector()
     else:
       self._show_action_picker(key)
+
+  def _show_button_combo_dialog(self, key: str):
+    combo_configs = {
+      "combo:distance": {
+        "title": tr_noop("Distance Button"),
+        "keys": ("DistanceButtonControl", "LongDistanceButtonControl", "VeryLongDistanceButtonControl"),
+        "labels": (tr_noop("Press"), tr_noop("Long Press"), tr_noop("Very Long")),
+      },
+      "combo:cancel": {
+        "title": tr_noop("Cancel Button"),
+        "keys": ("CancelButtonControl", "LongCancelButtonControl", "VeryLongCancelButtonControl"),
+        "labels": (tr_noop("Press"), tr_noop("Long Press"), tr_noop("Very Long")),
+      },
+      "combo:mode": {
+        "title": tr_noop("Mode Button"),
+        "keys": ("ModeButtonControl", "LongModeButtonControl", "VeryLongModeButtonControl"),
+        "labels": (tr_noop("Press"), tr_noop("Long Press"), tr_noop("Very Long")),
+      },
+      "combo:star": {
+        "title": tr_noop("Star Button"),
+        "keys": ("StarButtonControl", "LongStarButtonControl", "VeryLongStarButtonControl"),
+        "labels": (tr_noop("Press"), tr_noop("Long Press"), tr_noop("Very Long")),
+      },
+    }
+    config = combo_configs.get(key)
+    if config is None:
+      return
+    gui_app.push_widget(ButtonActionComboDialog(
+      self, tr(config["title"]), config["keys"],
+      tuple(tr(l) for l in config["labels"]),
+    ))
 
   def _on_select_make(self):
     makes = list(self._make_options)
@@ -562,16 +752,29 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
     gui_app.push_widget(dialog)
 
   def _show_action_picker(self, key: str):
-    actions = self._get_available_actions(key)
-    current = self._get_action_name(key)
-    if current not in actions:
-      current = actions[0]
+    cs = starpilot_state.car_state
+    if key == "MainCruiseButtonControl":
+      allowed_ids = {0, 9, 10, 11, 12, 13}
+      options = [o for o in ACTION_OPTIONS if o["id"] in allowed_ids]
+    else:
+      allowed_ids = set(range(9)) | {11, 12, 13}
+      if key == "LKASButtonControl":
+        allowed_ids.add(9)
+      options = [o for o in ACTION_OPTIONS
+                 if o["id"] in allowed_ids and (cs.hasOpenpilotLongitudinal or not o.get("requires_longitudinal", False))]
+
+    option_labels = [tr(o["name"]) for o in options]
+    option_ids = [o["id"] for o in options]
+
+    current_id = self._params.get_int(key)
+    current = next((tr(o["name"]) for o in options if o["id"] == current_id), option_labels[0])
 
     def on_select(res):
-      if res == DialogResult.CONFIRM and dialog.selection:
-        self._params.put_int(key, ACTION_IDS.get(dialog.selection, 0))
+      if res == DialogResult.CONFIRM and dialog.selection in option_labels:
+        idx = option_labels.index(dialog.selection)
+        self._params.put_int(key, option_ids[idx])
 
-    dialog = MultiOptionDialog(tr(key), actions, current, callback=on_select)
+    dialog = MultiOptionDialog(tr(self._action_title(key)), option_labels, current, callback=on_select)
     gui_app.push_widget(dialog)
 
   def _show_lock_timer_selector(self):

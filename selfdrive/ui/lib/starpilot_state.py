@@ -8,6 +8,7 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from cereal import car, log, custom, messaging
 from opendbc.car.gm.values import GMFlags
 from opendbc.car.hyundai.values import HyundaiFlags
+from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 
 @dataclass
 class StarPilotCarState:
@@ -179,7 +180,9 @@ class StarPilotState:
             )
             self.car_state.longitudinalActuatorDelay = float(self._safe_get(CP, "longitudinalActuatorDelay", self.car_state.longitudinalActuatorDelay))
             self.car_state.startAccel = float(self._safe_get(CP, "startAccel", self.car_state.startAccel))
-            self.car_state.steerActuatorDelay = float(self._safe_get(CP, "steerActuatorDelay", self.car_state.steerActuatorDelay))
+            vehicle_steer_delay = self._safe_get(CP, "steerActuatorDelay", None)
+            if vehicle_steer_delay is not None:
+                self.car_state.steerActuatorDelay = full_lateral_delay(vehicle_steer_delay)
             self.car_state.steerRatio = float(self._safe_get(CP, "steerRatio", self.car_state.steerRatio))
             self.car_state.stopAccel = float(self._safe_get(CP, "stopAccel", self.car_state.stopAccel))
             self.car_state.stoppingDecelRate = float(self._safe_get(CP, "stoppingDecelRate", self.car_state.stoppingDecelRate))

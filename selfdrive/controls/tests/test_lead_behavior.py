@@ -1,6 +1,7 @@
 from openpilot.selfdrive.controls.lib.lead_behavior import (
   get_tracked_lead_catchup_bias,
   is_radarless_matched_follow_window,
+  should_hold_tracked_vision_lead,
   should_track_lead,
   should_disable_far_lead_throttle,
 )
@@ -23,7 +24,7 @@ def test_tracked_lead_catchup_bias_ignores_very_far_gap():
 
 def test_tracked_lead_catchup_bias_applies_to_two_second_highway_gap():
   bias = get_tracked_lead_catchup_bias(30.4, 63.0, 40.0, 0.4)
-  assert bias > 14.0
+  assert bias > 9.0
 
 
 def test_tracked_lead_catchup_bias_reduces_for_laterally_offset_lead():
@@ -43,6 +44,24 @@ def test_tracked_lead_catchup_bias_fades_before_very_far_gap_cutoff():
 def test_tracked_lead_catchup_bias_stays_off_once_at_set_speed():
   bias = get_tracked_lead_catchup_bias(31.4, 78.7, 38.0, 0.1, v_cruise=31.4)
   assert bias == 0.0
+
+
+def test_tracked_lead_catchup_bias_fades_smoothly_near_set_speed():
+  below_set = get_tracked_lead_catchup_bias(27.70, 81.0, 46.0, 0.0, v_cruise=27.78, y_rel=0.8)
+  at_set = get_tracked_lead_catchup_bias(27.78, 81.0, 46.0, 0.0, v_cruise=27.78, y_rel=0.8)
+  assert 0.0 < below_set < 0.25
+  assert at_set == 0.0
+
+
+def test_tracked_lead_catchup_bias_dials_back_camry_bookmark_case():
+  bias = get_tracked_lead_catchup_bias(27.40, 81.0, 46.0, 0.0, v_cruise=27.78, y_rel=0.8)
+  assert 0.0 < bias < 2.0
+
+
+def test_tracked_lead_catchup_bias_fades_smoothly_at_closing_limit():
+  below_limit = get_tracked_lead_catchup_bias(31.4, 78.7, 38.0, 3.75)
+  above_limit = get_tracked_lead_catchup_bias(31.4, 78.7, 38.0, 3.77)
+  assert abs(below_limit - above_limit) < 0.1
 
 
 def test_disable_far_lead_throttle_rejects_two_second_plus_gap():
@@ -84,6 +103,59 @@ def test_should_track_lead_accepts_closer_vision_only_highway_lead():
 
 def test_should_track_lead_accepts_fast_closing_vision_lead_early():
   assert should_track_lead(True, 90.0, 140.0, 6.0, 20.0, v_lead=0.0, radar=False)
+
+
+def test_should_hold_tracked_vision_lead_keeps_honda_bookmark_case():
+  assert should_hold_tracked_vision_lead(
+    True, 44.5, 174.0, 6.0, 16.8,
+    model_prob=0.99, y_rel=-0.69, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_does_not_expand_initial_tracking_gate():
+  assert not should_track_lead(True, 44.5, 174.0, 6.0, 16.8, v_lead=16.7, radar=False)
+
+
+def test_should_hold_tracked_vision_lead_releases_offcenter_lead():
+  assert not should_hold_tracked_vision_lead(
+    True, 44.5, 174.0, 6.0, 16.8,
+    model_prob=0.99, y_rel=-1.7, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_uses_path_relative_offset_on_curve():
+  assert should_hold_tracked_vision_lead(
+    True, 27.8, 174.0, 6.0, 16.0,
+    model_prob=1.0, y_rel=-2.11, path_y=1.32, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_releases_low_confidence_lead():
+  assert not should_hold_tracked_vision_lead(
+    True, 44.5, 174.0, 6.0, 16.8,
+    model_prob=0.69, y_rel=0.0, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_does_not_change_radar_tracking():
+  assert not should_hold_tracked_vision_lead(
+    True, 44.5, 174.0, 6.0, 16.8,
+    model_prob=0.99, y_rel=0.0, radar=True,
+  )
+
+
+def test_should_hold_tracked_vision_lead_keeps_braking_lead():
+  assert should_hold_tracked_vision_lead(
+    True, 44.5, 174.0, 6.0, 16.8,
+    model_prob=0.99, y_rel=0.0, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_releases_beyond_exit_gap():
+  assert not should_hold_tracked_vision_lead(
+    True, 57.0, 174.0, 6.0, 16.8,
+    model_prob=0.99, y_rel=0.0, radar=False,
+  )
 
 
 def test_radarless_matched_follow_window_accepts_pace_matched_highway_follow():

@@ -61,10 +61,22 @@ class QlogRuntimeContext:
 
 
 class RouteReplayDaemon(slv.SpeedLimitVisionDaemon):
-  def __init__(self, runtime_context: QlogRuntimeContext | None, measured_inference_seconds: float):
+  def __init__(
+    self,
+    runtime_context: QlogRuntimeContext | None,
+    measured_inference_seconds: float,
+    measured_base_inference_seconds: float | None = None,
+    measured_classifier_forward_seconds: float = 0.0,
+    measured_tracking_base_seconds: float = 0.012,
+  ):
     super().__init__(use_runtime=False)
     self.runtime_context = runtime_context
     self.measured_inference_seconds = max(float(measured_inference_seconds), 0.0)
+    self.measured_base_inference_seconds = (
+      max(float(measured_base_inference_seconds), 0.0) if measured_base_inference_seconds is not None else None
+    )
+    self.measured_classifier_forward_seconds = max(float(measured_classifier_forward_seconds), 0.0)
+    self.measured_tracking_base_seconds = max(float(measured_tracking_base_seconds), 0.0)
     self.next_available_at = -float("inf")
     self.now = 0.0
     self.sampled_frames = 0
@@ -122,23 +134,51 @@ class RouteReplayDaemon(slv.SpeedLimitVisionDaemon):
       return
     self.current_frame_bgr = frame_bgr
 
+    track_due = self._track_classification_due(now)
     inference_interval = self._inference_interval(now)
-    next_due = max(self.next_available_at, self.last_inference_at + inference_interval)
-    if now < next_due:
+    detector_interval = max(inference_interval, slv.TRACK_DETECTOR_INTERVAL) if self.proposal_track is not None else inference_interval
+    detector_due = now >= self.last_inference_at + detector_interval
+    if not track_due and not detector_due:
       if self.published_speed_limit_mph > 0 and self._published_detection_stale(now):
         self._write_debug_event("stale_clear", reason="inference_interval")
         self._clear_detection()
       return
 
-    self.last_inference_at = now
-    self.next_available_at = now + self.measured_inference_seconds
     self.inference_frames += 1
-    detection = self._detect_sign(frame_bgr)
+    self.last_detector_forward_count = 0
+    self.last_detector_forward_duration_s = 0.0
+    self.last_classifier_forward_count = 0
+    self.last_classifier_forward_duration_s = 0.0
+    if detector_due:
+      self.detector_inference_count += 1
+      self.last_inference_at = now
+      detection = self._detect_sign(frame_bgr)
+      self._start_latest_detector_track(frame_bgr, now)
+      inference_seconds = self.measured_inference_seconds
+      if self.measured_base_inference_seconds is not None:
+        inference_seconds = (
+          self.measured_base_inference_seconds +
+          self.last_classifier_forward_count * self.measured_classifier_forward_seconds
+        )
+    else:
+      detection = self._classify_proposal_track(frame_bgr, now)
+      inference_seconds = self.measured_tracking_base_seconds + self.last_classifier_forward_count * self.measured_classifier_forward_seconds
+    self.next_available_at = now + inference_seconds
     if detection is not None:
       self._update_detection(detection)
     elif self.published_speed_limit_mph > 0 and self._published_detection_stale(now):
       self._write_debug_event("stale_clear", reason="no_detection")
       self._clear_detection()
+
+  def next_processing_due(self, now: float) -> float:
+    if self.proposal_track is not None:
+      if now - self.proposal_track.started_at > slv.TRACK_MAX_AGE_SECONDS:
+        self._clear_proposal_track()
+      else:
+        track_due = self.proposal_track.last_classified_at + self._track_classification_interval(now)
+        detector_due = self.last_inference_at + max(self._inference_interval(now), slv.TRACK_DETECTOR_INTERVAL)
+        return max(self.next_available_at, min(track_due, detector_due))
+    return max(self.next_available_at, self.last_inference_at + self._inference_interval(now))
 
 
 def parse_args() -> argparse.Namespace:
@@ -154,13 +194,49 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--qlog-context", action="store_true", help="Replay with logged deviceState/livePose/mapdOut context for closer runtime cadence.")
   parser.add_argument("--measured-inference-seconds", type=float, default=0.0, help="Simulate wall-clock time spent inside one runtime inference on the comma.")
   parser.add_argument(
+    "--measured-base-inference-seconds",
+    type=float,
+    help="Simulate a measured no-proposal inference cost; enables the dynamic comma cost model.",
+  )
+  parser.add_argument(
+    "--measured-classifier-forward-seconds",
+    type=float,
+    default=0.0,
+    help="Additional measured comma cost per classifier forward when the dynamic cost model is enabled.",
+  )
+  parser.add_argument(
+    "--measured-tracking-base-seconds",
+    type=float,
+    default=0.012,
+    help="Measured optical-flow and crop-preparation cost for one tracked frame.",
+  )
+  parser.add_argument("--disable-temporal-tracking", action="store_true", help="Disable proposal tracking for an A/B replay.")
+  parser.add_argument("--track-unreadable-min-proposal-confidence", type=float, help="Override confidence required to track an unreadable proposal.")
+  parser.add_argument("--track-detector-interval", type=float, help="Override detector cadence while tracking a proposal.")
+  parser.add_argument(
     "--detector-region-mode",
     choices=("full", "right_roi", "full_and_right_roi"),
     help="Override the detector/classifier region mode used by speed_limit_vision.py.",
   )
   parser.add_argument("--right-roi-bounds", help="Override the right ROI as left,top,right,bottom ratios, for example 0.45,0,1,0.82.")
   parser.add_argument("--right-roi-min-confidence", type=float, help="Override the right ROI detector minimum confidence.")
+  parser.add_argument("--classifier-min-confidence", type=float, help="Override the value classifier confidence threshold.")
   parser.add_argument("--full-frame-ocr", action="store_true", help="Enable the expensive full-frame OCR fallback during replay.")
+  crop_ocr_group = parser.add_mutually_exclusive_group()
+  crop_ocr_group.add_argument("--crop-ocr", action="store_true", dest="crop_ocr", default=None, help="Enable crop OCR confirmation during replay.")
+  crop_ocr_group.add_argument("--no-crop-ocr", action="store_false", dest="crop_ocr", help="Replay the model-only detector/classifier path.")
+  parser.add_argument("--low-speed-change-consistent-detections", type=int, help="Override reads required to change from 30+ mph to below 30 mph.")
+  parser.add_argument(
+    "--allow-low-speed-strong-consensus",
+    action="store_true",
+    help="Permit a strong multi-crop consensus to publish a low-speed change from one frame.",
+  )
+  parser.add_argument(
+    "--enable-strong-model-consensus",
+    action="store_true",
+    help="Mark three agreeing high-confidence regulatory model crops as strong consensus.",
+  )
+  parser.add_argument("--initial-speed-limit", type=int, default=0, help="Seed route replay with a currently published speed limit.")
   return parser.parse_args()
 
 
@@ -262,8 +338,25 @@ def configure_runtime_options(args: argparse.Namespace) -> None:
   if args.detector_region_mode:
     slv.DETECTOR_CLASSIFIER_REGION_MODE = args.detector_region_mode
 
+  if args.classifier_min_confidence is not None:
+    slv.US_CLASSIFIER_MIN_CONFIDENCE = args.classifier_min_confidence
+
   if args.full_frame_ocr:
     slv.FULL_FRAME_OCR_FALLBACK_ENABLED = True
+  if args.crop_ocr is not None:
+    slv.DETECTOR_CLASSIFIER_CROP_OCR_ENABLED = args.crop_ocr
+  if args.low_speed_change_consistent_detections is not None:
+    slv.LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = args.low_speed_change_consistent_detections
+  if args.allow_low_speed_strong_consensus:
+    slv.LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS = True
+  if args.enable_strong_model_consensus:
+    slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED = True
+  if args.disable_temporal_tracking:
+    slv.TEMPORAL_TRACKING_ENABLED = False
+  if args.track_unreadable_min_proposal_confidence is not None:
+    slv.TRACK_UNREADABLE_MIN_PROPOSAL_CONFIDENCE = args.track_unreadable_min_proposal_confidence
+  if args.track_detector_interval is not None:
+    slv.TRACK_DETECTOR_INTERVAL = args.track_detector_interval
 
   if args.right_roi_bounds:
     parts = [float(part.strip()) for part in args.right_roi_bounds.split(",")]
@@ -310,8 +403,19 @@ def replay_route(
   progress: bool,
   fast_seek: bool,
   measured_inference_seconds: float,
+  measured_base_inference_seconds: float | None = None,
+  measured_classifier_forward_seconds: float = 0.0,
+  measured_tracking_base_seconds: float = 0.012,
+  initial_speed_limit_mph: int = 0,
 ) -> tuple[RouteSummary, list[dict[str, str]]]:
-  daemon = RouteReplayDaemon(runtime_context, measured_inference_seconds)
+  daemon = RouteReplayDaemon(
+    runtime_context,
+    measured_inference_seconds,
+    measured_base_inference_seconds,
+    measured_classifier_forward_seconds,
+    measured_tracking_base_seconds,
+  )
+  daemon.published_speed_limit_mph = initial_speed_limit_mph
   for segment_path in segments:
     segment = segment_index(segment_path)
     capture = cv2.VideoCapture(str(segment_path))
@@ -336,8 +440,7 @@ def replay_route(
         frame_index = skip_to_frame(capture, frame_index, frame_index + 1, fast_seek)
         continue
 
-      inference_interval = daemon._inference_interval(now)
-      next_due = max(daemon.next_available_at, daemon.last_inference_at + inference_interval)
+      next_due = daemon.next_processing_due(now)
       if now < next_due:
         target_index = max(frame_index + 1, int(round((next_due - segment_start_s) * fps)))
         if total_frames > 0:
@@ -355,11 +458,8 @@ def replay_route(
 
     capture.release()
     if progress:
-      print(
-        f"  seg {segment:02d}: sampled={daemon.sampled_frames} inference={daemon.inference_frames} "
-        f"events={len(daemon.events)}",
-        flush=True,
-      )
+      counts = f"sampled={daemon.sampled_frames} inference={daemon.inference_frames} events={len(daemon.events)}"
+      print(f"  seg {segment:02d}: {counts}", flush=True)
 
   return summarize(log_id, len(segments), runtime_context is not None, daemon), daemon.events
 
@@ -385,7 +485,7 @@ def summarize(route: str, segment_count: int, qlog_context: bool, daemon: RouteR
 def write_events(path: Path, route_events: list[tuple[str, dict[str, str]]]) -> None:
   path.parent.mkdir(parents=True, exist_ok=True)
   fieldnames = [
-    "route", "time_s", "event", "candidateSpeedLimitMph", "speedLimitMph", "confidence", "reason",
+    "route", "time_s", "event", "candidateSpeedLimitMph", "candidateConfidence", "speedLimitMph", "confidence", "reason",
     "previousRoadName", "roadName",
   ]
   with path.open("w", encoding="utf-8", newline="") as output_file:
@@ -446,15 +546,22 @@ def main() -> int:
       args.progress,
       args.fast_seek,
       args.measured_inference_seconds,
+      args.measured_base_inference_seconds,
+      args.measured_classifier_forward_seconds,
+      args.measured_tracking_base_seconds,
+      args.initial_speed_limit,
     )
     all_events.extend((log_id, event) for event in events)
-    print(
-      f"{summary.route}: segments={summary.segments} qlog_context={int(summary.qlog_context)} sampled={summary.sampled_frames} "
-      f"inference={summary.inference_frames} candidate={summary.candidate_events} "
-      f"publish={summary.publish_events} stale_clear={summary.stale_clear_events} road_change={summary.road_change_events} "
-      f"measured_inference_s={args.measured_inference_seconds:.3f} region={slv.DETECTOR_CLASSIFIER_REGION_MODE}",
-      flush=True,
-    )
+    summary_line = "".join((
+      f"{summary.route}: segments={summary.segments} qlog_context={int(summary.qlog_context)} sampled={summary.sampled_frames} ",
+      f"inference={summary.inference_frames} candidate={summary.candidate_events} ",
+      f"publish={summary.publish_events} stale_clear={summary.stale_clear_events} road_change={summary.road_change_events} ",
+      f"measured_inference_s={args.measured_inference_seconds:.3f} ",
+      f"measured_base_s={args.measured_base_inference_seconds if args.measured_base_inference_seconds is not None else 'off'} ",
+      f"measured_classifier_forward_s={args.measured_classifier_forward_seconds:.3f} ",
+      f"region={slv.DETECTOR_CLASSIFIER_REGION_MODE}",
+    ))
+    print(summary_line, flush=True)
     publish_values = [event.get("speedLimitMph") for event in events if event["event"] == "publish"]
     if publish_values:
       print(f"  publishes: {', '.join(publish_values)}", flush=True)

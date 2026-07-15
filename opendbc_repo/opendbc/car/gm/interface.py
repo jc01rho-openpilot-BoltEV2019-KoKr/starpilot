@@ -658,7 +658,7 @@ class CarInterface(CarInterfaceBase):
       ret.longitudinalTuning.kpBP = [0.0, 5.0, 15.0, 35.0]
       ret.longitudinalTuning.kpV = [0.02, 0.03, 0.028, 0.022]
       ret.longitudinalTuning.kiBP = [0.0, 5.0, 15.0, 35.0]
-      ret.longitudinalTuning.kiV = [0.28, 0.26, 0.20, 0.16]
+      ret.longitudinalTuning.kiV = [0.20, 0.18, 0.13, 0.08]
 
     elif candidate in CC_ONLY_CAR and not ret.enableGasInterceptorDEPRECATED:
       ret.flags |= GMFlags.CC_LONG.value

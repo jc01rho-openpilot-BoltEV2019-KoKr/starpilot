@@ -32,6 +32,7 @@ KNOWN_READ_ONLY = {
     "ClusterOffset", "Compass", "DeveloperSidebarMetric1", "DeveloperSidebarMetric2",
     "DeveloperSidebarMetric3", "DeveloperSidebarMetric4", "DeveloperSidebarMetric5",
     "DeveloperSidebarMetric6", "DeveloperSidebarMetric7", "DongleId",
+    "FLMActiveOverrides", "FLMActiveProfileId", "FLMTrialApplied", "FLMTrialBaseline",
     "StarPilotCarParamsPersistent", "StarPilotDrives", "StarPilotKilometers",
     "StarPilotMinutes", "GitBranch", "GitCommit", "GitCommitDate", "GitDiff",
     "GitRemote", "GithubSshKeys", "GithubUsername", "HardwareSerial", "IMEI",

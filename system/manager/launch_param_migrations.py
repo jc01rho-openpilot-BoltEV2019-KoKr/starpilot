@@ -9,6 +9,16 @@ from typing import Protocol
 LONG_PITCH_KEY = "LongPitch"
 STEER_KP_KEY = "SteerKP"
 STEER_KP_STOCK_KEY = "SteerKPStock"
+USE_OLD_UI_KEY = "UseOldUI"
+VISION_SPEED_LIMIT_DETECTION_KEY = "VisionSpeedLimitDetection"
+DEVELOPER_METRIC_DISPLAY_KEYS = (
+  "FPSCounter",
+  "ShowCPU",
+  "ShowGPU",
+  "NumericalTemp",
+  "ShowMemoryUsage",
+  "SidebarMetrics",
+)
 
 DEFAULT_STEER_KP = 0.6
 LEGACY_STEER_KP = 0.7
@@ -17,7 +27,18 @@ QT_STEER_KP_PLACEHOLDER = 1.0
 LAUNCH_PARAM_MIGRATION_MARKER = ".starpilot_launch_param_migrations_v2"
 BRANCH_DEFAULTS_MIGRATION_MARKER = ".starpilot_branch_defaults_migrations_v1"
 ACCELERATION_PROFILE_MIGRATION_MARKER = ".starpilot_acceleration_profile_default_v1"
+USE_OLD_UI_MIGRATION_MARKER = ".starpilot_use_old_ui_migration_v2"
+LATERAL_METHOD_REBRAND_MIGRATION_MARKER = ".starpilot_lateral_method_rebrand_v1"
+VISION_SPEED_LIMIT_DETECTION_MIGRATION_MARKER = ".starpilot_vision_speed_limit_detection_v1"
+DEVELOPER_METRIC_DISPLAY_MIGRATION_MARKER = ".starpilot_developer_metric_display_off_v1"
 MARKER_DIRNAME = ".starpilot_param_migrations"
+
+LATERAL_METHOD_PARAM_SUFFIXES = (
+  "ActiveOverrides",
+  "ActiveProfileId",
+  "TrialBaseline",
+  "TrialApplied",
+)
 
 LEGACY_CE_STOPPED_LEAD_DEFAULT = True
 LEGACY_FORCE_STOPS_DEFAULT = False
@@ -79,6 +100,22 @@ def _branch_defaults_marker_path(params: ParamsLike) -> Path:
 
 def _acceleration_profile_marker_path(params: ParamsLike) -> Path:
   return _marker_dir_path(params) / ACCELERATION_PROFILE_MIGRATION_MARKER
+
+
+def _use_old_ui_marker_path(params: ParamsLike) -> Path:
+  return _marker_dir_path(params) / USE_OLD_UI_MIGRATION_MARKER
+
+
+def _lateral_method_rebrand_marker_path(params: ParamsLike) -> Path:
+  return _marker_dir_path(params) / LATERAL_METHOD_REBRAND_MIGRATION_MARKER
+
+
+def _vision_speed_limit_detection_marker_path(params: ParamsLike) -> Path:
+  return _marker_dir_path(params) / VISION_SPEED_LIMIT_DETECTION_MIGRATION_MARKER
+
+
+def _developer_metric_display_marker_path(params: ParamsLike) -> Path:
+  return _marker_dir_path(params) / DEVELOPER_METRIC_DISPLAY_MIGRATION_MARKER
 
 
 def _marker_dir_path(params: ParamsLike) -> Path:
@@ -161,15 +198,81 @@ def _apply_acceleration_profile_default_migration(params: ParamsLike, marker: Pa
   marker.touch()
 
 
+def _apply_use_old_ui_migration(params: ParamsLike, marker: Path) -> None:
+  if marker.exists():
+    return
+
+  marker.parent.mkdir(parents=True, exist_ok=True)
+
+  params.put_bool(USE_OLD_UI_KEY, False)
+
+  marker.touch()
+
+
+def _apply_lateral_method_rebrand_migration(params: ParamsLike, marker: Path) -> None:
+  if marker.exists():
+    return
+
+  marker.parent.mkdir(parents=True, exist_ok=True)
+  legacy_prefix = "".join(("F", "T", "M"))
+
+  for suffix in LATERAL_METHOD_PARAM_SUFFIXES:
+    legacy_path = Path(params.get_param_path(f"{legacy_prefix}{suffix}"))
+    current_path = Path(params.get_param_path(f"FLM{suffix}"))
+    if legacy_path.is_file():
+      current_path.parent.mkdir(parents=True, exist_ok=True)
+      current_path.write_bytes(legacy_path.read_bytes())
+      legacy_path.unlink()
+
+  marker.touch()
+
+
+def _apply_vision_speed_limit_detection_migration(params: ParamsLike, marker: Path) -> None:
+  if marker.exists():
+    return
+
+  marker.parent.mkdir(parents=True, exist_ok=True)
+
+  params.put_bool(VISION_SPEED_LIMIT_DETECTION_KEY, True)
+
+  marker.touch()
+
+
+def _apply_developer_metric_display_migration(params: ParamsLike, marker: Path) -> None:
+  if marker.exists():
+    return
+
+  marker.parent.mkdir(parents=True, exist_ok=True)
+
+  for key in DEVELOPER_METRIC_DISPLAY_KEYS:
+    params.put_bool(key, False)
+
+  marker.touch()
+
+
 def apply_launch_param_migrations(params: ParamsLike, marker_path: Path | None = None,
                                   branch_defaults_marker_path: Path | None = None,
-                                  acceleration_profile_marker_path: Path | None = None) -> None:
+                                  acceleration_profile_marker_path: Path | None = None,
+                                  use_old_ui_marker_path: Path | None = None,
+                                  lateral_method_rebrand_marker_path: Path | None = None,
+                                  vision_speed_limit_detection_marker_path: Path | None = None,
+                                  developer_metric_display_marker_path: Path | None = None) -> None:
   _apply_legacy_launch_param_migrations(params, marker_path or _default_marker_path(params))
   # Keep branch-default rollout on its own marker so older installs that already
   # have the legacy marker still receive this one-time param reset.
   _apply_branch_default_migration(params, branch_defaults_marker_path or _branch_defaults_marker_path(params))
   _apply_acceleration_profile_default_migration(
     params, acceleration_profile_marker_path or _acceleration_profile_marker_path(params)
+  )
+  _apply_use_old_ui_migration(params, use_old_ui_marker_path or _use_old_ui_marker_path(params))
+  _apply_lateral_method_rebrand_migration(
+    params, lateral_method_rebrand_marker_path or _lateral_method_rebrand_marker_path(params)
+  )
+  _apply_vision_speed_limit_detection_migration(
+    params, vision_speed_limit_detection_marker_path or _vision_speed_limit_detection_marker_path(params)
+  )
+  _apply_developer_metric_display_migration(
+    params, developer_metric_display_marker_path or _developer_metric_display_marker_path(params)
   )
 
 

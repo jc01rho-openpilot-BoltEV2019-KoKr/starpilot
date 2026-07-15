@@ -215,6 +215,23 @@ def test_hyundai_aol_does_not_auto_start_from_cruise_availability(monkeypatch, t
   assert ret.alwaysOnLateralEnabled is False
 
 
+def test_nissan_main_aol_can_start_before_normal_engagement(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(
+    SimpleNamespace(brand="nissan"),
+    SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
+  )
+
+  ret = card.update(make_car_state(available=True), SimpleNamespace(distancePressed=False), make_sm(),
+                    make_toggles(always_on_lateral=True, always_on_lateral_main=True))
+
+  assert ret.alwaysOnLateralAllowed is True
+  assert ret.alwaysOnLateralEnabled is True
+
+
 def test_hyundai_canfd_lkas_button_can_toggle_aol_before_engagement(monkeypatch, tmp_path):
   monkeypatch.setattr(spc, "Params", FakeParams)
   monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
@@ -371,6 +388,7 @@ def test_honda_lkas_button_pauses_lateral_when_cruise_is_active(monkeypatch, tmp
   sm = make_sm()
   sm["selfdriveState"].active = True
   toggles = make_toggles(always_on_lateral_lkas=True, lkas_allowed_for_aol=True)
+  card.prev_active = True
 
   ret = card.update(car_state, starpilot_car_state, sm, toggles)
 
@@ -381,6 +399,68 @@ def test_honda_lkas_button_pauses_lateral_when_cruise_is_active(monkeypatch, tmp
 
   assert ret.alwaysOnLateralAllowed is True
   assert ret.pauseLateral is False
+
+
+def test_honda_main_aol_follows_cruise_main_without_manual_aol_button_mapping(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(
+    SimpleNamespace(brand="honda"),
+    SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
+  )
+
+  toggles = make_toggles(always_on_lateral_main=True, lkas_allowed_for_aol=True)
+  ret = card.update(make_car_state(available=True), SimpleNamespace(distancePressed=False), make_sm(), toggles)
+
+  assert ret.alwaysOnLateralAllowed is True
+  assert ret.alwaysOnLateralEnabled is True
+
+
+def test_hyundai_main_aol_persists_after_brake_disengage_without_manual_aol_button_mapping(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(
+    SimpleNamespace(brand="hyundai"),
+    SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
+  )
+
+  sm = make_sm()
+  toggles = make_toggles(always_on_lateral_main=True)
+  starpilot_car_state = SimpleNamespace(distancePressed=False)
+
+  sm["selfdriveState"].active = True
+  enabled_state = make_car_state(available=True, enabled=True)
+  ret = card.update(enabled_state, starpilot_car_state, sm, toggles)
+  assert ret.alwaysOnLateralAllowed is True
+  assert ret.alwaysOnLateralEnabled is True
+
+  sm["selfdriveState"].active = False
+  disengaged_state = make_car_state(available=True, enabled=False)
+  ret = card.update(disengaged_state, starpilot_car_state, sm, toggles)
+
+  assert ret.alwaysOnLateralAllowed is True
+  assert ret.alwaysOnLateralEnabled is True
+
+
+def test_non_button_aol_platform_keeps_main_aol_when_main_cruise_is_mapped(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(
+    SimpleNamespace(brand="gm"),
+    SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
+  )
+
+  toggles = make_toggles(always_on_lateral_main=True, main_cruise_aol_toggle=True)
+  ret = card.update(make_car_state(available=True), SimpleNamespace(distancePressed=False), make_sm(), toggles)
+
+  assert ret.alwaysOnLateralAllowed is True
+  assert ret.alwaysOnLateralEnabled is True
 
 
 def test_main_aol_still_follows_cruise_main_for_other_platforms(monkeypatch, tmp_path):
@@ -473,6 +553,19 @@ def test_cancel_button_short_press_can_run_independent_mapping(monkeypatch, tmp_
   ret = card.update(make_car_state(), starpilot_car_state, sm, toggles)
   assert ret.cancelLongPressed is False
   assert ret.cancelVeryLongPressed is False
+  assert card.params_memory.get_int("WheelButtonBookmarkCounter") == 1
+
+
+def test_lkas_button_press_creates_bookmark(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="toyota"), SimpleNamespace(alternativeExperience=0))
+  car_state = make_car_state(button_events=[SimpleNamespace(type=spc.ButtonType.lkas, pressed=True)])
+
+  card.update(car_state, SimpleNamespace(distancePressed=False), make_sm(), make_toggles(bookmark_via_lkas=True))
+
   assert card.params_memory.get_int("WheelButtonBookmarkCounter") == 1
 
 

@@ -686,6 +686,21 @@ class TestHyundaiFingerprint:
   def test_kona_ev_non_scc_has_no_dedicated_fw_coverage(self):
     assert CAR.HYUNDAI_KONA_EV_NON_SCC not in FW_VERSIONS
 
+  def test_elantra_hev_2026_route_fw_exact_matches_2024_platform(self):
+    route_fw = {
+      (Ecu.fwdCamera, 0x7c4): b'\xf1\x00CN7HMFC  AT USA LHD 1.00 1.05 99210-AA510 240509',
+      (Ecu.fwdRadar, 0x7d0): b'\xf1\x00CN7_ RDR -----      1.00 1.01 99110-AA500         ',
+      (Ecu.eps, 0x7d4): b'\xf1\x00CN7 MDPS C 1.00 1.03 56300BY670\x00 4CSHC103',
+    }
+    car_fw = [
+      CarParams.CarFw(ecu=ecu, fwVersion=version, address=address, subAddress=0, brand="hyundai")
+      for (ecu, address), version in route_fw.items()
+    ]
+
+    exact, matches = match_fw_to_car(car_fw, "", allow_exact=True, allow_fuzzy=False, log=False)
+    assert exact
+    assert matches == {CAR.HYUNDAI_ELANTRA_HEV_2024}
+
   def test_kona_non_scc_fca_radar_fw_is_optional(self):
     fw_versions = FW_VERSIONS[CAR.HYUNDAI_KONA_NON_SCC]
     car_fw = [

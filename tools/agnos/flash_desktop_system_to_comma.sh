@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HOST="${1:-comma@192.168.3.110}"
-IMAGE="${2:-/Users/dominickthompson/Desktop/system-23280e1073340afe23452627a53269fbdad7251620f722df502de1a071ffd88b.img.xz}"
+IMAGE="${2:-/Users/dominickthompson/Desktop/system7.img.xz}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
@@ -16,8 +16,8 @@ REMOTE_RUNNER="${REMOTE_DIR}/run_flash.sh"
 REMOTE_AGNOS="${REMOTE_DIR}/agnos.py"
 PORT="8989"
 
-EXPECTED_VERSION="12.8.25"
-RAW_HASH="23280e1073340afe23452627a53269fbdad7251620f722df502de1a071ffd88b"
+EXPECTED_VERSION="12.8.27"
+RAW_HASH="1b71fd1835610e46c9d3f2d13e389108df4777308a6128e5b794b6875c91012e"
 RAW_SIZE="5368709120"
 
 if [[ ! -f "$IMAGE" ]]; then

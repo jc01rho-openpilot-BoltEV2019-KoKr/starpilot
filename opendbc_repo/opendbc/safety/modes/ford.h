@@ -86,6 +86,8 @@ static bool ford_get_quality_flag_valid(const CANPacket_t *msg) {
 
 #define FORD_CANFD_INACTIVE_CURVATURE_RATE 1024U
 
+static bool ford_lka_steering = false;
+
 // Curvature rate limits
 #define FORD_LIMITS(limit_lateral_acceleration) {                                               \
   .max_angle = 1000,          /* 0.02 curvature */                                              \
@@ -227,12 +229,10 @@ static bool ford_tx_hook(const CANPacket_t *msg) {
 
   // Safety check for Lane_Assist_Data1 action
   if (msg->addr == FORD_Lane_Assist_Data1) {
-    // Do not allow steering using Lane_Assist_Data1 (Lane-Departure Aid).
-    // This message must be sent for Lane Centering to work, and can include
-    // values such as the steering angle or lane curvature for debugging,
-    // but the action (LkaActvStats_D2_Req) must be set to zero.
     unsigned int action = msg->data[0] >> 5;
-    if (action != 0U) {
+    bool valid_lka_action = action == 0U;
+    valid_lka_action |= ford_lka_steering && controls_allowed && ((action == 2U) || (action == 4U));
+    if (!valid_lka_action) {
       tx = false;
     }
   }
@@ -330,7 +330,9 @@ static safety_config ford_init(uint16_t param) {
   };
 
   const uint16_t FORD_PARAM_CANFD = 2;
+  const uint16_t FORD_PARAM_LKA_STEERING = 4;
   const bool ford_canfd = GET_FLAG(param, FORD_PARAM_CANFD);
+  ford_lka_steering = GET_FLAG(param, FORD_PARAM_LKA_STEERING);
 
   bool ford_longitudinal = false;
 

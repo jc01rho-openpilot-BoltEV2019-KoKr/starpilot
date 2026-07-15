@@ -138,26 +138,26 @@ class TestManager:
     ui_process._qt_process = qt_process
     ui_process._raylib_process = raylib_process
 
-    params = FileBackedFakeParams(tmp_path / "params", {"TryRaylibUI": False})
+    params = FileBackedFakeParams(tmp_path / "params", {"UseOldUI": False})
 
     assert ui_process.should_run(False, params, car.CarParams.new_message(), SimpleNamespace())
     ui_process.start()
-    assert ui_process.proc is qt_process.proc
-    assert qt_process.starts == 1
-    assert raylib_process.starts == 0
+    assert ui_process.proc is raylib_process.proc
+    assert qt_process.starts == 0
+    assert raylib_process.starts == 1
 
-    params.put_bool("TryRaylibUI", True)
+    params.put_bool("UseOldUI", True)
     assert ui_process.should_run(True, params, car.CarParams.new_message(), SimpleNamespace())
     ui_process.start()
-    assert ui_process.proc is qt_process.proc
+    assert ui_process.proc is raylib_process.proc
     assert qt_process.stops == 0
-    assert raylib_process.starts == 0
+    assert qt_process.starts == 0
 
     assert ui_process.should_run(False, params, car.CarParams.new_message(), SimpleNamespace())
     ui_process.start()
-    assert qt_process.stops == 1
-    assert raylib_process.starts == 1
-    assert ui_process.proc is raylib_process.proc
+    assert raylib_process.stops == 1
+    assert qt_process.starts == 1
+    assert ui_process.proc is qt_process.proc
 
   def test_blacklisted_procs(self):
     # TODO: ensure there are blacklisted procs until we have a dedicated test

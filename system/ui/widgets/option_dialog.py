@@ -75,5 +75,5 @@ class MultiOptionDialog(Widget):
     self.cancel_button.render(cancel_rect)
 
     select_rect = rl.Rectangle(content_rect.x + button_w + BUTTON_SPACING, button_y, button_w, BUTTON_HEIGHT)
-    self.select_button.set_enabled(self.selection != self.current)
+    self.select_button.set_enabled(bool(self.selection))
     self.select_button.render(select_rect)

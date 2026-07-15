@@ -54,6 +54,7 @@ from opendbc.car.gm.carcontroller import (
   get_acc_dashboard_status_active,
   get_stock_cc_active_for_cancel,
   shape_bolt_acc_pedal_low_speed_friction,
+  shape_truck_friction_brake,
   shape_truck_positive_accel,
   should_use_fixed_stopping_brake,
   should_activate_auto_hold,
@@ -827,7 +828,7 @@ def test_calc_pedal_command_keeps_strong_positive_requests_responsive():
 def test_shape_truck_positive_accel_softens_small_highway_requests():
   shaped = shape_truck_positive_accel(0.12, 26.0, True)
 
-  assert 0.09 < shaped < 0.10
+  assert 0.08 < shaped < 0.095
 
 
 def test_shape_truck_positive_accel_keeps_mid_follow_requests_available():
@@ -858,6 +859,21 @@ def test_shape_truck_positive_accel_does_not_relax_without_speed_error():
   no_error = shape_truck_positive_accel(0.28, 26.0, True, lead_visible=True, set_speed_error=0.0)
 
   assert no_error == base
+
+
+def test_shape_truck_friction_brake_suppresses_boundary_chatter():
+  assert shape_truck_friction_brake(14, -0.3, False, False) == (0, False)
+
+
+def test_shape_truck_friction_brake_uses_hysteresis_once_engaged():
+  assert shape_truck_friction_brake(25, -0.3, False, False) == (25, True)
+  assert shape_truck_friction_brake(14, -0.3, False, True) == (14, True)
+  assert shape_truck_friction_brake(8, -0.3, False, True) == (0, False)
+
+
+def test_shape_truck_friction_brake_never_delays_meaningful_braking():
+  assert shape_truck_friction_brake(5, -0.65, False, False) == (5, True)
+  assert shape_truck_friction_brake(5, -0.2, True, False) == (5, True)
 
 
 def test_use_interceptor_sng_launch_requires_actual_near_stop():

@@ -78,3 +78,26 @@ class TestRouteLibrary:
       Route(route_name)
 
     assert calls == [(DEFAULT_API_HOST, f"v1/route/{route_name.replace('/', '|')}/files")]
+
+  def test_route_synthesizes_konik_metadata_when_endpoint_is_unavailable(self, mocker):
+    route_name = "59679e5e40b60ce0/0000091b--316e931f07"
+    file_url = "https://api.konik.ai/connectdata/59679e5e40b60ce0/0000091b--316e931f07/0/qlog.zst"
+
+    class FakeApi:
+      def __init__(self, token=None, host=None):
+        self.host = host
+
+      def get(self, endpoint):
+        if endpoint.endswith("/files"):
+          return {"qlogs": [file_url]}
+        raise APIError("400:metadata unavailable", 400)
+
+    mocker.patch("openpilot.tools.lib.route.route_api_hosts", return_value=[KONIK_API_HOST])
+    mocker.patch("openpilot.tools.lib.route.get_token", return_value=None)
+    mocker.patch("openpilot.tools.lib.route.CommaApi", FakeApi)
+
+    route = Route(route_name)
+
+    assert route.qlog_paths() == [file_url]
+    assert route.metadata == {"url": "https://connect.konik.ai/59679e5e40b60ce0/0000091b--316e931f07"}
+    assert route.segments[0].url == "https://connect.konik.ai/59679e5e40b60ce0/0000091b--316e931f07/0"

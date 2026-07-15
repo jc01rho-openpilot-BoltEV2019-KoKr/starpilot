@@ -11,6 +11,7 @@ from openpilot.starpilot.controls.lib.curve_speed_controller import CurveSpeedCo
 from openpilot.starpilot.controls.lib.speed_limit_controller import SpeedLimitController
 
 CSC_MIN_SPEED = CITY_SPEED_LIMIT * CV.MPH_TO_MS
+CSC_CURVE_RELEASE_HOLD_TIME = 0.75
 OVERRIDE_FORCE_STOP_TIMER = 10
 STANDSTILL_FORCE_STOP_CLEAR_TIME = 0.75
 STANDSTILL_FORCE_STOP_LIGHT_HOLD_TIME = 5.0
@@ -155,6 +156,9 @@ class StarPilotVCruise:
     self._nav_instruction_state_raw = None
     self._nav_instruction_state = {}
     self._applied_slc_control_target = 0.0
+    self.csc_controlling_speed = False
+    self.csc_target = 0.0
+    self.csc_curve_last_seen_at = None
 
   def _update_nav_instruction_state(self):
     raw = self.starpilot_planner.params_memory.get("NavInstructionState") or {}
@@ -406,19 +410,29 @@ class StarPilotVCruise:
     v_ego_diff = v_ego_cluster - v_ego
 
     # FrogsGoMoo's Curve Speed Controller
-    if long_control_active and v_ego > CRUISING_SPEED and self.starpilot_planner.road_curvature_detected and starpilot_toggles.curve_speed_controller:
+    csc_available = long_control_active and v_ego > CRUISING_SPEED and starpilot_toggles.curve_speed_controller
+    csc_curve_detected = csc_available and self.starpilot_planner.road_curvature_detected
+    if csc_curve_detected:
       self.csc.update_target(v_ego)
 
       self.csc_controlling_speed = True
-
       self.csc_target = self.csc.target
+      self.csc_curve_last_seen_at = now
     else:
-      self.csc.log_data(v_ego, sm)
+      csc_release_hold = bool(
+        csc_available and
+        self.csc_controlling_speed and
+        self.csc_curve_last_seen_at is not None and
+        self._elapsed_seconds(now, self.csc_curve_last_seen_at) < CSC_CURVE_RELEASE_HOLD_TIME
+      )
+      if not csc_release_hold:
+        self.csc.log_data(v_ego, sm)
 
-      self.csc_controlling_speed = False
-      self.csc.target_set = False
+        self.csc_controlling_speed = False
+        self.csc.target_set = False
+        self.csc_curve_last_seen_at = None
 
-      self.csc_target = v_cruise
+        self.csc_target = v_cruise
 
     # Pfeiferj's Speed Limit Controller
     self.slc.starpilot_toggles = starpilot_toggles

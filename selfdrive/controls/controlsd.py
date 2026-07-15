@@ -36,6 +36,16 @@ LaneChangeDirection = log.LaneChangeDirection
 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
 
+# After a smoothed lane change ends, ramp the curvature limits back to stock over this
+# time so the final recenter correction is shaped instead of stepping through unclamped.
+LANE_CHANGE_SMOOTH_RELEASE_T = 2.0
+
+# Floor on the jerk factor when the model is unwinding lane-change curvature (the arrest and
+# any correction back toward center). Entry gentleness is comfort, but arrest speed is a
+# correctness constraint: a slow symmetric cap lets the car glide past the new lane center.
+# 0.6 (≈ pace-5 rate) fully tracks the arrest demand seen in logs while staying 40% below stock.
+LANE_CHANGE_ARREST_JERK_FLOOR = 0.6
+
 
 def get_gm_hud_set_speed(set_speed_ms: float, starpilot_toggles) -> float:
   spoofed_speed = set_speed_ms
@@ -89,7 +99,7 @@ class Controls:
     self.steer_limited_by_safety = False
     self.curvature = 0.0
     self.desired_curvature = 0.0
-    self.lc_smooth_elapsed = 0.0
+    self.lc_smooth_release = 0.0
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -202,7 +212,9 @@ class Controls:
     # accel PID loop
     pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, CS.vEgo, CS.vCruise * CV.KPH_TO_MS)
     self.LoC.experimental_mode = bool(self.sm['selfdriveState'].experimentalMode)
-    actuators.accel = float(min(self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits, self.starpilot_toggles), self.starpilot_toggles.max_desired_acceleration))
+    actuators.accel = float(min(self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits,
+                                                self.starpilot_toggles, has_lead=long_plan.hasLead),
+                                self.starpilot_toggles.max_desired_acceleration))
 
     # Steering PID loop and lateral MPC
     # Reset desired curvature to current to avoid violating the limits on engage
@@ -212,25 +224,35 @@ class Controls:
       new_desired_curvature = model_v2.action.desiredCurvature if CC.latActive else self.curvature
 
     jerk_factor = 1.0
-    lat_accel_factor = 1.0
     if self.starpilot_toggles.lane_change_pace < 10:
-      t_target = self.starpilot_toggles.lane_change_t_target
       set_jerk = self.starpilot_toggles.lane_change_jerk_factor
-      set_accel = self.starpilot_toggles.lane_change_lat_accel_factor
       in_lane_change = model_v2.meta.laneChangeState in (LaneChangeState.laneChangeStarting, LaneChangeState.laneChangeFinishing) \
           and CS.vEgo >= self.starpilot_toggles.minimum_lane_change_speed
-      if in_lane_change or 0.0 < self.lc_smooth_elapsed < t_target:
-        self.lc_smooth_elapsed = min(self.lc_smooth_elapsed + DT_CTRL, t_target)
-        progress = self.lc_smooth_elapsed / t_target  # 0 → 1 over T seconds
-        jerk_factor = set_jerk + (1.0 - set_jerk) * progress
-        lat_accel_factor = set_accel + (1.0 - set_accel) * progress
-        if not in_lane_change and self.lc_smooth_elapsed >= t_target:
-          self.lc_smooth_elapsed = 0.0
-      elif not in_lane_change:
-        self.lc_smooth_elapsed = 0.0
+      # Hold the tight jerk limit for the whole maneuver, then taper back to stock so the
+      # model's recenter step and mid-change corrections stay shaped instead of passing
+      # through a mostly-relaxed clamp. Only the jerk (curvature rate) is tightened: capping
+      # lat accel strangles the end-of-maneuver arrest and lets the car glide past the new
+      # lane center before it can build enough counter-curvature.
+      if in_lane_change:
+        self.lc_smooth_release = LANE_CHANGE_SMOOTH_RELEASE_T
+      else:
+        self.lc_smooth_release = max(self.lc_smooth_release - DT_CTRL, 0.0)
+      if self.lc_smooth_release > 0.0:
+        release = 1.0 - self.lc_smooth_release / LANE_CHANGE_SMOOTH_RELEASE_T  # 0 in maneuver → 1 after
+        jerk_factor = set_jerk + (1.0 - set_jerk) * release
+        # When the model is unwinding curvature (reducing the lane-change curvature magnitude)
+        # and the entry cap would make the command lag it, apply the arrest floor so the car
+        # can stop on the new lane center. Applies only to the unwind direction; the entry
+        # ramp keeps the full pace smoothness. Robust to double lane changes (no baseline).
+        model_unwinding = abs(new_desired_curvature) < abs(self.desired_curvature) and \
+            math.copysign(1.0, new_desired_curvature - self.desired_curvature) == -math.copysign(1.0, self.desired_curvature) and \
+            abs(self.desired_curvature) > 1e-4
+        if model_unwinding:
+          arrest_floor = LANE_CHANGE_ARREST_JERK_FLOOR + (1.0 - LANE_CHANGE_ARREST_JERK_FLOOR) * release
+          jerk_factor = max(jerk_factor, arrest_floor)
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
-                                                               jerk_factor, lat_accel_factor)
+                                                               jerk_factor)
     lat_delay = self.sm["liveDelay"].lateralDelay + LAT_SMOOTH_SECONDS
 
     actuators.curvature = self.desired_curvature

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 
@@ -16,7 +17,7 @@ import starpilot.system.speed_limit_vision as slv
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import ensure_dir, preferred_clip_root, resolve_workspace  # type: ignore
+  from common import ensure_dir, preferred_clip_root, resolve_workspace  # type: ignore  # noqa: TID251
   from localize_bookmark_signs import configure_models  # type: ignore
   from mine_route_training_samples import (  # type: ignore
     MapContext,
@@ -25,6 +26,7 @@ if __package__ in (None, ""):
     iter_frames_at_times,
     load_segment_map_context,
     nearest_context,
+    model_bundle_fingerprint,
     parse_route_id,
     read_frame_at,
     route_segments,
@@ -42,6 +44,7 @@ else:
     iter_frames_at_times,
     load_segment_map_context,
     nearest_context,
+    model_bundle_fingerprint,
     parse_route_id,
     read_frame_at,
     route_segments,
@@ -57,6 +60,8 @@ DEFAULT_OUTPUT_NAME = "manual_review_queue_v1"
 PRIORITY_SPEED_VALUES = frozenset((30, 35, 40, 45, 50, 55, 60, 65))
 FIELDNAMES = [
   "record_key",
+  "mining_fingerprint",
+  "model_fingerprint",
   "route",
   "dongle_id",
   "log_id",
@@ -112,14 +117,15 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--clip-root", type=Path, default=preferred_clip_root(), help="Route realdata root.")
   parser.add_argument("--bundle-state-dir", type=Path, default=DEFAULT_ROUTE_BUNDLE_STATE_DIR, help="Completed extraction marker directory.")
   parser.add_argument("--models-dir", type=Path, help="Optional model directory for mining with non-repo ONNXs.")
+  parser.add_argument("--model-only", action="store_true", help="Do not run crop OCR while discovering review candidates.")
   parser.add_argument("--output-dir", type=Path, help=f"Defaults to <workspace>/review/{DEFAULT_OUTPUT_NAME}.")
   parser.add_argument("--manifest-out", type=Path, help="Defaults to <output-dir>/manual_review_queue.csv.")
   parser.add_argument("--sample-every", type=float, default=2.0, help="Seconds between regular video samples.")
   parser.add_argument("--seek-sampling", action="store_true", help="Seek directly to sampled frames instead of sequential grabbing.")
   parser.add_argument("--transition-radius", type=float, default=18.0, help="Extra seconds around map speed transitions to sample densely.")
   parser.add_argument("--transition-step", type=float, default=0.75, help="Seconds between transition-window samples.")
-  parser.add_argument("--max-frames-per-route", type=int, default=1200, help="Maximum frames to score per route.")
-  parser.add_argument("--max-candidates-per-route", type=int, default=500, help="Maximum review candidates to keep per route.")
+  parser.add_argument("--max-frames-per-route", type=int, default=1200, help="Maximum frames to score per route. 0 scans the full route.")
+  parser.add_argument("--max-candidates-per-route", type=int, default=500, help="Maximum review candidates to keep per route. 0 keeps all.")
   parser.add_argument("--max-candidates-per-frame", type=int, default=1, help="Maximum detector candidates to keep from a single video frame. 0 keeps all.")
   parser.add_argument("--max-negatives-per-route", type=int, default=60, help="Maximum empty/no-candidate frames to keep per route.")
   parser.add_argument("--min-proposal-confidence", type=float, default=0.025, help="Loose detector confidence floor for review candidates.")
@@ -132,6 +138,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--include-advisory", action=argparse.BooleanOptionalAction, default=True, help="Include advisory-speed detector class candidates.")
   parser.add_argument("--include-full-detection", action="store_true", help="Also run the full runtime detector on each frame for extra context. Slower.")
   parser.add_argument("--overwrite-images", action="store_true", help="Rewrite existing review images.")
+  parser.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True, help="Resume a matching fingerprinted queue.")
   parser.add_argument("--dry-run", action="store_true", help="Score frames and print counts without writing images/CSV.")
   return parser.parse_args()
 
@@ -158,6 +165,33 @@ def read_routes(args: argparse.Namespace) -> list[str]:
   if args.limit_routes > 0:
     deduped = deduped[:args.limit_routes]
   return deduped
+
+
+def review_mining_fingerprint(args: argparse.Namespace, model_fingerprint: str) -> str:
+  config = {
+    "schema_version": 1,
+    "model_fingerprint": model_fingerprint,
+    "model_only": args.model_only,
+    "sample_every": args.sample_every,
+    "transition_radius": args.transition_radius,
+    "transition_step": args.transition_step,
+    "max_frames_per_route": args.max_frames_per_route,
+    "max_candidates_per_route": args.max_candidates_per_route,
+    "max_candidates_per_frame": args.max_candidates_per_frame,
+    "max_negatives_per_route": args.max_negatives_per_route,
+    "min_proposal_confidence": args.min_proposal_confidence,
+    "no_read_min_proposal_confidence": args.no_read_min_proposal_confidence,
+    "school_zone_min_proposal_confidence": args.school_zone_min_proposal_confidence,
+    "min_width": args.min_width,
+    "min_height": args.min_height,
+    "dedupe_seconds": args.dedupe_seconds,
+    "include_advisory": args.include_advisory,
+    "include_full_detection": args.include_full_detection,
+  }
+  digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8"))
+  for source_path in (Path(__file__), Path(slv.__file__)):
+    digest.update(source_path.resolve().read_bytes())
+  return digest.hexdigest()
 
 
 def clamp_box(box: tuple[int, int, int, int], frame_shape: tuple[int, int, int]) -> tuple[int, int, int, int] | None:
@@ -245,7 +279,14 @@ def classify_map_relation(speed_limit_mph: int, context: MapContext, next_limit_
   return "no_map"
 
 
-def score_review_priority(class_id: int, proposal_confidence: float, chosen_vote: ReadVote | None, support_count: int, map_relation: str, reasons: set[str]) -> float:
+def score_review_priority(
+  class_id: int,
+  proposal_confidence: float,
+  chosen_vote: ReadVote | None,
+  support_count: int,
+  map_relation: str,
+  reasons: set[str],
+) -> float:
   score = proposal_confidence * 2.0
   if chosen_vote is not None:
     score += chosen_vote.confidence * 2.0
@@ -276,7 +317,14 @@ def summarize_votes(votes: list[ReadVote]) -> str:
   return "|".join(compact)
 
 
-def analyze_proposal(daemon: slv.SpeedLimitVisionDaemon, frame_bgr, proposal, full_detection, context: MapContext, args: argparse.Namespace):
+def analyze_proposal(
+  daemon: slv.SpeedLimitVisionDaemon,
+  frame_bgr,
+  proposal,
+  full_detection,
+  context: MapContext,
+  args: argparse.Namespace,
+):
   proposal_confidence, class_id, raw_box = proposal
   if class_id == 1 and not args.include_advisory:
     return None
@@ -306,7 +354,8 @@ def analyze_proposal(daemon: slv.SpeedLimitVisionDaemon, frame_bgr, proposal, fu
     is_regulatory = daemon._is_regulatory_speed_sign(crop) or class_id == 2
     any_regulatory = any_regulatory or is_regulatory
     add_vote(votes, daemon._classify_speed_limit_from_model(crop), "model", expansion_index, crop_box, is_regulatory, weight)
-    add_vote(votes, daemon._read_speed_limit_from_crop(crop), "ocr", expansion_index, crop_box, is_regulatory, weight)
+    if not args.model_only:
+      add_vote(votes, daemon._read_speed_limit_from_crop(crop), "ocr", expansion_index, crop_box, is_regulatory, weight)
 
   chosen_vote, support_count = choose_vote(votes)
   if chosen_vote is None and proposal_confidence < args.no_read_min_proposal_confidence and class_id != 2:
@@ -368,15 +417,10 @@ def write_image(path: Path, image, quality: int, overwrite: bool) -> None:
   cv2.imwrite(str(path), image, [cv2.IMWRITE_JPEG_QUALITY, quality])
 
 
-def cluster_key(route_id: str, segment: int, time_s: float, frame_shape: tuple[int, int, int], candidate: dict, dedupe_seconds: float) -> str:
-  x1, y1, x2, y2 = candidate["bbox"]
-  frame_height, frame_width = frame_shape[:2]
-  center_x = ((x1 + x2) / 2) / max(frame_width, 1)
-  center_y = ((y1 + y2) / 2) / max(frame_height, 1)
+def cluster_key(route_id: str, segment: int, time_s: float, candidate: dict, dedupe_seconds: float) -> str:
   time_bucket = int(math.floor(time_s / max(dedupe_seconds, 0.1)))
-  grid_x = int(center_x * 12)
-  grid_y = int(center_y * 8)
-  return f"{route_id}|{segment}|{time_bucket}|{candidate['class_id']}|{grid_x}|{grid_y}"
+  candidate_speed = candidate.get("candidate_speed_limit_mph") or "none"
+  return f"{route_id}|{segment}|{time_bucket}|{candidate['class_id']}|{candidate_speed}"
 
 
 def candidate_record_key(route_key: str, segment: int, time_s: float, index: int) -> str:
@@ -384,7 +428,14 @@ def candidate_record_key(route_key: str, segment: int, time_s: float, index: int
   return f"manual_review_{route_key}_{sample_index}"
 
 
-def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse.Namespace, output_dir: Path) -> tuple[list[dict[str, object]], dict[str, object]]:
+def mine_route(
+  route_id: str,
+  daemon: slv.SpeedLimitVisionDaemon,
+  args: argparse.Namespace,
+  output_dir: Path,
+  mining_fingerprint: str,
+  model_fingerprint: str,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
   route_id, dongle_id, log_id = parse_route_id(route_id)
   route_key = safe_key(route_id)
   clip_root = args.clip_root.expanduser().resolve()
@@ -400,7 +451,10 @@ def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse
   frames_scored = 0
 
   for segment in segments:
-    if frames_scored >= args.max_frames_per_route or route_candidates >= args.max_candidates_per_route:
+    if (
+      (args.max_frames_per_route > 0 and frames_scored >= args.max_frames_per_route) or
+      (args.max_candidates_per_route > 0 and route_candidates >= args.max_candidates_per_route)
+    ):
       break
     contexts = load_segment_map_context(segment.path)
     capture = cv2.VideoCapture(str(segment.video_path))
@@ -414,7 +468,10 @@ def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse
       frame_iter = iter_frames_at_times(capture, fps, times)
 
     for time_s, frame_bgr in frame_iter:
-      if frames_scored >= args.max_frames_per_route or route_candidates >= args.max_candidates_per_route:
+      if (
+        (args.max_frames_per_route > 0 and frames_scored >= args.max_frames_per_route) or
+        (args.max_candidates_per_route > 0 and route_candidates >= args.max_candidates_per_route)
+      ):
         break
       if frame_bgr is None:
         continue
@@ -444,6 +501,8 @@ def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse
         crop_path = crop_dir / f"{record_key}_crop.jpg"
         row = {
           "record_key": record_key,
+          "mining_fingerprint": mining_fingerprint,
+          "model_fingerprint": model_fingerprint,
           "route": route_id,
           "dongle_id": dongle_id,
           "log_id": log_id,
@@ -478,7 +537,7 @@ def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse
           "review_ignore_reason": "",
           "review_notes": "",
         }
-        key = cluster_key(route_id, segment.segment, time_s, frame_bgr.shape, candidate, args.dedupe_seconds)
+        key = cluster_key(route_id, segment.segment, time_s, candidate, args.dedupe_seconds)
         existing = rows_by_cluster.get(key)
         if existing is None or float(row["review_priority"]) > float(existing["review_priority"]):
           if not args.dry_run:
@@ -494,6 +553,8 @@ def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse
         frame_path = frame_dir / f"{record_key}.jpg"
         row = {
           "record_key": record_key,
+          "mining_fingerprint": mining_fingerprint,
+          "model_fingerprint": model_fingerprint,
           "route": route_id,
           "dongle_id": dongle_id,
           "log_id": log_id,
@@ -557,8 +618,17 @@ def write_manifest(path: Path, rows: list[dict[str, object]]) -> None:
     writer.writerows(rows)
 
 
-def write_summary(path: Path, manifest_path: Path, rows: list[dict[str, object]], summaries: list[dict[str, object]]) -> None:
+def write_summary(
+  path: Path,
+  manifest_path: Path,
+  rows: list[dict[str, object]],
+  summaries: list[dict[str, object]],
+  mining_fingerprint: str,
+  model_fingerprint: str,
+) -> None:
   path.write_text(json.dumps({
+    "mining_fingerprint": mining_fingerprint,
+    "model_fingerprint": model_fingerprint,
     "routes": summaries,
     "manifest": str(manifest_path),
     "rows": len(rows),
@@ -575,6 +645,9 @@ def main() -> int:
 
   args = parse_args()
   configure_models(args.models_dir)
+  slv.DETECTOR_CLASSIFIER_CROP_OCR_ENABLED = not args.model_only
+  model_fingerprint = model_bundle_fingerprint()
+  mining_fingerprint = review_mining_fingerprint(args, model_fingerprint)
   workspace = resolve_workspace(args.workspace)
   output_dir = args.output_dir.expanduser().resolve() if args.output_dir else ensure_dir(workspace / "review" / DEFAULT_OUTPUT_NAME)
   manifest_path = args.manifest_out.expanduser().resolve() if args.manifest_out else output_dir / "manual_review_queue.csv"
@@ -586,25 +659,43 @@ def main() -> int:
   all_rows: list[dict[str, object]] = []
   summaries = []
   summary_path = output_dir / "manual_review_summary.json"
+  completed_routes: set[str] = set()
+  if args.resume and summary_path.is_file():
+    prior_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    if prior_summary.get("mining_fingerprint") != mining_fingerprint:
+      raise RuntimeError("Existing review queue fingerprint does not match this run. Use a new --output-dir or --no-resume.")
+    if manifest_path.is_file():
+      with manifest_path.open("r", encoding="utf-8", newline="") as handle:
+        all_rows = list(csv.DictReader(handle))
+    summaries = list(prior_summary.get("routes", []))
+    completed_routes = {str(summary["route"]) for summary in summaries if summary.get("status") in ("mined", "missing_segments")}
+  elif args.resume and (manifest_path.exists() or summary_path.exists()):
+    raise RuntimeError("Existing review queue is missing fingerprinted resume state. Use a new --output-dir or --no-resume.")
+
   for index, route_id in enumerate(routes, start=1):
-    rows, summary = mine_route(route_id, daemon, args, output_dir)
+    normalized_route, _, _ = parse_route_id(route_id)
+    if normalized_route in completed_routes:
+      print(f"[{index}/{len(routes)}] {normalized_route}: skipped (already mined)")
+      continue
+    rows, summary = mine_route(route_id, daemon, args, output_dir, mining_fingerprint, model_fingerprint)
     all_rows.extend(rows)
     summaries.append(summary)
-    print(
-      f"[{index}/{len(routes)}] {summary['route']}: {summary['status']} "
-      f"frames={summary['frames']} candidates={summary['candidates']} negatives={summary['negatives']}"
-    )
+    progress = f"[{index}/{len(routes)}] {summary['route']}: {summary['status']}"
+    counts = f"frames={summary['frames']} candidates={summary['candidates']} negatives={summary['negatives']}"
+    print(f"{progress} {counts}")
     if not args.dry_run:
       all_rows.sort(key=lambda row: (-float(row["review_priority"]), str(row["record_key"])))
       write_manifest(manifest_path, all_rows)
-      write_summary(summary_path, manifest_path, all_rows, summaries)
+      write_summary(summary_path, manifest_path, all_rows, summaries, mining_fingerprint, model_fingerprint)
 
   all_rows.sort(key=lambda row: (-float(row["review_priority"]), str(row["record_key"])))
   if not args.dry_run:
     write_manifest(manifest_path, all_rows)
-    write_summary(summary_path, manifest_path, all_rows, summaries)
+    write_summary(summary_path, manifest_path, all_rows, summaries, mining_fingerprint, model_fingerprint)
     print(f"Wrote {len(all_rows)} review rows to {manifest_path}")
     print(f"Summary: {summary_path}")
+    print(f"Model fingerprint: {model_fingerprint}")
+    print(f"Mining fingerprint: {mining_fingerprint}")
   else:
     print(f"Dry run rows={len(all_rows)} candidates={sum(1 for row in all_rows if row['detector_class'] != 'negative_empty')}")
 

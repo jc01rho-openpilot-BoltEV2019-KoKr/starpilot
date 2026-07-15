@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from collections import defaultdict
 from itertools import chain
 
-from openpilot.tools.lib.auth_config import get_token
+from openpilot.tools.lib.auth_config import KONIK_API_HOST, get_token
 from openpilot.tools.lib.api import APIError, CommaApi, route_api_hosts
 from openpilot.tools.lib.helpers import RE
 
@@ -107,7 +107,12 @@ class Route:
     return sorted(segments.values(), key=lambda seg: seg.name.segment_num)
 
   def _get_route_metadata(self):
-    return self._get_route_endpoint('v1/route/' + self.name.canonical_name)
+    try:
+      return self._get_route_endpoint('v1/route/' + self.name.canonical_name)
+    except APIError as e:
+      if self._api_host == KONIK_API_HOST and e.status_code in (400, 404):
+        return {"url": f"https://connect.konik.ai/{self.name.dongle_id}/{self.name.log_id}"}
+      raise
 
   def _get_route_files(self):
     return self._get_route_endpoint('v1/route/' + self.name.canonical_name + '/files')

@@ -46,11 +46,13 @@ class CarControllerParams:
 class FordSafetyFlags(IntFlag):
   LONG_CONTROL = 1
   CANFD = 2
+  LKA_STEERING = 4
 
 
 class FordFlags(IntFlag):
   # Static flags
   CANFD = 1
+  LKA_STEERING = 2
 
 
 class RADAR:
@@ -109,6 +111,13 @@ class FordCANFDPlatformConfig(FordPlatformConfig):
   def init(self):
     super().init()
     self.flags |= FordFlags.CANFD
+
+
+@dataclass
+class FordLKASteeringPlatformConfig(FordPlatformConfig):
+  def init(self):
+    super().init()
+    self.flags |= FordFlags.LKA_STEERING
 
 
 @dataclass
@@ -177,6 +186,10 @@ class CAR(Platforms):
   FORD_RANGER_MK2 = FordCANFDPlatformConfig(
     [FordCarDocs("Ford Ranger 2024", "Adaptive Cruise Control with Lane Centering", setup_video="https://www.youtube.com/watch?v=2oJlXCKYOy0")],
     CarSpecs(mass=2000, wheelbase=3.27, steerRatio=17.0),
+  )
+  FORD_TRANSIT_MK5 = FordLKASteeringPlatformConfig(
+    [FordCarDocs("Ford Transit 2025", "Co-Pilot360 Assist+")],
+    CarSpecs(mass=2068, wheelbase=3.302, steerRatio=16.7),
   )
 
 

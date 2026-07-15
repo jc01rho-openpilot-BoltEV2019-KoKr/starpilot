@@ -142,7 +142,12 @@ def main():
   assert vipc_client.is_connected()
   cloudlog.warning(f"connected with buffer size: {vipc_client.buffer_len}")
 
-  model = ModelState(vipc_client.width, vipc_client.height)
+  # connect() finishes before stream is populated. The first buffer always has known dimensions.
+  first_buf = vipc_client.recv()
+  while first_buf is None:
+    first_buf = vipc_client.recv()
+
+  model = ModelState(first_buf.width, first_buf.height)
   cloudlog.warning("models loaded, dmonitoringmodeld starting")
 
   sm = SubMaster(["liveCalibration"])

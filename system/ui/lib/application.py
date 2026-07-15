@@ -989,17 +989,19 @@ class GuiApplication:
     rl.draw_text_ex = _draw_text_ex_scaled
 
   def _patch_scissor_mode(self):
-    if self._scale == 1.0:
-      return
-
     if not hasattr(rl, "_orig_begin_scissor_mode"):
       rl._orig_begin_scissor_mode = rl.begin_scissor_mode
 
+    scale_x = self._scale * (self._pixel_scale_x if self._render_texture else 1.0)
+    scale_y = self._scale * (self._pixel_scale_y if self._render_texture else 1.0)
+    if scale_x == 1.0 and scale_y == 1.0:
+      rl.begin_scissor_mode = rl._orig_begin_scissor_mode
+      return
+
     def _begin_scissor_mode_scaled(x, y, width, height):
       return rl._orig_begin_scissor_mode(
-        int(x * self._scale * self._pixel_scale_x), int(y * self._scale * self._pixel_scale_y),
-        int(math.ceil(width * self._scale * self._pixel_scale_x)),
-        int(math.ceil(height * self._scale * self._pixel_scale_y)))
+        int(x * scale_x), int(y * scale_y),
+        int(math.ceil(width * scale_x)), int(math.ceil(height * scale_y)))
 
     rl.begin_scissor_mode = _begin_scissor_mode_scaled
 

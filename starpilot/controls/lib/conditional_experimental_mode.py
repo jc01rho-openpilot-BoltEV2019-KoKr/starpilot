@@ -55,6 +55,7 @@ class ConditionalExperimentalMode:
   SLOW_LEAD_CONTINUITY_MIN_EGO = 2.5
   SLOW_LEAD_CONTINUITY_HOLD_TIME = 1.25
   SLOW_LEAD_FORCE_CLEAR_TIME = 0.75
+  SLOW_LEAD_MODE_RELEASE_HOLD_TIME = 1.5
   SLOW_LEAD_MIN_CLOSING_SPEED = 0.75
   SLOW_LEAD_CLEAR_FASTER_FACTOR = 0.5
   POST_STOP_LAUNCH_TRIGGER_SUPPRESS_TIME = 2.0
@@ -104,6 +105,7 @@ class ConditionalExperimentalMode:
     self.prev_experimental_mode = False  # For hysteresis
     self.mode_hold_until = 0.0
     self.mode_false_since = 0.0
+    self.slow_lead_mode_hold_until = 0.0
     self._prev_ce_status = None
     self.prev_standstill = False
     self.prev_standstill_stop_hold = False
@@ -119,6 +121,7 @@ class ConditionalExperimentalMode:
       self.post_stop_launch_trigger_suppress_until = now + self.POST_STOP_LAUNCH_TRIGGER_SUPPRESS_TIME
       self.mode_hold_until = 0.0
       self.mode_false_since = 0.0
+      self.slow_lead_mode_hold_until = 0.0
       self.prev_experimental_mode = False
 
     if not standstill:
@@ -133,6 +136,10 @@ class ConditionalExperimentalMode:
       if triggered:
         self.mode_hold_until = now + self.CEM_TRANSITION_GUARD_TIME
         self.mode_false_since = 0.0
+        if self.status_value == CEStatus["LEAD"]:
+          self.slow_lead_mode_hold_until = now + self.SLOW_LEAD_MODE_RELEASE_HOLD_TIME
+        else:
+          self.slow_lead_mode_hold_until = 0.0
       elif self.prev_experimental_mode and self.mode_false_since == 0.0:
         self.mode_false_since = now
       elif not self.prev_experimental_mode:
@@ -140,8 +147,17 @@ class ConditionalExperimentalMode:
 
       hold_active = now < self.mode_hold_until
       transition_buffer_active = self.mode_false_since != 0.0 and (now - self.mode_false_since) < self.CEM_TRANSITION_BUFFER_TIME
+      slow_lead_hold_active = bool(
+        starpilot_toggles.conditional_lead and
+        now < self.slow_lead_mode_hold_until and
+        self.has_credible_slow_lead_context(v_ego)
+      )
+      if slow_lead_hold_active and not triggered:
+        self.status_value = CEStatus["LEAD"]
+      elif not slow_lead_hold_active:
+        self.slow_lead_mode_hold_until = 0.0
 
-      self.experimental_mode = triggered or hold_active or transition_buffer_active
+      self.experimental_mode = triggered or slow_lead_hold_active or hold_active or transition_buffer_active
       self.prev_experimental_mode = self.experimental_mode
       ce_write_value = self.status_value if self.experimental_mode else CEStatus["OFF"]
       if ce_write_value != self._prev_ce_status:
@@ -150,6 +166,7 @@ class ConditionalExperimentalMode:
     elif not is_manual_ce_status(self.status_value):
       self.mode_hold_until = 0.0
       self.mode_false_since = 0.0
+      self.slow_lead_mode_hold_until = 0.0
 
       # Keep the stop-light path live at standstill so EXP stays pinned for a red
       # light / stop sign. Stop signs latch until pedal, while stop lights can
@@ -168,6 +185,7 @@ class ConditionalExperimentalMode:
     else:
       self.mode_hold_until = 0.0
       self.mode_false_since = 0.0
+      self.slow_lead_mode_hold_until = 0.0
       self._prev_ce_status = None
       self.experimental_mode = self.status_value == CEStatus["USER_OVERRIDDEN"]
       self.prev_experimental_mode = self.experimental_mode
@@ -176,6 +194,19 @@ class ConditionalExperimentalMode:
 
     self.prev_standstill = standstill
     self.prev_standstill_stop_hold = current_standstill_stop_hold
+
+  def has_credible_slow_lead_context(self, v_ego):
+    lead = self.starpilot_planner.lead_one
+    if lead is None or not bool(getattr(lead, "status", False)):
+      return False
+
+    lead_radar = bool(getattr(lead, "radar", False))
+    lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
+    if not lead_radar and lead_prob < self.SLOW_LEAD_CONTINUITY_MIN_MODEL_PROB:
+      return False
+
+    lead_distance = float(getattr(lead, "dRel", float("inf")))
+    return lead_distance < max(40.0, float(v_ego) * self.SLOW_LEAD_CONTINUITY_MAX_DISTANCE_TIME)
 
   def get_standstill_stop_hold(self, sm):
     dash_stop_sign = (

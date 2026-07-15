@@ -123,7 +123,7 @@ class BigDeviceUIProcess:
     return self.should_run_fn(started, params, CP, starpilot_toggles)
 
   def _desired_process(self):
-    return self._raylib_process if self._params is not None and self._params.get_bool("TryRaylibUI") else self._qt_process
+    return self._qt_process if self._params is not None and self._params.get_bool("UseOldUI") else self._raylib_process
 
   def start(self) -> None:
     desired_process = self._desired_process()
@@ -228,7 +228,7 @@ device_type = HARDWARE.get_device_type()
 if device_type in ("tici", "tizi"):
   procs.append(BigDeviceUIProcess(always_run, watchdog_max_dt=UI_WATCHDOG_MAX_DT))
 else:
-  # C4 (mici) already runs the Python raylib UI path; TryRaylibUI must not affect it.
+  # C4 (mici) already runs the Python raylib UI path; UseOldUI must not affect it.
   procs.append(PythonProcess("ui", "selfdrive.ui.ui", always_run, watchdog_max_dt=UI_WATCHDOG_MAX_DT))
 
 procs += [
