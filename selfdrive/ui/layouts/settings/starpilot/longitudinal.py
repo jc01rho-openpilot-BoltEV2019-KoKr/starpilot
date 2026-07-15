@@ -29,6 +29,9 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherSettingsView,
   TileGrid,
   HubTile,
+  TOGGLE_MIN_HEIGHT,
+  TOGGLE_ROW_HEIGHT,
+  RowToggleTile,
   ToggleTile,
   draw_section_header,
   draw_list_group_shell,
@@ -61,6 +64,18 @@ DECELERATION_PROFILE_OPTIONS = [
   (DECELERATION_PROFILES["STANDARD"], "Standard"),
   (DECELERATION_PROFILES["ECO"], "Eco"),
   (DECELERATION_PROFILES["SPORT"], "Sport"),
+]
+
+SLC_FALLBACK_OPTIONS = [
+  (0, "Set Speed"),
+  (1, "Experimental Mode"),
+  (2, "Previous Limit"),
+]
+
+SLC_OVERRIDE_OPTIONS = [
+  (0, "None"),
+  (1, "Set With Gas Pedal"),
+  (2, "Max Set Speed"),
 ]
 
 
@@ -269,7 +284,10 @@ class ConditionalDriveModeView(PanelManagerView):
     self._update_pagination()
 
   def _init_toggles(self):
-    self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
+    if PANEL_STYLE.toggle_row_mode:
+      self._toggle_grid = TileGrid(columns=1, padding=12, min_tile_height=TOGGLE_MIN_HEIGHT)
+    else:
+      self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
     self._child(self._toggle_grid)
     self.register_page_grid(self._toggle_grid)
 
@@ -299,16 +317,18 @@ class ConditionalDriveModeView(PanelManagerView):
 
   def _update_pagination(self):
     mode = self._get_drive_mode_index()
+    page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
     if mode == 1:
-      pages = [self._cem_toggle_defs[i:i+4] for i in range(0, len(self._cem_toggle_defs), 4)]
+      pages = [self._cem_toggle_defs[i:i+page_size] for i in range(0, len(self._cem_toggle_defs), page_size)]
       self._set_toggle_pages(pages)
     elif mode == 2:
-      pages = [self._ccm_toggle_defs[i:i+4] for i in range(0, len(self._ccm_toggle_defs), 4)]
+      pages = [self._ccm_toggle_defs[i:i+page_size] for i in range(0, len(self._ccm_toggle_defs), page_size)]
       self._set_toggle_pages(pages)
     else:
       self._set_toggle_pages([])
 
   def _make_toggle_tile(self, info: dict) -> ToggleTile:
+    cls = RowToggleTile if PANEL_STYLE.toggle_row_mode else ToggleTile
     kwargs = {
       "title": info["title"],
       "desc": info.get("subtitle", ""),
@@ -321,7 +341,7 @@ class ConditionalDriveModeView(PanelManagerView):
     if "disabled_label" in info:
       kwargs["disabled_label"] = info["disabled_label"]
       
-    return ToggleTile(**kwargs)
+    return cls(**kwargs)
 
   def _set_active_adjustor(self, key: str, active: bool):
     if active:
@@ -422,16 +442,20 @@ class ConditionalDriveModeView(PanelManagerView):
 
     for key in keys:
       self._adjustor_rows[key].custom_row_height = None
-    grid._tile_height = None
 
     default_adjustor_h = float(AETHER_LIST_METRICS.adjustor_row_height)
     left_h = len(keys) * default_adjustor_h + 16.0
     
     num_tiles = 4 if self._has_pagination else len(grid.tiles)
-    rows = (num_tiles + 1) // 2 if self._uses_two_columns(content_width) else num_tiles
+    if PANEL_STYLE.toggle_row_mode:
+      rows = num_tiles
+      tile_h = TOGGLE_ROW_HEIGHT
+    else:
+      rows = (num_tiles + 1) // 2 if self._uses_two_columns(content_width) else num_tiles
+      tile_h = grid.min_tile_height
     
     pagination_space = 32.0 if self._has_pagination else 0.0
-    tiles_h = rows * grid.min_tile_height + (rows - 1) * grid.gap + grid.gap * 2 + pagination_space
+    tiles_h = rows * tile_h + (rows - 1) * grid.gap + grid.gap * 2 + pagination_space
 
     right_h = tiles_h
 
@@ -485,14 +509,21 @@ class ConditionalDriveModeView(PanelManagerView):
     y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
     
     self._draw_adjustors(y, rect.x, col_width, keys)
-    
+
+    tg_columns = 1 if PANEL_STYLE.toggle_row_mode else 2
     if self._uses_two_columns(content_width):
-      self._draw_two_column_tile_grid(grid, rect.x + col_width + SECTION_GAP, y, col_width, self._tiles_container_h, title=None, style=PANEL_STYLE)
+      self._draw_two_column_tile_grid(
+        grid, rect.x + col_width + SECTION_GAP, y, col_width,
+        self._tiles_container_h, title=None, style=PANEL_STYLE,
+        columns=tg_columns)
     else:
       y += self._left_container_h + SECTION_GAP
       draw_section_header(rl.Rectangle(rect.x, y, col_width, SECTION_HEADER_HEIGHT), tr("Triggers"), style=PANEL_STYLE)
       y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-      self._draw_two_column_tile_grid(grid, rect.x, y, col_width, self._tiles_container_h, title=None, style=PANEL_STYLE)
+      self._draw_two_column_tile_grid(
+        grid, rect.x, y, col_width,
+        self._tiles_container_h, title=None, style=PANEL_STYLE,
+        columns=tg_columns)
 
   def _draw_adjustors(self, y: float, x: float, width: float, keys: list[str]):
     draw_list_group_shell(rl.Rectangle(x, y, width, self._left_container_h), style=PANEL_STYLE)
@@ -673,12 +704,14 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     self._slc_rows = [
       SettingRow("SLCFallback", "value", tr_noop("Fallback Speed"),
                  subtitle="",
-                 get_value=lambda: self._params.get("SLCFallback", encoding="utf-8") or "Set Speed",
-                 on_click=lambda: self._show_string_select("SLCFallback", ["Set Speed", "Experimental Mode", "Previous Limit"])),
+                 get_value=lambda: self._profile_label_for_value(self._params.get_int("SLCFallback"), SLC_FALLBACK_OPTIONS),
+                 on_click=lambda: self._show_labeled_select("Fallback Speed", "SLCFallback", SLC_FALLBACK_OPTIONS,
+                                                            self._params.get_int("SLCFallback"))),
       SettingRow("SLCOverride", "value", tr_noop("Override Speed"),
                  subtitle="",
-                 get_value=lambda: self._params.get("SLCOverride", encoding="utf-8") or "None",
-                 on_click=lambda: self._show_string_select("SLCOverride", ["None", "Set With Gas Pedal", "Max Set Speed"])),
+                 get_value=lambda: self._profile_label_for_value(self._params.get_int("SLCOverride"), SLC_OVERRIDE_OPTIONS),
+                 on_click=lambda: self._show_labeled_select("Override Speed", "SLCOverride", SLC_OVERRIDE_OPTIONS,
+                                                            self._params.get_int("SLCOverride"))),
       SettingRow("SLCPriority", "value", tr_noop("Source Priority"),
                  subtitle="",
                  get_value=self._get_priority_value,
@@ -972,7 +1005,13 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
   def _on_priority_clicked(self):
     primary_options = ["Dashboard", "Map Data", "Vision", "Highest", "Lowest"]
+    if not starpilot_state.car_state.hasDashSpeedLimits:
+      primary_options.remove("Dashboard")
+
     current_primary = self._params.get("SLCPriority1", encoding="utf-8") or "Map Data"
+    if current_primary not in primary_options:
+      current_primary = primary_options[0]
+
     current_secondary = self._params.get("SLCPriority2", encoding="utf-8") or "None"
 
     def on_secondary_select(primary, dialog, res):
@@ -982,6 +1021,8 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
     def show_secondary_dialog(primary):
       secondary_options = ["None"] + [option for option in ("Dashboard", "Map Data", "Vision") if option != primary]
+      if not starpilot_state.car_state.hasDashSpeedLimits and "Dashboard" in secondary_options:
+        secondary_options.remove("Dashboard")
       selected_secondary = current_secondary if current_secondary in secondary_options else "None"
       secondary_dialog = MultiOptionDialog(tr("SLC Secondary Priority"), secondary_options, selected_secondary,
                                            callback=lambda res: on_secondary_select(primary, secondary_dialog, res))
@@ -1108,6 +1149,15 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     params so they read correctly in the new unit. The first call (no prior
     state) is a no-op so the user's saved values aren't rewritten on boot."""
     current = self._is_metric()
+
+    # Update offset row titles dynamically to reflect correct unit-specific bounds (parity with C++).
+    ranges_metric = ["0-29", "30-49", "50-59", "60-79", "80-99", "100-119", "120-140"]
+    ranges_imperial = ["0-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75-99"]
+    unit = "km/h" if current else "mph"
+    ranges = ranges_metric if current else ranges_imperial
+    for i, row in enumerate(self._slc_offset_rows):
+      row.title = f"Speed Offset ({ranges[i]} {unit})"
+
     last = self._last_is_metric
     self._last_is_metric = current
     if last is None or last == current:
@@ -1259,7 +1309,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
           def on_key(res, text):
             if res == DialogResult.CONFIRM:
-              self._params.put("WeatherAPIKey", text)
+              self._params.put("WeatherToken", text)
 
           self._keyboard.reset(min_text_size=1)
           self._keyboard.set_title(tr_noop("Weather API Key"), "")
@@ -1270,7 +1320,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
           def on_confirm(res):
             if res == DialogResult.CONFIRM:
-              self._params.remove("WeatherAPIKey")
+              self._params.remove("WeatherToken")
 
           gui_app.push_widget(ConfirmDialog(tr_noop("Remove API Key?"), tr_noop("Confirm"), callback=on_confirm))
 

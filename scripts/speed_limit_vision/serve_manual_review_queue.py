@@ -4,8 +4,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import time
 
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,7 +40,8 @@ HTML = r"""<!doctype html>
   <style>
     :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: #111; color: #eee; }
-    header { display: flex; align-items: center; gap: 16px; padding: 10px 14px; background: #1b1b1b; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 2; }
+    header { display: flex; align-items: center; gap: 16px; padding: 10px 14px; background: #1b1b1b; }
+    header { border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 2; }
     button, select, input, textarea { background: #222; color: #eee; border: 1px solid #555; border-radius: 6px; padding: 7px 9px; font: inherit; }
     button { cursor: pointer; }
     button:hover { background: #333; }
@@ -63,6 +64,7 @@ HTML = r"""<!doctype html>
     .speed button { min-width: 42px; }
     .muted { color: #aaa; }
     .status { white-space: nowrap; }
+    .hint { margin-bottom: 10px; padding: 8px; border-left: 3px solid #3f7ec8; background: #20252b; color: #dbeaff; }
     @media (max-width: 980px) { main { grid-template-columns: 1fr; } img { max-height: 45vh; } }
   </style>
 </head>
@@ -79,7 +81,8 @@ HTML = r"""<!doctype html>
       <option value="negative">Negatives</option>
     </select>
     <span class="status" id="status"></span>
-    <span class="muted">Keys: Space/p accept model, type speed to correct, u uncertain, i/x ignore, Enter save correction, j/k next/prev, s school, r regulatory, a advisory</span>
+    <span class="muted">Keys: Space/p accept model, type speed to correct, u uncertain, i/x ignore,
+      Enter save correction, j/k next/prev, s school, r regulatory, a advisory</span>
   </header>
   <main>
     <section class="images">
@@ -93,6 +96,7 @@ HTML = r"""<!doctype html>
       </div>
     </section>
     <aside class="panel">
+      <div class="hint" id="taskHint" hidden></div>
       <div class="meta" id="meta"></div>
       <h3>Speed</h3>
       <div class="buttons speed" id="speedButtons"></div>
@@ -110,8 +114,8 @@ HTML = r"""<!doctype html>
         <button data-status="uncertain">Uncertain (u)</button>
         <button data-status="needs_later">Needs Later</button>
       </div>
-      <label>Box</label>
-      <input id="bboxInput" placeholder="x1,y1,x2,y2 - drag on frame to set">
+      <label>Box (optional - redraw only when the current box is wrong)</label>
+      <input id="bboxInput" placeholder="Drag around the complete sign only when correction is needed">
       <div class="buttons">
         <button id="clearBBoxBtn">Clear Box (b)</button>
       </div>
@@ -270,9 +274,26 @@ function inferredType(row) {
   return "regulatory";
 }
 
+function auditHint(row) {
+  if (!row) return "";
+  const previous = row.before_speed_limit_mph || "no value";
+  const candidate = row.candidate_speed_limit_mph || "no value";
+  if (row.comparison_change === "advisory_type_reaudit") {
+    return `Recheck sign type for reviewed ${candidate}: Space = regulatory; A then Space = advisory; S then Space = school zone.`;
+  }
+  if (row.comparison_change === "lost_read") {
+    return `Current model rejected previous ${previous}. Type the speed if readable; press i if it is not a speed sign.`;
+  }
+  if (row.comparison_change === "gained_read") return `Current model gained ${candidate}. Press Space if correct, or type the correct speed.`;
+  if (row.comparison_change === "value_changed") {
+    return `Model changed ${previous} to ${candidate}. Press Space for the current value, or type the correct speed.`;
+  }
+  return "";
+}
+
 function ensureSpeedSignType() {
   if (draft.review_sign_type === "not_speed_limit") {
-    draft.review_sign_type = inferredType(current);
+    draft.review_sign_type = "regulatory";
     setActive("#typeButtons button", "type", draft.review_sign_type);
   }
 }
@@ -329,12 +350,15 @@ function render() {
   draft = {
     review_status: current.review_status || "",
     review_speed_limit_mph: current.review_speed_limit_mph || current.candidate_speed_limit_mph || "",
-    review_sign_type: current.review_sign_type || inferredType(current),
+    review_sign_type: current.review_sign_type || "regulatory",
     review_bbox: current.review_bbox || current.bbox || "",
     review_ignore_reason: current.review_ignore_reason || "",
     review_notes: current.review_notes || "",
   };
   qs("#status").textContent = `${index + 1}/${rows.length}`;
+  const hint = auditHint(current);
+  qs("#taskHint").textContent = hint;
+  qs("#taskHint").hidden = !hint;
   qs("#cropImg").src = current.crop_path ? `/media/${current.record_key}/crop` : "";
   qs("#frameImg").src = `/media/${current.record_key}/frame`;
   setBBox(draft.review_bbox, false);
@@ -343,13 +367,18 @@ function render() {
   setActive("#speedButtons button", "speed", draft.review_speed_limit_mph);
   setActive("#typeButtons button", "type", draft.review_sign_type);
   setActive("#statusButtons button", "status", draft.review_status);
+  qs("#acceptPredBtn").disabled = !current.candidate_speed_limit_mph;
+  const mapSummary = `${current.map_relation} current=${current.map_current_speed_limit_mph}`;
+  const nextMapSummary = `next=${current.map_next_speed_limit_mph} dist=${current.map_next_speed_limit_distance_m}`;
   qs("#meta").innerHTML = [
     ["record", current.record_key],
+    ["change", current.comparison_change],
+    ["previous", `${current.before_speed_limit_mph || "none"} @ ${current.before_confidence || ""}`],
     ["candidate", `${current.candidate_speed_limit_mph || "none"} @ ${current.candidate_confidence || ""}`],
     ["class", `${current.detector_class} (${current.proposal_confidence})`],
     ["bbox", draft.review_bbox],
     ["reasons", current.review_reasons],
-    ["map", `${current.map_relation} current=${current.map_current_speed_limit_mph} next=${current.map_next_speed_limit_mph} dist=${current.map_next_speed_limit_distance_m}`],
+    ["map", `${mapSummary} ${nextMapSummary}`],
     ["reads", current.read_sources],
     ["route", current.route],
     ["time", `seg ${current.segment} @ ${current.frame_time_s}s`],
@@ -390,7 +419,6 @@ qs("#clearBBoxBtn").onclick = () => setBBox("");
 qs("#acceptPredBtn").onclick = () => {
   if (!current) return;
   draft.review_speed_limit_mph = current.candidate_speed_limit_mph || "";
-  draft.review_sign_type = inferredType(current);
   save(true, "accepted");
 };
 qsa("#typeButtons button").forEach(btn => btn.onclick = () => {
@@ -529,7 +557,7 @@ class ReviewServer(ThreadingHTTPServer):
 class Handler(BaseHTTPRequestHandler):
   server: ReviewServer
 
-  def log_message(self, format, *args):  # noqa: A003
+  def log_message(self, _format, *args):
     return
 
   def send_json(self, data, status=HTTPStatus.OK):
@@ -548,7 +576,7 @@ class Handler(BaseHTTPRequestHandler):
     self.end_headers()
     self.wfile.write(body)
 
-  def do_GET(self):  # noqa: N802
+  def do_GET(self):
     parsed = urlparse(self.path)
     if parsed.path == "/":
       self.send_text(HTML)
@@ -582,7 +610,7 @@ class Handler(BaseHTTPRequestHandler):
       return
     self.send_error(HTTPStatus.NOT_FOUND)
 
-  def do_POST(self):  # noqa: N802
+  def do_POST(self):
     if urlparse(self.path).path != "/api/review":
       self.send_error(HTTPStatus.NOT_FOUND)
       return
@@ -596,7 +624,7 @@ class Handler(BaseHTTPRequestHandler):
     if record_key not in self.server.row_by_key:
       self.send_error(HTTPStatus.BAD_REQUEST, "Unknown record_key")
       return
-    label = {"record_key": record_key, "reviewed_at_unix": f"{time.time():.3f}"}
+    label = {"record_key": record_key, "reviewed_at_unix": f"{datetime.now(UTC).timestamp():.3f}"}
     for field in QUEUE_REVIEW_FIELDS:
       label[field] = str(payload.get(field) or "")
     self.server.labels[record_key] = label

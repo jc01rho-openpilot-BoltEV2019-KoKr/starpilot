@@ -20,8 +20,10 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherAdjustorRow,
   AetherListColors,
   PanelManagerView,
+  SPACING,
   TileGrid,
-  ToggleTile,
+  TOGGLE_MIN_HEIGHT,
+  TOGGLE_ROW_HEIGHT,
   DEFAULT_PANEL_STYLE,
   point_hits,
   draw_list_group_shell,
@@ -69,7 +71,10 @@ class SoundsManagerView(PanelManagerView):
     )
 
   def _init_toggles(self):
-    self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
+    if self.PANEL_STYLE.toggle_row_mode:
+      self._toggle_grid = TileGrid(columns=1, padding=SPACING.md, min_tile_height=TOGGLE_MIN_HEIGHT)
+    else:
+      self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
     self._child(self._toggle_grid)
     self._page_grid = self._toggle_grid
 
@@ -85,7 +90,8 @@ class SoundsManagerView(PanelManagerView):
         "disabled_label": tr(info.get("disabled_label", "")) if info.get("disabled_label") else "",
       })
 
-    self._set_toggle_pages([toggle_defs[i:i+4] for i in range(0, len(toggle_defs), 4)])
+    page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
+    self._set_toggle_pages([toggle_defs[i:i+page_size] for i in range(0, len(toggle_defs), page_size)])
 
   def _set_active_adjustor(self, key: str, active: bool):
     if active:
@@ -233,25 +239,21 @@ class SoundsManagerView(PanelManagerView):
   def _measure_content_height(self, content_width: float) -> float:
     col_width = (content_width - SECTION_GAP) / 2
 
-    self._toggle_grid._tile_height = None
     for key in self._controller.VOLUME_KEYS:
       self._adjustor_rows[key].custom_row_height = None
     self._adjustor_rows[self._controller.COOLDOWN_KEY].custom_row_height = None
 
     hdr_h = GROUP_HEADER_HEIGHT + GROUP_HEADER_GAP + GROUP_HEADER_LINE_GAP
+    vol_overhead = 4 + 24 + 4  # top pad + "Reset All" label + gap
 
-    if self._scroll_rect:
-      available_container_h = self._scroll_rect.height - 6.0
-    else:
-      available_container_h = 0.0
-
-    left_available_for_rows = available_container_h - 12.0 - 4.0 - hdr_h
-    left_row_h = max(80.0, min(107.0, left_available_for_rows / (len(self._controller.VOLUME_KEYS) + 1)))
+    available_h = max(72.0, (self._scroll_rect.height if self._scroll_rect else 0.0) - 6.0)
+    rows_available = max(72.0 * (len(self._controller.VOLUME_KEYS) + 1), available_h - vol_overhead)
+    ROW_HEIGHT = rows_available / (len(self._controller.VOLUME_KEYS) + 1)
     for key in self._controller.VOLUME_KEYS:
-      self._adjustor_rows[key].custom_row_height = left_row_h
-    self._adjustor_rows[self._controller.COOLDOWN_KEY].custom_row_height = left_row_h
+      self._adjustor_rows[key].custom_row_height = ROW_HEIGHT
+    self._adjustor_rows[self._controller.COOLDOWN_KEY].custom_row_height = ROW_HEIGHT
 
-    left_content_h = (len(self._controller.VOLUME_KEYS) + 1) * left_row_h + 12 + 4 + hdr_h
+    left_content_h = (len(self._controller.VOLUME_KEYS) + 1) * ROW_HEIGHT + vol_overhead
     tiles_needed_h = self.measure_page_grid_height(self._toggle_grid, col_width - 24) + 24 + 4 + hdr_h
     max_content_h = max(left_content_h, tiles_needed_h)
 
@@ -271,15 +273,7 @@ class SoundsManagerView(PanelManagerView):
     self._draw_utility_column(y, rect.x + col_width + SECTION_GAP, col_width)
 
   def _draw_volume_column(self, y: float, x: float, width: float):
-    safety_keys = ["WarningImmediateVolume", "WarningSoftVolume", "RefuseVolume", "PromptDistractedVolume"]
-    system_keys = ["EngageVolume", "DisengageVolume"]
-    info_keys = ["PromptVolume", "BelowSteerSpeedVolume"]
-
-    groups = [
-      (None, safety_keys),
-      (tr("SYSTEM STATE"), system_keys),
-      (tr("INFORMATIONAL"), info_keys + [self._controller.COOLDOWN_KEY]),
-    ]
+    all_keys = self._controller.VOLUME_KEYS + [self._controller.COOLDOWN_KEY]
 
     draw_list_group_shell(
       rl.Rectangle(x, y, width, self._left_container_h),
@@ -287,30 +281,21 @@ class SoundsManagerView(PanelManagerView):
     )
 
     current_y = y + 4
-    current_y = draw_group_header(x + 24, current_y, width - 48, tr("VOLUME"))
 
-    label_rect = rl.Rectangle(x + 24, current_y - GROUP_HEADER_HEIGHT - GROUP_HEADER_LINE_GAP - GROUP_HEADER_GAP, width - 48, GROUP_HEADER_HEIGHT)
-    gui_label(label_rect, tr("Reset All"), 20, AetherListColors.MUTED, FontWeight.NORMAL,
+    label_rect = rl.Rectangle(x + 24, current_y, width - 48, 24)
+    gui_label(label_rect, tr("Reset All"), 24, AetherListColors.MUTED, FontWeight.NORMAL,
               alignment=rl.GuiTextAlignment.TEXT_ALIGN_RIGHT)
-    self._reset_rect = rl.Rectangle(label_rect.x + label_rect.width - 80, label_rect.y, 80, 45)
+    self._reset_rect = rl.Rectangle(label_rect.x + label_rect.width - 140, label_rect.y, 140, 24)
     self._interactive_rects["action:restore_defaults"] = self._reset_rect
-    for i, (label, keys) in enumerate(groups):
-      if label is not None:
-        divider_h = 3
-        divider_color = rl.Color(173, 78, 90, 30) if i == 1 else rl.Color(139, 92, 246, 25)
-        rl.draw_rectangle_rec(
-          rl.Rectangle(x + 24, current_y, width - 48, divider_h),
-          divider_color
-        )
-        current_y += divider_h + 3
-      for index, key in enumerate(keys):
-        adjustor = self._adjustor_rows[key]
-        row_h = adjustor.measure_height(width)
-        row_rect = rl.Rectangle(x, current_y, width, row_h)
-        adjustor.set_is_last(index == len(keys) - 1)
-        adjustor.set_parent_rect(self._scroll_rect)
-        adjustor.render(row_rect)
-        current_y += row_h
+    current_y += 28
+    for index, key in enumerate(all_keys):
+      adjustor = self._adjustor_rows[key]
+      row_h = adjustor.measure_height(width)
+      row_rect = rl.Rectangle(x, current_y, width, row_h)
+      adjustor.set_is_last(index == len(all_keys) - 1)
+      adjustor.set_parent_rect(self._scroll_rect)
+      adjustor.render(row_rect)
+      current_y += row_h
 
   def _draw_utility_column(self, y: float, x: float, width: float):
     draw_list_group_shell(rl.Rectangle(x, y, width, self._tiles_container_h), style=PANEL_STYLE)

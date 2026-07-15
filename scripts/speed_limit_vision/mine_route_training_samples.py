@@ -30,10 +30,14 @@ else:
 DEFAULT_ROUTE_BUNDLE_STATE_DIR = Path("/Volumes/T5/starpilot_speed_limit/analysis/route_bundles/state")
 DEFAULT_WORKSPACE = Path("/Volumes/T5/starpilot_speed_limit/workspace/speed_limit_training_clean")
 DEFAULT_REVIEW_MANIFEST_NAME = "route_training_samples.csv"
+MINING_RUN_SCHEMA_VERSION = 2
 MPH_PER_MS = 2.2369362920544
 VALID_WEAK_LABEL_VALUES = set(slv.US_CLASSIFIER_SPEED_VALUES)
 POSITIVE_FIELDNAMES = [
   "record_key",
+  "mining_run_id",
+  "mining_fingerprint",
+  "model_fingerprint",
   "route",
   "dongle_id",
   "log_id",
@@ -83,6 +87,9 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--clip-root", type=Path, default=preferred_clip_root(), help="Route realdata root.")
   parser.add_argument("--bundle-state-dir", type=Path, default=DEFAULT_ROUTE_BUNDLE_STATE_DIR, help="Completed extraction marker directory.")
   parser.add_argument("--models-dir", type=Path, help="Optional model directory for mining with non-repo ONNXs.")
+  parser.add_argument("--model-only", action="store_true", help="Use detector/classifier output without OCR when weak-labeling signs.")
+  parser.add_argument("--run-id", help="Version this mining pass. Use 'auto' to derive an id from the ONNX bundle.")
+  parser.add_argument("--output-root", type=Path, help="Output root for this pass. Defaults to a versioned staging directory when --run-id is set.")
   parser.add_argument("--manifest-out", type=Path, help=f"Review manifest path. Defaults to <workspace>/review/{DEFAULT_REVIEW_MANIFEST_NAME}.")
   parser.add_argument("--sample-every", type=float, default=4.0, help="Seconds between regular video samples.")
   parser.add_argument("--seek-sampling", action="store_true", help="Seek directly to sampled frames instead of sequentially grabbing through each segment.")
@@ -108,6 +115,54 @@ def parse_args() -> argparse.Namespace:
 
 def safe_key(text: str) -> str:
   return text.replace("/", "_").replace("|", "_").replace(":", "_")
+
+
+def model_bundle_fingerprint() -> str:
+  digest = hashlib.sha256()
+  for path in (slv.US_DETECTOR_MODEL_PATH, slv.US_CLASSIFIER_MODEL_PATH):
+    resolved = Path(path).expanduser().resolve()
+    digest.update(resolved.name.encode("utf-8"))
+    with resolved.open("rb") as handle:
+      for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+  return digest.hexdigest()
+
+
+def mining_configuration_fingerprint(args: argparse.Namespace, model_fingerprint: str) -> str:
+  config = {
+    "schema_version": MINING_RUN_SCHEMA_VERSION,
+    "model_fingerprint": model_fingerprint,
+    "model_only": args.model_only,
+    "sample_every": args.sample_every,
+    "transition_radius": args.transition_radius,
+    "transition_step": args.transition_step,
+    "max_frames_per_route": args.max_frames_per_route,
+    "max_positives_per_route": args.max_positives_per_route,
+    "max_negatives_per_route": args.max_negatives_per_route,
+    "positive_min_score": args.positive_min_score,
+    "no_map_min_score": args.no_map_min_score,
+    "min_proposal_confidence": args.min_proposal_confidence,
+    "min_width": args.min_width,
+    "min_height": args.min_height,
+    "next_limit_distance": args.next_limit_distance,
+  }
+  digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8"))
+  for source_path in (Path(__file__), Path(score_frame.__code__.co_filename), Path(slv.__file__)):
+    digest.update(source_path.resolve().read_bytes())
+  return digest.hexdigest()
+
+
+def resolve_run_id(requested: str | None, model_fingerprint: str, mining_fingerprint: str) -> str:
+  if not requested:
+    return ""
+  run_id = (
+    f"model_{model_fingerprint[:12]}_run_{mining_fingerprint[:12]}"
+    if requested == "auto"
+    else safe_key(requested.strip())
+  )
+  if not run_id:
+    raise ValueError("--run-id must not be empty")
+  return run_id
 
 
 def parse_route_id(text: str) -> tuple[str, str, str]:
@@ -390,6 +445,8 @@ def should_keep_positive(scored: dict, speed_limit_mph: int, consistent_count: i
     return False
   if float(scored["proposal_confidence"]) < args.min_proposal_confidence:
     return False
+  if args.model_only and relation not in ("agree_current", "agree_next"):
+    return False
   if relation in ("agree_current", "agree_next"):
     return float(scored["score"]) >= args.positive_min_score and consistent_count >= 1
   return float(scored["score"]) >= args.no_map_min_score and consistent_count >= 2
@@ -443,16 +500,33 @@ def write_sample(frame_bgr, image_path: Path, label_path: Path, label_text: str,
   return True
 
 
-def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse.Namespace, workspace: Path, clip_root: Path, manifest_path: Path, route_state_dir: Path) -> dict[str, int | str | float]:
+def mine_route(
+  route_id: str,
+  daemon: slv.SpeedLimitVisionDaemon,
+  args: argparse.Namespace,
+  output_root: Path,
+  clip_root: Path,
+  manifest_path: Path,
+  route_state_dir: Path,
+  run_id: str,
+  mining_fingerprint: str,
+  model_fingerprint: str,
+) -> dict[str, int | str | float]:
   route_id, dongle_id, log_id = parse_route_id(route_id)
   route_key = safe_key(route_id)
   state_path = route_state_dir / f"{route_key}.json"
+  if run_id and state_path.exists():
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if state.get("model_fingerprint") != model_fingerprint or state.get("mining_fingerprint") != mining_fingerprint:
+      raise RuntimeError(
+        f"Mining state fingerprint mismatch for {route_id}. Use a new --run-id or output root instead of mixing runs."
+      )
   if state_path.exists() and not args.force:
     return {"route": route_id, "status": "skipped", "positives": 0, "negatives": 0, "scored": 0}
 
   split = route_split(route_id, args.val_route_modulo, args.val_route_remainder)
-  image_dir = ensure_dir(workspace / "detector" / "images" / split)
-  label_dir = ensure_dir(workspace / "detector" / "labels" / split)
+  image_dir = ensure_dir(output_root / "detector" / "images" / split)
+  label_dir = ensure_dir(output_root / "detector" / "labels" / split)
   segments = route_segments(clip_root, log_id)
   if not segments:
     return {"route": route_id, "status": "missing_segments", "positives": 0, "negatives": 0, "scored": 0}
@@ -487,7 +561,7 @@ def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse
         continue
 
       scored_frames += 1
-      scored = score_frame(daemon, frame_bgr)
+      scored = score_frame(daemon, frame_bgr, use_ocr=not args.model_only)
       context = nearest_context(contexts, time_s)
 
       if scored is None:
@@ -501,6 +575,9 @@ def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse
           negatives += 1
           route_rows.append({
             "record_key": record_key,
+            "mining_run_id": run_id,
+            "mining_fingerprint": mining_fingerprint,
+            "model_fingerprint": model_fingerprint,
             "route": route_id,
             "dongle_id": dongle_id,
             "log_id": log_id,
@@ -548,6 +625,9 @@ def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse
       bbox = ",".join(str(value) for value in scored["box"])
       route_rows.append({
         "record_key": record_key,
+        "mining_run_id": run_id,
+        "mining_fingerprint": mining_fingerprint,
+        "model_fingerprint": model_fingerprint,
         "route": route_id,
         "dongle_id": dongle_id,
         "log_id": log_id,
@@ -585,9 +665,13 @@ def mine_route(route_id: str, daemon: slv.SpeedLimitVisionDaemon, args: argparse
 
   if not args.dry_run:
     merge_review_rows(manifest_path, route_rows)
-    merge_value_labels(workspace / "classifier" / "value_labels.csv", value_rows)
+    merge_value_labels(output_root / "classifier" / "value_labels.csv", value_rows)
     state_path.write_text(json.dumps({
       "route": route_id,
+      "mining_run_id": run_id,
+      "mining_fingerprint": mining_fingerprint,
+      "model_fingerprint": model_fingerprint,
+      "model_only": args.model_only,
       "status": "mined",
       "positives": positives,
       "negatives": negatives,
@@ -613,20 +697,41 @@ def main() -> int:
   args = parse_args()
   workspace = resolve_workspace(args.workspace)
   clip_root = args.clip_root.expanduser().resolve()
-  manifest_path = args.manifest_out.expanduser().resolve() if args.manifest_out else (ensure_dir(workspace / "review") / DEFAULT_REVIEW_MANIFEST_NAME)
-  route_state_dir = ensure_dir(workspace / "review" / "route_training_samples_state")
   routes = read_routes(args)
   if not routes:
     raise SystemExit("No routes to mine. Pass route ids, --routes-file, or completed bundle markers.")
 
   configure_models(args.models_dir)
+  slv.DETECTOR_CLASSIFIER_CROP_OCR_ENABLED = not args.model_only
+  model_fingerprint = model_bundle_fingerprint()
+  mining_fingerprint = mining_configuration_fingerprint(args, model_fingerprint)
+  run_id = resolve_run_id(args.run_id, model_fingerprint, mining_fingerprint)
+  if args.output_root:
+    output_root = args.output_root.expanduser().resolve()
+  elif run_id:
+    output_root = workspace / "staging" / "route_mining" / run_id
+  else:
+    output_root = workspace
+  manifest_path = args.manifest_out.expanduser().resolve() if args.manifest_out else (ensure_dir(output_root / "review") / DEFAULT_REVIEW_MANIFEST_NAME)
+  route_state_dir = ensure_dir(output_root / "review" / "route_training_samples_state")
   daemon = slv.SpeedLimitVisionDaemon(use_runtime=False)
 
   total_positive = 0
   total_negative = 0
   total_scored = 0
   for index, route in enumerate(routes, start=1):
-    result = mine_route(route, daemon, args, workspace, clip_root, manifest_path, route_state_dir)
+    result = mine_route(
+      route,
+      daemon,
+      args,
+      output_root,
+      clip_root,
+      manifest_path,
+      route_state_dir,
+      run_id,
+      mining_fingerprint,
+      model_fingerprint,
+    )
     total_positive += int(result.get("positives", 0))
     total_negative += int(result.get("negatives", 0))
     total_scored += int(result.get("scored", 0))
@@ -641,6 +746,8 @@ def main() -> int:
     flush=True,
   )
   print(f"Review manifest: {manifest_path}", flush=True)
+  print(f"Model fingerprint: {model_fingerprint}", flush=True)
+  print(f"Mining fingerprint: {mining_fingerprint}", flush=True)
   return 0
 
 

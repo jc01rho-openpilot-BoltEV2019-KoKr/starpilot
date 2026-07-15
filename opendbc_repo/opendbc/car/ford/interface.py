@@ -31,7 +31,7 @@ class CarInterface(CarInterfaceBase):
 
     ret.radarUnavailable = Bus.radar not in DBC[candidate]
     ret.steerControlType = structs.CarParams.SteerControlType.angle
-    ret.steerActuatorDelay = 0.2
+    ret.steerActuatorDelay = 0.05 if ret.flags & FordFlags.LKA_STEERING else 0.2
     ret.steerLimitTimer = 1.0
     ret.steerAtStandstill = True
 
@@ -63,6 +63,8 @@ class CarInterface(CarInterfaceBase):
         if fingerprint[CAN.camera].get(0x3d6) != 8 or fingerprint[CAN.camera].get(0x186) != 8:
           carlog.error('dashcamOnly: SecOC is unsupported')
           ret.dashcamOnly = True
+    elif ret.flags & FordFlags.LKA_STEERING:
+      ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.LKA_STEERING.value
     else:
       # Lock out if the car does not have needed lateral and longitudinal control APIs.
       # Note that we also check CAN for adaptive cruise, but no known signal for LCA exists

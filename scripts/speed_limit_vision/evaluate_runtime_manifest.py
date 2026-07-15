@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     default=Path("starpilot/assets/vision_models"),
     help="Directory containing speed_limit_us_detector.onnx and speed_limit_us_value_classifier.onnx.",
   )
-  parser.add_argument("--manifest", type=Path, required=True, help="CSV manifest with dataset_image/frame_path and labels.")
+  parser.add_argument("--manifest", type=Path, required=True, help="CSV manifest with dataset_image/frame_path/image_path and labels.")
   parser.add_argument("--split", action="append", help="Optional split filter. Repeat for multiple splits.")
   parser.add_argument("--max-rows", type=int, default=0, help="Optional cap after filtering.")
   parser.add_argument("--seed", type=int, default=0, help="Sampling seed used with --max-rows.")
@@ -28,6 +28,9 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--detector-min-confidence", type=float, help="Override runtime US detector confidence threshold.")
   parser.add_argument("--classifier-min-confidence", type=float, help="Override runtime US classifier confidence threshold.")
   parser.add_argument("--classifier-reject-min-confidence", type=float, help="Override runtime reject-class confidence threshold.")
+  parser.add_argument("--trusted-model-min-confidence", type=float, help="Override tiny-box trusted model confidence for evaluation.")
+  parser.add_argument("--strong-rescue-min-proposal-confidence", type=float, help="Override single-frame tiny-sign proposal confidence.")
+  parser.add_argument("--strong-rescue-min-read-confidence", type=float, help="Override single-frame tiny-sign classifier confidence.")
   parser.add_argument(
     "--detector-region-mode",
     choices=("full", "right_roi", "full_and_right_roi"),
@@ -36,7 +39,14 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--right-roi-bounds", help="Override the right ROI as left,top,right,bottom ratios, for example 0.45,0,1,0.82.")
   parser.add_argument("--right-roi-min-confidence", type=float, help="Override the right ROI detector minimum confidence.")
   parser.add_argument("--full-frame-ocr", action="store_true", help="Enable the expensive full-frame OCR fallback during eval.")
+  crop_ocr_group = parser.add_mutually_exclusive_group()
+  crop_ocr_group.add_argument("--crop-ocr", action="store_true", dest="crop_ocr", default=None, help="Enable crop OCR confirmation.")
+  crop_ocr_group.add_argument("--no-crop-ocr", action="store_false", dest="crop_ocr", help="Evaluate the model-only detector/classifier path.")
+  parser.add_argument("--separate-reject-classifier", action="store_true", help="Enable the optional second-stage reject classifier during eval.")
+  parser.add_argument("--classifier-expansion-limit", type=int, help="Evaluate only the first N detector crop expansions.")
+  parser.add_argument("--classifier-expansion-indices", help="Comma-separated detector crop expansion indices to evaluate.")
   parser.add_argument("--include-uncertain", action="store_true", help="Include uncertain_positive review rows in positive metrics.")
+  parser.add_argument("--advisory-positive", action="store_true", help="Score reviewed advisory rows as readable speed positives.")
   parser.add_argument("--strict-positive-recall", type=float, help="Exit non-zero if positive exact recall is below this value.")
   parser.add_argument("--strict-negative-fpr", type=float, help="Exit non-zero if negative false-positive rate is above this value.")
   return parser.parse_args()
@@ -48,6 +58,10 @@ def configure_runtime_options(args: argparse.Namespace) -> None:
 
   if args.full_frame_ocr:
     slv.FULL_FRAME_OCR_FALLBACK_ENABLED = True
+  if args.crop_ocr is not None:
+    slv.DETECTOR_CLASSIFIER_CROP_OCR_ENABLED = args.crop_ocr
+  if args.separate_reject_classifier:
+    slv.SEPARATE_REJECT_CLASSIFIER_ENABLED = True
 
   if args.right_roi_bounds:
     parts = [float(part.strip()) for part in args.right_roi_bounds.split(",")]
@@ -81,7 +95,7 @@ def first_present(row: dict[str, str], keys: tuple[str, ...]) -> str:
 
 
 def expected_value(row: dict[str, str]) -> int | None:
-  value_text = first_present(row, ("speed_limit_mph", "dominant_value"))
+  value_text = first_present(row, ("expected_speed_limit_mph", "speed_limit_mph", "dominant_value"))
   if value_text:
     try:
       return int(float(value_text))
@@ -151,6 +165,21 @@ def main() -> int:
   if args.classifier_reject_min_confidence is not None:
     slv.US_CLASSIFIER_REJECT_MIN_CONFIDENCE = args.classifier_reject_min_confidence
     slv.US_REJECT_CLASSIFIER_MIN_CONFIDENCE = args.classifier_reject_min_confidence
+  if args.trusted_model_min_confidence is not None:
+    slv.DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = args.trusted_model_min_confidence
+  if args.classifier_expansion_indices:
+    indices = tuple(int(value) for value in args.classifier_expansion_indices.split(","))
+    if not indices or min(indices) < 0 or max(indices) >= len(slv.DETECTOR_CLASSIFIER_EXPANSIONS):
+      raise ValueError("--classifier-expansion-indices contains an invalid index")
+    slv.DETECTOR_CLASSIFIER_EXPANSIONS = tuple(slv.DETECTOR_CLASSIFIER_EXPANSIONS[index] for index in indices)
+  elif args.classifier_expansion_limit is not None:
+    if args.classifier_expansion_limit < 1:
+      raise ValueError("--classifier-expansion-limit must be at least 1")
+    slv.DETECTOR_CLASSIFIER_EXPANSIONS = slv.DETECTOR_CLASSIFIER_EXPANSIONS[:args.classifier_expansion_limit]
+  if args.strong_rescue_min_proposal_confidence is not None:
+    slv.DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_PROPOSAL_CONFIDENCE = args.strong_rescue_min_proposal_confidence
+  if args.strong_rescue_min_read_confidence is not None:
+    slv.DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_READ_CONFIDENCE = args.strong_rescue_min_read_confidence
   configure_runtime_options(args)
   daemon = slv.SpeedLimitVisionDaemon(use_runtime=False)
 
@@ -163,7 +192,7 @@ def main() -> int:
   unreadable_count = 0
 
   for row in rows:
-    image_text = first_present(row, ("dataset_image", "frame_path", "source_frame"))
+    image_text = first_present(row, ("dataset_image", "frame_path", "source_frame", "image_path"))
     if not image_text:
       unreadable_count += 1
       continue
@@ -178,7 +207,8 @@ def main() -> int:
     predicted_value = detection.speed_limit_mph if detection is not None else None
     confidence = detection.confidence if detection is not None else None
     expected = expected_value(row)
-    negative = is_negative(row)
+    advisory_positive = args.advisory_positive and row.get("review_sign_type", "").strip().lower() == "advisory"
+    negative = False if advisory_positive else is_negative(row)
 
     if negative:
       negative_count += 1
@@ -211,10 +241,9 @@ def main() -> int:
   if uncertain_count and not args.include_uncertain:
     print(f"Skipped uncertain rows: {uncertain_count}")
   print(f"Unreadable rows: {unreadable_count}")
-  print(
-    f"Positive exact: {positive_exact}/{positive_count} "
-    f"({positive_exact_recall:.3f}); any detection: {positive_detected}/{positive_count} ({positive_any_recall:.3f})"
-  )
+  positive_summary = f"Positive exact: {positive_exact}/{positive_count} ({positive_exact_recall:.3f})"
+  detection_summary = f"any detection: {positive_detected}/{positive_count} ({positive_any_recall:.3f})"
+  print(f"{positive_summary}; {detection_summary}")
   print(f"Negative false positives: {negative_false_positive}/{negative_count} ({negative_fpr:.3f})")
 
   if args.output_csv:

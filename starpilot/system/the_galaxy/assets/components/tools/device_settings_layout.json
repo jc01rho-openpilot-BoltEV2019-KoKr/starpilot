@@ -25,15 +25,25 @@
         "is_parent_toggle": true
       },
       {
+        "key": "UseAutoSteerDelay",
+        "label": "Use Auto-Learned Delay",
+        "description": "Automatically learn the full steering delay. The manual actuator delay is ignored while enabled.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLateralTune"
+      },
+      {
         "key": "SteerDelay",
         "label": "Actuator Delay",
-        "description": "Actuator Delay",
+        "description": "Exact full delay between steering command and vehicle response.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.01,
         "max": 1.0,
         "step": 0.01,
         "precision": 2,
+        "disabled_when_key_true": "UseAutoSteerDelay",
+        "disabled_reason": "Auto-learned delay is enabled.",
         "parent_key": "AdvancedLateralTune"
       },
       {
@@ -3633,9 +3643,66 @@
     "icon": "bi-exclamation-triangle",
     "params": [
       {
-        "key": "TryRaylibUI",
-        "label": "Try raylib UI",
-        "description": "Use the beta raylib UI instead of the default Qt UI on tici/tizi devices. This setting has no effect on C4/mici devices.",
+        "key": "DeveloperUI",
+        "label": "Developer UI",
+        "description": "Detailed information about openpilot's internal operations.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "DeveloperMetrics",
+        "label": "Developer Metrics",
+        "description": "Performance data, sensor readings, and system metrics for debugging and optimizing openpilot.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true,
+        "parent_key": "DeveloperUI"
+      },
+      {
+        "key": "FPSCounter",
+        "label": "FPS Display",
+        "description": "Show the frames per second at the bottom of the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "ShowCPU",
+        "label": "CPU Metrics",
+        "description": "Show CPU usage in the driving screen developer metrics.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "ShowGPU",
+        "label": "GPU Metrics",
+        "description": "Show GPU usage in the driving screen developer metrics.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "NumericalTemp",
+        "label": "Temperature Metrics",
+        "description": "Show numerical device temperature in the driving screen developer metrics.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "ShowMemoryUsage",
+        "label": "RAM Metrics",
+        "description": "Show memory usage in the driving screen developer metrics.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeveloperMetrics"
+      },
+      {
+        "key": "UseOldUI",
+        "label": "Use Old UI",
+        "description": "Use the old Qt UI instead of the default raylib UI on tici/tizi devices. This setting has no effect on C4/mici devices.",
         "data_type": "bool",
         "ui_type": "toggle"
       },

@@ -1,0 +1,968 @@
+import importlib.util
+import json
+import math
+import sys
+
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
+import pytest
+
+
+MODULE_PATH = Path(__file__).resolve().parents[1] / "flm_workspace.py"
+
+
+def _simple_module(name, **attrs):
+  module = ModuleType(name)
+  for attr, value in attrs.items():
+    setattr(module, attr, value)
+  return module
+
+
+def _install_flm_import_stubs(tmp_path):
+  class FakeParams:
+    _store = {}
+
+    def __init__(self, return_defaults=False):
+      self.return_defaults = return_defaults
+
+    def get(self, key, block=False, return_default=False, encoding=None, default=None):
+      del block, return_default
+      value = self._store.get(key, default)
+      if encoding and isinstance(value, bytes):
+        return value.decode(encoding, errors="replace")
+      return value
+
+    def get_bool(self, key, default=False):
+      value = self._store.get(key, default)
+      if isinstance(value, bool):
+        return value
+      return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+    def get_float(self, key, block=False, return_default=False, default=0.0):
+      del block, return_default
+      value = self._store.get(key, default)
+      try:
+        return float(value)
+      except Exception:
+        return default
+
+    def put(self, key, value):
+      self._store[key] = value
+
+    def put_bool(self, key, value):
+      self._store[key] = bool(value)
+
+    def put_float(self, key, value):
+      self._store[key] = float(value)
+
+    def remove(self, key):
+      self._store.pop(key, None)
+
+  FakeParams._store = {}
+
+  class FakeHyundaiFlags:
+    CANFD = 1
+
+  class FakeSteerControlType:
+    torque = 0
+
+  fake_car_params = SimpleNamespace(SteerControlType=FakeSteerControlType)
+  cereal_car = _simple_module("cereal.car", CarParams=fake_car_params)
+  cereal = _simple_module("cereal", car=cereal_car)
+  sys.modules["cereal"] = cereal
+  sys.modules["cereal.car"] = cereal_car
+
+  sys.modules["opendbc.car.hyundai.values"] = _simple_module("opendbc.car.hyundai.values", HyundaiFlags=FakeHyundaiFlags)
+  sys.modules["openpilot.common.params"] = _simple_module("openpilot.common.params", Params=FakeParams)
+  sys.modules["openpilot.selfdrive.controls.lib.latcontrol_torque"] = _simple_module(
+    "openpilot.selfdrive.controls.lib.latcontrol_torque",
+    KP=1.0,
+  )
+
+  def normalize_flm_overrides(payload):
+    if isinstance(payload, str):
+      payload = json.loads(payload)
+    payload = payload or {}
+    normalized = {
+      "schemaVersion": 1,
+      "baseFrictionThresholds": {},
+      "vehicleKnobs": {},
+    }
+    for family, family_payload in payload.get("baseFrictionThresholds", {}).items():
+      values = family_payload.get("values", [])
+      if len(values) == 5:
+        normalized["baseFrictionThresholds"][family] = {
+          "speedKnots": [0.0, 5.0, 10.0, 15.0, 25.0],
+          "values": [float(value) for value in values],
+        }
+    for key, value in payload.get("vehicleKnobs", {}).items():
+      normalized["vehicleKnobs"][key] = float(value)
+    if not normalized["baseFrictionThresholds"] and not normalized["vehicleKnobs"]:
+      return {}
+    return normalized
+
+  sys.modules["openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes"] = _simple_module(
+    "openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes",
+    FLM_FRICTION_SPEED_KNOTS=[0.0, 5.0, 10.0, 15.0, 25.0],
+    get_flm_capabilities=lambda *args, **kwargs: {"richProfileKey": "hyundai_ioniq_6", "frictionFamily": "hkg_canfd"},
+    get_flm_rich_profile_key=lambda *args, **kwargs: "hyundai_ioniq_6",
+    get_flm_supported_vehicle_knobs=lambda: {
+      "hyundai_ioniq_6.ff_gain_left": {"min": 0.0, "max": 0.6, "precision": 0.001, "defaultValue": 0.1, "profile": "hyundai_ioniq_6"},
+      "hyundai_ioniq_6.ff_gain_right": {"min": 0.0, "max": 0.6, "precision": 0.001, "defaultValue": 0.12, "profile": "hyundai_ioniq_6"},
+      "hyundai_ioniq_6.turn_in_boost_left": {"min": 0.4, "max": 2.8, "precision": 0.001, "defaultValue": 1.64, "profile": "hyundai_ioniq_6"},
+      "hyundai_ioniq_6.unwind_taper_left": {"min": 0.0, "max": 1.2, "precision": 0.001, "defaultValue": 0.4, "profile": "hyundai_ioniq_6"},
+      "hyundai_ioniq_6.low_speed_angle_assist_max_torque": {"min": 0.0, "max": 0.8, "precision": 0.001, "defaultValue": 0.46, "profile": "hyundai_ioniq_6"},
+      "hyundai_ioniq_6.crawl_turn_in_ff_boost_left": {"min": 0.0, "max": 0.5, "precision": 0.001, "defaultValue": 0.18, "profile": "hyundai_ioniq_6"},
+      "hyundai_ioniq_6.curvy_turn_in_trim_left": {"min": 0.0, "max": 0.2, "precision": 0.001, "defaultValue": 0.06, "profile": "hyundai_ioniq_6"},
+      "hyundai_ioniq_6.curvy_unwind_extra_reduction_left": {"min": 0.0, "max": 0.45, "precision": 0.001, "defaultValue": 0.18, "profile": "hyundai_ioniq_6"},
+    },
+    get_gm_base_friction_threshold=lambda v_ego: 0.20 + (0.001 * float(v_ego)),
+    get_hkg_canfd_base_friction_threshold=lambda v_ego: 0.39 + (0.001 * float(v_ego)),
+    get_standard_friction_threshold=lambda v_ego: 0.30 + (0.001 * float(v_ego)),
+    normalize_flm_overrides=normalize_flm_overrides,
+  )
+  sys.modules["openpilot.system.hardware"] = _simple_module("openpilot.system.hardware", PC=True)
+  sys.modules["openpilot.system.hardware.hw"] = _simple_module(
+    "openpilot.system.hardware.hw",
+    Paths=SimpleNamespace(comma_home=lambda: str(tmp_path), log_root=lambda **kwargs: str(tmp_path / "logs")),
+  )
+  sys.modules["openpilot.tools.lib.logreader"] = _simple_module("openpilot.tools.lib.logreader", LogReader=lambda *args, **kwargs: [])
+  sys.modules["openpilot.starpilot.system.the_galaxy.utilities"] = _simple_module(
+    "openpilot.starpilot.system.the_galaxy.utilities",
+    get_segments_in_route=lambda route, footage_path: [],
+  )
+
+  return FakeParams
+
+
+def _load_flm_workspace_module(tmp_path):
+  fake_params_cls = _install_flm_import_stubs(tmp_path)
+  module_name = f"test_flm_workspace_{hash(tmp_path)}"
+  spec = importlib.util.spec_from_file_location(module_name, MODULE_PATH)
+  module = importlib.util.module_from_spec(spec)
+  assert spec.loader is not None
+  sys.modules[module_name] = module
+  spec.loader.exec_module(module)
+  return module, fake_params_cls
+
+
+def _sample(module, **kwargs):
+  base = dict(
+    route="route",
+    segment=0,
+    t=0.0,
+    v_ego=28.0,
+    lat_active=True,
+    steering_pressed=False,
+    saturated=False,
+    actual_la=0.0,
+    desired_la=0.0,
+    desired_jerk=0.0,
+    error=0.0,
+    error_rate=0.0,
+    p=0.0,
+    i=0.0,
+    d=0.0,
+    f=0.0,
+    output=0.0,
+    steering_angle_deg=0.0,
+    steering_torque=0.0,
+    cmd_torque=0.0,
+    out_torque=0.0,
+    roll_deg=0.0,
+  )
+  base.update(kwargs)
+  return module.FLMSample(**base)
+
+
+def test_legacy_workspace_is_migrated_to_flm(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  legacy_name = "".join(("f", "t", "m"))
+  legacy_root = tmp_path / "starpilot" / "data" / "galaxy" / legacy_name
+  legacy_report = legacy_root / "reports" / "legacy.json"
+  legacy_report.parent.mkdir(parents=True)
+  legacy_report.write_text(json.dumps({
+    "reportId": "legacy",
+    f"{legacy_name}Overrides": {"vehicleKnobs": {"generic.ff_gain_left": 0.1}},
+    "profileLabel": legacy_name.upper(),
+  }), encoding="utf-8")
+
+  workspace = module.ensure_flm_workspace()
+  migrated = json.loads((workspace["reports"] / "legacy.json").read_text(encoding="utf-8"))
+
+  assert not legacy_root.exists()
+  assert migrated["flmOverrides"]["vehicleKnobs"]["generic.ff_gain_left"] == pytest.approx(0.1)
+  assert migrated["profileLabel"] == "FLM"
+
+
+def test_classify_torque_samples_detects_center_chatter(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  samples = []
+  for idx in range(60):
+    angle = 0.75 * math.sin(idx * 0.9)
+    samples.append(_sample(
+      module,
+      t=idx * 0.1,
+      desired_la=0.04 * math.sin(idx * 0.1),
+      actual_la=0.03 * math.sin(idx * 0.1),
+      steering_angle_deg=angle,
+      output=0.02 * math.sin(idx * 0.9),
+    ))
+
+  summaries, stats = module.classify_torque_samples(samples)
+  assert stats["sampleCount"] == len(samples) - 2  # Segment edges are event boundaries, not analysis samples.
+  chatter = next(summary for summary in summaries if summary["bucket"] == "center_chatter")
+  assert chatter["plotData"]["driverOverrideFree"] is True
+  assert len(chatter["plotData"]["times"]) == len(chatter["plotData"]["desired"])
+  assert len(chatter["plotData"]["times"]) == len(chatter["plotData"]["actual"])
+
+
+def test_plot_context_stops_at_ineligible_samples(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  samples = [_sample(module, t=idx * 0.1, desired_la=idx * 0.01, actual_la=idx * 0.009) for idx in range(20)]
+  eligibility = [True] * len(samples)
+  eligibility[5] = False
+  eligibility[14] = False
+  event = {
+    "startIdx": 8,
+    "endIdx": 10,
+    "direction": "left",
+    "speedBand": "mid",
+  }
+
+  plot = module._build_plot_data(samples, event, eligibility)
+  assert plot["driverOverrideFree"] is True
+  assert plot["times"] == pytest.approx([idx * 0.1 for idx in range(8)])
+  assert plot["eventStartSec"] == pytest.approx(0.2)
+  assert plot["eventEndSec"] == pytest.approx(0.4)
+  assert plot["segmentLabel"] == "route/0"
+
+
+def test_analysis_eligibility_masks_driver_override_with_settle_buffer(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  samples = [
+    _sample(module, t=idx * 0.1, steering_pressed=(idx == 20))
+    for idx in range(50)
+  ]
+
+  eligible = module._analysis_eligibility_mask(samples)
+  assert eligible[16] is True
+  assert eligible[17] is False
+  assert eligible[20] is False
+  assert eligible[30] is False
+  assert eligible[31] is True
+
+
+def test_stock_param_state_captures_generic_and_rich_defaults(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  torque_tune = SimpleNamespace(friction=0.09, latAccelFactor=3.0)
+  lateral_tuning = SimpleNamespace(which=lambda: "torque", torque=torque_tune)
+  CP = SimpleNamespace(lateralTuning=lateral_tuning, steerActuatorDelay=0.1, steerRatio=14.26)
+  capabilities = {"frictionFamily": "hkg_canfd", "richProfileKey": "hyundai_ioniq_6"}
+
+  stock = module._stock_param_state(CP, capabilities)
+  assert stock["SteerLatAccel"] == pytest.approx(3.0)
+  assert stock["SteerFriction"] == pytest.approx(0.09)
+  assert stock["UseAutoSteerDelay"] is True
+  assert stock["SteerDelay"] == pytest.approx(0.3)
+  assert stock["SteerRatio"] == pytest.approx(14.26)
+  assert len(stock["FLMBaseFrictionThresholds"]["hkg_canfd"]["values"]) == 5
+  assert stock["FLMVehicleKnobs"]["hyundai_ioniq_6.turn_in_boost_left"] == pytest.approx(1.64)
+
+
+def test_classify_torque_samples_does_not_bridge_driver_override(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  samples = []
+  for idx in range(80):
+    samples.append(_sample(
+      module,
+      t=idx * 0.1,
+      desired_la=-0.5,
+      actual_la=-0.1,
+      desired_jerk=-0.5,
+      steering_pressed=30 <= idx <= 40,
+    ))
+
+  summaries, stats = module.classify_torque_samples(samples)
+  late_events = [event for summary in summaries if summary["bucket"] == "late_turn_in" for event in summary["events"]]
+  assert stats["excludedDriverOverrideSamples"] > 11
+  assert all(event["endIdx"] < 27 or event["startIdx"] > 50 for event in late_events)
+
+
+def test_build_suggestions_prefers_rich_low_speed_turn_in_knob(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summary = {
+    "bucket": "low_speed_unwillingness",
+    "dimensionId": "low_speed_unwillingness:left:low",
+    "direction": "left",
+    "speedBand": "low",
+    "severity": 0.9,
+    "evidence": {"speedBand": "low", "directionBias": "left", "eventCount": 3, "segments": [{"label": "route/2"}]},
+    "plotSvg": "",
+  }
+  capabilities = {"richProfileKey": "hyundai_ioniq_6", "frictionFamily": "hkg_canfd"}
+  current = {"SteerLatAccel": 1.8, "SteerFriction": 0.2}
+
+  suggestions = module.build_suggestions([summary], capabilities, current)
+  adjustment = suggestions[0]["primaryAdjustmentRaw"]
+  assert adjustment["type"] == "vehicle_knob"
+  assert adjustment["symbol"] == "hyundai_ioniq_6.low_speed_angle_assist_max_torque"
+
+
+def test_build_suggestions_baseline_prefers_generic_lat_accel_for_understeer(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summary = {
+    "bucket": "understeer",
+    "dimensionId": "understeer:left:mid",
+    "direction": "left",
+    "speedBand": "mid",
+    "severity": 1.0,
+    "evidence": {"speedBand": "mid", "directionBias": "left", "eventCount": 3, "segments": [{"label": "route/2"}]},
+    "plotSvg": "",
+  }
+  capabilities = {"richProfileKey": "hyundai_ioniq_6", "frictionFamily": "hkg_canfd"}
+  current = {"SteerLatAccel": 1.8, "SteerFriction": 0.2}
+
+  suggestions = module.build_suggestions([summary], capabilities, current, strategy="baseline")
+  adjustment = suggestions[0]["primaryAdjustmentRaw"]
+  assert adjustment["type"] == "generic_param"
+  assert adjustment["paramKey"] == "SteerLatAccel"
+  assert adjustment["suggested"] > adjustment["current"]
+
+
+def test_build_suggestions_baseline_respects_asymmetric_nonlinear_map(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summary = {
+    "bucket": "understeer",
+    "dimensionId": "understeer:right:mid",
+    "direction": "right",
+    "speedBand": "mid",
+    "severity": 1.0,
+    "evidence": {"speedBand": "mid", "directionBias": "right", "eventCount": 3, "segments": [{"label": "route/2"}]},
+    "plotSvg": "",
+  }
+  capabilities = {
+    "richProfileKey": "hyundai_ioniq_6",
+    "frictionFamily": "gm",
+    "nonlinearTorqueMap": {
+      "type": "siglin",
+      "left": [2.6, 1.1, 0.19, 0.0],
+      "right": [2.7, 1.0, 0.15, 0.0],
+      "asymmetric": True,
+    },
+  }
+  current = {"SteerLatAccel": 1.8, "SteerFriction": 0.2}
+
+  suggestions = module.build_suggestions([summary], capabilities, current, strategy="baseline")
+  adjustment = suggestions[0]["primaryAdjustmentRaw"]
+  assert adjustment["type"] == "vehicle_knob"
+  assert adjustment["symbol"] == "hyundai_ioniq_6.ff_gain_right"
+  assert adjustment["suggested"] > adjustment["current"]
+
+
+def test_build_suggestions_rebases_rich_knob_against_active_override(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summary = {
+    "bucket": "low_speed_unwillingness",
+    "dimensionId": "low_speed_unwillingness:left:low",
+    "direction": "left",
+    "speedBand": "low",
+    "severity": 1.0,
+    "evidence": {"speedBand": "low", "directionBias": "left", "eventCount": 3, "segments": [{"label": "route/2"}]},
+    "plotSvg": "",
+  }
+  capabilities = {"richProfileKey": "hyundai_ioniq_6", "frictionFamily": "hkg_canfd"}
+  current = {
+    "SteerLatAccel": 1.8,
+    "SteerFriction": 0.2,
+    "FLMActiveOverrides": {
+      "schemaVersion": 1,
+      "baseFrictionThresholds": {},
+      "vehicleKnobs": {
+        "hyundai_ioniq_6.low_speed_angle_assist_max_torque": 0.62,
+      },
+    },
+  }
+
+  suggestions = module.build_suggestions([summary], capabilities, current)
+  adjustment = suggestions[0]["primaryAdjustmentRaw"]
+  assert adjustment["type"] == "vehicle_knob"
+  assert adjustment["symbol"] == "hyundai_ioniq_6.low_speed_angle_assist_max_torque"
+  assert adjustment["current"] == pytest.approx(0.62)
+  assert adjustment["suggested"] > adjustment["current"]
+
+
+def test_build_suggestions_prefers_ioniq_6_curvy_trim_for_mid_speed_turn_in(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summary = {
+    "bucket": "oversteer",
+    "dimensionId": "oversteer:left:fast",
+    "direction": "left",
+    "speedBand": "fast",
+    "severity": 1.0,
+    "evidence": {"speedBand": "fast", "directionBias": "left", "eventCount": 2, "segments": [{"label": "route/4"}]},
+    "plotSvg": "",
+  }
+  capabilities = {"richProfileKey": "hyundai_ioniq_6", "frictionFamily": "hkg_canfd"}
+  current = {"SteerLatAccel": 1.8, "SteerFriction": 0.2}
+
+  suggestions = module.build_suggestions([summary], capabilities, current)
+  adjustment = suggestions[0]["primaryAdjustmentRaw"]
+  assert adjustment["type"] == "vehicle_knob"
+  assert adjustment["symbol"] == "hyundai_ioniq_6.curvy_turn_in_trim_left"
+  assert adjustment["suggested"] > adjustment["current"]
+
+
+def test_build_suggestions_rebases_friction_curve_against_active_override(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summary = {
+    "bucket": "center_chatter",
+    "dimensionId": "center_chatter:center:highway",
+    "direction": "center",
+    "speedBand": "highway",
+    "severity": 1.0,
+    "evidence": {"speedBand": "highway", "directionBias": "center", "eventCount": 4, "segments": [{"label": "route/5"}]},
+    "plotSvg": "",
+  }
+  capabilities = {"richProfileKey": "torque_universal", "frictionFamily": "standard"}
+  current_curve = [0.34, 0.35, 0.36, 0.37, 0.38]
+  current = {
+    "SteerLatAccel": 1.8,
+    "SteerFriction": 0.2,
+    "FLMActiveOverrides": {
+      "schemaVersion": 1,
+      "baseFrictionThresholds": {
+        "standard": {
+          "speedKnots": [0.0, 5.0, 10.0, 15.0, 25.0],
+          "values": current_curve,
+        },
+      },
+      "vehicleKnobs": {},
+    },
+  }
+
+  suggestions = module.build_suggestions([summary], capabilities, current)
+  adjustment = suggestions[0]["primaryAdjustmentRaw"]
+  assert adjustment["type"] == "friction_curve"
+  assert adjustment["family"] == "standard"
+  assert adjustment["current"] == current_curve
+  assert adjustment["suggested"][2] > current_curve[2]
+
+
+def test_select_primary_tuning_path_prefers_baseline_for_broad_mismatch(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summaries = [
+    {"bucket": "understeer", "severity": 1.0},
+    {"bucket": "center_chatter", "severity": 0.9},
+    {"bucket": "unwind_too_slow", "severity": 0.85},
+    {"bucket": "saturation_limited", "severity": 0.8},
+  ]
+  stats = {"meanErrorAbs": 0.16}
+
+  decision = module.select_primary_tuning_path(summaries, stats)
+  assert decision["primaryPathKey"] == "baseline_fix"
+  assert decision["alternatePathKey"] == "cleanup_pass"
+
+
+def test_select_primary_tuning_path_prefers_cleanup_for_localized_issue(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summaries = [
+    {"bucket": "notchy_mid_curve", "severity": 0.7},
+    {"bucket": "center_chatter", "severity": 0.55},
+  ]
+  stats = {"meanErrorAbs": 0.07}
+
+  decision = module.select_primary_tuning_path(summaries, stats)
+  assert decision["primaryPathKey"] == "cleanup_pass"
+  assert decision["alternatePathKey"] == "baseline_fix"
+
+
+def test_select_primary_tuning_path_vetoes_baseline_when_global_fit_is_strong(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summaries = [
+    {
+      "bucket": "late_turn_in",
+      "severity": 1.05,
+      "direction": "right",
+      "speedBand": "mid",
+      "evidence": {"segments": [{"label": "route/37"}]},
+    },
+    {"bucket": "center_chatter", "severity": 0.55, "direction": "center", "speedBand": "highway", "evidence": {"segments": []}},
+    {"bucket": "unwind_too_slow", "severity": 0.6, "direction": "right", "speedBand": "mid", "evidence": {"segments": [{"label": "route/37"}]}},
+  ]
+
+  decision = module.select_primary_tuning_path(summaries, {"meanErrorAbs": 0.054})
+  assert decision["primaryPathKey"] == "cleanup_pass"
+  assert "already strong" in decision["reason"]
+
+
+def test_conflicting_summary_resolution_keeps_dominant_direction(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summaries = [
+    {"bucket": "early_turn_in", "severity": 1.34, "evidence": {"directionBias": "right", "speedBand": "mid", "eventCount": 1}},
+    {"bucket": "late_turn_in", "severity": 1.03, "evidence": {"directionBias": "right", "speedBand": "mid", "eventCount": 18}},
+  ]
+
+  resolved = module._resolve_conflicting_actionable_suggestions(summaries)
+  assert [summary["bucket"] for summary in resolved] == ["late_turn_in"]
+
+
+def test_build_trial_profiles_suppresses_ignored_dimensions(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  suggestions = [
+    {
+      "dimensionId": "center_chatter:center:highway",
+      "primaryAdjustmentRaw": {
+        "type": "friction_curve",
+        "family": "standard",
+        "current": [0.30, 0.31, 0.32, 0.33, 0.34],
+        "suggested": [0.31, 0.32, 0.33, 0.34, 0.35],
+        "delta": [0.01, 0.01, 0.01, 0.01, 0.01],
+      },
+    },
+    {
+      "dimensionId": "understeer:left:mid",
+      "primaryAdjustmentRaw": {
+        "type": "generic_param",
+        "paramKey": "SteerLatAccel",
+        "current": 1.6,
+        "suggested": 1.7,
+        "delta": 0.1,
+      },
+    },
+  ]
+  feedback = {"acceptedDimensions": ["understeer:left:mid"], "ignoredDimensions": ["center_chatter:center:highway"]}
+  profiles = module.build_trial_profiles("report-1", suggestions, feedback, {"richProfileKey": None})
+
+  assert profiles
+  assert profiles[0]["genericParams"]["ForceAutoTuneOff"] is True
+  assert profiles[0]["genericParams"]["SteerLatAccel"] > 1.6
+  assert profiles[0]["flmOverrides"] == {}
+
+
+def test_build_trial_profiles_returns_none_when_every_dimension_is_ignored(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  suggestion = {
+    "dimensionId": "understeer:left:mid",
+    "severity": 0.8,
+    "primaryAdjustmentRaw": {
+      "type": "generic_param",
+      "paramKey": "SteerLatAccel",
+      "current": 1.6,
+      "suggested": 1.7,
+      "delta": 0.1,
+    },
+  }
+
+  profiles = module.build_trial_profiles(
+    "report-all-ignored",
+    [suggestion],
+    {"acceptedDimensions": [], "ignoredDimensions": ["understeer:left:mid"]},
+    {"richProfileKey": None},
+  )
+  assert profiles == []
+
+
+def test_merge_primary_adjustments_averages_conflicting_deltas(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  suggestions = [
+    {
+      "severity": 1.0,
+      "primaryAdjustmentRaw": {
+        "type": "generic_param",
+        "paramKey": "SteerLatAccel",
+        "current": 1.6,
+        "suggested": 1.7,
+        "delta": 0.1,
+      },
+    },
+    {
+      "severity": 0.5,
+      "primaryAdjustmentRaw": {
+        "type": "generic_param",
+        "paramKey": "SteerLatAccel",
+        "current": 1.6,
+        "suggested": 1.55,
+        "delta": -0.05,
+      },
+    },
+  ]
+
+  params_delta, overrides, _ = module._merge_primary_adjustments(suggestions, 1.0)
+  assert params_delta["SteerLatAccel"] == pytest.approx(1.65, abs=1e-4)
+  assert overrides == {}
+
+
+def test_merge_primary_adjustments_disables_auto_delay_for_manual_delay_trial(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  suggestions = [{
+    "severity": 1.0,
+    "primaryAdjustmentRaw": {
+      "type": "generic_param",
+      "paramKey": "SteerDelay",
+      "current": 0.31,
+      "suggested": 0.33,
+      "delta": 0.02,
+    },
+  }]
+
+  params_delta, overrides, _ = module._merge_primary_adjustments(suggestions, 1.0)
+
+  assert params_delta["SteerDelay"] == pytest.approx(0.33)
+  assert params_delta["UseAutoSteerDelay"] is False
+  assert overrides == {}
+
+
+def test_apply_and_revert_trial_profile_round_trip(tmp_path):
+  module, fake_params_cls = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  report_id = "report-apply"
+  profile_id = f"{report_id}:recommended"
+  profile = {
+    "id": profile_id,
+    "reportId": report_id,
+    "label": "Recommended",
+    "description": "Recommended trial",
+    "genericParams": {
+      "AdvancedLateralTune": True,
+      "SteerLatAccel": 1.9,
+      "ForceAutoTuneOff": True,
+      "ForceAutoTune": False,
+    },
+    "flmOverrides": {
+      "schemaVersion": 1,
+      "baseFrictionThresholds": {},
+      "vehicleKnobs": {
+        "hyundai_ioniq_6.turn_in_boost_left": 0.08,
+      },
+    },
+  }
+  (workspace["profiles"] / f"{report_id}.json").write_text(json.dumps([profile]), encoding="utf-8")
+
+  fake_params_cls._store = {
+    "AdvancedLateralTune": False,
+    "ForceAutoTune": True,
+    "ForceAutoTuneOff": False,
+    "SteerLatAccel": 1.5,
+    "FLMActiveProfileId": "",
+    "FLMActiveOverrides": {
+      "schemaVersion": 1,
+      "baseFrictionThresholds": {},
+      "vehicleKnobs": {"hyundai_ioniq_6.unwind_taper_left": 0.55},
+    },
+    "FLMTrialApplied": False,
+  }
+
+  result = module.apply_trial_profile(report_id, profile_id)
+  assert result["profile"]["id"] == profile_id
+  active_snapshot = json.loads((workspace["snapshots"] / "active.json").read_text(encoding="utf-8"))
+  assert active_snapshot["profileLabel"] == "Recommended"
+  assert active_snapshot["appliedGenericParams"]["SteerLatAccel"] == pytest.approx(1.9)
+  assert active_snapshot["appliedGenericParams"]["ForceAutoTuneOff"] is True
+  assert active_snapshot["appliedVehicleKnobs"]["hyundai_ioniq_6.turn_in_boost_left"] == pytest.approx(0.08)
+  assert active_snapshot["params"]["SteerLatAccel"] == pytest.approx(1.5)
+  assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.9)
+  assert fake_params_cls._store["FLMActiveProfileId"] == profile_id
+  assert fake_params_cls._store["FLMTrialApplied"] is True
+  assert fake_params_cls._store["FLMTrialBaseline"]["params"]["SteerLatAccel"] == pytest.approx(1.5)
+  assert fake_params_cls._store["FLMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.turn_in_boost_left"] == pytest.approx(0.08)
+  assert fake_params_cls._store["FLMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.unwind_taper_left"] == pytest.approx(0.55)
+
+  revert_result = module.revert_trial_profile()
+  assert revert_result["snapshot"]["profileId"] == profile_id
+  assert fake_params_cls._store["AdvancedLateralTune"] is False
+  assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.5)
+  assert fake_params_cls._store["FLMTrialApplied"] is False
+  assert "FLMTrialBaseline" not in fake_params_cls._store
+  assert fake_params_cls._store["FLMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.unwind_taper_left"] == pytest.approx(0.55)
+
+
+def test_repeated_trial_revisions_revert_to_original_baseline(tmp_path):
+  module, fake_params_cls = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  first_report_id = "report-first"
+  first_profile_id = f"{first_report_id}:cleanup_pass:recommended"
+  second_report_id = "report-second"
+  second_profile_id = f"{second_report_id}:cleanup_pass:recommended"
+  first_profile = {
+    "id": first_profile_id,
+    "label": "Recommended",
+    "pathKey": "cleanup_pass",
+    "pathLabel": "Cleanup Pass",
+    "genericParams": {"AdvancedLateralTune": True, "SteerLatAccel": 1.8},
+    "flmOverrides": {
+      "schemaVersion": 1,
+      "baseFrictionThresholds": {},
+      "vehicleKnobs": {"hyundai_ioniq_6.turn_in_boost_left": 0.08},
+    },
+  }
+  second_profile = {
+    "id": second_profile_id,
+    "label": "Recommended",
+    "pathKey": "cleanup_pass",
+    "pathLabel": "Cleanup Pass",
+    "genericParams": {"AdvancedLateralTune": True, "SteerLatAccel": 1.9},
+    "flmOverrides": {
+      "schemaVersion": 1,
+      "baseFrictionThresholds": {},
+      "vehicleKnobs": {"hyundai_ioniq_6.unwind_taper_left": 0.62},
+    },
+  }
+  (workspace["profiles"] / f"{first_report_id}.json").write_text(json.dumps([first_profile]), encoding="utf-8")
+  (workspace["profiles"] / f"{second_report_id}.json").write_text(json.dumps([second_profile]), encoding="utf-8")
+  fake_params_cls._store = {
+    "AdvancedLateralTune": False,
+    "SteerLatAccel": 1.5,
+    "FLMActiveProfileId": "",
+    "FLMActiveOverrides": {},
+    "FLMTrialApplied": False,
+  }
+
+  module.apply_trial_profile(first_report_id, first_profile_id)
+  module.apply_trial_profile(second_report_id, second_profile_id)
+
+  active_snapshot = json.loads((workspace["snapshots"] / "active.json").read_text(encoding="utf-8"))
+  assert active_snapshot["revisionCount"] == 2
+  assert active_snapshot["params"]["SteerLatAccel"] == pytest.approx(1.5)
+  assert active_snapshot["params"]["FLMTrialApplied"] is False
+  assert active_snapshot["appliedGenericParams"]["SteerLatAccel"] == pytest.approx(1.9)
+  assert active_snapshot["appliedVehicleKnobs"]["hyundai_ioniq_6.turn_in_boost_left"] == pytest.approx(0.08)
+  assert active_snapshot["appliedVehicleKnobs"]["hyundai_ioniq_6.unwind_taper_left"] == pytest.approx(0.62)
+  assert fake_params_cls._store["FLMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.turn_in_boost_left"] == pytest.approx(0.08)
+  assert fake_params_cls._store["FLMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.unwind_taper_left"] == pytest.approx(0.62)
+
+  module.revert_trial_profile()
+  assert fake_params_cls._store["AdvancedLateralTune"] is False
+  assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.5)
+  assert fake_params_cls._store["FLMTrialApplied"] is False
+  assert fake_params_cls._store["FLMActiveOverrides"] == {}
+
+
+def test_orphaned_previous_revision_can_recover_its_baseline(tmp_path):
+  module, fake_params_cls = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  report_id = "report-recovery"
+  profile_id = f"{report_id}:cleanup_pass:recommended"
+  profile = {
+    "id": profile_id,
+    "label": "Recommended",
+    "pathKey": "cleanup_pass",
+    "pathLabel": "Cleanup Pass",
+    "genericParams": {"AdvancedLateralTune": True, "SteerLatAccel": 1.8},
+    "flmOverrides": {},
+  }
+  (workspace["profiles"] / f"{report_id}.json").write_text(json.dumps([profile]), encoding="utf-8")
+  fake_params_cls._store = {
+    "AdvancedLateralTune": False,
+    "SteerLatAccel": 1.5,
+    "FLMActiveProfileId": "",
+    "FLMActiveOverrides": {},
+    "FLMTrialApplied": False,
+  }
+  module.apply_trial_profile(report_id, profile_id)
+  (workspace["snapshots"] / "active.json").unlink()
+
+  active_trial = module.list_workspace()["activeTrial"]
+  assert active_trial["recoveryNeeded"] is True
+  assert active_trial["params"]["SteerLatAccel"] == pytest.approx(1.5)
+
+  module.revert_trial_profile()
+  assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.5)
+  assert fake_params_cls._store["FLMTrialApplied"] is False
+
+
+def test_persistent_baseline_recovers_when_snapshot_files_are_missing(tmp_path):
+  module, fake_params_cls = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  report_id = "report-persistent-recovery"
+  profile_id = f"{report_id}:cleanup_pass:recommended"
+  profile = {
+    "id": profile_id,
+    "label": "Recommended",
+    "genericParams": {"AdvancedLateralTune": True, "SteerLatAccel": 1.8},
+    "flmOverrides": {},
+  }
+  (workspace["profiles"] / f"{report_id}.json").write_text(json.dumps([profile]), encoding="utf-8")
+  fake_params_cls._store = {
+    "AdvancedLateralTune": False,
+    "SteerLatAccel": 1.5,
+    "FLMActiveProfileId": "",
+    "FLMActiveOverrides": {},
+    "FLMTrialApplied": False,
+  }
+
+  module.apply_trial_profile(report_id, profile_id)
+  for path in workspace["snapshots"].glob("*.json"):
+    path.unlink()
+
+  active_trial = module.list_workspace()["activeTrial"]
+  assert active_trial["rollbackAvailable"] is True
+  assert active_trial["recoveryNeeded"] is True
+
+  module.revert_trial_profile()
+  assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.5)
+  assert fake_params_cls._store["FLMTrialApplied"] is False
+
+
+def test_legacy_orphan_recovers_baseline_from_source_report(tmp_path):
+  module, fake_params_cls = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  report_id = "report-source-recovery"
+  profile_id = f"{report_id}:baseline_fix:assertive"
+  (workspace["reports"] / f"{report_id}.json").write_text(json.dumps({
+    "reportId": report_id,
+    "createdAt": 123.0,
+    "currentParams": {
+      "AdvancedLateralTune": False,
+      "SteerLatAccel": 1.5,
+      "FLMActiveProfileId": "",
+      "FLMActiveOverrides": {},
+      "FLMTrialApplied": False,
+    },
+  }), encoding="utf-8")
+  fake_params_cls._store = {
+    "AdvancedLateralTune": True,
+    "SteerLatAccel": 1.9,
+    "FLMActiveProfileId": profile_id,
+    "FLMActiveOverrides": {},
+    "FLMTrialApplied": True,
+  }
+
+  active_trial = module.list_workspace()["activeTrial"]
+  assert active_trial["rollbackAvailable"] is True
+  assert active_trial["recoveryNeeded"] is True
+
+  module.revert_trial_profile()
+  assert fake_params_cls._store["AdvancedLateralTune"] is False
+  assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.5)
+  assert fake_params_cls._store["FLMTrialApplied"] is False
+
+
+def test_irrecoverable_trial_can_keep_current_values_as_new_baseline(tmp_path):
+  module, fake_params_cls = _load_flm_workspace_module(tmp_path)
+  module.ensure_flm_workspace()
+  fake_params_cls._store = {
+    "AdvancedLateralTune": True,
+    "SteerLatAccel": 1.9,
+    "FLMActiveProfileId": "missing-report:baseline_fix:assertive",
+    "FLMActiveOverrides": {"vehicleKnobs": {"generic.turn_in_boost_left": 0.1}},
+    "FLMTrialApplied": True,
+  }
+
+  active_trial = module.list_workspace()["activeTrial"]
+  assert active_trial["rollbackAvailable"] is False
+
+  module.accept_trial_as_baseline()
+  assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.9)
+  assert fake_params_cls._store["FLMActiveOverrides"]["vehicleKnobs"]["generic.turn_in_boost_left"] == pytest.approx(0.1)
+  assert fake_params_cls._store["FLMActiveProfileId"] == ""
+  assert fake_params_cls._store["FLMTrialApplied"] is False
+
+
+def test_workspace_hydrates_display_metadata_for_existing_active_trial(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  report_id = "report-existing"
+  profile_id = f"{report_id}:cleanup_pass:recommended"
+  profile = {
+    "id": profile_id,
+    "label": "Recommended",
+    "pathKey": "cleanup_pass",
+    "pathLabel": "Cleanup Pass",
+    "genericParams": {"AdvancedLateralTune": True, "SteerFriction": 0.25},
+    "flmOverrides": {
+      "schemaVersion": 1,
+      "baseFrictionThresholds": {},
+      "vehicleKnobs": {"hyundai_ioniq_6.ff_gain_left": 0.15},
+    },
+  }
+  (workspace["profiles"] / f"{report_id}.json").write_text(json.dumps([profile]), encoding="utf-8")
+  (workspace["snapshots"] / "active.json").write_text(json.dumps({
+    "reportId": report_id,
+    "profileId": profile_id,
+    "capturedAt": 123.0,
+    "params": {"SteerFriction": 0.1},
+  }), encoding="utf-8")
+
+  active_trial = module.list_workspace()["activeTrial"]
+  assert active_trial["pathLabel"] == "Cleanup Pass"
+  assert active_trial["appliedGenericParams"]["SteerFriction"] == pytest.approx(0.25)
+  assert active_trial["appliedVehicleKnobs"]["hyundai_ioniq_6.ff_gain_left"] == pytest.approx(0.15)
+
+
+def test_delete_report_removes_saved_artifacts(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  report_id = "report-delete"
+  for path in (
+    workspace["reports"] / f"{report_id}.json",
+    workspace["reports"] / f"{report_id}.html",
+    workspace["profiles"] / f"{report_id}.json",
+    workspace["feedback"] / f"{report_id}.json",
+    workspace["snapshots"] / f"{report_id}-recommended.json",
+  ):
+    path.write_text("{}", encoding="utf-8")
+
+  result = module.delete_report(report_id)
+  assert "Deleted tuning report" in result["message"]
+  assert not (workspace["reports"] / f"{report_id}.json").exists()
+  assert not (workspace["reports"] / f"{report_id}.html").exists()
+  assert not (workspace["profiles"] / f"{report_id}.json").exists()
+  assert not (workspace["feedback"] / f"{report_id}.json").exists()
+  assert not (workspace["snapshots"] / f"{report_id}-recommended.json").exists()
+
+
+def test_delete_report_is_blocked_while_trial_is_active(tmp_path):
+  module, fake_params_cls = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  report_id = "report-active-delete"
+  report_path = workspace["reports"] / f"{report_id}.json"
+  report_path.write_text("{}", encoding="utf-8")
+  fake_params_cls._store = {"FLMTrialApplied": True}
+
+  with pytest.raises(RuntimeError, match="Revert or keep"):
+    module.delete_report(report_id)
+  assert report_path.exists()
+
+
+def test_select_report_path_persists_manual_override(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  report_id = "report-path"
+  suggestion_base = {
+    "evidence": {"speedBand": "mixed", "directionBias": "center", "eventCount": 0, "segments": []},
+    "currentVsSuggested": None,
+    "observedBehavior": "test",
+    "likelyInterpretation": "test",
+    "primaryAdjustment": "test",
+    "whatNotToTouchYet": "test",
+    "ifThatWasWrong": "test",
+    "plotSvg": "",
+  }
+  cleanup_suggestion = {**suggestion_base, "dimensionId": "cleanup", "bucket": "model_limited"}
+  baseline_suggestion = {**suggestion_base, "dimensionId": "baseline", "bucket": "understeer"}
+  report = {
+    "reportId": report_id,
+    "routeNames": ["route"],
+    "car": {"carFingerprint": "TEST", "controlPath": "torque", "gitBranch": "", "gitCommit": ""},
+    "capabilities": {"frictionFamily": "standard", "richProfileKey": "hyundai_ioniq_6", "nonlinearTorqueMap": {}},
+    "primaryPathKey": "cleanup_pass",
+    "selectedPathKey": "cleanup_pass",
+    "pathSelectionSource": "auto",
+    "paths": [
+      {"key": "cleanup_pass", "title": "Cleanup Pass", "isPrimary": True, "suggestions": [cleanup_suggestion], "profiles": []},
+      {"key": "baseline_fix", "title": "Baseline Fix", "isPrimary": False, "suggestions": [baseline_suggestion], "profiles": []},
+    ],
+    "suggestions": [cleanup_suggestion],
+    "profiles": [],
+    "addTheseParametersAndStartHere": [],
+  }
+  (workspace["reports"] / f"{report_id}.json").write_text(json.dumps(report), encoding="utf-8")
+
+  result = module.select_report_path(report_id, "baseline_fix")
+  selected = result["report"]
+  assert selected["selectedPathKey"] == "baseline_fix"
+  assert selected["pathSelectionSource"] == "manual"
+  assert selected["primaryPathKey"] == "cleanup_pass"
+  assert selected["suggestions"] == [baseline_suggestion]

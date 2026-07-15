@@ -10,6 +10,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 
 from openpilot.common.basedir import BASEDIR
+from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 
 MAPD_DIR = Path(BASEDIR) / "starpilot/navigation"
@@ -19,6 +20,8 @@ RESTART_DELAY_S = 0.25
 MISSING_TILE_BACKOFF_S = 30.0
 FAILURE_WINDOW_S = 3.0
 FAILURE_THRESHOLD = 3
+MISSING_COVERAGE_EXIT_CODE = 3
+ROAD_STATE_POLL_S = 1.0
 
 
 def extract_bounds_filename(line: str) -> str | None:
@@ -80,11 +83,15 @@ def quarantine_offline_tile(filename: str) -> Path | None:
     cloudlog.warning(f"mapd_wrapper refusing to quarantine unexpected path: {filename}")
     return None
 
-  if not tile_path.exists():
+  if not tile_path.is_file():
     return None
 
   quarantined = tile_path.with_name(f"{tile_path.name}.corrupt.{int(time.time())}")
-  tile_path.rename(quarantined)
+  try:
+    tile_path.rename(quarantined)
+  except OSError:
+    cloudlog.exception(f"mapd_wrapper failed to quarantine offline data: {tile_path}")
+    return None
   return quarantined
 
 
@@ -97,7 +104,10 @@ def terminate_child(proc: subprocess.Popen[str]) -> None:
     proc.wait(timeout=2)
   except subprocess.TimeoutExpired:
     proc.kill()
-    proc.wait(timeout=2)
+    try:
+      proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+      cloudlog.error(f"mapd_wrapper child did not exit after kill: pid={proc.pid}")
 
 
 def run_mapd_once() -> int:
@@ -132,6 +142,15 @@ def run_mapd_once() -> int:
   for line in proc.stdout:
     print(line, end="")
     bad_tile = monitor.observe(line)
+
+    # mapd reports an unmarshal failure even when no offline tile is installed.
+    # Stop its resulting hot loop until the next onroad process cycle.
+    missing_tile = monitor.current_filename
+    if is_offline_read_error(line) and missing_tile is not None and not Path(missing_tile).is_file():
+      cloudlog.info(f"mapd_wrapper has no offline tile for {missing_tile}; stopping mapd until the next drive")
+      terminate_child(proc)
+      return MISSING_COVERAGE_EXIT_CODE
+
     if bad_tile is None:
       continue
 
@@ -157,7 +176,14 @@ def run_mapd_once() -> int:
   return proc.wait()
 
 
+def wait_for_road_state_change(params: Params) -> None:
+  initial_onroad = params.get_bool("IsOnroad")
+  while params.get_bool("IsOnroad") == initial_onroad:
+    time.sleep(ROAD_STATE_POLL_S)
+
+
 def main() -> None:
+  params = Params()
   while True:
     exit_code = run_mapd_once()
     if exit_code == 1:
@@ -165,6 +191,9 @@ def main() -> None:
       continue
     if exit_code == 2:
       time.sleep(MISSING_TILE_BACKOFF_S)
+      continue
+    if exit_code == MISSING_COVERAGE_EXIT_CODE:
+      wait_for_road_state_change(params)
       continue
     raise SystemExit(exit_code)
 

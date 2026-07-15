@@ -27,9 +27,10 @@ env_var_truthy() {
 usage() {
   cat <<'EOF'
 Usage:
-  ./onroad [jobs] (--c3 | --c4 | --raybig | --all | --replay-only) [-nav] [-alert] [--cem] [--prefix name] <route-or-replay-args...>
+  ./onroad [jobs] [--c3 | --c4 | --raybig | --all | --replay-only] [--galaxy] [-nav] [-alert] [--cem] [--prefix name] <route-or-replay-args...>
 
 Examples:
+  ./onroad <route>
   ./onroad --c3 <route>
   ./onroad --c4 <route> --start 30
   ./onroad --c4 -nav <route>
@@ -42,7 +43,9 @@ Examples:
 Notes:
   - This is host/dev only. It uses the isolated host worktree and does not touch the device path.
   - A private comma connect route still requires tools/lib/auth.py before replay can download it.
+  - If no UI flag is provided, the route's logged device type selects the UI: mici/c4 -> c4, tici/tizi -> raybig unless UseOldUI was enabled.
   - Use multiple UI flags together if you want more than one desktop UI at once.
+  - --galaxy starts a local Galaxy web session with the same preview params and prints the localhost URL. It blocks replay's logged customReserved9 stream so Galaxy can own the live Testing Grounds publisher.
   - -nav injects a fake navigation demo stream and blocks replay from publishing navInstruction/navRoute.
   - --cem publishes fake CEM statuses for desktop visual review in the raylib UIs.
   - -alert blocks replay from publishing selfdriveState and fires a fake critical full-screen red alert (alertSize=full, alertStatus=critical) 20 seconds after the demo publisher starts (10s for replay route + UI to come up, plus 10s for the user to open Settings). Default alert text mimics a real controlsMismatch event; run tools/replay/fake_alert_demo.py directly to override --text1/--text2/--delay.
@@ -58,15 +61,21 @@ fi
 PREFIX_ARG=""
 REPLAY_ARGS=()
 UI_TARGETS=()
+UI_SELECTION_EXPLICIT=0
 LEGACY_UI_SELECTION=""
 REPLAY_ONLY=0
 NAV_DEMO=0
 CEM_DEMO=0
 ALERT_DEMO=0
+GALAXY=0
 REPLAY_PID=""
 NAV_PID=""
 CEM_PID=""
 ALERT_PID=""
+GALAXY_PID=""
+GALAXY_PORT=""
+GALAXY_URL=""
+ONROAD_TEMP_PREFIX=""
 UI_PIDS=()
 
 parse_args() {
@@ -78,18 +87,22 @@ parse_args() {
         ;;
       --c3)
         UI_TARGETS+=(c3)
+        UI_SELECTION_EXPLICIT=1
         shift
         ;;
       --c4)
         UI_TARGETS+=(c4)
+        UI_SELECTION_EXPLICIT=1
         shift
         ;;
       --raybig)
         UI_TARGETS+=(raybig)
+        UI_SELECTION_EXPLICIT=1
         shift
         ;;
       --all)
         UI_TARGETS+=(c3 c4 raybig)
+        UI_SELECTION_EXPLICIT=1
         shift
         ;;
       --replay-only)
@@ -104,6 +117,10 @@ parse_args() {
         CEM_DEMO=1
         shift
         ;;
+      --galaxy)
+        GALAXY=1
+        shift
+        ;;
       -alert|--alert|--alert-demo)
         ALERT_DEMO=1
         shift
@@ -114,10 +131,12 @@ parse_args() {
           exit 1
         fi
         LEGACY_UI_SELECTION="$2"
+        UI_SELECTION_EXPLICIT=1
         shift 2
         ;;
       --ui=*)
         LEGACY_UI_SELECTION="${1#*=}"
+        UI_SELECTION_EXPLICIT=1
         shift
         ;;
       -p|--prefix)
@@ -228,6 +247,9 @@ cleanup() {
   if [[ -n "${ALERT_PID}" ]]; then
     kill "${ALERT_PID}" >/dev/null 2>&1 || true
   fi
+  if [[ -n "${GALAXY_PID}" ]]; then
+    kill "${GALAXY_PID}" >/dev/null 2>&1 || true
+  fi
 
   for pid in "${UI_PIDS[@]-}"; do
     if [[ -n "${pid}" ]]; then
@@ -246,12 +268,15 @@ cleanup() {
   if [[ -n "${ALERT_PID}" ]]; then
     wait "${ALERT_PID}" >/dev/null 2>&1 || true
   fi
+  if [[ -n "${GALAXY_PID}" ]]; then
+    wait "${GALAXY_PID}" >/dev/null 2>&1 || true
+  fi
 
-  if [[ -n "${OPENPILOT_PREFIX:-}" && "${OPENPILOT_PREFIX}" == desktop-onroad-* ]]; then
-    echo "Cleaning up temporary prefix environment (${OPENPILOT_PREFIX})..."
-    rm -rf "/dev/shm/msgq_${OPENPILOT_PREFIX}"
-    rm -rf "/tmp/comma_download_cache${OPENPILOT_PREFIX}"
-    rm -rf "${HOME}/.comma${OPENPILOT_PREFIX}"
+  if [[ -n "${ONROAD_TEMP_PREFIX:-}" && "${ONROAD_TEMP_PREFIX}" == desktop-onroad-* ]]; then
+    echo "Cleaning up temporary prefix environment (${ONROAD_TEMP_PREFIX})..."
+    rm -rf "/dev/shm/msgq_${ONROAD_TEMP_PREFIX}"
+    rm -rf "/tmp/comma_download_cache${ONROAD_TEMP_PREFIX}"
+    rm -rf "${HOME}/.comma${ONROAD_TEMP_PREFIX}"
   fi
 
   exit "${exit_code}"
@@ -295,8 +320,8 @@ append_blocked_service_names() {
   printf '%s' "${joined}"
 }
 
-ensure_nav_demo_replay_blocklist() {
-  local nav_services="navInstruction,navRoute"
+ensure_replay_blocklist() {
+  local services="$1"
   local idx=0
 
   for ((idx=0; idx<${#REPLAY_ARGS[@]}; idx++)); do
@@ -306,41 +331,29 @@ ensure_nav_demo_replay_blocklist() {
           echo "Missing value for ${REPLAY_ARGS[$idx]}" >&2
           exit 1
         fi
-        REPLAY_ARGS[$((idx + 1))]="$(append_blocked_service_names "${REPLAY_ARGS[$((idx + 1))]}" "${nav_services}")"
+        REPLAY_ARGS[$((idx + 1))]="$(append_blocked_service_names "${REPLAY_ARGS[$((idx + 1))]}" "${services}")"
         return
         ;;
       --block=*)
-        REPLAY_ARGS[$idx]="--block=$(append_blocked_service_names "${REPLAY_ARGS[$idx]#*=}" "${nav_services}")"
+        REPLAY_ARGS[$idx]="--block=$(append_blocked_service_names "${REPLAY_ARGS[$idx]#*=}" "${services}")"
         return
         ;;
     esac
   done
 
-  REPLAY_ARGS=(-b "${nav_services}" "${REPLAY_ARGS[@]}")
+  REPLAY_ARGS=(-b "${services}" "${REPLAY_ARGS[@]}")
+}
+
+ensure_nav_demo_replay_blocklist() {
+  ensure_replay_blocklist "navInstruction,navRoute"
 }
 
 ensure_alert_demo_replay_blocklist() {
-  local alert_services="selfdriveState"
-  local idx=0
+  ensure_replay_blocklist "selfdriveState"
+}
 
-  for ((idx=0; idx<${#REPLAY_ARGS[@]}; idx++)); do
-    case "${REPLAY_ARGS[$idx]}" in
-      -b|--block)
-        if (( idx + 1 >= ${#REPLAY_ARGS[@]} )); then
-          echo "Missing value for ${REPLAY_ARGS[$idx]}" >&2
-          exit 1
-        fi
-        REPLAY_ARGS[$((idx + 1))]="$(append_blocked_service_names "${REPLAY_ARGS[$((idx + 1))]}" "${alert_services}")"
-        return
-        ;;
-      --block=*)
-        REPLAY_ARGS[$idx]="--block=$(append_blocked_service_names "${REPLAY_ARGS[$idx]#*=}" "${alert_services}")"
-        return
-        ;;
-    esac
-  done
-
-  REPLAY_ARGS=(-b "${alert_services}" "${REPLAY_ARGS[@]}")
+ensure_galaxy_replay_blocklist() {
+  ensure_replay_blocklist "customReserved9"
 }
 
 prepare_env() {
@@ -371,32 +384,29 @@ prepare_env() {
   export SP_CEM_DEMO="${CEM_DEMO}"
   export SP_ONROAD_ALERT_DEMO="${ALERT_DEMO}"
 
+  local generated_prefix="${PREFIX_ARG:-${OPENPILOT_PREFIX:-desktop-onroad-$$}}"
+  ONROAD_TEMP_PREFIX="${generated_prefix}"
+
   if [[ "$(uname -s)" == "Darwin" ]] || env_var_truthy "${ZMQ:-0}"; then
-    export OPENPILOT_ZMQ_NAMESPACE="${PREFIX_ARG:-${OPENPILOT_ZMQ_NAMESPACE:-desktop-onroad-$$}}"
+    export OPENPILOT_ZMQ_NAMESPACE="${PREFIX_ARG:-${OPENPILOT_ZMQ_NAMESPACE:-${generated_prefix}}}"
     unset OPENPILOT_PREFIX
+    export PARAMS_ROOT="${PARAMS_ROOT:-${HOME}/.comma${generated_prefix}/params}"
   else
-    export OPENPILOT_PREFIX="${PREFIX_ARG:-${OPENPILOT_PREFIX:-desktop-onroad-$$}}"
+    export OPENPILOT_PREFIX="${generated_prefix}"
     mkdir -p "/dev/shm/msgq_${OPENPILOT_PREFIX}"
   fi
 }
 
 seed_params() {
-  "${ROOT_DIR}/.venv/bin/python3" - <<'PY'
-import os
+  "${ROOT_DIR}/.venv/bin/python3" "${ROOT_DIR}/tools/replay/onroad_config.py" seed "${REPLAY_ARGS[@]}"
+}
 
-from openpilot.common.params import Params
-from openpilot.system.version import terms_version, training_version
-
-params = Params()
-params.put("HasAcceptedTerms", terms_version)
-params.put("CompletedTrainingVersion", training_version)
-params.put_bool("OpenpilotEnabledToggle", True)
-params.put_bool("IsDriverViewEnabled", False)
-params.put_bool("ForceOnroad", False)
-params.put_bool("ForceOffroad", False)
-if os.getenv("SP_ONROAD_NAV_DEMO", "").lower() in {"1", "true", "yes", "on"}:
-  params.put_bool("NavigationUI", True)
-PY
+auto_select_ui_targets() {
+  local selection=""
+  selection="$("${ROOT_DIR}/.venv/bin/python3" "${ROOT_DIR}/tools/replay/onroad_config.py" select-ui "${REPLAY_ARGS[@]}")"
+  IFS=' ' read -r -a UI_TARGETS <<< "${selection}"
+  dedupe_ui_targets
+  echo "Auto-selected UI: ${UI_TARGETS[*]}"
 }
 
 seed_starpilot_theme() {
@@ -474,6 +484,73 @@ launch_alert_demo() {
   fi
 }
 
+pick_free_local_port() {
+  "${ROOT_DIR}/.venv/bin/python3" - <<'PY'
+import socket
+
+# The desktop ZMQ transport hashes replay service names into ports 8023-65535.
+# Keep Galaxy below that range so the HTTP server cannot steal a replay service port.
+for port in range(4600, 8023):
+  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    try:
+      sock.bind(("127.0.0.1", port))
+    except OSError:
+      continue
+    print(port)
+    raise SystemExit(0)
+
+raise SystemExit("Unable to find a free local Galaxy port below the ZMQ replay range.")
+PY
+}
+
+wait_for_galaxy() {
+  local url="${GALAXY_URL}/api/galaxy/status"
+  local idx=0
+
+  for ((idx=0; idx<50; idx++)); do
+    if ! kill -0 "${GALAXY_PID}" >/dev/null 2>&1; then
+      wait "${GALAXY_PID}"
+      return 1
+    fi
+
+    if "${ROOT_DIR}/.venv/bin/python3" - "${url}" <<'PY' >/dev/null 2>&1; then
+import sys
+import urllib.request
+
+with urllib.request.urlopen(sys.argv[1], timeout=0.5) as response:
+  raise SystemExit(0 if response.status == 200 else 1)
+PY
+      return 0
+    fi
+
+    sleep 0.1
+  done
+
+  echo "Timed out waiting for local Galaxy session at ${GALAXY_URL}" >&2
+  return 1
+}
+
+launch_galaxy() {
+  GALAXY_PORT="$(pick_free_local_port)"
+  GALAXY_URL="http://127.0.0.1:${GALAXY_PORT}"
+  local galaxy_dir="${HOME}/.comma${ONROAD_TEMP_PREFIX}/starpilot/data/galaxy"
+
+  echo "Starting local Galaxy session..."
+  (
+    export SP_GALAXY_DIR="${galaxy_dir}"
+    export SP_GALAXY_HOST="127.0.0.1"
+    export SP_GALAXY_PORT="${GALAXY_PORT}"
+    export SP_GALAXY_DEBUG=0
+    export SP_GALAXY_RELOAD=0
+    exec "${ROOT_DIR}/.venv/bin/python3" -m openpilot.starpilot.system.the_galaxy.the_galaxy
+  ) &
+  GALAXY_PID=$!
+
+  wait_for_galaxy
+
+  echo "Access Galaxy with ${GALAXY_URL}"
+}
+
 launch_c3_ui() {
   local os_ext="linux"
   if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -528,13 +605,12 @@ if [[ "${ALERT_DEMO}" == "1" ]]; then
   ensure_alert_demo_replay_blocklist
 fi
 
-if [[ ${#REPLAY_ARGS[@]} -eq 0 ]]; then
-  usage >&2
-  exit 1
+if [[ "${GALAXY}" == "1" ]]; then
+  ensure_galaxy_replay_blocklist
 fi
 
-if [[ "${REPLAY_ONLY}" != "1" && ${#UI_TARGETS[@]} -eq 0 ]]; then
-  echo "Select at least one UI with --c3, --c4, --raybig, or use --replay-only." >&2
+if [[ ${#REPLAY_ARGS[@]} -eq 0 ]]; then
+  usage >&2
   exit 1
 fi
 
@@ -545,6 +621,19 @@ echo "Using OPENPILOT_PREFIX=${OPENPILOT_PREFIX:-<default>}"
 if [[ -n "${OPENPILOT_ZMQ_NAMESPACE:-}" ]]; then
   echo "Using OPENPILOT_ZMQ_NAMESPACE=${OPENPILOT_ZMQ_NAMESPACE}"
 fi
+if [[ -n "${PARAMS_ROOT:-}" ]]; then
+  echo "Using PARAMS_ROOT=${PARAMS_ROOT}"
+fi
+
+if [[ "${REPLAY_ONLY}" != "1" && "${UI_SELECTION_EXPLICIT}" == "0" && ${#UI_TARGETS[@]} -eq 0 ]]; then
+  auto_select_ui_targets
+fi
+
+if [[ "${REPLAY_ONLY}" != "1" && ${#UI_TARGETS[@]} -eq 0 ]]; then
+  echo "Select at least one UI with --c3, --c4, --raybig, or use --replay-only." >&2
+  exit 1
+fi
+
 echo "Preparing replay and desktop UI runtime..."
 
 build_replay
@@ -563,6 +652,10 @@ esac
 
 seed_params
 seed_starpilot_theme
+
+if [[ "${GALAXY}" == "1" ]]; then
+  launch_galaxy
+fi
 
 echo "Starting replay: ${REPLAY_ARGS[*]}"
 launch_replay

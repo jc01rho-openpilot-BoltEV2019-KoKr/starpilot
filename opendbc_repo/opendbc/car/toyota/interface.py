@@ -113,7 +113,9 @@ class CarInterface(CarInterfaceBase):
 
     # No radar dbc for cars without DSU which are not TSS 2.0
     # TODO: make an adas dbc file for dsu-less models
-    ret.radarUnavailable = Bus.radar not in DBC[candidate] or candidate in (NO_DSU_CAR - TSS2_CAR)
+    ret.radarUnavailable = Bus.radar not in DBC[candidate] or candidate in (NO_DSU_CAR - TSS2_CAR - {CAR.TOYOTA_CAMRY})
+    if candidate == CAR.TOYOTA_CAMRY:
+      ret.radarTimeStepDEPRECATED = 0.1
 
     # Since we don't yet parse radar on TSS2/TSS-P radar-based ACC cars, gate
     # longitudinal behind the alpha-long toggle.
@@ -156,6 +158,8 @@ class CarInterface(CarInterfaceBase):
     ret.minEnableSpeed = -1. if (stop_and_go or ret.enableGasInterceptorDEPRECATED) else MIN_ACC_SPEED
 
     prius_long_defaults = candidate == CAR.TOYOTA_PRIUS and ret.openpilotLongitudinalControl
+    camry_hybrid_long_defaults = (candidate == CAR.TOYOTA_CAMRY and ret.openpilotLongitudinalControl and
+                                  bool(ret.flags & ToyotaFlags.HYBRID.value))
 
     if candidate in TSS2_CAR or ret.enableGasInterceptorDEPRECATED or prius_long_defaults:
       ret.flags |= ToyotaFlags.RAISED_ACCEL_LIMIT.value
@@ -167,6 +171,13 @@ class CarInterface(CarInterfaceBase):
       # Hybrids have much quicker longitudinal actuator response
       if ret.flags & ToyotaFlags.HYBRID.value:
         ret.longitudinalActuatorDelay = 0.05
+
+    if camry_hybrid_long_defaults:
+      # The THS eCVT responds much faster than the legacy non-TSS2 ICE tune.
+      ret.longitudinalActuatorDelay = 0.05
+      ret.vEgoStopping = 0.25
+      ret.vEgoStarting = 0.25
+      ret.stoppingDecelRate = 0.3
 
     if ret.enableGasInterceptorDEPRECATED:
       # Pedal/SDSU Toyotas feel best with a softer final stop clamp.

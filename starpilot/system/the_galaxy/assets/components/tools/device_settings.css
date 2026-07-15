@@ -172,6 +172,51 @@
   margin-right: var(--margin-base);
 }
 
+.ds-row-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.ds-flm-badge {
+  background: var(--sidebar-bg);
+  border: 1px solid var(--main-fg);
+  border-radius: 999px;
+  color: var(--main-fg);
+  font-size: 0.68rem;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.02em;
+  padding: 0.18rem 0.45rem;
+  text-transform: uppercase;
+}
+
+.ds-flm-detail,
+.ds-flm-summary {
+  border-left: 2px solid var(--main-fg);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  margin-top: 0.45rem;
+  padding-left: 0.65rem;
+}
+
+.ds-flm-summary > div + div {
+  margin-top: 0.2rem;
+}
+
+.ds-flm-link {
+  color: var(--main-fg);
+  display: inline-block;
+  font-weight: var(--font-weight-bold);
+  margin-top: 0.35rem;
+  text-decoration: none;
+}
+
+.ds-flm-link:hover {
+  text-decoration: underline;
+}
+
 .ds-row-desc {
   color: var(--text-muted);
   font-size: var(--font-size-xs);

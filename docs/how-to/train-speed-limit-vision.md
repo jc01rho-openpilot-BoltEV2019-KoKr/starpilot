@@ -302,3 +302,112 @@ For temporal behavior on a saved frame directory or route extract, replay the ru
 ```bash
 .venv/bin/python scripts/replay_speed_limit_vision.py .tmp/vision_iter/seg10_5fps --frames-fps 5
 ```
+
+The detector/classifier runtime is model-only by default. Use `--crop-ocr` with
+`evaluate_runtime_manifest.py` or `replay_route_runtime.py` only for an explicit
+legacy comparison. A model-only release must match reviewed-manifest accuracy
+and pass representative route replays at measured on-device cadence. Evaluate
+candidate recognition and temporal publish behavior separately: a correct
+single-frame candidate can still be suppressed by the history and speed-change
+confirmation policy.
+
+Ignored review rows label the proposed crop, not the entire camera frame.
+Consequently, negative-window candidate and publish counts from
+`evaluate_reviewed_route_events.py` are an upper bound until the full frame is
+audited; another valid sign can be present outside the rejected crop. Use the
+per-row output and frame image to audit any regression delta before treating it
+as a runtime false positive.
+
+## Promotion Gate
+
+Do not promote a checkpoint from classifier validation accuracy alone. Export it
+to an isolated model directory and run the complete runtime pipeline against the
+reviewed positive, hard-negative, and failed-drive manifests. A candidate must
+preserve exact-value recall, avoid new wrong-value reads, and remain within the
+accepted false-positive budget before route replay.
+
+Mine detector proposals that fool an integrated-reject classifier into a new
+reject class before retraining:
+
+```bash
+.venv/bin/python scripts/speed_limit_vision/mine_classifier_reject_crops.py \
+  --models-dir /path/to/candidate/models \
+  --dataset /path/to/versioned/classifier \
+  --manifest /path/to/reviewed-negative-manifest.csv
+```
+
+Keep the resulting dataset version separate from the current training set. If a
+hard-negative retrain lowers reviewed recall, reject the checkpoint even when it
+improves aggregate validation accuracy or removes a known false positive.
+
+## Active-Learning Review Pass
+
+Keep parallel miners in separate directories and merge them only when their
+model and mining fingerprints match:
+
+```bash
+.venv/bin/python scripts/speed_limit_vision/merge_manual_review_queues.py \
+  /path/to/shard0 /path/to/shard1 /path/to/shard2 /path/to/shard3 \
+  --output-dir /path/to/merged
+```
+
+When rescanning with a new model, compare the fingerprinted queues before
+selecting another batch. The optional review output retains the full queue
+schema so it can be passed directly to the selector and review server:
+
+```bash
+.venv/bin/python scripts/speed_limit_vision/compare_manual_review_queues.py \
+  --before /path/to/baseline/manual_review_queue.csv \
+  --after /path/to/candidate/manual_review_queue.csv \
+  --output-csv /path/to/comparison.csv \
+  --review-output /path/to/disagreements/manual_review_queue.csv
+
+.venv/bin/python scripts/speed_limit_vision/select_manual_review_queue.py \
+  --input /path/to/disagreements/manual_review_queue.csv \
+  --output /path/to/review/manual_review_queue.csv \
+  --max-rows 1200 \
+  --min-seconds-per-route-speed 3
+```
+
+The selector prioritizes value changes and gained/lost reads, balances routes
+and speed classes, and removes adjacent same-speed frames from one scene. Start
+the reviewer and import its labels without moving route media off the training
+volume:
+
+```bash
+.venv/bin/python scripts/speed_limit_vision/serve_manual_review_queue.py \
+  --manifest /path/to/review/manual_review_queue.csv \
+  --port 8765
+
+.venv/bin/python scripts/speed_limit_vision/import_manual_review_queue.py \
+  --queue /path/to/review/manual_review_queue.csv
+```
+
+## Re-mine the Route Backlog
+
+Re-run the backlog after a candidate passes the reviewed-manifest and route
+replay gates. Use a model fingerprinted run so new pseudo-labels are staged next
+to, rather than merged into, the original route-mining data:
+
+```bash
+.venv/bin/python scripts/speed_limit_vision/mine_route_training_samples.py \
+  --workspace /Volumes/T5/starpilot_speed_limit/workspace/speed_limit_training_clean \
+  --models-dir /path/to/promoted/models \
+  --model-only \
+  --run-id auto \
+  --sample-every 2.0 \
+  --transition-step 0.5 \
+  --max-frames-per-route 720 \
+  --max-positives-per-route 120 \
+  --max-negatives-per-route 200
+```
+
+The output is written under
+`staging/route_mining/model_<model-fingerprint>_run_<mining-fingerprint>/` with
+its own detector images, classifier labels, review manifest, and per-route
+completion state. The mining fingerprint includes the model-only mode,
+thresholds, sampling configuration, and relevant source code. Review and
+deduplicate that staged run before merging it into a training dataset. Never
+overwrite the canonical route samples or automatically train on every mined
+positive; map agreement and human review remain required because a stronger
+model can still reproduce its own mistakes at larger scale.

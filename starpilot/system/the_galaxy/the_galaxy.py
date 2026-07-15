@@ -63,6 +63,7 @@ from openpilot.starpilot.common.maps_catalog import (
 )
 from openpilot.starpilot.common.experimental_state import sync_persist_chill_state, sync_persist_experimental_state
 from openpilot.starpilot.common.favorite_slots import FAVORITE_SLOTS_PARAM, normalize_favorite_slots
+from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 from openpilot.starpilot.common.starpilot_utilities import delete_file, get_lock_status, run_cmd
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH, ERROR_LOGS_PATH, EXCLUDED_KEYS, LEGACY_STARPILOT_PARAM_RENAMES, MAPS_PATH, MODELS_PATH, RESOURCES_REPO, SCREEN_RECORDINGS_PATH, STOCK_THEME_PATH, THEME_SAVE_PATH,\
                                                            default_ev_tuning_enabled, migrate_cancel_button_controls, update_starpilot_toggles
@@ -76,7 +77,7 @@ from openpilot.starpilot.common.testing_grounds import (
 )
 from openpilot.starpilot.navigation.destination_store import normalize_destination_payload, update_recent_destinations
 from openpilot.starpilot.system.the_galaxy.factory_reset import remove_path as _run_factory_reset_delete
-from openpilot.starpilot.system.the_galaxy import utilities
+from openpilot.starpilot.system.the_galaxy import flm_workspace, utilities
 from openpilot.starpilot.system.the_galaxy.update_recovery import inspect_interrupted_update, public_recovery_status, recover_interrupted_update
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -84,6 +85,7 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 GITLAB_API = "https://gitlab.com/api/v4"
 GITLAB_SUBMISSIONS_PROJECT_ID = "71992109"
 GITLAB_TOKEN = os.environ.get("GITLAB_TOKEN", "")
+LEGACY_LATERAL_METHOD_API_PREFIX = "/api/" + "".join(("f", "t", "m"))
 
 GALAXY_DEPS_PATH = "/data/galaxy_deps"
 LEGACY_GALAXY_DEPS_PATH = "/data/" + "".join(chr(code) for code in (112, 111, 110, 100)) + "_deps"
@@ -534,6 +536,8 @@ MAPS_CANCEL_DOWNLOAD_PARAM = "CancelDownloadMaps"
 
 
 def _get_galaxy_dir():
+  if override := os.getenv("SP_GALAXY_DIR"):
+    return Path(override)
   return Path(Paths.comma_home()) / "starpilot" / "data" / "galaxy" if PC else Path("/data/galaxy")
 
 
@@ -845,6 +849,7 @@ _TROUBLESHOOT_CEM_KEYS = [
 
 _TROUBLESHOOT_ADVANCED_LATERAL_KEYS = [
   "AdvancedLateralTune",
+  "UseAutoSteerDelay",
   "SteerDelay",
   "SteerFriction",
   "SteerOffset",
@@ -2450,6 +2455,18 @@ def _is_blank_param_raw(raw_value):
     return len(raw_value.strip()) == 0
   return False
 
+def _get_use_old_ui_enabled():
+  if not _raylib_ui_toggle_affects_device():
+    return False
+
+  raw_value = _safe_params_get_live_raw("UseOldUI")
+  if _is_blank_param_raw(raw_value):
+    legacy_raw_value = _safe_params_get_live_raw("TryRaylibUI")
+    if not _is_blank_param_raw(legacy_raw_value):
+      return not _coerce_param_value(legacy_raw_value, bool)
+
+  return _coerce_param_value(raw_value, bool)
+
 def _has_runtime_default_value(key, raw_value):
   if _is_blank_param_raw(raw_value):
     return False
@@ -2483,7 +2500,7 @@ def _get_runtime_default_param_overrides():
         overrides["EVTuning"] = default_ev_tuning_enabled(cp)
 
         car_param_defaults = {
-          "SteerDelay": getattr(cp, "steerActuatorDelay", None),
+          "SteerDelay": full_lateral_delay(getattr(cp, "steerActuatorDelay", 0.0)),
           "SteerRatio": getattr(cp, "steerRatio", None),
           "LongitudinalActuatorDelay": getattr(cp, "longitudinalActuatorDelay", None),
           "StartAccel": getattr(cp, "startAccel", None),
@@ -2528,6 +2545,11 @@ def _get_runtime_default_param_overrides():
   return overrides
 
 def _get_current_param_value(key, value_type, defaults_lookup=None):
+  if key == "UseOldUI":
+    return _get_use_old_ui_enabled()
+  if key == "TryRaylibUI":
+    return _raylib_ui_toggle_affects_device() and not _get_use_old_ui_enabled()
+
   if key == CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY:
     return _get_custom_accel_profile_initialized()
 
@@ -3100,6 +3122,12 @@ def _build_troubleshoot_payload():
       "id": "fingerprint",
       "label": "Fingerprint",
       "value": _get_fingerprint_snapshot_text(),
+      "resettable": False,
+    },
+    {
+      "id": "lan_ip",
+      "label": "LAN IP",
+      "value": utilities.get_current_lan_ip() or "Unavailable",
       "resettable": False,
     },
     *_get_hardware_snapshot_items(),
@@ -3761,6 +3789,8 @@ def setup(app):
   def disable_device_settings_asset_cache(response):
     if request.path in {
       "/assets/components/router.js",
+      "/assets/components/home/home.js",
+      "/assets/components/home/home.css",
       "/assets/components/tools/device_settings.js",
       "/assets/components/tools/device_settings.css",
       "/assets/components/tools/device_settings_layout.json",
@@ -4166,22 +4196,24 @@ def setup(app):
       if key not in allowed_keys:
         return jsonify({"error": f"Parameter '{key}' is not editable."}), 403
 
-      if key == "TryRaylibUI":
+      if key in {"UseOldUI", "TryRaylibUI"}:
         enabled = str_val.strip() in ("1", "true", "True")
+        use_old_ui = enabled if key == "UseOldUI" else not enabled
+        updated = {"UseOldUI": use_old_ui, "TryRaylibUI": not use_old_ui}
         if not _raylib_ui_toggle_affects_device():
-          current_enabled = params.get_bool("TryRaylibUI")
           return jsonify({
-            "message": "Try raylib UI is only available on tici/tizi devices.",
-            "updated": {"TryRaylibUI": current_enabled},
+            "message": "Use Old UI is only available on tici/tizi devices.",
+            "updated": {"UseOldUI": False, "TryRaylibUI": False},
           }), 200
 
         if params.get_bool("IsOnroad"):
-          return jsonify({"error": "Cannot change Try raylib UI while driving."}), 403
+          return jsonify({"error": "Cannot change Use Old UI while driving."}), 403
 
-        params.put_bool("TryRaylibUI", enabled)
+        params.put_bool("UseOldUI", use_old_ui)
+        params.put_bool("TryRaylibUI", not use_old_ui)
         return jsonify({
-          "message": f"{'Raylib' if enabled else 'Qt'} UI selected. UI will restart shortly.",
-          "updated": {"TryRaylibUI": enabled},
+          "message": f"{'Old' if use_old_ui else 'Raylib'} UI selected. UI will restart shortly.",
+          "updated": updated,
         }), 200
 
       # 1. Prevent changing the model or reboot-required toggles while the car is actively driving
@@ -4499,6 +4531,10 @@ def setup(app):
       return _serialize_param_write_value(_get_custom_accel_profile_initialized()), 200
     if request_key == "LeadIndicator":
       return _serialize_param_write_value(_get_lead_indicator_enabled()), 200
+    if request_key == "UseOldUI":
+      return ("1" if _get_use_old_ui_enabled() else "0"), 200
+    if request_key == "TryRaylibUI":
+      return ("1" if _raylib_ui_toggle_affects_device() and not _get_use_old_ui_enabled() else "0"), 200
     if request_key == "IsRHD" and not params.get_bool("IsRHDOverride"):
       return ("1" if params.get_bool("IsRhdDetected") else "0"), 200
     value = params.get(request_key) or ""
@@ -4535,7 +4571,11 @@ def setup(app):
       default_val = defaults_lookup.get(key)
 
       try:
-        if t == bool:
+        if key == "UseOldUI":
+          result[key] = False
+        elif key == "TryRaylibUI":
+          result[key] = _raylib_ui_toggle_affects_device()
+        elif t == bool:
           if isinstance(default_val, bytes):
             default_str = default_val.decode("utf-8", errors="replace")
           else:
@@ -5078,7 +5118,8 @@ def setup(app):
     def generate():
       routes = [(path, name) for path in FOOTAGE_PATHS for name in utilities.get_routes_names(path)]
       total = len(routes)
-      yield f"data: {json.dumps({'progress': 0, 'total': total})}\n\n"
+      connect_dongle_id = params.get("StockDongleId", encoding="utf-8") or params.get("DongleId", encoding="utf-8") or ""
+      yield f"data: {json.dumps({'progress': 0, 'total': total, 'connectDongleId': connect_dongle_id})}\n\n"
 
       with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(utilities.process_route, path, name): (path, name) for path, name in routes}
@@ -5647,6 +5688,151 @@ def setup(app):
       "message": "Lateral maneuver mode disabled.",
       **_serialize_lateral_maneuver_status(status),
     }), 200
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/status", methods=["GET"])
+  @app.route("/api/flm/status", methods=["GET"])
+  def get_flm_status():
+    workspace = flm_workspace.list_workspace()
+    return jsonify({
+      "isOnroad": params.get_bool("IsOnroad"),
+      "status": flm_workspace.read_flm_status(),
+      "activeTrial": workspace.get("activeTrial"),
+      "reports": workspace.get("reports", [])[:10],
+    }), 200
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/analyze", methods=["POST"])
+  @app.route("/api/flm/analyze", methods=["POST"])
+  def start_flm_analysis():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "FLM analysis can only run offroad."}), 409
+
+    data = request.get_json(silent=True) or {}
+    route_names = [str(route).strip() for route in data.get("routes", []) if str(route).strip()]
+    if not route_names:
+      return jsonify({"error": "No routes were selected."}), 400
+
+    started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS)
+    if not started:
+      return jsonify({"error": "Failed to start FLM analysis."}), 500
+
+    return jsonify({
+      "message": f"Started FLM analysis for {len(route_names[:flm_workspace.FLM_ANALYZER_ROUTE_LIMIT])} route(s).",
+      "status": flm_workspace.read_flm_status(),
+    }), 200
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/analyze/stop", methods=["POST"])
+  @app.route("/api/flm/analyze/stop", methods=["POST"])
+  def stop_flm_analysis():
+    stopped = flm_workspace.stop_flm_background_analysis()
+    return jsonify({
+      "message": "Stopped FLM analysis." if stopped else "No active FLM analysis was running.",
+      "stopped": bool(stopped),
+      "status": flm_workspace.read_flm_status(),
+    }), 200
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/report/<report_id>", methods=["GET"])
+  @app.route("/api/flm/report/<report_id>", methods=["GET"])
+  def get_flm_report(report_id):
+    try:
+      return jsonify(flm_workspace.load_report(report_id)), 200
+    except FileNotFoundError:
+      return jsonify({"error": "FLM report not found."}), 404
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/report/<report_id>", methods=["DELETE"])
+  @app.route("/api/flm/report/<report_id>", methods=["DELETE"])
+  def delete_flm_report(report_id):
+    try:
+      return jsonify(flm_workspace.delete_report(report_id)), 200
+    except FileNotFoundError:
+      return jsonify({"error": "FLM report not found."}), 404
+    except RuntimeError as error:
+      return jsonify({"error": str(error)}), 409
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/report/<report_id>/path", methods=["POST"])
+  @app.route("/api/flm/report/<report_id>/path", methods=["POST"])
+  def select_flm_report_path(report_id):
+    data = request.get_json(silent=True) or {}
+    path_key = str(data.get("pathKey") or "").strip()
+    if not path_key:
+      return jsonify({"error": "pathKey is required."}), 400
+
+    try:
+      return jsonify(flm_workspace.select_report_path(report_id, path_key)), 200
+    except FileNotFoundError:
+      return jsonify({"error": "FLM report not found."}), 404
+    except ValueError as error:
+      return jsonify({"error": str(error)}), 400
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/workspace", methods=["GET"])
+  @app.route("/api/flm/workspace", methods=["GET"])
+  def get_flm_workspace():
+    return jsonify(flm_workspace.list_workspace()), 200
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/workspace/clear", methods=["POST"])
+  @app.route("/api/flm/workspace/clear", methods=["POST"])
+  def clear_flm_workspace():
+    try:
+      return jsonify(flm_workspace.clear_workspace()), 200
+    except RuntimeError as error:
+      return jsonify({"error": str(error)}), 409
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/trials/apply", methods=["POST"])
+  @app.route("/api/flm/trials/apply", methods=["POST"])
+  def apply_flm_trial():
+    data = request.get_json(silent=True) or {}
+    report_id = str(data.get("reportId") or "").strip()
+    profile_id = str(data.get("profileId") or "").strip()
+    if not report_id or not profile_id:
+      return jsonify({"error": "Both reportId and profileId are required."}), 400
+
+    try:
+      result = flm_workspace.apply_trial_profile(report_id, profile_id)
+    except FileNotFoundError:
+      return jsonify({"error": "FLM profile not found."}), 404
+    except RuntimeError as error:
+      return jsonify({"error": str(error)}), 409
+
+    return jsonify(result), 200
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/trials/revert", methods=["POST"])
+  @app.route("/api/flm/trials/revert", methods=["POST"])
+  def revert_flm_trial():
+    try:
+      result = flm_workspace.revert_trial_profile()
+    except FileNotFoundError:
+      return jsonify({"error": "No active FLM trial snapshot was found."}), 404
+
+    return jsonify(result), 200
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/trials/accept", methods=["POST"])
+  @app.route("/api/flm/trials/accept", methods=["POST"])
+  def accept_flm_trial():
+    try:
+      result = flm_workspace.accept_trial_as_baseline()
+    except FileNotFoundError:
+      return jsonify({"error": "No active FLM trial was found."}), 404
+
+    return jsonify(result), 200
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/feedback", methods=["POST"])
+  @app.route("/api/flm/feedback", methods=["POST"])
+  def save_flm_feedback():
+    data = request.get_json(silent=True) or {}
+    report_id = str(data.get("reportId") or "").strip()
+    if not report_id:
+      return jsonify({"error": "reportId is required."}), 400
+
+    feedback = {
+      "acceptedDimensions": data.get("acceptedDimensions", []),
+      "ignoredDimensions": data.get("ignoredDimensions", []),
+      "notes": data.get("notes", ""),
+    }
+    try:
+      result = flm_workspace.record_feedback(report_id, feedback)
+    except FileNotFoundError:
+      return jsonify({"error": "FLM report not found."}), 404
+
+    return jsonify(result), 200
 
   @app.route("/api/update/fast/status", methods=["GET"])
   def get_fast_update_status():
@@ -7053,14 +7239,17 @@ def main():
   threading.Thread(target=_testing_ground_custom_reserved_worker, daemon=True).start()
 
   # Desktop-only debug mode. On-device must stay on 8082 to match Galaxy FRP routing.
-  debug = not _is_comma_device_runtime()
-  port = 8083 if debug else 8082
+  on_device = _is_comma_device_runtime()
+  debug = False if on_device else os.getenv("SP_GALAXY_DEBUG", "1").lower() in {"1", "true", "yes", "on"}
+  port = 8082 if on_device else int(os.getenv("SP_GALAXY_PORT", "8083"))
+  host = "0.0.0.0" if on_device else os.getenv("SP_GALAXY_HOST", "0.0.0.0")
+  use_reloader = False if on_device else os.getenv("SP_GALAXY_RELOAD", "0" if not debug else "1").lower() in {"1", "true", "yes", "on"}
 
   if debug:
     print("\"The Galaxy\" is not running on a comma device, enabling debug mode")
 
   app.secret_key = secrets.token_hex(32)
-  app.run(host="0.0.0.0", port=port, debug=debug)
+  app.run(host=host, port=port, debug=debug, use_reloader=use_reloader)
 
 if __name__ == "__main__":
   main()

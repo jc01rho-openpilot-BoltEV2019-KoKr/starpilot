@@ -2,11 +2,13 @@
 import base64
 import copy
 import hashlib
+import ipaddress
 import json
 import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -75,6 +77,7 @@ DASHBOARD_ANALYZER_LOG_PATH = "/tmp/galaxy_dashboard_analyzer.log"
 DASHBOARD_ANALYZER_STATUS_PATH = Path("/tmp/galaxy_dashboard_analyzer_status.json")
 DASHBOARD_ANALYZER_STATUS_MAX_AGE_SECONDS = 30 * 60
 DASHBOARD_TOP_MODEL_LIMIT = 3
+LAN_IP_CACHE_TTL_SECONDS = 10.0
 DASHBOARD_EVENT_DISTRACTED = "driverDistracted2"
 DASHBOARD_EVENT_UNRESPONSIVE = "driverUnresponsive3"
 DASHBOARD_TIME_SOURCE_LOG = "log"
@@ -104,9 +107,103 @@ _DASHBOARD_CACHE = {
   "updated_at": 0.0,
   "value": None,
 }
+_LAN_IP_CACHE = {
+  "updated_at": 0.0,
+  "value": None,
+}
 _DASHBOARD_ANALYZER_LOCK = threading.Lock()
 _DASHBOARD_ANALYZER_PROCESS = None
 params = Params(return_defaults=True)
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _format_lan_ip(ip_text):
+  try:
+    address = ipaddress.ip_address(str(ip_text).strip())
+  except ValueError:
+    return ""
+
+  if (
+    address.version != 4
+    or address.is_loopback
+    or address.is_link_local
+    or address.is_multicast
+    or address.is_unspecified
+    or address in _CGNAT_NETWORK
+  ):
+    return ""
+
+  return str(address)
+
+
+def _candidate_lan_ips_from_ip_addr():
+  try:
+    result = subprocess.run(
+      ["ip", "-o", "-4", "addr", "show", "scope", "global", "up"],
+      check=False,
+      capture_output=True,
+      text=True,
+      timeout=0.5,
+    )
+  except Exception:
+    return []
+
+  candidates = []
+  ignored_prefixes = ("lo", "tailscale", "tun", "docker", "br-", "veth", "zt", "wg")
+  for line in result.stdout.splitlines():
+    parts = line.split()
+    if len(parts) < 4:
+      continue
+
+    interface = parts[1].rstrip(":")
+    if interface.startswith(ignored_prefixes):
+      continue
+
+    try:
+      inet_index = parts.index("inet")
+    except ValueError:
+      continue
+
+    candidate = _format_lan_ip(parts[inet_index + 1].split("/", 1)[0] if inet_index + 1 < len(parts) else "")
+    if candidate:
+      candidates.append(candidate)
+
+  return candidates
+
+
+def get_current_lan_ip():
+  now = time.monotonic()
+  if now - _LAN_IP_CACHE["updated_at"] < LAN_IP_CACHE_TTL_SECONDS:
+    return _LAN_IP_CACHE["value"]
+
+  candidates = []
+
+  try:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+      sock.settimeout(0.2)
+      sock.connect(("8.8.8.8", 80))
+      candidates.append(sock.getsockname()[0])
+  except Exception:
+    pass
+
+  candidates.extend(_candidate_lan_ips_from_ip_addr())
+
+  try:
+    result = subprocess.run(["hostname", "-I"], check=False, capture_output=True, text=True, timeout=0.5)
+    candidates.extend(result.stdout.split())
+  except Exception:
+    pass
+
+  for candidate in candidates:
+    ip = _format_lan_ip(candidate)
+    if ip:
+      _LAN_IP_CACHE["updated_at"] = time.monotonic()
+      _LAN_IP_CACHE["value"] = ip
+      return ip
+
+  _LAN_IP_CACHE["updated_at"] = time.monotonic()
+  _LAN_IP_CACHE["value"] = None
+  return None
 
 
 def secure_filename(filename):
@@ -2410,11 +2507,13 @@ def _build_device_summary(params_obj):
   is_onroad = _params_get_bool(params_obj, "IsOnroad")
   uptime_seconds = _read_uptime_seconds()
   cpu_temp_c = _read_cpu_temp_c()
+  lan_ip = get_current_lan_ip()
   return {
     "status": "Driving" if is_onroad else "Parked",
     "online": True,
     "uptimeSeconds": uptime_seconds,
     "cpuTempC": cpu_temp_c,
+    "lanIp": lan_ip,
   }
 
 

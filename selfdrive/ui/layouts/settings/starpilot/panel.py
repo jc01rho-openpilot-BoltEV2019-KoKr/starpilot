@@ -422,14 +422,17 @@ class _SettingsPage(StarPilotPanel):
     gui_app.push_widget(dialog)
 
   def _show_labeled_select(self, title, key, options, current_value):
-    """Integer-based multi-option selector with label/value pairs (puts int)."""
+    """Integer-based multi-option selector with label/value pairs (puts int).
+
+    Mirrors Qt's ButtonParamControl: resolve by index so no KeyError is possible.
+    """
     option_labels = [tr(label) for _, label in options]
-    label_to_value = {tr(label): value for value, label in options}
+    option_values = [value for value, _ in options]
     default = next((tr(label) for value, label in options if value == current_value), option_labels[0])
 
     def on_select(res):
-      if res == DialogResult.CONFIRM and dialog.selection:
-        self._params.put_int(key, label_to_value[dialog.selection])
+      if res == DialogResult.CONFIRM and dialog.selection in option_labels:
+        self._params.put_int(key, option_values[option_labels.index(dialog.selection)])
 
     dialog = MultiOptionDialog(tr(title), option_labels, default, callback=on_select)
     gui_app.push_widget(dialog)

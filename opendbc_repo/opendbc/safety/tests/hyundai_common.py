@@ -208,6 +208,28 @@ class HyundaiLongitudinalBase(common.LongitudinalAccelSafetyTest):
 
 
 class HyundaiAolLkasOnEngageBase:
+  def test_acc_main_sync_does_not_clear_aol_lkas_latch(self):
+    try:
+      tx_acc_state_msg = self._tx_acc_state_msg(False)
+    except NotImplementedError as err:
+      raise unittest.SkipTest("ACC main TX state message not implemented") from err
+
+    self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL)
+
+    self._rx(self._button_msg(Buttons.NONE, main_button=0))
+    self._rx(self._button_msg(Buttons.NONE, main_button=1))
+    self._rx(self._button_msg(Buttons.NONE, main_button=0))
+    self._rx(self._button_msg(Buttons.SET))
+    self._rx(self._button_msg(Buttons.NONE))
+
+    self.safety.set_controls_allowed(False)
+    for _ in range(3):
+      self._tx(tx_acc_state_msg)
+    self.assertFalse(self.safety.get_acc_main_on())
+
+    self._set_prev_torque(0)
+    self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_RATE_UP)))
+
   def test_aol_lkas_auto_enables_on_set_engagement(self):
     torque_cmd = self.MAX_RATE_UP
 

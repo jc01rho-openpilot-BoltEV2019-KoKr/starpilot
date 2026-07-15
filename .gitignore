@@ -21,6 +21,7 @@ compiledmodels/
 /docs_site/
 
 *.mp4
+!docs/assets/speed-limit-vision-demo*.mp4
 *.dylib
 *.DSYM
 *.d

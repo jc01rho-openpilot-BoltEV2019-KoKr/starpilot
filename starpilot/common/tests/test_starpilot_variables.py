@@ -44,6 +44,13 @@ class _FakeParams:
   def get_bool(self, key):
     return bool(self.bools.get(key, False))
 
+  def get(self, key):
+    if key in self.floats:
+      return self.floats[key]
+    if key in self.ints:
+      return self.ints[key]
+    return self.bools.get(key)
+
   def put_float(self, key, value):
     self.floats[key] = float(value)
 
@@ -68,6 +75,32 @@ def test_sync_stock_param_does_not_stomp_existing_custom_value_when_stock_missin
 
   assert params.get_float("SteerDelay") == 0.35
   assert params.get_float("SteerDelayStock") == 0.10
+
+
+def test_steer_delay_mode_migration_converts_untouched_stock_value_to_full_auto_delay():
+  params = _FakeParams({"SteerDelay": 0.11, "SteerDelayStock": 0.11})
+  variables = object.__new__(spv.StarPilotVariables)
+  variables.params = params
+  variables.params_raw = params
+
+  variables._migrate_steer_delay_mode(0.11)
+
+  assert params.get_bool("UseAutoSteerDelay") is True
+  assert params.get_float("SteerDelay") == 0.31
+  assert params.get_bool(spv.STEER_DELAY_MODE_MIGRATION_KEY) is True
+
+
+def test_steer_delay_mode_migration_preserves_existing_manual_full_delay():
+  params = _FakeParams({"SteerDelay": 0.35, "SteerDelayStock": 0.11})
+  variables = object.__new__(spv.StarPilotVariables)
+  variables.params = params
+  variables.params_raw = params
+
+  variables._migrate_steer_delay_mode(0.11)
+
+  assert params.get_bool("UseAutoSteerDelay") is False
+  assert params.get_float("SteerDelay") == 0.35
+  assert params.get_bool(spv.STEER_DELAY_MODE_MIGRATION_KEY) is True
 
 
 def test_cancel_button_migration_copies_distance_actions_once():

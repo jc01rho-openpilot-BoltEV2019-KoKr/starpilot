@@ -158,3 +158,46 @@ def test_prioritize_smooth_following_skips_radarless_follow_hold(monkeypatch):
     planner.shutdown()
     if 'planner_smooth' in locals():
       planner_smooth.shutdown()
+
+
+def test_tracked_vision_lead_uses_exit_hysteresis_at_mid_speed():
+  planner = StarPilotPlanner(Path("/tmp/nonexistent"), DummyThemeManager())
+
+  try:
+    planner.model_length = 174.0
+    planner.tracking_lead = True
+    planner.tracking_lead_filter.x = 1.0
+    planner.lead_one = SimpleNamespace(
+      status=True,
+      dRel=44.5,
+      vLead=16.7,
+      yRel=-0.69,
+      aLeadK=0.0,
+      modelProb=0.99,
+      radar=False,
+    )
+
+    assert planner.update_lead_status(16.8, stop_distance=6.0, prioritize_smooth_following=False)
+    assert planner.update_lead_status(16.8, stop_distance=6.0, prioritize_smooth_following=True)
+  finally:
+    planner.shutdown()
+
+
+def test_untracked_vision_lead_still_uses_strict_entry_gate():
+  planner = StarPilotPlanner(Path("/tmp/nonexistent"), DummyThemeManager())
+
+  try:
+    planner.model_length = 174.0
+    planner.lead_one = SimpleNamespace(
+      status=True,
+      dRel=44.5,
+      vLead=16.7,
+      yRel=-0.69,
+      aLeadK=0.0,
+      modelProb=0.99,
+      radar=False,
+    )
+
+    assert not planner.update_lead_status(16.8, stop_distance=6.0, prioritize_smooth_following=False)
+  finally:
+    planner.shutdown()

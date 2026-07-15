@@ -3,6 +3,7 @@ import unittest
 
 from opendbc.car.nissan.values import NissanSafetyFlags
 from opendbc.car.structs import CarParams
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
 from opendbc.safety.tests.common import CANPackerSafety
@@ -17,6 +18,7 @@ class TestNissanSafety(common.CarSafetyTest, common.AngleSteeringSafetyTest):
 
   EPS_BUS = 0
   CRUISE_BUS = 2
+  PRO_PILOT_BUS = 1
 
   # Angle control limits
   STEER_ANGLE_MAX = 600  # deg, reasonable limit
@@ -82,7 +84,21 @@ class TestNissanSafety(common.CarSafetyTest, common.AngleSteeringSafetyTest):
   def _toggle_aol(self, toggle_on):
     # PRO_PILOT, CRUISE_ON is the main on button for X-Trail/Rogue/Altima
     values = {"CRUISE_ON": 1 if toggle_on else 0}
-    return self.packer.make_can_msg_panda("PRO_PILOT", 2, values)
+    return self.packer.make_can_msg_panda("PRO_PILOT", self.PRO_PILOT_BUS, values)
+
+  def test_aol_remains_allowed_after_cruise_cancel(self):
+    self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL)
+    self._rx(self._toggle_aol(True))
+    self._rx(self._pcm_status_msg(True))
+    self.assertTrue(self.safety.get_controls_allowed())
+
+    self._rx(self._pcm_status_msg(False))
+    self.assertFalse(self.safety.get_controls_allowed())
+
+    self._reset_angle_measurement(0)
+    self._reset_speed_measurement(1)
+    self._set_prev_desired_angle(0)
+    self.assertTrue(self._tx(self._angle_cmd_msg(angle=self.ANGLE_RATE_UP[0] / 2.0, enabled=True)))
 
 
 class TestNissanSafetyAltEpsBus(TestNissanSafety):
@@ -90,6 +106,7 @@ class TestNissanSafetyAltEpsBus(TestNissanSafety):
 
   EPS_BUS = 1
   CRUISE_BUS = 1
+  PRO_PILOT_BUS = 2
 
   def setUp(self):
     self.packer = CANPackerSafety("nissan_x_trail_2017_generated")

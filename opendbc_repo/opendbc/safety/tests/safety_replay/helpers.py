@@ -31,7 +31,9 @@ def is_steering_msg(mode, param, addr):
   elif mode == CarParams.SafetyModel.subaru:
     ret = addr == 0x122
   elif mode == CarParams.SafetyModel.ford:
-    ret = addr == 0x3d6 if param & FordSafetyFlags.CANFD else addr == 0x3d3
+    ret = addr == (0x3ca if param & FordSafetyFlags.LKA_STEERING else
+                   0x3d6 if param & FordSafetyFlags.CANFD else
+                   0x3d3)
   elif mode == CarParams.SafetyModel.nissan:
     ret = addr == 0x169
   elif mode == CarParams.SafetyModel.rivian:
@@ -67,7 +69,10 @@ def get_steer_value(mode, param, msg):
     torque = ((msg.data[3] & 0x1F) << 8) | msg.data[2]
     torque = -to_signed(torque, 13)
   elif mode == CarParams.SafetyModel.ford:
-    if param & FordSafetyFlags.CANFD:
+    if param & FordSafetyFlags.LKA_STEERING:
+      action = msg.data[0] >> 5
+      angle = 1 if action in (2, 4) else 0
+    elif param & FordSafetyFlags.CANFD:
       angle = ((msg.data[2] << 3) | (msg.data[3] >> 5)) - 1000
     else:
       angle = ((msg.data[0] << 3) | (msg.data[1] >> 5)) - 1000

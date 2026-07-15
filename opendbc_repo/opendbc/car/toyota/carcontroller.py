@@ -52,12 +52,18 @@ LOCK_CMD = b"\x40\x05\x30\x11\x00\x80\x00\x00"
 UNLOCK_CMD = b"\x40\x05\x30\x11\x00\x40\x00\x00"
 
 
+def is_ths_hybrid(CP) -> bool:
+  return CP.carFingerprint == CAR.TOYOTA_PRIUS or (
+    CP.carFingerprint == CAR.TOYOTA_CAMRY and bool(CP.flags & ToyotaFlags.HYBRID.value)
+  )
+
+
 def get_long_tune(CP, params):
   kiBP = [2., 5.]
   kiV = [0.5, 0.25]
   k_f = 1.0
 
-  if CP.carFingerprint == CAR.TOYOTA_PRIUS:
+  if is_ths_hybrid(CP):
     k_f = 0.8
   elif CP.carFingerprint not in TSS2_CAR:
     kiBP = [0., 5., 35.]
@@ -440,7 +446,7 @@ class CarController(CarControllerBase):
           else:
             # constantly slowly unwind integral to recover from large temporary errors
             unwind_rate = ACCEL_PID_UNWIND
-            if self.CP.carFingerprint == CAR.TOYOTA_PRIUS and pcm_accel_cmd * self.long_pid.i < 0.0:
+            if is_ths_hybrid(self.CP) and pcm_accel_cmd * self.long_pid.i < 0.0:
               unwind_rate *= PRIUS_INTEGRAL_MISMATCH_UNWIND
             self.long_pid.i -= unwind_rate * float(np.sign(self.long_pid.i))
 
@@ -487,8 +493,13 @@ class CarController(CarControllerBase):
         pcm_accel_cmd = float(np.clip(pcm_accel_cmd, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
 
         main_accel_cmd = 0. if self.CP.flags & ToyotaFlags.SECOC.value else pcm_accel_cmd
+        # Toyota's physical distance-button hold can collide with StarPilot's wheel-button
+        # actions and trip a temporary EPS fault. Suppress native long-press handling while
+        # the physical gap button is held so ACC only sees the hold as a plain button press.
+        allow_long_press = 0 if bool(getattr(CS, "distance_button", False)) else None
         can_sends.append(toyotacan.create_accel_command(self.packer, main_accel_cmd, pcm_cancel_cmd, self.permit_braking, self.standstill_req, lead,
-                                                        CS.acc_type, fcw_alert, self.distance_button, starpilot_toggles.reverse_cruise_increase))
+                                                        CS.acc_type, fcw_alert, self.distance_button, starpilot_toggles.reverse_cruise_increase,
+                                                        allow_long_press))
         if self.CP.flags & ToyotaFlags.SECOC.value:
           acc_cmd_2 = toyotacan.create_accel_command_2(self.packer, pcm_accel_cmd)
           acc_cmd_2 = add_mac(self.secoc_key,
@@ -507,7 +518,9 @@ class CarController(CarControllerBase):
         if self.CP.carFingerprint in UNSUPPORTED_DSU_CAR:
           can_sends.append(toyotacan.create_acc_cancel_command(self.packer))
         else:
-          can_sends.append(toyotacan.create_accel_command(self.packer, 0, pcm_cancel_cmd, True, False, lead, CS.acc_type, False, self.distance_button, starpilot_toggles.reverse_cruise_increase))
+          allow_long_press = 0 if bool(getattr(CS, "distance_button", False)) else None
+          can_sends.append(toyotacan.create_accel_command(self.packer, 0, pcm_cancel_cmd, True, False, lead, CS.acc_type, False,
+                                                          self.distance_button, starpilot_toggles.reverse_cruise_increase, allow_long_press))
 
     # *** hud ui ***
     if self.CP.carFingerprint != CAR.TOYOTA_PRIUS_V:

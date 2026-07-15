@@ -504,6 +504,87 @@ def test_post_stop_slow_lead_trigger_is_suppressed_after_red_light_release(monke
   assert cem.status_value == conditional_experimental_mode_module.CEStatus["LEAD"]
 
 
+def test_slow_lead_mode_release_waits_for_stable_credible_lead(monkeypatch):
+  v_ego = 20.0
+  cem = make_cem(
+    model_length=100.0,
+    tracking_lead=True,
+    lead_status=True,
+    lead_d_rel=34.0,
+    lead_v_lead=18.5,
+    lead_model_prob=0.99,
+  )
+  toggles = make_update_toggles()
+  toggles.conditional_lead = True
+  toggles.conditional_slower_lead = True
+  sm = make_update_sm(standstill=False)
+  slow_lead_active = [True]
+  now = [100.0]
+
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", lambda: now[0])
+
+  def update_conditions(*args, **kwargs):
+    cem.slow_lead_detected = slow_lead_active[0]
+
+  monkeypatch.setattr(cem, "update_conditions", update_conditions)
+
+  cem.update(v_ego, sm, toggles)
+  assert cem.experimental_mode
+  assert cem.status_value == conditional_experimental_mode_module.CEStatus["LEAD"]
+
+  slow_lead_active[0] = False
+  now[0] = 100.9
+  cem.update(v_ego, sm, toggles)
+  assert cem.experimental_mode
+  assert cem.status_value == conditional_experimental_mode_module.CEStatus["LEAD"]
+
+  now[0] = 101.6
+  cem.update(v_ego, sm, toggles)
+  assert not cem.experimental_mode
+  assert cem.params_memory.get_int("CEStatus") == conditional_experimental_mode_module.CEStatus["OFF"]
+
+
+def test_slow_lead_mode_release_does_not_hold_missing_lead(monkeypatch):
+  v_ego = 20.0
+  cem = make_cem(
+    model_length=100.0,
+    tracking_lead=True,
+    lead_status=True,
+    lead_d_rel=34.0,
+    lead_v_lead=18.5,
+    lead_model_prob=0.99,
+  )
+  toggles = make_update_toggles()
+  toggles.conditional_lead = True
+  toggles.conditional_slower_lead = True
+  sm = make_update_sm(standstill=False)
+  slow_lead_active = [True]
+  now = [200.0]
+
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", lambda: now[0])
+
+  def update_conditions(*args, **kwargs):
+    cem.slow_lead_detected = slow_lead_active[0]
+
+  monkeypatch.setattr(cem, "update_conditions", update_conditions)
+
+  cem.update(v_ego, sm, toggles)
+  assert cem.experimental_mode
+
+  slow_lead_active[0] = False
+  cem.starpilot_planner.lead_one.status = False
+  cem.starpilot_planner.tracking_lead = False
+  now[0] = 200.6
+  cem.update(v_ego, sm, toggles)
+  assert cem.experimental_mode
+
+  now[0] = 200.9
+  cem.update(v_ego, sm, toggles)
+
+  assert not cem.experimental_mode
+  assert cem.params_memory.get_int("CEStatus") == conditional_experimental_mode_module.CEStatus["OFF"]
+
+
 def test_standstill_update_can_activate_exp_from_dashboard_stop_sign(monkeypatch):
   cem = make_cem(model_length=80.0, model_stopped=False)
   toggles = make_update_toggles()

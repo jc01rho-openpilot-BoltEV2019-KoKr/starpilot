@@ -269,6 +269,59 @@ def test_update_releases_stopping_on_small_sustained_positive_target():
   assert lc.long_control_state == LongCtrlState.starting
 
 
+def test_update_releases_stopping_immediately_after_confirmed_lead_departure():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.stopping
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = True
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=0.16,
+    should_stop=False,
+    accel_limits=(-3.0, 2.0),
+    starpilot_toggles=make_toggles(startAccel=1.5),
+    has_lead=True,
+  )
+
+  assert lc.long_control_state == LongCtrlState.starting
+  assert output_accel > 0.0
+
+
+@pytest.mark.parametrize(("should_stop", "brake_pressed"), [(True, False), (False, True)])
+def test_confirmed_lead_departure_does_not_override_stop_or_driver_brake(should_stop, brake_pressed):
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.stopping
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=brake_pressed)
+  CS.cruiseState.standstill = True
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=0.5,
+    should_stop=should_stop,
+    accel_limits=(-3.0, 2.0),
+    starpilot_toggles=make_toggles(startAccel=1.5),
+    has_lead=True,
+  )
+
+  assert lc.long_control_state == LongCtrlState.stopping
+  assert output_accel <= 0.0
+
+
 def test_update_releases_stopping_with_cruise_standstill_latched():
   CP = car.CarParams.new_message(vEgoStarting=0.5)
   CP.longitudinalTuning.kpBP = [0.0]
@@ -721,7 +774,7 @@ def test_gm_stock_truck_positive_i_bleeds_on_coast_request():
   assert lc.pid.i < 0.25
 
 
-def test_gm_stock_truck_positive_i_trim_skips_when_planner_still_requests_accel():
+def test_gm_stock_truck_positive_i_bleeds_during_light_highway_accel_request():
   CP = car.CarParams.new_message()
   CP.brand = "gm"
   CP.carFingerprint = "CHEVROLET_SILVERADO"
@@ -735,6 +788,48 @@ def test_gm_stock_truck_positive_i_trim_skips_when_planner_still_requests_accel(
   lc.pid.i = 0.25
   lc.last_output_accel = 0.20
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  lc._trim_gm_truck_positive_hold_integrator(0.05, 0.05, CS)
+
+  assert lc.pid.i < 0.25
+
+
+def test_gm_stock_truck_positive_i_trim_keeps_meaningful_accel_request():
+  CP = car.CarParams.new_message()
+  CP.brand = "gm"
+  CP.carFingerprint = "CHEVROLET_SILVERADO"
+  CP.enableGasInterceptorDEPRECATED = False
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.02]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.28]
+
+  lc = LongControl(CP)
+  lc.pid.i = 0.25
+  lc.last_output_accel = 0.20
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  lc._trim_gm_truck_positive_hold_integrator(0.12, 0.12, CS)
+
+  assert lc.pid.i == pytest.approx(0.25, abs=1e-9)
+
+
+def test_gm_stock_truck_positive_i_trim_preserves_low_speed_launch():
+  CP = car.CarParams.new_message()
+  CP.brand = "gm"
+  CP.carFingerprint = "CHEVROLET_SILVERADO"
+  CP.enableGasInterceptorDEPRECATED = False
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.02]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.28]
+
+  lc = LongControl(CP)
+  lc.pid.i = 0.25
+  lc.last_output_accel = 0.20
+  CS = car.CarState.new_message(vEgo=5.0, aEgo=0.0, brakePressed=False)
   CS.cruiseState.standstill = False
 
   lc._trim_gm_truck_positive_hold_integrator(0.05, 0.05, CS)

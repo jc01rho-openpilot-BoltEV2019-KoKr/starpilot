@@ -4,6 +4,12 @@
 
 static bool nissan_alt_eps = false;
 
+static void nissan_rx_all_hook(const CANPacket_t *msg) {
+  if ((msg->addr == 0x1B6U) && (msg->bus == (nissan_alt_eps ? 2U : 1U))) {
+    acc_main_on = GET_BIT(msg, 36U);
+  }
+}
+
 static void nissan_rx_hook(const CANPacket_t *msg) {
 
   if (msg->bus == (nissan_alt_eps ? 1U : 0U)) {
@@ -49,10 +55,6 @@ static void nissan_rx_hook(const CANPacket_t *msg) {
   if ((msg->addr == 0x30fU) && (msg->bus == (nissan_alt_eps ? 1U : 2U))) {
     bool cruise_engaged = (msg->data[0] >> 3) & 1U;
     pcm_cruise_check(cruise_engaged);
-  }
-
-  if ((msg->addr == 0x1B6U) && (msg->bus == (nissan_alt_eps ? 2U : 1U))) {
-    acc_main_on = GET_BIT(msg, 36U);
   }
 
   if ((msg->addr == 0x239U) && (msg->bus == 0U)) {
@@ -140,6 +142,7 @@ static safety_config nissan_init(uint16_t param) {
 
 const safety_hooks nissan_hooks = {
   .init = nissan_init,
+  .rx_all = nissan_rx_all_hook,
   .rx = nissan_rx_hook,
   .tx = nissan_tx_hook,
 };

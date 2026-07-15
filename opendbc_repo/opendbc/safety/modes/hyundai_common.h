@@ -199,7 +199,6 @@ void hyundai_common_acc_main_on_sync(void) {
 
     if (acc_main_on_mismatches >= 3U) {
       acc_main_on = false;
-      lkas_on = false;
     }
   } else {
     acc_main_on_mismatches = 0U;

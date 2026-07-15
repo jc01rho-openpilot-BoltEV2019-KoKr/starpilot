@@ -27,6 +27,7 @@ from openpilot.common.params import Params
 from openpilot.selfdrive.controls.lib.latcontrol_torque import KP
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.starpilot.common.model_versions import is_tinygrad_model_version
+from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 from openpilot.starpilot.common.accel_profile import (
   ACCELERATION_PROFILES,
   CUSTOM_ACCEL_PROFILE_PARAM_KEYS,
@@ -92,6 +93,8 @@ PRIUS_CLUSTER_OFFSET_CARS = {
   str(TOYOTA_CAR.TOYOTA_PRIUS_V),
   str(TOYOTA_CAR.TOYOTA_PRIUS_TSS2),
 }
+
+STEER_DELAY_MODE_MIGRATION_KEY = "SteerDelayModeMigrated"
 
 RESOURCES_REPO = os.getenv("STARPILOT_RESOURCES_REPO", "firestar5683/StarPilot-Resources")
 
@@ -229,6 +232,10 @@ EXCLUDED_KEYS = {
   "CommunityFavorites",
   "CurvatureData",
   "ExperimentalLongitudinalEnabled",
+  "FLMActiveOverrides",
+  "FLMActiveProfileId",
+  "FLMTrialBaseline",
+  "FLMTrialApplied",
   "InstallDate",
   "StarPilotCarParamsPersistent",
   "KonikMinutes",
@@ -552,6 +559,29 @@ class StarPilotVariables:
 
     self.params.put_float(stock_key, live_value)
 
+  def _migrate_steer_delay_mode(self, vehicle_delay: float) -> None:
+    if self.params_raw.get_bool(STEER_DELAY_MODE_MIGRATION_KEY):
+      return
+
+    def parse_value(raw_value):
+      try:
+        return float(raw_value)
+      except (TypeError, ValueError):
+        return None
+
+    current_delay = parse_value(self.params_raw.get("SteerDelay"))
+    previous_stock = parse_value(self.params_raw.get("SteerDelayStock"))
+    full_stock_delay = full_lateral_delay(vehicle_delay)
+
+    use_auto_delay = current_delay is None or math.isclose(current_delay, 0.0, abs_tol=1e-6)
+    use_auto_delay |= current_delay is not None and math.isclose(current_delay, vehicle_delay, abs_tol=1e-6)
+    use_auto_delay |= current_delay is not None and previous_stock is not None and math.isclose(current_delay, previous_stock, abs_tol=1e-6)
+
+    self.params.put_bool("UseAutoSteerDelay", use_auto_delay)
+    if use_auto_delay:
+      self.params.put_float("SteerDelay", full_stock_delay)
+    self.params.put_bool(STEER_DELAY_MODE_MIGRATION_KEY, True)
+
   def update(self, holiday_theme="stock", started=False):
     toggle = self.starpilot_toggles
     toggle.tuning_level = self.params.get("TuningLevel") if self.params.get_bool("TuningLevelConfirmed") else TUNING_LEVELS["ADVANCED"]
@@ -621,15 +651,16 @@ class StarPilotVariables:
     startAccel = CP.startAccel
     stopAccel = CP.stopAccel
     steerActuatorDelay = CP.steerActuatorDelay
+    fullSteerActuatorDelay = full_lateral_delay(steerActuatorDelay)
     steerKp = KP
     steerRatio = CP.steerRatio
     toggle.stoppingDecelRate = CP.stoppingDecelRate
     toggle.vEgoStarting = CP.vEgoStarting
     toggle.vEgoStopping = CP.vEgoStopping
 
-    # Keep stock tuning params synchronized for all device UIs (Qt + raylib).
-    # Historically this only ran in Qt settings, which left C4 defaults at 0.
-    self._sync_stock_param("SteerDelay", "SteerDelayStock", steerActuatorDelay)
+    # Keep stock tuning params synchronized for all device UIs.
+    self._migrate_steer_delay_mode(steerActuatorDelay)
+    self._sync_stock_param("SteerDelay", "SteerDelayStock", fullSteerActuatorDelay)
     self._sync_stock_param("SteerFriction", "SteerFrictionStock", friction)
     self._sync_stock_param("SteerKP", "SteerKPStock", steerKp)
     self._sync_stock_param("SteerLatAccel", "SteerLatAccelStock", latAccelFactor)
@@ -677,8 +708,16 @@ class StarPilotVariables:
     advanced_lateral_tuning = self.get_value("AdvancedLateralTune")
     toggle.force_auto_tune = self.get_value("ForceAutoTune", condition=advanced_lateral_tuning and not has_auto_tune and is_torque_car and not is_angle_car)
     toggle.force_auto_tune_off = self.get_value("ForceAutoTuneOff", condition=advanced_lateral_tuning and has_auto_tune and is_torque_car and not is_angle_car)
-    toggle.steerActuatorDelay = self.get_value("SteerDelay", cast=float, condition=advanced_lateral_tuning, default=steerActuatorDelay, min=0.01, max=1.0)
-    toggle.use_custom_steerActuatorDelay = bool(round(toggle.steerActuatorDelay, 2) != round(steerActuatorDelay, 2))
+    toggle.flm_active_profile_id = self.params.get("FLMActiveProfileId", encoding="utf-8") or ""
+    toggle.flm_trial_applied = self.params.get_bool("FLMTrialApplied")
+    flm_overrides_raw = self.params.get("FLMActiveOverrides", encoding="utf-8") or ""
+    try:
+      toggle.flm_active_overrides = json.loads(flm_overrides_raw) if flm_overrides_raw else {}
+    except Exception:
+      toggle.flm_active_overrides = {}
+    toggle.use_auto_steer_delay = self.get_value("UseAutoSteerDelay", condition=advanced_lateral_tuning, default=True)
+    toggle.steerActuatorDelay = self.get_value("SteerDelay", cast=float, condition=advanced_lateral_tuning, default=fullSteerActuatorDelay, min=0.01, max=1.0)
+    toggle.use_custom_steerActuatorDelay = advanced_lateral_tuning and not toggle.use_auto_steer_delay
     toggle.friction = self.get_value("SteerFriction", cast=float, condition=advanced_lateral_tuning, default=friction, min=0, max=1)
     toggle.use_custom_friction = bool(round(toggle.friction, 2) != round(friction, 2)) and is_torque_car and not toggle.force_auto_tune or toggle.force_auto_tune_off
     toggle.steerKp = [[0], [self.get_value("SteerKP", cast=float, condition=advanced_lateral_tuning and is_torque_car and not is_angle_car, default=steerKp, min=steerKp * 0.5, max=steerKp * 1.5)]]
@@ -1002,19 +1041,17 @@ class StarPilotVariables:
     toggle.one_lane_change = self.get_value("OneLaneChange", condition=toggle.lane_changes)
 
     # Lane change pace: 1 = smoothest (~8 s target), 10 = stock (no clamp applied)
-    # Factors are derived from a sinusoidal lane-change profile: a = pi^2 * W / T^2, j = pi^3 * W / T^3.
-    # 1.3x headroom keeps the controller off the ceiling mid-maneuver.
+    # The jerk factor is derived from a sinusoidal lane-change profile: j = pi^3 * W / T^3,
+    # with 1.3x headroom. Only jerk (curvature rate) is shaped; lateral accel stays at the
+    # stock envelope so the end-of-maneuver arrest is never starved of authority.
     pace = self.get_value("LaneChangeSmoothing", cast=int, condition=toggle.lane_changes) or 10
     pace = max(1, min(10, pace))
     lane_w = 3.5
     t_target = 3.0 + (10 - pace) * 5.0 / 9.0
-    a_req = (math.pi ** 2) * lane_w / (t_target ** 2)
     j_req = (math.pi ** 3) * lane_w / (t_target ** 3)
     toggle.lane_change_pace = pace
-    toggle.lane_change_lat_accel_factor = min(1.0, a_req * 1.3 / 3.0)
     toggle.lane_change_jerk_factor = min(1.0, j_req * 1.3 / 5.0)
     toggle.lane_change_time_max = 10.0 + (10 - pace) * 2.0 / 9.0
-    toggle.lane_change_t_target = t_target
 
     lateral_tuning = self.get_value("LateralTune")
     toggle.force_torque_controller = self.get_value("ForceTorqueController", condition=lateral_tuning and not is_torque_car and not is_angle_car)

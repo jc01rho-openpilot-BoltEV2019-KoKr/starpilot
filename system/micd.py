@@ -125,7 +125,13 @@ class Mic:
 
   def micd_thread(self):
     # sounddevice must be imported after forking processes
-    import sounddevice as sd
+    while True:
+      try:
+        import sounddevice as sd
+        break
+      except Exception:
+        cloudlog.exception("micd: sounddevice/PortAudio unavailable, retrying")
+        time.sleep(5)
 
     while True:
       stream = None

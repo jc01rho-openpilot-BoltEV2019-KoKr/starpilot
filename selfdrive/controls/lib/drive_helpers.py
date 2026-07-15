@@ -32,9 +32,20 @@ def clip_curvature(v_ego, prev_curvature, new_curvature, roll, jerk_factor=1.0, 
 
   effective_lat_accel = MAX_LATERAL_ACCEL_NO_ROLL * lat_accel_factor
   roll_compensation = roll * ACCELERATION_DUE_TO_GRAVITY
-  max_lat_accel = effective_lat_accel + roll_compensation
-  min_lat_accel = -effective_lat_accel + roll_compensation
-  new_curvature, limited_accel = clamp(new_curvature, min_lat_accel / v_ego ** 2, max_lat_accel / v_ego ** 2)
+  min_curvature = (-effective_lat_accel + roll_compensation) / v_ego ** 2
+  max_curvature = (effective_lat_accel + roll_compensation) / v_ego ** 2
+  if lat_accel_factor < 1.0:
+    # A tightened maneuver clamp must not clip curvature already being commanded
+    # (e.g. lane change on a curve); it only limits further growth.
+    min_curvature = min(min_curvature, prev_curvature)
+    max_curvature = max(max_curvature, prev_curvature)
+  # Saturation is reported against the stock envelope only: riding an intentionally
+  # tightened lane-change ceiling is comfort shaping, not steering saturation, and
+  # must not trip the "Turn Exceeds Steering Limit" alert.
+  stock_min_curvature = (-MAX_LATERAL_ACCEL_NO_ROLL + roll_compensation) / v_ego ** 2
+  stock_max_curvature = (MAX_LATERAL_ACCEL_NO_ROLL + roll_compensation) / v_ego ** 2
+  limited_accel = bool(new_curvature < stock_min_curvature or new_curvature > stock_max_curvature)
+  new_curvature, _ = clamp(new_curvature, min_curvature, max_curvature)
 
   new_curvature, limited_max_curv = clamp(new_curvature, -MAX_CURVATURE, MAX_CURVATURE)
   return float(new_curvature), limited_accel or limited_max_curv

@@ -100,7 +100,15 @@ def iter_context_frames(clip_root: Path, window: ebl.BookmarkWindow, search_befo
       yield relative_time_s, clip_path, source_time_s, frame_bgr
 
 
-def _score_expanded_candidate(daemon: slv.SpeedLimitVisionDaemon, frame_bgr, class_id: int, proposal_confidence: float, box, full_detection):
+def _score_expanded_candidate(
+  daemon: slv.SpeedLimitVisionDaemon,
+  frame_bgr,
+  class_id: int,
+  proposal_confidence: float,
+  box,
+  full_detection,
+  use_ocr: bool = True,
+):
   frame_height, frame_width = frame_bgr.shape[:2]
   x1, y1, x2, y2 = box
   box_width = x2 - x1
@@ -123,7 +131,7 @@ def _score_expanded_candidate(daemon: slv.SpeedLimitVisionDaemon, frame_bgr, cla
 
     is_regulatory = daemon._is_regulatory_speed_sign(sign_crop) or class_id == 2
     model_read = daemon._classify_speed_limit_from_model(sign_crop)
-    ocr_read = daemon._read_speed_limit_from_crop(sign_crop)
+    ocr_read = daemon._read_speed_limit_from_crop(sign_crop) if use_ocr else None
     if model_read is None and ocr_read is None:
       continue
 
@@ -132,9 +140,14 @@ def _score_expanded_candidate(daemon: slv.SpeedLimitVisionDaemon, frame_bgr, cla
       if read_result is None or read_result[0] not in slv.SCHOOL_ZONE_SPEED_VALUES:
         continue
     elif not is_regulatory:
-      if model_read is None or ocr_read is None or model_read[0] != ocr_read[0]:
+      if use_ocr:
+        if model_read is None or ocr_read is None or model_read[0] != ocr_read[0]:
+          continue
+        read_result = (model_read[0], min(model_read[1], ocr_read[1]))
+      elif model_read is None or model_read[1] < slv.DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE:
         continue
-      read_result = (model_read[0], min(model_read[1], ocr_read[1]))
+      else:
+        read_result = model_read
     else:
       if model_read is not None and ocr_read is not None and model_read[0] == ocr_read[0]:
         read_result = (model_read[0], max(model_read[1], ocr_read[1]))
@@ -169,7 +182,7 @@ def _score_expanded_candidate(daemon: slv.SpeedLimitVisionDaemon, frame_bgr, cla
   return best
 
 
-def score_frame(daemon: slv.SpeedLimitVisionDaemon, frame_bgr):
+def score_frame(daemon: slv.SpeedLimitVisionDaemon, frame_bgr, use_ocr: bool = True):
   full_detection = daemon._detect_sign(frame_bgr)
   best = None
 
@@ -177,7 +190,15 @@ def score_frame(daemon: slv.SpeedLimitVisionDaemon, frame_bgr):
     if class_id == 1:
       continue
 
-    candidate = _score_expanded_candidate(daemon, frame_bgr, class_id, proposal_confidence, (x1, y1, x2, y2), full_detection)
+    candidate = _score_expanded_candidate(
+      daemon,
+      frame_bgr,
+      class_id,
+      proposal_confidence,
+      (x1, y1, x2, y2),
+      full_detection,
+      use_ocr=use_ocr,
+    )
     if candidate is None:
       continue
     if best is None or candidate["score"] > best["score"]:

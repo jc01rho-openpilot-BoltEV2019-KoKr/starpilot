@@ -76,6 +76,7 @@ class TestFordSafetyBase(common.CarSafetyTest):
   STEER_MESSAGE = 0
 
   # Curvature control limits
+  LKA_STEERING = False
   DEG_TO_CAN = 50000  # 1 / (2e-5) rad to can
   MAX_CURVATURE = 0.02
   MAX_CURVATURE_ERROR = 0.002
@@ -354,12 +355,13 @@ class TestFordSafetyBase(common.CarSafetyTest):
             self._set_prev_desired_angle(sign * (curvature_offset + initial_curvature))
             self.assertEqual(should_tx, self._tx(self._lat_ctl_msg(True, 0, 0, sign * (curvature_offset + desired_curvature), 0)))
 
-  def test_prevent_lkas_action(self):
-    self.safety.set_controls_allowed(1)
-    self.assertFalse(self._tx(self._lkas_command_msg(1)))
-
-    self.safety.set_controls_allowed(0)
-    self.assertFalse(self._tx(self._lkas_command_msg(1)))
+  def test_lkas_action(self):
+    for controls_allowed in (0, 1):
+      self.safety.set_controls_allowed(controls_allowed)
+      for action in range(8):
+        should_tx = action == 0
+        should_tx |= self.LKA_STEERING and controls_allowed and action in (2, 4)
+        self.assertEqual(should_tx, self._tx(self._lkas_command_msg(action)))
 
   def test_acc_buttons(self):
     for allowed in (0, 1):
@@ -482,6 +484,16 @@ class TestFordLongitudinalSafety(TestFordLongitudinalSafetyBase):
   def test_max_lateral_acceleration(self):
     # CAN does not limit curvature from lateral acceleration
     pass
+
+
+class TestFordLKASteeringSafety(TestFordLongitudinalSafety):
+  LKA_STEERING = True
+
+  def setUp(self):
+    self.packer = CANPackerSafety("ford_lincoln_base_pt")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.ford, FordSafetyFlags.LKA_STEERING)
+    self.safety.init_tests()
 
 
 class TestFordCANFDLongitudinalSafety(TestFordLongitudinalSafetyBase):

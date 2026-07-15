@@ -24,6 +24,8 @@ TILE_INSET = 1.0
 TILE_RADIUS_PX = 18.0
 TILE_SIGNAL_WIDTH = 1
 MIN_TILE_WIDTH = 300
+TOGGLE_ROW_HEIGHT = 128
+TOGGLE_MIN_HEIGHT = 80
 
 _HUD_BG_ON = rl.Color(12, 10, 18, 230)
 _HUD_BG_DISABLED = rl.Color(6, 5, 10, 235)
@@ -359,6 +361,7 @@ class PanelStyle:
   danger_fill: rl.Color
   danger_border: rl.Color
   danger_text: rl.Color
+  toggle_row_mode: bool = False
 
 
 DEFAULT_PANEL_STYLE = PanelStyle(
@@ -378,6 +381,7 @@ DEFAULT_PANEL_STYLE = PanelStyle(
   danger_fill=AetherListColors.DANGER_SOFT,
   danger_border=rl.Color(173, 78, 90, 50),
   danger_text=AetherListColors.DANGER,
+  toggle_row_mode=True,
 )
 
 
@@ -719,10 +723,10 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
   def _compute_two_column_height(self, left_height: float) -> float:
     return max(self._scroll_rect.height if self._scroll_rect else 0.0, left_height)
 
-  def _draw_two_column_tile_grid(self, grid: TileGrid, x: float, y: float, column_width: float, matching_height: float, title: str | None = None, style: PanelStyle | None = None):
+  def _draw_two_column_tile_grid(self, grid: TileGrid, x: float, y: float, column_width: float, matching_height: float, title: str | None = None, style: PanelStyle | None = None, columns: int = 2):
     if style is None:
       style = self.PANEL_STYLE
-    grid._columns = 2
+    grid._columns = columns
     if title:
       draw_section_header(rl.Rectangle(x, y, column_width, self.METRICS.section_header_height), title, style=style)
       draw_y = y + self.METRICS.section_header_height + self.METRICS.section_header_gap
@@ -737,7 +741,8 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
   # ── convenience builders ──────────────────────────────────
 
   def _make_toggle_tile(self, d: dict) -> ToggleTile:
-    return ToggleTile(
+    cls = RowToggleTile if self.PANEL_STYLE.toggle_row_mode else ToggleTile
+    return cls(
       title=d["title"],
       get_state=d["get_state"],
       set_state=d["set_state"],
@@ -757,6 +762,12 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
       desc=d.get("subtitle", ""),
       is_enabled=d.get("is_enabled"),
     )
+
+  def _compute_page_size(self, tile_height: float, default: int = 4) -> int:
+    if not self._scroll_rect or self._scroll_rect.height <= 0.0:
+      return default
+    available = self._scroll_rect.height - GROUP_OVERHEAD - 24
+    return max(2, int((available + SPACING.tile_gap) / (tile_height + SPACING.tile_gap)))
 
   # ── pagination ─────────────────────────────────────────────
 
@@ -1923,7 +1934,7 @@ def draw_metric_strip(
       )
 
 
-GROUP_HEADER_HEIGHT = 26.0
+GROUP_HEADER_HEIGHT = 30.0
 GROUP_HEADER_GAP = 1.0
 GROUP_HEADER_LINE_GAP = 1.0
 GROUP_OVERHEAD = 8.0 + GROUP_HEADER_HEIGHT + GROUP_HEADER_LINE_GAP + GROUP_HEADER_GAP
@@ -1932,7 +1943,7 @@ GROUP_HEADER_COLOR = AetherListColors.HEADER
 
 
 def draw_group_header(x: float, y: float, width: float, label: str) -> float:
-  gui_label(rl.Rectangle(x, y, max(1.0, width), GROUP_HEADER_HEIGHT), label, 20, GROUP_HEADER_COLOR, FontWeight.MEDIUM)
+  gui_label(rl.Rectangle(x, y, max(1.0, width), GROUP_HEADER_HEIGHT), label, 26, GROUP_HEADER_COLOR, FontWeight.MEDIUM)
   y += GROUP_HEADER_HEIGHT + GROUP_HEADER_LINE_GAP
   rl.draw_line(int(x), int(y), int(x + width), int(y), GROUP_HAIRLINE_COLOR)
   return y + GROUP_HEADER_GAP
@@ -2620,27 +2631,16 @@ class AetherAdjustorRow(Widget):
       current_border=current_border,
     )
 
-    title_fs = 28
-    sub_fs = 24
-    bar_val_fs = 20
+    bar_h = max(74, min(94, int(rect.height * 0.87)))
+    title_fs = max(38, int(bar_h * 0.53))
+    value_fs = max(24, int(bar_h * 0.34))
 
     content_left = rect.x + 24
-    content_width = max(120.0, rect.width - 48)
-
-    title_y = rect.y + 10
-    title_h = 30
-    gui_label(rl.Rectangle(content_left, title_y, content_width, title_h), self._title, title_fs, self._style.title_color, FontWeight.MEDIUM)
-
-    sub_y = rect.y + 44
-    sub_h = 28
-    if self._subtitle:
-      gui_label(rl.Rectangle(content_left, sub_y, content_width, sub_h), self._subtitle, sub_fs, self._style.subtitle_color, FontWeight.NORMAL)
-
-    bar_h = 30
-    bar_y = (sub_y + sub_h + 6) if self._subtitle else (title_y + title_h + 8)
-    bar_rect = snap_rect(rl.Rectangle(content_left, bar_y, rect.x + rect.width - 24 - content_left, bar_h))
+    bar_width = max(120.0, rect.width - 48)
+    bar_y = rect.y + (rect.height - bar_h) / 2
+    bar_rect = snap_rect(rl.Rectangle(content_left, bar_y, bar_width, bar_h))
     self._progress_bar_rect = bar_rect
-    self._header_rect = rl.Rectangle(rect.x, rect.y, rect.width, min(rect.height, bar_y + bar_h - rect.y))
+    self._header_rect = bar_rect
 
     draw_rounded_fill(bar_rect, rl.Color(255, 255, 255, 8), radius_px=bar_h // 2)
     draw_rounded_stroke(bar_rect, rl.Color(255, 255, 255, 14), radius_px=bar_h // 2)
@@ -2648,17 +2648,27 @@ class AetherAdjustorRow(Widget):
     fill_frac = self._scrubber._value_fraction(self._current_value())
     if fill_frac > 0:
       fill_rect = snap_rect(rl.Rectangle(bar_rect.x, bar_rect.y, max(1.0, bar_rect.width * fill_frac), bar_h))
-      draw_rounded_fill(fill_rect, with_alpha(self._color, 180 if active else 120), radius_px=bar_h // 2)
+      fill_alpha = 200 if self._pressed_zone == "header" else (180 if active else 140)
+      draw_rounded_fill(fill_rect, with_alpha(self._color, fill_alpha), radius_px=bar_h // 2)
 
-    draw_text_fit_common(
-      self._font_value,
-      self.formatted_value(),
-      rl.Vector2(bar_rect.x + 12, bar_rect.y + (bar_h - bar_val_fs) / 2),
-      max(1.0, bar_rect.width - 24),
-      bar_val_fs,
-      align_center=True,
-      color=self._style.title_color,
-    )
+    inset = 18
+    title_y = bar_rect.y + (bar_h - title_fs) / 2
+    rl.draw_text_ex(self._font_title, self._title,
+                    rl.Vector2(bar_rect.x + inset, title_y),
+                    title_fs, 0, self._style.title_color)
+
+    value_str = self.formatted_value()
+    value_w = measure_text_cached(self._font_value, value_str, value_fs).x
+    rl.draw_text_ex(self._font_value, value_str,
+                    rl.Vector2(bar_rect.x + bar_rect.width - inset - value_w,
+                               bar_rect.y + (bar_h - value_fs) / 2),
+                    value_fs, 0, self._style.title_color)
+
+    if self._subtitle:
+      sub_fs = 20
+      sub_y = bar_rect.y - sub_fs - 4
+      gui_label(rl.Rectangle(content_left, sub_y, bar_width, sub_fs),
+                self._subtitle, sub_fs, self._style.subtitle_color, FontWeight.NORMAL)
 
     if not active:
       return
@@ -5550,7 +5560,7 @@ class AetherSegmentedControl(Widget):
 
       label = str(_resolve_value(option, ""))
       status = str(_resolve_value(self._statuses[i], ""))
-      title_size = max(26, min(35, int(face_rect.height * (0.28 if has_status else 0.36))))
+      title_size = max(26, min(50, int(face_rect.height * (0.28 if has_status else 0.36))))
       status_size = max(20, min(25, int(face_rect.height * 0.22)))
 
       if has_status:

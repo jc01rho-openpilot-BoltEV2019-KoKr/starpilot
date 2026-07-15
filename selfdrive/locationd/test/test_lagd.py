@@ -1,6 +1,8 @@
 import random
-import numpy as np
 import time
+from types import SimpleNamespace
+
+import numpy as np
 import pytest
 
 from cereal import messaging, log, car
@@ -44,6 +46,18 @@ def process_messages(estimator, lag_frames, n_frames, vego=20.0, rejection_thres
 
 
 class TestLagd:
+  def test_manual_delay_uses_exact_configured_value(self):
+    mocked_CP = car.CarParams(steerActuatorDelay=0.11)
+    estimator = LateralLagEstimator(mocked_CP, DT)
+    estimator.starpilot_toggles = SimpleNamespace(
+      use_custom_steerActuatorDelay=True,
+      steerActuatorDelay=0.30,
+    )
+
+    msg = estimator.get_msg(True)
+
+    assert msg.liveDelay.lateralDelay == pytest.approx(0.30)
+
   def test_read_saved_params(self):
     params = Params()
 

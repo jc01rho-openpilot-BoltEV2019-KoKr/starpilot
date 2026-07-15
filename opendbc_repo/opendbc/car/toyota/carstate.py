@@ -23,6 +23,7 @@ TEMP_STEER_FAULTS = (0, 9, 11, 21, 25)
 # - lka/lta msg drop out: 3 (recoverable)
 # - prolonged high driver torque: 17 (permanent)
 PERM_STEER_FAULTS = (3, 17)
+LKAS_BUTTON_CAR = TSS2_CAR | {CAR.TOYOTA_PRIUS}
 
 
 # Traffic signals for Speed Limit Controller - Credit goes to the DragonPilot team!
@@ -41,6 +42,13 @@ def calculate_speed_limit(cp_cam):
 def calculate_interceptor_gas_pressed(cp) -> bool:
   interceptor_gas = (cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS"] + cp.vl["GAS_SENSOR"]["INTERCEPTOR_GAS2"]) / 2
   return interceptor_gas > 805
+
+
+def create_lkas_button_events(lkas_button: int, prev_lkas_button: int) -> list[structs.CarState.ButtonEvent]:
+  if lkas_button != 0 and lkas_button != prev_lkas_button:
+    return (create_button_events(1, 0, {1: ButtonType.lkas}) +
+            create_button_events(0, 1, {1: ButtonType.lkas}))
+  return []
 
 
 class CarState(CarStateBase):
@@ -220,16 +228,12 @@ class CarState(CarStateBase):
       self.pcm_follow_distance = cp.vl["PCM_CRUISE_2"]["PCM_FOLLOW_DISTANCE"]
 
     buttonEvents = []
-    if self.CP.carFingerprint in TSS2_CAR:
-      # lkas button is wired to the camera
+    if self.CP.carFingerprint in LKAS_BUTTON_CAR:
       prev_lkas_button = self.lkas_button
       self.lkas_button = cp_cam.vl["LKAS_HUD"]["LDA_ON_MESSAGE"]
+      buttonEvents += create_lkas_button_events(self.lkas_button, prev_lkas_button)
 
-      # Cycles between 1 and 2 when pressing the button, then rests back at 0 after ~3s
-      if self.lkas_button != 0 and self.lkas_button != prev_lkas_button:
-        buttonEvents.extend(create_button_events(1, 0, {1: ButtonType.lkas}) +
-                            create_button_events(0, 1, {1: ButtonType.lkas}))
-
+    if self.CP.carFingerprint in TSS2_CAR:
       if self.CP.carFingerprint not in (RADAR_ACC_CAR | SECOC_CAR):
         # distance button is wired to the ACC module (camera or radar)
         prev_distance_button = self.distance_button

@@ -42,6 +42,30 @@ THEME_KEY_CONFIG = {
 COLOR_PRESETS = ["Stock", "#FFFFFF", "#178644", "#3B82F6", "#E63956", "#8B5CF6", "#F59E0B"]
 CAMERA_VIEWS = ["Auto", "Driver", "Standard", "Wide"]
 
+# Mirrors starpilot/ui/qt/offroad/developer_panel.cc:200-218.
+# Keys are the int values stored in DeveloperSidebarMetric{1..7}; values are the
+# human-readable labels shown in both the row value and the picker dialog.
+DEVELOPER_SIDEBAR_METRIC_OPTIONS: dict[int, str] = {
+  0:  "None",
+  1:  "Acceleration: Current",
+  2:  "Acceleration: Max",
+  3:  "Auto Tune: Actuator Delay",
+  4:  "Auto Tune: Friction",
+  5:  "Auto Tune: Lateral Acceleration",
+  6:  "Auto Tune: Steer Ratio",
+  7:  "Auto Tune: Stiffness Factor",
+  8:  "Engagement %: Lateral",
+  9:  "Engagement %: Longitudinal",
+  10: "Lateral Control: Steering Angle",
+  11: "Lateral Control: Torque % Used",
+  12: "Longitudinal Control: Actuator Acceleration Output",
+  13: "Longitudinal MPC: Danger Factor",
+  14: "Longitudinal MPC Jerk: Acceleration",
+  15: "Longitudinal MPC Jerk: Danger Zone",
+  16: "Longitudinal MPC Jerk: Speed Control",
+  17: "Model Name",
+}
+
 def _theme_display_name(value: str) -> str:
     if not value:
         return "Stock"
@@ -209,12 +233,19 @@ class StarPilotAppearanceLayout(_SettingsPage):
         if enabled:
             self._params.put_bool("DeveloperUI", True)
 
+    def _set_developer_metrics(self, enabled):
+        self._params.put_bool("DeveloperMetrics", enabled)
+        if enabled:
+            self._params.put_bool("DeveloperUI", True)
+
     def _build_view(self):
         po = lambda: self._params.get_bool("PedalsOnUI")
         ol = lambda: starpilot_state.car_state.hasOpenpilotLongitudinal
         bsm = lambda: starpilot_state.car_state.hasBSM
         model_on = lambda: self._params.get_bool("ModelUI")
         hud_on = lambda: self._params.get_bool("CustomUI")
+        dev_metrics_on = lambda: self._params.get_bool("DeveloperMetrics")
+        dev_sidebar_on = lambda: self._params.get_bool("DeveloperSidebar")
 
         # ═══ 1. Model & Path Visualization ═══
         self._model_rows = [
@@ -473,7 +504,7 @@ class StarPilotAppearanceLayout(_SettingsPage):
         self._dev_rows = [
             SettingRow("DeveloperSidebar", "toggle", tr_noop("Developer Sidebar"),
                        subtitle=tr_noop("Driving metrics panel on the right"),
-                       get_state=lambda: bool(self._params.get("DeveloperSidebar") or False),
+                       get_state=lambda: self._params.get_bool("DeveloperSidebar"),
                        set_state=lambda s: self._set_developer_sidebar(s)),
             SettingRow("LeadDetectionThreshold", "value", tr_noop("Lead Detection Threshold"),
                        subtitle="",
@@ -488,7 +519,8 @@ class StarPilotAppearanceLayout(_SettingsPage):
             SettingRow("RadarTracksUI", "toggle", tr_noop("Radar Point Display"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("RadarTracksUI"),
-                       set_state=lambda s: self._params.put_bool("RadarTracksUI", s)),
+                       set_state=lambda s: self._params.put_bool("RadarTracksUI", s),
+                       enabled=lambda: starpilot_state.car_state.hasRadar),
             SettingRow("ShowStoppingPoint", "toggle", tr_noop("Show Stop Sign"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("ShowStoppingPoint"),
@@ -499,6 +531,53 @@ class StarPilotAppearanceLayout(_SettingsPage):
                        get_state=lambda: self._params.get_bool("ShowStoppingPointMetrics"),
                        set_state=lambda s: self._params.put_bool("ShowStoppingPointMetrics", s),
                        enabled=lambda: self._params.get_bool("ShowStoppingPoint") and ol()),
+            SettingRow("DeveloperMetrics", "toggle", tr_noop("Developer Metrics"),
+                       subtitle=tr_noop("Performance data, sensor readings, and system metrics."),
+                       get_state=lambda: self._params.get_bool("DeveloperMetrics"),
+                       set_state=lambda s: self._set_developer_metrics(s)),
+            SettingRow("FPSCounter", "toggle", tr_noop("FPS Display"),
+                       subtitle="",
+                       get_state=lambda: self._params.get_bool("FPSCounter"),
+                       set_state=lambda s: self._params.put_bool("FPSCounter", s),
+                       visible=dev_metrics_on),
+            SettingRow("ShowCPU", "toggle", tr_noop("CPU Metrics"),
+                       subtitle="",
+                       get_state=lambda: self._params.get_bool("ShowCPU"),
+                       set_state=lambda s: self._params.put_bool("ShowCPU", s),
+                       visible=dev_metrics_on),
+            SettingRow("ShowGPU", "toggle", tr_noop("GPU Metrics"),
+                       subtitle="",
+                       get_state=lambda: self._params.get_bool("ShowGPU"),
+                       set_state=lambda s: self._params.put_bool("ShowGPU", s),
+                       visible=dev_metrics_on),
+            SettingRow("NumericalTemp", "toggle", tr_noop("Temperature Metrics"),
+                       subtitle="",
+                       get_state=lambda: self._params.get_bool("NumericalTemp"),
+                       set_state=lambda s: self._params.put_bool("NumericalTemp", s),
+                       visible=dev_metrics_on),
+            SettingRow("ShowMemoryUsage", "toggle", tr_noop("RAM Metrics"),
+                       subtitle="",
+                       get_state=lambda: self._params.get_bool("ShowMemoryUsage"),
+                       set_state=lambda s: self._params.put_bool("ShowMemoryUsage", s),
+                       visible=dev_metrics_on),
+            SettingRow("DeveloperSidebarMetrics", "value", tr_noop("Developer Sidebar Metrics"),
+                       subtitle=tr_noop("Pick which metrics appear in the developer sidebar on the driving screen."),
+                       get_value=lambda: tr("Manage"),
+                       on_click=lambda: self._navigate_to("dev_sidebar"),
+                       visible=dev_sidebar_on),
+        ]
+
+        self._dev_sidebar_rows = [
+            SettingRow(
+                f"DeveloperSidebarMetric{i}",
+                "value",
+                tr_noop(f"Metric #{i}"),
+                subtitle="",
+                get_value=lambda i=i: self._get_developer_sidebar_metric_display(i),
+                on_click=lambda i=i: self._show_developer_sidebar_metric_selector(i),
+                visible=dev_sidebar_on,
+            )
+            for i in range(1, 8)
         ]
 
         self._manager_view = AppearanceManagerView(
@@ -557,6 +636,13 @@ class StarPilotAppearanceLayout(_SettingsPage):
             [SettingSection(title="", rows=self._dev_rows)],
             header_title=tr_noop("Advanced Metrics"),
             header_subtitle=tr_noop("Adjust radar plots, lead vehicle info, and stop sign metrics."),
+            panel_style=PANEL_STYLE,
+        )
+        self._sub_panels["dev_sidebar"] = AetherSettingsView(
+            self,
+            [SettingSection(title="", rows=self._dev_sidebar_rows)],
+            header_title=tr_noop("Developer Sidebar Metrics"),
+            header_subtitle=tr_noop("Pick which metrics appear in the developer sidebar on the driving screen."),
             panel_style=PANEL_STYLE,
         )
         self._wire_sub_panels()
@@ -720,6 +806,29 @@ class StarPilotAppearanceLayout(_SettingsPage):
 
         dialog = MultiOptionDialog(tr("Startup Alert"), options, current, callback=on_select)
         gui_app.push_widget(dialog)
+
+    # ── Developer sidebar metric selectors ──
+
+    def _show_developer_sidebar_metric_selector(self, idx: int):
+        key = f"DeveloperSidebarMetric{idx}"
+        current_int = self._params.get_int(key)
+        options = list(DEVELOPER_SIDEBAR_METRIC_OPTIONS.values())
+        current_display = DEVELOPER_SIDEBAR_METRIC_OPTIONS.get(current_int, tr("None"))
+
+        def on_select(res):
+            if res == DialogResult.CONFIRM and dialog.selection:
+                selected_int = next(
+                    (k for k, v in DEVELOPER_SIDEBAR_METRIC_OPTIONS.items() if v == dialog.selection),
+                    0,
+                )
+                self._params.put_int(key, selected_int)
+
+        dialog = MultiOptionDialog(tr(f"Metric #{idx}"), options, current_display, callback=on_select)
+        gui_app.push_widget(dialog)
+
+    def _get_developer_sidebar_metric_display(self, idx: int) -> str:
+        val = self._params.get_int(f"DeveloperSidebarMetric{idx}")
+        return tr(DEVELOPER_SIDEBAR_METRIC_OPTIONS.get(val, "None"))
 
     # ── Boot logo manager ──
 
