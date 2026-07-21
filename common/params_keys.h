@@ -370,6 +370,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"IssueReported", {CLEAR_ON_MANAGER_START, JSON, "{}", "{}"}},
     {"KonikDongleId", {PERSISTENT, STRING, "", "", 0}},
     {"KonikMinutes", {PERSISTENT, INT, "0", "0", 0}},
+    {"LaneCentering", {PERSISTENT, BOOL, "0", "0", 2}},
+    {"LaneCenterOffset", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
     {"LaneChanges", {PERSISTENT, BOOL, "1", "1", 0}},
     {"LaneChangeSmoothing", {PERSISTENT, INT, "10", "10", 1}},
     {"LaneChangeTime", {PERSISTENT, FLOAT, "1.0", "0.0", 1}},
