@@ -407,7 +407,7 @@ class SelfdriveD:
       if self.below_steer_showing and not under_min:
         self.below_steer_showing = False
 
-      # Fully own the event — strip brand emissions, inject our own while active.
+      # Strip brand emissions so the disabled local warning cannot be reintroduced upstream.
       car_events = [e for e in car_events if e.name.raw != EventName.belowSteerSpeed]
       show_alert = self.below_steer_showing and under_min
 
@@ -420,7 +420,8 @@ class SelfdriveD:
           self.last_below_steer_speed_alert_time = now
 
       if show_alert:
-        self.events.add(EventName.belowSteerSpeed)
+        # self.events.add(EventName.belowSteerSpeed)  # Disable the low-speed steering warning.
+        pass
 
       self.events.add_from_msg(car_events)
 
