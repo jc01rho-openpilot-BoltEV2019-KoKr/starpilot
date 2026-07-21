@@ -30,6 +30,7 @@ starpilot/
 | ------------------- | ---------------------------------------- | ------------------------------------------------- |
 | 새 토글/설정 추가   | common/starpilot_variables.py            | StarPilotVariables 클래스 + SimpleNamespace 토글   |
 | 새 제어 모듈 추가   | controls/starpilot_planner.py            | __init__에서 compose, update()에서 호출           |
+| 차선 중앙 보정      | ../selfdrive/controls/lib/drive_helpers.py | LaneCenteringController; controlsd.py에서 통합    |
 | 속도 제한 로직 수정 | controls/lib/speed_limit_controller.py   | Mapbox + 지도 + 비전 통합                         |
 | 곡선 속도 제어      | controls/lib/curve_speed_controller.py   | 학습형 곡선 속도                                  |
 | CEM 수정            | controls/lib/conditional_experimental_mode.py | 곡선/리드/신호 자동 experimental 전환        |
