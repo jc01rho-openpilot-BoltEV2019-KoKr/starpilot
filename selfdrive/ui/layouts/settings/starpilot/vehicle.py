@@ -20,6 +20,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   COMPACT_PANEL_METRICS,
   DEFAULT_PANEL_STYLE,
   PanelManagerView,
+  RowToggleTile,
   SPACING,
   SettingRow,
   TileGrid,
@@ -86,14 +87,13 @@ class VehicleSettingsManagerView(PanelManagerView):
     super().__init__()
     self._controller = controller
     self._shell_rect = rl.Rectangle(0, 0, 0, 0)
-    if PANEL_STYLE.toggle_row_mode:
+    if self.PANEL_STYLE.toggle_row_mode:
       self._toggle_grid = TileGrid(columns=1, padding=SPACING.md, min_tile_height=TOGGLE_MIN_HEIGHT)
     else:
       self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
     self.register_page_grid(self._toggle_grid)
     self._last_make = ""
     self._last_model = ""
-    self._left_row_height = ROW_HEIGHT
 
   @property
   def vertical_scrolling_disabled(self) -> bool:
@@ -133,7 +133,11 @@ class VehicleSettingsManagerView(PanelManagerView):
     return rows
 
   def _combo_value(self, keys: tuple[str, ...]) -> str:
-    return "  |  ".join(self._controller._get_action_name(k) for k in keys)
+    first_action = self._controller._get_action_name(keys[0])
+    mapped_count = sum(1 for k in keys if self._controller._params.get_int(k) != 0)
+    if mapped_count > 1:
+      return f"{first_action} (+{mapped_count - 1})"
+    return first_action
 
   def _build_steering_rows(self) -> list[SettingRow]:
     cs = starpilot_state.car_state
@@ -186,65 +190,34 @@ class VehicleSettingsManagerView(PanelManagerView):
     subtitle = row.disabled_label if not enabled and row.disabled_label else (tr(row.subtitle) if row.subtitle else "")
 
     row_h = rect.height
-    if row_h < 100:
-      title_size = max(26, int(49 * row_h / 100))
-      subtitle = ""
+    if row_h < 90:
+      title_size = 36
+      subtitle_size = 26
+      value_size = 32
+    elif row_h < 105:
+      title_size = 42
+      subtitle_size = 32
+      value_size = 38
     else:
       title_size = 49
+      subtitle_size = 38
+      value_size = 44
 
-    if row.id.startswith("combo:"):
-      bg = rl.Color(255, 255, 255, 4)
-      if pressed:
-        bg = rl.Color(255, 255, 255, 12)
-      elif hovered:
-        bg = rl.Color(255, 255, 255, 8)
-      draw_rounded_fill(rect, bg, radius_px=6)
-      draw_rounded_stroke(rect, rl.Color(255, 255, 255, 6), radius_px=6)
-      if not is_last:
-        sep_y = int(rect.y + rect.height - 1)
-        rl.draw_line(int(rect.x + 22), sep_y, int(rect.x + rect.width - 22), sep_y, rl.Color(255, 255, 255, 16))
-
-      font_m = gui_app.font(FontWeight.MEDIUM)
-      rl.draw_text_ex(font_m, tr(row.title),
-                      rl.Vector2(rect.x + 24, rect.y + 20), title_size, 0, PANEL_STYLE.title_color)
-
-      value_text = row.get_value() if row.get_value else ""
-      if value_text:
-        title_w = measure_text_cached(font_m, tr(row.title), title_size).x
-        value_fs = max(24, int(44 * row_h / 100)) if row_h < 100 else 44
-        value_right = int(rect.x + rect.width - 90 - 16)
-        value_left = int(rect.x + 24 + int(title_w) + 24)
-        avail = value_right - value_left
-        tw = measure_text_cached(font_m, value_text, value_fs).x
-        if tw <= avail:
-          x = value_right - tw
-          rl.draw_text_ex(font_m, value_text, rl.Vector2(x, rect.y + 20), value_fs, 0, PANEL_STYLE.title_color)
-        else:
-          draw_text_fit_common(font_m, value_text, rl.Vector2(value_left, rect.y + 20),
-                               avail, value_fs, color=PANEL_STYLE.title_color)
-
-      chevron_r = rl.Rectangle(rect.x + rect.width - 90, rect.y + 18, 26, 26)
-      rl.draw_text_ex(font_m, ">",
-                      rl.Vector2(chevron_r.x, chevron_r.y),
-                      26, 0, PANEL_STYLE.muted_color)
-      return
-
-    if row.type == "value":
-      value_size = max(24, int(44 * row_h / 100)) if row_h < 100 else 44
+    if row.type == "value" or row.id.startswith("combo:"):
       value_text = row.get_value() if row.get_value else ""
       draw_settings_list_row(rect, title=tr(row.title), subtitle=subtitle,
                              value=value_text, enabled=enabled,
                              hovered=hovered, pressed=pressed,
                              is_last=is_last, show_chevron=row.on_click is not None,
-                             title_size=title_size, subtitle_size=38, value_size=value_size,
-                               style=PANEL_STYLE)
+                             title_size=title_size, subtitle_size=subtitle_size, value_size=value_size,
+                             style=PANEL_STYLE)
     elif row.type == "toggle":
       toggle_value = row.get_state() if row.get_state else False
       draw_settings_list_row(rect, title=tr(row.title), subtitle=subtitle,
                              toggle_value=toggle_value, enabled=enabled,
                              hovered=hovered, pressed=pressed,
                              is_last=is_last, show_chevron=False,
-                             title_size=title_size, subtitle_size=38,
+                             title_size=title_size, subtitle_size=subtitle_size,
                              style=PANEL_STYLE)
 
   def _draw_section(self, y: float, x: float, width: float, title: str, rows: list[SettingRow], row_height: float = ROW_HEIGHT) -> float:
@@ -315,13 +288,11 @@ class VehicleSettingsManagerView(PanelManagerView):
     tiles_h = 0.0
     if self._toggle_grid.tiles:
       if self._uses_two_columns(width):
-        if not PANEL_STYLE.toggle_row_mode:
-          self._toggle_grid._columns = 2
+        self._toggle_grid._columns = 1
         col_w = self._column_width(width)
         tiles_h = self.measure_page_grid_height(self._toggle_grid, col_w - 24)
       else:
-        if not PANEL_STYLE.toggle_row_mode:
-          self._toggle_grid._columns = 3
+        self._toggle_grid._columns = 2
         tiles_h = self.measure_page_grid_height(self._toggle_grid, width - 24)
 
     if self._uses_two_columns(width):
@@ -330,23 +301,20 @@ class VehicleSettingsManagerView(PanelManagerView):
       if steering_rows:
         subsection_overhead += hdr_oh
 
-      left_content_natural = total_rows * ROW_HEIGHT + subsection_overhead
-
-      available_content_h = self._scroll_rect.height if self._scroll_rect else max(left_content_natural, tiles_h)
-
-      if left_content_natural > available_content_h and total_rows > 0:
-        self._left_row_height = max(48.0, available_content_h / total_rows)
+      avail_h = self._scroll_rect.height if self._scroll_rect else 760.0
+      avail_for_rows = max(100.0, avail_h - subsection_overhead)
+      if total_rows > 0:
+        self._left_row_height = max(76.0, min(ROW_HEIGHT, avail_for_rows / total_rows))
       else:
         self._left_row_height = ROW_HEIGHT
 
       left_content_h = total_rows * self._left_row_height + subsection_overhead
-      self._container_h = max(left_content_h, tiles_h)
+      self._container_h = min(avail_h, max(left_content_h, tiles_h))
 
       total_h = self._compute_two_column_height(self._container_h)
       self._container_h = total_h
       return total_h
 
-    self._left_row_height = ROW_HEIGHT
     hdr_oh = GROUP_HEADER_HEIGHT + GROUP_HEADER_LINE_GAP + GROUP_HEADER_GAP
     identity_natural_h = hdr_oh + 4 + len(identity_rows) * ROW_HEIGHT
     steering_natural_h = hdr_oh + 4 + len(steering_rows) * ROW_HEIGHT
@@ -464,7 +432,7 @@ class VehicleSettingsManagerView(PanelManagerView):
 
   def _rebuild_toggle_grid(self):
     defs = self._build_driving_toggles()
-    page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
+    page_size = min(4, self._compute_page_size(TOGGLE_ROW_HEIGHT))
     self._set_toggle_pages([defs[i:i+page_size] for i in range(0, len(defs), page_size)])
 
   def _check_rebuild_grid(self):
