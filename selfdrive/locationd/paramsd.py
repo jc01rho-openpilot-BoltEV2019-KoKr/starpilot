@@ -26,6 +26,14 @@ MIN_ACTIVE_SPEED = 1.0
 LOW_ACTIVE_SPEED = 10.0
 
 
+def resolve_vehicle_model_params(learned_steer_ratio: float, learned_stiffness: float, starpilot_toggles) -> tuple[float, float]:
+  if getattr(starpilot_toggles, "force_auto_tune_off", False):
+    return float(starpilot_toggles.steerRatio), 1.0
+
+  steer_ratio = starpilot_toggles.steerRatio if getattr(starpilot_toggles, "use_custom_steerRatio", False) else learned_steer_ratio
+  return float(steer_ratio), float(learned_stiffness)
+
+
 class VehicleParamsLearner:
   def __init__(self, CP: car.CarParams, steer_ratio: float, stiffness_factor: float, angle_offset: float, P_initial: np.ndarray | None = None):
     self.kf = CarKalman(GENERATED_DIR)
@@ -165,8 +173,11 @@ class VehicleParamsLearner:
     liveParameters = msg.liveParameters
     liveParameters.posenetValid = True
     liveParameters.sensorValid = sensors_valid
-    liveParameters.steerRatio = float(x[States.STEER_RATIO].item() if not self.starpilot_toggles.use_custom_steerRatio else self.starpilot_toggles.steerRatio)
-    liveParameters.stiffnessFactor = float(x[States.STIFFNESS].item())
+    liveParameters.steerRatio, liveParameters.stiffnessFactor = resolve_vehicle_model_params(
+      float(x[States.STEER_RATIO].item()),
+      float(x[States.STIFFNESS].item()),
+      self.starpilot_toggles,
+    )
     liveParameters.roll = float(self.roll)
     liveParameters.angleOffsetAverageDeg = float(self.avg_angle_offset)
     liveParameters.angleOffsetDeg = float(self.angle_offset)

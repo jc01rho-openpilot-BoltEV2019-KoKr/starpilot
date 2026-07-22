@@ -1,8 +1,9 @@
 import random
+from types import SimpleNamespace
 import numpy as np
 
 from cereal import messaging
-from openpilot.selfdrive.locationd.paramsd import retrieve_initial_vehicle_params, migrate_cached_vehicle_params_if_needed
+from openpilot.selfdrive.locationd.paramsd import resolve_vehicle_model_params, retrieve_initial_vehicle_params, migrate_cached_vehicle_params_if_needed
 from openpilot.selfdrive.locationd.models.car_kf import CarKalman
 from openpilot.selfdrive.locationd.test.test_locationd_scenarios import TEST_ROUTE
 from openpilot.selfdrive.test.process_replay.migration import migrate, migrate_carParams
@@ -20,6 +21,30 @@ def get_random_live_parameters(CP):
 
 
 class TestParamsd:
+  def test_force_auto_tune_off_locks_vehicle_model_params(self):
+    toggles = SimpleNamespace(force_auto_tune_off=True, use_custom_steerRatio=True, steerRatio=16.8)
+
+    steer_ratio, stiffness = resolve_vehicle_model_params(17.2, 0.84, toggles)
+
+    assert steer_ratio == 16.8
+    assert stiffness == 1.0
+
+  def test_custom_steer_ratio_keeps_learned_stiffness(self):
+    toggles = SimpleNamespace(force_auto_tune_off=False, use_custom_steerRatio=True, steerRatio=16.8)
+
+    steer_ratio, stiffness = resolve_vehicle_model_params(17.2, 0.84, toggles)
+
+    assert steer_ratio == 16.8
+    assert stiffness == 0.84
+
+  def test_vehicle_model_learning_remains_default(self):
+    toggles = SimpleNamespace(force_auto_tune_off=False, use_custom_steerRatio=False, steerRatio=16.8)
+
+    steer_ratio, stiffness = resolve_vehicle_model_params(17.2, 0.84, toggles)
+
+    assert steer_ratio == 17.2
+    assert stiffness == 0.84
+
   def test_read_saved_params(self):
     params = Params()
 

@@ -1,5 +1,8 @@
+import numpy as np
+
 from opendbc.can import CANPacker
-from opendbc.car import Bus, structs
+from opendbc.car import Bus, DT_CTRL, structs
+from opendbc.car.common.filter_simple import FirstOrderFilter
 from opendbc.car.lateral import apply_std_steer_angle_limits
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.nissan import nissancan
@@ -13,6 +16,7 @@ class CarController(CarControllerBase):
     super().__init__(dbc_names, CP)
     self.car_fingerprint = CP.carFingerprint
 
+    self.angle_filter = FirstOrderFilter(0.0, 0.1, DT_CTRL)
     self.apply_angle_last = 0
 
     self.packer = CANPacker(dbc_names[Bus.pt])
@@ -27,8 +31,15 @@ class CarController(CarControllerBase):
     ### STEER ###
     steer_hud_alert = 1 if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw) else 0
 
+    # Nissan EPS is sensitive to jitter in angle requests at low speed and high steering angles.
+    if CC.latActive:
+      self.angle_filter.update_alpha(float(np.interp(CS.out.vEgo, [5, 10, 20], [0.2, 0.1, 0.0])))
+      self.angle_filter.update(actuators.steeringAngleDeg)
+    else:
+      self.angle_filter.x = actuators.steeringAngleDeg
+
     # windup slower
-    self.apply_angle_last = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_angle_last, CS.out.vEgoRaw,
+    self.apply_angle_last = apply_std_steer_angle_limits(self.angle_filter.x, self.apply_angle_last, CS.out.vEgoRaw,
                                                          CS.out.steeringAngleDeg, CC.latActive, CarControllerParams.ANGLE_LIMITS)
 
     lkas_max_torque = 0

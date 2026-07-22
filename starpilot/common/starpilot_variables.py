@@ -15,11 +15,13 @@ import numpy as np
 from cereal import car, custom, log
 from opendbc.car import gen_empty_fingerprint
 from opendbc.car.car_helpers import interfaces
+from opendbc.car.chrysler.values import JEEPS as CHRYSLER_JEEPS
 from opendbc.car.gm.values import CAR as GM_CAR, EV_CAR as GM_EV_CAR, GMFlags
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, EV_CAR as HYUNDAI_EV_CAR, HyundaiFlags, HyundaiStarPilotSafetyFlags
 from opendbc.car.interfaces import TORQUE_SUBSTITUTE_PATH, CarInterfaceBase, GearShifter
 from opendbc.car.mock.values import CAR as MOCK
 from opendbc.car.subaru.values import SubaruFlags
+from opendbc.car.tesla.values import CAR as TESLA_CAR
 from opendbc.car.toyota.values import CAR as TOYOTA_CAR, ToyotaStarPilotFlags
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.constants import CV
@@ -162,6 +164,24 @@ CANCEL_BUTTON_MAPPINGS = (
 
 AOL_LKAS_MIGRATION_KEY = "AOLLKASMigratedToButtonControl"
 
+
+def sync_reboot_marker(marker_path: Path, enabled: bool, params: Params) -> bool:
+  """Synchronize a boot-time marker and ask manager for a guarded reboot."""
+  if marker_path.is_file() == enabled:
+    return False
+
+  marker_path.parent.mkdir(parents=True, exist_ok=True)
+  if enabled:
+    marker_path.touch()
+  else:
+    marker_path.unlink(missing_ok=True)
+
+  # Manager defers DoReboot while onroad. Calling HARDWARE.reboot() here can
+  # abruptly reset the device if this constructor runs after engagement.
+  params.put_bool("DoReboot", True)
+  return True
+
+
 DEVELOPER_SIDEBAR_METRICS = {
   "NONE": 0,
   "ACCELERATION_CURRENT": 1,
@@ -264,13 +284,6 @@ EXCLUDED_KEYS = {
   "UptimeOffroad"
 }
 
-TUNING_LEVELS = {
-  "MINIMAL": 0,
-  "STANDARD": 1,
-  "ADVANCED": 2,
-  "DEVELOPER": 3
-}
-
 # Shared params handles for modules that import these from starpilot_variables.
 params = Params(return_defaults=True)
 params_memory = Params(memory=True)
@@ -339,6 +352,9 @@ def get_starpilot_toggles(sm=messaging.SubMaster(["starpilotPlan"])):
 
   toggles.force_offroad = get_starpilot_toggles._params.get_bool("ForceOffroad")
   toggles.force_onroad = get_starpilot_toggles._params.get_bool("ForceOnroad")
+  # Controller selection happens before the first live StarPilot broadcast. Do
+  # not let a cached CarParams/controller type hide the persisted user request.
+  toggles.force_torque_controller = get_starpilot_toggles._params.get_bool("ForceTorqueController")
   return toggles
 
 @cache
@@ -396,8 +412,6 @@ class StarPilotVariables:
     toggle = self.starpilot_toggles
 
     self.default_values = {key.decode(): self.params.get_default_value(key) for key in self.params.all_keys()}
-    self.tuning_levels = {key.decode(): self.params.get_tuning_level(key) for key in self.params.all_keys()}
-
     branch = get_build_metadata().channel
     self.release_branch = branch == "StarPilot"
     self.staging_branch = branch == "StarPilot-Staging"
@@ -408,8 +422,6 @@ class StarPilotVariables:
     # Development/vetting branches are no longer gated into dashcam mode.
     toggle.block_user = False
 
-    toggle.tuning_level = self.params.get("TuningLevel") if self.params.get_bool("TuningLevelConfirmed") else TUNING_LEVELS["ADVANCED"]
-
     device_management = self.get_value("DeviceManagement")
 
     toggle.use_higher_bitrate = device_management
@@ -418,24 +430,12 @@ class StarPilotVariables:
     toggle.use_higher_bitrate &= not self.get_value("DisableOnroadUploads")
     toggle.use_higher_bitrate &= not self.vetting_branch
 
-    HD_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if not HD_PATH.is_file() and toggle.use_higher_bitrate:
-      HD_PATH.touch()
-      HARDWARE.reboot()
-    elif HD_PATH.is_file() and not toggle.use_higher_bitrate:
-      HD_PATH.unlink()
-      HARDWARE.reboot()
+    sync_reboot_marker(HD_PATH, toggle.use_higher_bitrate, self.params_raw)
 
     toggle.use_konik_server = device_management
     toggle.use_konik_server &= self.get_value("UseKonikServer")
 
-    KONIK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if not KONIK_PATH.is_file() and toggle.use_konik_server:
-      KONIK_PATH.touch()
-      HARDWARE.reboot()
-    elif KONIK_PATH.is_file() and not toggle.use_konik_server:
-      KONIK_PATH.unlink()
-      HARDWARE.reboot()
+    sync_reboot_marker(KONIK_PATH, toggle.use_konik_server, self.params_raw)
 
     stock_colors_json = (STOCK_THEME_PATH / "colors/colors.json")
     self.stock_colors = json.loads(stock_colors_json.read_text()) if stock_colors_json.is_file() else {}
@@ -449,8 +449,8 @@ class StarPilotVariables:
         return f"#{color.get('alpha', 255):02X}{color.get('red', 255):02X}{color.get('green', 255):02X}{color.get('blue', 255):02X}"
     return "#FFFFFFFF"
 
-  def get_value(self, key, cast=bool, condition=True, conversion=None, default=None, min=None, max=None, respect_tuning_level=True):
-    if not condition or (respect_tuning_level and self.starpilot_toggles.tuning_level < self.tuning_levels.get(key, 0)):
+  def get_value(self, key, cast=bool, condition=True, conversion=None, default=None, min=None, max=None):
+    if not condition:
       if default is not None:
         value = default
       elif cast is bool:
@@ -498,9 +498,7 @@ class StarPilotVariables:
     return value
 
   def get_button_function(self, key, condition=True):
-    # Tuning level should hide wheel-mapping controls, not silently revert their
-    # runtime behavior to defaults after the driver has configured them.
-    return self.get_value(key, cast=float, condition=condition, respect_tuning_level=False)
+    return self.get_value(key, cast=float, condition=condition)
 
   def migrate_prius_cluster_offset(self, car_model):
     if car_model not in PRIUS_CLUSTER_OFFSET_CARS or self.params_raw.get_bool(PRIUS_CLUSTER_OFFSET_MIGRATION_KEY):
@@ -582,9 +580,10 @@ class StarPilotVariables:
       self.params.put_float("SteerDelay", full_stock_delay)
     self.params.put_bool(STEER_DELAY_MODE_MIGRATION_KEY, True)
 
-  def update(self, holiday_theme="stock", started=False):
+  def update(self, holiday_theme="stock", started=False, clear_update_flag=True):
     toggle = self.starpilot_toggles
-    toggle.tuning_level = self.params.get("TuningLevel") if self.params.get_bool("TuningLevelConfirmed") else TUNING_LEVELS["ADVANCED"]
+    # CarParams uses this value to select the matching Panda safety configuration.
+    toggle.tesla_cooperative_steering = self.params.get_bool("TeslaCoopSteering")
 
     fallback_platform = GM_CAR.CHEVROLET_BOLT_ACC_2022_2023 if HARDWARE.get_device_type() == "pc" else MOCK.MOCK
 
@@ -708,7 +707,9 @@ class StarPilotVariables:
     advanced_lateral_tuning = self.get_value("AdvancedLateralTune")
     toggle.lane_centering = self.get_value("LaneCentering", condition=advanced_lateral_tuning)
     toggle.force_auto_tune = self.get_value("ForceAutoTune", condition=advanced_lateral_tuning and not has_auto_tune and is_torque_car and not is_angle_car)
-    toggle.force_auto_tune_off = self.get_value("ForceAutoTuneOff", condition=advanced_lateral_tuning and has_auto_tune and is_torque_car and not is_angle_car)
+    # Force-off is also meaningful on manually tuned torque cars: it locks the
+    # vehicle-model parameters instead of allowing paramsd to learn over them.
+    toggle.force_auto_tune_off = self.get_value("ForceAutoTuneOff", condition=advanced_lateral_tuning and is_torque_car and not is_angle_car)
     toggle.flm_active_profile_id = self.params.get("FLMActiveProfileId", encoding="utf-8") or ""
     toggle.flm_trial_applied = self.params.get_bool("FLMTrialApplied")
     flm_overrides_raw = self.params.get("FLMActiveOverrides", encoding="utf-8") or ""
@@ -860,12 +861,12 @@ class StarPilotVariables:
     relaxed_follow_low = float(self.get_value("RelaxedFollow", cast=float, condition=toggle.custom_personalities, min=1, max=MAX_T_FOLLOW))
     relaxed_follow_high = float(self.get_value("RelaxedFollowHigh", cast=float, condition=toggle.custom_personalities, min=1, max=MAX_T_FOLLOW))
     toggle.relaxed_follow = [relaxed_follow_low, relaxed_follow_high]
-    toggle.traffic_mode_jerk_acceleration = [self.get_value("TrafficJerkAcceleration", cast=float, condition=toggle.custom_personalities, conversion=0.01, min=0.25, max=2.0), toggle.aggressive_jerk_acceleration]
-    toggle.traffic_mode_jerk_deceleration = [self.get_value("TrafficJerkDeceleration", cast=float, condition=toggle.custom_personalities, conversion=0.01, min=0.25, max=2.0), toggle.aggressive_jerk_deceleration]
-    toggle.traffic_mode_jerk_danger = [self.get_value("TrafficJerkDanger", cast=float, condition=toggle.custom_personalities, conversion=0.01, min=0.25, max=2.0), toggle.aggressive_jerk_danger]
-    toggle.traffic_mode_jerk_speed = [self.get_value("TrafficJerkSpeed", cast=float, condition=toggle.custom_personalities, conversion=0.01, min=0.25, max=2.0), toggle.aggressive_jerk_speed]
-    toggle.traffic_mode_jerk_speed_decrease = [self.get_value("TrafficJerkSpeedDecrease", cast=float, condition=toggle.custom_personalities, conversion=0.01, min=0.25, max=2.0), toggle.aggressive_jerk_speed_decrease]
-    toggle.traffic_mode_follow = [float(self.get_value("TrafficFollow", cast=float, condition=toggle.custom_personalities, min=0.5, max=MAX_T_FOLLOW)), toggle.aggressive_follow[0]]
+    toggle.traffic_mode_jerk_acceleration = [self.get_value("TrafficJerkAcceleration", cast=float, condition=toggle.custom_personalities, conversion=0.01, min=0.25, max=2.0), toggle.relaxed_jerk_acceleration]
+    toggle.traffic_mode_jerk_deceleration = [self.get_value("TrafficJerkDeceleration", cast=float, condition=toggle.custom_personalities, conversion=0.01, min=0.25, max=2.0), toggle.relaxed_jerk_deceleration]
+    toggle.traffic_mode_jerk_danger = [self.get_value("TrafficJerkDanger", cast=float, condition=toggle.custom_personalities, conversion=0.01, min=0.25, max=2.0), toggle.relaxed_jerk_danger]
+    toggle.traffic_mode_jerk_speed = [self.get_value("TrafficJerkSpeed", cast=float, condition=toggle.custom_personalities, conversion=0.01, min=0.25, max=2.0), toggle.relaxed_jerk_speed]
+    toggle.traffic_mode_jerk_speed_decrease = [self.get_value("TrafficJerkSpeedDecrease", cast=float, condition=toggle.custom_personalities, conversion=0.01, min=0.25, max=2.0), toggle.relaxed_jerk_speed_decrease]
+    toggle.traffic_mode_follow = [float(self.get_value("TrafficFollow", cast=float, condition=toggle.custom_personalities, min=0.5, max=MAX_T_FOLLOW)), toggle.relaxed_follow[0]]
 
     custom_themes = self.get_value("CustomThemes")
     toggle.boot_logo = self.get_value("BootLogo", cast=None, default="starpilot")
@@ -1047,7 +1048,7 @@ class StarPilotVariables:
     # The jerk factor is derived from a sinusoidal lane-change profile: j = pi^3 * W / T^3,
     # with 1.3x headroom. Only jerk (curvature rate) is shaped; lateral accel stays at the
     # stock envelope so the end-of-maneuver arrest is never starved of authority.
-    pace = self.get_value("LaneChangeSmoothing", cast=int, condition=toggle.lane_changes) or 10
+    pace = self.get_value("LaneChangeSmoothing", cast=int, condition=toggle.lane_changes) or 5
     pace = max(1, min(10, pace))
     lane_w = 3.5
     t_target = 3.0 + (10 - pace) * 5.0 / 9.0
@@ -1057,9 +1058,10 @@ class StarPilotVariables:
     toggle.lane_change_time_max = 10.0 + (10 - pace) * 2.0 / 9.0
 
     lateral_tuning = self.get_value("LateralTune")
-    toggle.force_torque_controller = self.get_value("ForceTorqueController", condition=lateral_tuning and not is_torque_car and not is_angle_car)
+    toggle.force_torque_controller = self.get_value("ForceTorqueController", condition=lateral_tuning and not is_angle_car)
     toggle.nnff = self.get_value("NNFF", condition=lateral_tuning and has_nnff and not is_angle_car)
     toggle.nnff_lite = self.get_value("NNFFLite", condition=not toggle.nnff and lateral_tuning and not is_angle_car)
+    toggle.nav_desires_allowed = self.get_value("NavDesiresAllowed")
     toggle.use_turn_desires = self.get_value("TurnDesires", condition=lateral_tuning)
 
     lkas_button_control = self.get_button_function("LKASButtonControl", condition=toggle.car_make != "subaru")
@@ -1174,14 +1176,6 @@ class StarPilotVariables:
       ]
     else:
       toggle.custom_accel_profile_values = [custom_accel_defaults[key] for key in CUSTOM_ACCEL_PROFILE_PARAM_KEYS]
-    toggle.human_acceleration = self.get_value("HumanAcceleration", condition=longitudinal_tuning)
-    toggle.prioritize_smooth_following = self.get_value("PrioritizeSmoothFollowing", condition=longitudinal_tuning)
-    if longitudinal_tuning and self.params_raw.get("PrioritizeSmoothFollowing") is None:
-      legacy_coast_value = self.params_raw.get("CoastUpToLeads")
-      if legacy_coast_value is not None:
-        toggle.prioritize_smooth_following = not self.params_raw.get_bool("CoastUpToLeads")
-      else:
-        toggle.prioritize_smooth_following = False
     toggle.human_lane_changes = has_radar and self.get_value("HumanLaneChanges", condition=longitudinal_tuning)
     toggle.nav_longitudinal_allowed = toggle.openpilot_longitudinal and self.get_value("NavLongitudinalAllowed", condition=longitudinal_tuning)
     # Keep lead detection sensitivity normalized even when longitudinal tuning is disabled.
@@ -1192,7 +1186,6 @@ class StarPilotVariables:
       lead_detection_probability = float(np.clip(lead_detection_probability * 0.01, 0.25, 0.5))
     toggle.lead_detection_probability = lead_detection_probability
     toggle.recovery_power = self.get_value("RecoveryPower", cast=float, condition=longitudinal_tuning, default=1.0, min=0.5, max=2.0)
-    toggle.stop_distance = self.get_value("StopDistance", cast=float, condition=longitudinal_tuning, default=6.0)
     toggle.taco_tune = self.get_value("TacoTune", condition=longitudinal_tuning)
 
     toggle.model = self.get_value("Model", cast=None, default="sc2")
@@ -1419,6 +1412,16 @@ class StarPilotVariables:
     toggle.subaru_sng = self.get_value("SubaruSNG", condition=toggle.car_make == "subaru" and not (CP.flags & SubaruFlags.GLOBAL_GEN2 or CP.flags & SubaruFlags.HYBRID))
     toggle.subaru_sng_manual_parking_brake = self.get_value("SubaruSNGManualParkingBrake", condition=toggle.subaru_sng)
 
+    toggle.jeep_brake_hold = self.get_value(
+      "JeepBrakeHold",
+      condition=toggle.car_make == "chrysler" and toggle.car_model in CHRYSLER_JEEPS,
+    )
+
+    toggle.tesla_cooperative_steering = self.get_value(
+      "TeslaCoopSteering",
+      condition=toggle.car_make == "tesla" and toggle.car_model == TESLA_CAR.TESLA_MODEL_3,
+    )
+
     toggle.tethering_config = self.get_value("TetheringEnabled", cast=float)
 
     toyota_doors = self.get_value("ToyotaDoors", condition=toggle.car_make == "toyota")
@@ -1451,4 +1454,5 @@ class StarPilotVariables:
     toggle.volt_sng = self.get_value("VoltSNG", condition=toggle.car_model in LEGACY_VOLT_STOCK_ACC_CARS)
 
     process_starpilot_toggles.cache_clear()
-    self.params_memory.remove("StarPilotTogglesUpdated")
+    if clear_update_flag:
+      self.params_memory.remove("StarPilotTogglesUpdated")

@@ -156,6 +156,9 @@ class CarInterface(CarInterfaceBase):
 
     if candidate == CAR.PORSCHE_MACAN_MK1:
       ret.steerActuatorDelay = 0.07
+    elif candidate == CAR.VOLKSWAGEN_TAOS_MK1:
+      # Logged Taos braking response aligns about 0.1 s later than the MQB default.
+      ret.longitudinalActuatorDelay = 0.25
 
     ret.pcmCruise = not ret.openpilotLongitudinalControl
     ret.autoResumeSng = ret.minEnableSpeed == -1

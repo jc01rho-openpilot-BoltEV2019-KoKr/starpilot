@@ -1,5 +1,7 @@
 from openpilot.common.params import ParamKeyType
 from openpilot.starpilot.common.favorite_slots import (
+  FAVORITE_ACTION_ACCEL_COUNTER,
+  FAVORITE_ACTION_DISTANCE_INCREASE,
   FAVORITE_SLOTS_PARAM,
   default_favorite_slots,
   load_favorite_slots,
@@ -30,6 +32,12 @@ class FakeParams:
 
   def put_bool_nonblocking(self, key, value):
     self.put_bool(key, value)
+
+  def get_int(self, key, default=0):
+    return int(self.store.get(key, default))
+
+  def put_int(self, key, value):
+    self.store[key] = int(value)
 
   def get_type(self, key):
     return self.types.get(key, ParamKeyType.STRING)
@@ -78,3 +86,14 @@ def test_toggle_favorite_slot_flips_bool_and_requests_refresh():
   assert toggle_favorite_slot(0, params, memory) is True
   assert params.get_bool("RedneckCruise") is True
   assert memory.get_bool("StarPilotTogglesUpdated") is True
+
+
+def test_toggle_favorite_slot_action_increments_virtual_button_counter():
+  params = FakeParams()
+  memory = FakeParams()
+  params.put(FAVORITE_SLOTS_PARAM, [
+    {"enabled": True, "show_onroad": True, "key": FAVORITE_ACTION_DISTANCE_INCREASE, "label": "Distance + / RES"},
+  ])
+
+  assert toggle_favorite_slot(0, params, memory) is True
+  assert memory.get_int(FAVORITE_ACTION_ACCEL_COUNTER) == 1

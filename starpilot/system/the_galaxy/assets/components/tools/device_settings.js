@@ -8,12 +8,48 @@ const COLOR_UI_DEFAULTS = {
   PathColor: "#30ff9c",
 }
 const FAVORITE_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
+const FAVORITE_ACTION_PREFIX = "__starpilot_favorite_action__:"
+const GALAXY_DEVELOPER_MODE_KEY = "GalaxyDeveloperMode"
+const HIDDEN_SECTION_NAMES = new Set(["Model & Customization"])
+const HIDDEN_SETTING_KEYS = new Set(["DisableWideRoad", "HumanAcceleration", "ReverseCruise"])
+const GM_MAKES = ["Buick", "Cadillac", "Chevrolet", "GMC", "Holden"]
+const HKG_MAKES = ["Genesis", "Hyundai", "Kia"]
+const VEHICLE_SETTING_MAKES = {
+  TeslaCoopSteering: ["Tesla"],
+  NAPRadarEnabled: ["Tesla"],
+  NAPRadarBehindNosecone: ["Tesla"],
+  NAPRadarOffset: ["Tesla"],
+  NAPPedalEnabled: ["Tesla"],
+  NAPPedalCanBus: ["Tesla"],
+  NAPAdaptiveAccel: ["Tesla"],
+  NAPPedalCalibDone: ["Tesla"],
+  NAPPedalCalibFactor: ["Tesla"],
+  NAPPedalCalibZero: ["Tesla"],
+  GMPedalLongitudinal: GM_MAKES,
+  GMDashSpoofOffsets: GM_MAKES,
+  IgnoreIgnitionLine: GM_MAKES,
+  LongPitch: GM_MAKES,
+  RemoteStartBootsComma: GM_MAKES,
+  HKGRemoteStartBootsComma: HKG_MAKES,
+  VoltSNG: ["Chevrolet", "Holden"],
+  GMAutoHold: ["Chevrolet", "Holden"],
+  VoltOnePedalMode: ["Chevrolet", "Holden"],
+  RemapCancelToDistance: ["Chevrolet", "Holden"],
+  JeepBrakeHold: ["Jeep"],
+  SubaruSNG: ["Subaru"],
+  SubaruSNGManualParkingBrake: ["Subaru"],
+  ClusterOffset: ["Lexus", "Toyota"],
+  SNGHack: ["Lexus", "Toyota"],
+  ToyotaAutoHold: ["Lexus", "Toyota"],
+}
 
 // Plain variables — scheduling/routing flags that must NOT be reactive
 let syncScheduled = false
 let lastParams = null
 let flmWorkspaceInflight = null
 let lastFlmWorkspaceFetch = 0
+let favoritePollInflight = null
+let favoritePollTimer = null
 const DYNAMIC_DEFAULT_DEP_KEYS = new Set(["AccelerationProfile", "EVTuning", "TruckTuning"])
 const PANDA_FIRMWARE_TOGGLE_KEYS = new Set(["IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma"])
 const FLM_ADVANCED_LATERAL_KEYS = new Set([
@@ -36,6 +72,7 @@ const state = reactive({
   fetched: false,
   activeSectionSlug: "",
   numericUpdating: {},
+  actionUpdating: {},
   favoriteLoading: false,
   favoriteSaving: false,
   favoriteOptions: [],
@@ -51,11 +88,34 @@ function slugifySectionName(name) {
     .replace(/^-+|-+$/g, "")
 }
 
+function normalizeVehicleMake(value) {
+  return String(value || "").trim().toLowerCase()
+}
+
+function isVehicleSettingVisible(section, param) {
+  if (section.name !== "Vehicle") return true
+  const allowedMakes = VEHICLE_SETTING_MAKES[param.key]
+  if (!allowedMakes) return true
+  const selectedMake = normalizeVehicleMake(state.values.CarMake)
+  return allowedMakes.some(make => normalizeVehicleMake(make) === selectedMake)
+}
+
+function isSettingVisible(section, param) {
+  // This policy controls Galaxy rendering only; hidden params retain their stored values.
+  if (HIDDEN_SETTING_KEYS.has(param.key) || !isVehicleSettingVisible(section, param)) return false
+  if (state.values[GALAXY_DEVELOPER_MODE_KEY]) return true
+  return section.name === "Favorites" || param.settings_tier === "simple"
+}
+
 function getSectionsWithSlug() {
-  return state.layout.map(section => ({
-    ...section,
-    slug: slugifySectionName(section.name),
-  }))
+  return state.layout
+    .filter(section => !HIDDEN_SECTION_NAMES.has(section.name))
+    .map(section => ({
+      ...section,
+      params: (section.params || []).filter(param => isSettingVisible(section, param)),
+      slug: slugifySectionName(section.name),
+    }))
+    .filter(section => section.params.length > 0)
 }
 
 function isGroupParam(param) {
@@ -314,7 +374,7 @@ async function fetchLayoutAndParams() {
   state.loadingValues = true
 
   try {
-    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=favorite-slots-5", { cache: "no-store" })
+    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=settings-tier-1", { cache: "no-store" })
     const rawLayoutData = await layoutRes.json()
 
     const layoutData = rawLayoutData
@@ -507,6 +567,14 @@ function favoriteOptionMatchesFilter(option, filter) {
     .some(value => String(value || "").toLowerCase().includes(q))
 }
 
+function isFavoriteActionKey(key) {
+  return String(key || "").startsWith(FAVORITE_ACTION_PREFIX)
+}
+
+function isFavoriteActionOption(option) {
+  return isFavoriteActionKey(option?.key) || !!option?.action
+}
+
 function filteredFavoriteOptions(index) {
   const filter = state.favoriteFilters[index] || ""
   return normalizeFavoriteOptions(state.favoriteOptions).filter(opt => favoriteOptionMatchesFilter(opt, filter))
@@ -530,7 +598,7 @@ function populateFavoriteSelect(index, selectEl = null) {
 async function fetchFavoriteSlots() {
   state.favoriteLoading = true
   try {
-    const res = await fetch("/api/favorites/slots")
+    const res = await fetch("/api/favorites/slots", { cache: "no-store" })
     const data = await res.json()
     if (res.ok) {
       state.favoriteOptions = normalizeFavoriteOptions(data.options)
@@ -542,6 +610,45 @@ async function fetchFavoriteSlots() {
     console.error("Failed to fetch favorite slots:", e)
   }
   state.favoriteLoading = false
+}
+
+async function refreshFavoriteValues() {
+  if (favoritePollInflight || state.favoriteSaving || state.favoriteLoading) return favoritePollInflight
+
+  favoritePollInflight = fetch("/api/favorites/values", { cache: "no-store" })
+    .then(async res => {
+      if (!res.ok) return
+
+      const data = await res.json()
+      const values = (data.values && typeof data.values === "object") ? data.values : {}
+      const changed = Object.entries(values).some(([key, value]) => state.values[key] !== value)
+      if (!changed) return
+
+      state.favoriteValues = { ...state.favoriteValues, ...values }
+      state.values = { ...state.values, ...values }
+      scheduleSyncInputs()
+    })
+    .catch(() => {})
+    .finally(() => {
+      favoritePollInflight = null
+    })
+
+  return favoritePollInflight
+}
+
+function ensureFavoriteValuePolling() {
+  if (favoritePollTimer !== null) return
+
+  favoritePollTimer = setInterval(() => {
+    if (!window.location.pathname.startsWith("/device_settings")) {
+      clearInterval(favoritePollTimer)
+      favoritePollTimer = null
+      return
+    }
+    if (document.visibilityState === "visible") {
+      refreshFavoriteValues()
+    }
+  }, 1000)
 }
 
 async function saveFavoriteSlots(slots) {
@@ -636,6 +743,25 @@ async function updateFavoriteValue(key, checked, sourceEl = null) {
   } catch (e) {
     state.values = { ...state.values, [key]: current }
     state.favoriteValues = { ...state.favoriteValues, [key]: current }
+    showParamSnackbar("Network error — is the device reachable?", "error")
+  }
+}
+
+async function activateFavoriteAction(key) {
+  try {
+    const res = await fetch("/api/favorites/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    })
+    const data = await res.json()
+
+    if (res.ok) {
+      showParamSnackbar(data.message || "Favorite action sent.")
+    } else {
+      showParamSnackbar(data.error || "Failed to send favorite action", "error")
+    }
+  } catch (e) {
     showParamSnackbar("Network error — is the device reachable?", "error")
   }
 }
@@ -858,6 +984,35 @@ async function resetNumericParam(param) {
   updateNumericParam(param, defaultValue, {
     successMessage: `Parameter '${param.key}' reset to default.`,
   })
+}
+
+async function runSettingAction(param) {
+  const key = String(param?.key || "")
+  const endpoint = String(param?.action_endpoint || "")
+  if (!key || !endpoint || state.actionUpdating[key]) return
+
+  const confirmation = String(param?.confirm_message || `Run ${param?.label || key}?`)
+  if (!window.confirm(confirmation)) return
+
+  state.actionUpdating = { ...state.actionUpdating, [key]: true }
+  try {
+    const response = await fetch(endpoint, { method: "POST" })
+    const payload = await response.json()
+    if (!response.ok) {
+      throw new Error(payload.error || response.statusText || "Action failed")
+    }
+
+    const updated = payload.updated && typeof payload.updated === "object" ? payload.updated : {}
+    state.values = { ...state.values, ...updated }
+    showParamSnackbar(payload.message || `${param?.label || key} completed.`)
+    scheduleSyncInputs()
+  } catch (error) {
+    showParamSnackbar(error?.message || `${param?.label || key} failed.`, "error")
+  } finally {
+    const next = { ...state.actionUpdating }
+    delete next[key]
+    state.actionUpdating = next
+  }
 }
 
 async function updateParam(key, elType) {
@@ -1121,15 +1276,31 @@ function renderFavoriteSlotsPanel() {
             const selectedOption = favorite.selectedOption
             const selectedKey = favorite.selectedKey
             const selectedValue = favorite.selectedValue
+            const isAction = isFavoriteActionOption(selectedOption)
+            const quickCopy = html`
+              <div class="ds-favorite-quick-copy">
+                <span class="ds-favorite-quick-slot">Favorite #${favorite.index + 1}</span>
+                <span class="ds-favorite-quick-title">${selectedOption.label || favorite.slot.label || selectedKey}</span>
+                ${selectedOption.section ? html`<span class="ds-favorite-quick-section">${selectedOption.section}</span>` : ""}
+                ${selectedOption.description ? html`<span class="ds-favorite-quick-desc">${selectedOption.description}</span>` : ""}
+              </div>
+            `
+
+            if (isAction) {
+              return html`
+                <button
+                  type="button"
+                  class="ds-favorite-quick-card ds-favorite-action-card"
+                  @click="${() => activateFavoriteAction(selectedKey)}">
+                  ${quickCopy}
+                  <span class="ds-favorite-action-chip">Press</span>
+                </button>
+              `
+            }
 
             return html`
               <label class="ds-favorite-quick-card">
-                <div class="ds-favorite-quick-copy">
-                  <span class="ds-favorite-quick-slot">Favorite #${favorite.index + 1}</span>
-                  <span class="ds-favorite-quick-title">${selectedOption.label || favorite.slot.label || selectedKey}</span>
-                  ${selectedOption.section ? html`<span class="ds-favorite-quick-section">${selectedOption.section}</span>` : ""}
-                  ${selectedOption.description ? html`<span class="ds-favorite-quick-desc">${selectedOption.description}</span>` : ""}
-                </div>
+                ${quickCopy}
                 <input
                   type="checkbox"
                   class="ds-toggle ds-favorite-quick-toggle"
@@ -1230,6 +1401,7 @@ function renderSettingRow(p) {
 
   const isNumeric = p.ui_type === "numeric"
   const isColor = p.ui_type === "color"
+  const isAction = p.ui_type === "action"
   const isGroup = isGroupParam(p)
   const isChild = p.parent_key ? "ds-child-modifier" : ""
   const lockReason = () => getSettingLockReason(p)
@@ -1238,7 +1410,16 @@ function renderSettingRow(p) {
   const flmTrialSummary = p.key === "AdvancedLateralTune" ? getFlmTrialSummary() : null
   let rowControl = ""
 
-  if (isNumeric) {
+  if (isAction) {
+    rowControl = html`
+      <button
+        class="ds-reset-btn"
+        disabled="${() => isLocked() || !!state.actionUpdating[p.key]}"
+        @click="${() => runSettingAction(p)}">
+        ${() => state.actionUpdating[p.key] ? "Resetting..." : (p.action_label || "Run")}
+      </button>
+    `
+  } else if (isNumeric) {
     rowControl = html`
       <div class="ds-stepper-container">
         ${(() => {
@@ -1447,6 +1628,7 @@ export function DeviceSettings({ params }) {
   lastParams = params
 
   fetchFlmWorkspace()
+  ensureFavoriteValuePolling()
 
   if (!state.fetched) {
     state.fetched = true

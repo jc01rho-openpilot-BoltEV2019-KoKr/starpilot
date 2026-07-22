@@ -1,7 +1,10 @@
 import hashlib
+import json
 
+from scripts import model_compiler
 from scripts.model_compiler import split_oversized_artifact
 from openpilot.starpilot.assets import download_functions
+from openpilot.starpilot.assets import model_manager
 from openpilot.starpilot.assets.model_manager import MANIFEST_CANDIDATES, ModelManager
 from openpilot.starpilot.common.model_versions import UNIFIED_ARTIFACT_FORMAT
 
@@ -19,6 +22,42 @@ def test_behavior_version_does_not_control_artifact_layout():
     "example_driving_tinygrad.pkl",
   ]
   assert manager._required_files("example", "split") == []
+
+
+def test_external_gpu_requirement_is_cached_from_manifest(tmp_path, monkeypatch):
+  monkeypatch.setattr(model_manager, "MODELS_PATH", tmp_path)
+  manager = object.__new__(ModelManager)
+  metadata = manager._build_artifact_metadata_map([
+    {"id": "large", "artifact_format": UNIFIED_ARTIFACT_FORMAT, "uses_external_gpu": True},
+    {"id": "normal", "artifact_format": UNIFIED_ARTIFACT_FORMAT},
+  ])
+  (tmp_path / model_manager.ARTIFACT_METADATA_CACHE).write_text(json.dumps(metadata))
+
+  assert model_manager.model_uses_external_gpu("large")
+  assert not model_manager.model_uses_external_gpu("normal")
+  assert not model_manager.model_uses_external_gpu("missing")
+
+
+def test_external_gpu_compilation_is_opt_in(tmp_path, monkeypatch):
+  invocations = []
+  monkeypatch.setattr(model_compiler, "build_compile_env", lambda: {
+    "DEV": "QCOM", "IMAGE": "2", "NOLOCALS": "1", "OPENPILOT_HACKS": "1",
+  })
+  monkeypatch.setattr(model_compiler.subprocess, "run", lambda command, **kwargs: invocations.append((command, kwargs)))
+  files = {"driving_supercombo": tmp_path / "model.onnx"}
+
+  model_compiler.compile_driving("normal", files, "supercombo", "v15", tmp_path, "policy")
+  model_compiler.compile_driving("large", files, "supercombo", "v15", tmp_path, "policy", external_gpu=True)
+
+  normal_command, normal_kwargs = invocations[0]
+  external_command, external_kwargs = invocations[1]
+  assert "--out-of-band" not in normal_command
+  assert normal_kwargs["env"]["DEV"] == "QCOM"
+  assert normal_kwargs["env"]["IMAGE"] == "2"
+  assert "--out-of-band" in external_command
+  assert external_kwargs["env"]["DEV"] == "USB+AMD:LLVM"
+  assert external_kwargs["env"]["WARP_DEV"] == "QCOM"
+  assert all(flag not in external_kwargs["env"] for flag in ("IMAGE", "NOLOCALS", "OPENPILOT_HACKS"))
 
 
 def test_dropbox_urls_are_direct_downloads():

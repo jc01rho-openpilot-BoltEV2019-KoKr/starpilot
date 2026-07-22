@@ -58,12 +58,15 @@ class ToyotaSafetyFlags(IntFlag):
   SECOC = (8 << 8)
   LONG_FILTER = (16 << 8)
   GAS_INTERCEPTOR = (32 << 8)
+  ALT_CRUISE = (64 << 8)
 
 
 class ToyotaFlags(IntFlag):
   # Detected flags
   HYBRID = 1
   DISABLE_RADAR = 4
+  # The DSU's ACC messages are rerouted through the camera bus by an adapter.
+  DSU_BYPASS = 8192
 
   # Static flags
   TSS2 = 8

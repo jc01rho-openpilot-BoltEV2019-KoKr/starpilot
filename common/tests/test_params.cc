@@ -25,3 +25,13 @@ TEST_CASE("params_nonblocking_put") {
     REQUIRE(p.get(name) == "1");
   }
 }
+
+TEST_CASE("settings_tier_is_independent_from_tuning_level") {
+  Params params;
+
+  REQUIRE(params.getSettingsTier("AlwaysOnLateral") == SETTINGS_SIMPLE);
+  REQUIRE(params.getTuningLevel("AlwaysOnLateral") == 0);
+  REQUIRE(params.getSettingsTier("HumanLaneChanges") == SETTINGS_SIMPLE);
+  REQUIRE(params.getTuningLevel("HumanLaneChanges") == 2);
+  REQUIRE(params.getSettingsTier("AdvancedLateralTune") == SETTINGS_ADVANCED);
+}

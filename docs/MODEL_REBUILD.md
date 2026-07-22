@@ -6,7 +6,7 @@ This workflow rebuilds StarPilot driving and driver-monitoring artifacts for the
 
 - The supported build device is `comma@192.168.3.110`.
 - Never run these commands against `192.168.3.109`.
-- Do not compile normal and big-GPU artifacts together. This workflow builds normal QCOM artifacts only.
+- Normal artifacts target QCOM. External-GPU artifacts must be compiled explicitly and tagged in the manifest.
 - Keep source ONNX files and compiled PKLs on the T5 workspace, not the comma.
 
 ## Workspace
@@ -82,6 +82,23 @@ The lower-level device compiler also supports direct use:
 ./models --model deeprl3v2 --input-format supercombo --version v15
 ```
 
+For a model that cannot run on the device GPU, compile with the USB AMD GPU attached:
+
+```bash
+./models --model heavyweight --input-format supercombo --version v15 --external-gpu
+```
+
+This emits a streaming out-of-band pickle and keeps QCOM available for camera warps. Its manifest entry must include:
+
+```json
+{
+  "id": "heavyweight",
+  "uses_external_gpu": true
+}
+```
+
+Only tagged models activate the external GPU. If the GPU or artifact is unavailable, runtime falls back to the built-in model; all untagged models retain the existing QCOM path.
+
 `--version` records behavioral semantics only. It does not change artifact layout.
 
 If the compiled PKL exceeds 100 MiB, `./models` automatically keeps the full
@@ -138,6 +155,8 @@ The generator preserves existing IDs and behavioral metadata and adds
 `deeprl3v2`. Manifest v22 implies the unified single-PKL runtime layout.
 Repository-hosted multipart files are discovered by naming convention, so no
 size, hash, format, or part-count metadata is required.
+
+`uses_external_gpu` is optional and defaults to `false`.
 
 ## Runtime Verification
 

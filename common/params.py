@@ -4,6 +4,27 @@ from enum import IntEnum, IntFlag
 from pathlib import Path
 import tempfile
 
+SETTINGS_SIMPLE = 0
+SETTINGS_ADVANCED = 1
+
+
+def _load_settings_tiers() -> dict[str, int]:
+  params_keys = Path(__file__).with_name("params_keys.h")
+  if not params_keys.exists():
+    return {}
+
+  tiers = {}
+  for line in params_keys.read_text(encoding="utf-8", errors="ignore").splitlines():
+    if not line.lstrip().startswith('{"'):
+      continue
+    parts = line.split('"')
+    if len(parts) >= 2:
+      tiers[parts[1]] = SETTINGS_SIMPLE if "SETTINGS_SIMPLE" in line else SETTINGS_ADVANCED
+  return tiers
+
+
+_SETTINGS_TIERS = _load_settings_tiers()
+
 try:
   from openpilot.common.params_pyx import Params as _Params, ParamKeyFlag, ParamKeyType, UnknownKeyName
 except Exception:
@@ -180,6 +201,9 @@ except Exception:
     def get_tuning_level(self, key):
       return 0
 
+    def get_settings_tier(self, key):
+      return _SETTINGS_TIERS.get(self.check_key(key), SETTINGS_ADVANCED)
+
 else:
   assert _Params
   assert ParamKeyFlag
@@ -187,6 +211,12 @@ else:
   assert UnknownKeyName
 
   class Params(_Params):
+    def get_settings_tier(self, key):
+      try:
+        return super().get_settings_tier(key)
+      except AttributeError:
+        return _SETTINGS_TIERS.get(self.check_key(key), SETTINGS_ADVANCED)
+
     def get(self, key, block=False, return_default=False, encoding=None, default=None):
       try:
         value = super().get(key, block=block, return_default=return_default)

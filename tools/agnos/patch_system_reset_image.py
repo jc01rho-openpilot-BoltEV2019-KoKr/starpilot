@@ -32,6 +32,7 @@ MICI_SETUP_ENTRY_IN_SETUP_ZIPAPP = "openpilot/system/ui/mici_setup.py"
 UPDATER_ENTRY_IN_ZIPAPP = "openpilot/system/ui/updater.py"
 VERSION_PATH_IN_IMAGE = "/VERSION"
 PYTHON_SITE_PACKAGES_PATH_IN_IMAGE = "/usr/local/venv/lib/python3.12/site-packages"
+AMDGPU_FIRMWARE_PATH_IN_IMAGE = "/lib/firmware/amdgpu"
 PATCH_MARKER = "STARPILOT_C4_RESET_LAYOUT_V1"
 APP_PATCH_MARKER = "STARPILOT_C4_RESET_APP_DIMENSIONS_V1"
 SETUP_WIFI_PATCH_MARKER = "JEEPNY_AVAILABLE = True"
@@ -50,6 +51,17 @@ CHUNK_TYPE_FILL = 0xCAC2
 CHUNK_TYPE_DONT_CARE = 0xCAC3
 CHUNK_TYPE_CRC32 = 0xCAC4
 XZ_MAGIC = b"\xFD7zXZ\x00"
+
+AMDGPU_FIRMWARE_SHA256 = {
+  "gc_12_0_0_imu.bin.zst": "aa15e5b3156bffc45e0c50bccbcd364fbd3f958531b695b7487a803d780b8328",
+  "gc_12_0_0_me.bin.zst": "d7eba5197f2580f32b8256b1d9cb68e723e9e644293a34446a7913e3c093cba5",
+  "gc_12_0_0_mec.bin.zst": "1931593440b8f9423580d9e2cdc5b34e7c682cdffe1ca4b74b0c2f6a0420236d",
+  "gc_12_0_0_pfp.bin.zst": "16bfd64c10fe73b5e760055069a60e5841dba16c0ed4edb56c20d675e23901f6",
+  "gc_12_0_0_rlc.bin.zst": "6436b582734a413456fff3d3c7195e71cc9e78a7ed31ee21c83ffd6fae1ad186",
+  "psp_14_0_2_sos.bin.zst": "7b538448b57d4f9dd06b2eea90d4f86a16e65e3027cdecee8db71c2c5f1fa243",
+  "sdma_7_0_0.bin.zst": "beaafb53993a106edd392392d5896245ae2a957c6d0f495d0002eec72ad8ad38",
+  "smu_14_0_2.bin.zst": "6951995d1d606f4dc60c895f19d34ed18aa40e62129f83d8510c45e8aa9ae2fc",
+}
 
 DEFAULT_SYNC_COMMA_FILES = [
   "/usr/comma/bg.jpg",
@@ -366,7 +378,7 @@ def patch_reset_script() -> bytes:
 
 
 def parse_args() -> argparse.Namespace:
-  p = argparse.ArgumentParser(description="Patch AGNOS system image with minimal C4 reset/setup/updater fixes")
+  p = argparse.ArgumentParser(description="Patch AGNOS system image with StarPilot reset and hardware support")
   p.add_argument("--manifest", default="system/hardware/tici/agnos.json", help="Path to AGNOS manifest JSON")
   p.add_argument("--work-dir", default=".cache/agnos_reset_patch", help="Working directory")
   p.add_argument("--source-url", default=None, help="Override source raw system image URL")
@@ -378,6 +390,8 @@ def parse_args() -> argparse.Namespace:
                  help="Comma-separated file list to sync from reference image (e.g. /usr/comma/installer,/usr/comma/setup)")
   p.add_argument("--disable-comma-file-sync", action="store_true",
                  help="Disable syncing /usr/comma files from a reference image")
+  p.add_argument("--disable-usbgpu-firmware", action="store_true",
+                 help="Do not install the AMD firmware required by the external GPU")
   p.add_argument("--output-xz", default=None, help="Output .img.xz path")
   p.add_argument("--new-url", default=None, help="Hosted URL for patched image; used for manifest output")
   p.add_argument("--manifest-out", default=None, help="Write updated manifest JSON here")
@@ -435,12 +449,13 @@ def find_default_reference_manifest(primary_manifest_path: Path) -> Path | None:
     repo_root = repo_root.parent
 
   candidates = [
+    repo_root.parent / "openpilot/openpilot/system/hardware/tici/agnos.json",
     repo_root.parent / "openpilot/system/hardware/tici/agnos.json",
     repo_root / "openpilot/system/hardware/tici/agnos.json",
   ]
 
   for candidate in candidates:
-    if candidate.is_file():
+    if candidate.is_file() and candidate.resolve() != primary_manifest_path.resolve():
       return candidate.resolve()
   return None
 
@@ -1043,6 +1058,51 @@ def sha256_file(path: Path) -> str:
   return h.hexdigest()
 
 
+def sha256_zstd_payload(path: Path) -> str:
+  try:
+    import zstandard
+  except ImportError as e:
+    raise RuntimeError("zstandard is required to verify the external-GPU firmware") from e
+
+  digest = hashlib.sha256()
+  with open(path, "rb") as compressed:
+    with zstandard.ZstdDecompressor().stream_reader(compressed) as source:
+      while chunk := source.read(1024 * 1024):
+        digest.update(chunk)
+  return digest.hexdigest()
+
+
+def install_amdgpu_firmware_from_reference(debugfs: str, reference_img: Path, patched_img: Path, work_dir: Path) -> None:
+  ensure_directory_in_image(debugfs, patched_img, AMDGPU_FIRMWARE_PATH_IN_IMAGE, "040755", 0, 0)
+  firmware_dir = work_dir / "amdgpu_firmware"
+  firmware_dir.mkdir(parents=True, exist_ok=True)
+
+  for filename, expected_payload_hash in AMDGPU_FIRMWARE_SHA256.items():
+    image_path = f"{AMDGPU_FIRMWARE_PATH_IN_IMAGE}/{filename}"
+    local_file = firmware_dir / filename
+    verify_file = firmware_dir / f"{filename}.verify"
+    local_file.unlink(missing_ok=True)
+    verify_file.unlink(missing_ok=True)
+
+    stat_out = run_debugfs(debugfs, reference_img, f"stat {image_path}", write=False)
+    file_type, perms_octal, uid, gid = parse_debugfs_stat(stat_out)
+    if file_type != "regular":
+      raise RuntimeError(f"Reference firmware {image_path} is {file_type}, expected regular")
+    run_debugfs(debugfs, reference_img, f"dump -p {image_path} {local_file}", write=False)
+    if sha256_zstd_payload(local_file) != expected_payload_hash:
+      raise RuntimeError(f"Reference firmware payload hash mismatch for {filename}")
+
+    mode_octal = inode_mode_from_type_and_perms(file_type, perms_octal)
+    write_regular_file_to_image(debugfs, patched_img, image_path, local_file, mode_octal, uid, gid)
+    run_debugfs(debugfs, patched_img, f"dump -p {image_path} {verify_file}", write=False)
+    if sha256_file(local_file) != sha256_file(verify_file):
+      raise RuntimeError(f"Compressed firmware verification failed for {filename}")
+    if sha256_zstd_payload(verify_file) != expected_payload_hash:
+      raise RuntimeError(f"Installed firmware payload hash mismatch for {filename}")
+
+  print(f"Installed and verified {len(AMDGPU_FIRMWARE_SHA256)} AMD firmware files", flush=True)
+
+
 def compress_xz(src: Path, dst: Path) -> None:
   dst.parent.mkdir(parents=True, exist_ok=True)
   tmp = dst.with_suffix(dst.suffix + ".part")
@@ -1149,14 +1209,22 @@ def main() -> int:
   shutil.copy2(raw_img, patched_img)
 
   sync_paths = [] if args.disable_comma_file_sync else parse_sync_file_list(args.sync_comma_files)
-  if sync_paths:
+  reference_raw = None
+  if sync_paths or not args.disable_usbgpu_firmware:
     reference_source_img = resolve_reference_source_image(args, manifest_path, work_dir)
     reference_raw = work_dir / "reference_system.ext4.img"
     materialize_ext4_image(reference_source_img, reference_raw, work_dir, "reference_system", force=args.force_download)
 
+  if sync_paths:
+    assert reference_raw is not None
     print(f"Syncing /usr/comma payload files from reference image: {reference_raw}", flush=True)
     synced_files = sync_files_from_reference_image(debugfs, reference_raw, patched_img, sync_paths, work_dir)
     print(f"Synced {len(synced_files)} /usr/comma files from reference image", flush=True)
+
+  if not args.disable_usbgpu_firmware:
+    assert reference_raw is not None
+    print(f"Installing external-GPU firmware from reference image: {reference_raw}", flush=True)
+    install_amdgpu_firmware_from_reference(debugfs, reference_raw, patched_img, work_dir)
 
   preserved_paths = {
     RESET_PATH_IN_IMAGE: "comma_reset",

@@ -11,7 +11,7 @@ from cereal import car, custom, log
 from openpilot.common.constants import CV
 from openpilot.common.git import get_short_branch
 from openpilot.common.params import Params
-from openpilot.common.realtime import DT_CTRL, DT_DMON
+from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.desire_helper import LaneChangeDirection
 from openpilot.selfdrive.locationd.calibrationd import MIN_SPEED_FILTER
 from openpilot.selfdrive.monitoring.policy import DRIVER_MONITOR_SETTINGS
@@ -28,9 +28,6 @@ EventName = log.OnroadEvent.EventName
 StarPilotAlertStatus = custom.StarPilotSelfdriveState.AlertStatus
 StarPilotAudibleAlert = custom.StarPilotCarControl.HUDControl.AudibleAlert
 StarPilotEventName = custom.StarPilotOnroadEvent.EventName
-
-DMON_LOCKOUT_TIME = DRIVER_MONITOR_SETTINGS()._LOCKOUT_TIME
-
 
 # Alert priorities
 class Priority(IntEnum):
@@ -366,7 +363,7 @@ def calibration_incomplete_alert(CP: car.CarParams, CS: car.CarState, sm: messag
 
 def too_distracted_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, starpilot_toggles: SimpleNamespace) -> Alert:
   if sm['driverMonitoringState'].lockout:
-    mins_left = max(1, round((100 - sm['driverMonitoringState'].lockoutRecoveryPercent) / 100 * DMON_LOCKOUT_TIME * DT_DMON / 60.))
+    mins_left = sm['driverMonitoringState'].lockoutMinutesRemaining
     return NoEntryAlert("Too Distracted", f"{mins_left} minute{'s' if mins_left != 1 else ''} Left", priority=Priority.HIGH)
   return NoEntryAlert("Pay Attention to Engage", priority=Priority.HIGH)
 

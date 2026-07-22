@@ -462,6 +462,47 @@ def test_post_stop_speed_trigger_is_suppressed_after_red_light_release(monkeypat
   assert cem.status_value == conditional_experimental_mode_module.CEStatus["SPEED"]
 
 
+def test_post_stop_suppression_survives_hold_release_before_motion(monkeypatch):
+  cem = make_cem(model_length=80.0, model_stopped=False)
+  toggles = make_update_toggles()
+  toggles.conditional_limit = 5.0 * CV.MPH_TO_MS
+  standstill_sm = make_update_sm(standstill=True)
+  moving_sm = make_update_sm(standstill=False)
+
+  now = [100.0]
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", lambda: now[0])
+
+  def hold_red_light(*args, **kwargs):
+    cem.stop_light_detected = True
+
+  monkeypatch.setattr(cem, "stop_sign_and_light", hold_red_light)
+  cem.update(0.0, standstill_sm, toggles)
+  assert cem.experimental_mode
+
+  def clear_red_light(*args, **kwargs):
+    cem.stop_light_detected = False
+    cem.stop_light_model_detected = False
+
+  monkeypatch.setattr(cem, "stop_sign_and_light", clear_red_light)
+
+  now[0] = 100.1
+  cem.update(0.0, standstill_sm, toggles)
+  assert not cem.experimental_mode
+  assert cem.standstill_stop_release_pending
+
+  low_speed_trigger_v_ego = 4.0 * CV.MPH_TO_MS
+
+  now[0] = 100.2
+  cem.update(low_speed_trigger_v_ego, moving_sm, toggles)
+  assert not cem.experimental_mode
+  assert not cem.standstill_stop_release_pending
+
+  now[0] = 102.5
+  cem.update(low_speed_trigger_v_ego, moving_sm, toggles)
+  assert cem.experimental_mode
+  assert cem.status_value == conditional_experimental_mode_module.CEStatus["SPEED"]
+
+
 def test_post_stop_slow_lead_trigger_is_suppressed_after_red_light_release(monkeypatch):
   cem = make_cem(model_length=80.0, model_stopped=False)
   toggles = make_update_toggles()
@@ -825,6 +866,43 @@ def test_tracked_following_slower_lead_still_triggers_slow_lead():
   assert cem.slow_lead_detected
 
 
+def test_tracked_vision_slow_lead_continues_existing_experimental_mode():
+  v_ego = 8.0
+  cem = make_cem(
+    model_length=80.0,
+    tracking_lead=True,
+    lead_status=True,
+    lead_d_rel=22.0,
+    lead_v_lead=6.4,
+    lead_model_prob=0.99,
+  )
+  toggles = SimpleNamespace(conditional_slower_lead=True, conditional_stopped_lead=False)
+
+  cem.prev_experimental_mode = True
+  for _ in range(24):
+    cem.slow_lead(toggles, v_ego)
+
+  assert cem.slow_lead_detected
+
+
+def test_tracked_vision_slow_lead_does_not_start_experimental_mode():
+  v_ego = 8.0
+  cem = make_cem(
+    model_length=80.0,
+    tracking_lead=True,
+    lead_status=True,
+    lead_d_rel=22.0,
+    lead_v_lead=6.4,
+    lead_model_prob=0.99,
+  )
+  toggles = SimpleNamespace(conditional_slower_lead=True, conditional_stopped_lead=False)
+
+  for _ in range(24):
+    cem.slow_lead(toggles, v_ego)
+
+  assert not cem.slow_lead_detected
+
+
 def test_slow_lead_does_not_linger_at_crawl_when_stopped_lead_disabled():
   v_ego = 1.5
   cem = make_cem(
@@ -963,7 +1041,6 @@ def test_starpilot_planner_updates_cem_with_current_frame_state(monkeypatch):
       minimum_lane_change_speed=100.0,
       pause_lateral_below_speed=0.0,
       pause_lateral_below_signal=False,
-      stop_distance=6.0,
       weather_presets=False,
     )
 

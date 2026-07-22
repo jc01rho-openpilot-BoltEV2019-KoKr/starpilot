@@ -221,11 +221,6 @@ def main():
     is_paired = galaxy_password_hash and len(galaxy_password_hash) == 64 and slug
 
     if is_paired:
-      if process is not None and process.poll() is None and not local_galaxy_ready():
-        print(f"Galaxy: Web app is not ready on {GALAXY_WEB_HOST}:{GALAXY_WEB_PORT}. Stopping frpc tunnel until it recovers...")
-        cleanup_frpc()
-        last_slug = None
-
       if process is None or process.poll() is not None or slug != last_slug:
         cleanup_frpc()
         if process is not None and slug == last_slug:

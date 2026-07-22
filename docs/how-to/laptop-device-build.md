@@ -2,7 +2,7 @@
 
 This flow builds **device-target (`larch64`) binaries on your laptop** using a Linux/aarch64 container and a synced comma sysroot.
 
-For the full StarPilot branch workflow, including host-native shorthand tools such as `./dev`, `./c3`, `./c4`, and `./raybig`, see [tools/STARPILOT_DEVELOPMENT.md](../../tools/STARPILOT_DEVELOPMENT.md).
+For the full StarPilot branch workflow, including host-native shorthand tools such as `./dev`, `./c3`, `./c4`, and `./raybig`, see the [StarPilot development guide](https://github.com/firestar5683/StarPilot/blob/Dom/tools/STARPILOT_DEVELOPMENT.md).
 
 ## Prerequisites
 

@@ -26,6 +26,7 @@
 
 #define HYUNDAI_CANFD_MRR35_RADAR_TRACK_START 0x3A5
 #define HYUNDAI_CANFD_MRR35_RADAR_TRACK_END 0x3C4
+#define HYUNDAI_CANFD_INACTIVE_ACCEL_TX_THRESHOLD 10U
 
 #define HYUNDAI_CANFD_BLINDSPOT_DASH_TX_MSGS(e_can) \
   {0x1BA, e_can, 24, .check_relay = false},  /* BLINDSPOTS_REAR_CORNERS */ \
@@ -60,7 +61,9 @@ static bool hyundai_canfd_alt_buttons = false;
 static bool hyundai_canfd_lka_steering_alt = false;
 static bool hyundai_canfd_angle_steering = false;
 static bool hyundai_ccnc = false;
+static bool hyundai_canfd_ccnc_angle_long = false;
 static bool hyundai_canfd_lka_alt_drive_gear = false;
+static uint8_t hyundai_canfd_inactive_accel_tx_count = 0U;
 
 static unsigned int hyundai_canfd_get_lka_addr(void) {
   return hyundai_canfd_lka_steering_alt ? 0x110U : 0x50U;
@@ -122,7 +125,9 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
       torque_driver_new -= 4095;
       update_sample(&torque_driver, torque_driver_new);
 
-      int angle_meas_new = (msg->data[13] << 8U) | msg->data[12];
+      // CCNC angle-long platforms publish the usable angle in STEERING_ANGLE_2.
+      const unsigned int angle_offset = hyundai_canfd_ccnc_angle_long ? 16U : 12U;
+      int angle_meas_new = (msg->data[angle_offset + 1U] << 8U) | msg->data[angle_offset];
       angle_meas_new = to_signed(angle_meas_new, 16);
       update_sample(&angle_meas, angle_meas_new);
     }
@@ -130,6 +135,7 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
     // cruise buttons
     const unsigned int button_addr = hyundai_canfd_alt_buttons ? 0x1aaU : 0x1cfU;
     if (msg->addr == button_addr) {
+      const bool controls_allowed_prev = controls_allowed;
       bool main_button = false;
       int cruise_button = 0;
       if (msg->addr == 0x1cfU) {
@@ -144,6 +150,9 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
         hyundai_lkas_button_check(GET_BIT(msg, 39U));
       }
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
+      if (!controls_allowed_prev && controls_allowed) {
+        hyundai_canfd_inactive_accel_tx_count = 0U;
+      }
     }
 
     // gas press, different for EV, hybrid, and ICE models
@@ -231,6 +240,10 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
       const int lfa_angle_active = (msg->data[3] >> 4U) & 0xFU;
       const bool steer_angle_req = lfa_angle_active == 2;
 
+      if (steer_angle_req && hyundai_canfd_ccnc_angle_long && !hyundai_canfd_lka_alt_openpilot_allowed()) {
+        tx = false;
+      }
+
       int desired_angle = (((uint32_t)(msg->data[5] & 0x3FU)) << 8) | (uint32_t)msg->data[4];
       desired_angle = to_signed(desired_angle, 14);
 
@@ -303,6 +316,18 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
     bool violation = false;
 
     if (hyundai_longitudinal) {
+      const int acc_mode = (msg->data[8] >> 4) & 0x7U;
+      const bool inactive_accel = (acc_mode == 0) && (desired_accel_raw == 0) && (desired_accel_val == 0);
+      if (inactive_accel) {
+        hyundai_canfd_inactive_accel_tx_count = SAFETY_MIN(hyundai_canfd_inactive_accel_tx_count + 1U,
+                                                           HYUNDAI_CANFD_INACTIVE_ACCEL_TX_THRESHOLD);
+        if (hyundai_canfd_inactive_accel_tx_count >= HYUNDAI_CANFD_INACTIVE_ACCEL_TX_THRESHOLD) {
+          controls_allowed = false;
+        }
+      } else {
+        hyundai_canfd_inactive_accel_tx_count = 0U;
+      }
+
       violation |= longitudinal_accel_checks(desired_accel_raw, HYUNDAI_LONG_LIMITS);
       violation |= longitudinal_accel_checks(desired_accel_val, HYUNDAI_LONG_LIMITS);
     } else {
@@ -342,6 +367,16 @@ static safety_config hyundai_canfd_init(uint16_t param) {
     HYUNDAI_CANFD_LKA_STEERING_ALT_COMMON_TX_MSGS(0, 1)
   };
 
+  static const CanMsg HYUNDAI_CANFD_LKA_STEERING_ALT_BUTTONS_TX_MSGS[] = {
+    HYUNDAI_CANFD_LKA_STEERING_COMMON_TX_MSGS(0, 1)
+    HYUNDAI_CANFD_SCC_CONTROL_COMMON_TX_MSGS(1, false)
+  };
+
+  static const CanMsg HYUNDAI_CANFD_LKA_STEERING_ALT_ALT_BUTTONS_TX_MSGS[] = {
+    HYUNDAI_CANFD_LKA_STEERING_ALT_COMMON_TX_MSGS(0, 1)
+    HYUNDAI_CANFD_SCC_CONTROL_COMMON_TX_MSGS(1, false)
+  };
+
   static const CanMsg HYUNDAI_CANFD_LKA_STEERING_LONG_TX_MSGS[] = {
     HYUNDAI_CANFD_LKA_STEERING_COMMON_TX_MSGS(0, 1)
     HYUNDAI_CANFD_LFA_STEERING_COMMON_TX_MSGS(1)
@@ -369,6 +404,24 @@ static safety_config hyundai_canfd_init(uint16_t param) {
     {0x1EA, 1, 32, .check_relay = false},  // ADRV_0x1ea
     {0x200, 1,  8, .check_relay = false},  // ADRV_0x200
     {0x345, 1,  8, .check_relay = false},  // ADRV_0x345
+    {0x1DA, 1, 32, .check_relay = false},  // ADRV_0x1da
+  };
+
+  static const CanMsg HYUNDAI_CANFD_CCNC_ANGLE_LONG_TX_MSGS[] = {
+    HYUNDAI_CANFD_LKA_STEERING_ALT_COMMON_TX_MSGS(0, 1)
+    HYUNDAI_CANFD_LFA_STEERING_COMMON_TX_MSGS(1)
+    HYUNDAI_CANFD_SCC_CONTROL_COMMON_TX_MSGS(1, true)
+    {0x1BA, 1, 24, .check_relay = false},  // BLINDSPOTS_REAR_CORNERS
+    {0x1E5, 1, 16, .check_relay = false},  // BLINDSPOTS_FRONT_CORNER_1
+    {0x100, 0, 24, .check_relay = false},  // ACCELERATOR_BRAKE_ALT radar heartbeat
+    {0x730, 1,  8, .check_relay = false},  // tester present for ADAS ECU disable
+    {0x160, 1, 16, .check_relay = false},  // ADRV_0x160
+    {0x161, 1, 32, .check_relay = false},  // CCNC_0x161
+    {0x162, 1, 32, .check_relay = false},  // CCNC_0x162
+    {0x1EA, 1, 32, .check_relay = false},  // ADRV_0x1ea
+    {0x200, 1,  8, .check_relay = false},  // ADRV_0x200
+    {0x345, 1,  8, .check_relay = false},  // ADRV_0x345
+    {0x38C, 1, 32, .check_relay = false},  // CCNC support frame
     {0x1DA, 1, 32, .check_relay = false},  // ADRV_0x1da
   };
 
@@ -411,7 +464,10 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   hyundai_canfd_lka_steering_alt = GET_FLAG(param, HYUNDAI_PARAM_CANFD_LKA_STEERING_ALT);
   hyundai_canfd_angle_steering = GET_FLAG(param, HYUNDAI_PARAM_CANFD_ANGLE_STEERING);
   hyundai_ccnc = GET_FLAG(param, HYUNDAI_PARAM_CCNC);
+  hyundai_canfd_ccnc_angle_long = hyundai_longitudinal && hyundai_canfd_lka_steering &&
+                                  hyundai_canfd_lka_steering_alt && hyundai_canfd_angle_steering && hyundai_ccnc;
   hyundai_canfd_lka_alt_drive_gear = false;
+  hyundai_canfd_inactive_accel_tx_count = 0U;
 
   safety_config ret;
   if (hyundai_longitudinal) {
@@ -420,8 +476,18 @@ static safety_config hyundai_canfd_init(uint16_t param) {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(1)
       };
 
-      SET_RX_CHECKS(hyundai_canfd_lka_steering_long_rx_checks, ret);
-      if (hyundai_canfd_lka_steering_alt) {
+      static RxCheck hyundai_canfd_lka_steering_alt_buttons_long_rx_checks[] = {
+        HYUNDAI_CANFD_ALT_BUTTONS_RX_CHECKS(1)
+      };
+
+      if (hyundai_canfd_alt_buttons) {
+        SET_RX_CHECKS(hyundai_canfd_lka_steering_alt_buttons_long_rx_checks, ret);
+      } else {
+        SET_RX_CHECKS(hyundai_canfd_lka_steering_long_rx_checks, ret);
+      }
+      if (hyundai_canfd_ccnc_angle_long) {
+        SET_TX_MSGS(HYUNDAI_CANFD_CCNC_ANGLE_LONG_TX_MSGS, ret);
+      } else if (hyundai_canfd_lka_steering_alt) {
         SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEERING_ALT_LONG_TX_MSGS, ret);
       } else {
         SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEERING_LONG_TX_MSGS, ret);
@@ -467,17 +533,33 @@ static safety_config hyundai_canfd_init(uint16_t param) {
     if (hyundai_canfd_lka_steering) {
       // *** LKA steering checks ***
       // E-CAN is on bus 1, SCC messages are sent on cars with ADRV ECU.
-      // Does not use the alt buttons message
       static RxCheck hyundai_canfd_lka_steering_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(1)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(1)
       };
 
-      SET_RX_CHECKS(hyundai_canfd_lka_steering_rx_checks, ret);
-      if (hyundai_canfd_lka_steering_alt) {
-        SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEERING_ALT_TX_MSGS, ret);
+      static RxCheck hyundai_canfd_lka_steering_alt_buttons_rx_checks[] = {
+        HYUNDAI_CANFD_ALT_BUTTONS_RX_CHECKS(1)
+        HYUNDAI_CANFD_SCC_ADDR_CHECK(1)
+      };
+
+      if (hyundai_canfd_alt_buttons) {
+        SET_RX_CHECKS(hyundai_canfd_lka_steering_alt_buttons_rx_checks, ret);
       } else {
-        SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEERING_TX_MSGS, ret);
+        SET_RX_CHECKS(hyundai_canfd_lka_steering_rx_checks, ret);
+      }
+      if (hyundai_canfd_lka_steering_alt) {
+        if (hyundai_canfd_alt_buttons) {
+          SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEERING_ALT_ALT_BUTTONS_TX_MSGS, ret);
+        } else {
+          SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEERING_ALT_TX_MSGS, ret);
+        }
+      } else {
+        if (hyundai_canfd_alt_buttons) {
+          SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEERING_ALT_BUTTONS_TX_MSGS, ret);
+        } else {
+          SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEERING_TX_MSGS, ret);
+        }
       }
 
     } else if (!hyundai_camera_scc) {

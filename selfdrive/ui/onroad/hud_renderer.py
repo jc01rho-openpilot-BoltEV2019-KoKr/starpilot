@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui.onroad.exp_button import ExpButton
 from openpilot.selfdrive.ui.onroad.starpilot.navigation_card import NavigationCardRenderer
+from openpilot.selfdrive.ui.onroad.starpilot.compass import get_compass_text
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr
@@ -74,6 +75,9 @@ class HudRenderer(Widget):
     self._exp_button: ExpButton = ExpButton(UI_CONFIG.button_size, UI_CONFIG.wheel_icon_size)
     self._navigation_card = NavigationCardRenderer()
 
+    self.draw_set_speed = True
+    self.draw_exp_button = True
+
   def _update_state(self) -> None:
     """Update HUD state based on car state and controls state."""
     sm = ui_state.sm
@@ -121,7 +125,7 @@ class HudRenderer(Widget):
       COLORS.HEADER_GRADIENT_END,
     )
 
-    if self.is_cruise_available and not ui_state.starpilot_toggles.get("hide_max_speed", False):
+    if self.draw_set_speed and self.is_cruise_available and not ui_state.starpilot_toggles.get("hide_max_speed", False):
       self._draw_set_speed(rect)
 
     if not ui_state.starpilot_toggles.get("hide_speed", False):
@@ -131,7 +135,8 @@ class HudRenderer(Widget):
 
     button_x = rect.x + rect.width - UI_CONFIG.border_size - UI_CONFIG.button_size
     button_y = rect.y + UI_CONFIG.border_size
-    self._exp_button.render(rl.Rectangle(button_x, button_y, UI_CONFIG.button_size, UI_CONFIG.button_size))
+    if self.draw_exp_button:
+      self._exp_button.render(rl.Rectangle(button_x, button_y, UI_CONFIG.button_size, UI_CONFIG.button_size))
 
   def user_interacting(self) -> bool:
     return self._exp_button.is_pressed or self._navigation_card.is_pressed
@@ -190,3 +195,10 @@ class HudRenderer(Widget):
     unit_text_size = measure_text_cached(self._font_medium, unit_text, FONT_SIZES.speed_unit)
     unit_pos = rl.Vector2(rect.x + rect.width / 2 - unit_text_size.x / 2, 290 - unit_text_size.y / 2)
     rl.draw_text_ex(self._font_medium, unit_text, unit_pos, FONT_SIZES.speed_unit, 0, COLORS.WHITE_TRANSLUCENT)
+
+    compass_text = get_compass_text()
+    if compass_text:
+      compass_font_size = 50
+      compass_size = measure_text_cached(self._font_bold, compass_text, compass_font_size)
+      compass_pos = rl.Vector2(rect.x + rect.width / 2 - compass_size.x / 2, 65 - compass_size.y / 2)
+      rl.draw_text_ex(self._font_bold, compass_text, compass_pos, compass_font_size, 0, rl.Color(255, 255, 255, 180))

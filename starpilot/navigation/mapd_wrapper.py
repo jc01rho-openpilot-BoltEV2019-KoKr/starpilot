@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 import json
-import os
 import signal
 import subprocess
-import sys
 import time
 
 from collections import defaultdict, deque
 from pathlib import Path
 
+from cereal import messaging
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
@@ -21,6 +20,7 @@ MISSING_TILE_BACKOFF_S = 30.0
 FAILURE_WINDOW_S = 3.0
 FAILURE_THRESHOLD = 3
 MISSING_COVERAGE_EXIT_CODE = 3
+WAIT_FOR_GPS_EXIT_CODE = 4
 ROAD_STATE_POLL_S = 1.0
 
 
@@ -44,6 +44,15 @@ def is_offline_read_error(line: str) -> bool:
     return False
 
   return payload.get("msg") == "could not unmarshal offline data"
+
+
+def is_null_island_tile(filename: str) -> bool:
+  try:
+    min_lat, min_lon, max_lat, max_lon = (float(value) for value in Path(filename).name.split("_"))
+  except (TypeError, ValueError):
+    return False
+
+  return min_lat <= 0 <= max_lat and min_lon <= 0 <= max_lon
 
 
 class CorruptTileMonitor:
@@ -86,7 +95,7 @@ def quarantine_offline_tile(filename: str) -> Path | None:
   if not tile_path.is_file():
     return None
 
-  quarantined = tile_path.with_name(f"{tile_path.name}.corrupt.{int(time.time())}")
+  quarantined = tile_path.with_name(f"{tile_path.name}.corrupt.{time.monotonic_ns()}")
   try:
     tile_path.rename(quarantined)
   except OSError:
@@ -147,6 +156,11 @@ def run_mapd_once() -> int:
     # Stop its resulting hot loop until the next onroad process cycle.
     missing_tile = monitor.current_filename
     if is_offline_read_error(line) and missing_tile is not None and not Path(missing_tile).is_file():
+      if is_null_island_tile(missing_tile):
+        cloudlog.info(f"mapd_wrapper received a location before GPS fix; waiting to restart mapd: {missing_tile}")
+        terminate_child(proc)
+        return WAIT_FOR_GPS_EXIT_CODE
+
       cloudlog.info(f"mapd_wrapper has no offline tile for {missing_tile}; stopping mapd until the next drive")
       terminate_child(proc)
       return MISSING_COVERAGE_EXIT_CODE
@@ -157,10 +171,7 @@ def run_mapd_once() -> int:
     quarantined = quarantine_offline_tile(bad_tile)
     if quarantined is None:
       if not OFFLINE_ROOT.exists():
-        cloudlog.warning(
-          f"mapd_wrapper detected repeated offline read failures for {bad_tile}, "
-          f"but {OFFLINE_ROOT} does not exist; backing off mapd restarts"
-        )
+        cloudlog.warning(f"mapd_wrapper detected repeated offline read failures for {bad_tile}, but {OFFLINE_ROOT} does not exist; backing off mapd restarts")
         terminate_child(proc)
         return 2
 
@@ -182,6 +193,16 @@ def wait_for_road_state_change(params: Params) -> None:
     time.sleep(ROAD_STATE_POLL_S)
 
 
+def wait_for_gps_fix_or_road_state_change(params: Params, sm=None) -> None:
+  initial_onroad = params.get_bool("IsOnroad")
+  sm = sm or messaging.SubMaster(["gpsLocationExternal"])
+
+  while params.get_bool("IsOnroad") == initial_onroad:
+    sm.update(1000)
+    if sm.updated["gpsLocationExternal"] and sm["gpsLocationExternal"].hasFix:
+      return
+
+
 def main() -> None:
   params = Params()
   while True:
@@ -194,6 +215,9 @@ def main() -> None:
       continue
     if exit_code == MISSING_COVERAGE_EXIT_CODE:
       wait_for_road_state_change(params)
+      continue
+    if exit_code == WAIT_FOR_GPS_EXIT_CODE:
+      wait_for_gps_fix_or_road_state_change(params)
       continue
     raise SystemExit(exit_code)
 

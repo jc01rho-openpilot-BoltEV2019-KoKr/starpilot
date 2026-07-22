@@ -15,8 +15,15 @@ import cv2
 
 from starpilot.system.speed_limit_vision import DETECTOR_CLASSIFIER_EXPANSIONS
 
+if __package__ in (None, ""):
+  import sys
+  sys.path.insert(0, str(Path(__file__).resolve().parent))
+  from common import SUPPORTED_SPEED_VALUES  # type: ignore  # noqa: TID251
+else:
+  from .common import SUPPORTED_SPEED_VALUES
 
-SPEED_VALUES = frozenset((15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75))
+
+SPEED_VALUES = frozenset(SUPPORTED_SPEED_VALUES)
 
 
 def parse_args() -> argparse.Namespace:

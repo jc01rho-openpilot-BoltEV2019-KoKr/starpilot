@@ -10,6 +10,29 @@ from openpilot.common.params import ParamKeyType, Params
 
 FAVORITE_SLOTS_PARAM = "StarPilotFavoriteSlots"
 FAVORITE_SLOT_COUNT = 3
+FAVORITE_ACTION_PREFIX = "__starpilot_favorite_action__:"
+FAVORITE_ACTION_DISTANCE_DECREASE = f"{FAVORITE_ACTION_PREFIX}distance_decrease"
+FAVORITE_ACTION_DISTANCE_INCREASE = f"{FAVORITE_ACTION_PREFIX}distance_increase"
+FAVORITE_ACTION_DECEL_COUNTER = "FavoriteVirtualDecelCruiseCounter"
+FAVORITE_ACTION_ACCEL_COUNTER = "FavoriteVirtualAccelCruiseCounter"
+FAVORITE_ACTION_OPTIONS = (
+  {
+    "key": FAVORITE_ACTION_DISTANCE_DECREASE,
+    "label": "Distance - / SET",
+    "description": "Acts like a short press of the car's SET/- cruise button.",
+    "section": "Actions",
+    "action": "decelCruise",
+  },
+  {
+    "key": FAVORITE_ACTION_DISTANCE_INCREASE,
+    "label": "Distance + / RES",
+    "description": "Acts like a short press of the car's RES/+ cruise button.",
+    "section": "Actions",
+    "action": "accelCruise",
+  },
+)
+FAVORITE_ACTION_KEYS = {option["key"] for option in FAVORITE_ACTION_OPTIONS}
+FAVORITE_ACTION_LABELS = {option["key"]: option["label"] for option in FAVORITE_ACTION_OPTIONS}
 
 
 def default_favorite_slots() -> list[dict[str, Any]]:
@@ -50,6 +73,23 @@ def _get_key_type(params: Params, key: str):
   return None
 
 
+def is_favorite_action_key(key: str | None) -> bool:
+  return bool(key) and key in FAVORITE_ACTION_KEYS
+
+
+def favorite_key_is_valid(params: Params, key: str | None, eligible_keys: Iterable[str] | None = None) -> bool:
+  if not key:
+    return False
+
+  if is_favorite_action_key(key):
+    return True
+
+  if eligible_keys is not None and key not in set(eligible_keys):
+    return False
+
+  return _get_key_type(params, key) == ParamKeyType.BOOL
+
+
 def is_bool_param(params: Params, key: str | None, eligible_keys: Iterable[str] | None = None) -> bool:
   if not key:
     return False
@@ -73,10 +113,15 @@ def normalize_favorite_slots(raw_slots: Any, params: Params | None = None,
     if key is not None:
       key = str(key).strip() or None
 
-    if key and ((eligible is not None and key not in eligible) or (params is not None and not is_bool_param(params, key))):
+    if key and is_favorite_action_key(key):
+      pass
+    elif key and (
+      (eligible is not None and key not in eligible) or
+      (params is not None and not is_bool_param(params, key))
+    ):
       key = None
 
-    label = str(raw_slot.get("label") or "").strip()
+    label = str(raw_slot.get("label") or FAVORITE_ACTION_LABELS.get(key, "")).strip()
     if len(label) > 32:
       label = label[:32].rstrip()
 
@@ -111,6 +156,20 @@ def request_starpilot_toggle_refresh(params_memory: Params | None = None) -> Non
   params_memory.put_bool("StarPilotTogglesUpdated", True)
 
 
+def trigger_favorite_action(key: str | None, params_memory: Params | None = None) -> bool:
+  if not is_favorite_action_key(key):
+    return False
+
+  params_memory = params_memory or Params(memory=True)
+  counter_key = (
+    FAVORITE_ACTION_ACCEL_COUNTER
+    if key == FAVORITE_ACTION_DISTANCE_INCREASE
+    else FAVORITE_ACTION_DECEL_COUNTER
+  )
+  params_memory.put_int(counter_key, params_memory.get_int(counter_key) + 1)
+  return True
+
+
 def toggle_favorite_slot(slot_index: int, params: Params | None = None, params_memory: Params | None = None) -> bool:
   if slot_index < 0 or slot_index >= FAVORITE_SLOT_COUNT:
     return False
@@ -119,7 +178,13 @@ def toggle_favorite_slot(slot_index: int, params: Params | None = None, params_m
   slots = load_favorite_slots(params)
   slot = slots[slot_index]
   key = slot.get("key")
-  if not slot.get("enabled") or not is_bool_param(params, key):
+  if not slot.get("enabled"):
+    return False
+
+  if is_favorite_action_key(key):
+    return trigger_favorite_action(key, params_memory)
+
+  if not is_bool_param(params, key):
     return False
 
   next_value = not params.get_bool(key)

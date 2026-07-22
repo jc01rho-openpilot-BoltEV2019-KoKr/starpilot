@@ -245,48 +245,11 @@ class TestAethergridContracts(unittest.TestCase):
     self.assertGreater(hit.height, tile._rect.height)
 
 
-  def test_aether_tile_uses_single_planar_face_contract(self):
-    mod = _import_aethergrid()
-    tile = mod.AetherTile(surface_color="#3B82F6")
-    face = tile._surface_rect(mod.rl.Rectangle(0, 0, 320, 160))
-
-    self.assertLess(face.width, 320)
-    self.assertLess(face.height, 160)
-    self.assertGreaterEqual(face.x, 0)
-    self.assertGreaterEqual(face.y, 0)
-
-  def test_aether_tile_surface_rect_snaps_to_integer_pixels(self):
-    mod = _import_aethergrid()
-    tile = mod.AetherTile(surface_color="#3B82F6")
-    face = tile._surface_rect(mod.rl.Rectangle(0.5, 0.5, 320.25, 160.75))
-
-    self.assertEqual(face.x, round(face.x))
-    self.assertEqual(face.y, round(face.y))
-    self.assertEqual(face.width, round(face.width))
-    self.assertEqual(face.height, round(face.height))
-
-  def test_aether_tile_preserves_substrate_color_attribute_for_compatibility(self):
-    mod = _import_aethergrid()
-    substrate = mod.hex_to_color("#101820")
-    tile = mod.AetherTile(surface_color="#3B82F6", substrate_color=substrate)
-
-    self.assertIs(tile.substrate_color, substrate)
-
-
   def test_hub_tile_preserves_status_progress_api(self):
     mod = _import_aethergrid()
     tile = mod.HubTile("Driving Controls", "Desc", bg_color="#3B82F6", get_status=lambda: "Download 50%")
 
     self.assertEqual(tile.get_status(), "Download 50%")
-
-  def test_tile_stack_layout_keeps_full_content_block_inside_face(self):
-    mod = _import_aethergrid()
-    tile = mod.AetherTile(surface_color="#3B82F6")
-    face = mod.rl.Rectangle(0, 0, 320, 180)
-    layout = tile._measure_tile_stack(face, icon_height=60, title_lines=2, title_size=28, primary_size=30, desc_lines=2, desc_size=18)
-
-    self.assertGreaterEqual(layout["top"], 0)
-    self.assertLessEqual(layout["desc_bottom"], face.height)
 
   def test_tile_grid_reflows_to_wider_tiles_when_width_is_tight(self):
     mod = _import_aethergrid()
@@ -452,13 +415,12 @@ class TestAethergridContracts(unittest.TestCase):
   def test_disabled_tiles_hud_mode_rendering(self):
     mod = _import_aethergrid()
     
-    # ToggleTile disabled, show_led=True
+    # ToggleTile disabled
     toggle = mod.ToggleTile(
       title="Test Loud",
       get_state=lambda: True,
       set_state=lambda s: None,
       is_enabled=lambda: False,
-      show_led=True
     )
     # Spy on _render_hud_background
     orig_hud_bg = toggle._render_hud_background

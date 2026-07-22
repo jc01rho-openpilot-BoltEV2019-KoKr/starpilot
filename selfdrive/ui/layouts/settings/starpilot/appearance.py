@@ -1,17 +1,13 @@
 from __future__ import annotations
 import re
-import math
 
-from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
+from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.multilang import tr, tr_noop
-from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
-from openpilot.system.ui.lib.text_measure import measure_text_cached
-from openpilot.system.ui.widgets import DialogResult, Widget
+from openpilot.system.ui.widgets import DialogResult
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
-import pyray as rl
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     AetherSliderDialog,
     DEFAULT_PANEL_STYLE,
@@ -19,13 +15,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     SettingRow,
     SettingSection,
     AetherSettingsView,
-    AetherCategoryDrawer,
-    TileGrid,
-    HubTile,
-    draw_list_group_shell,
-    hex_to_color,
-    PLATE_TAU,
-    AetherListColors,
+    CardHubManagerView,
 )
 from openpilot.selfdrive.ui.layouts.settings.starpilot.simple_download_manager import SimpleDownloadManager
 from openpilot.starpilot.common.starpilot_variables import THEME_SAVE_PATH
@@ -90,113 +80,52 @@ def _theme_display_name(value: str) -> str:
     return display
 
 # ═══════════════════════════════════════════════════════════════
-# Unified Appearance panel
+# AppearanceManagerView — 6-card category hub
 # ═══════════════════════════════════════════════════════════════
 
-class AppearanceManagerView(AetherSettingsView):
-    @property
-    def vertical_scrolling_disabled(self) -> bool:
-        return True
-
+class AppearanceManagerView(CardHubManagerView):
     def __init__(self, controller, sections, **kwargs):
         super().__init__(controller, sections, **kwargs)
-        self._main_grid = TileGrid(columns=3, padding=12)
-        self._main_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
-        self._child(self._main_grid)
 
-        self._init_toggles()
-
-    def _init_toggles(self):
-        hero_data = [
+    def _build_cards(self):
+        return [
             {
                 "title": tr("Model & Path Visualization"),
                 "desc": tr("Customize dynamic lane paths, road edges, and colors."),
                 "icon": "steering",
-                "color": "#8B5CF6",
-                "on_click": lambda: self._controller._navigate_to("model")
+                "on_click": lambda: self._controller._navigate_to("model"),
             },
             {
                 "title": tr("Driving Widgets & HUD"),
                 "desc": tr("Configure compass, dynamic pedals, signals, and screen borders."),
                 "icon": "display",
-                "color": "#8B5CF6",
-                "on_click": lambda: self._controller._navigate_to("hud")
+                "on_click": lambda: self._controller._navigate_to("hud"),
             },
             {
                 "title": tr("Screen Declutter & Visibility"),
                 "desc": tr("Toggle speed limits, alert banners, and driver monitoring icon."),
                 "icon": "system",
-                "color": "#8B5CF6",
-                "on_click": lambda: self._controller._navigate_to("declutter")
+                "on_click": lambda: self._controller._navigate_to("declutter"),
             },
-        ]
-
-        standard_data = [
             {
                 "title": tr("Navigation & Mapping"),
                 "desc": tr("Configure road names, Vienna signs, and offroad routes."),
                 "icon": "navigate",
-                "color": "#8B5CF6",
-                "on_click": lambda: self._controller._navigate_to("nav")
+                "on_click": lambda: self._controller._navigate_to("nav"),
             },
             {
                 "title": tr("Camera & System Startup"),
                 "desc": tr("Manage driver monitoring cameras, boot logos, and startup sounds."),
                 "icon": "vehicle",
-                "color": "#8B5CF6",
-                "on_click": lambda: self._controller._navigate_to("system")
+                "on_click": lambda: self._controller._navigate_to("system"),
             },
             {
                 "title": tr("Advanced Metrics"),
                 "desc": tr("Adjust radar plots, lead vehicle info, and stop sign metrics."),
                 "icon": "sound",
-                "color": "#8B5CF6",
-                "on_click": lambda: self._controller._navigate_to("dev")
+                "on_click": lambda: self._controller._navigate_to("dev"),
             },
         ]
-
-        all_data = hero_data + standard_data
-        self._main_grid.clear()
-        for d in all_data:
-            self._main_grid.add_tile(
-                HubTile(
-                    title=d["title"],
-                    desc=d["desc"],
-                    icon_key=d["icon"],
-                    on_click=d["on_click"],
-                    bg_color=d["color"],
-                )
-            )
-
-    def _render(self, rect: rl.Rectangle):
-        self.set_rect(rect)
-        self._interactive_rects.clear()
-
-        margin_x = 10.0
-        margin_y = 10.0
-
-        grid_x = rect.x + margin_x
-        grid_y = rect.y + margin_y
-        grid_w = rect.width - margin_x * 2
-        grid_h = rect.y + rect.height - grid_y - margin_y
-
-        self._scroll_rect = rl.Rectangle(grid_x, grid_y, grid_w, grid_h)
-        self._content_height = grid_h
-
-        self._scroll_panel.set_enabled(self.is_visible)
-        self._scroll_offset = self._scroll_panel.update(
-            self._scroll_rect, self._scroll_rect.height
-        )
-
-        if self.vertical_scrolling_disabled:
-            self._scroll_offset = 0.0
-
-        self._draw_scroll_content(self._scroll_rect, self._scroll_rect.width)
-
-    def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
-        y = rect.y + self._scroll_offset
-        self._main_grid.set_parent_rect(self._scroll_rect)
-        self._main_grid.render(rl.Rectangle(rect.x, y, width, rect.height))
 
 
 class StarPilotAppearanceLayout(_SettingsPage):
@@ -398,10 +327,6 @@ class StarPilotAppearanceLayout(_SettingsPage):
 
         # ═══ 3. Screen Declutter & Visibility ═══
         self._declutter_rows = [
-            SettingRow("AdvancedCustomUI", "toggle", tr_noop("Advanced UI Controls"),
-                       subtitle=tr_noop("Fine-tune which elements appear on screen."),
-                       get_state=lambda: self._params.get_bool("AdvancedCustomUI"),
-                       set_state=lambda s: self._params.put_bool("AdvancedCustomUI", s)),
             SettingRow("HideSpeed", "toggle", tr_noop("Hide Speed"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("HideSpeed"),
@@ -486,10 +411,6 @@ class StarPilotAppearanceLayout(_SettingsPage):
                        subtitle="",
                        get_state=lambda: self._params.get_bool("DriverCamera"),
                        set_state=lambda s: self._params.put_bool("DriverCamera", s)),
-            SettingRow("StockConfidenceBallWidget", "toggle", tr_noop("Stock Confidence Ball"),
-                       subtitle=tr_noop("Use the original moving confidence ball on the small comma 4 UI."),
-                       get_state=lambda: self._params.get_bool("StockConfidenceBallWidget"),
-                       set_state=lambda s: self._params.put_bool("StockConfidenceBallWidget", s)),
             SettingRow("BootLogo", "value", tr_noop("Boot Logo"),
                        subtitle="",
                        get_value=lambda: self._get_theme_value("BootLogo"),
@@ -592,6 +513,8 @@ class StarPilotAppearanceLayout(_SettingsPage):
             "Display the driving model path, lanes, and road edges.")
         pt_hud = self._make_parent("CustomUI", "Driving Screen Widgets",
             "Show interactive indicators on the driving screen.")
+        pt_declutter = self._make_parent("AdvancedCustomUI", "Advanced UI Controls",
+            "Fine-tune which elements appear on screen.")
 
         # Register subpanels for Level 2 slide transitions
         self._sub_panels["model"] = AetherSettingsView(
@@ -615,6 +538,7 @@ class StarPilotAppearanceLayout(_SettingsPage):
             [SettingSection(title="", rows=self._declutter_rows)],
             header_title=tr_noop("Screen Declutter & Visibility"),
             header_subtitle=tr_noop("Toggle speed limits, alert banners, and driver monitoring icon."),
+            parent_toggle=pt_declutter,
             panel_style=PANEL_STYLE,
         )
         self._sub_panels["nav"] = AetherSettingsView(

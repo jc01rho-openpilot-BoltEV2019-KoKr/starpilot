@@ -14,12 +14,13 @@ import numpy as np
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import (  # type: ignore
+  from common import (  # type: ignore  # noqa: TID251
     BOOKMARK_LEADIN_MANIFEST_FIELDS,
     DEFAULT_WORKSPACE,
     ensure_dir,
     preferred_clip_root,
     resolve_workspace,
+    source_video_fps,
     write_csv_header,
   )
 else:
@@ -29,6 +30,7 @@ else:
     ensure_dir,
     preferred_clip_root,
     resolve_workspace,
+    source_video_fps,
     write_csv_header,
   )
 
@@ -62,17 +64,36 @@ def load_existing_rows(manifest_path: Path) -> dict[str, dict[str, str]]:
     return {row["record_key"]: row for row in reader if row.get("record_key")}
 
 
-def read_frame_at(video_path: Path, target_time_s: float):
+def read_frames_at(video_path: Path, target_times_s: list[float]):
   capture = cv2.VideoCapture(str(video_path))
-  fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
-  frame_index = max(int(round(target_time_s * fps)), 0)
-  capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-  ok, frame_bgr = capture.read()
+  fps = source_video_fps(video_path, capture.get(cv2.CAP_PROP_FPS))
+  targets = sorted((max(int(round(target_time_s * fps)), 0), target_time_s) for target_time_s in target_times_s)
+  results = {}
+  frame_index = 0
+  last_frame_index = -1
+  last_frame_bgr = None
+
+  for target_frame_index, target_time_s in targets:
+    if target_frame_index == last_frame_index and last_frame_bgr is not None:
+      results[target_time_s] = (last_frame_index / fps, last_frame_bgr.copy())
+      continue
+
+    while frame_index < target_frame_index:
+      if not capture.grab():
+        capture.release()
+        return results
+      frame_index += 1
+
+    ok, frame_bgr = capture.read()
+    if not ok or frame_bgr is None:
+      break
+    last_frame_index = frame_index
+    last_frame_bgr = frame_bgr
+    results[target_time_s] = (frame_index / fps, frame_bgr)
+    frame_index += 1
+
   capture.release()
-  if not ok or frame_bgr is None:
-    return None
-  actual_time_s = frame_index / fps
-  return actual_time_s, frame_bgr
+  return results
 
 
 def sample_offsets(leadin_start_s: float, segment_offset_s: float, sample_every: float, max_samples: int):
@@ -104,7 +125,7 @@ def extract_window_frames(row: dict, clip_root: Path, sample_every: float, max_s
   leadin_start_s = float(row["leadinStartS"])
   spans_previous_segment = bool(row.get("spansPreviousSegment"))
 
-  sampled = []
+  requests = []
   previous_clip = clip_root / f"{route}--{segment - 1}" / "fcamera.hevc"
   current_clip = clip_root / f"{route}--{segment}" / "fcamera.hevc"
 
@@ -119,10 +140,18 @@ def extract_window_frames(row: dict, clip_root: Path, sample_every: float, max_s
     if not source_video.is_file():
       continue
 
-    frame_info = read_frame_at(source_video, source_time_s)
+    requests.append((relative_offset_s, source_video, source_time_s))
+
+  decoded_by_video = {}
+  for source_video in {request[1] for request in requests}:
+    target_times_s = [request[2] for request in requests if request[1] == source_video]
+    decoded_by_video[source_video] = read_frames_at(source_video, target_times_s)
+
+  sampled = []
+  for relative_offset_s, source_video, source_time_s in requests:
+    frame_info = decoded_by_video[source_video].get(source_time_s)
     if frame_info is None:
       continue
-
     actual_time_s, frame_bgr = frame_info
     sampled.append({
       "relative_offset_s": relative_offset_s,

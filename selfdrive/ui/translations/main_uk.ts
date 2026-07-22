@@ -1651,10 +1651,6 @@
         <translation>Профіль вповільн.</translation>
     </message>
     <message>
-        <source>Human-Like Acceleration</source>
-        <translation>Людьське приск.</translation>
-    </message>
-    <message>
         <source>"Taco Bell Run" Turn Speed Hack</source>
         <translation>«Taco Bell Run» — хак поворотів</translation>
     </message>

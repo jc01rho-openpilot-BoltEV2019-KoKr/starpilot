@@ -15,11 +15,11 @@ if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
   from build_value_dataset import crop_box, parse_yolo_labels  # type: ignore
-  from common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace  # type: ignore
+  from common import DEFAULT_WORKSPACE, SUPPORTED_SPEED_VALUES, ensure_dir, resolve_workspace  # type: ignore  # noqa: TID251
   from generate_value_roi_classifier_dataset import augment_mask, extract_value_mask  # type: ignore
 else:
   from .build_value_dataset import crop_box, parse_yolo_labels
-  from .common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace
+  from .common import DEFAULT_WORKSPACE, SUPPORTED_SPEED_VALUES, ensure_dir, resolve_workspace
   from .generate_value_roi_classifier_dataset import augment_mask, extract_value_mask
 
 
@@ -60,7 +60,7 @@ def parse_speed_from_read(text: str) -> int:
   if not match:
     return 0
   value = int(match.group(1))
-  return value if value in DEFAULT_SPEED_VALUES else 0
+  return value if value in SUPPORTED_SPEED_VALUES else 0
 
 
 def row_speed(row: dict[str, str]) -> int:
@@ -68,7 +68,7 @@ def row_speed(row: dict[str, str]) -> int:
     text = (row.get(field) or "").strip()
     if text.isdigit():
       value = int(text)
-      if value in DEFAULT_SPEED_VALUES:
+      if value in SUPPORTED_SPEED_VALUES:
         return value
   for field in ("full_detection", "model_read", "ocr_read"):
     value = parse_speed_from_read(row.get(field, ""))
@@ -235,12 +235,12 @@ def main() -> int:
     if args.max_rows > 0 and attempted >= args.max_rows:
       break
 
-  print(
-    "Imported manifest classifier masks: "
-    f"attempted={attempted} imported={imported} written={written} "
-    f"skipped_no_speed={skipped_no_speed} skipped_no_crop={skipped_no_crop} skipped_no_mask={skipped_no_mask} "
-    f"skipped_write_failed={skipped_write_failed}"
-  )
+  print("".join((
+    "Imported manifest classifier masks: ",
+    f"attempted={attempted} imported={imported} written={written} ",
+    f"skipped_no_speed={skipped_no_speed} skipped_no_crop={skipped_no_crop} skipped_no_mask={skipped_no_mask} ",
+    f"skipped_write_failed={skipped_write_failed}",
+  )))
   return 0
 
 

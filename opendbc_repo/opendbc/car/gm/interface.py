@@ -72,6 +72,18 @@ NON_LINEAR_TORQUE_PARAMS = {
   },
 }
 
+NON_LINEAR_TORQUE_PARAM_ALIASES = {
+  CAR.CHEVROLET_VOLT_ASCM: CAR.CHEVROLET_VOLT,
+  CAR.CHEVROLET_VOLT_CAMERA: CAR.CHEVROLET_VOLT,
+  CAR.CHEVROLET_VOLT_CC: CAR.CHEVROLET_VOLT,
+  CAR.CHEVROLET_VOLT_2019: CAR.CHEVROLET_VOLT,
+}
+
+
+def get_nonlinear_torque_params(car_fingerprint):
+  source_fingerprint = NON_LINEAR_TORQUE_PARAM_ALIASES.get(car_fingerprint, car_fingerprint)
+  return NON_LINEAR_TORQUE_PARAMS.get(source_fingerprint)
+
 PEDAL_MSG = 0x201
 CAM_MSG = 0x320
 ACCELERATOR_POS_MSG = 0xBE
@@ -177,7 +189,7 @@ class CarInterface(CarInterfaceBase):
       # The "lat_accel vs torque" relationship is assumed to be the sum of "sigmoid + linear" curves
       # An important thing to consider is that the slope at 0 should be > 0 (ideally >1)
       # This has big effect on the stability about 0 (noise when going straight)
-      non_linear_torque_params = NON_LINEAR_TORQUE_PARAMS.get(self.CP.carFingerprint)
+      non_linear_torque_params = get_nonlinear_torque_params(self.CP.carFingerprint)
       assert non_linear_torque_params, "The params are not defined"
       if isinstance(non_linear_torque_params, dict):
         side_key = "left" if lateral_acceleration >= 0 else "right"
@@ -195,7 +207,7 @@ class CarInterface(CarInterfaceBase):
     return torque_values, lataccel_values
 
   def torque_from_lateral_accel(self) -> TorqueFromLateralAccelCallbackType:
-    if self.CP.carFingerprint in NON_LINEAR_TORQUE_PARAMS:
+    if get_nonlinear_torque_params(self.CP.carFingerprint) is not None:
       torque_values, lataccel_values = self.get_lataccel_torque_siglin()
 
       def torque_from_lateral_accel_siglin(lateral_acceleration: float, torque_params: structs.CarParams.LateralTorqueTuning):
@@ -207,7 +219,7 @@ class CarInterface(CarInterfaceBase):
       return torque_from_lateral_accel_linear
 
   def lateral_accel_from_torque(self) -> LateralAccelFromTorqueCallbackType:
-    if self.CP.carFingerprint in NON_LINEAR_TORQUE_PARAMS:
+    if get_nonlinear_torque_params(self.CP.carFingerprint) is not None:
       torque_values, lataccel_values = self.get_lataccel_torque_siglin()
 
       def lateral_accel_from_torque_siglin(torque: float, torque_params: structs.CarParams.LateralTorqueTuning):
@@ -509,7 +521,7 @@ class CarInterface(CarInterfaceBase):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    elif candidate == CAR.CADILLAC_XT4:
+    elif candidate in (CAR.CADILLAC_XT4, CAR.CADILLAC_XT4_CC):
       ret.steerActuatorDelay = 0.2
       if not ret.openpilotLongitudinalControl:
         ret.minEnableSpeed = -1.

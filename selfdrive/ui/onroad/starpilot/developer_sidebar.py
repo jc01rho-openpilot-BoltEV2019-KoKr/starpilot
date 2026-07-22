@@ -1,6 +1,7 @@
 import pyray as rl
 import time
 import re
+import json
 from cereal import car
 from openpilot.common.params import Params
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -14,6 +15,8 @@ METRIC_MARGIN = 12
 FONT_SIZE = 35
 METER_TO_FOOT = 3.28084
 _WHITE_DIM = rl.Color(255, 255, 255, 85)
+_LOCKED_VALUE_COLOR = rl.Color(34, 197, 94, 255)
+_AUTO_TUNE_COLOR = rl.Color(59, 130, 246, 255)
 _FLM_OVERRIDE_COLOR = rl.Color(239, 68, 68, 255)
 
 def parse_hex_color(hex_str: str, default_color=rl.WHITE) -> rl.Color:
@@ -48,6 +51,17 @@ def resolve_effective_torque_value(custom_enabled: bool, custom_value: float,
   return stock_value if stock_value != 0.0 else configured_value
 
 
+def _safe_float(value, default: float = 0.0) -> float:
+  try:
+    return float(value)
+  except (TypeError, ValueError):
+    return default
+
+
+def _setting_changed(value: float, reference: float) -> bool:
+  return round(value, 2) != round(reference, 2)
+
+
 class DeveloperSidebar:
   def __init__(self):
     self._params = Params()
@@ -57,10 +71,16 @@ class DeveloperSidebar:
     self._cached_force_auto_tune_off = False
     self._cached_force_auto_tune = False
     self._cached_flm_trial_applied = False
+    self._cached_use_auto_steer_delay = True
+    self._cached_delay_stock = 0.0
+    self._cached_delay = 0.0
     self._cached_friction_stock = 0.0
     self._cached_friction = 0.0
     self._cached_lat_stock = 0.0
     self._cached_lat = 0.0
+    self._cached_ratio_stock = 0.0
+    self._cached_ratio = 0.0
+    self._flm_generic_param_keys: set[str] = set()
 
     self.lateral_engagement_time = 0
     self.longitudinal_engagement_time = 0
@@ -73,7 +93,7 @@ class DeveloperSidebar:
     self._visible = False
     self._metric_color = rl.WHITE
     self._active_ids: list[int] = []
-    self._flm_override_metric_ids: set[int] = set()
+    self._metric_colors: dict[int, rl.Color] = {}
     self._metrics: dict[int, tuple[str, str]] = {}
 
   @property
@@ -98,10 +118,41 @@ class DeveloperSidebar:
     self._cached_force_auto_tune_off = self._params.get_bool("ForceAutoTuneOff")
     self._cached_force_auto_tune = self._params.get_bool("ForceAutoTune")
     self._cached_flm_trial_applied = self._params.get_bool("FLMTrialApplied")
+    self._cached_use_auto_steer_delay = self._params.get_bool("UseAutoSteerDelay", default=True)
+    self._cached_delay_stock = self._params.get_float("SteerDelayStock")
+    self._cached_delay = self._params.get_float("SteerDelay")
     self._cached_friction_stock = self._params.get_float("SteerFrictionStock")
     self._cached_friction = self._params.get_float("SteerFriction")
     self._cached_lat_stock = self._params.get_float("SteerLatAccelStock")
     self._cached_lat = self._params.get_float("SteerLatAccel")
+    self._cached_ratio_stock = self._params.get_float("SteerRatioStock")
+    self._cached_ratio = self._params.get_float("SteerRatio")
+    self._flm_generic_param_keys = self._read_flm_generic_param_keys() if self._cached_flm_trial_applied else set()
+
+  def _read_flm_generic_param_keys(self) -> set[str]:
+    try:
+      raw = self._params.get("FLMTrialBaseline", encoding="utf-8") or "{}"
+      snapshot = raw if isinstance(raw, dict) else json.loads(raw)
+      applied = snapshot.get("appliedGenericParams", {}) if isinstance(snapshot, dict) else {}
+      return set(applied.keys()) if isinstance(applied, dict) else set()
+    except Exception:
+      return set()
+
+  @staticmethod
+  def _toggle_bool(toggles: dict, key: str, fallback: bool = False) -> bool:
+    return bool(toggles[key]) if key in toggles else fallback
+
+  @staticmethod
+  def _toggle_float(toggles: dict, key: str, fallback: float = 0.0) -> float:
+    return _safe_float(toggles.get(key, fallback), fallback)
+
+  def _flm_changed(self, *keys: str) -> bool:
+    return self._cached_flm_trial_applied and any(key in self._flm_generic_param_keys for key in keys)
+
+  def _tuning_color(self, *, auto: bool = False, flm: bool = False) -> rl.Color:
+    if flm:
+      return _FLM_OVERRIDE_COLOR
+    return _AUTO_TUNE_COLOR if auto else _LOCKED_VALUE_COLOR
 
   def _draw_metric(self, sidebar_rect: rl.Rectangle, label_first: str, label_second: str, color: rl.Color, y: float):
     card_x = int(sidebar_rect.x + sidebar_rect.width) - METRIC_MARGIN - METRIC_WIDTH
@@ -211,26 +262,19 @@ class DeveloperSidebar:
       steer_label += f" - ({self.max_steer_angle}°)"
       torque_label += f" - ({self.max_torque}%)"
 
-    force_auto_tune_off = ui_state.starpilot_toggles.get("force_auto_tune_off", False) or self._cached_force_auto_tune_off
-    force_auto_tune = ui_state.starpilot_toggles.get("force_auto_tune", False) or self._cached_force_auto_tune
+    toggles = ui_state.starpilot_toggles
+    force_auto_tune_off = self._toggle_bool(toggles, "force_auto_tune_off", self._cached_force_auto_tune_off)
+    force_auto_tune = self._toggle_bool(toggles, "force_auto_tune", self._cached_force_auto_tune)
     use_params = live_torque_parameters.useParams if (live_torque_parameters and hasattr(live_torque_parameters, 'useParams')) else False
-    using_live_torque = not force_auto_tune_off and (use_params or force_auto_tune)
+    using_live_torque = live_torque_parameters is not None and not force_auto_tune_off and (use_params or force_auto_tune)
     live_friction = live_torque_parameters.frictionCoefficientFiltered if (live_torque_parameters and hasattr(live_torque_parameters, 'frictionCoefficientFiltered')) else 0.0
     live_lat_factor = live_torque_parameters.latAccelFactorFiltered if (live_torque_parameters and hasattr(live_torque_parameters, 'latAccelFactorFiltered')) else 0.0
-    custom_friction = float(ui_state.starpilot_toggles.get("friction", self._cached_friction) or 0.0)
-    custom_lat_factor = float(ui_state.starpilot_toggles.get("latAccelFactor", self._cached_lat) or 0.0)
-    use_custom_friction = bool(ui_state.starpilot_toggles.get("use_custom_friction", force_auto_tune_off))
-    use_custom_lat_factor = bool(ui_state.starpilot_toggles.get("use_custom_latAccelFactor", force_auto_tune_off))
-
-    self._flm_override_metric_ids = set()
-    if self._cached_flm_trial_applied:
-      flm_metric_flags = {
-        3: bool(ui_state.starpilot_toggles.get("use_custom_steerActuatorDelay", False)),
-        4: use_custom_friction,
-        5: use_custom_lat_factor,
-        6: bool(ui_state.starpilot_toggles.get("use_custom_steerRatio", False)),
-      }
-      self._flm_override_metric_ids = {metric_id for metric_id, enabled in flm_metric_flags.items() if enabled}
+    custom_friction = self._toggle_float(toggles, "friction", self._cached_friction)
+    custom_lat_factor = self._toggle_float(toggles, "latAccelFactor", self._cached_lat)
+    fallback_use_custom_friction = force_auto_tune_off or (_setting_changed(self._cached_friction, self._cached_friction_stock) and not force_auto_tune)
+    fallback_use_custom_lat_factor = force_auto_tune_off or (_setting_changed(self._cached_lat, self._cached_lat_stock) and not force_auto_tune)
+    use_custom_friction = self._toggle_bool(toggles, "use_custom_friction", fallback_use_custom_friction)
+    use_custom_lat_factor = self._toggle_bool(toggles, "use_custom_latAccelFactor", fallback_use_custom_lat_factor)
 
     friction_coeff = resolve_effective_torque_value(
       use_custom_friction,
@@ -249,7 +293,15 @@ class DeveloperSidebar:
       self._cached_lat,
     )
 
-    lat_delay = live_delay.lateralDelay if live_delay else 0.0
+    use_auto_steer_delay = self._toggle_bool(toggles, "use_auto_steer_delay", self._cached_use_auto_steer_delay)
+    use_custom_delay = self._toggle_bool(toggles, "use_custom_steerActuatorDelay", not use_auto_steer_delay)
+    custom_delay = self._toggle_float(toggles, "steerActuatorDelay", self._cached_delay)
+    if use_custom_delay:
+      lat_delay = custom_delay
+    elif live_delay:
+      lat_delay = live_delay.lateralDelay
+    else:
+      lat_delay = self._cached_delay_stock if self._cached_delay_stock != 0.0 else self._cached_delay
 
     tot_time = max(1, self.total_engagement_time)
     lat_pct = (self.lateral_engagement_time / tot_time) * 100.0
@@ -261,8 +313,40 @@ class DeveloperSidebar:
     danger_jerk = starpilot_plan.dangerJerk if starpilot_plan else 0.0
     speed_jerk = starpilot_plan.speedJerk if starpilot_plan else 0.0
 
-    steer_ratio = live_parameters.steerRatio if live_parameters else 0.0
-    stiff_factor = live_parameters.stiffnessFactor if live_parameters else 0.0
+    fallback_use_custom_steer_ratio = force_auto_tune_off or (_setting_changed(self._cached_ratio, self._cached_ratio_stock) and not force_auto_tune)
+    use_custom_steer_ratio = self._toggle_bool(toggles, "use_custom_steerRatio", fallback_use_custom_steer_ratio)
+    custom_steer_ratio = self._toggle_float(toggles, "steerRatio", self._cached_ratio)
+    if use_custom_steer_ratio:
+      steer_ratio = custom_steer_ratio
+    elif live_parameters:
+      steer_ratio = live_parameters.steerRatio
+    else:
+      steer_ratio = self._cached_ratio_stock if self._cached_ratio_stock != 0.0 else self._cached_ratio
+    stiff_factor = 1.0 if force_auto_tune_off else (live_parameters.stiffnessFactor if live_parameters else 1.0)
+
+    force_auto_tune_flm = self._flm_changed("ForceAutoTune", "ForceAutoTuneOff")
+    self._metric_colors = {
+      3: self._tuning_color(
+        auto=not use_custom_delay and live_delay is not None,
+        flm=self._flm_changed("SteerDelay", "UseAutoSteerDelay"),
+      ),
+      4: self._tuning_color(
+        auto=using_live_torque and not use_custom_friction,
+        flm=self._flm_changed("SteerFriction") or (force_auto_tune_flm and (using_live_torque or use_custom_friction)),
+      ),
+      5: self._tuning_color(
+        auto=using_live_torque and not use_custom_lat_factor,
+        flm=self._flm_changed("SteerLatAccel") or (force_auto_tune_flm and (using_live_torque or use_custom_lat_factor)),
+      ),
+      6: self._tuning_color(
+        auto=live_parameters is not None and not use_custom_steer_ratio,
+        flm=self._flm_changed("SteerRatio") or (force_auto_tune_flm and use_custom_steer_ratio),
+      ),
+      7: self._tuning_color(
+        auto=live_parameters is not None and not force_auto_tune_off,
+        flm=force_auto_tune_flm and force_auto_tune_off,
+      ),
+    }
 
     model_name = ui_state.starpilot_toggles.get("model_name", "N/A")
     model_name = re.sub(r'\(.*\)', '', model_name)
@@ -305,6 +389,5 @@ class DeveloperSidebar:
       if metric_id <= 0 or metric_id not in self._metrics:
         continue
       label_first, label_second = self._metrics[metric_id]
-      flm_overridden = metric_id in self._flm_override_metric_ids
-      self._draw_metric(sidebar_rect, label_first, label_second, _FLM_OVERRIDE_COLOR if flm_overridden else self._metric_color, y)
+      self._draw_metric(sidebar_rect, label_first, label_second, self._metric_colors.get(metric_id, self._metric_color), y)
       y += METRIC_HEIGHT + spacing

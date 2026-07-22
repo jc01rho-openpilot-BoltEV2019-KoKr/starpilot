@@ -64,6 +64,7 @@ A_CHANGE_COSTS = [200, 195, 180, 220]  # High speed: 170 → 220 for smoother hi
 LEAD_FILTER_TIME_LOW = 0.8   # Under 40 mph: Fast response for city emergency braking
 LEAD_FILTER_TIME_HIGH = 1.8  # Over 40 mph: Smoother filtering for vision-only highway stability (was 1.2)
 SPEED_FILTER_THRESHOLD = 40 * CV.MPH_TO_MS  # 40 mph threshold
+DUPLICATE_VISION_LEAD_FILTER_TIME = 0.15
 
 # DISTANCE ADAPTATION STRENGTH (How much penalties increase when close to lead)
 # [City, Urban Hwy, Rural Hwy, High Speed]
@@ -211,11 +212,7 @@ def get_stopped_equivalence_factor(v_lead):
   return (v_lead**2) / (2 * COMFORT_BRAKE)
 
 def get_safe_obstacle_distance(v_ego, t_follow):
-  from openpilot.common.params import Params
-  params = Params()
-  stop_str = params.get("StopDistance", encoding="utf8")
-  stop_distance = float(stop_str) if stop_str else STOP_DISTANCE
-  return (v_ego**2) / (2 * COMFORT_BRAKE) + t_follow * v_ego + stop_distance
+  return (v_ego**2) / (2 * COMFORT_BRAKE) + t_follow * v_ego + STOP_DISTANCE
 
 def desired_follow_distance(v_ego, v_lead, t_follow=None):
   if t_follow is None:
@@ -386,6 +383,8 @@ class LongitudinalMpc:
     self.current_filter_time = LEAD_FILTER_TIME_LOW
     self.lead_a_filter = FirstOrderFilter(0.0, self.current_filter_time, self.dt)
     self.lead_v_filter = FirstOrderFilter(0.0, self.current_filter_time, self.dt)
+    self.duplicate_lead_a_filters = [FirstOrderFilter(0.0, 0.0, self.dt, initialized=False) for _ in range(2)]
+    self.duplicate_lead_v_filters = [FirstOrderFilter(0.0, 0.0, self.dt, initialized=False) for _ in range(2)]
     # Slew-limited filter factor to avoid abrupt 0.50↔1.00 jumps
     self.filter_time_factor = 1.0
     self.prev_filter_time_factor = 1.0
@@ -427,6 +426,9 @@ class LongitudinalMpc:
     self.time_linearization = 0.0
     self.time_integrator = 0.0
     self.x0 = np.zeros(X_DIM)
+    for lead_filter in (*self.duplicate_lead_a_filters, *self.duplicate_lead_v_filters):
+      lead_filter.x = 0.0
+      lead_filter.initialized = False
     self.set_weights()
 
   def set_cost_weights(self, cost_weights, constraint_cost_weights):
@@ -473,7 +475,6 @@ class LongitudinalMpc:
       self.lead_a_filter = FirstOrderFilter(current_a, self.current_filter_time, self.dt)
       self.lead_v_filter = FirstOrderFilter(current_v, self.current_filter_time, self.dt)
       self.prev_filter_time = self.current_filter_time
-
     # Adaptive jerk factors for distance with interp scaling
     dist_factor = 1.0 + self.current_dist_adapt * (20.0 / max(lead_dist, 5.0))
     acceleration_jerk *= dist_factor
@@ -481,7 +482,6 @@ class LongitudinalMpc:
     speed_jerk *= dist_factor
 
     # Scene complexity adjustment based on model uncertainty
-    prev_filter_time_factor = getattr(self, 'prev_filter_time_factor', 1.0)
     # Target factor from uncertainty
     if uncertainty <= 0.45:
       tgt_factor = 1.0
@@ -500,10 +500,13 @@ class LongitudinalMpc:
       tgt_factor = max(tgt_factor, float(filter_time_factor_floor))
 
     # Slew-limit changes to avoid step-wise filter jumps
-    max_step = self.slew_per_sec * self.dt
-    delta = np.clip(tgt_factor - self.filter_time_factor, -max_step, max_step)
-    self.filter_time_factor += float(delta)
-    filter_time_factor = float(self.filter_time_factor)
+    if panic_bypass:
+      # A real closing hazard must never wait for the comfort filter to unwind.
+      self.filter_time_factor = 0.0
+    else:
+      max_step = self.slew_per_sec * self.dt
+      delta = np.clip(tgt_factor - self.filter_time_factor, -max_step, max_step)
+      self.filter_time_factor += float(delta)
 
     # When uncertainty is moderately elevated, allow accel but cap jerk by increasing jerk cost
     if 0.45 <= uncertainty < 0.60:
@@ -523,6 +526,7 @@ class LongitudinalMpc:
     self.set_cost_weights(cost_weights, constraint_cost_weights)
 
     # Adjust filter time constants for complex scenes
+    filter_time_factor = float(self.filter_time_factor)
     if abs(filter_time_factor - getattr(self, 'prev_filter_time_factor', 1.0)) > 0.05:
       new_filter_time = self.current_filter_time * filter_time_factor
       current_a = self.lead_a_filter.x if hasattr(self.lead_a_filter, 'x') else 0.0
@@ -565,9 +569,11 @@ class LongitudinalMpc:
     lead_xv = np.column_stack((x_lead_traj, v_lead_traj))
     return lead_xv
 
-  def process_lead(self, lead, tracking_lead=True, t_follow=None):
+  def process_lead(self, lead, tracking_lead=True, t_follow=None, *, lead_index=0,
+                   smooth_duplicate_vision=False):
     v_ego = self.x0[1]
-    if lead is not None and lead.status and tracking_lead:
+    lead_active = lead is not None and lead.status and tracking_lead
+    if lead_active:
       x_lead = lead.dRel
       v_lead = lead.vLead
       a_lead = lead.aLeadK
@@ -588,11 +594,30 @@ class LongitudinalMpc:
     x_lead = np.clip(x_lead, min_x_lead, 1e8)
     v_lead = np.clip(v_lead, 0.0, 1e8)
     a_lead = np.clip(a_lead, -10., 5.)
-    # Apply smoothing filters with interp scaling
-    self.lead_a_filter.update(a_lead)
-    self.lead_v_filter.update(v_lead)
-    a_lead = self.lead_a_filter.x
-    v_lead = self.lead_v_filter.x
+    if lead_active and smooth_duplicate_vision and not bool(getattr(lead, "radar", False)):
+      # Keep the baseline filter synchronized so leaving this narrow comfort
+      # path cannot introduce a state discontinuity.
+      self.lead_a_filter.update(a_lead)
+      self.lead_v_filter.update(v_lead)
+
+      filter_time = self.current_filter_time
+      filter_time = max(filter_time, DUPLICATE_VISION_LEAD_FILTER_TIME)
+      filter_time *= self.filter_time_factor
+
+      a_filter = self.duplicate_lead_a_filters[lead_index]
+      v_filter = self.duplicate_lead_v_filters[lead_index]
+      a_filter.update_alpha(filter_time)
+      v_filter.update_alpha(filter_time)
+      a_lead = a_filter.update(a_lead)
+      v_lead = v_filter.update(v_lead)
+    else:
+      # Preserve the historical planner path outside the qualified comfort scene.
+      self.lead_a_filter.update(a_lead)
+      self.lead_v_filter.update(v_lead)
+      a_lead = self.lead_a_filter.x
+      v_lead = self.lead_v_filter.x
+      self.duplicate_lead_a_filters[lead_index].initialized = False
+      self.duplicate_lead_v_filters[lead_index].initialized = False
     lead_xv = self.extrapolate_lead(x_lead, v_lead, a_lead, a_lead_tau, v_ego)
     return lead_xv
 
@@ -660,7 +685,7 @@ class LongitudinalMpc:
     return track_one >= 0 and track_one == track_two
 
   @staticmethod
-  def leads_are_near_duplicates(lead_one, lead_two, v_ego):
+  def leads_are_near_duplicates(lead_one, lead_two, v_ego, *, vision_min_speed=None):
     if lead_one is None or lead_two is None or not lead_one.status or not lead_two.status:
       return False
     if LongitudinalMpc.leads_share_identical_radar_track(lead_one, lead_two):
@@ -670,7 +695,8 @@ class LongitudinalMpc:
         abs(float(lead_one.dRel) - float(lead_two.dRel)) <= NEAR_DUPLICATE_LEAD_SOURCE_MAX_DREL_DIFF and
         abs(float(lead_one.vRel) - float(lead_two.vRel)) <= max(1.0, NEAR_DUPLICATE_LEAD_SOURCE_MAX_VREL_DIFF)
       )
-    if float(v_ego) < NEAR_DUPLICATE_LEAD_SOURCE_MIN_SPEED:
+    min_vision_speed = NEAR_DUPLICATE_LEAD_SOURCE_MIN_SPEED if vision_min_speed is None else float(vision_min_speed)
+    if float(v_ego) < min_vision_speed:
       return False
     lead_one_radar = bool(getattr(lead_one, "radar", False))
     lead_two_radar = bool(getattr(lead_two, "radar", False))
@@ -809,13 +835,15 @@ class LongitudinalMpc:
 
   def update(self, radarstate, v_cruise, x, v, a, j, danger_factor, t_follow,
              personality=log.LongitudinalPersonality.standard, tracking_lead=True,
-             optional_far_lead_comfort=True):
+             optional_far_lead_comfort=True, smooth_duplicate_vision=False):
     v_ego = self.x0[1]
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
     self.status = tracking_lead and (lead_one.status or lead_two.status)
-    lead_xv_0 = self.process_lead(lead_one, tracking_lead, t_follow=t_follow)
-    lead_xv_1 = self.process_lead(lead_two, tracking_lead, t_follow=t_follow)
+    lead_xv_0 = self.process_lead(lead_one, tracking_lead, t_follow=t_follow, lead_index=0,
+                                  smooth_duplicate_vision=smooth_duplicate_vision)
+    lead_xv_1 = self.process_lead(lead_two, tracking_lead, t_follow=t_follow, lead_index=1,
+                                  smooth_duplicate_vision=smooth_duplicate_vision)
 
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance

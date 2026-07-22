@@ -372,6 +372,10 @@ class CAR(Platforms):
     [GMCarDocs("Cadillac XT4 2023", "Driver Assist Package")],
     GMCarSpecs(mass=1660, wheelbase=2.78, steerRatio=14.4, centerToFrontRatio=0.4),
   )
+  CADILLAC_XT4_CC = GMPlatformConfig(
+    [GMCarDocs("Cadillac XT4 - No-ACC")],
+    CADILLAC_XT4.specs,
+  )
   CADILLAC_XT5 = GMSDGMPlatformConfig(
     [GMCarDocs("Cadillac XT5 2022", "Driver Assist Package")],
     CarSpecs(mass=1810, wheelbase=2.86, steerRatio=16.34, centerToFrontRatio=0.5),
@@ -574,6 +578,7 @@ CC_ONLY_CAR = {
   CAR.CHEVROLET_MALIBU_CC,
   CAR.CHEVROLET_MALIBU_HYBRID_CC,
   CAR.CHEVROLET_SILVERADO_CC,
+  CAR.CADILLAC_XT4_CC,
 }
 CC_REGEN_PADDLE_CAR = {
   CAR.CHEVROLET_BOLT_CC_2018_2021,

@@ -13,7 +13,12 @@ import cv2
 
 import starpilot.system.speed_limit_vision as slv
 
-from scripts.speed_limit_vision import common
+if __package__ in (None, ""):
+  import sys
+  sys.path.insert(0, str(Path(__file__).resolve().parent))
+  import common  # type: ignore  # noqa: TID251
+else:
+  from . import common
 
 
 DEFAULT_SESSION_ROOT = Path(".tmp/live_drive_debug")
@@ -133,7 +138,7 @@ def locate_window(route: str, event: dict, route_mtimes: dict[str, dict[int, int
 
 def iter_video_window(path: Path, start_s: float, end_s: float, sample_fps: float | None = None):
   capture = cv2.VideoCapture(str(path))
-  fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
+  fps = common.source_video_fps(path, capture.get(cv2.CAP_PROP_FPS))
   start_frame = max(int(start_s * fps), 0)
   end_frame = max(int(end_s * fps), start_frame)
   frame_step = 1

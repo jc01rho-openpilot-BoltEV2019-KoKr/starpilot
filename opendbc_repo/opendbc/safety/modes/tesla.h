@@ -3,7 +3,10 @@
 #include "opendbc/safety/declarations.h"
 
 static bool tesla_longitudinal = false;
+static bool tesla_coop_steering = false;
 static bool tesla_stock_aeb = false;
+
+#define TESLA_STEERING_DISENGAGE_TORQUE 500  // cNm
 
 // Only rising edges while controls are not allowed are considered for these systems:
 // TODO: Only LKAS (non-emergency) is currently supported since we've only seen it
@@ -101,11 +104,14 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
       update_sample(&angle_meas, angle_meas_new);
 
       const int hands_on_level = msg->data[4] >> 6;  // EPAS3S_handsOnLevel
+      const int torsion_bar_torque = (((msg->data[2] & 0x0FU) << 8) | msg->data[3]) - 2050;  // 0.01 Nm
       const int eac_status = msg->data[6] >> 5;  // EPAS3S_eacStatus
       const int eac_error_code = msg->data[2] >> 4;  // EPAS3S_eacErrorCode
 
       // Disengage on normal user override, or if high angle rate fault from user overriding extremely quickly
-      steering_disengage = (hands_on_level >= 3) || ((eac_status == 0) && (eac_error_code == 9));
+      steering_disengage = (hands_on_level >= 3) ||
+                           (tesla_coop_steering && (SAFETY_ABS(torsion_bar_torque) > TESLA_STEERING_DISENGAGE_TORQUE)) ||
+                           ((eac_status == 0) && (eac_error_code == 9));
     }
 
     // Vehicle speed (DI_speed)
@@ -333,7 +339,11 @@ static safety_config tesla_init(uint16_t param) {
   SAFETY_UNUSED(param);
 #ifdef ALLOW_DEBUG
   const uint16_t TESLA_FLAG_LONGITUDINAL_CONTROL = 1;
+  const uint16_t TESLA_FLAG_COOP_STEERING = 256;
   tesla_longitudinal = GET_FLAG(param, TESLA_FLAG_LONGITUDINAL_CONTROL);
+  tesla_coop_steering = GET_FLAG(param, TESLA_FLAG_COOP_STEERING);
+#else
+  tesla_coop_steering = false;
 #endif
 
   tesla_stock_aeb = false;

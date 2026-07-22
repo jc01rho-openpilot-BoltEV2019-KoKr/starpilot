@@ -236,11 +236,14 @@ def compile_model(model_id: str, source: dict, version: str, workspace: Path, fo
   run(["rsync", "-az", "--exclude=._*", f"{source_dir}/", f"{REMOTE}:{remote_input}/"])
 
   log_path = workspace / "logs" / f"{model_id}.log"
-  command = (
-    f"cd {REMOTE_ROOT} && ./models --model {model_id} "
-    f"--input-dir {remote_input} --output-dir {REMOTE_ROOT}/compiledmodels "
-    f"--input-format {source['input_format']} --version {version}"
-  )
+  command_parts = [
+    f"cd {REMOTE_ROOT} && ./models --model {model_id}",
+    f"--input-dir {remote_input} --output-dir {REMOTE_ROOT}/compiledmodels",
+    f"--input-format {source['input_format']} --version {version}",
+  ]
+  if source.get("uses_external_gpu"):
+    command_parts.append("--external-gpu")
+  command = " ".join(command_parts)
   with open(log_path, "wb") as log_file:
     process = subprocess.run(["ssh", REMOTE, command], stdout=log_file, stderr=subprocess.STDOUT)
   if process.returncode != 0:
@@ -288,7 +291,7 @@ def validate_model(model_id: str, version: str, workspace: Path) -> dict:
   return payload
 
 
-def update_manifest(base_manifest: Path, workspace: Path) -> dict:
+def update_manifest(base_manifest: Path, workspace: Path, source_map: dict) -> dict:
   payload = load_json(base_manifest)
   models = payload["models"] if isinstance(payload, dict) else payload
   if not any(model.get("id") == "deeprl3v2" for model in models):
@@ -302,6 +305,9 @@ def update_manifest(base_manifest: Path, workspace: Path) -> dict:
     })
   multipart_handoff = []
   for model in models:
+    source = source_map.get(model["id"], {})
+    if "uses_external_gpu" in source:
+      model["uses_external_gpu"] = bool(source["uses_external_gpu"])
     artifact = workspace / "compiled" / f"{model['id']}_driving_tinygrad.pkl"
     model.pop("artifact_format", None)
     model.pop("artifact_size", None)
@@ -350,7 +356,7 @@ def main() -> int:
   if args.command == "manifest":
     if args.base_manifest is None:
       parser.error("--base-manifest is required")
-    update_manifest(args.base_manifest, args.workspace)
+    update_manifest(args.base_manifest, args.workspace, source_map)
     return 0
 
   model_ids = [args.model] if args.model else list(source_map)

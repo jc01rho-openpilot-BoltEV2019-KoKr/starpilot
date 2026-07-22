@@ -587,19 +587,27 @@ function tuneComparisonRows() {
   if (!stock || !current) return []
 
   const trialGeneric = activeTrialProfile()?.genericParams || {}
-  const rows = [
+  const angleControl = state.report?.car?.controlPath === "angle"
+  const genericParams = angleControl ? [
+    ["Auto steer delay", "UseAutoSteerDelay"],
+    ["Steer delay", "SteerDelay"],
+    ["Steer ratio", "SteerRatio"],
+  ] : [
     ["Lat accel", "SteerLatAccel"],
     ["Friction", "SteerFriction"],
     ["Auto steer delay", "UseAutoSteerDelay"],
     ["Steer delay", "SteerDelay"],
     ["Steer ratio", "SteerRatio"],
     ["KP", "SteerKP"],
-  ].map(([label, key]) => ({
+  ]
+  const rows = genericParams.map(([label, key]) => ({
     key,
     label,
     stock: stock[key],
     current: Object.hasOwn(trialGeneric, key) ? trialGeneric[key] : current[key],
   }))
+
+  if (angleControl) return rows
 
   const overrides = mergedFlmOverrides()
   for (const [family, payload] of Object.entries(stock.FLMBaseFrictionThresholds || {})) {
@@ -635,21 +643,29 @@ function renderTuneComparison() {
   const rows = tuneComparisonRows()
   if (!rows.length) return ""
   const profile = activeTrialProfile()
+  const angleControl = state.report?.car?.controlPath === "angle"
   return html`
     <div class="flmCardSubsection flmTuneComparison">
       <div class="flmCardHeader">
         <div>
-          <h4>Stock vs Current FLM</h4>
+          <h4>${angleControl ? "Applicable Angle Settings" : "Stock vs Current FLM"}</h4>
           <p class="longManeuverMuted">
-            ${profile ? `Includes active trial: ${profile.pathLabel || "FLM"} / ${profile.label}` : "Current values captured when this route was analyzed."}
+            ${angleControl
+              ? "Current applicable values captured when this route was analyzed."
+              : profile
+                ? `Includes active trial: ${profile.pathLabel || "FLM"} / ${profile.label}`
+                : "Current values captured when this route was analyzed."}
           </p>
+          ${angleControl ? html`
+            <p class="longManeuverMuted">Torque-only lateral acceleration, friction, and KP values do not apply to this angle-control car.</p>
+          ` : ""}
         </div>
       </div>
       <div class="flmTuneComparisonTable">
         <div class="flmTuneComparisonHeader">Parameter</div>
         <div class="flmTuneComparisonHeader">Stock</div>
         <div class="flmTuneComparisonArrow"></div>
-        <div class="flmTuneComparisonHeader">FLM</div>
+        <div class="flmTuneComparisonHeader">${angleControl ? "Current" : "FLM"}</div>
         ${rows.map((row) => html`
           <div class="flmTuneComparisonLabel" title="${row.codeLabel || row.key}">${row.label}</div>
           <div>${formatTuneComparisonValue(row.stock)}</div>

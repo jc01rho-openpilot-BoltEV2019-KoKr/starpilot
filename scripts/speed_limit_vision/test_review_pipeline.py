@@ -5,7 +5,6 @@ import pytest
 from argparse import Namespace
 from pathlib import Path
 
-
 def load_local_module(name: str):
   path = Path(__file__).resolve().with_name(f"{name}.py")
   spec = importlib.util.spec_from_file_location(f"test_local_{name}", path)
@@ -16,7 +15,9 @@ def load_local_module(name: str):
 
 
 import_queue = load_local_module("import_manual_review_queue")
+common = load_local_module("common")
 build_review_classifier = load_local_module("build_review_classifier_dataset")
+localized_review = load_local_module("build_localized_bookmark_review_queue")
 select_queue = load_local_module("select_manual_review_queue")
 compare_queues = load_local_module("compare_manual_review_queues")
 rescore_queue = load_local_module("rescore_manual_review_queue")
@@ -24,6 +25,32 @@ is_classifier_reject = import_queue.is_classifier_reject
 split_for_key = import_queue.split_for_key
 split_group_key = import_queue.split_group_key
 select_rows = select_queue.select_rows
+
+
+def test_raw_comma_camera_uses_real_frame_rate():
+  assert common.source_video_fps(Path("route/fcamera.hevc"), 25.0) == 20.0
+  assert common.source_video_fps(Path("clip.mp4"), 29.97) == 29.97
+  assert common.source_video_fps(Path("clip.mp4"), 0.0) == 20.0
+
+
+def test_extended_classifier_order_matches_lexical_dataset_classes():
+  assert common.SUPPORTED_SPEED_VALUES == (5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 90, 100)
+  assert common.EXTENDED_CLASSIFIER_SPEED_VALUES == (10, 100, 15, 20, 25, 30, 35, 40, 45, 5, 50, 55, 60, 65, 70, 75, 80, 90)
+
+
+@pytest.mark.parametrize("speed", (5, 10, 80, 90, 100))
+def test_manual_import_accepts_extended_speed_values(speed):
+  assert import_queue.parse_speed(str(speed)) == speed
+
+
+def test_localized_bookmark_source_position_normalizes_previous_segment():
+  previous = {"segment": "26", "relative_time_s": "-18.950"}
+  current = {"segment": "26", "relative_time_s": "12.500"}
+  explicit = {"segment": "26", "relative_time_s": "-18.950", "source_segment": "25", "source_time_s": "41.050"}
+
+  assert localized_review.source_position(previous) == ("25", "41.050")
+  assert localized_review.source_position(current) == ("26", "12.500")
+  assert localized_review.source_position(explicit) == ("25", "41.050")
 
 
 def review_row(key: str, route: str, speed: int, priority: float) -> dict[str, str]:
@@ -253,11 +280,29 @@ def test_corrected_record_removes_inherited_classifier_sample(tmp_path):
 
 def test_reject_repeat_spec_preserves_record_key_punctuation():
   counts = build_review_classifier.parse_reject_repeat_counts(["route/sign=track:55=32"])
+  positive_counts = build_review_classifier.parse_record_repeat_counts(["route/sign=track:75=16"], "positive")
 
   assert counts == {"route/sign=track:55": 32}
+  assert positive_counts == {"route/sign=track:75": 16}
 
   with pytest.raises(ValueError, match="at least 1"):
     build_review_classifier.parse_reject_repeat_counts(["bad-record=0"])
+
+
+def test_review_crop_staging_matches_runtime_letterbox(tmp_path):
+  import cv2
+  import numpy as np
+
+  source = tmp_path / "portrait.jpg"
+  image = np.full((80, 40, 3), 255, dtype=np.uint8)
+  cv2.imwrite(str(source), image)
+
+  assert build_review_classifier.stage_crop(source, tmp_path / "train" / "75", "portrait", 128)
+  staged = cv2.imread(str(next((tmp_path / "train" / "75").iterdir())))
+
+  assert staged is not None and staged.shape == (128, 128, 3)
+  assert staged[:, :20].mean() == pytest.approx(114, abs=2)
+  assert staged[:, 32:96].mean() > 245
 
 
 def test_conditional_reject_generates_runtime_crop_expansions(tmp_path):

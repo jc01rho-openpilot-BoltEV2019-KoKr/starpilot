@@ -46,6 +46,13 @@ UNWIND_D_DES_THRESHOLD = -1.0
 UNWIND_LAT_ACCEL_NEAR_ZERO = 0.3
 MIN_LATERAL_CONTROL_SPEED = 0.3
 
+# Roll compensation and latAccelOffset are lateral-accel-domain corrections; below
+# walking pace the desired lateral accel is ~0 so an unfaded road-crown term dominates
+# the whole feedforward and actively unwinds a held wheel at pull-away (newturn rlog
+# 18.3-18.7s: ff pinned at -0.5 against a correct right-turn hold at 0.3 m/s).
+FF_ROLL_OFFSET_FADE_BP = [0.5, 2.5]  # m/s
+FF_ROLL_OFFSET_FADE_V = [0.0, 1.0]
+
 class LatControlTorque(LatControl):
   def __init__(self, CP, CI, dt):
     super().__init__(CP, CI, dt)
@@ -55,8 +62,12 @@ class LatControlTorque(LatControl):
     self.pid = PIDController([INTERP_SPEEDS, KP_INTERP], KI, rate=1/self.dt)
     self.update_limits()
     self.steering_angle_deadzone_deg = self.torque_params.steeringAngleDeadzoneDeg
-    self.lat_accel_request_buffer_len = int(LAT_ACCEL_REQUEST_BUFFER_SECONDS / self.dt)
-    self.lat_accel_request_buffer = deque([0.] * self.lat_accel_request_buffer_len, maxlen=self.lat_accel_request_buffer_len)
+    self.request_buffer_len = int(LAT_ACCEL_REQUEST_BUFFER_SECONDS / self.dt)
+    # Stores requested CURVATURE, scaled by the current v^2 on read. Storing lateral
+    # accel directly makes the delayed request lag the measurement whenever speed is
+    # changing (both scale with v^2 but the buffered value used the old speed), which
+    # at creep-speed gains reads as a phantom unwind error during every pull-away.
+    self.curvature_request_buffer = deque([0.] * self.request_buffer_len, maxlen=self.request_buffer_len)
     self.lookahead_frames = int(JERK_LOOKAHEAD_SECONDS / self.dt)
     self.jerk_filter = FirstOrderFilter(0.0, 1 / (2 * np.pi * LP_FILTER_CUTOFF_HZ), self.dt)
     self.ioniq_6_directional_taper_filter = FirstOrderFilter(1.0, IONIQ_6_DIRECTIONAL_TAPER_FILTER_RC, self.dt)
@@ -76,6 +87,7 @@ class LatControlTorque(LatControl):
     self.is_genesis_g90 = CP.carFingerprint in GENESIS_G90_CARS
     self.is_palisade = CP.carFingerprint in PALISADE_CARS
     self.is_prius = CP.carFingerprint in PRIUS_CARS
+    self.is_rav4_prime = CP.carFingerprint in RAV4_PRIME_CARS
     self.is_ioniq_5 = CP.carFingerprint in IONIQ_5_CARS
     self.is_ioniq_ev_old = CP.carFingerprint in IONIQ_EV_OLD_CARS
     self.is_ioniq_6 = CP.carFingerprint in IONIQ_6_CARS
@@ -86,6 +98,8 @@ class LatControlTorque(LatControl):
     self.is_kia_niro_phev_2022 = CP.carFingerprint in KIA_NIRO_PHEV_2022_CARS
     self.is_kia_forte = CP.carFingerprint in KIA_FORTE_CARS
     self.is_kia_ev6 = CP.carFingerprint in KIA_EV6_CARS
+    self.is_kia_carnival = CP.carFingerprint in KIA_CARNIVAL_CARS
+    self.is_tucson_4th_gen = CP.carFingerprint in TUCSON_4TH_GEN_CARS
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA_CAR.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_silverado = CP.carFingerprint in SILVERADO_CARS
     self.is_gm = CP.brand == "gm"
@@ -162,28 +176,36 @@ class LatControlTorque(LatControl):
                               getattr(starpilot_toggles, "flm_active_profile_id", ""))
     set_flm_runtime_overrides(getattr(starpilot_toggles, "flm_active_overrides", None) if flm_profile_active else None)
     flm_surface_active = flm_profile_active and flm_runtime_overrides_active()
+    measured_curvature = -VM.calc_curvature(math.radians(CS.steeringAngleDeg - params.angleOffsetDeg), CS.vEgo, params.roll)
+    measurement = measured_curvature * CS.vEgo ** 2
+    future_desired_lateral_accel = desired_curvature * CS.vEgo ** 2
     if not active:
       output_torque = 0.0
       pid_log.active = False
       self.pid.reset()
-      self.previous_measurement = 0.0
+      # Keep the request buffer and rate state primed with the live command (which tracks
+      # the measured curvature while inactive) instead of zeroing them. Re-engaging with a
+      # wound wheel against a zeroed buffer puts the setpoint ~lat_delay behind the
+      # measurement, and the low-speed gains turn that lag into a hard unwind shove
+      # (turnn rlog 38.75s: +0.8 torque against a held right turn on pull-away).
+      self.curvature_request_buffer.append(desired_curvature)
+      self.previous_measurement = measurement
       self.measurement_rate_filter.x = 0.0
-      self.lat_accel_request_buffer = deque([0.] * self.lat_accel_request_buffer_len, maxlen=self.lat_accel_request_buffer_len)
-      self.prev_desired_lateral_accel = 0.0
+      self.jerk_filter.x = 0.0
+      self.prev_desired_lateral_accel = future_desired_lateral_accel
       self.ioniq_6_directional_taper_filter.x = 1.0
     else:
       if self.prev_steering_pressed and not CS.steeringPressed:
         self.pid.i *= self.steer_release_i_decay
 
-      measured_curvature = -VM.calc_curvature(math.radians(CS.steeringAngleDeg - params.angleOffsetDeg), CS.vEgo, params.roll)
-      roll_compensation = params.roll * ACCELERATION_DUE_TO_GRAVITY
+      roll_offset_fade = np.interp(CS.vEgo, FF_ROLL_OFFSET_FADE_BP, FF_ROLL_OFFSET_FADE_V)
+      roll_compensation = params.roll * ACCELERATION_DUE_TO_GRAVITY * roll_offset_fade
       curvature_deadzone = abs(VM.calc_curvature(math.radians(self.steering_angle_deadzone_deg), CS.vEgo, 0.0))
       lateral_accel_deadzone = curvature_deadzone * CS.vEgo ** 2
 
-      delay_frames = int(np.clip(lat_delay / self.dt, 1, self.lat_accel_request_buffer_len))
-      expected_lateral_accel = self.lat_accel_request_buffer[-delay_frames]
-      future_desired_lateral_accel = desired_curvature * CS.vEgo ** 2
-      self.lat_accel_request_buffer.append(future_desired_lateral_accel)
+      delay_frames = int(np.clip(lat_delay / self.dt, 1, self.request_buffer_len))
+      expected_lateral_accel = self.curvature_request_buffer[-delay_frames] * CS.vEgo ** 2
+      self.curvature_request_buffer.append(desired_curvature)
       raw_lateral_jerk = (future_desired_lateral_accel - expected_lateral_accel) / max(lat_delay, self.dt)
       raw_lateral_jerk = np.clip(raw_lateral_jerk, -MAX_LAT_JERK_UP, MAX_LAT_JERK_UP)
       desired_lateral_jerk = np.clip(self.jerk_filter.update(raw_lateral_jerk), -MAX_LAT_JERK_UP, MAX_LAT_JERK_UP)
@@ -194,7 +216,6 @@ class LatControlTorque(LatControl):
                          abs(setpoint) < UNWIND_LAT_ACCEL_NEAR_ZERO)
       self.prev_desired_lateral_accel = setpoint
 
-      measurement = measured_curvature * CS.vEgo ** 2
       measurement_rate = self.measurement_rate_filter.update((measurement - self.previous_measurement) / self.dt)
       measurement_rate = np.clip(measurement_rate, -MAX_LAT_JERK_UP, MAX_LAT_JERK_UP)
       self.previous_measurement = measurement
@@ -208,7 +229,7 @@ class LatControlTorque(LatControl):
       pid_log.error = float(error_with_lsf)
       ff = gravity_adjusted_future_lateral_accel
       # latAccelOffset corrects roll compensation bias from device roll misalignment relative to car roll
-      ff -= self.torque_params.latAccelOffset
+      ff -= self.torque_params.latAccelOffset * roll_offset_fade
       ff_scale = 1.0
       if self.use_bolt_ff_scaling:
         ff_scale = np.interp(ff, [-FF_SCALE_BLEND_LAT_ACCEL, 0.0, FF_SCALE_BLEND_LAT_ACCEL],
@@ -221,6 +242,7 @@ class LatControlTorque(LatControl):
       genesis_g90_test_active = self.is_genesis_g90 and genesis_g90_lateral_testing_ground_active()
       palisade_active = self.is_palisade
       prius_active = self.is_prius
+      rav4_prime_active = self.is_rav4_prime
       ioniq_5_active = self.is_ioniq_5
       ioniq_ev_old_active = self.is_ioniq_ev_old
       ioniq_6_active = self.is_ioniq_6
@@ -230,7 +252,9 @@ class LatControlTorque(LatControl):
       kia_xceed_active = self.is_kia_xceed
       kia_niro_phev_2022_active = self.is_kia_niro_phev_2022
       kia_forte_active = self.is_kia_forte
-      kia_ev6_test_active = self.is_kia_ev6 and kia_ev6_lateral_testing_ground_active()
+      kia_ev6_active = self.is_kia_ev6
+      kia_carnival_active = self.is_kia_carnival
+      tucson_4th_gen_active = self.is_tucson_4th_gen
       volt_plexy_test_active = self.is_volt_standard and volt_plexy_lateral_testing_ground_active()
       ioniq_5_center_taper = get_ioniq_5_center_taper_scale(setpoint, CS.vEgo) if ioniq_5_active else 1.0
       prius_center_taper = get_prius_center_taper_scale(setpoint, CS.vEgo) if prius_active else 1.0
@@ -243,8 +267,10 @@ class LatControlTorque(LatControl):
       kia_xceed_center_taper = get_kia_xceed_center_taper_scale(setpoint, CS.vEgo) if kia_xceed_active else 1.0
       kia_niro_phev_2022_center_taper = get_kia_niro_phev_2022_center_taper_scale(setpoint, CS.vEgo) if kia_niro_phev_2022_active else 1.0
       kia_forte_center_taper = get_kia_forte_center_taper_scale(setpoint, CS.vEgo) if kia_forte_active else 1.0
-      kia_ev6_center_taper = get_kia_ev6_center_taper_scale(setpoint, CS.vEgo) if kia_ev6_test_active else 1.0
-      kia_ev6_low_speed_center_taper = get_kia_ev6_low_speed_center_taper_scale(setpoint, CS.vEgo) if kia_ev6_test_active else 1.0
+      kia_ev6_center_taper = get_kia_ev6_center_taper_scale(setpoint, CS.vEgo) if kia_ev6_active else 1.0
+      kia_ev6_low_speed_center_taper = get_kia_ev6_low_speed_center_taper_scale(setpoint, CS.vEgo) if kia_ev6_active else 1.0
+      kia_carnival_center_taper = get_kia_carnival_center_taper_scale(setpoint, CS.vEgo) if kia_carnival_active else 1.0
+      tucson_4th_gen_center_taper = get_tucson_4th_gen_center_taper_scale(setpoint, CS.vEgo) if tucson_4th_gen_active else 1.0
       silverado_center_taper = get_silverado_center_taper_scale(setpoint, CS.vEgo) if self.is_silverado else 1.0
       civic_bosch_modified_a_center_taper = get_civic_bosch_modified_a_center_taper_scale(setpoint, CS.vEgo) if (
         self.is_civic_bosch_modified and civic_bosch_modified_a_lateral_testing_ground_active()
@@ -281,6 +307,10 @@ class LatControlTorque(LatControl):
         friction_threshold = get_prius_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = get_prius_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = 1.0 + ((friction_scale - 1.0) * prius_center_taper)
+      elif rav4_prime_active:
+        ff *= get_rav4_prime_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+        friction_threshold = get_rav4_prime_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
+        friction_scale = get_rav4_prime_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
       elif ioniq_5_active:
         ff *= get_ioniq_5_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * ioniq_5_center_taper
         friction_threshold = get_ioniq_5_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
@@ -312,11 +342,16 @@ class LatControlTorque(LatControl):
       elif kia_forte_active:
         ff *= get_kia_forte_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * kia_forte_center_taper
         friction_threshold = get_kia_forte_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
-      elif kia_ev6_test_active:
+      elif kia_ev6_active:
         ff *= get_kia_ev6_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * kia_ev6_center_taper
         friction_threshold = get_kia_ev6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = get_kia_ev6_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = 1.0 + ((friction_scale - 1.0) * kia_ev6_center_taper)
+      elif kia_carnival_active:
+        friction_threshold = get_kia_carnival_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
+        friction_scale *= get_kia_carnival_friction_center_fade_scale(setpoint, CS.vEgo)
+      elif tucson_4th_gen_active:
+        friction_threshold = get_tucson_4th_gen_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
       elif self.is_silverado:
         ff *= silverado_center_taper
       elif volt_plexy_test_active:
@@ -375,14 +410,20 @@ class LatControlTorque(LatControl):
       if ioniq_6_active:
         output_torque *= get_ioniq_6_highway_output_taper_scale(setpoint, CS.vEgo)
         output_torque *= get_ioniq_6_highway_transition_output_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+      elif rav4_prime_active:
+        output_torque *= get_rav4_prime_output_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif prius_active:
         output_torque *= prius_center_taper
       elif volt_standard_test_active:
         output_torque *= volt_standard_center_taper
       elif volt_plexy_test_active:
         output_torque *= volt_plexy_center_taper
-      elif kia_ev6_test_active:
+      elif kia_ev6_active:
         output_torque *= kia_ev6_low_speed_center_taper
+      elif kia_carnival_active:
+        output_torque *= kia_carnival_center_taper
+      elif tucson_4th_gen_active:
+        output_torque *= tucson_4th_gen_center_taper
       elif self.is_silverado:
         output_torque *= silverado_center_taper
       elif kia_niro_phev_2022_active:

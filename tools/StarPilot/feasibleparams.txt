@@ -61,7 +61,6 @@ ColorScheme
 CommunityFavorites
 ConditionalChill
 ConditionalExperimental
-PrioritizeSmoothFollowing
 CurveSpeedController
 CustomAlerts
 CustomCruise
@@ -134,7 +133,6 @@ HideSpeedLimit
 HideTurningBanner
 HigherBitrate
 HolidayThemes
-HumanAcceleration
 HumanLaneChanges
 IconPack
 IncreaseFollowingLowVisibility
@@ -344,7 +342,6 @@ SteerRatioStock
 StockConfidenceBallWidget
 StopAccel
 StopAccelStock
-StopDistance
 StoppedTimer
 StoppingDecelRate
 StoppingDecelRateStock

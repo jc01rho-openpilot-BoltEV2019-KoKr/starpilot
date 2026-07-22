@@ -1,4 +1,6 @@
 from collections import deque
+import gc
+import weakref
 
 import numpy as np
 import pytest
@@ -7,11 +9,158 @@ import starpilot.system.speed_limit_vision as slv
 from starpilot.system.speed_limit_vision import DetectorProposal, HistoryEntry, ProposalTrack, SpeedLimitVisionDaemon
 
 
+class MemoryParams:
+  def __init__(self):
+    self.values = {}
+
+  def put_float(self, key, value):
+    self.values[key] = value
+
+  def put_int(self, key, value):
+    self.values[key] = value
+
+  def remove(self, key):
+    self.values.pop(key, None)
+
+
+class StaticClassifierNet:
+  def __init__(self, probabilities):
+    self.probabilities = np.array(probabilities, dtype=np.float32)
+
+  def setInput(self, _blob):
+    pass
+
+  def forward(self):
+    return self.probabilities
+
+
 def daemon_with_history(current_speed, entries):
   daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
   daemon.published_speed_limit_mph = current_speed
   daemon.history = deque(HistoryEntry(speed, confidence, float(index)) for index, (speed, confidence) in enumerate(entries))
   return daemon
+
+
+def publishing_daemon(is_metric):
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.is_metric = is_metric
+  daemon.published_speed_limit_mph = 0
+  daemon.published_confidence = 0.0
+  daemon.previous_published_speed_limit_mph = 0
+  daemon.last_publish_change_at = 0.0
+  daemon.last_published_support_at = 0.0
+  daemon.current_frame_bgr = None
+  daemon.params_memory = MemoryParams()
+  daemon.history = deque()
+  daemon._write_debug_event = lambda *_args, **_kwargs: None
+  daemon._schedule_auto_bookmark = lambda *_args, **_kwargs: None
+  daemon._publish_status = lambda status, **_kwargs: setattr(daemon, "published_status", status)
+  return daemon
+
+
+def test_disconnect_camera_releases_client_state():
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.client = object()
+  daemon.stream_type = object()
+  daemon.stream_name = "road camera"
+
+  daemon._disconnect_camera()
+
+  assert daemon.client is None
+  assert daemon.stream_type is None
+  assert daemon.stream_name == ""
+
+
+def test_receive_frame_does_not_retain_vision_buffer(monkeypatch):
+  buffer_refs = []
+
+  class FakeBuffer:
+    def __init__(self):
+      self.data = np.ones(6, dtype=np.uint8)
+
+  class FakeClient:
+    width = 2
+    height = 2
+    stride = 2
+
+    def recv(self):
+      buffer = FakeBuffer()
+      buffer_refs.append(weakref.ref(buffer))
+      return buffer
+
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.client = FakeClient()
+  monkeypatch.setattr(slv.cv2, "cvtColor", lambda image, _conversion: np.array(image, copy=True))
+
+  frame = daemon._receive_frame_bgr()
+  gc.collect()
+
+  assert frame.shape == (3, 2)
+  assert buffer_refs[0]() is None
+
+
+def test_published_sign_value_uses_configured_units():
+  imperial_daemon = publishing_daemon(False)
+  metric_daemon = publishing_daemon(True)
+
+  imperial_daemon._publish_detection(50, 0.95, "Vision")
+  metric_daemon._publish_detection(50, 0.95, "Vision")
+
+  assert imperial_daemon.params_memory.values["VisionSpeedLimit"] == pytest.approx(22.352)
+  assert imperial_daemon.published_status == "Vision 50 mph (95%)"
+  assert metric_daemon.params_memory.values["VisionSpeedLimit"] == pytest.approx(50 / 3.6)
+  assert metric_daemon.published_status == "Vision 50 km/h (95%)"
+
+
+@pytest.mark.parametrize(("confidence", "expected"), ((0.89, None), (0.91, (80, 0.91))))
+def test_extended_classifier_values_require_high_confidence(monkeypatch, confidence, expected):
+  speed_values = (10, 100, 15, 20, 25, 30, 35, 40, 45, 5, 50, 55, 60, 65, 70, 75, 80, 90)
+  probabilities = np.zeros(len(speed_values) + 1, dtype=np.float32)
+  probabilities[speed_values.index(80)] = confidence
+  probabilities[-1] = 1.0 - confidence
+  method_globals = slv.SpeedLimitVisionDaemon._classify_speed_limit_from_model.__globals__
+  monkeypatch.setitem(method_globals, "US_CLASSIFIER_SPEED_VALUES", speed_values)
+  monkeypatch.setitem(method_globals, "EXTENDED_CLASSIFIER_SPEED_VALUES", frozenset((5, 10, 80, 90, 100)))
+  monkeypatch.setitem(method_globals, "EXTENDED_CLASSIFIER_MIN_CONFIDENCE", 0.90)
+
+  daemon = slv.SpeedLimitVisionDaemon.__new__(slv.SpeedLimitVisionDaemon)
+  daemon.classifier_net = StaticClassifierNet(probabilities)
+  daemon.reject_classifier_net = None
+  daemon.classifier_input_size = 128
+  daemon.last_classifier_forward_count = 0
+  daemon.last_classifier_forward_duration_s = 0.0
+
+  result = daemon._classify_speed_limit_from_model(np.ones((64, 48, 3), dtype=np.uint8))
+
+  if expected is None:
+    assert result is None
+  else:
+    assert result == pytest.approx(expected)
+
+
+def test_five_mph_detection_is_publishable():
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+
+  detection = daemon._publishable_detection(slv.Detection(5, 0.95))
+
+  assert detection is not None
+  assert detection.speed_limit_mph == 5
+
+
+def test_detection_support_counts_independent_frames():
+  daemon = publishing_daemon(False)
+  daemon.followup_until = 0.0
+  daemon.last_detection_at = 0.0
+  daemon.last_candidate_speed_limit_mph = 0
+  daemon.last_candidate_confidence = 0.0
+  daemon.last_candidate_at = 0.0
+  daemon.last_logged_candidate = None
+  daemon._schedule_training_capture = lambda *_args, **_kwargs: None
+
+  for expected_count in range(1, 4):
+    daemon._update_detection(slv.Detection(15, 0.99))
+    assert daemon.params_memory.values["VisionSpeedLimitSupportCount"] == expected_count
+    assert daemon.params_memory.values["VisionSpeedLimitSupportSpeed"] == pytest.approx(15 * slv.CV.MPH_TO_MS)
 
 
 def test_speed_change_requires_two_matching_reads_below_single_read_threshold():

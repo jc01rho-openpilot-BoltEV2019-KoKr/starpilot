@@ -27,6 +27,8 @@ ACCEL_PID_UNWIND = 0.03 * DT_CTRL * 3  # m/s^2 / frame
 PRIUS_INTEGRAL_MISMATCH_UNWIND = 8.0
 PRIUS_POSITIVE_FEEDFORWARD_SCALE = 0.7
 PRIUS_CRUISE_FEEDFORWARD_SCALE = 1.0
+PRIUS_NEGATIVE_FEEDFORWARD_SCALE = 1.125
+CAMRY_HYBRID_POSITIVE_FEEDFORWARD_SCALE = 0.8
 
 MAX_PITCH_COMPENSATION = 1.5  # m/s^2
 TOYOTA_COAST_BRAKE_MIN_SPEED = 15.0  # m/s
@@ -52,10 +54,12 @@ LOCK_CMD = b"\x40\x05\x30\x11\x00\x80\x00\x00"
 UNLOCK_CMD = b"\x40\x05\x30\x11\x00\x40\x00\x00"
 
 
+def is_camry_hybrid(CP) -> bool:
+  return CP.carFingerprint == CAR.TOYOTA_CAMRY and bool(CP.flags & ToyotaFlags.HYBRID.value)
+
+
 def is_ths_hybrid(CP) -> bool:
-  return CP.carFingerprint == CAR.TOYOTA_PRIUS or (
-    CP.carFingerprint == CAR.TOYOTA_CAMRY and bool(CP.flags & ToyotaFlags.HYBRID.value)
-  )
+  return CP.carFingerprint == CAR.TOYOTA_PRIUS or is_camry_hybrid(CP)
 
 
 def get_long_tune(CP, params):
@@ -64,7 +68,7 @@ def get_long_tune(CP, params):
   k_f = 1.0
 
   if is_ths_hybrid(CP):
-    k_f = 0.8
+    k_f = 0.8 if CP.carFingerprint == CAR.TOYOTA_PRIUS else 1.0
   elif CP.carFingerprint not in TSS2_CAR:
     kiBP = [0., 5., 35.]
     kiV = [3.6, 2.4, 1.5]
@@ -77,6 +81,16 @@ def get_long_tune(CP, params):
 def get_prius_positive_feedforward_scale(v_ego: float) -> float:
   return float(np.interp(v_ego, [0.0, 8.0, 20.0],
                          [PRIUS_POSITIVE_FEEDFORWARD_SCALE, PRIUS_POSITIVE_FEEDFORWARD_SCALE, PRIUS_CRUISE_FEEDFORWARD_SCALE]))
+
+
+def get_prius_feedforward(accel: float, v_ego: float) -> float:
+  if accel > 0.0:
+    return accel * get_prius_positive_feedforward_scale(v_ego)
+  return accel * PRIUS_NEGATIVE_FEEDFORWARD_SCALE
+
+
+def get_camry_hybrid_feedforward(accel: float) -> float:
+  return accel * CAMRY_HYBRID_POSITIVE_FEEDFORWARD_SCALE if accel > 0.0 else accel
 
 
 def update_permit_braking(current: bool, net_acceleration_request_min: float, stopping: bool,
@@ -461,8 +475,11 @@ class CarController(CarControllerBase):
 
             feedforward = pcm_accel_cmd
             if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
-              if feedforward > 0.0:
-                feedforward *= get_prius_positive_feedforward_scale(CS.out.vEgo)
+              feedforward = get_prius_feedforward(feedforward, CS.out.vEgo)
+            elif is_camry_hybrid(self.CP) and feedforward > 0.0:
+              # Preserve the established Camry Hybrid acceleration response while
+              # allowing negative requests to track the planner at full scale.
+              feedforward = get_camry_hybrid_feedforward(feedforward)
 
             pcm_accel_cmd = self.long_pid.update(error_future,
                                                  speed=CS.out.vEgo,

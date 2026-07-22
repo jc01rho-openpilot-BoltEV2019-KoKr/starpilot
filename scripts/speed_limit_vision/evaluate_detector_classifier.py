@@ -13,10 +13,10 @@ from ultralytics import YOLO
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import DEFAULT_SPEED_VALUES  # type: ignore
+  from common import DEFAULT_SPEED_VALUES, source_video_fps  # type: ignore  # noqa: TID251
   from generate_value_roi_classifier_dataset import extract_value_mask  # type: ignore
 else:
-  from .common import DEFAULT_SPEED_VALUES
+  from .common import DEFAULT_SPEED_VALUES, source_video_fps
   from .generate_value_roi_classifier_dataset import extract_value_mask
 
 
@@ -50,7 +50,7 @@ def iter_frames(path: Path):
     return
 
   cap = cv2.VideoCapture(str(path))
-  fps = cap.get(cv2.CAP_PROP_FPS) or 20.0
+  fps = source_video_fps(path, cap.get(cv2.CAP_PROP_FPS))
   frame_index = 0
   while True:
     ok, frame = cap.read()

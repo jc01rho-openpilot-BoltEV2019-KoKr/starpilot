@@ -21,6 +21,15 @@ class FakeParams:
   def get_float(self, key):
     return float(self.values.get(key, 0) or 0)
 
+  def get_int(self, key):
+    return int(self.values.get(key, 0) or 0)
+
+  def put_float(self, key, value):
+    self.values[key] = value
+
+  def put_int(self, key, value):
+    self.values[key] = value
+
   def put_nonblocking(self, key, value):
     self.values[key] = value
 
@@ -84,6 +93,44 @@ def make_controller(**toggle_overrides):
 
 def mph(value):
   return value * CV.MPH_TO_MS
+
+
+def test_large_vision_delta_requires_three_detector_frames():
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    vision_speed_limit_detection=True,
+  )
+  try:
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(15))
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimitSupportSpeed", mph(15))
+    controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 2)
+    sm = make_sm(gas_pressed=False)
+
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm)
+    assert controller.target == 0
+
+    controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 3)
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm)
+    assert controller.target == pytest.approx(mph(15))
+    assert controller.source == "Vision"
+  finally:
+    controller.shutdown()
+
+
+def test_normal_vision_delta_keeps_fast_path():
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    vision_speed_limit_detection=True,
+  )
+  try:
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(50))
+    sm = make_sm(gas_pressed=False)
+
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm)
+    assert controller.target == pytest.approx(mph(50))
+    assert controller.source == "Vision"
+  finally:
+    controller.shutdown()
 
 
 def test_new_source_limit_clears_override_until_gas_release():

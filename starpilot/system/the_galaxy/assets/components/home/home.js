@@ -427,12 +427,14 @@ function renderVitals(device) {
   const uptime = device.uptimeSeconds == null ? "unknown" : formatDuration(device.uptimeSeconds);
   const cpu = device.cpuTempC == null ? "unknown" : `${formatInt(device.cpuTempC)} C`;
   const lanIp = device.lanIp || "unknown";
+  const networkName = device.networkName || "No wireless connectivity";
   return `
     <section class="dashboard-card dashboard-device-card">
       <h2>Vitals</h2>
       <div class="dashboard-key-values">
         <div><span>Status</span><strong>${escapeHtml(device.status || "Parked")}</strong></div>
         <div><span>LAN IP</span><strong>${escapeHtml(lanIp)}</strong></div>
+        <div><span>Network</span><strong>${escapeHtml(networkName)}</strong></div>
         <div><span>Uptime</span><strong>${escapeHtml(uptime)}</strong></div>
         <div><span>CPU temp</span><strong>${escapeHtml(cpu)}</strong></div>
       </div>

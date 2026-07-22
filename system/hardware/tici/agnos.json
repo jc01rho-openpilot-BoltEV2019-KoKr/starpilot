@@ -67,9 +67,9 @@
   },
   {
     "name": "system",
-    "url": "https://www.dropbox.com/scl/fi/kf8be07fgdjgcv9ic482y/system7.img.xz?rlkey=0e6jwij46tndpaeu33jx65tma&st=g9g0ph65&dl=1",
-    "hash": "1b71fd1835610e46c9d3f2d13e389108df4777308a6128e5b794b6875c91012e",
-    "hash_raw": "1b71fd1835610e46c9d3f2d13e389108df4777308a6128e5b794b6875c91012e",
+    "url": "https://www.dropbox.com/scl/fi/8fd3w7hbhsyq146kqqdab/system8.img.xz?rlkey=5zt15mtuehdlj8ncj6pwn7zjy&st=j6tr4d47&dl=1",
+    "hash": "4c01245932068aedfceb41cb1aab1f7f044f6659aa2fe2de558f99e2d3aa5793",
+    "hash_raw": "4c01245932068aedfceb41cb1aab1f7f044f6659aa2fe2de558f99e2d3aa5793",
     "size": 5368709120,
     "sparse": false,
     "full_check": false,

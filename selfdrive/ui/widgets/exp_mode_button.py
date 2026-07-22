@@ -2,7 +2,9 @@ import pyray as rl
 from openpilot.common.params import Params
 from openpilot.system.ui.lib.application import gui_app, FontWeight, FONT_SCALE
 from openpilot.system.ui.lib.multilang import tr
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
+from openpilot.selfdrive.ui.lib.mode_banner import ModeBannerVariant, draw_mode_banner_gradient, get_mode_banner_variant
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.starpilot.common.experimental_state import requested_experimental_mode
 
@@ -17,29 +19,18 @@ class ExperimentalModeButton(Widget):
 
     self.params = Params()
     self.experimental_mode = requested_experimental_mode(self.params, ui_state.params_memory)
+    self.mode_variant = get_mode_banner_variant(self.params, ui_state.params_memory)
 
     self.chill_pixmap = gui_app.texture("icons/couch.png", self.img_width, self.img_width)
     self.experimental_pixmap = gui_app.texture("icons/experimental_grey.png", self.img_width, self.img_width)
 
   def show_event(self):
     self.experimental_mode = requested_experimental_mode(self.params, ui_state.params_memory)
-
-  def _get_gradient_colors(self):
-    alpha = 0xCC if self.is_pressed else 0xFF
-
-    if self.experimental_mode:
-      return rl.Color(255, 155, 63, alpha), rl.Color(219, 56, 34, alpha)
-    else:
-      return rl.Color(20, 255, 171, alpha), rl.Color(35, 149, 255, alpha)
-
-  def _draw_gradient_background(self, rect):
-    start_color, end_color = self._get_gradient_colors()
-    rl.draw_rectangle_gradient_h(int(rect.x), int(rect.y), int(rect.width), int(rect.height),
-                                 start_color, end_color)
+    self.mode_variant = get_mode_banner_variant(self.params, ui_state.params_memory)
 
   def _render(self, rect):
     rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
-    self._draw_gradient_background(rect)
+    draw_mode_banner_gradient(rect, self.mode_variant, 0xCC if self.is_pressed else 0xFF)
     rl.draw_rectangle_rounded_lines_ex(self._rect, 0.19, 10, 5, rl.BLACK)
     rl.end_scissor_mode()
 
@@ -49,11 +40,23 @@ class ExperimentalModeButton(Widget):
     rl.draw_line_ex(rl.Vector2(line_x, rect.y), rl.Vector2(line_x, rect.y + rect.height), 3, separator_color)
 
     # Draw text label (left aligned)
-    text = tr("EXPERIMENTAL MODE ON") if self.experimental_mode else tr("CHILL MODE ON")
-    text_x = rect.x + self.horizontal_padding
-    text_y = rect.y + rect.height / 2 - 45 * FONT_SCALE // 2  # Center vertically
+    if self.mode_variant == ModeBannerVariant.CONDITIONAL_EXPERIMENTAL:
+      text = tr("CONDITIONAL EXPERIMENTAL")
+    elif self.mode_variant == ModeBannerVariant.CONDITIONAL_CHILL:
+      text = tr("CONDITIONAL CHILL")
+    else:
+      text = tr("EXPERIMENTAL MODE ON") if self.experimental_mode else tr("CHILL MODE ON")
 
-    rl.draw_text_ex(gui_app.font(FontWeight.NORMAL), text, rl.Vector2(int(text_x), int(text_y)), 45, 0, rl.BLACK)
+    text_x = rect.x + self.horizontal_padding
+    font = gui_app.font(FontWeight.NORMAL)
+    font_size = 45
+    available_width = line_x - text_x - self.horizontal_padding
+    measured_width = measure_text_cached(font, text, font_size).x
+    if measured_width > available_width:
+      font_size = max(32, int(font_size * available_width / measured_width))
+    text_y = rect.y + rect.height / 2 - font_size * FONT_SCALE // 2  # Center vertically
+
+    rl.draw_text_ex(font, text, rl.Vector2(int(text_x), int(text_y)), font_size, 0, rl.BLACK)
 
     # Draw icon (right aligned)
     icon_x = rect.x + rect.width - self.horizontal_padding - self.img_width

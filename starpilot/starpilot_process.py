@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import copy
 import datetime
 import hashlib
 import importlib
@@ -207,11 +208,12 @@ def update_checks(now, model_manager, theme_manager, thread_manager, params, par
 
   time.sleep(1)
 
-def update_toggles(starpilot_variables, started, theme_manager, thread_manager, time_validated, params, starpilot_toggles):
+def update_toggles(starpilot_variables, started, theme_manager, thread_manager, time_validated, params, starpilot_toggles,
+                   clear_update_flag=True):
   previous_holiday_themes = starpilot_toggles.holiday_themes
   previous_random_themes = starpilot_toggles.random_themes
 
-  starpilot_variables.update(theme_manager.holiday_theme, started)
+  starpilot_variables.update(theme_manager.holiday_theme, started, clear_update_flag=clear_update_flag)
   starpilot_toggles = starpilot_variables.starpilot_toggles
 
   randomize_theme = starpilot_toggles.holiday_themes != previous_holiday_themes
@@ -221,6 +223,20 @@ def update_toggles(starpilot_variables, started, theme_manager, thread_manager, 
   theme_manager.update_active_theme(time_validated, starpilot_toggles, randomize_theme=randomize_theme)
 
   return starpilot_toggles
+
+
+def update_toggles_in_background(result, starpilot_variables, started, theme_manager, thread_manager, time_validated, params,
+                                 starpilot_toggles):
+  """Reload toggles without mutating the values used by the planner mid-update."""
+  try:
+    updated_variables = copy.copy(starpilot_variables)
+    updated_variables.starpilot_toggles = copy.copy(starpilot_toggles)
+    updated_toggles = update_toggles(updated_variables, started, theme_manager, thread_manager, time_validated, params,
+                                     updated_variables.starpilot_toggles, clear_update_flag=False)
+    result["update"] = (updated_variables, updated_toggles)
+  except Exception:
+    result["failed"] = True
+    raise
 
 def starpilot_thread():
   rate_keeper = Ratekeeper(1 / DT_MDL, None)
@@ -246,6 +262,7 @@ def starpilot_thread():
   starpilot_toggles = starpilot_variables.starpilot_toggles
   serialized_starpilot_toggles = serialize_starpilot_toggles(starpilot_toggles)
   toggle_broadcast_pending = True
+  toggle_update_result = {}
 
   drive_stats_session = requests.Session()
   next_dashboard_analysis_refresh = 0.0
@@ -334,8 +351,9 @@ def starpilot_thread():
     elif current_safe_mode and (params_memory.get_bool("StarPilotTogglesUpdated") or rate_keeper.frame % SAFE_MODE_ENFORCE_FRAMES == 0):
       apply_safe_mode(params, params_raw, params_memory, ensure_backup=False)
 
-    if params_memory.get_bool("StarPilotTogglesUpdated") or theme_manager.theme_updated:
-      starpilot_toggles = update_toggles(starpilot_variables, started, theme_manager, thread_manager, time_validated, params, starpilot_toggles)
+    completed_toggle_update = toggle_update_result.pop("update", None)
+    if completed_toggle_update is not None:
+      starpilot_variables, starpilot_toggles = completed_toggle_update
       serialized_starpilot_toggles = serialize_starpilot_toggles(starpilot_toggles)
       toggle_broadcast_pending = True
 
@@ -343,6 +361,22 @@ def starpilot_thread():
       if model_randomizer_enabled and not model_randomizer_previously and not started:
         model_manager.randomize_selected_model()
       model_randomizer_previously = model_randomizer_enabled
+
+    toggle_update_result.pop("failed", None)
+    toggle_refresh_requested = params_memory.get_bool("StarPilotTogglesUpdated") or theme_manager.theme_updated
+    toggle_update_running = thread_manager.is_thread_alive("update_toggles_in_background")
+    if started and toggle_refresh_requested and not toggle_update_running and not toggle_update_result:
+      # StarPilotVariables.update performs hundreds of param reads and can exceed
+      # the starpilotPlan liveness timeout. Keep that work off the planner loop.
+      params_memory.remove("StarPilotTogglesUpdated")
+      thread_manager.run_with_lock(
+        update_toggles_in_background,
+        (toggle_update_result, starpilot_variables, started, theme_manager, thread_manager, time_validated, params, starpilot_toggles),
+      )
+    elif not started and toggle_refresh_requested:
+      starpilot_toggles = update_toggles(starpilot_variables, started, theme_manager, thread_manager, time_validated, params, starpilot_toggles)
+      serialized_starpilot_toggles = serialize_starpilot_toggles(starpilot_toggles)
+      toggle_broadcast_pending = True
 
     periodic_update_due = monotonic_now >= next_periodic_update_check
     if periodic_update_due:

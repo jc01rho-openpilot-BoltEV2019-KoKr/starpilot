@@ -1,5 +1,8 @@
+#!/usr/bin/env python3
+import io
 import math
 import os
+import sys
 from pathlib import Path
 
 CHUNK_SIZE = 45 * 1024 * 1024  # 45MB, under GitHub's 50MB limit
@@ -13,9 +16,16 @@ def get_manifest_path(name):
   return f"{name}.chunkmanifest"
 
 
+def _chunk_paths(path, num_chunks):
+  return [get_manifest_path(path)] + [get_chunk_name(path, i, num_chunks) for i in range(num_chunks)]
+
+
 def get_chunk_paths(path, file_size):
   num_chunks = math.ceil(file_size / CHUNK_SIZE)
-  return [get_manifest_path(path)] + [get_chunk_name(path, i, num_chunks) for i in range(num_chunks)]
+  return _chunk_paths(path, num_chunks)
+
+
+get_chunk_targets = get_chunk_paths
 
 
 def chunk_file(path, targets):
@@ -31,6 +41,51 @@ def chunk_file(path, targets):
   os.remove(path)
 
 
+def get_existing_chunks(path):
+  if os.path.isfile(path):
+    return [path]
+  manifest_path = get_manifest_path(path)
+  if os.path.isfile(manifest_path):
+    num_chunks = int(Path(manifest_path).read_text().strip())
+    return _chunk_paths(path, num_chunks)
+  raise FileNotFoundError(path)
+
+
+def file_chunked_exists(path) -> bool:
+  return os.path.isfile(path) or os.path.isfile(get_manifest_path(path))
+
+
+class ChunkStream(io.RawIOBase):
+  def __init__(self, paths):
+    self._paths = iter(paths)
+    self._buffer = memoryview(b"")
+
+  def readable(self):
+    return True
+
+  def readinto(self, buffer):
+    count = 0
+    while count < len(buffer):
+      if not self._buffer:
+        path = next(self._paths, None)
+        if path is None:
+          break
+        self._buffer = memoryview(Path(path).read_bytes())
+        continue
+      take = min(len(buffer) - count, len(self._buffer))
+      buffer[count:count + take] = self._buffer[:take]
+      self._buffer = self._buffer[take:]
+      count += take
+    return count
+
+
+def open_file_chunked(path):
+  chunks = get_existing_chunks(path)
+  if chunks and chunks[0] == get_manifest_path(path):
+    chunks = chunks[1:]
+  return io.BufferedReader(ChunkStream(chunks))
+
+
 def read_file_chunked(path):
   manifest_path = get_manifest_path(path)
   if os.path.isfile(manifest_path):
@@ -39,3 +94,8 @@ def read_file_chunked(path):
   if os.path.isfile(path):
     return Path(path).read_bytes()
   raise FileNotFoundError(path)
+
+
+if __name__ == "__main__":
+  file_path = sys.argv[1]
+  chunk_file(file_path, get_chunk_targets(file_path, os.path.getsize(file_path)))

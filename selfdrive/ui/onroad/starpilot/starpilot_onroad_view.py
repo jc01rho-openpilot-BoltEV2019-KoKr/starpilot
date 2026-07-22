@@ -5,20 +5,27 @@ from openpilot.common.params import Params
 from openpilot.selfdrive.ui.onroad.augmented_road_view import AugmentedRoadView
 from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import render_behind, render_overlay, render_background_effects
 from openpilot.selfdrive.ui.onroad.starpilot.path import render_adjacent_lanes, render_path_edges
-from openpilot.selfdrive.ui.onroad.starpilot.personality_button import PersonalityButton, BTN_SIZE
-from openpilot.selfdrive.ui.onroad.starpilot.slc_speed_limit import (
-  render_speed_limit, handle_slc_click, SET_SPEED_X_OFFSET, SET_SPEED_Y_OFFSET,
-  SET_SPEED_WIDTH_IMP, SET_SPEED_WIDTH_MET, SET_SPEED_HEIGHT, SIGN_MARGIN,
-)
 from openpilot.selfdrive.ui.ui_state import ui_state
-from openpilot.selfdrive.ui.onroad.starpilot.aethergauge import AetherGauge
 from openpilot.selfdrive.ui.onroad.starpilot.torque_bar import TorqueBar
-from openpilot.selfdrive.ui.lib.starpilot_status import (
-    get_screen_edge_color, ENGAGED_COLOR,
-    EXPERIMENTAL_COLOR, TRAFFIC_COLOR,
+from openpilot.selfdrive.ui.onroad.starpilot.widget_layout_manager import WidgetLayoutManager
+from openpilot.selfdrive.ui.onroad.starpilot.widgets import (
+  SetSpeedWidget, SpeedLimitWidget, PedalIconsWidget,
+  AetherGaugeWidget, PersonalityButtonWidget, DriverMonitorWidget,
+  SteeringWheelWidget
 )
+from openpilot.selfdrive.ui.onroad.starpilot.stopping_point import render_stopping_point
+from openpilot.selfdrive.ui.onroad.starpilot.pause_indicators import render_lateral_paused, render_longitudinal_paused
+from openpilot.selfdrive.ui.onroad.starpilot.weather_icon import render_weather_icon
+from openpilot.selfdrive.ui.lib.starpilot_status import (
+  get_screen_edge_color, ENGAGED_COLOR,
+  EXPERIMENTAL_COLOR, TRAFFIC_COLOR,
+)
+
 from openpilot.system.ui.lib.application import MousePos, gui_app, FontWeight
 from openpilot.system.ui.lib.text_measure import measure_text_cached
+
+from cereal import log
+AlertSize = log.SelfdriveState.AlertSize
 
 
 class StarPilotOnroadView(AugmentedRoadView):
@@ -26,15 +33,49 @@ class StarPilotOnroadView(AugmentedRoadView):
     super().__init__(stream_type)
     self._params = Params()
 
-    self._personality_button = PersonalityButton()
     self._font_bold = gui_app.font(FontWeight.BOLD)
     self._font_medium = gui_app.font(FontWeight.MEDIUM)
     self._standstill_started_at = 0.0
-    self._aethergauge = AetherGauge()
     self._torque_bar = TorqueBar()
+    self._min_fps = 99.9
+    self._max_fps = 0.0
+    self._avg_fps = 0.0
+
+    self.layout_manager = WidgetLayoutManager(self._content_rect)
+
+    # Disable parent rendering calls — layout manager draws at computed bounds
+    self._draw_driver_state = False
+    self._hud_renderer.draw_set_speed = False
+    self._hud_renderer.draw_exp_button = False
+
+    # Initialize layout widgets
+    self._set_speed_widget = SetSpeedWidget(self._hud_renderer)
+    self._speed_limit_widget = SpeedLimitWidget()
+    self._aethergauge_widget = AetherGaugeWidget(self._hud_renderer)
+    self._steering_wheel_widget = SteeringWheelWidget(self._hud_renderer._exp_button)
+    self._pedals_widget = PedalIconsWidget()
+    self._personality_button_widget = PersonalityButtonWidget()
+    self._driver_monitor_widget = DriverMonitorWidget(self.driver_state_renderer)
+
+    # Register to layout zones
+    self.layout_manager.register_widget("left", self._set_speed_widget)
+    self.layout_manager.register_widget("left", self._speed_limit_widget)
+    self.layout_manager.register_widget("left", self._aethergauge_widget)
+    self.layout_manager.register_widget("right", self._steering_wheel_widget)
+    self.layout_manager.register_widget("right", self._pedals_widget)
+    self.layout_manager.register_widget("bottom", self._personality_button_widget)
+    self.layout_manager.register_widget("bottom", self._driver_monitor_widget)
+
+    # Register as child widgets for click propagation
+    self._child(self._set_speed_widget)
+    self._child(self._speed_limit_widget)
+    self._child(self._aethergauge_widget)
+    self._child(self._steering_wheel_widget)
+    self._child(self._pedals_widget)
+    self._child(self._personality_button_widget)
+    self._child(self._driver_monitor_widget)
 
   def _render(self, rect: rl.Rectangle):
-    self._position_personality_button()
     border_width = self._get_border_width()
     border_color = get_screen_edge_color(ui_state)
     rl.draw_rectangle_rounded(rect, 0.12, 10, border_color)
@@ -45,48 +86,43 @@ class StarPilotOnroadView(AugmentedRoadView):
       return
 
     if self._draw_hud_controls:
+      dm = self.driver_state_renderer
+      self.layout_manager.update_layout(self._content_rect, is_rhd=dm.is_rhd if dm else False)
       self._render_slc()
       self._render_overlays()
+      self._render_road_name()
     if self._draw_road_overlays:
-      self._render_path_features(rect)
+      self._render_path_features(self._content_rect)
+
+  def _draw_border(self, rect: rl.Rectangle):
+    border_width = self._get_border_width()
+    rl.draw_rectangle_rounded_lines_ex(rect, 0.12, 10, border_width, rl.BLACK)
+    border_rect = rl.Rectangle(rect.x + border_width, rect.y + border_width,
+                                rect.width - 2 * border_width, rect.height - 2 * border_width)
+    render_behind(border_rect, border_width)
+    render_overlay(border_rect, border_width)
 
   def _render_slc(self):
-    alert_showing, _ = self.alert_renderer.will_render()
-    if alert_showing is not None:
+    alert_showing, alert_size = self.alert_renderer.will_render()
+    if alert_showing is not None and alert_size == AlertSize.full:
       return
-
-    rl.begin_scissor_mode(
-      int(self._content_rect.x), int(self._content_rect.y),
-      int(self._content_rect.width), int(self._content_rect.height),
-    )
-    render_speed_limit(self._content_rect)
-    rl.end_scissor_mode()
+    if self._speed_limit_widget.is_visible:
+      self._speed_limit_widget.render(self._speed_limit_widget.rect)
+    if self._set_speed_widget.is_visible:
+      self._set_speed_widget.render(self._set_speed_widget.rect)
 
   def _render_overlays(self):
     alert_showing, _ = self.alert_renderer.will_render()
     if alert_showing is not None:
       return
 
-    self._position_personality_button()
-    self._personality_button.render()
     self._render_standstill_timer()
     self._render_developer_metrics()
-    dm = self.driver_state_renderer
-    if dm and dm.position_x != 0.0:
-      cx = dm.position_x
-      btn = self._personality_button
-      if btn.is_visible and btn.center_x < cx:
-        cx = btn.center_x
-      self._aethergauge.render(
-        self._content_rect, self._font_bold, self._font_medium,
-        current_speed=self._hud_renderer.speed,
-        cx=cx,         bottom=dm.position_y - 96 - 145
-      )
-    else:
-      self._aethergauge.render(self._content_rect, self._font_bold, self._font_medium, current_speed=self._hud_renderer.speed)
+
+    self.layout_manager.render_widgets(exclude={"speed_limit", "set_speed"})
+
     self._render_torque_bar()
     self._render_bottom_row_widgets()
-    self._render_pedals()
 
   def _render_torque_bar(self) -> None:
     """Draw the curved torque-utilization indicator at the bottom of the screen."""
@@ -110,8 +146,8 @@ class StarPilotOnroadView(AugmentedRoadView):
       return
 
     rl.begin_scissor_mode(
-      int(self._content_rect.x), int(self._content_rect.y),
-      int(self._content_rect.width), int(self._content_rect.height),
+      int(rect.x), int(rect.y),
+      int(rect.width), int(rect.height),
     )
 
     # Path edges (always rendered if track_edge_vertices exist)
@@ -122,37 +158,9 @@ class StarPilotOnroadView(AugmentedRoadView):
     render_adjacent_lanes(mr)
 
     # Render stopping point atop the path
-    from openpilot.selfdrive.ui.onroad.starpilot.stopping_point import render_stopping_point
     render_stopping_point(mr, self._font_bold)
 
     rl.end_scissor_mode()
-
-  def _position_personality_button(self):
-    dm = self.driver_state_renderer
-    toggle_on = self._params.get_bool("OnroadDistanceButton")
-    GAP = 10
-
-    if dm and dm.position_x != 0.0:
-      unshifted = dm.position_x - dm.x_shift
-      y = dm.position_y - BTN_SIZE / 2
-
-      if dm.is_rhd:
-        x = dm.position_x - BTN_SIZE * 2
-      else:
-        x = unshifted - BTN_SIZE // 2
-        dm.x_shift = BTN_SIZE + GAP if (dm.is_visible and toggle_on) else 0.0
-
-      self._personality_button.set_position(x, y)
-
-    if not dm or not dm.is_visible or not toggle_on:
-      self._personality_button.set_visible(False)
-      if dm and not dm.is_rhd:
-        dm.x_shift = 0.0
-      return
-
-    self._personality_button.set_visible(
-      lambda: ui_state.started and ui_state.has_longitudinal_control
-    )
 
   def _render_standstill_timer(self):
     if not self._params.get_bool("stopped_timer"):
@@ -183,10 +191,8 @@ class StarPilotOnroadView(AugmentedRoadView):
     minute_size = measure_text_cached(self._font_bold, minute_text, 176)
     second_size = measure_text_cached(self._font_medium, second_text, 66)
 
-    import numpy as np
-
     def blend_colors(start: rl.Color, end: rl.Color, transition: float) -> rl.Color:
-      transition = float(np.clip(transition, 0.0, 1.0))
+      transition = float(min(max(transition, 0.0), 1.0))
       return rl.Color(
         int(start.r + transition * (end.r - start.r)),
         int(start.g + transition * (end.g - start.g)),
@@ -221,31 +227,12 @@ class StarPilotOnroadView(AugmentedRoadView):
       rl.Color(255, 255, 255, 242),
     )
 
-  def _draw_border(self, rect: rl.Rectangle):
-    border_width = self._get_border_width()
-    rl.draw_rectangle_rounded_lines_ex(rect, 0.12, 10, border_width, rl.BLACK)
-    border_rect = rl.Rectangle(rect.x + border_width, rect.y + border_width,
-                                rect.width - 2 * border_width, rect.height - 2 * border_width)
-
-    render_behind(border_rect, border_width)
-
-    render_overlay(border_rect, border_width)
-
   def _handle_mouse_press(self, mouse_pos: MousePos):
-    border_width = self._get_border_width()
-    content_rect = rl.Rectangle(
-      border_width, border_width,
-      gui_app.width - 2 * border_width, gui_app.height - 2 * border_width,
-    )
-    ss_width = SET_SPEED_WIDTH_MET if ui_state.is_metric else SET_SPEED_WIDTH_IMP
-    ss_x = content_rect.x + SET_SPEED_X_OFFSET + (SET_SPEED_WIDTH_IMP - ss_width) // 2
-    sign_x = ss_x + SIGN_MARGIN
-    sign_y = content_rect.y + SET_SPEED_Y_OFFSET + SET_SPEED_HEIGHT + SIGN_MARGIN
-    sign_width = ss_width - 2 * SIGN_MARGIN
-    handle_slc_click(mouse_pos, sign_x, sign_y, sign_width)
-
-    if self._personality_button.is_interacting:
-      return
+    # Check if click maps to any of the layout widgets
+    for zone in self.layout_manager.zones.values():
+      for widget in zone:
+        if widget.is_visible and rl.check_collision_point_rec(mouse_pos, widget.rect):
+          return
     super()._handle_mouse_press(mouse_pos)
 
   def _render_developer_metrics(self):
@@ -276,10 +263,6 @@ class StarPilotOnroadView(AugmentedRoadView):
 
     # Track FPS
     fps = rl.get_fps()
-    if not hasattr(self, "_min_fps"):
-      self._min_fps = 99.9
-      self._max_fps = 0.0
-      self._avg_fps = 0.0
 
     if fps > 0:
       self._min_fps = min(self._min_fps, fps)
@@ -305,21 +288,8 @@ class StarPilotOnroadView(AugmentedRoadView):
       mem_val = int(device_state.memoryUsagePercent)
       mem_gb = 8.0 * mem_val / 100.0
 
-    # Format text lines for top-right developer metrics overlay.
-    text_lines = []
-    if show_cpu:
-      text_lines.append(f"CPU: {cpu_val}%")
-    if show_gpu:
-      text_lines.append(f"GPU: {gpu_val}%")
-    if show_temp:
-      text_lines.append(f"TEMP: {temp_val}°C")
-    if show_memory:
-      text_lines.append(f"RAM: {mem_gb:.1f} GB ({mem_val}%)")
-
-    # Helper function for outlined text drawing
     font = self._font_medium
     font_size = 24
-    line_height = font_size + 4
 
     def draw_text_with_outline(text, pos_x, pos_y, color):
       pos = rl.Vector2(pos_x, pos_y)
@@ -329,21 +299,25 @@ class StarPilotOnroadView(AugmentedRoadView):
       rl.draw_text_ex(font, text, rl.Vector2(pos.x + 1, pos.y + 1), font_size, 0, rl.BLACK)
       rl.draw_text_ex(font, text, pos, font_size, 0, color)
 
-    # 1. Render top-right developer metrics block
-    if text_lines:
-      x = self._content_rect.x + self._content_rect.width - 30
-      y = self._content_rect.y + 40
-      for i, line in enumerate(text_lines):
-        sz = measure_text_cached(font, line, font_size)
-        draw_text_with_outline(line, x - sz.x, y + i * line_height, rl.WHITE)
-
-    # 2. Render bottom-center detailed FPS tracker string (min/max/avg)
+    parts = []
+    if show_cpu:
+      parts.append(f"CPU: {cpu_val}%")
+    if show_gpu:
+      parts.append(f"GPU: {gpu_val}%")
+    if show_temp:
+      parts.append(f"TEMP: {temp_val}°C")
+    if show_memory:
+      parts.append(f"RAM: {mem_gb:.1f} GB ({mem_val}%)")
     if show_fps:
-      fps_str = f"FPS: {round(fps)} | Min: {round(self._min_fps)} | Max: {round(self._max_fps)} | Avg: {round(self._avg_fps)}"
-      sz = measure_text_cached(font, fps_str, font_size)
-      bx = self._content_rect.x + (self._content_rect.width - sz.x) / 2
-      by = self._content_rect.y + self._content_rect.height - sz.y - 10
-      draw_text_with_outline(fps_str, bx, by, rl.WHITE)
+      parts += [f"FPS: {round(fps)}", f"Min: {round(self._min_fps)}",
+                f"Max: {round(self._max_fps)}", f"Avg: {round(self._avg_fps)}"]
+
+    line = " | ".join(parts)
+    sz = measure_text_cached(font, line, font_size)
+    bx = self._content_rect.x + (self._content_rect.width - sz.x) / 2
+    border_width = self._get_border_width()
+    by = self._content_rect.y + self._content_rect.height + (border_width - sz.y) // 2
+    draw_text_with_outline(line, bx, by, rl.WHITE)
 
 
   def _render_bottom_row_widgets(self):
@@ -391,60 +365,52 @@ class StarPilotOnroadView(AugmentedRoadView):
       badge_rect = rl.Rectangle(bx, by, badge_w, badge_h)
 
       if badge == "lateral_paused":
-        from openpilot.selfdrive.ui.onroad.starpilot.pause_indicators import render_lateral_paused
         render_lateral_paused(badge_rect)
       elif badge == "longitudinal_paused":
-        from openpilot.selfdrive.ui.onroad.starpilot.pause_indicators import render_longitudinal_paused
         render_longitudinal_paused(badge_rect)
 
-    # 2. Render Compass & Weather (on the opposite side of DM icon)
-    # Dimensions
-    compass_w = 120
-    compass_h = 120
-    weather_w = 120
-    weather_h = 120
-
-    # Determine compass position
-    if not dm.is_rhd:
-      # LHD: Compass on the far right
-      cx = self._content_rect.x + self._content_rect.width - 30 - compass_w
-    else:
-      # RHD: Compass on the far left
-      cx = self._content_rect.x + 30
-
-    cy = dm.position_y - compass_h / 2
-    compass_rect = rl.Rectangle(cx, cy, compass_w, compass_h)
-
-    # Render Compass
-    from openpilot.selfdrive.ui.onroad.starpilot.compass import render_compass
-    render_compass(compass_rect, self._font_medium)
-
-    # Render Weather next to Compass
+    # 2. Render Weather (on the opposite side of DM icon)
     plan = ui_state.sm["starpilotPlan"] if ui_state.sm.valid.get("starpilotPlan", False) else None
     if plan and plan.weatherId != 0:
+      weather_w = 120
+      weather_h = 120
       if not dm.is_rhd:
-        # LHD: Weather to the left of Compass
-        wx = cx - spacing - weather_w
+        # LHD: Weather on the far right
+        wx = self._content_rect.x + self._content_rect.width - 30 - weather_w
       else:
-        # RHD: Weather to the right of Compass
-        wx = cx + compass_w + spacing
+        # RHD: Weather on the far left
+        wx = self._content_rect.x + 30
 
+      cy = dm.position_y - weather_h / 2
       weather_rect = rl.Rectangle(wx, cy, weather_w, weather_h)
-      from openpilot.selfdrive.ui.onroad.starpilot.weather_icon import render_weather_icon
       render_weather_icon(weather_rect)
 
-  def _render_pedals(self):
-    alert_showing, _ = self.alert_renderer.will_render()
-    if alert_showing is not None:
+  def _render_road_name(self):
+    toggles = ui_state.starpilot_toggles
+    road_name_on = bool(toggles.get("road_name_ui", self._params.get_bool("RoadNameUI")))
+    if not road_name_on:
       return
 
-    dm = self.driver_state_renderer
-    if not dm or dm.position_x == 0.0:
+    mapd = ui_state.sm["mapdOut"] if ui_state.sm.valid.get("mapdOut", False) else None
+    if mapd is None:
+      return
+    road_name = str(mapd.roadName or "")
+    if not road_name:
       return
 
-    anchor = dm.position_x if dm.is_rhd else dm.position_x - dm.x_shift
-    start_x = anchor - 96
-    start_y = dm.position_y - 198
+    font = self._font_bold
+    font_size = 32
+    sz = measure_text_cached(font, road_name, font_size)
 
-    from openpilot.selfdrive.ui.onroad.starpilot.pedal_icons import render_pedal_icons
-    render_pedal_icons(start_x, start_y, self._font_bold)
+    pad_x = 24
+    pad_y = 5
+    pill_w = sz.x + pad_x * 2
+    pill_h = font_size + pad_y * 2
+
+    cx = self._content_rect.x + self._content_rect.width / 2
+    by = self._content_rect.y + self._content_rect.height - pill_h - 16
+
+    pill = rl.Rectangle(cx - pill_w / 2, by, pill_w, pill_h)
+    rl.draw_rectangle_rounded(pill, 0.4, 8, rl.Color(0, 0, 0, 166))
+    rl.draw_rectangle_rounded_lines_ex(pill, 0.4, 8, 1, rl.Color(255, 255, 255, 60))
+    rl.draw_text_ex(font, road_name, rl.Vector2(cx - sz.x / 2, by + pad_y), font_size, 0, rl.WHITE)

@@ -15,6 +15,13 @@ from cereal import log
 
 import starpilot.system.speed_limit_vision as slv
 
+if __package__ in (None, ""):
+  import sys
+  sys.path.insert(0, str(Path(__file__).resolve().parent))
+  from common import source_video_fps  # type: ignore  # noqa: TID251
+else:
+  from .common import source_video_fps
+
 
 @dataclass(frozen=True)
 class RouteSummary:
@@ -419,7 +426,7 @@ def replay_route(
   for segment_path in segments:
     segment = segment_index(segment_path)
     capture = cv2.VideoCapture(str(segment_path))
-    fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
+    fps = source_video_fps(segment_path, capture.get(cv2.CAP_PROP_FPS))
     total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     segment_start_s = segment * 60.0
     frame_index = max(int(round(max(start_s - segment_start_s, 0.0) * fps)), 0)

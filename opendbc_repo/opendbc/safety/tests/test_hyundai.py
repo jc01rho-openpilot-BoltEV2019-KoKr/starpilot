@@ -50,6 +50,7 @@ class TestHyundaiSafety(HyundaiButtonBase, common.CarSafetyTest, common.DriverTo
   STANDSTILL_THRESHOLD = 12  # 0.375 kph
   RELAY_MALFUNCTION_ADDRS = {0: (0x340, 0x485)}  # LKAS11
   FWD_BLACKLISTED_ADDRS = {2: [0x340, 0x485]}
+  LFAHDA_MFC_LEN = 4
 
   MAX_RATE_UP = 3
   MAX_RATE_DOWN = 7
@@ -116,6 +117,13 @@ class TestHyundaiSafety(HyundaiButtonBase, common.CarSafetyTest, common.DriverTo
     values = {"CR_Lkas_StrToqReq": torque, "CF_Lkas_ActToi": steer_req}
     return self.packer.make_can_msg_safety("LKAS11", 0, values)
 
+  def test_lfahda_mfc_tx_length(self):
+    self.safety.set_controls_allowed(1)
+    self.assertTrue(self._tx(common.make_msg(0, 0x485, self.LFAHDA_MFC_LEN)))
+
+    wrong_len = 8 if self.LFAHDA_MFC_LEN == 4 else 4
+    self.assertFalse(self._tx(common.make_msg(0, 0x485, wrong_len)))
+
   def test_pcm_main_cruise_state_availability(self):
     if self.safety.get_current_safety_param() & HyundaiSafetyFlags.LONG:
       raise unittest.SkipTest("Longitudinal mode does not learn ACC main state from SCC11 RX")
@@ -159,6 +167,16 @@ class TestHyundaiSafetyCameraSCC(TestHyundaiSafety):
     self.packer = CANPackerSafety("hyundai_kia_generic")
     self.safety = libsafety_py.libsafety
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, HyundaiSafetyFlags.CAMERA_SCC)
+    self.safety.init_tests()
+
+
+class TestHyundaiSafetyCanRefresh(TestHyundaiSafety):
+  LFAHDA_MFC_LEN = 8
+
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_can_refresh_generated")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, HyundaiSafetyFlags.CAN_REFRESH_MSGS)
     self.safety.init_tests()
 
 
@@ -211,6 +229,7 @@ class TestHyundaiCanCanfdBlendedSafety(TestHyundaiSafety):
   TX_MSGS = [[0x340, 0], [0x4F1, 0], [0x485, 0], [0x364, 0]]
   RELAY_MALFUNCTION_ADDRS = {0: (0x340, 0x485, 0x364)}
   FWD_BLACKLISTED_ADDRS = {2: [0x340, 0x485, 0x364]}
+  LFAHDA_MFC_LEN = 8
   MAX_RATE_UP = 2
   MAX_RATE_DOWN = 3
   MAX_TORQUE_LOOKUP = [0], [404]
@@ -406,6 +425,36 @@ class TestHyundaiLongitudinalSafetyCameraSCC(HyundaiLongitudinalBase, TestHyunda
 
   def test_disabled_ecu_alive(self):
     pass
+
+
+class TestHyundaiSafetyCanRefreshCameraSCC(TestHyundaiSafetyCameraSCC):
+  LFAHDA_MFC_LEN = 8
+
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_can_refresh_generated")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, HyundaiSafetyFlags.CAMERA_SCC | HyundaiSafetyFlags.CAN_REFRESH_MSGS)
+    self.safety.init_tests()
+
+
+class TestHyundaiSafetyCanRefreshLong(TestHyundaiLongitudinalSafety):
+  LFAHDA_MFC_LEN = 8
+
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_can_refresh_generated")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, HyundaiSafetyFlags.LONG | HyundaiSafetyFlags.CAN_REFRESH_MSGS)
+    self.safety.init_tests()
+
+
+class TestHyundaiSafetyCanRefreshLongCameraSCC(TestHyundaiLongitudinalSafetyCameraSCC):
+  LFAHDA_MFC_LEN = 8
+
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_can_refresh_generated")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, HyundaiSafetyFlags.LONG | HyundaiSafetyFlags.CAMERA_SCC | HyundaiSafetyFlags.CAN_REFRESH_MSGS)
+    self.safety.init_tests()
 
 
 class TestHyundaiSafetyFCEVLong(TestHyundaiLongitudinalSafety, TestHyundaiSafetyFCEV):

@@ -34,7 +34,7 @@ from opendbc.car.gm.values import GMFlags
 from opendbc.car.toyota.carcontroller import LOCK_CMD, UNLOCK_CMD
 from opendbc.car.toyota.values import ToyotaStarPilotFlags
 from openpilot.common.constants import CV
-from openpilot.common.params import ParamKeyType, Params
+from openpilot.common.params import ParamKeyFlag, ParamKeyType, Params
 from openpilot.common.realtime import DT_HW
 from openpilot.common.time_helpers import system_time_valid
 from openpilot.system.hardware import HARDWARE, PC
@@ -62,7 +62,13 @@ from openpilot.starpilot.common.maps_catalog import (
   schedule_param_value,
 )
 from openpilot.starpilot.common.experimental_state import sync_persist_chill_state, sync_persist_experimental_state
-from openpilot.starpilot.common.favorite_slots import FAVORITE_SLOTS_PARAM, normalize_favorite_slots
+from openpilot.starpilot.common.favorite_slots import (
+  FAVORITE_ACTION_OPTIONS,
+  FAVORITE_SLOTS_PARAM,
+  is_favorite_action_key,
+  normalize_favorite_slots,
+  trigger_favorite_action,
+)
 from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 from openpilot.starpilot.common.starpilot_utilities import delete_file, get_lock_status, run_cmd
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH, ERROR_LOGS_PATH, EXCLUDED_KEYS, LEGACY_STARPILOT_PARAM_RENAMES, MAPS_PATH, MODELS_PATH, RESOURCES_REPO, SCREEN_RECORDINGS_PATH, STOCK_THEME_PATH, THEME_SAVE_PATH,\
@@ -488,6 +494,100 @@ def _build_default_params():
 
 starpilot_default_params = _build_default_params()
 
+TOGGLE_BACKUP_FORMAT = "starpilot-toggle-backup"
+TOGGLE_BACKUP_VERSION = 1
+TOGGLE_BACKUP_MAX_ENCODED_BYTES = 2_000_000
+TOGGLE_BACKUP_NO_DEFAULT_KEYS = {
+  "AdbEnabled",
+  "AlphaLongitudinalEnabled",
+  "AlwaysOnDM",
+  "ExperimentalMode",
+  "ExperimentalModeConfirmed",
+  "IsLdwEnabled",
+  "IsMetric",
+  "IsRHD",
+  "IsRHDOverride",
+  "RecordAudio",
+  "RecordFront",
+  "SshEnabled",
+}
+
+
+def _get_toggle_backup_keys():
+  keys = set()
+  for key, default_value, _, _ in starpilot_default_params:
+    if key in EXCLUDED_KEYS:
+      continue
+    if default_value is None and key not in TOGGLE_BACKUP_NO_DEFAULT_KEYS:
+      continue
+
+    try:
+      flags = _params_raw.get_key_flag(key)
+    except Exception:
+      continue
+
+    if not flags & ParamKeyFlag.PERSISTENT or flags & ParamKeyFlag.DONT_LOG:
+      continue
+
+    keys.add(key)
+
+  return keys
+
+
+def _coerce_toggle_restore_value(key, value):
+  value_type = _get_param_key_type(_params_raw, key)
+
+  if value_type == ParamKeyType.BOOL:
+    if isinstance(value, bool):
+      return value
+    if isinstance(value, numbers.Real) and value in (0, 1):
+      return bool(value)
+    if isinstance(value, str):
+      normalized = value.strip().lower()
+      if normalized in {"1", "true", "yes", "on"}:
+        return True
+      if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"Invalid boolean value for {key}")
+
+  if value_type == ParamKeyType.INT:
+    if isinstance(value, bool):
+      raise ValueError(f"Invalid integer value for {key}")
+    return int(float(value))
+
+  if value_type == ParamKeyType.FLOAT:
+    if isinstance(value, bool):
+      raise ValueError(f"Invalid numeric value for {key}")
+    result = float(value)
+    if not math.isfinite(result):
+      raise ValueError(f"Invalid numeric value for {key}")
+    return result
+
+  if value_type == ParamKeyType.JSON:
+    if isinstance(value, str):
+      value = json.loads(value)
+    if not isinstance(value, (dict, list)):
+      raise ValueError(f"Invalid JSON value for {key}")
+    return value
+
+  if value_type == ParamKeyType.BYTES:
+    if isinstance(value, bytes):
+      return value
+    if isinstance(value, str):
+      return value.encode("utf-8")
+    raise ValueError(f"Invalid byte value for {key}")
+
+  if value_type == ParamKeyType.TIME:
+    if isinstance(value, datetime):
+      return value
+    if isinstance(value, str):
+      return datetime.fromisoformat(value)
+    raise ValueError(f"Invalid time value for {key}")
+
+  if value is None or isinstance(value, (dict, list)):
+    raise ValueError(f"Invalid string value for {key}")
+  return str(value)
+
 params = ParamsCompat(_params_raw)
 params_memory = ParamsCompat(_params_memory_raw)
 STATS_RESPONSE_CACHE_SECONDS = 2.0
@@ -902,11 +1002,6 @@ _TROUBLESHOOT_SECTION_DEFINITIONS = [
     "id": "personality_settings",
     "title": "Personality Profile Settings",
     "keys": _TROUBLESHOOT_PERSONALITY_KEYS,
-  },
-  {
-    "id": "model_stop_distance",
-    "title": "Model Stop Distance",
-    "keys": ["StopDistance"],
   },
   {
     "id": "cem_settings",
@@ -2293,6 +2388,7 @@ def _get_favorite_slot_options():
 
   allowed_keys, value_types = _get_param_type_info()
   options = []
+  options.extend(dict(option) for option in FAVORITE_ACTION_OPTIONS)
   try:
     layout_path = os.path.join(os.path.dirname(__file__), "assets", "components", "tools", "device_settings_layout.json")
     with open(layout_path) as f:
@@ -2328,7 +2424,14 @@ def _favorite_slot_values(options):
   return {
     option["key"]: _safe_params_get_bool(option["key"])
     for option in options
-    if option.get("key")
+    if option.get("key") and not is_favorite_action_key(option.get("key"))
+  }
+
+def _configured_favorite_slot_values(slots):
+  return {
+    slot["key"]: _safe_params_get_bool(slot["key"])
+    for slot in slots
+    if slot.get("key") and not is_favorite_action_key(slot.get("key"))
   }
 
 _cached_allowed_keys = None
@@ -3796,6 +3899,7 @@ def setup(app):
       "/assets/components/tools/device_settings.js",
       "/assets/components/tools/device_settings.css",
       "/assets/components/tools/device_settings_layout.json",
+      "/assets/components/tools/toggles.js",
     }:
       response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
       response.headers["Pragma"] = "no-cache"
@@ -3929,6 +4033,7 @@ def setup(app):
       "amap2Key": params.get("AMapKey2", encoding="utf8") or "",
       "destination": params.get("NavDestination", encoding="utf8") or "",
       "isMetric": params.get_bool("IsMetric"),
+      "language": params.get("LanguageSetting", encoding="utf8") or "",
       "lastPosition": {
         "latitude": str(last_position.get("latitude", "")),
         "longitude": str(last_position.get("longitude", ""))
@@ -4116,7 +4221,7 @@ def setup(app):
           continue
         key = str(raw_slot.get("key") or "").strip()
         if key and key not in eligible_keys:
-          return jsonify(error=f"Favorite #{idx + 1} must use a Galaxy-exposed boolean toggle."), 400
+          return jsonify(error=f"Favorite #{idx + 1} must use a Galaxy-exposed toggle or action."), 400
 
       slots = normalize_favorite_slots(raw_slots, params=params, eligible_keys=eligible_keys)
 
@@ -4146,6 +4251,23 @@ def setup(app):
       "options": options,
       "values": _favorite_slot_values(options),
     }), 200
+
+  @app.route("/api/favorites/values", methods=["GET"])
+  def favorite_values():
+    options = _get_favorite_slot_options()
+    eligible_keys = {option["key"] for option in options}
+    slots = normalize_favorite_slots(params.get(FAVORITE_SLOTS_PARAM), params=params, eligible_keys=eligible_keys)
+    return jsonify({"values": _configured_favorite_slot_values(slots)}), 200
+
+  @app.route("/api/favorites/action", methods=["POST"])
+  def favorite_action():
+    data = request.get_json() or {}
+    key = str(data.get("key") or "").strip()
+    if not is_favorite_action_key(key):
+      return jsonify({"error": "Unknown favorite action."}), 400
+    if not trigger_favorite_action(key, params_memory):
+      return jsonify({"error": "Favorite action failed."}), 400
+    return jsonify({"message": "Favorite action sent."}), 200
 
   @app.route("/api/params", methods=["GET", "PUT"])
   def get_param():
@@ -4545,6 +4667,23 @@ def setup(app):
         value = value.decode("utf-8", errors="replace")
       return canonical_model_key(str(value).strip()), 200
     return value, 200
+
+  @app.route("/api/curve_speed_controller/reset", methods=["POST"])
+  def reset_curve_speed_controller_data():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Curve Speed Controller data can only be reset while parked."}), 403
+
+    params.put("CalibratedLateralAcceleration", 2.0)
+    params.remove("CalibrationProgress")
+    params.remove("CurvatureData")
+
+    return jsonify({
+      "message": "Curve Speed Controller data reset. Training will restart on the next drive.",
+      "updated": {
+        "CalibratedLateralAcceleration": 2.0,
+        "CalibrationProgress": 0.0,
+      },
+    }), 200
 
   @app.route("/api/params/all", methods=["GET"])
   def get_all_params():
@@ -5694,9 +5833,12 @@ def setup(app):
   @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/status", methods=["GET"])
   @app.route("/api/flm/status", methods=["GET"])
   def get_flm_status():
+    is_onroad = params.get_bool("IsOnroad")
+    if is_onroad:
+      flm_workspace.cancel_flm_if_onroad()
     workspace = flm_workspace.list_workspace()
     return jsonify({
-      "isOnroad": params.get_bool("IsOnroad"),
+      "isOnroad": is_onroad,
       "status": flm_workspace.read_flm_status(),
       "activeTrial": workspace.get("activeTrial"),
       "reports": workspace.get("reports", [])[:10],
@@ -7105,21 +7247,27 @@ def setup(app):
   @app.route("/api/toggles/backup", methods=["POST"])
   def backup_toggle_values():
     toggle_values = {}
-    for key, _, _, _ in starpilot_default_params:
-      if key in EXCLUDED_KEYS:
+    default_values = _get_static_default_param_values()
+    for key in sorted(_get_toggle_backup_keys()):
+      raw_value = _params_raw.get(key)
+      if raw_value is None:
+        raw_value = default_values.get(key)
+      if raw_value is None:
         continue
-
-      raw_value = params.get(key)
       value = _sanitize_json_value(raw_value)
-      if value is None:
-        value = "0"
-      elif not isinstance(value, (str, int, float, bool, dict, list)):
+      if not isinstance(value, (str, int, float, bool, dict, list)):
         value = str(value)
 
       toggle_values[key] = value
 
     encoded = utilities.encode_parameters(toggle_values)
-    wrapped = json.dumps({"data": encoded}, indent=2)
+    wrapped = json.dumps({
+      "format": TOGGLE_BACKUP_FORMAT,
+      "version": TOGGLE_BACKUP_VERSION,
+      "createdAt": datetime.now(timezone.utc).isoformat(),
+      "settingsCount": len(toggle_values),
+      "data": encoded,
+    }, indent=2)
 
     buffer = BytesIO(wrapped.encode("utf-8"))
     buffer.seek(0)
@@ -7128,30 +7276,78 @@ def setup(app):
 
   @app.route("/api/toggles/restore", methods=["POST"])
   def restore_toggle_values():
-    request_data = request.get_json()
-    if not request_data or "data" not in request_data:
-      return jsonify({"success": False, "message": "Missing 'data' in request."}), 400
+    request_data = request.get_json(silent=True)
+    if not isinstance(request_data, dict):
+      return jsonify({"success": False, "message": "Invalid toggle backup file."}), 400
 
-    allowed_keys = {key for key, _, _, _ in starpilot_default_params if key not in EXCLUDED_KEYS}
+    backup_format = request_data.get("format")
+    if backup_format not in (None, TOGGLE_BACKUP_FORMAT):
+      return jsonify({"success": False, "message": "This file is not a Galaxy toggle backup."}), 400
 
-    toggle_values = utilities.decode_parameters(request_data["data"])
+    backup_version = request_data.get("version", 1)
+    if not isinstance(backup_version, int) or backup_version > TOGGLE_BACKUP_VERSION:
+      return jsonify({"success": False, "message": "This toggle backup requires a newer Galaxy version."}), 400
+
+    encoded_data = request_data.get("data")
+    if not isinstance(encoded_data, str) or not encoded_data.strip():
+      return jsonify({"success": False, "message": "Toggle backup data is missing."}), 400
+    if len(encoded_data.encode("utf-8")) > TOGGLE_BACKUP_MAX_ENCODED_BYTES:
+      return jsonify({"success": False, "message": "Toggle backup file is too large."}), 413
+
+    try:
+      toggle_values = utilities.decode_parameters(encoded_data)
+    except Exception:
+      return jsonify({"success": False, "message": "Toggle backup data is damaged or invalid."}), 400
+    if not isinstance(toggle_values, dict):
+      return jsonify({"success": False, "message": "Toggle backup does not contain settings."}), 400
+
+    allowed_keys = _get_toggle_backup_keys()
+    restored_count = 0
+    skipped_count = 0
     for key, value in toggle_values.items():
+      if not isinstance(key, str):
+        skipped_count += 1
+        continue
+
       mapped_key = LEGACY_STARPILOT_PARAM_RENAMES.get(key, key)
-      if mapped_key in allowed_keys:
-        params.put(mapped_key, value)
+      if mapped_key not in allowed_keys:
+        skipped_count += 1
+        continue
+
+      try:
+        _params_raw.put(mapped_key, _coerce_toggle_restore_value(mapped_key, value))
+        restored_count += 1
+      except (TypeError, ValueError, json.JSONDecodeError):
+        skipped_count += 1
+
+    if restored_count == 0:
+      return jsonify({"success": False, "message": "No compatible toggle settings were found in this backup."}), 400
 
     update_starpilot_toggles()
-    return jsonify({"success": True, "message": "Toggles restored!"})
+    message = f"Restored {restored_count} toggle settings."
+    if skipped_count:
+      message += f" Skipped {skipped_count} incompatible or unavailable settings."
+    return jsonify({
+      "success": True,
+      "message": message,
+      "restoredCount": restored_count,
+      "skippedCount": skipped_count,
+    })
 
   @app.route("/api/toggles/reset_default", methods=["POST"])
   def reset_toggle_values():
-    params.put_bool("DoToggleReset", True)
-    HARDWARE.reboot()
+    for raw_key in _params_raw.all_keys():
+      key = raw_key.decode() if isinstance(raw_key, bytes) else str(raw_key)
+      if key in EXCLUDED_KEYS:
+        continue
 
-  @app.route("/api/toggles/reset_stock", methods=["POST"])
-  def reset_toggle_values_to_stock():
-    params.put_bool("DoToggleResetStock", True)
+      default_value = _params_raw.get_default_value(raw_key)
+      if default_value is not None:
+        _params_raw.put(raw_key, default_value)
+
+    update_starpilot_toggles()
     HARDWARE.reboot()
+    return jsonify({"success": True, "message": "Toggles reset to default StarPilot values. Rebooting..."})
 
   @app.route("/mapbox-help/<path:filename>", methods=["GET"])
   def serve_mapbox_help(filename):

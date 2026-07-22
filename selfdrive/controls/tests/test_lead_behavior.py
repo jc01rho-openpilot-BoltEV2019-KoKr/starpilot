@@ -158,6 +158,20 @@ def test_should_hold_tracked_vision_lead_releases_beyond_exit_gap():
   )
 
 
+def test_should_hold_tracked_vision_lead_ignores_shortened_model_horizon_in_bolt_stutter_case():
+  assert should_hold_tracked_vision_lead(
+    True, 54.6, 40.0, 6.0, 19.4,
+    model_prob=1.0, y_rel=0.05, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_does_not_extend_low_confidence_short_horizon_case():
+  assert not should_hold_tracked_vision_lead(
+    True, 54.6, 40.0, 6.0, 19.4,
+    model_prob=0.90, y_rel=0.05, radar=False,
+  )
+
+
 def test_radarless_matched_follow_window_accepts_pace_matched_highway_follow():
   assert is_radarless_matched_follow_window(31.0, 48.0, 30.4, 1.45, radar=False, lead_brake=0.05, lead_prob=0.95)
 

@@ -12,7 +12,7 @@ import numpy as np
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import (  # type: ignore
+  from common import (  # type: ignore  # noqa: TID251
     CLASSIFIER_EXPORT_NAME,
     DEFAULT_WORKSPACE,
     DETECTOR_EXPORT_NAME,
@@ -39,17 +39,40 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--output-dir", type=Path, help="Where exported ONNX models should be written. Defaults to <workspace>/exports.")
   parser.add_argument("--detector-imgsz", type=int, default=640, help="Detector export image size.")
   parser.add_argument("--classifier-imgsz", type=int, default=128, help="Classifier export image size.")
+  parser.add_argument(
+    "--detector-end2end",
+    action=argparse.BooleanOptionalAction,
+    default=None,
+    help="Override end-to-end detector export. Use --no-detector-end2end for a YOLO26 raw output compatible with the runtime parser.",
+  )
   parser.add_argument("--opset", type=int, default=12, help="ONNX opset.")
   parser.add_argument("--install-repo-assets", action="store_true", help="Copy exported ONNX files into starpilot/assets/vision_models.")
   parser.add_argument("--skip-verify", action="store_true", help="Skip the OpenCV DNN load/forward smoke test after export.")
   return parser.parse_args()
 
 
-def export_yolo(weights_path: Path, output_path: Path, imgsz: int, opset: int, nms: bool) -> None:
+def export_yolo(
+  weights_path: Path,
+  output_path: Path,
+  imgsz: int,
+  opset: int,
+  nms: bool,
+  end2end: bool | None = None,
+) -> None:
   from ultralytics import YOLO
 
   model = YOLO(str(weights_path))
-  exported_path = Path(model.export(format="onnx", imgsz=imgsz, opset=opset, simplify=False, dynamic=False, nms=nms))
+  export_kwargs = {
+    "format": "onnx",
+    "imgsz": imgsz,
+    "opset": opset,
+    "simplify": False,
+    "dynamic": False,
+    "nms": nms,
+  }
+  if end2end is not None:
+    export_kwargs["end2end"] = end2end
+  exported_path = Path(model.export(**export_kwargs))
   ensure_dir(output_path.parent)
   shutil.copy2(exported_path, output_path)
 
@@ -79,7 +102,14 @@ def main() -> int:
   if args.detector_weights:
     detector_weights = args.detector_weights.resolve()
     detector_output = output_dir / DETECTOR_EXPORT_NAME
-    export_yolo(detector_weights, detector_output, args.detector_imgsz, args.opset, nms=False)
+    export_yolo(
+      detector_weights,
+      detector_output,
+      args.detector_imgsz,
+      args.opset,
+      nms=False,
+      end2end=args.detector_end2end,
+    )
     if not args.skip_verify:
       verify_onnx_with_opencv(detector_output, args.detector_imgsz)
     exported_paths.append(detector_output)

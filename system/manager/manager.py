@@ -61,13 +61,14 @@ LEGACY_BOLT_FP_MIGRATION_FLAG = Path("/data") / "legacy_bolt_fp_migration_v1"
 STARPILOT_DEFAULTS_PARITY_MIGRATION_FLAG = Path("/data") / "starpilot_defaults_parity_v1"
 STARPILOT_HUMANLIKE_DISABLE_MIGRATION_FLAG = Path("/data") / "starpilot_humanlike_disable_v1"
 STARPILOT_CLUSTER_OFFSET_MIGRATION_FLAG = Path("/data") / "starpilot_cluster_offset_v1"
-STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG = Path("/data") / "starpilot_prioritize_smooth_following_v1"
+STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG = Path("/data") / "starpilot_traffic_smooth_v1"
+STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG = Path("/data") / "starpilot_traffic_follow_v1"
 STARPILOT_PARAM_RENAME_MIGRATION_FLAG = Path("/data") / "starpilot_param_rename_v1"
 STARPILOT_PARAM_CANONICALIZATION_MIGRATION_FLAG = Path("/data") / "starpilot_param_canonicalization_v1"
 STARPILOT_PC_ROOT_MIGRATION_FLAG = Path("/data") / "starpilot_pc_root_v1"
 STARPILOT_PARAMS_CACHE_MIGRATION_FLAG = Path("/data") / "starpilot_params_cache_v1"
 STARPILOT_LEGACY_CACHE_MARKER_KEYS = ("RemapCancelToDistance",)
-STARPILOT_REMOVED_PARAM_KEYS = ("HumanFollowing",)
+STARPILOT_REMOVED_PARAM_KEYS = ("CoastUpToLeads", "HumanAcceleration", "HumanFollowing", "PrioritizeSmoothFollowing")
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
 }
@@ -144,6 +145,10 @@ def update_nav_offroad_clear_state(params, started: bool, tracked_destination, t
     return None, None
 
   return tracked_destination, tracked_started_at
+
+
+def should_defer_reboot(started: bool, ignition: bool) -> bool:
+  return started or ignition
 
 
 def _merge_starpilot_stat_values(existing, incoming, key=None):
@@ -504,7 +509,6 @@ def migrate_starpilot_default_parity(params: Params, params_cache: Params) -> No
   desired_bool_values = {
     "AdvancedLateralTune": True,
     "ForceAutoTuneOff": True,
-    "HumanAcceleration": False,
     "NNFF": False,
     "NNFFLite": False,
   }
@@ -552,7 +556,7 @@ def migrate_disable_humanlike_defaults(params: Params, params_cache: Params) -> 
 
   disabled_keys: list[str] = []
 
-  for key in ("HumanAcceleration", "HumanLaneChanges"):
+  for key in ("HumanLaneChanges",):
     if not (params.get_bool(key) or params_cache.get_bool(key)):
       continue
 
@@ -601,33 +605,65 @@ def migrate_cluster_offset_default(params: Params, params_cache: Params) -> None
     cloudlog.exception(f"Failed to write migration flag: {STARPILOT_CLUSTER_OFFSET_MIGRATION_FLAG}")
 
 
-def migrate_prioritize_smooth_following_default(params: Params, params_cache: Params) -> None:
-  if STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG.exists():
+def migrate_traffic_mode_smooth_defaults(params: Params, params_cache: Params) -> None:
+  # Traffic Mode was repurposed from an aggressive city mode (jerk 50%) into a smooth
+  # bumper-to-bumper mode with Relaxed-parity jerk defaults (100%). Rewrite persisted
+  # legacy defaults only; user-tuned values are preserved.
+  if STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG.exists():
     return
 
-  if not (_has_persisted_param_file(params, "PrioritizeSmoothFollowing") or _has_persisted_param_file(params_cache, "PrioritizeSmoothFollowing")):
-    migrated_from_legacy = False
-    for params_obj in (params, params_cache):
-      if not _has_persisted_param_file(params_obj, "CoastUpToLeads"):
-        continue
+  migrated_keys: list[str] = []
+  for key in ("TrafficJerkAcceleration", "TrafficJerkDeceleration", "TrafficJerkSpeed", "TrafficJerkSpeedDecrease"):
+    # Decide off the real params store only: the boot sync mirrors real -> cache, so a
+    # cache-first check could clobber a user override with a stale cached default.
+    raw_value = _read_raw_param_bytes(params, key)
+    if not raw_value:
+      continue
 
-      prioritize_smooth_following = not params_obj.get_bool("CoastUpToLeads")
-      params.put_bool("PrioritizeSmoothFollowing", prioritize_smooth_following)
-      params_cache.put_bool("PrioritizeSmoothFollowing", prioritize_smooth_following)
-      cloudlog.warning(f"Migrated CoastUpToLeads to PrioritizeSmoothFollowing={int(prioritize_smooth_following)}")
-      migrated_from_legacy = True
-      break
+    try:
+      parsed_value = float(raw_value.decode("utf-8", errors="strict").strip())
+    except Exception:
+      continue
 
-    if not migrated_from_legacy:
-      params.put_bool("PrioritizeSmoothFollowing", False)
-      params_cache.put_bool("PrioritizeSmoothFollowing", False)
-      cloudlog.warning("Seeded PrioritizeSmoothFollowing to default disabled")
+    if abs(parsed_value - 50.0) < 1e-6:
+      params.put_float(key, 100.0)
+      params_cache.put_float(key, 100.0)
+      migrated_keys.append(key)
+
+  if migrated_keys:
+    cloudlog.warning(f"Applied one-time Traffic Mode smooth-defaults migration for {migrated_keys}")
 
   try:
-    STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
-    STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+    STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
   except Exception:
-    cloudlog.exception(f"Failed to write migration flag: {STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG}")
+    cloudlog.exception(f"Failed to write migration flag: {STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG}")
+
+
+def migrate_traffic_follow_default(params: Params, params_cache: Params) -> None:
+  # TrafficFollow's initial smooth-mode default (0.5s) proved too tight in on-road
+  # testing (frequent closing-on-lead); raised to 0.75s. Rewrite persisted legacy
+  # 0.5 only; user-tuned values are preserved.
+  if STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG.exists():
+    return
+
+  raw_value = _read_raw_param_bytes(params, "TrafficFollow")
+  if raw_value:
+    try:
+      parsed_value = float(raw_value.decode("utf-8", errors="strict").strip())
+    except Exception:
+      parsed_value = None
+
+    if parsed_value is not None and abs(parsed_value - 0.5) < 1e-6:
+      params.put_float("TrafficFollow", 0.75)
+      params_cache.put_float("TrafficFollow", 0.75)
+      cloudlog.warning("Applied one-time TrafficFollow migration from 0.5 to 0.75")
+
+  try:
+    STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+  except Exception:
+    cloudlog.exception(f"Failed to write migration flag: {STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG}")
 
 
 def _read_raw_param_bytes(params: Params, key: str | bytes):
@@ -849,7 +885,8 @@ def manager_init() -> None:
   migrate_starpilot_default_parity(params, params_cache)
   migrate_disable_humanlike_defaults(params, params_cache)
   migrate_cluster_offset_default(params, params_cache)
-  migrate_prioritize_smooth_following_default(params, params_cache)
+  migrate_traffic_mode_smooth_defaults(params, params_cache)
+  migrate_traffic_follow_default(params, params_cache)
   last_timing = _log_boot_timing("manager_init", "starpilot_migrations", manager_init_start, last_timing)
 
   # set unset params to their default value
@@ -1041,10 +1078,10 @@ def manager_thread() -> None:
     # Exit main loop when uninstall/shutdown/reboot is needed
     shutdown = False
     for param in ("DoUninstall", "DoShutdown", "DoReboot"):
-      if param == "DoReboot" and started:
+      if param == "DoReboot" and should_defer_reboot(started, ignition):
         if params.get_bool(param):
           if not warned_onroad_reboot:
-            cloudlog.warning("ignoring DoReboot while onroad; deferring until offroad")
+            cloudlog.warning("ignoring DoReboot while started or ignition is on; deferring until offroad")
             warned_onroad_reboot = True
         continue
       if params.get_bool(param):

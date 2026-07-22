@@ -114,10 +114,7 @@ def fill_driver_data(msg, model_output, suffix):
   msg.rightBlinkProb = model_output[f"right_blink_prob_{suffix}"][0, 0].item()
   msg.sunglassesProb = model_output[f"sunglasses_prob_{suffix}"][0, 0].item()
   msg.phoneProb = model_output[f"using_phone_prob_{suffix}"][0, 0].item()
-  try:
-    msg.sleepProb = model_output[f"sleep_prob_{suffix}"][0, 0].item()
-  except AttributeError:
-    pass
+  msg.sleepProb = model_output[f"sleep_prob_{suffix}"][0, 0].item()
 
 
 def get_driverstate_packet(model_output, frame_id: int, exec_time: float, gpu_exec_time: float):

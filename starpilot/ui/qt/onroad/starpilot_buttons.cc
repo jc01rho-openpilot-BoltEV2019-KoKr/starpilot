@@ -5,11 +5,16 @@
 #include <QJsonObject>
 #include <QPainter>
 #include <QPainterPath>
+#include <string>
 
 namespace {
 constexpr int favorite_btn_size = btn_size;
 constexpr int favorite_indicator_size = 22;
 constexpr int favorite_slots_count = 3;
+const QString favorite_action_decrease = "__starpilot_favorite_action__:distance_decrease";
+const QString favorite_action_increase = "__starpilot_favorite_action__:distance_increase";
+const std::string favorite_action_decel_counter = "FavoriteVirtualDecelCruiseCounter";
+const std::string favorite_action_accel_counter = "FavoriteVirtualAccelCruiseCounter";
 
 QJsonArray parseFavoriteSlots(const std::string &raw_slots) {
   QJsonParseError error;
@@ -117,8 +122,10 @@ FavoriteSlotState FavoriteButton::currentSlot() {
   next_slot.show_onroad = slot_obj.value("show_onroad").toBool(false);
   next_slot.key = slot_obj.value("key").toString().trimmed();
   next_slot.label = slot_obj.value("label").toString().trimmed();
+  next_slot.action = next_slot.key == favorite_action_decrease || next_slot.key == favorite_action_increase;
 
-  if (next_slot.key.isEmpty() || !params.checkKey(next_slot.key.toStdString()) || params.getKeyType(next_slot.key.toStdString()) != ParamKeyType::BOOL) {
+  if (!next_slot.action &&
+      (next_slot.key.isEmpty() || !params.checkKey(next_slot.key.toStdString()) || params.getKeyType(next_slot.key.toStdString()) != ParamKeyType::BOOL)) {
     next_slot.enabled = false;
     next_slot.show_onroad = false;
     next_slot.key.clear();
@@ -126,10 +133,12 @@ FavoriteSlotState FavoriteButton::currentSlot() {
     return next_slot;
   }
 
-  if (next_slot.label.isEmpty()) {
+  if (next_slot.label.isEmpty() && next_slot.action) {
+    next_slot.label = next_slot.key == favorite_action_increase ? "Distance + / RES" : "Distance - / SET";
+  } else if (next_slot.label.isEmpty()) {
     next_slot.label = next_slot.key;
   }
-  next_slot.value = params.getBool(next_slot.key.toStdString());
+  next_slot.value = !next_slot.action && params.getBool(next_slot.key.toStdString());
   return next_slot;
 }
 
@@ -137,6 +146,7 @@ void FavoriteButton::updateState() {
   const FavoriteSlotState next_slot = currentSlot();
   const bool changed = next_slot.enabled != slot.enabled ||
                        next_slot.show_onroad != slot.show_onroad ||
+                       next_slot.action != slot.action ||
                        next_slot.value != slot.value ||
                        next_slot.key != slot.key ||
                        next_slot.label != slot.label;
@@ -154,6 +164,13 @@ bool FavoriteButton::shouldShow() const {
 void FavoriteButton::toggleFavorite() {
   slot = currentSlot();
   if (!slot.enabled || slot.key.isEmpty()) {
+    return;
+  }
+
+  if (slot.action) {
+    const std::string counter_key = slot.key == favorite_action_increase ? favorite_action_accel_counter : favorite_action_decel_counter;
+    params_memory.putInt(counter_key, params_memory.getInt(counter_key) + 1);
+    update();
     return;
   }
 
@@ -193,12 +210,20 @@ void FavoriteButton::paintEvent(QPaintEvent *event) {
   p.setPen(QPen(QColor(255, 255, 255, isDown() ? 130 : 95), 2));
   p.drawPath(bg_path);
 
-  const QColor indicator_color = slot.value ? QColor(48, 255, 156) : QColor(135, 135, 135);
+  const QColor indicator_color = slot.action ? QColor(139, 108, 197) : (slot.value ? QColor(48, 255, 156) : QColor(135, 135, 135));
   const int indicator_x = width() - 20 - favorite_indicator_size;
   const int indicator_y = 20;
   p.setPen(Qt::NoPen);
   p.setBrush(indicator_color);
   p.drawEllipse(indicator_x, indicator_y, favorite_indicator_size, favorite_indicator_size);
+  if (slot.action) {
+    QFont action_font = p.font();
+    action_font.setPixelSize(20);
+    action_font.setWeight(QFont::DemiBold);
+    p.setFont(action_font);
+    p.setPen(QColor(255, 255, 255, 230));
+    p.drawText(QRect(indicator_x, indicator_y - 1, favorite_indicator_size, favorite_indicator_size), Qt::AlignCenter, slot.key == favorite_action_increase ? "+" : "-");
+  }
 
   QFont slot_font = p.font();
   slot_font.setPixelSize(20);

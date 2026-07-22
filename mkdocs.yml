@@ -32,10 +32,10 @@ nav:
     - What is a car port?: car-porting/what-is-a-car-port.md
     - Porting a car brand: car-porting/brand-port.md
     - Porting a car model: car-porting/model-port.md
-  - Contributing:
+  - Contribute:
+    - Contributing Guide: contributing/contribute.md
     - Roadmap: contributing/roadmap.md
     #- Architecture: contributing/architecture.md
-    - Contributing Guide →: https://github.com/commaai/openpilot/blob/master/docs/CONTRIBUTING.md
   - Links:
     - Blog →: https://blog.comma.ai
     - Bounties →: https://comma.ai/bounties

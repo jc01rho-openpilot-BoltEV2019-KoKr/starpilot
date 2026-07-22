@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import math
 import threading
 import time
-from dataclasses import replace
 
 import pyray as rl
 
@@ -15,6 +15,7 @@ from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog, alert_dial
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
+  AETHER_LIST_METRICS,
   AetherSliderDialog,
   COMPACT_PANEL_METRICS,
   DEFAULT_PANEL_STYLE,
@@ -32,8 +33,9 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_rounded_fill,
   draw_rounded_stroke,
   draw_settings_list_row,
-  draw_soft_card,
-  mix_colors,
+  draw_text_fit_common,
+  snap_rect,
+  with_alpha,
 )
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.lib.fingerprint_catalog import (
@@ -72,7 +74,7 @@ def _lock_doors_timer_labels():
   return labels
 
 
-SECTION_GAP = 28
+SECTION_GAP = AETHER_LIST_METRICS.section_gap
 ROW_HEIGHT = 125.0
 PANEL_STYLE = DEFAULT_PANEL_STYLE
 
@@ -130,20 +132,25 @@ class VehicleSettingsManagerView(PanelManagerView):
                  on_click=lambda: self._controller._on_select("ClusterOffset")))
     return rows
 
+  def _combo_value(self, keys: tuple[str, ...]) -> str:
+    return "  |  ".join(self._controller._get_action_name(k) for k in keys)
+
   def _build_steering_rows(self) -> list[SettingRow]:
     cs = starpilot_state.car_state
     rows = []
 
+    dist_keys = ("DistanceButtonControl", "LongDistanceButtonControl", "VeryLongDistanceButtonControl")
     rows.append(SettingRow(
       "combo:distance", "value", tr_noop("Distance Button"),
-      get_value=lambda: self._controller._get_action_name("DistanceButtonControl"),
+      get_value=lambda k=dist_keys: self._combo_value(k),
       on_click=lambda: self._controller._on_select("combo:distance"),
     ))
 
     if cs.isBolt and cs.hasPedal and self._controller._params.get_bool("RemapCancelToDistance"):
+      cancel_keys = ("CancelButtonControl", "LongCancelButtonControl", "VeryLongCancelButtonControl")
       rows.append(SettingRow(
         "combo:cancel", "value", tr_noop("Cancel Button"),
-        get_value=lambda: self._controller._get_action_name("CancelButtonControl"),
+        get_value=lambda k=cancel_keys: self._combo_value(k),
         on_click=lambda: self._controller._on_select("combo:cancel"),
       ))
 
@@ -157,14 +164,16 @@ class VehicleSettingsManagerView(PanelManagerView):
                  on_click=lambda: self._controller._on_select("MainCruiseButtonControl")))
 
     if cs.hasModeStarButtons:
+      mode_keys = ("ModeButtonControl", "LongModeButtonControl", "VeryLongModeButtonControl")
+      star_keys = ("StarButtonControl", "LongStarButtonControl", "VeryLongStarButtonControl")
       rows.append(SettingRow(
         "combo:mode", "value", tr_noop("Mode Button"),
-        get_value=lambda: self._controller._get_action_name("ModeButtonControl"),
+        get_value=lambda k=mode_keys: self._combo_value(k),
         on_click=lambda: self._controller._on_select("combo:mode"),
       ))
       rows.append(SettingRow(
         "combo:star", "value", tr_noop("Star Button"),
-        get_value=lambda: self._controller._get_action_name("StarButtonControl"),
+        get_value=lambda k=star_keys: self._combo_value(k),
         on_click=lambda: self._controller._on_select("combo:star"),
       ))
 
@@ -182,6 +191,43 @@ class VehicleSettingsManagerView(PanelManagerView):
       subtitle = ""
     else:
       title_size = 49
+
+    if row.id.startswith("combo:"):
+      bg = rl.Color(255, 255, 255, 4)
+      if pressed:
+        bg = rl.Color(255, 255, 255, 12)
+      elif hovered:
+        bg = rl.Color(255, 255, 255, 8)
+      draw_rounded_fill(rect, bg, radius_px=6)
+      draw_rounded_stroke(rect, rl.Color(255, 255, 255, 6), radius_px=6)
+      if not is_last:
+        sep_y = int(rect.y + rect.height - 1)
+        rl.draw_line(int(rect.x + 22), sep_y, int(rect.x + rect.width - 22), sep_y, rl.Color(255, 255, 255, 16))
+
+      font_m = gui_app.font(FontWeight.MEDIUM)
+      rl.draw_text_ex(font_m, tr(row.title),
+                      rl.Vector2(rect.x + 24, rect.y + 20), title_size, 0, PANEL_STYLE.title_color)
+
+      value_text = row.get_value() if row.get_value else ""
+      if value_text:
+        title_w = measure_text_cached(font_m, tr(row.title), title_size).x
+        value_fs = max(24, int(44 * row_h / 100)) if row_h < 100 else 44
+        value_right = int(rect.x + rect.width - 90 - 16)
+        value_left = int(rect.x + 24 + int(title_w) + 24)
+        avail = value_right - value_left
+        tw = measure_text_cached(font_m, value_text, value_fs).x
+        if tw <= avail:
+          x = value_right - tw
+          rl.draw_text_ex(font_m, value_text, rl.Vector2(x, rect.y + 20), value_fs, 0, PANEL_STYLE.title_color)
+        else:
+          draw_text_fit_common(font_m, value_text, rl.Vector2(value_left, rect.y + 20),
+                               avail, value_fs, color=PANEL_STYLE.title_color)
+
+      chevron_r = rl.Rectangle(rect.x + rect.width - 90, rect.y + 18, 26, 26)
+      rl.draw_text_ex(font_m, ">",
+                      rl.Vector2(chevron_r.x, chevron_r.y),
+                      26, 0, PANEL_STYLE.muted_color)
+      return
 
     if row.type == "value":
       value_size = max(24, int(44 * row_h / 100)) if row_h < 100 else 44
@@ -230,7 +276,7 @@ class VehicleSettingsManagerView(PanelManagerView):
         row_y += self._left_row_height
 
       if steering_rows:
-        row_y = draw_group_header(rect.x + 24, row_y, col_w - 48, tr("STEERING CONTROLS"))
+        row_y = draw_group_header(rect.x + 24, row_y, col_w - 48, tr("Steering Controls"))
         for i, row in enumerate(steering_rows):
           self._draw_row(rl.Rectangle(rect.x, row_y, col_w, self._left_row_height),
                          row, i == len(steering_rows) - 1)
@@ -443,9 +489,6 @@ class VehicleSettingsManagerView(PanelManagerView):
 
 
 class ButtonActionComboDialog(Widget):
-  _DIALOG_W = 660
-  _DIALOG_H = 440
-
   def __init__(self, controller: "StarPilotVehicleSettingsLayout", title: str,
                keys: tuple[str, ...], labels: tuple[str, ...]):
     super().__init__()
@@ -453,60 +496,54 @@ class ButtonActionComboDialog(Widget):
     self._title = title
     self._keys = keys
     self._labels = labels
-    self._pressed_idx: int | None = None
-    self._pressed_close = False
+    self._snapshot = {key: controller._params.get_int(key) for key in keys}
+    self._pressed_zone: str | None = None
     self._font_title = gui_app.font(FontWeight.BOLD)
     self._font_btn = gui_app.font(FontWeight.SEMI_BOLD)
-
-  def _layout(self):
-    sw = gui_app.width
-    sh = gui_app.height
-    dx = (sw - self._DIALOG_W) / 2
-    dy = (sh - self._DIALOG_H) / 2
-    d_rect = rl.Rectangle(int(dx), int(dy), int(self._DIALOG_W), int(self._DIALOG_H))
-
-    rows_area_y = dy + 72
-    rows_area_h = len(self._keys) * 88 + 12
-    rows_area = rl.Rectangle(int(dx + 40), int(rows_area_y), int(self._DIALOG_W - 80), int(rows_area_h))
-
-    row_rects = []
-    for i in range(len(self._keys)):
-      row_rects.append(rl.Rectangle(
-        int(dx + 40), int(rows_area_y + i * 88),
-        int(self._DIALOG_W - 80), 88,
-      ))
-
-    close_w = 320
-    close_h = 64
-    close_rect = rl.Rectangle(
-      int(dx + (self._DIALOG_W - close_w) / 2),
-      int(dy + self._DIALOG_H - 36 - close_h),
-      close_w, close_h,
-    )
-    return d_rect, rows_area, row_rects, close_rect
+    self._ok_offset = 0.0
+    self._cancel_offset = 0.0
+    self._ok_target = 0.0
+    self._cancel_target = 0.0
+    self._row_rects: list[rl.Rectangle] = []
+    self._cancel_rect = rl.Rectangle(0, 0, 0, 0)
+    self._ok_rect = rl.Rectangle(0, 0, 0, 0)
 
   def _handle_mouse_press(self, mouse_pos):
-    _, _, row_rects, close_rect = self._layout()
-    if rl.check_collision_point_rec(mouse_pos, close_rect):
-      self._pressed_close = True
-      return
-    for i, rect in enumerate(row_rects):
+    for i, rect in enumerate(self._row_rects):
       if rl.check_collision_point_rec(mouse_pos, rect):
-        self._pressed_idx = i
+        self._pressed_zone = f"row:{i}"
         return
+    if rl.check_collision_point_rec(mouse_pos, self._cancel_rect):
+      self._pressed_zone = "cancel"
+      self._cancel_target = 1.0
+      return
+    if rl.check_collision_point_rec(mouse_pos, self._ok_rect):
+      self._pressed_zone = "ok"
+      self._ok_target = 1.0
 
   def _handle_mouse_release(self, mouse_pos):
-    if self._pressed_idx is not None:
-      idx = self._pressed_idx
-      self._pressed_idx = None
-      _, _, row_rects, _ = self._layout()
-      if idx < len(row_rects) and rl.check_collision_point_rec(mouse_pos, row_rects[idx]):
+    zone = self._pressed_zone
+    self._pressed_zone = None
+    if not zone:
+      return
+
+    if zone.startswith("row:"):
+      idx = int(zone.split(":")[1])
+      if idx < len(self._row_rects) and rl.check_collision_point_rec(mouse_pos, self._row_rects[idx]):
         self._controller._show_action_picker(self._keys[idx])
       return
-    if self._pressed_close:
-      self._pressed_close = False
-      _, _, _, close_rect = self._layout()
-      if rl.check_collision_point_rec(mouse_pos, close_rect):
+
+    if zone == "cancel":
+      self._cancel_target = 0.0
+      if rl.check_collision_point_rec(mouse_pos, self._cancel_rect):
+        for k, v in self._snapshot.items():
+          self._controller._params.put_int(k, v)
+        gui_app.pop_widget()
+      return
+
+    if zone == "ok":
+      self._ok_target = 0.0
+      if rl.check_collision_point_rec(mouse_pos, self._ok_rect):
         gui_app.pop_widget()
 
   def _render(self, rect):
@@ -514,63 +551,119 @@ class ButtonActionComboDialog(Widget):
     sh = gui_app.height
     rl.draw_rectangle(0, 0, sw, sh, rl.Color(0, 0, 0, 160))
 
-    d_rect, rows_area, row_rects, close_rect = self._layout()
+    dialog_w = min(2320, int(rect.width - 40))
+    dialog_h = max(min(1015, int(rect.height - 40)), 968)
+    dx = rect.x + (rect.width - dialog_w) / 2
+    dy = rect.y + (rect.height - dialog_h) / 2
+    d_rect = snap_rect(rl.Rectangle(int(dx), int(dy), dialog_w, dialog_h))
+
+    btn_y = int(dy + dialog_h - 160 - 87)
+    btn_pair_w = 600 + 40 + 600
+    btn_start_x = int(dx + (dialog_w - btn_pair_w) / 2)
+    self._cancel_rect = rl.Rectangle(btn_start_x, btn_y, 600, 160)
+    self._ok_rect = rl.Rectangle(btn_start_x + 600 + 40, btn_y, 600, 160)
+
+    row_margin = 80
+    self._row_rects = []
+    for i in range(len(self._keys)):
+      self._row_rects.append(rl.Rectangle(
+        int(dx + row_margin), int(dy + 130 + i * (170 + 40)),
+        dialog_w - 2 * row_margin, 170,
+      ))
+
     mouse_pos = gui_app.last_mouse_event.pos
 
-    draw_rounded_fill(d_rect, rl.Color(10, 12, 16, 255), radius_px=24)
-    draw_rounded_stroke(d_rect, rl.Color(255, 255, 255, 16), radius_px=24)
-    rl.draw_rectangle_rec(rl.Rectangle(d_rect.x, d_rect.y, d_rect.width, 4), PANEL_STYLE.accent)
+    draw_rounded_fill(d_rect, rl.Color(10, 12, 16, 255), radius_px=35)
+    draw_rounded_stroke(d_rect, rl.Color(255, 255, 255, 16), radius_px=35)
+    rl.draw_rectangle_rec(rl.Rectangle(d_rect.x, d_rect.y, d_rect.width, 3), PANEL_STYLE.accent)
 
-    title_size = 32
+    title_size = 64
     ts = measure_text_cached(self._font_title, self._title, title_size)
     rl.draw_text_ex(self._font_title, self._title,
-                    rl.Vector2(int(d_rect.x + (d_rect.width - ts.x) / 2),
-                               int(d_rect.y + (64 - title_size) / 2)),
+                    rl.Vector2(int(dx + (dialog_w - ts.x) / 2), int(dy + 87)),
                     title_size, 0, rl.WHITE)
 
-    draw_list_group_shell(rows_area, style=PANEL_STYLE)
+    font_label = gui_app.font(FontWeight.MEDIUM)
+    font_value = gui_app.font(FontWeight.MEDIUM)
+    value_fs = 48
+    title_fs = 48
 
     for i in range(len(self._keys)):
-      row_rect = row_rects[i]
+      row_rect = self._row_rects[i]
       hovered = rl.check_collision_point_rec(mouse_pos, row_rect)
-      pressed = self._pressed_idx == i
+      pressed = self._pressed_zone == f"row:{i}"
 
-      draw_settings_list_row(
-        row_rect,
-        title=self._labels[i],
-        value=self._controller._get_action_name(self._keys[i]),
-        enabled=True,
-        hovered=hovered and (self._pressed_idx is None),
-        pressed=pressed,
-        is_last=(i == len(self._keys) - 1),
-        show_chevron=True,
-        title_size=46,
-        value_size=42,
-        style=PANEL_STYLE,
-      )
+      bg = rl.Color(255, 255, 255, 4)
+      if pressed:
+        bg = rl.Color(255, 255, 255, 12)
+      elif hovered:
+        bg = rl.Color(255, 255, 255, 8)
+      draw_rounded_fill(row_rect, bg, radius_px=8)
+      draw_rounded_stroke(row_rect, rl.Color(255, 255, 255, 6), radius_px=8)
 
-    close_hovered = rl.check_collision_point_rec(mouse_pos, close_rect)
-    close_pressed = self._pressed_close
+      if i < len(self._keys) - 1:
+        sep_y = int(row_rect.y + row_rect.height - 1)
+        rl.draw_line(int(row_rect.x + 24), sep_y, int(row_rect.x + row_rect.width - 24), sep_y, rl.Color(255, 255, 255, 16))
 
-    if close_pressed:
-      close_fill = mix_colors(PANEL_STYLE.accent, rl.Color(0, 0, 0, 255), 0.2)
-      close_border = PANEL_STYLE.accent
-    elif close_hovered:
-      close_fill = PANEL_STYLE.accent
-      close_border = PANEL_STYLE.accent
+      title_x = int(row_rect.x + 24)
+      title_y = int(row_rect.y + (row_rect.height - title_fs) / 2)
+      rl.draw_text_ex(self._font_title, self._labels[i], rl.Vector2(title_x, title_y), title_fs, 0, rl.WHITE)
+
+      action_name = self._controller._get_action_name(self._keys[i])
+      value_left = int(title_x + 350)
+      value_right = int(row_rect.x + row_rect.width - 24)
+      available_w = value_right - value_left
+      text_w = measure_text_cached(font_label, action_name, value_fs).x
+      if text_w <= available_w:
+        val_x = value_right - text_w
+        val_y = int(row_rect.y + (row_rect.height - value_fs) / 2)
+        rl.draw_text_ex(font_value, action_name, rl.Vector2(val_x, val_y), value_fs, 0, rl.WHITE)
+      else:
+        draw_text_fit_common(
+          font_value, action_name,
+          rl.Vector2(value_left, int(row_rect.y + (row_rect.height - value_fs) / 2)),
+          available_w, value_fs, color=rl.WHITE,
+        )
+
+    dt = rl.get_frame_time()
+    self._ok_offset += (self._ok_target - self._ok_offset) * (1 - math.exp(-dt / 0.060))
+    self._cancel_offset += (self._cancel_target - self._cancel_offset) * (1 - math.exp(-dt / 0.060))
+
+    c_y = self._cancel_rect.y + min(1.0, 10 * self._cancel_offset * 0.1)
+    c_face = snap_rect(rl.Rectangle(self._cancel_rect.x, c_y, 600, 160))
+    c_hovered = rl.check_collision_point_rec(mouse_pos, self._cancel_rect)
+    c_pressed = self._pressed_zone == "cancel"
+
+    if c_pressed:
+      c_fill = rl.Color(50, 54, 64, 255)
+      c_border = rl.Color(255, 255, 255, 40)
+    elif c_hovered:
+      c_fill = rl.Color(40, 44, 54, 255)
+      c_border = rl.Color(255, 255, 255, 30)
     else:
-      close_fill = rl.Color(255, 255, 255, 14)
-      close_border = rl.Color(255, 255, 255, 28)
+      c_fill = rl.Color(34, 38, 48, 255)
+      c_border = rl.Color(255, 255, 255, 20)
 
-    draw_soft_card(close_rect, close_fill, close_border)
+    draw_rounded_fill(c_face, c_fill, radius_px=41)
+    draw_rounded_stroke(c_face, c_border, radius_px=41)
+    c_text = tr("CANCEL")
+    cts = measure_text_cached(self._font_btn, c_text, 49)
+    rl.draw_text_ex(self._font_btn, c_text,
+                    rl.Vector2(int(c_face.x + (c_face.width - cts.x) / 2),
+                               int(c_face.y + (c_face.height - cts.y) / 2)),
+                    49, 0, rl.WHITE)
 
-    close_text = tr("Close")
-    close_size = 22
-    cts = measure_text_cached(self._font_btn, close_text, close_size)
-    rl.draw_text_ex(self._font_btn, close_text,
-                    rl.Vector2(int(close_rect.x + (close_rect.width - cts.x) / 2),
-                               int(close_rect.y + (close_rect.height - cts.y) / 2)),
-                    close_size, 0, rl.WHITE)
+    o_y = self._ok_rect.y + min(1.0, 10 * self._ok_offset * 0.1)
+    o_face = snap_rect(rl.Rectangle(self._ok_rect.x, o_y, 600, 160))
+
+    draw_rounded_fill(o_face, PANEL_STYLE.accent, radius_px=41)
+    draw_rounded_stroke(o_face, with_alpha(PANEL_STYLE.accent, 150), radius_px=41)
+    o_text = tr("OK")
+    ots = measure_text_cached(self._font_btn, o_text, 49)
+    rl.draw_text_ex(self._font_btn, o_text,
+                    rl.Vector2(int(o_face.x + (o_face.width - ots.x) / 2),
+                               int(o_face.y + (o_face.height - ots.y) / 2)),
+                    49, 0, rl.WHITE)
 
 
 class StarPilotVehicleSettingsLayout(_SettingsPage):

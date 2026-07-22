@@ -32,6 +32,11 @@ CRUISE_INTERVAL_SIGN = {
 ACCEL_CRUISE_BUTTONS = (ButtonType.accelCruise,)
 
 
+def is_speed_limit_confirmation_pending(starpilot_plan) -> bool:
+  """Only consume cruise buttons when SLC has a limit awaiting confirmation."""
+  return bool(starpilot_plan.speedLimitChanged and starpilot_plan.unconfirmedSlcSpeedLimit >= 1)
+
+
 class VCruiseHelper:
   def __init__(self, CP, FPCP=None):
     self.CP = CP

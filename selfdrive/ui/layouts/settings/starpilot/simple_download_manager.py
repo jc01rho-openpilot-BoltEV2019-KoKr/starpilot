@@ -117,10 +117,10 @@ class SimpleDownloadManager(Widget):
   MODE_DOWNLOAD = 2
 
   MODE_LABELS = ["SELECT", "DELETE", "DOWNLOAD"]
-  ITEM_HEIGHT = 128
-  PILL_HEIGHT = 73
-  PILL_GAP = 14
-  OUTER_MARGIN = 60
+  ITEM_HEIGHT = 144
+  PILL_HEIGHT = 88
+  PILL_GAP = 18
+  OUTER_MARGIN = 40
 
   def __init__(
     self,
@@ -352,59 +352,64 @@ class SimpleDownloadManager(Widget):
   def _render(self, rect: rl.Rectangle) -> bool | int | None:
     self.set_rect(rect)
 
-    # Full-screen HUD background
-    draw_hud_background(rect, AetherListColors.PRIMARY, glow=0.5, radius_px=200,
-                        bg_color=rl.Color(3, 3, 5, 240))
+    # Full-screen dark overlay matching AetherSliderDialog
+    rl.draw_rectangle(0, 0, gui_app.width, gui_app.height, rl.Color(0, 0, 0, 160))
 
-    # Dialog card
+    # Dialog card (spacious & thematic bounds)
     margin_x = self.OUTER_MARGIN
     margin_y = self.OUTER_MARGIN
-    card_w = min(rect.width - margin_x * 2, 680)
-    card_h = min(rect.height - margin_y * 2, 660)
+    card_w = min(1800, int(rect.width - margin_x * 2))
+    card_h = min(960, int(rect.height - margin_y * 2))
     card_x = rect.x + (rect.width - card_w) / 2
     card_y = rect.y + (rect.height - card_h) / 2
-    card_rect = rl.Rectangle(card_x, card_y, card_w, card_h)
-    draw_soft_card(card_rect, rl.Color(14, 13, 18, 255), with_alpha(AetherListColors.PANEL_BORDER, 180),
-                   radius=0.022, segments=20)
+    card_rect = snap_rect(rl.Rectangle(card_x, card_y, card_w, card_h))
 
-    cx = int(card_x + 24)
-    cw = int(card_w - 48)
-    y = int(card_y + 20)
+    # Rounded dialog shell with purple top accent stripe (AetherSliderDialog parity)
+    draw_rounded_fill(card_rect, rl.Color(10, 12, 16, 255), radius_px=35)
+    draw_rounded_stroke(card_rect, rl.Color(255, 255, 255, 16), radius_px=35)
+    rl.draw_rectangle_rec(rl.Rectangle(card_rect.x, card_rect.y, card_rect.width, 3), AetherListColors.PRIMARY)
+
+    cx = int(card_x + 48)
+    cw = int(card_w - 96)
+    y = int(card_y + 36)
 
     # ── Title + close ──
     title_font = gui_app.font(FontWeight.BOLD)
-    close_size = 36
-    close_x = int(card_x + card_w - 24 - close_size)
-    self._close_rect = rl.Rectangle(close_x, y + 2, close_size, close_size)
+    close_size = 56
+    close_x = int(card_x + card_w - 48 - close_size)
+    self._close_rect = rl.Rectangle(close_x, y, close_size, close_size)
 
-    draw_text_fit_common(title_font, self.title, rl.Vector2(float(cx), float(y)),
-                         float(cw - close_size - 16), 32, color=AetherListColors.HEADER)
+    draw_text_fit_common(title_font, tr(self.title), rl.Vector2(float(cx), float(y + 4)),
+                         float(cw - close_size - 32), 48, color=AetherListColors.HEADER)
 
     close_hovered = self._pressed_target == "close"
-    rl.draw_rectangle_rounded(self._close_rect, 0.5, 8,
+    rl.draw_rectangle_rounded(self._close_rect, 0.35, 12,
                               with_alpha(rl.Color(255, 255, 255, 28 if close_hovered else 14), 255))
+    rl.draw_rectangle_rounded_lines_ex(self._close_rect, 0.35, 12, 1.5,
+                                       with_alpha(rl.Color(255, 255, 255, 40), 255))
     cx_c = self._close_rect.x + self._close_rect.width / 2
     cy_c = self._close_rect.y + self._close_rect.height / 2
-    s = close_size * 0.3
-    clr = AetherListColors.MUTED
-    rl.draw_line_ex(rl.Vector2(cx_c - s, cy_c - s), rl.Vector2(cx_c + s, cy_c + s), 2.5, clr)
-    rl.draw_line_ex(rl.Vector2(cx_c + s, cy_c - s), rl.Vector2(cx_c - s, cy_c + s), 2.5, clr)
+    s = close_size * 0.28
+    clr = AetherListColors.HEADER if close_hovered else AetherListColors.MUTED
+    rl.draw_line_ex(rl.Vector2(cx_c - s, cy_c - s), rl.Vector2(cx_c + s, cy_c + s), 3.0, clr)
+    rl.draw_line_ex(rl.Vector2(cx_c + s, cy_c - s), rl.Vector2(cx_c - s, cy_c + s), 3.0, clr)
 
-    y += 48
+    y += 72
 
     # ── Current selection ──
     current_val = self._current_value()
     current_display = _theme_display_name(current_val) if current_val else "Stock"
     info_font = gui_app.font(FontWeight.NORMAL)
-    rl.draw_text_ex(info_font, f"{tr('Current')}: {current_display}",
-                    rl.Vector2(float(cx), float(y)), 20, 0, AetherListColors.SUBTEXT)
-    y += 32
+    current_text = f"{tr('Current')}: {current_display}"
+    rl.draw_text_ex(info_font, current_text,
+                    rl.Vector2(float(cx), float(y)), 28, 0, AetherListColors.SUBTEXT)
+    y += 44
 
     # ── Info message ──
     if self._info_message and time.monotonic() < self._info_message_until:
       rl.draw_text_ex(info_font, self._info_message,
-                      rl.Vector2(float(cx), float(y)), 18, 0, AetherListColors.SUCCESS)
-      y += 26
+                      rl.Vector2(float(cx), float(y)), 26, 0, AetherListColors.SUCCESS)
+      y += 36
 
     # ── Mode pills ──
     pill_w = int((cw - self.PILL_GAP * 2) / 3)
@@ -422,23 +427,23 @@ class SimpleDownloadManager(Widget):
       self._pill_rects.append(prect)
       is_active = i == self._active_mode
       is_pressed = self._pressed_target == f"mode:{i}"
-      hovered = is_pressed
       draw_action_pill(
         prect,
         tr(label),
         active_fill if is_active else inactive_fill,
         active_border if is_active else inactive_border,
         active_text if is_active else inactive_text,
-        font_size=20,
+        font_size=28,
+        roundness=0.35,
       )
       if is_pressed:
-        rl.draw_rectangle_rounded(prect, 0.35, 12, with_alpha(rl.Color(255, 255, 255, 10), 255))
+        rl.draw_rectangle_rounded(prect, 0.35, 12, with_alpha(rl.Color(255, 255, 255, 16), 255))
 
-    y += self.PILL_HEIGHT + 16
+    y += self.PILL_HEIGHT + 24
 
     # ── Content area ──
     scroll_y = y
-    scroll_h = int(card_rect.y + card_rect.height - scroll_y - 16)
+    scroll_h = int(card_rect.y + card_rect.height - scroll_y - 28)
     if scroll_h < 40:
       return True
     scroll_rect = rl.Rectangle(float(cx), float(scroll_y), float(cw), float(scroll_h))
@@ -459,7 +464,8 @@ class SimpleDownloadManager(Widget):
         scroll_rect,
         tr(empty_msg["title"]),
         tr(empty_msg["body"]),
-        title_size=26, body_size=20,
+        title_size=38, body_size=26,
+        title_top_padding=50, body_height=80,
         fill=rl.Color(0, 0, 0, 0), border=rl.Color(0, 0, 0, 0),
       )
     else:
@@ -469,13 +475,14 @@ class SimpleDownloadManager(Widget):
 
       if self._downloading:
         # Download progress display
-        prog_h = 120
+        prog_h = 140
         prog_rect = rl.Rectangle(scroll_rect.x + 20, scroll_rect.y + self._scroll_offset + 20,
                                  scroll_rect.width - 40, prog_h)
-        draw_rounded_fill(prog_rect, with_alpha(rl.Color(255, 255, 255, 6), 255), radius_px=12)
+        draw_rounded_fill(prog_rect, with_alpha(rl.Color(255, 255, 255, 8), 255), radius_px=16)
+        draw_rounded_stroke(prog_rect, with_alpha(rl.Color(255, 255, 255, 20), 255), radius_px=16)
 
         # Busy ring
-        ring_center = rl.Vector2(prog_rect.x + 50, prog_rect.y + prog_rect.height / 2)
+        ring_center = rl.Vector2(prog_rect.x + 70, prog_rect.y + prog_rect.height / 2)
         draw_busy_ring(ring_center, rl.get_time() * 4, AetherListColors.PRIMARY,
                        track_color=with_alpha(rl.Color(255, 255, 255, 18), 255))
 
@@ -483,65 +490,65 @@ class SimpleDownloadManager(Widget):
         progress_text = self._download_progress or "Downloading..."
         draw_text_fit_common(
           normal_font, progress_text,
-          rl.Vector2(prog_rect.x + 90, prog_rect.y + 24),
-          prog_rect.width - 110, 24,
+          rl.Vector2(prog_rect.x + 130, prog_rect.y + 32),
+          prog_rect.width - 340, 32,
           color=AetherListColors.HEADER,
         )
 
         # Cancel button
-        cancel_w, cancel_h = 160, 44
-        cancel_y = prog_rect.y + prog_h - cancel_h - 16
+        cancel_w, cancel_h = 180, 54
+        cancel_y = prog_rect.y + (prog_h - cancel_h) / 2
         self._cancel_rect = snap_rect(rl.Rectangle(
-          prog_rect.x + 90, cancel_y, float(cancel_w), float(cancel_h)))
+          prog_rect.x + prog_rect.width - cancel_w - 24, cancel_y, float(cancel_w), float(cancel_h)))
         cancel_hovered = self._pressed_target == "cancel_download"
         draw_action_pill(
           self._cancel_rect, tr("CANCEL"),
-          with_alpha(AetherListColors.DANGER, 40 if cancel_hovered else 24),
-          with_alpha(AetherListColors.DANGER, 80),
-          AetherListColors.HEADER, font_size=18,
+          with_alpha(AetherListColors.DANGER, 50 if cancel_hovered else 30),
+          with_alpha(AetherListColors.DANGER, 100),
+          AetherListColors.HEADER, font_size=24,
         )
 
         item_y += prog_h + 40
 
       if self._confirm_target is not None:
         # Confirm overlay
-        confirm_w = min(380, scroll_rect.width - 60)
-        confirm_h = 160
+        confirm_w = min(720, scroll_rect.width - 60)
+        confirm_h = 220
         confirm_rect = rl.Rectangle(
           scroll_rect.x + (scroll_rect.width - confirm_w) / 2,
           scroll_rect.y + self._scroll_offset + (scroll_rect.height - confirm_h) / 2,
           confirm_w, confirm_h,
         )
-        draw_soft_card(confirm_rect, rl.Color(20, 19, 25, 255), with_alpha(AetherListColors.PANEL_BORDER, 120),
-                       radius=0.03, segments=16)
+        draw_soft_card(confirm_rect, rl.Color(20, 19, 25, 255), with_alpha(AetherListColors.PANEL_BORDER, 160),
+                       radius=0.03, segments=18)
 
         confirm_font = gui_app.font(FontWeight.MEDIUM)
         confirm_msg = tr("Delete \"{name}\"?").format(name=self._confirm_target)
         draw_text_fit_common(
           confirm_font, confirm_msg,
-          rl.Vector2(confirm_rect.x + 20, confirm_rect.y + 24),
-          confirm_rect.width - 40, 24,
+          rl.Vector2(confirm_rect.x + 24, confirm_rect.y + 32),
+          confirm_rect.width - 48, 32,
           align_center=True, color=AetherListColors.HEADER,
         )
 
-        btn_w = (confirm_rect.width - 50) / 2
-        btn_y = confirm_rect.y + confirm_rect.height - 56
-        btn_h = 40
+        btn_w = (confirm_rect.width - 60) / 2
+        btn_y = confirm_rect.y + confirm_rect.height - 76
+        btn_h = 52
 
-        self._confirm_no_rect = snap_rect(rl.Rectangle(confirm_rect.x + 16, btn_y, btn_w, btn_h))
-        self._confirm_yes_rect = snap_rect(rl.Rectangle(confirm_rect.x + confirm_rect.width - btn_w - 16, btn_y, btn_w, btn_h))
+        self._confirm_no_rect = snap_rect(rl.Rectangle(confirm_rect.x + 20, btn_y, btn_w, btn_h))
+        self._confirm_yes_rect = snap_rect(rl.Rectangle(confirm_rect.x + confirm_rect.width - btn_w - 20, btn_y, btn_w, btn_h))
 
         no_hovered = self._pressed_target == "confirm_no"
         yes_hovered = self._pressed_target == "confirm_yes"
 
         draw_action_pill(self._confirm_no_rect, tr("CANCEL"),
-                         with_alpha(rl.Color(255, 255, 255, 10 if no_hovered else 6), 255),
+                         with_alpha(rl.Color(255, 255, 255, 14 if no_hovered else 8), 255),
                          with_alpha(rl.Color(255, 255, 255, 36), 255),
-                         AetherListColors.SUBTEXT, font_size=18)
+                         AetherListColors.SUBTEXT, font_size=24)
         draw_action_pill(self._confirm_yes_rect, tr("DELETE"),
-                         with_alpha(AetherListColors.DANGER, 50 if yes_hovered else 30),
-                         with_alpha(AetherListColors.DANGER, 100),
-                         AetherListColors.HEADER, font_size=18)
+                         with_alpha(AetherListColors.DANGER, 60 if yes_hovered else 36),
+                         with_alpha(AetherListColors.DANGER, 120),
+                         AetherListColors.HEADER, font_size=24)
 
         item_y += confirm_h + 20
 
@@ -598,8 +605,9 @@ class SimpleDownloadManager(Widget):
           is_last=is_last,
           alpha=255,
           action_pill=True,
-          action_pill_height=38,
-          title_size=26,
+          action_pill_height=54,
+          title_size=36,
+          action_text_size=26,
           title_color=AetherListColors.HEADER,
           subtitle_color=AetherListColors.SUBTEXT,
           action_fill=action_fill,

@@ -309,6 +309,10 @@ int Params::getTuningLevel(const std::string &key) {
   return keys[key].tuning_level;
 }
 
+ParamSettingsTier Params::getSettingsTier(const std::string &key) {
+  return keys[key].settings_tier;
+}
+
 std::optional<std::string> Params::getStockValue(const std::string &key) {
   ParamKeyAttributes &attributes = keys[key];
   if (attributes.stock_value) {

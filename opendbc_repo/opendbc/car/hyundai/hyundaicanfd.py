@@ -3,7 +3,7 @@ import numpy as np
 from opendbc.car import CanBusBase, CanData
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.crc import CRC16_XMODEM
-from opendbc.car.hyundai.values import HyundaiFlags
+from opendbc.car.hyundai.values import HyundaiFlags, CAR
 
 
 def _set_value(msg: bytearray, sig, ival: int) -> None:
@@ -90,6 +90,10 @@ def _create_angle_adas_cmd_msg(packer, CAN, apply_angle: float, lat_active: bool
     "FCA_ESA_TqBstGainVal": 0.0,
   }
   return packer.make_can_msg("ADAS_CMD_35_10ms", CAN.ECAN, values)
+
+
+def create_angle_adas_cmd(packer, CAN, apply_angle: float, lat_active: bool, torque_reduction_gain: float):
+  return _create_angle_adas_cmd_msg(packer, CAN, apply_angle, lat_active, torque_reduction_gain)
 
 
 def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque, apply_angle,
@@ -202,6 +206,25 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
       ret.append(packer.make_can_msg("LFA", CAN.ECAN, lfa_values))
 
   return ret
+
+
+def create_inactive_angle_steering_messages(packer, CAN, steering_angle: float):
+  lfa_values = {
+    "LKA_MODE": 2,
+    "LKA_ICON": 1,
+    "TORQUE_REQUEST": 0,
+    "LKA_ASSIST": 0,
+    "STEER_REQ": 0,
+    "STEER_MODE": 0,
+    "HAS_LANE_SAFETY": 0,
+    "NEW_SIGNAL_1": 0,
+    "NEW_SIGNAL_2": 0,
+    "DAMP_FACTOR": 100,
+  }
+  return [
+    packer.make_can_msg("LFA", CAN.ECAN, lfa_values),
+    create_angle_adas_cmd(packer, CAN, steering_angle, False, 0.0),
+  ]
 
 
 def create_suppress_lfa(packer, CAN, lfa_block_msg, lka_steering_alt):
@@ -394,6 +417,35 @@ def create_blindspot_status_messages(packer, CAN, rear_values, front_corner_valu
   return [
     packer.make_can_msg("BLINDSPOTS_REAR_CORNERS", CAN.ECAN, rear),
     packer.make_can_msg("BLINDSPOTS_FRONT_CORNER_1", CAN.ECAN, front),
+  ]
+
+
+def create_ccnc_blindspot_status_messages(packer, CP, CAN, counter, left_blindspot=False, right_blindspot=False,
+                                           left_escalated=False, right_escalated=False, drive_gear=False,
+                                           left_warning_lamp=False, right_warning_lamp=False,
+                                           left_sound_active=False, right_sound_active=False):
+  left_state = 2 if left_blindspot and left_escalated else (1 if left_blindspot else 0)
+  right_state = 2 if right_blindspot and right_escalated else (1 if right_blindspot else 0)
+  left_osm_state = 2 if left_warning_lamp else 1 if left_state == 1 else 0
+  right_osm_state = 2 if right_warning_lamp else 1 if right_state == 1 else 0
+  desired_fields = {
+    "BCW_IndSta": 1,
+    "BCA_OnOffEquip2Sta": 2,
+    "BCA_Sta": int(drive_gear),
+    "BCW_LtIndSta": left_state,
+    "BCW_RtIndSta": right_state,
+    "BCW_LtSndWrngSta": int(left_sound_active),
+    "BCW_RtSndWrngSta": int(right_sound_active),
+    "OSMrrLamp_LtIndSta": left_osm_state,
+    "OSMrrLamp_RtIndSta": right_osm_state,
+  }
+
+  return [
+    _create_ccnc_adrv_message_with_signals(
+      packer, CP, CAN, 0x1BA, counter, "BLINDSPOTS_REAR_CORNERS", desired_fields,
+    ),
+    # No retained radar input reproduces the stock RCTA target decision across routes.
+    _create_ccnc_adrv_message(CP.carFingerprint, 0x1E5, CAN.ECAN, counter),
   ]
 
 
@@ -741,6 +793,30 @@ def create_adrv_messages(packer, CAN, frame):
   return ret
 
 
+def create_ccnc_adrv_messages(packer, CP, CAN, frame, enabled, main_cruise_enabled, hud, out, is_metric,
+                              steering_available, steering_active, left_blindspot, right_blindspot,
+                              drive_gear=False,
+                              hba_icon=0,
+                              left_escalated=False, right_escalated=False,
+                              left_warning_lamp=False, right_warning_lamp=False,
+                              left_sound_active=False, right_sound_active=False):
+  ret = [
+    _create_ccnc_adrv_message(CP.carFingerprint, address, CAN.ECAN, frame // period)
+    for address, period in _CCNC_ADRV_PERIODS[CP.carFingerprint].items() if frame % period == 0
+  ]
+  if frame % 5 == 0:
+    ret.extend(create_ccnc_angle_long_status_messages(
+      packer, CP, CAN, frame // 5, enabled, main_cruise_enabled, hud, out, is_metric,
+      steering_available, steering_active, hba_icon,
+    ))
+    ret.extend(create_ccnc_blindspot_status_messages(
+      packer, CP, CAN, frame // 5, left_blindspot, right_blindspot, left_escalated, right_escalated,
+      drive_gear,
+      left_warning_lamp, right_warning_lamp, left_sound_active, right_sound_active,
+    ))
+  return ret
+
+
 def hkg_can_fd_checksum(address: int, sig, d: bytearray) -> int:
   crc = 0
   for i in range(2, len(d)):
@@ -767,10 +843,39 @@ def hkg_can_fd_checksum(address: int, sig, d: bytearray) -> int:
 # brake, and accelerator bits are updated for the radar heartbeat.
 _ACCEL_BRAKE_ALT_TEMPLATE = bytes.fromhex("000000020000fcff000000000020000055ff000068000000")
 _KIA_EV9_ACCEL_BRAKE_ALT_TEMPLATE = bytes.fromhex("00000000ff006f00e80400001201030055ffff0000000000")
+# Neutral bodies verified across stock and successful suppression routes. Only
+# rolling integrity fields and the decoded state above are changed at runtime.
+_CCNC_ADRV_TEMPLATES = {
+  CAR.KIA_EV9: {
+    0x160: bytes.fromhex("0000000100000000fffc0100a8001000"),
+    0x1DA: bytes.fromhex("0000002200110000000000000000000000000000000000000000000000000000"),
+    0x1EA: bytes.fromhex("000000080000000000000000000000ff000000000000000000000000000f0f00"),
+    0x200: bytes.fromhex("00000014801a0000"),
+    0x345: bytes.fromhex("0000001500560000"),
+    0x161: bytes.fromhex("0000000000000000c0fff0c003000040000000000000000000ff000000000000"),
+    0x162: bytes.fromhex("0000002700000000000000000000000000000000000000000000000000000000"),
+    0x1BA: bytes.fromhex("00000000000000880200000000000000000100000000000f"),
+    0x1E5: bytes.fromhex("00000000000000000000220300000080"),
+    0x1E0: bytes.fromhex("00000002000000000000000000000000"),
+    0x38C: bytes.fromhex("000000f71f000000000000000000000000000000000000000000000000000000"),
+  },
+}
+_CCNC_ADRV_PERIODS = {
+  CAR.KIA_EV9: {
+    0x160: 2,
+    0x1DA: 100,
+    0x1EA: 5,
+    0x200: 5,
+    0x345: 20,
+    0x1E0: 5,
+    0x38C: 20,
+  },
+}
+
 
 def create_accelerator_brake_alt_spoof(bus: int, counter: int, brake_pressed: bool, accelerator_pressed: bool,
                                        car_fingerprint=None) -> CanData:
-  template = _KIA_EV9_ACCEL_BRAKE_ALT_TEMPLATE if str(car_fingerprint) == "KIA_EV9" else _ACCEL_BRAKE_ALT_TEMPLATE
+  template = _KIA_EV9_ACCEL_BRAKE_ALT_TEMPLATE if car_fingerprint == CAR.KIA_EV9 else _ACCEL_BRAKE_ALT_TEMPLATE
   d = bytearray(template)
   d[2] = counter & 0xFF                              # COUNTER (bit 16, 8-bit)
   d[4] = (d[4] & ~0x01) | (0x01 if brake_pressed else 0x00)         # BRAKE_PRESSED (bit 32)
@@ -779,3 +884,111 @@ def create_accelerator_brake_alt_spoof(bus: int, counter: int, brake_pressed: bo
   d[0] = crc & 0xFF
   d[1] = (crc >> 8) & 0xFF
   return CanData(0x100, bytes(d), bus)
+
+
+def _create_ccnc_adrv_message(car_fingerprint, address: int, bus: int, counter: int) -> CanData:
+  d = bytearray(_CCNC_ADRV_TEMPLATES[car_fingerprint][address])
+  d[2] = counter & 0xFF
+  crc = hkg_can_fd_checksum(address, None, d)
+  d[0] = crc & 0xFF
+  d[1] = (crc >> 8) & 0xFF
+  return CanData(address, bytes(d), bus)
+
+
+def _set_ccnc_message_signals(packer, message_name: str, dat: bytearray, values: dict) -> None:
+  dbc_msg = packer.dbc.name_to_msg[message_name]
+  for name, value in values.items():
+    sig = dbc_msg.sigs[name]
+    ival = int(np.floor((value - sig.offset) / sig.factor + 0.5))
+    if ival < 0:
+      ival = (1 << sig.size) + ival
+    _set_value(dat, sig, ival)
+
+
+def _create_ccnc_adrv_message_with_signals(packer, CP, CAN, address: int, counter: int,
+                                            message_name: str, values: dict) -> CanData:
+  msg = _create_ccnc_adrv_message(CP.carFingerprint, address, CAN.ECAN, counter)
+  dat = bytearray(msg.dat)
+  # Update decoded fields in the verified neutral payload.
+  _set_ccnc_message_signals(packer, message_name, dat, values)
+  crc = hkg_can_fd_checksum(address, None, dat)
+  dat[0] = crc & 0xFF
+  dat[1] = (crc >> 8) & 0xFF
+  return CanData(address, bytes(dat), CAN.ECAN)
+
+
+def create_ccnc_acc_control(packer, CAN, enabled: bool, accel: float,
+                            stop_request: bool, cruise_standstill: bool, gas_override: bool, set_speed: float,
+                            main_mode_acc: int, lead_distance: float, lead_rel_speed: float, lead_visible: bool,
+                            v_ego: float, jerk_lower: float = 0.7, jerk_upper: float = 0.7):
+  if not enabled or gas_override or stop_request:
+    accel = 0.0
+
+  lead_visible = bool(enabled and lead_visible)
+  desired_headway = min(max(round(1.625 * max(v_ego, 0.0), 1), 3.5), 204.6) if enabled else 204.6
+  values = {
+    "ACCMode": 0 if not enabled else (2 if gas_override else 1),
+    "MainMode_ACC": int(bool(main_mode_acc)),
+    "StopReq": 1 if stop_request and enabled else 0,
+    "CRUISE_STANDSTILL": 1 if cruise_standstill and stop_request and enabled else 0,
+    "aReqValue": accel,
+    "aReqRaw": accel,
+    "VSetDis": set_speed,
+    "JerkLowerLimit": jerk_lower if enabled else 1.0,
+    "JerkUpperLimit": jerk_upper if enabled else 3.0,
+    "ACC_ObjDist": float(np.clip(lead_distance, 0.0, 204.7)) if lead_visible else 204.6,
+    "ACC_ObjRelSpd": float(np.clip(lead_rel_speed, -16.4, 34.7)) if lead_visible else 34.6,
+    "ObjValid": 0 if lead_visible else 1,
+    "OBJ_STATUS": 2 if enabled and lead_visible else 0,
+    "NEW_SIGNAL_3": 2 if lead_visible else 0,
+    "NEW_SIGNAL_15": desired_headway,
+    "SET_ME_2": 4,
+    "SET_ME_3": 3,
+    "SET_ME_TMP_64": 0x64,
+    # Stock CCNC LKA-long routes use raw 7. The DBC's physical range is stale.
+    "DISTANCE_SETTING": 7 if enabled else 0,
+  }
+
+  return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)
+
+
+def create_ccnc_angle_long_status_messages(packer, CP, CAN, counter: int, enabled: bool = False,
+                                         main_cruise_enabled: bool = False, hud=None, out=None,
+                                         is_metric: bool = True, steering_available: bool = False,
+                                         steering_active: bool = False, hba_icon: int = 0) -> list[CanData]:
+  cruise_speed = round(out.vCruiseCluster * (1 if is_metric else CV.KPH_TO_MPH)) if out is not None else 0
+  display_speed = (40 if is_metric else 25) if cruise_speed > (145 if is_metric else 90) else max(cruise_speed, 0)
+  main_standby = bool(main_cruise_enabled and not enabled)
+  values_161 = {
+    "FCA_ICON": 1,       # orange: FCA unavailable
+    "FCA_ALT_ICON": 0,
+    "FCA_IMAGE": 0,
+    "ALERTS_1": 0,
+    "ALERTS_2": 0,
+    "ALERTS_3": 0,
+    "ALERTS_4": 0,
+    "ALERTS_5": 0,
+    "SOUNDS_1": 0,
+    "SOUNDS_2": 0,
+    "SOUNDS_3": 0,
+    "SOUNDS_4": 0,
+    "LFA_ICON": (2 if steering_active else 1) if steering_available else 0,
+    "HBA_ICON": hba_icon if hba_icon in (1, 2) else 0,
+    "HDA_ICON": 2 if enabled else 1 if main_standby else 0,
+    "TARGET": 3 if enabled else 0,
+    "SETSPEED": 3 if enabled else 1 if main_standby else 0,
+    "SETSPEED_HUD": 2 if enabled else 1 if main_standby else 0,
+    "SETSPEED_SPEED": display_speed if enabled or main_standby else 255,
+    "DISTANCE": hud.leadDistanceBars if enabled and hud is not None else 0,
+    "DISTANCE_SPACING": 3 if enabled or main_standby else 0,
+    "DISTANCE_CAR": 2 if enabled else 1 if main_standby else 0,
+  }
+  values_162 = {fault: 0 for fault in (
+    "FAULT_FSS", "FAULT_FCA", "FAULT_LSS", "FAULT_SLA", "FAULT_HDA", "FAULT_DAS", "FAULT_LFA", "FAULT_DAW",
+    "FAULT_HBA", "FAULT_ESS",
+  )}
+  values_162["VIBRATE"] = 0
+  return [
+    _create_ccnc_adrv_message_with_signals(packer, CP, CAN, 0x161, counter, "CCNC_0x161", values_161),
+    _create_ccnc_adrv_message_with_signals(packer, CP, CAN, 0x162, counter, "CCNC_0x162", values_162),
+  ]

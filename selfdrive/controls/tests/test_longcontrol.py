@@ -4,6 +4,7 @@ from cereal import car
 import pytest
 
 import openpilot.selfdrive.controls.lib.longcontrol as longcontrol
+import openpilot.selfdrive.controls.lib.longcontrol_vehicle_tunes as vehicle_tunes
 from opendbc.car.gm.values import CAR, GMFlags
 from openpilot.selfdrive.controls.lib.longcontrol import (
   LongControl,
@@ -15,7 +16,6 @@ from openpilot.selfdrive.controls.lib.longcontrol import (
 def make_toggles(**overrides):
   defaults = {
     "custom_accel_profile": False,
-    "human_acceleration": False,
     "startAccel": 1.5,
     "stopAccel": -0.5,
     "stoppingDecelRate": 0.8,
@@ -168,6 +168,117 @@ def test_starting_accel_obeys_a_target_cap_when_custom_profile_enabled():
 
   assert lc.long_control_state == LongCtrlState.starting
   assert output_accel == 0.1
+
+
+def test_starting_accel_obeys_a_target_cap_when_traffic_mode_enabled():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  # Large manually-tuned startAccel override (e.g. 3.5) should not fire a raw
+  # launch kick while Traffic Mode is active; output must track the soft a_target.
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=1.10,
+    should_stop=False,
+    accel_limits=(-3.0, 4.0),
+    starpilot_toggles=make_toggles(startAccel=3.5),
+    traffic_mode_enabled=True,
+  )
+
+  assert lc.long_control_state == LongCtrlState.starting
+  assert output_accel == pytest.approx(1.10)
+
+
+def test_starting_accel_uses_raw_start_accel_when_no_profile_ceiling():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  # No usable profile ceiling published (e.g. a stale/zero starpilotPlan) -> keep the
+  # raw StartAccel shove so a publish gap never zeroes out the launch.
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=1.10,
+    should_stop=False,
+    accel_limits=(-3.0, 4.0),
+    starpilot_toggles=make_toggles(startAccel=3.5),
+    traffic_mode_enabled=False,
+    profile_max_accel=0.0,
+  )
+
+  assert lc.long_control_state == LongCtrlState.starting
+  assert output_accel == pytest.approx(3.5)
+
+
+def test_starting_accel_capped_by_profile_ceiling():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  # A large StartAccel override (3.5) must be capped to the selected profile's launch
+  # ceiling (e.g. Eco = 1.5) so a soft profile launches soft.
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=1.10,
+    should_stop=False,
+    accel_limits=(-3.0, 4.0),
+    starpilot_toggles=make_toggles(startAccel=3.5),
+    traffic_mode_enabled=False,
+    profile_max_accel=1.5,
+  )
+
+  assert lc.long_control_state == LongCtrlState.starting
+  assert output_accel == pytest.approx(1.5)
+
+
+def test_starting_accel_keeps_start_accel_shove_below_profile_ceiling():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  # StartAccel below the profile ceiling (e.g. Sport+ = 3.5) is preserved in full -
+  # the cap only trims launches that exceed the profile, it does not weaken the shove.
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=1.10,
+    should_stop=False,
+    accel_limits=(-3.0, 4.0),
+    starpilot_toggles=make_toggles(startAccel=1.5),
+    traffic_mode_enabled=False,
+    profile_max_accel=3.5,
+  )
+
+  assert lc.long_control_state == LongCtrlState.starting
+  assert output_accel == pytest.approx(1.5)
 
 
 def test_update_requires_sustained_moderate_positive_target_to_leave_stopping():
@@ -397,13 +508,15 @@ def test_volt_testing_ground_handoff_freezes_integrator(monkeypatch):
   CP.longitudinalTuning.kiBP = [0.0]
   CP.longitudinalTuning.kiV = [0.03]
 
-  monkeypatch.setattr(longcontrol, "testing_ground", SimpleNamespace(use_2=True))
+  monkeypatch.setattr(vehicle_tunes, "testing_ground", SimpleNamespace(use_2=True))
 
   lc = LongControl(CP)
-  freeze = lc._get_pedal_long_freeze(a_target=0.7, error=0.7, v_ego=8.0, accel_limits=(-3.0, 2.0))
+  freeze = lc.vehicle_tuning.get_integrator_freeze(
+    lc.last_output_accel, a_target=0.7, error=0.7, v_ego=8.0, accel_limits=(-3.0, 2.0),
+  )
 
   assert freeze
-  assert lc.integrator_hold_frames > 0
+  assert lc.vehicle_tuning.integrator_hold_frames > 0
 
 
 def test_non_interceptor_volt_testing_ground_handoff_freezes_integrator(monkeypatch):
@@ -416,13 +529,15 @@ def test_non_interceptor_volt_testing_ground_handoff_freezes_integrator(monkeypa
   CP.longitudinalTuning.kiBP = [0.0]
   CP.longitudinalTuning.kiV = [0.03]
 
-  monkeypatch.setattr(longcontrol, "testing_ground", SimpleNamespace(use_2=True))
+  monkeypatch.setattr(vehicle_tunes, "testing_ground", SimpleNamespace(use_2=True))
 
   lc = LongControl(CP)
-  freeze = lc._get_pedal_long_freeze(a_target=0.7, error=0.7, v_ego=8.0, accel_limits=(-3.0, 2.0))
+  freeze = lc.vehicle_tuning.get_integrator_freeze(
+    lc.last_output_accel, a_target=0.7, error=0.7, v_ego=8.0, accel_limits=(-3.0, 2.0),
+  )
 
   assert freeze
-  assert lc.integrator_hold_frames > 0
+  assert lc.vehicle_tuning.integrator_hold_frames > 0
 
 
 def test_negative_target_unwinds_positive_accel_command_after_sign_flip():
@@ -503,7 +618,7 @@ def test_pedal_long_brake_bias_adds_small_negative_nudge_for_strong_decel_reques
   lc = LongControl(CP)
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
 
-  biased = lc._apply_pedal_long_brake_bias(-1.0, -3.0, CS)
+  biased = lc.vehicle_tuning.apply_pedal_long_brake_bias(-1.0, -3.0, CS)
 
   assert biased < -1.0
   assert biased == pytest.approx(-1.15, abs=0.03)
@@ -522,8 +637,8 @@ def test_pedal_long_brake_bias_does_not_touch_non_pedal_or_mild_decel():
   lc = LongControl(CP)
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
 
-  assert lc._apply_pedal_long_brake_bias(-1.0, -3.0, CS) == -1.0
-  assert lc._apply_pedal_long_brake_bias(-0.4, -0.6, CS) == -0.4
+  assert lc.vehicle_tuning.apply_pedal_long_brake_bias(-1.0, -3.0, CS) == -1.0
+  assert lc.vehicle_tuning.apply_pedal_long_brake_bias(-0.4, -0.6, CS) == -0.4
 
 
 def test_d_term_zero_when_kd_not_configured():
@@ -563,9 +678,10 @@ def test_d_term_derivative_on_measurement_no_kick():
   lc = LongControl(CP)
   lc.d_term_active = True
 
-  # Same aEgo, different a_target → should NOT affect D-term (DOM)
-  d1 = lc._compute_d_term(1.0, 20.0)  # a_target=1.0
-  d2 = lc._compute_d_term(-1.0, 20.0)  # a_target=-1.0 (step change)
+  lc.aEgo_filter.reset(1.0)
+  lc.prev_aEgo_filtered = 1.0
+  d1 = lc._compute_d_term(1.0, 20.0)
+  d2 = lc._compute_d_term(1.0, 20.0)
   
   # D-term should be identical (within small float tolerance) since aEgo same
   assert abs(d1 - d2) < 0.01
@@ -645,7 +761,9 @@ def test_bolt_acc_pedal_friction_feedforward_preserves_regen_scaling_within_enve
 
   lc = LongControl(CP)
 
-  assert lc._get_longitudinal_feedforward(-1.8, 4.73) == pytest.approx(-0.36)
+  assert lc.vehicle_tuning.get_longitudinal_feedforward(
+    lc.feedforward_gain, lc.last_output_accel, -1.8, 4.73,
+  ) == pytest.approx(-0.36)
 
 
 def test_bolt_acc_pedal_friction_feedforward_restores_full_gain_beyond_regen_envelope():
@@ -659,7 +777,9 @@ def test_bolt_acc_pedal_friction_feedforward_restores_full_gain_beyond_regen_env
 
   lc = LongControl(CP)
 
-  assert lc._get_longitudinal_feedforward(-3.22, 4.73) == pytest.approx(-3.22)
+  assert lc.vehicle_tuning.get_longitudinal_feedforward(
+    lc.feedforward_gain, lc.last_output_accel, -3.22, 4.73,
+  ) == pytest.approx(-3.22)
 
 
 def test_bolt_acc_pedal_friction_feedforward_blends_back_in_for_small_friction_request():
@@ -672,19 +792,21 @@ def test_bolt_acc_pedal_friction_feedforward_blends_back_in_for_small_friction_r
   CP.longitudinalTuning.kfDEPRECATED = 0.20
 
   lc = LongControl(CP)
-  pedal_regen_limit = float(longcontrol.interp(20.0, longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
-                                               longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
+  pedal_regen_limit = float(vehicle_tunes.interp(20.0, vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
+                                                 vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
   a_target = pedal_regen_limit - 0.10
-  expected_gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.20, a_target, 20.0, pedal_regen_limit, 0.0)
+  expected_gain = vehicle_tunes.get_bolt_acc_pedal_feedforward_gain(0.20, a_target, 20.0, pedal_regen_limit, 0.0)
   expected = a_target * expected_gain
 
-  assert lc._get_longitudinal_feedforward(a_target, 20.0) == pytest.approx(expected)
+  assert lc.vehicle_tuning.get_longitudinal_feedforward(
+    lc.feedforward_gain, lc.last_output_accel, a_target, 20.0,
+  ) == pytest.approx(expected)
 
 
 def test_bolt_acc_pedal_friction_floor_holds_friction_only_authority():
-  pedal_regen_limit = float(longcontrol.interp(9.85, longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
-                                               longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
-  floor = longcontrol.get_bolt_acc_pedal_friction_floor(-3.47, 9.85, pedal_regen_limit)
+  pedal_regen_limit = float(vehicle_tunes.interp(9.85, vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
+                                                 vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
+  floor = vehicle_tunes.get_bolt_acc_pedal_friction_floor(-3.47, 9.85, pedal_regen_limit)
 
   assert floor is not None
   assert floor < pedal_regen_limit
@@ -709,32 +831,32 @@ def test_bolt_acc_pedal_friction_bias_applies_floor_only_on_experimental_fingerp
   bolt_cc_lc = LongControl(bolt_cc_cp)
   CS = car.CarState.new_message(vEgo=9.85, aEgo=-2.0, brakePressed=False)
 
-  pedal_regen_limit = float(longcontrol.interp(CS.vEgo, longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
-                                               longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
-  floor = longcontrol.get_bolt_acc_pedal_friction_floor(-3.47, CS.vEgo, pedal_regen_limit)
+  pedal_regen_limit = float(vehicle_tunes.interp(CS.vEgo, vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
+                                                 vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
+  floor = vehicle_tunes.get_bolt_acc_pedal_friction_floor(-3.47, CS.vEgo, pedal_regen_limit)
   assert floor is not None
 
-  pedal_biased = pedal_lc._apply_pedal_long_brake_bias(-1.85, -3.47, CS)
-  bolt_cc_biased = bolt_cc_lc._apply_pedal_long_brake_bias(-1.85, -3.47, CS)
+  pedal_biased = pedal_lc.vehicle_tuning.apply_pedal_long_brake_bias(-1.85, -3.47, CS)
+  bolt_cc_biased = bolt_cc_lc.vehicle_tuning.apply_pedal_long_brake_bias(-1.85, -3.47, CS)
 
   assert pedal_biased == pytest.approx(floor)
   assert bolt_cc_biased > pedal_biased + 0.5
 
 
 def test_bolt_acc_pedal_feedforward_gain_stays_base_for_mild_regen():
-  gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.2, -1.0, 10.0, -2.75, -0.4)
+  gain = vehicle_tunes.get_bolt_acc_pedal_feedforward_gain(0.2, -1.0, 10.0, -2.75, -0.4)
 
   assert gain == pytest.approx(0.2)
 
 
 def test_bolt_acc_pedal_feedforward_gain_restores_for_authority_gap():
-  gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.2, -1.83, 12.38, -2.79, -0.70)
+  gain = vehicle_tunes.get_bolt_acc_pedal_feedforward_gain(0.2, -1.83, 12.38, -2.79, -0.70)
 
   assert gain > 0.55
 
 
 def test_bolt_acc_pedal_feedforward_gain_restores_near_friction_handoff():
-  gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.2, -2.63, 9.35, -2.69, -1.30)
+  gain = vehicle_tunes.get_bolt_acc_pedal_feedforward_gain(0.2, -2.63, 9.35, -2.69, -1.30)
 
   assert gain > 0.45
 
@@ -750,7 +872,9 @@ def test_bolt_cc_pedal_friction_feedforward_remains_fully_scaled_by_kf():
 
   lc = LongControl(CP)
 
-  assert lc._get_longitudinal_feedforward(-3.22, 4.73) == pytest.approx(-0.644)
+  assert lc.vehicle_tuning.get_longitudinal_feedforward(
+    lc.feedforward_gain, lc.last_output_accel, -3.22, 4.73,
+  ) == pytest.approx(-0.644)
 
 
 def test_gm_stock_truck_positive_i_bleeds_on_coast_request():
@@ -769,9 +893,68 @@ def test_gm_stock_truck_positive_i_bleeds_on_coast_request():
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
   CS.cruiseState.standstill = False
 
-  lc._trim_gm_truck_positive_hold_integrator(-0.02, -0.02, CS)
+  lc.vehicle_tuning.trim_gm_truck_positive_hold_integrator(
+    lc.pid, lc.last_output_accel, -0.02, -0.02, CS,
+  )
 
   assert lc.pid.i < 0.25
+
+
+def test_gm_stock_truck_target_filter_smooths_mild_follow_reversals():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  tuning = LongControl(CP).vehicle_tuning
+
+  assert tuning.shape_gm_truck_accel_target(0.25, 20.0, False) == pytest.approx(0.25)
+  filtered_brake = tuning.shape_gm_truck_accel_target(-0.10, 20.0, False)
+  filtered_accel = tuning.shape_gm_truck_accel_target(0.25, 20.0, False)
+
+  assert -0.10 < filtered_brake < 0.25
+  assert filtered_brake < filtered_accel < 0.25
+
+
+def test_gm_stock_truck_target_filter_bypasses_urgent_braking():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  tuning = LongControl(CP).vehicle_tuning
+
+  tuning.shape_gm_truck_accel_target(0.40, 20.0, False)
+
+  assert tuning.shape_gm_truck_accel_target(-0.70, 20.0, False) == pytest.approx(-0.70)
+
+  tuning.reset()
+  tuning.shape_gm_truck_accel_target(0.40, 20.0, False)
+  assert tuning.shape_gm_truck_accel_target(-0.10, 20.0, False) == pytest.approx(-0.10)
+
+  tuning.reset()
+  tuning.shape_gm_truck_accel_target(0.25, 20.0, False)
+  assert tuning.shape_gm_truck_accel_target(0.10, 20.0, True) == pytest.approx(0.10)
+
+
+def test_gm_stock_truck_target_filter_bypasses_low_speed_and_other_cars():
+  truck_cp = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  truck_tuning = LongControl(truck_cp).vehicle_tuning
+  truck_tuning.shape_gm_truck_accel_target(0.40, 20.0, False)
+
+  bolt_cp = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  bolt_tuning = LongControl(bolt_cp).vehicle_tuning
+
+  assert truck_tuning.shape_gm_truck_accel_target(-0.10, 10.0, False) == pytest.approx(-0.10)
+  assert bolt_tuning.shape_gm_truck_accel_target(-0.10, 20.0, False) == pytest.approx(-0.10)
 
 
 def test_gm_stock_truck_positive_i_bleeds_during_light_highway_accel_request():
@@ -790,7 +973,9 @@ def test_gm_stock_truck_positive_i_bleeds_during_light_highway_accel_request():
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
   CS.cruiseState.standstill = False
 
-  lc._trim_gm_truck_positive_hold_integrator(0.05, 0.05, CS)
+  lc.vehicle_tuning.trim_gm_truck_positive_hold_integrator(
+    lc.pid, lc.last_output_accel, 0.05, 0.05, CS,
+  )
 
   assert lc.pid.i < 0.25
 
@@ -811,7 +996,9 @@ def test_gm_stock_truck_positive_i_trim_keeps_meaningful_accel_request():
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
   CS.cruiseState.standstill = False
 
-  lc._trim_gm_truck_positive_hold_integrator(0.12, 0.12, CS)
+  lc.vehicle_tuning.trim_gm_truck_positive_hold_integrator(
+    lc.pid, lc.last_output_accel, 0.12, 0.12, CS,
+  )
 
   assert lc.pid.i == pytest.approx(0.25, abs=1e-9)
 
@@ -832,6 +1019,105 @@ def test_gm_stock_truck_positive_i_trim_preserves_low_speed_launch():
   CS = car.CarState.new_message(vEgo=5.0, aEgo=0.0, brakePressed=False)
   CS.cruiseState.standstill = False
 
-  lc._trim_gm_truck_positive_hold_integrator(0.05, 0.05, CS)
+  lc.vehicle_tuning.trim_gm_truck_positive_hold_integrator(
+    lc.pid, lc.last_output_accel, 0.05, 0.05, CS,
+  )
 
   assert lc.pid.i == pytest.approx(0.25, abs=1e-9)
+
+
+def test_gm_stock_truck_negative_i_unwinds_when_already_overbraking():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  lc = LongControl(CP)
+  lc.pid.i = -0.22
+  lc.last_output_accel = -0.66
+  CS = car.CarState.new_message(vEgo=29.6, aEgo=-0.49, brakePressed=False)
+
+  lc.vehicle_tuning.trim_gm_truck_negative_hold_integrator(
+    lc.pid, lc.last_output_accel, -0.44, 0.05, CS,
+  )
+
+  assert -0.22 < lc.pid.i < 0.0
+
+
+def test_gm_stock_truck_negative_i_stays_when_decel_is_not_achieved():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  lc = LongControl(CP)
+  lc.pid.i = -0.22
+  lc.last_output_accel = -0.66
+  CS = car.CarState.new_message(vEgo=29.6, aEgo=0.05, brakePressed=False)
+
+  lc.vehicle_tuning.trim_gm_truck_negative_hold_integrator(
+    lc.pid, lc.last_output_accel, -0.44, -0.49, CS,
+  )
+
+  assert lc.pid.i == pytest.approx(-0.22, abs=1e-9)
+
+
+def test_gm_stock_truck_negative_i_stays_for_urgent_braking():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  lc = LongControl(CP)
+  lc.pid.i = -0.22
+  lc.last_output_accel = -1.30
+  CS = car.CarState.new_message(vEgo=29.6, aEgo=-1.20, brakePressed=False)
+
+  lc.vehicle_tuning.trim_gm_truck_negative_hold_integrator(
+    lc.pid, lc.last_output_accel, -1.00, 0.20, CS,
+  )
+
+  assert lc.pid.i == pytest.approx(-0.22, abs=1e-9)
+
+
+def test_gm_stock_truck_negative_i_trim_does_not_affect_other_gm_cars():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  lc = LongControl(CP)
+  lc.pid.i = -0.22
+  lc.last_output_accel = -0.66
+  CS = car.CarState.new_message(vEgo=29.6, aEgo=-0.49, brakePressed=False)
+
+  lc.vehicle_tuning.trim_gm_truck_negative_hold_integrator(
+    lc.pid, lc.last_output_accel, -0.44, 0.05, CS,
+  )
+
+  assert lc.pid.i == pytest.approx(-0.22, abs=1e-9)
+
+
+def test_gm_stock_truck_update_gradually_releases_stale_brake_integral():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  lc = LongControl(CP)
+  lc.pid.i = -0.22
+  lc.last_output_accel = -0.66
+  CS = car.CarState.new_message(vEgo=29.6, aEgo=-0.49, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=-0.44,
+    should_stop=False,
+    accel_limits=(-3.5, 2.0),
+    starpilot_toggles=make_toggles(),
+    has_lead=True,
+  )
+
+  assert -0.66 < output_accel < -0.44

@@ -10,6 +10,7 @@ source_files = [
   for f in Path("generator").rglob("*")
   if f.is_file() and f.suffix in {".py", ".dbc"}
 ]
+source_files.append(File("hyundai_kia_generic.dbc"))
 
 output_files = [
   f.name.replace(".dbc", "_generated.dbc")

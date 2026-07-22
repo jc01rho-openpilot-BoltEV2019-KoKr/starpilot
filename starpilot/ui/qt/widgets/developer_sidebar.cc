@@ -1,6 +1,80 @@
 #include "starpilot/ui/qt/widgets/developer_sidebar.h"
 
+#include <cmath>
+#include <initializer_list>
+
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSet>
 #include <QRegularExpression>
+
+namespace {
+
+const QColor LOCKED_VALUE_COLOR = QColor(34, 197, 94);
+const QColor AUTO_TUNE_COLOR = QColor(59, 130, 246);
+const QColor FLM_OVERRIDE_COLOR = QColor(239, 68, 68);
+
+bool settingChanged(float value, float reference) {
+  return std::round(value * 100.0f) != std::round(reference * 100.0f);
+}
+
+bool toggleBool(const QJsonObject &toggles, const QString &key, bool fallback = false) {
+  return toggles.contains(key) ? toggles.value(key).toBool(fallback) : fallback;
+}
+
+float toggleFloat(const QJsonObject &toggles, const QString &key, float fallback = 0.0f) {
+  return toggles.contains(key) ? static_cast<float>(toggles.value(key).toDouble(fallback)) : fallback;
+}
+
+float resolveEffectiveTorqueValue(bool customEnabled, float customValue,
+                                  bool liveEnabled, float liveValue,
+                                  float stockValue, float configuredValue) {
+  if (customEnabled) {
+    return customValue;
+  }
+  if (liveEnabled) {
+    return liveValue;
+  }
+  return stockValue != 0.0f ? stockValue : configuredValue;
+}
+
+QSet<QString> readFlmGenericParamKeys(Params &params) {
+  QSet<QString> keys;
+  const std::string raw = params.get("FLMTrialBaseline");
+  if (raw.empty()) {
+    return keys;
+  }
+
+  QJsonParseError error;
+  const QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(raw), &error);
+  if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+    return keys;
+  }
+
+  const QJsonObject appliedParams = doc.object().value("appliedGenericParams").toObject();
+  for (const QString &key : appliedParams.keys()) {
+    keys.insert(key);
+  }
+  return keys;
+}
+
+bool flmChanged(const QSet<QString> &keys, std::initializer_list<const char *> names) {
+  for (const char *name : names) {
+    if (keys.contains(QString::fromUtf8(name))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+QColor tuningColor(bool autoTune, bool flm) {
+  if (flm) {
+    return FLM_OVERRIDE_COLOR;
+  }
+  return autoTune ? AUTO_TUNE_COLOR : LOCKED_VALUE_COLOR;
+}
+
+} // namespace
 
 void DeveloperSidebar::drawMetric(QPainter &p, const QPair<QString, QString> &label, QColor c, int y) {
   const QRect rect = {12, y, 275, 126};
@@ -70,6 +144,7 @@ void DeveloperSidebar::updateState(const UIState &s, const StarPilotUIState &fs)
   const SubMaster &sm = *(s.sm);
 
   const StarPilotUIScene &starpilot_scene = fs.starpilot_scene;
+  const QJsonObject &starpilot_toggles = starpilot_scene.starpilot_toggles;
   const SubMaster &fpsm = *(fs.sm);
 
   const cereal::CarControl::Reader &carControl = fpsm["carControl"].getCarControl();
@@ -78,11 +153,12 @@ void DeveloperSidebar::updateState(const UIState &s, const StarPilotUIState &fs)
   const cereal::LiveDelayData::Reader &liveDelay = fpsm["liveDelay"].getLiveDelay();
   const cereal::LiveParametersData::Reader &liveParameters = fpsm["liveParameters"].getLiveParameters();
   const cereal::LiveTorqueParametersData::Reader &liveTorqueParameters = fpsm["liveTorqueParameters"].getLiveTorqueParameters();
-  const bool forceAutoTuneOff = starpilot_scene.starpilot_toggles.value("force_auto_tune_off").toBool();
-  const bool usingLiveTorqueTune = !forceAutoTuneOff && (liveTorqueParameters.getUseParams() || starpilot_scene.starpilot_toggles.value("force_auto_tune").toBool());
+  const bool forceAutoTuneOff = toggleBool(starpilot_toggles, "force_auto_tune_off", params.getBool("ForceAutoTuneOff"));
+  const bool forceAutoTune = toggleBool(starpilot_toggles, "force_auto_tune", params.getBool("ForceAutoTune"));
+  const bool usingLiveTorqueTune = !forceAutoTuneOff && (liveTorqueParameters.getUseParams() || forceAutoTune);
 
   const bool is_metric = s.scene.is_metric;
-  const bool use_si = starpilot_scene.starpilot_toggles.value("use_si_metrics").toBool();
+  const bool use_si = starpilot_toggles.value("use_si_metrics").toBool();
 
   const QString accelerationUnit = (is_metric || use_si) ? tr(" m/s²") : tr(" ft/s²");
   const float accelerationConversion = (is_metric || use_si) ? 1.0f : METER_TO_FOOT;
@@ -124,34 +200,79 @@ void DeveloperSidebar::updateState(const UIState &s, const StarPilotUIState &fs)
     torqueLabel += QString(" - (%1%)").arg(maxTorque);
   }
 
-  float displayedFriction = usingLiveTorqueTune ? liveTorqueParameters.getFrictionCoefficientFiltered() : params.getFloat("SteerFrictionStock");
-  if (displayedFriction == 0.0f) {
-    displayedFriction = forceAutoTuneOff ? params.getFloat("SteerFriction") : liveTorqueParameters.getFrictionCoefficientFiltered();
-  }
+  const float frictionStock = params.getFloat("SteerFrictionStock");
+  const float frictionConfigured = params.getFloat("SteerFriction");
+  const float latAccelStock = params.getFloat("SteerLatAccelStock");
+  const float latAccelConfigured = params.getFloat("SteerLatAccel");
+  const float steerRatioStock = params.getFloat("SteerRatioStock");
+  const float steerRatioConfigured = params.getFloat("SteerRatio");
 
-  float displayedLatAccel = usingLiveTorqueTune ? liveTorqueParameters.getLatAccelFactorFiltered() : params.getFloat("SteerLatAccelStock");
-  if (displayedLatAccel == 0.0f) {
-    displayedLatAccel = forceAutoTuneOff ? params.getFloat("SteerLatAccel") : liveTorqueParameters.getLatAccelFactorFiltered();
-  }
+  const float customFriction = toggleFloat(starpilot_toggles, "friction", frictionConfigured);
+  const float customLatAccel = toggleFloat(starpilot_toggles, "latAccelFactor", latAccelConfigured);
+  const bool useCustomFriction = toggleBool(starpilot_toggles, "use_custom_friction",
+                                            forceAutoTuneOff || (settingChanged(frictionConfigured, frictionStock) && !forceAutoTune));
+  const bool useCustomLatAccel = toggleBool(starpilot_toggles, "use_custom_latAccelFactor",
+                                            forceAutoTuneOff || (settingChanged(latAccelConfigured, latAccelStock) && !forceAutoTune));
+
+  const float displayedFriction = resolveEffectiveTorqueValue(
+    useCustomFriction,
+    customFriction,
+    usingLiveTorqueTune,
+    liveTorqueParameters.getFrictionCoefficientFiltered(),
+    frictionStock,
+    frictionConfigured
+  );
+  const float displayedLatAccel = resolveEffectiveTorqueValue(
+    useCustomLatAccel,
+    customLatAccel,
+    usingLiveTorqueTune,
+    liveTorqueParameters.getLatAccelFactorFiltered(),
+    latAccelStock,
+    latAccelConfigured
+  );
+
+  const bool cachedUseAutoDelay = params.get("UseAutoSteerDelay").empty() ? true : params.getBool("UseAutoSteerDelay");
+  const bool useAutoSteerDelay = toggleBool(starpilot_toggles, "use_auto_steer_delay", cachedUseAutoDelay);
+  const bool useCustomDelay = toggleBool(starpilot_toggles, "use_custom_steerActuatorDelay", !useAutoSteerDelay);
+  const float customDelay = toggleFloat(starpilot_toggles, "steerActuatorDelay", params.getFloat("SteerDelay"));
+  const float displayedDelay = useCustomDelay ? customDelay : liveDelay.getLateralDelay();
+
+  const bool useCustomSteerRatio = toggleBool(starpilot_toggles, "use_custom_steerRatio",
+                                              forceAutoTuneOff || (settingChanged(steerRatioConfigured, steerRatioStock) && !forceAutoTune));
+  const QSet<QString> flmGenericParamKeys = params.getBool("FLMTrialApplied") ? readFlmGenericParamKeys(params) : QSet<QString>();
+  const bool forceAutoTuneFlm = flmChanged(flmGenericParamKeys, {"ForceAutoTune", "ForceAutoTuneOff"});
+  const QColor delayColor = tuningColor(!useCustomDelay, flmChanged(flmGenericParamKeys, {"SteerDelay", "UseAutoSteerDelay"}));
+  const QColor frictionColor = tuningColor(
+    usingLiveTorqueTune && !useCustomFriction,
+    flmChanged(flmGenericParamKeys, {"SteerFriction"}) || (forceAutoTuneFlm && (usingLiveTorqueTune || useCustomFriction))
+  );
+  const QColor latAccelColor = tuningColor(
+    usingLiveTorqueTune && !useCustomLatAccel,
+    flmChanged(flmGenericParamKeys, {"SteerLatAccel"}) || (forceAutoTuneFlm && (usingLiveTorqueTune || useCustomLatAccel))
+  );
+  const QColor steerRatioColor = tuningColor(
+    !useCustomSteerRatio,
+    flmChanged(flmGenericParamKeys, {"SteerRatio"}) || (forceAutoTuneFlm && useCustomSteerRatio)
+  );
 
   accelerationStatus = ItemStatus(QPair<QString, QString>(tr("ACCEL"), QString::number(acceleration, 'f', 2) + accelerationUnit), metricColor);
   accelerationJerkStatus = ItemStatus(QPair<QString, QString>(tr("ACCEL JERK"), QString::number(starpilotPlan.getAccelerationJerk())), metricColor);
   actuatorAccelerationStatus = ItemStatus(QPair<QString, QString>(tr("ACT ACCEL"), QString::number(carControl.getActuators().getAccel() * accelerationConversion, 'f', 2) + accelerationUnit), metricColor);
   dangerFactorStatus = ItemStatus(QPair<QString, QString>(tr("DANGER %"), QString::number(starpilotPlan.getDangerFactor() * 100.0f, 'f', 2) + "%"), metricColor);
   dangerJerkStatus = ItemStatus(QPair<QString, QString>(tr("DANGER JERK"), QString::number(starpilotPlan.getDangerJerk())), metricColor);
-  delayStatus = ItemStatus(QPair<QString, QString>(tr("STEER DELAY"), QString::number(liveDelay.getLateralDelay(), 'f', 5)), metricColor);
-  frictionStatus = ItemStatus(QPair<QString, QString>(tr("FRICTION"), QString::number(displayedFriction, 'f', 5)), metricColor);
-  latAccelStatus = ItemStatus(QPair<QString, QString>(tr("LAT ACCEL"), QString::number(displayedLatAccel, 'f', 5)), metricColor);
+  delayStatus = ItemStatus(QPair<QString, QString>(tr("STEER DELAY"), QString::number(displayedDelay, 'f', 5)), delayColor);
+  frictionStatus = ItemStatus(QPair<QString, QString>(tr("FRICTION"), QString::number(displayedFriction, 'f', 5)), frictionColor);
+  latAccelStatus = ItemStatus(QPair<QString, QString>(tr("LAT ACCEL"), QString::number(displayedLatAccel, 'f', 5)), latAccelColor);
   lateralEngagementStatus = ItemStatus(QPair<QString, QString>(tr("LATERAL %"), QString::number((lateralEngagementTime / totalEngagementTime) * 100.0f, 'f', 2) + "%"), metricColor);
   longitudinalEngagementStatus = ItemStatus(QPair<QString, QString>(tr("LONG %"), QString::number((longitudinalEngagementTime / totalEngagementTime) * 100.0f, 'f', 2) + "%"), metricColor);
   maxAccelerationStatus = ItemStatus(QPair<QString, QString>(tr("MAX ACCEL"), QString::number(maxAcceleration, 'f', 2) + accelerationUnit), metricColor);
   speedJerkStatus = ItemStatus(QPair<QString, QString>(tr("SPEED JERK"), QString::number(starpilotPlan.getSpeedJerk())), metricColor);
   steerAngleStatus = ItemStatus(QPair<QString, QString>(tr("STEER ANGLE"), steerLabel), metricColor);
-  steerRatioStatus = ItemStatus(QPair<QString, QString>(tr("STEER RATIO"), QString::number(liveParameters.getSteerRatio(), 'f', 5)), metricColor);
-  stiffnessFactorStatus = ItemStatus(QPair<QString, QString>(tr("STEER STIFF"), QString::number(liveParameters.getStiffnessFactor(), 'f', 5)), metricColor);
+  steerRatioStatus = ItemStatus(QPair<QString, QString>(tr("STEER RATIO"), QString::number(liveParameters.getSteerRatio(), 'f', 5)), steerRatioColor);
+  stiffnessFactorStatus = ItemStatus(QPair<QString, QString>(tr("STEER STIFF"), QString::number(liveParameters.getStiffnessFactor(), 'f', 5)), AUTO_TUNE_COLOR);
   torqueStatus = ItemStatus(QPair<QString, QString>(tr("TORQUE %"), torqueLabel), metricColor);
 
-  QString modelName = starpilot_scene.starpilot_toggles.value("model_name").toString();
+  QString modelName = starpilot_toggles.value("model_name").toString();
   modelName.remove(QRegularExpression("\\(.*\\)"));
   modelName.remove(QRegularExpression("[^a-zA-Z0-9 \\-\\.:]"));
   modelNameStatus = ItemStatus(QPair<QString, QString>(modelName.trimmed(), ""), metricColor);

@@ -4,11 +4,14 @@ import pytest
 
 from openpilot.common.constants import CV
 from openpilot.selfdrive.controls.lib.longitudinal_planner import A_CRUISE_MIN
-from openpilot.starpilot.common.accel_profile import ACCELERATION_PROFILES, DECELERATION_PROFILES
+from openpilot.starpilot.common.accel_profile import A_CRUISE_MAX_BP_CUSTOM, ACCELERATION_PROFILES, DECELERATION_PROFILES
 from openpilot.starpilot.controls.lib.starpilot_acceleration import (
   A_CRUISE_MIN_ECO,
+  A_CRUISE_MIN_TRAFFIC,
   StarPilotAcceleration,
+  get_max_accel_eco,
   get_max_accel_standard,
+  get_max_accel_traffic,
   get_slc_shaped_min_accel,
 )
 
@@ -36,7 +39,6 @@ def make_toggles(**overrides):
     "custom_accel_profile_values": [],
     "ev_tuning": True,
     "truck_tuning": False,
-    "human_acceleration": False,
     "map_acceleration": False,
     "map_deceleration": False,
     "set_speed_limit": True,
@@ -164,3 +166,43 @@ def test_truck_tuning_standard_profile_uses_proven_cruise_limits():
 
 def test_truck_tuning_standard_profile_limits_highway_run_up():
   assert get_max_accel_standard(40.0, ev_tuning=False, truck_tuning=True) == pytest.approx(0.35)
+
+
+def test_traffic_curve_anchors():
+  assert get_max_accel_traffic(0.0) == pytest.approx(1.10)
+  assert get_max_accel_traffic(10.0) == pytest.approx(0.67)
+  assert get_max_accel_traffic(25.0) == pytest.approx(0.34)
+  assert get_max_accel_traffic(40.0) == pytest.approx(0.23)
+
+
+def test_traffic_curve_softer_than_eco():
+  for v in A_CRUISE_MAX_BP_CUSTOM:
+    assert get_max_accel_traffic(v) < get_max_accel_eco(v, ev_tuning=True)
+    assert get_max_accel_traffic(v) < get_max_accel_eco(v, ev_tuning=False)
+
+
+def test_traffic_mode_overrides_custom_accel_profile():
+  accel = StarPilotAcceleration(FakePlanner(v_cruise=25.0))
+  sm = make_sm(traffic_mode=True)
+
+  accel.update(5.0, sm, make_toggles(custom_accel_profile=True, custom_accel_profile_values=[6.0] * 7))
+
+  assert accel.max_accel == pytest.approx(get_max_accel_traffic(5.0))
+
+
+def test_traffic_mode_sets_soft_cruise_decel_floor():
+  accel = StarPilotAcceleration(FakePlanner(v_cruise=25.0))
+  sm = make_sm(traffic_mode=True)
+
+  accel.update(5.0, sm, make_toggles())
+
+  assert accel.min_accel == pytest.approx(A_CRUISE_MIN_TRAFFIC)
+
+
+def test_force_coast_wins_over_traffic_mode_decel():
+  accel = StarPilotAcceleration(FakePlanner(v_cruise=25.0))
+  sm = make_sm(traffic_mode=True, force_coast=True)
+
+  accel.update(5.0, sm, make_toggles())
+
+  assert accel.min_accel == pytest.approx(A_CRUISE_MIN_ECO)

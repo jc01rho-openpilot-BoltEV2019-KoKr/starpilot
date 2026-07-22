@@ -18,6 +18,9 @@ from openpilot.starpilot.common.favorite_slots import toggle_favorite_slot
 from openpilot.starpilot.common.starpilot_utilities import is_FrogsGoMoo
 from openpilot.starpilot.common.starpilot_variables import ERROR_LOGS_PATH, GearShifter, NON_DRIVING_GEARS
 
+HYUNDAI_MAIN_CRUISE_AOL_CONFIRM_TIMEOUT_FRAMES = 100
+
+
 class StarPilotCard:
   @staticmethod
   def _button_type_raw(button_event) -> int:
@@ -40,6 +43,9 @@ class StarPilotCard:
     self.hyundai_preserve_aol_across_reverse = getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.HYUNDAI_SONATA_HYBRID
     self.hyundai_aol_needs_engagement = self.CP.brand == "hyundai" and not (hyundai_flags & HyundaiFlags.CANFD) and not kia_forte_non_scc
     self.hyundai_aol_ready = False
+    self.main_cruise_aol_pending = False
+    self.main_cruise_aol_pending_frames = 0
+    self.prev_cruise_available = None
     self.prev_active = False
     self.prev_cruise_enabled = False
     self.decel_pressed = False
@@ -116,6 +122,11 @@ class StarPilotCard:
     button_event_types = [self._button_type_raw(be) for be in carState.buttonEvents]
     button_aol_supported = self.CP.brand == "hyundai" or starpilot_toggles.lkas_allowed_for_aol
     button_managed_aol = starpilot_toggles.always_on_lateral_lkas or (button_aol_supported and starpilot_toggles.main_cruise_aol_toggle)
+    hyundai_main_cruise_aol_managed = self.CP.brand == "hyundai" and starpilot_toggles.main_cruise_aol_toggle
+
+    if carState.gearShifter in NON_DRIVING_GEARS or not hyundai_main_cruise_aol_managed:
+      self.main_cruise_aol_pending = False
+      self.main_cruise_aol_pending_frames = 0
 
     if self.hyundai_aol_needs_engagement:
       if carState.gearShifter in NON_DRIVING_GEARS:
@@ -129,6 +140,8 @@ class StarPilotCard:
     if button_aol_supported:
       for be, be_type in zip(carState.buttonEvents, button_event_types, strict=False):
         if be_type == ButtonType.lkas and be.pressed and starpilot_toggles.always_on_lateral_lkas:
+          self.main_cruise_aol_pending = False
+          self.main_cruise_aol_pending_frames = 0
           if self.hyundai_aol_needs_engagement:
             self.hyundai_aol_ready = True
           self.always_on_lateral_allowed = not self.always_on_lateral_allowed
@@ -138,9 +151,27 @@ class StarPilotCard:
           if starpilot_toggles.main_cruise_aol_toggle:
             if self.hyundai_aol_needs_engagement:
               self.hyundai_aol_ready = True
-            self.always_on_lateral_allowed = not self.always_on_lateral_allowed
+            if hyundai_main_cruise_aol_managed:
+              # Panda permits Hyundai main-button AOL only after the vehicle reports main on.
+              self.main_cruise_aol_pending = True
+              self.main_cruise_aol_pending_frames = 0
+            else:
+              self.always_on_lateral_allowed = not self.always_on_lateral_allowed
           elif starpilot_toggles.main_cruise_slc_adopt and starpilot_toggles.speed_limit_controller:
             self.params_memory.put_bool("SLCAdoptSpeedLimit", True)
+
+    cruise_available_changed = self.prev_cruise_available is not None and carState.cruiseState.available != self.prev_cruise_available
+    if self.main_cruise_aol_pending:
+      if cruise_available_changed:
+        self.always_on_lateral_allowed = carState.cruiseState.available
+        self.main_cruise_aol_pending = False
+        self.main_cruise_aol_pending_frames = 0
+      else:
+        self.main_cruise_aol_pending_frames += 1
+        if self.main_cruise_aol_pending_frames >= HYUNDAI_MAIN_CRUISE_AOL_CONFIRM_TIMEOUT_FRAMES:
+          self.main_cruise_aol_pending = False
+          self.main_cruise_aol_pending_frames = 0
+
     if starpilot_toggles.always_on_lateral_main and not button_managed_aol:
       car_fingerprint = getattr(self.CP, "carFingerprint", None)
       pcm_cruise = getattr(self.CP, "pcmCruise", False)
@@ -157,11 +188,14 @@ class StarPilotCard:
     # On rising edge of engagement (SET press enabling lat+long), auto-enable AOL
     # so that lateral persists when braking disengages longitudinal
     if sm["selfdriveState"].active and not self.prev_active and self.always_on_lateral_set and starpilot_toggles.always_on_lateral_lkas:
+      self.main_cruise_aol_pending = False
+      self.main_cruise_aol_pending_frames = 0
       if self.hyundai_aol_needs_engagement:
         self.hyundai_aol_ready = True
       self.always_on_lateral_allowed = True
 
     self.prev_active = sm["selfdriveState"].active
+    self.prev_cruise_available = carState.cruiseState.available
     self.prev_cruise_enabled = carState.cruiseState.enabled
 
     self.always_on_lateral_enabled = self.always_on_lateral_allowed and self.always_on_lateral_set

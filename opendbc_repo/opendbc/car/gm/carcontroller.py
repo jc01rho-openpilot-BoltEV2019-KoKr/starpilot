@@ -66,9 +66,9 @@ TRUCK_LONG_SMOOTH_CARS = {
   CAR.CHEVROLET_SILVERADO,
   CAR.CHEVROLET_SILVERADO_CC,
 }
-TRUCK_FRICTION_BRAKE_ENGAGE = 25
+TRUCK_FRICTION_BRAKE_ENGAGE = 40
 TRUCK_FRICTION_BRAKE_RELEASE = 8
-TRUCK_FRICTION_BRAKE_IMMEDIATE_ACCEL = -0.65
+TRUCK_FRICTION_BRAKE_IMMEDIATE_ACCEL = -0.85
 ACC_DASHBOARD_ZERO_RESERVED_CARS = {
   CAR.CHEVROLET_BLAZER,
   CAR.CHEVROLET_EQUINOX,
@@ -479,6 +479,9 @@ class CarController(CarControllerBase):
     self.last_steer_frame = 0
     self.last_button_frame = 0
     self.cancel_counter = 0
+    self.xt4_cc_button_burst_remaining = 0
+    self.xt4_cc_button_burst_button = CruiseButtons.INIT
+    self.xt4_cc_button_burst_last_counter = -1
 
     self.lka_steering_cmd_counter = 0
     self.lka_icon_status_last = (False, False)
@@ -930,6 +933,16 @@ class CarController(CarControllerBase):
       can_sends.append(gmcan.create_ecm_cruise_control_command(
         self.packer_pt, CanBus.POWERTRAIN, True, hud_v_cruise * CV.MS_TO_KPH))
 
+    xt4_cc_button_spam = (
+      self.CP.carFingerprint == CAR.CADILLAC_XT4_CC and
+      should_send_cc_button_spam(self.CP, CC, CS)
+    )
+    if xt4_cc_button_spam:
+      can_sends.extend(gmcan.create_gm_cc_spam_command(self.packer_pt, self, CS, actuators, starpilot_toggles))
+    elif self.CP.carFingerprint == CAR.CADILLAC_XT4_CC:
+      self.xt4_cc_button_burst_remaining = 0
+      self.xt4_cc_button_burst_button = CruiseButtons.INIT
+
     if self.CP.openpilotLongitudinalControl:
       # Gas/regen, brakes, and UI commands - all at 25Hz
       if self.frame % 4 == 0:
@@ -1087,17 +1100,19 @@ class CarController(CarControllerBase):
 
         if self.CP.flags & GMFlags.CC_LONG.value:
           if should_send_cc_button_spam(self.CP, CC, CS):
-            # Using extend instead of append since the message is only sent intermittently
-            can_sends.extend(gmcan.create_gm_cc_spam_command(self.packer_pt, self, CS, actuators, starpilot_toggles))
-          elif (CS.out.cruiseState.enabled and CC.enabled and self.frame % 52 == 0 and
+            if self.CP.carFingerprint != CAR.CADILLAC_XT4_CC:
+              # Using extend instead of append since the message is only sent intermittently
+              can_sends.extend(gmcan.create_gm_cc_spam_command(self.packer_pt, self, CS, actuators, starpilot_toggles))
+          else:
+            if (CS.out.cruiseState.enabled and CC.enabled and self.frame % 52 == 0 and
                 CS.cruise_buttons == CruiseButtons.UNPRESS and CS.out.gasPressed and CS.out.cruiseState.speed < CS.out.vEgo < hud_v_cruise):
-            if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
-              can_sends.append(gmcan.create_buttons_malibu(
-                self.packer_pt, CanBus.POWERTRAIN, CruiseButtons.DECEL_SET,
-                self.malibu_button_phase, CS.steering_button_prefix))
-              self.malibu_button_phase = (self.malibu_button_phase + 1) % 4
-            else:
-              can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.DECEL_SET))
+              if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC:
+                can_sends.append(gmcan.create_buttons_malibu(
+                  self.packer_pt, CanBus.POWERTRAIN, CruiseButtons.DECEL_SET,
+                  self.malibu_button_phase, CS.steering_button_prefix))
+                self.malibu_button_phase = (self.malibu_button_phase + 1) % 4
+              else:
+                can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.DECEL_SET))
         if self.CP.enableGasInterceptorDEPRECATED:
           can_sends.append(create_gas_interceptor_command(self.packer_pt, interceptor_gas_cmd, idx))
         if bolt_acc_pedal_friction_experiment:

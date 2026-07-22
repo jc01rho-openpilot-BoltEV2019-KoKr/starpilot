@@ -53,6 +53,8 @@ export NOBOARD=1
 export SIMULATION=1
 export SKIP_FW_QUERY=1
 export USE_WEBCAM=1
+export PRIME_TYPE="${PRIME_TYPE:-0}"
+export SP_RAYBIG_FAKE_DRIVE_STATS="${SP_RAYBIG_FAKE_DRIVE_STATS:-1}"
 
 backup_dir="$(mktemp -d /tmp/starpilot_raybig_ui_backup.XXXXXX)"
 backup_manifest="${backup_dir}/.artifact_manifest"

@@ -5,11 +5,13 @@ import time
 from cereal import log
 import pyray as rl
 from collections.abc import Callable
+from importlib.resources import as_file
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.layouts import HBoxLayout
 from openpilot.system.ui.widgets.icon_widget import IconWidget
 from openpilot.system.ui.widgets.label import UnifiedLabel
-from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
+from openpilot.system.ui.lib.application import ASSETS_DIR, gui_app, FontWeight, MousePos
+from openpilot.selfdrive.ui.lib.mode_banner import ModeBannerVariant, get_mode_banner_variant, mode_atom_color
 from openpilot.selfdrive.ui.lib.starpilot_version import STARPILOT_DISPLAY_VERSION
 from openpilot.selfdrive.ui.ui_state import ui_state
 
@@ -81,6 +83,68 @@ class NetworkIcon(Widget):
     rl.draw_texture_ex(draw_net_txt, rl.Vector2(draw_x, draw_y), 0.0, 1.0, rl.Color(255, 255, 255, int(255 * 0.9)))
 
 
+class ModeStatusAtom(Widget):
+  def __init__(self):
+    super().__init__()
+    self._variant = ModeBannerVariant.CHILL
+    self._textures = self._make_textures()
+    self.set_rect(rl.Rectangle(0, 0, 48, 48))
+    self.set_enabled(False)
+    self.refresh()
+
+  @staticmethod
+  def _make_textures() -> dict[ModeBannerVariant, rl.Texture]:
+    textures = {}
+    with as_file(ASSETS_DIR.joinpath("icons_mici/experimental_mode.png")) as asset_path:
+      source = rl.load_image(asset_path.as_posix())
+
+    pixel_count = source.width * source.height
+    source_pixels = bytearray(rl.ffi.buffer(source.data, pixel_count * 4))
+    try:
+      for variant in ModeBannerVariant:
+        tinted = rl.image_copy(source)
+        tinted_pixels = bytearray(source_pixels)
+        gradient = [mode_atom_color(variant, x / max(source.width - 1, 1)) for x in range(source.width)]
+        for y in range(source.height):
+          for x in range(source.width):
+            offset = (y * source.width + x) * 4
+            opacity = source_pixels[offset + 3]
+            if opacity == 0:
+              continue
+
+            color = gradient[x]
+            source_shade = max(source_pixels[offset:offset + 3]) / 255.0
+            shade = 0.65 + 0.35 * source_shade
+            tinted_pixels[offset] = round(color.r * shade)
+            tinted_pixels[offset + 1] = round(color.g * shade)
+            tinted_pixels[offset + 2] = round(color.b * shade)
+            tinted_pixels[offset + 3] = opacity
+
+        rl.ffi.buffer(tinted.data, len(tinted_pixels))[:] = bytes(tinted_pixels)
+        texture = rl.load_texture_from_image(tinted)
+        rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+        rl.set_texture_wrap(texture, rl.TextureWrap.TEXTURE_WRAP_CLAMP)
+        rl.unload_image(tinted)
+        textures[variant] = texture
+    finally:
+      rl.unload_image(source)
+    return textures
+
+  def refresh(self) -> None:
+    self._variant = get_mode_banner_variant(ui_state.params, ui_state.params_memory)
+
+  def _render(self, rect: rl.Rectangle) -> None:
+    texture = self._textures[self._variant]
+    source = rl.Rectangle(0, 0, texture.width, texture.height)
+    rl.draw_texture_pro(texture, source, rect, rl.Vector2(0, 0), 0, rl.WHITE)
+
+  def __del__(self):
+    if rl.is_window_ready():
+      for texture in getattr(self, "_textures", {}).values():
+        if texture.id != 0:
+          rl.unload_texture(texture)
+
+
 class MiciHomeLayout(Widget):
   def __init__(self):
     super().__init__()
@@ -95,13 +159,17 @@ class MiciHomeLayout(Widget):
     self._experimental_mode = False
     self._current_model_name = "default"
 
-    self._experimental_icon = IconWidget("icons_mici/experimental_mode.png", (48, 48))
+    self._mode_status_atom = ModeStatusAtom()
+    self._egpu_icon = IconWidget("icons_mici/egpu.png", (50, 37))
+    self._egpu_icon_gray = IconWidget("icons_mici/egpu_gray.png", (50, 37))
     self._mic_icon = IconWidget("icons_mici/microphone.png", (32, 46))
 
     self._status_bar_layout = HBoxLayout([
       IconWidget("icons_mici/settings.png", (48, 48), opacity=0.9),
       NetworkIcon(),
-      self._experimental_icon,
+      self._mode_status_atom,
+      self._egpu_icon,
+      self._egpu_icon_gray,
       self._mic_icon,
     ], spacing=18)
 
@@ -119,6 +187,7 @@ class MiciHomeLayout(Widget):
 
   def _update_params(self):
     self._experimental_mode = ui_state.params.get_bool("ExperimentalMode")
+    self._mode_status_atom.refresh()
 
     def _clean_model_name(value: str) -> str:
       return re.sub(r"[🗺️👀📡]", "", value).replace("(Default)", "").strip()
@@ -148,6 +217,7 @@ class MiciHomeLayout(Widget):
         if ui_state.has_longitudinal_control:
           self._experimental_mode = not self._experimental_mode
           ui_state.params.put("ExperimentalMode", self._experimental_mode)
+          self._mode_status_atom.refresh()
         self._mouse_down_t = None
         self._did_long_press = True
 
@@ -210,7 +280,8 @@ class MiciHomeLayout(Widget):
       self._version_commit_label.render()
 
     # ***** Center-aligned bottom section icons *****
-    self._experimental_icon.set_visible(self._experimental_mode)
+    self._egpu_icon.set_visible(ui_state.usbgpu and ui_state.usbgpu_active)
+    self._egpu_icon_gray.set_visible(ui_state.usbgpu and not ui_state.usbgpu_active)
     self._mic_icon.set_visible(ui_state.recording_audio)
 
     footer_rect = rl.Rectangle(self.rect.x + HOME_PADDING, self.rect.y + self.rect.height - 48, self.rect.width - HOME_PADDING, 48)

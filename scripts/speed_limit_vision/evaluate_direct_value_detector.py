@@ -17,10 +17,12 @@ import starpilot.system.speed_limit_vision as slv
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
+  from common import source_video_fps  # type: ignore  # noqa: TID251
   from evaluate_runtime_manifest import expected_value, first_present, is_negative, load_rows  # type: ignore
   from evaluate_reviewed_route_events import load_cases  # type: ignore
   from replay_route_runtime import RouteReplayDaemon  # type: ignore
 else:
+  from .common import source_video_fps
   from .evaluate_runtime_manifest import expected_value, first_present, is_negative, load_rows
   from .evaluate_reviewed_route_events import load_cases
   from .replay_route_runtime import RouteReplayDaemon
@@ -175,7 +177,7 @@ def evaluate_manifest(args: argparse.Namespace, detector: DirectValueDetector) -
 def replay_video_cases(cases, detector: DirectValueDetector, args: argparse.Namespace):
   daemons = {case.record_key: DirectRouteReplayDaemon(detector, args.measured_inference_seconds) for case in cases}
   capture = cv2.VideoCapture(str(cases[0].source_video_path))
-  fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
+  fps = source_video_fps(cases[0].source_video_path, capture.get(cv2.CAP_PROP_FPS))
   windows = {
     case.record_key: (max(case.frame_time_s - args.window_before, 0.0), case.frame_time_s + args.window_after)
     for case in cases

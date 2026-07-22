@@ -10,6 +10,9 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 
 VALID_SPEEDS = frozenset((15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75))
 
@@ -25,6 +28,13 @@ def parse_args() -> argparse.Namespace:
     action="append",
     default=[],
     help="Remove inherited samples whose staged filename contains this corrected record key. Repeat as needed.",
+  )
+  parser.add_argument(
+    "--repeat-positive-record",
+    action="append",
+    default=[],
+    metavar="RECORD_KEY=COUNT",
+    help="Stage a reviewed positive COUNT times to give a hard example more training weight.",
   )
   parser.add_argument(
     "--repeat-reject-record",
@@ -49,6 +59,7 @@ def parse_args() -> argparse.Namespace:
     default=1.0,
     help="Deterministic fraction of training advisories staged as reject; validation advisories are always retained.",
   )
+  parser.add_argument("--input-size", type=int, default=128, help="Square letterbox size used by the runtime classifier.")
   return parser.parse_args()
 
 
@@ -106,23 +117,40 @@ def remove_inherited_records(root: Path, record_keys: list[str]) -> int:
   return removed
 
 
-def parse_reject_repeat_counts(specs: list[str]) -> dict[str, int]:
+def parse_record_repeat_counts(specs: list[str], sample_kind: str) -> dict[str, int]:
   repeat_counts: dict[str, int] = {}
   for spec in specs:
     record_key, separator, count_text = spec.rpartition("=")
     if not separator or not record_key:
-      raise ValueError(f"Invalid --repeat-reject-record value: {spec!r}")
+      raise ValueError(f"Invalid --repeat-{sample_kind}-record value: {spec!r}")
     try:
       count = int(count_text)
     except ValueError as exc:
-      raise ValueError(f"Invalid reject repeat count: {spec!r}") from exc
+      raise ValueError(f"Invalid {sample_kind} repeat count: {spec!r}") from exc
     if count < 1:
-      raise ValueError(f"Reject repeat count must be at least 1: {spec!r}")
+      raise ValueError(f"{sample_kind.capitalize()} repeat count must be at least 1: {spec!r}")
     repeat_counts[record_key] = count
   return repeat_counts
 
 
-def stage_crop(source: Path, destination_dir: Path, record_key: str) -> bool:
+def parse_reject_repeat_counts(specs: list[str]) -> dict[str, int]:
+  return parse_record_repeat_counts(specs, "reject")
+
+
+def square_resize(image: np.ndarray, size: int, color: tuple[int, int, int] = (114, 114, 114)) -> np.ndarray:
+  image_height, image_width = image.shape[:2]
+  ratio = min(size / max(image_height, 1), size / max(image_width, 1))
+  resized_width = max(int(round(image_width * ratio)), 1)
+  resized_height = max(int(round(image_height * ratio)), 1)
+  resized = cv2.resize(image, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
+  canvas = np.full((size, size, image.shape[2]), color, dtype=image.dtype)
+  offset_x = (size - resized_width) // 2
+  offset_y = (size - resized_height) // 2
+  canvas[offset_y:offset_y + resized_height, offset_x:offset_x + resized_width] = resized
+  return canvas
+
+
+def stage_crop(source: Path, destination_dir: Path, record_key: str, input_size: int) -> bool:
   if not source.is_file():
     return False
   digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
@@ -131,7 +159,12 @@ def stage_crop(source: Path, destination_dir: Path, record_key: str) -> bool:
   destination_dir.mkdir(parents=True, exist_ok=True)
   destination = destination_dir / f"review_{safe_key}_{digest}{suffix}"
   if not destination.exists():
-    shutil.copyfile(source, destination)
+    image = cv2.imread(str(source))
+    if image is None or image.size == 0:
+      return False
+    normalized = square_resize(image, input_size)
+    if not cv2.imwrite(str(destination), normalized, [cv2.IMWRITE_JPEG_QUALITY, 95]):
+      return False
   return True
 
 
@@ -150,6 +183,7 @@ def main() -> int:
   shutil.copytree(base, output, copy_function=shutil.copyfile)
   appledouble_removed = remove_appledouble_files(output)
   inherited_records_removed = remove_inherited_records(output, args.exclude_base_record_key)
+  positive_repeat_counts = parse_record_repeat_counts(args.repeat_positive_record, "positive")
   reject_repeat_counts = parse_reject_repeat_counts(args.repeat_reject_record)
 
   positive_counts: Counter[str] = Counter()
@@ -162,7 +196,9 @@ def main() -> int:
       elif args.advisory_as_reject and keep_advisory_reject(row, args.advisory_reject_fraction):
         split = row.get("split", "")
         source = Path(row.get("crop_path", "")).expanduser()
-        if split in ("train", "val") and stage_crop(source, output / split / "reject", row.get("record_key", "advisory")):
+        if split in ("train", "val") and stage_crop(
+          source, output / split / "reject", row.get("record_key", "advisory"), args.input_size,
+        ):
           reject_counts[f"advisory_{split}"] += 1
         else:
           skipped += 1
@@ -172,10 +208,16 @@ def main() -> int:
     split = row.get("split", "")
     speed = parse_speed(row.get("speed_limit_mph", ""))
     source = Path(row.get("crop_path", "")).expanduser()
-    if split not in ("train", "val") or not speed or not stage_crop(source, output / split / str(speed), row.get("record_key", "positive")):
+    record_key = row.get("record_key", "positive")
+    repeat_count = positive_repeat_counts.get(record_key, 1) if split == "train" else 1
+    staged = split in ("train", "val") and bool(speed)
+    for repeat_index in range(repeat_count):
+      staged_key = record_key if repeat_index == 0 else f"{record_key}_repeat_{repeat_index:03d}"
+      staged = staged and stage_crop(source, output / split / str(speed), staged_key, args.input_size)
+    if not staged:
       skipped += 1
       continue
-    positive_counts[f"{split}/{speed}"] += 1
+    positive_counts[f"{split}/{speed}"] += repeat_count
 
   for row in read_rows(args.reject_manifest):
     split = row.get("split", "")
@@ -185,7 +227,7 @@ def main() -> int:
     staged = split in ("train", "val")
     for repeat_index in range(repeat_count):
       staged_key = record_key if repeat_index == 0 else f"{record_key}_repeat_{repeat_index:03d}"
-      staged = staged and stage_crop(source, output / split / "reject", staged_key)
+      staged = staged and stage_crop(source, output / split / "reject", staged_key, args.input_size)
     if not staged:
       skipped += 1
       continue
