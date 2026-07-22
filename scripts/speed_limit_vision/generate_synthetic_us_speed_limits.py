@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 import random
 
 from dataclasses import dataclass
@@ -16,7 +15,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace  # type: ignore
+  from common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace  # type: ignore  # noqa: TID251
 else:
   from .common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace
 
@@ -100,7 +99,6 @@ def render_regulatory_sign(speed_value: int, school_zone: bool, seed: int) -> Im
 def render_advisory_sign(speed_value: int, seed: int) -> Image.Image:
   rng = random.Random(seed)
   size = rng.randint(240, 320)
-  image = Image.new("RGBA", (size, size), (255, 255, 255, 0))
   base = Image.new("RGBA", (size, size), (255, 255, 255, 0))
   draw = ImageDraw.Draw(base)
 
@@ -224,7 +222,11 @@ def save_classifier_crop(base_dir: Path, split: str, speed_value: int, image_bgr
 def collect_backgrounds(background_dir: Path) -> list[Path]:
   if not background_dir.is_dir():
     return []
-  return sorted(path for path in background_dir.iterdir() if path.suffix.lower() in {".jpg", ".jpeg", ".png"})
+  return sorted(
+    path
+    for path in background_dir.iterdir()
+    if not path.name.startswith("._") and path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+  )
 
 
 def main():
@@ -234,6 +236,8 @@ def main():
   parser.add_argument("--train-count", type=int, default=9000, help="Number of synthetic training detector images.")
   parser.add_argument("--val-count", type=int, default=1200, help="Number of synthetic validation detector images.")
   parser.add_argument("--negative-ratio", type=float, default=0.18, help="Share of detector images with no sign.")
+  parser.add_argument("--speed-values", nargs="+", type=int, default=list(DEFAULT_SPEED_VALUES), help="Posted values to synthesize.")
+  parser.add_argument("--regulatory-only", action="store_true", help="Generate only regulatory signs for the requested values.")
   parser.add_argument("--seed", type=int, default=20260330, help="Random seed.")
   args = parser.parse_args()
 
@@ -246,7 +250,7 @@ def main():
   detector_image_dir = workspace / "detector" / "images"
   detector_label_dir = workspace / "detector" / "labels"
   classifier_dir = workspace / "classifier"
-  speed_values = tuple(DEFAULT_SPEED_VALUES)
+  speed_values = tuple(dict.fromkeys(args.speed_values))
   rng = random.Random(args.seed)
 
   for split, count in (("train", max(args.train_count, 0)), ("val", max(args.val_count, 0))):
@@ -266,7 +270,11 @@ def main():
       detector_lines: list[str] = []
 
       if rng.random() >= args.negative_ratio:
-        sign_spec = choose_sign_spec(rng, speed_values)
+        sign_spec = (
+          SignSpec(detector_class=0, style="regulatory", speed_value=rng.choice(speed_values))
+          if args.regulatory_only
+          else choose_sign_spec(rng, speed_values)
+        )
         if sign_spec.style == "advisory":
           sign_image = render_advisory_sign(sign_spec.speed_value or 25, seed=rng.randint(0, 1_000_000))
         else:

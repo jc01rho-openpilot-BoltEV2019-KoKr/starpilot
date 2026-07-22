@@ -61,6 +61,7 @@ class AugmentedRoadView(CameraView):
     self._driver_stream_active = False
     self._draw_road_overlays = True
     self._draw_hud_controls = True
+    self._draw_driver_state = True
 
     self.model_renderer = ModelRenderer()
     self._hud_renderer = HudRenderer()
@@ -118,7 +119,8 @@ class AugmentedRoadView(CameraView):
     if self._draw_hud_controls:
       self._hud_renderer.render(self._content_rect)
     self.alert_renderer.render(self._content_rect)
-    self.driver_state_renderer.render(self._content_rect)
+    if self._draw_driver_state:
+      self.driver_state_renderer.render(self._content_rect)
 
     # Custom UI extension point - add custom overlays here
     # Use self._content_rect for positioning within camera bounds
@@ -248,7 +250,11 @@ class AugmentedRoadView(CameraView):
 
   def _calc_frame_matrix(self, rect: rl.Rectangle) -> np.ndarray:
     if self.stream_type == DRIVER_CAM:
-      return CameraView._calc_frame_matrix(self, rect)
+      base = CameraView._calc_frame_matrix(self, rect)
+      driver_view_ratio = 2.0
+      base[0, 0] *= driver_view_ratio
+      base[1, 1] *= driver_view_ratio
+      return base
 
     # Check if we can use cached matrix
     cache_key = (

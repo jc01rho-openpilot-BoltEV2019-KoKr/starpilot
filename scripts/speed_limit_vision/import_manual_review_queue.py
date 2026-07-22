@@ -14,9 +14,9 @@ import cv2
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace  # type: ignore  # noqa: TID251
+  from common import DEFAULT_WORKSPACE, SUPPORTED_SPEED_VALUES, ensure_dir, resolve_workspace  # type: ignore  # noqa: TID251
 else:
-  from .common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace
+  from .common import DEFAULT_WORKSPACE, SUPPORTED_SPEED_VALUES, ensure_dir, resolve_workspace
 
 
 CLASSIFIER_FIELDNAMES = [
@@ -149,7 +149,7 @@ def parse_speed(text: str) -> int:
     value = int(float(text))
   except ValueError:
     return 0
-  return value if value in DEFAULT_SPEED_VALUES else 0
+  return value if value in SUPPORTED_SPEED_VALUES else 0
 
 
 def parse_bbox(text: str) -> tuple[int, int, int, int] | None:

@@ -9,6 +9,11 @@ from pathlib import Path
 from openpilot.common.swaglog import cloudlog
 
 
+def _capture_message(*args, **kwargs) -> None:
+  from openpilot.system import sentry
+  sentry.capture_message(*args, **kwargs)
+
+
 def _default_dump_dir() -> Path:
   for candidate in ("/data/log", "/tmp"):
     if os.path.isdir(candidate) and os.access(candidate, os.W_OK):
@@ -87,9 +92,29 @@ class UIStallMonitor:
         self._stalled_since = now
         self._stalled_phase = phase
 
-      preview = self._main_thread_preview()
-      path_s = str(dump_path) if dump_path is not None else "<write_failed>"
-      cloudlog.error(f"{self._name} main loop stalled for {stalled_for_s:.1f}s in phase={phase} (phase_for={phase_for_s:.1f}s) dump={path_s}\n{preview}")
+      self._report_stall(dump, dump_path, phase, stalled_for_s, phase_for_s)
+
+  def _report_stall(self, dump: str, dump_path: Path | None, phase: str, stalled_for_s: float, phase_for_s: float) -> None:
+    preview = self._main_thread_preview()
+    path_s = str(dump_path) if dump_path is not None else "<write_failed>"
+    cloudlog.error(f"{self._name} main loop stalled for {stalled_for_s:.1f}s in phase={phase} (phase_for={phase_for_s:.1f}s) dump={path_s}\n{preview}")
+    _capture_message(
+      "raylib UI main loop stalled",
+      tags={
+        "ui_stall_name": self._name,
+        "ui_stall_phase": phase,
+      },
+      extras={
+        "pid": os.getpid(),
+        "stalled_for_s": round(stalled_for_s, 3),
+        "phase_for_s": round(phase_for_s, 3),
+        "dump_path": path_s,
+        "main_thread_stack": preview,
+        "thread_dump": dump,
+      },
+      attachment_path=dump_path,
+      flush_timeout=2.0,
+    )
 
   def _build_dump(self, now: float, phase: str, stalled_for_s: float, phase_for_s: float) -> str:
     frames = sys._current_frames()

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 LONG_PITCH_KEY = "LongPitch"
+LANE_CHANGE_SMOOTHING_KEY = "LaneChangeSmoothing"
 STEER_KP_KEY = "SteerKP"
 STEER_KP_STOCK_KEY = "SteerKPStock"
 USE_OLD_UI_KEY = "UseOldUI"
@@ -31,6 +32,7 @@ USE_OLD_UI_MIGRATION_MARKER = ".starpilot_use_old_ui_migration_v2"
 LATERAL_METHOD_REBRAND_MIGRATION_MARKER = ".starpilot_lateral_method_rebrand_v1"
 VISION_SPEED_LIMIT_DETECTION_MIGRATION_MARKER = ".starpilot_vision_speed_limit_detection_v1"
 DEVELOPER_METRIC_DISPLAY_MIGRATION_MARKER = ".starpilot_developer_metric_display_off_v1"
+LANE_CHANGE_SMOOTHING_MIGRATION_MARKER = ".starpilot_lane_change_smoothing_default_v1"
 MARKER_DIRNAME = ".starpilot_param_migrations"
 
 LATERAL_METHOD_PARAM_SUFFIXES = (
@@ -48,8 +50,10 @@ LEGACY_RELAXED_FOLLOW_DEFAULT = 1.75
 LEGACY_RELAXED_FOLLOW_HIGH_DEFAULT = 1.75
 LEGACY_JERK_DEFAULT = 50.0
 LEGACY_ACCELERATION_PROFILE_DEFAULT = 2
+LEGACY_LANE_CHANGE_SMOOTHING_DEFAULT = 10
 
 STANDARD_ACCELERATION_PROFILE = 0
+DEFAULT_LANE_CHANGE_SMOOTHING = 5
 
 BRANCH_BOOL_MIGRATIONS = {
   "CEStoppedLead": (LEGACY_CE_STOPPED_LEAD_DEFAULT, False),
@@ -116,6 +120,10 @@ def _vision_speed_limit_detection_marker_path(params: ParamsLike) -> Path:
 
 def _developer_metric_display_marker_path(params: ParamsLike) -> Path:
   return _marker_dir_path(params) / DEVELOPER_METRIC_DISPLAY_MIGRATION_MARKER
+
+
+def _lane_change_smoothing_marker_path(params: ParamsLike) -> Path:
+  return _marker_dir_path(params) / LANE_CHANGE_SMOOTHING_MIGRATION_MARKER
 
 
 def _marker_dir_path(params: ParamsLike) -> Path:
@@ -250,13 +258,26 @@ def _apply_developer_metric_display_migration(params: ParamsLike, marker: Path) 
   marker.touch()
 
 
+def _apply_lane_change_smoothing_default_migration(params: ParamsLike, marker: Path) -> None:
+  if marker.exists():
+    return
+
+  marker.parent.mkdir(parents=True, exist_ok=True)
+
+  if params.get_int(LANE_CHANGE_SMOOTHING_KEY) == LEGACY_LANE_CHANGE_SMOOTHING_DEFAULT:
+    params.put_int(LANE_CHANGE_SMOOTHING_KEY, DEFAULT_LANE_CHANGE_SMOOTHING)
+
+  marker.touch()
+
+
 def apply_launch_param_migrations(params: ParamsLike, marker_path: Path | None = None,
                                   branch_defaults_marker_path: Path | None = None,
                                   acceleration_profile_marker_path: Path | None = None,
                                   use_old_ui_marker_path: Path | None = None,
                                   lateral_method_rebrand_marker_path: Path | None = None,
                                   vision_speed_limit_detection_marker_path: Path | None = None,
-                                  developer_metric_display_marker_path: Path | None = None) -> None:
+                                  developer_metric_display_marker_path: Path | None = None,
+                                  lane_change_smoothing_marker_path: Path | None = None) -> None:
   _apply_legacy_launch_param_migrations(params, marker_path or _default_marker_path(params))
   # Keep branch-default rollout on its own marker so older installs that already
   # have the legacy marker still receive this one-time param reset.
@@ -273,6 +294,9 @@ def apply_launch_param_migrations(params: ParamsLike, marker_path: Path | None =
   )
   _apply_developer_metric_display_migration(
     params, developer_metric_display_marker_path or _developer_metric_display_marker_path(params)
+  )
+  _apply_lane_change_smoothing_default_migration(
+    params, lane_change_smoothing_marker_path or _lane_change_smoothing_marker_path(params)
   )
 
 

@@ -18,9 +18,11 @@ import starpilot.system.speed_limit_vision as slv
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
+  from common import source_video_fps  # type: ignore  # noqa: TID251
   from import_manual_review_queue import merged_review_rows, parse_speed  # type: ignore
   from replay_route_runtime import configure_models  # type: ignore
 else:
+  from .common import source_video_fps
   from .import_manual_review_queue import merged_review_rows, parse_speed
   from .replay_route_runtime import configure_models
 
@@ -372,7 +374,7 @@ def mine_backward_samples(
 
 def mine_case(case: TrackCase, daemon: slv.SpeedLimitVisionDaemon, args: argparse.Namespace) -> list[TrackSample]:
   capture = cv2.VideoCapture(str(case.video_path))
-  fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
+  fps = source_video_fps(case.video_path, capture.get(cv2.CAP_PROP_FPS))
   anchor_frame_index = max(int(round(case.frame_time_s * fps)), 0)
   before_frame_count = max(int(round(args.window_before * fps)), 0)
   earlier_frames: deque[tuple[int, np.ndarray]] = deque(maxlen=before_frame_count)

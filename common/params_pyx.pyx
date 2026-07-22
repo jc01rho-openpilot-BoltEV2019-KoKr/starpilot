@@ -32,6 +32,10 @@ cdef extern from "common/params.h":
     JSON
     BYTES
 
+  cdef enum ParamSettingsTier:
+    SETTINGS_SIMPLE
+    SETTINGS_ADVANCED
+
   cdef cppclass c_Params "Params":
     c_Params(string, bool) except + nogil
     string get(string, bool) nogil
@@ -54,6 +58,8 @@ cdef extern from "common/params.h":
     optional[string] getStockValue(string) nogil
 
     int getTuningLevel(string) nogil
+
+    ParamSettingsTier getSettingsTier(string) nogil
 
 PYTHON_2_CPP = {
   (str, STRING): lambda v: v,
@@ -255,3 +261,6 @@ cdef class Params:
     cdef string k = self.check_key(key)
     cdef optional[int] level = self.p.getTuningLevel(k)
     return level.value() if level.has_value() else 0
+
+  def get_settings_tier(self, key):
+    return self.p.getSettingsTier(self.check_key(key))

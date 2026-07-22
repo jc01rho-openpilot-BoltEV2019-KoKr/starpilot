@@ -56,6 +56,12 @@ StarPilotEventName = custom.StarPilotOnroadEvent.EventName
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 
 
+def commanded_torque_at_max_for_saturation(CP, output: float) -> bool:
+  torque_controller = (CP.steerControlType == car.CarParams.SteerControlType.torque and
+                       CP.lateralTuning.which() == "torque")
+  return torque_controller and abs(output) > 0.99
+
+
 def should_loud_blindspot_alert_without_lateral(CS, sm, starpilot_toggles) -> bool:
   if not (getattr(starpilot_toggles, "loud_blindspot_alert", False) and
           getattr(starpilot_toggles, "loud_blindspot_alert_when_disengaged", False)):
@@ -661,7 +667,7 @@ class SelfdriveD:
       desired_lateral_accel = self.sm['modelV2'].action.desiredCurvature * (clipped_speed**2)
       undershooting = abs(desired_lateral_accel) / abs(1e-3 + actual_lateral_accel) > 1.2
       turning = abs(desired_lateral_accel) > 1.0
-      commanded_torque_at_max = abs(lac.output) > 0.99
+      commanded_torque_at_max = commanded_torque_at_max_for_saturation(self.CP, lac.output)
       # TODO: lac.saturated includes speed and other checks, should be pulled out
       if undershooting and turning and (lac.saturated or commanded_torque_at_max):
         now = time.monotonic()

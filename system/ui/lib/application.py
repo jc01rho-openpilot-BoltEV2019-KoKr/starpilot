@@ -37,6 +37,10 @@ BIG_UI = os.getenv("BIG", "0") == "1"
 MACOS = platform.system() == "Darwin"
 ENABLE_VSYNC = os.getenv("ENABLE_VSYNC", "0") == "1"
 MICI_FORCE_RENDER_TEXTURE = os.getenv("MICI_FORCE_RENDER_TEXTURE", "1" if DEVICE_TYPE == "mici" else "0") == "1"
+BURN_IN_PREVENTION = os.getenv("BURN_IN_PREVENTION", "0" if PC else "1") == "1"
+BURN_IN_SHIFT_INTERVAL = max(1.0, float(os.getenv("BURN_IN_SHIFT_INTERVAL", "180")))
+BURN_IN_SHIFT_PIXELS = max(0, int(os.getenv("BURN_IN_SHIFT_PIXELS", "2")))
+WHITE_LUMINANCE_CAP = min(1.0, max(0.0, float(os.getenv("WHITE_LUMINANCE_CAP", "0.95" if BURN_IN_PREVENTION else "1.0"))))
 SHOW_FPS = os.getenv("SHOW_FPS") == "1"
 SHOW_TOUCHES = os.getenv("SHOW_TOUCHES") == "1"
 STRICT_MODE = os.getenv("STRICT_MODE") == "1"
@@ -61,6 +65,17 @@ if platform.system() == "Darwin":
   """
 
 BURN_IN_MODE = "BURN_IN" in os.environ
+BURN_IN_SHIFT_PATTERN = (
+  (0, 0),
+  (-1, 0),
+  (-1, -1),
+  (0, -1),
+  (1, -1),
+  (1, 0),
+  (1, 1),
+  (0, 1),
+  (-1, 1),
+)
 BURN_IN_VERTEX_SHADER = GL_VERSION + """
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
@@ -85,6 +100,29 @@ void main() {
   vec3 gradient = mix(start, middle, clamp(intensity * 2.0, 0.0, 1.0));
   gradient = mix(gradient, end, clamp((intensity - 0.5) * 2.0, 0.0, 1.0));
   fragColor = vec4(gradient, sampled.a);
+}
+"""
+WHITE_LUMINANCE_FRAGMENT_SHADER = GL_VERSION + """
+in vec2 fragTexCoord;
+uniform sampler2D texture0;
+uniform float whiteLuminanceCap;
+out vec4 fragColor;
+void main() {
+  vec4 sampled = texture(texture0, fragTexCoord);
+  float luminance = dot(sampled.rgb, vec3(0.2126, 0.7152, 0.0722));
+  float chroma = max(max(sampled.r, sampled.g), sampled.b) - min(min(sampled.r, sampled.g), sampled.b);
+
+  // Gently compress only near-white, low-saturation pixels. Saturated alert colors
+  // and the vast majority of camera pixels pass through unchanged.
+  float knee = max(0.0, whiteLuminanceCap - 0.05);
+  if (luminance > knee) {
+    float kneeRange = max(0.0001, 1.0 - knee);
+    float targetLuminance = knee + (whiteLuminanceCap - knee) * ((luminance - knee) / kneeRange);
+    float neutralAmount = 1.0 - smoothstep(0.08, 0.25, chroma);
+    sampled.rgb *= mix(1.0, targetLuminance / max(luminance, 0.0001), neutralAmount);
+  }
+
+  fragColor = sampled;
 }
 """
 
@@ -451,6 +489,7 @@ class GuiApplication:
 
     self._render_texture: rl.RenderTexture | None = None
     self._burn_in_shader: rl.Shader | None = None
+    self._white_luminance_shader: rl.Shader | None = None
     self._ffmpeg_proc: subprocess.Popen | None = None
     self._ffmpeg_queue: queue.Queue | None = None
     self._ffmpeg_thread: threading.Thread | None = None
@@ -459,6 +498,7 @@ class GuiApplication:
     self._textures: dict[str, rl.Texture] = {}
     self._target_fps: int = _DEFAULT_FPS
     self._last_fps_log_time: float = time.monotonic()
+    self._burn_in_start_time = time.monotonic()
     self._frame = 0
     self._window_close_requested = False
     self._nav_stack: list[object] = []
@@ -521,7 +561,8 @@ class GuiApplication:
       self._render_texture_width = max(1, int(round(self._scaled_width * self._pixel_scale_x)))
       self._render_texture_height = max(1, int(round(self._scaled_height * self._pixel_scale_y)))
 
-      needs_render_texture = (self._scale != 1.0 and not PC) or BURN_IN_MODE or RECORD or MICI_FORCE_RENDER_TEXTURE
+      needs_render_texture = ((self._scale != 1.0 and not PC) or BURN_IN_MODE or RECORD or
+                              MICI_FORCE_RENDER_TEXTURE or BURN_IN_PREVENTION or WHITE_LUMINANCE_CAP < 1.0)
       if PC and self._scale != 1.0:
         rl.set_mouse_scale(1 / self._scale, 1 / self._scale)
       if PC:
@@ -573,6 +614,12 @@ class GuiApplication:
       self._patch_scissor_mode()
       if BURN_IN_MODE and self._burn_in_shader is None:
         self._burn_in_shader = rl.load_shader_from_memory(BURN_IN_VERTEX_SHADER, BURN_IN_FRAGMENT_SHADER)
+      if WHITE_LUMINANCE_CAP < 1.0 and self._white_luminance_shader is None:
+        self._white_luminance_shader = rl.load_shader_from_memory(BURN_IN_VERTEX_SHADER, WHITE_LUMINANCE_FRAGMENT_SHADER)
+        cap_location = rl.get_shader_location(self._white_luminance_shader, "whiteLuminanceCap")
+        cap_value = rl.ffi.new("float[]", [WHITE_LUMINANCE_CAP])
+        rl.set_shader_value(self._white_luminance_shader, cap_location, cap_value,
+                            rl.ShaderUniformDataType.SHADER_UNIFORM_FLOAT)
 
       if not PC:
         self._mouse.start()
@@ -815,6 +862,10 @@ class GuiApplication:
       rl.unload_shader(self._burn_in_shader)
       self._burn_in_shader = None
 
+    if self._white_luminance_shader:
+      rl.unload_shader(self._white_luminance_shader)
+      self._white_luminance_shader = None
+
     self._mouse.stop()
 
     self.close_ffmpeg()
@@ -907,12 +958,17 @@ class GuiApplication:
           rl.clear_background(rl.BLACK)
           self._mark_progress("gui_app.after_present_clear_background")
           src_rect = rl.Rectangle(0, 0, float(self._render_texture_width), -float(self._render_texture_height))
-          dst_rect = rl.Rectangle(0, 0, float(self._scaled_width), float(self._scaled_height))
+          shift_x, shift_y = self._burn_in_shift()
+          dst_rect = rl.Rectangle(shift_x, shift_y, float(self._scaled_width), float(self._scaled_height))
           texture = self._render_texture.texture
           if texture:
             self._mark_progress("gui_app.before_present_draw_texture")
             if BURN_IN_MODE and self._burn_in_shader:
               rl.begin_shader_mode(self._burn_in_shader)
+              rl.draw_texture_pro(texture, src_rect, dst_rect, rl.Vector2(0, 0), 0.0, rl.WHITE)
+              rl.end_shader_mode()
+            elif self._white_luminance_shader:
+              rl.begin_shader_mode(self._white_luminance_shader)
               rl.draw_texture_pro(texture, src_rect, dst_rect, rl.Vector2(0, 0), 0.0, rl.WHITE)
               rl.end_shader_mode()
             else:
@@ -947,6 +1003,15 @@ class GuiApplication:
           self._output_render_profile()
     except KeyboardInterrupt:
       pass
+
+  def _burn_in_shift(self, now: float | None = None) -> tuple[int, int]:
+    if not BURN_IN_PREVENTION or BURN_IN_SHIFT_PIXELS == 0:
+      return 0, 0
+
+    elapsed = (time.monotonic() if now is None else now) - self._burn_in_start_time
+    pattern_index = int(max(0.0, elapsed) // BURN_IN_SHIFT_INTERVAL) % len(BURN_IN_SHIFT_PATTERN)
+    x, y = BURN_IN_SHIFT_PATTERN[pattern_index]
+    return x * BURN_IN_SHIFT_PIXELS, y * BURN_IN_SHIFT_PIXELS
 
   def font(self, font_weight: FontWeight = FontWeight.NORMAL) -> rl.Font:
     return self._fonts[font_weight]

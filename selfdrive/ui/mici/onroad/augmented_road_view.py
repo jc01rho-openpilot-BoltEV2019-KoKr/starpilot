@@ -9,7 +9,7 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.mici.onroad import SIDE_PANEL_WIDTH
 from openpilot.selfdrive.ui.mici.onroad.alert_renderer import AlertRenderer, ALERT_COLORS, AlertStatus
 from openpilot.selfdrive.ui.mici.onroad.driver_state import DriverStateRenderer
-from openpilot.selfdrive.ui.mici.onroad.hud_renderer import HudRenderer
+from openpilot.selfdrive.ui.mici.onroad.hud_renderer import HudRenderer, VISION_SPEED_LIMIT_PULSE_COLOR
 from openpilot.selfdrive.ui.mici.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.mici.onroad.confidence_ball import ConfidenceBall
 from openpilot.selfdrive.ui.mici.onroad.sidebar_widgets import MiciSidebarWidgets
@@ -21,7 +21,7 @@ from openpilot.selfdrive.ui.mici.onroad.starpilot_status import (
 )
 from openpilot.selfdrive.ui.mici.onroad.cameraview import CameraView
 from openpilot.selfdrive.ui.lib.starpilot_visuals import get_border_width
-from openpilot.starpilot.common.favorite_slots import load_favorite_slots, toggle_favorite_slot
+from openpilot.starpilot.common.favorite_slots import is_favorite_action_key, load_favorite_slots, toggle_favorite_slot
 from openpilot.system.ui.lib.application import FontWeight, gui_app, MousePos, MouseEvent
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.lib.wrap_text import wrap_text
@@ -152,16 +152,22 @@ class BookmarkIcon(Widget):
 
 
 class FavoriteSlotsOverlay(Widget):
-  EDGE_MARGIN = 8
-  BUTTON_GAP = 8
-  MAX_BUTTON_SIZE = 208
-  INDICATOR_SIZE = 18
+  SLOT_COUNT = 3
+  MAX_TAP_TRAVEL = 24
+  COLOR_TRANSITION_SECONDS = 0.65
+  FADE_START_SECONDS = 2.0
+  FEEDBACK_DURATION_SECONDS = 3.0
 
   def __init__(self):
     super().__init__()
     self._font = gui_app.font(FontWeight.SEMI_BOLD)
     self._button_rects: list[tuple[int, rl.Rectangle]] = []
     self._pressed_slot: int | None = None
+    self._press_pos: MousePos | None = None
+    self._max_tap_travel = 0.0
+    self._feedback_slot: int | None = None
+    self._feedback_started_at = -self.FEEDBACK_DURATION_SECONDS
+    self._feedback_value: bool | None = None
     self._interacting = False
 
   def interacting(self):
@@ -176,20 +182,10 @@ class FavoriteSlotsOverlay(Widget):
     return visible
 
   def _slot_rects(self, rect: rl.Rectangle, slots: list[tuple[int, dict]]) -> list[tuple[int, rl.Rectangle]]:
-    if not slots:
-      return []
-
-    slot_count = len(slots)
-    available_width = rect.width - (2 * self.EDGE_MARGIN) - ((slot_count - 1) * self.BUTTON_GAP)
-    available_height = rect.height - (2 * self.EDGE_MARGIN)
-    button_size = min(self.MAX_BUTTON_SIZE, available_height, available_width / slot_count)
-    row_width = slot_count * button_size + (slot_count - 1) * self.BUTTON_GAP
-    x = rect.x + (rect.width - row_width) / 2
-    y = rect.y + (rect.height - button_size) / 2
-
+    slot_width = rect.width / self.SLOT_COUNT
     return [
-      (slot_index, rl.Rectangle(x + draw_index * (button_size + self.BUTTON_GAP), y, button_size, button_size))
-      for draw_index, (slot_index, _slot) in enumerate(slots)
+      (slot_index, rl.Rectangle(rect.x + slot_index * slot_width, rect.y, slot_width, rect.height))
+      for slot_index, _slot in slots
     ]
 
   def _fit_label(self, label: str, max_width: float, max_height: float) -> tuple[list[str], int]:
@@ -204,41 +200,100 @@ class FavoriteSlotsOverlay(Widget):
         return lines, font_size
     return lines[:3], 18
 
+  @staticmethod
+  def _ease_out_cubic(progress: float) -> float:
+    progress = float(np.clip(progress, 0.0, 1.0))
+    return 1.0 - (1.0 - progress) ** 3
+
+  @staticmethod
+  def _blend_color(start: rl.Color, end: rl.Color, progress: float, alpha: int) -> rl.Color:
+    progress = float(np.clip(progress, 0.0, 1.0))
+    return rl.Color(
+      round(start.r + (end.r - start.r) * progress),
+      round(start.g + (end.g - start.g) * progress),
+      round(start.b + (end.b - start.b) * progress),
+      alpha,
+    )
+
+  def _feedback_alpha(self, elapsed: float) -> float:
+    if elapsed < self.FADE_START_SECONDS:
+      return 1.0
+    fade_duration = self.FEEDBACK_DURATION_SECONDS - self.FADE_START_SECONDS
+    return float(np.clip(1.0 - (elapsed - self.FADE_START_SECONDS) / fade_duration, 0.0, 1.0))
+
+  def _draw_feedback(self, slot_rect: rl.Rectangle, slot: dict, elapsed: float, held: bool) -> None:
+    alpha_scale = 1.0 if held else self._feedback_alpha(elapsed)
+    if alpha_scale <= 0.0:
+      return
+
+    color_progress = self._ease_out_cubic(elapsed / self.COLOR_TRANSITION_SECONDS)
+    alpha = round(255 * alpha_scale)
+    accent = self._blend_color(VISION_SPEED_LIMIT_PULSE_COLOR, rl.Color(255, 255, 255, 255), color_progress, alpha)
+
+    panel_margin = 12
+    panel_width = max(96.0, slot_rect.width - 2 * panel_margin)
+    panel_height = min(132.0, slot_rect.height * 0.5)
+    panel_rect = rl.Rectangle(
+      slot_rect.x + (slot_rect.width - panel_width) / 2,
+      slot_rect.y + (slot_rect.height - panel_height) / 2,
+      panel_width,
+      panel_height,
+    )
+
+    # A restrained initial glow gives the same purple acknowledgement as the
+    # vision speed-limit pulse without leaving persistent controls onscreen.
+    glow_strength = (1.0 - color_progress) * alpha_scale
+    for expansion, opacity in ((8, 22), (4, 44)):
+      glow_rect = rl.Rectangle(
+        panel_rect.x - expansion,
+        panel_rect.y - expansion,
+        panel_rect.width + 2 * expansion,
+        panel_rect.height + 2 * expansion,
+      )
+      glow = rl.Color(
+        VISION_SPEED_LIMIT_PULSE_COLOR.r,
+        VISION_SPEED_LIMIT_PULSE_COLOR.g,
+        VISION_SPEED_LIMIT_PULSE_COLOR.b,
+        round(opacity * glow_strength),
+      )
+      rl.draw_rectangle_rounded_lines_ex(glow_rect, 0.16, 12, 2, glow)
+
+    rl.draw_rectangle_rounded(panel_rect, 0.16, 12, rl.Color(0, 0, 0, round(178 * alpha_scale)))
+    rl.draw_rectangle_rounded_lines_ex(panel_rect, 0.16, 12, 3, accent)
+
+    label = slot.get("label") or slot.get("key") or "Favorite"
+    state_text = "PRESS" if is_favorite_action_key(slot.get("key")) else ("ON" if self._feedback_value else "OFF")
+    lines, font_size = self._fit_label(label, panel_rect.width - 20, panel_rect.height - 46)
+    line_height = font_size * 1.08
+    label_height = len(lines) * line_height
+    text_y = panel_rect.y + 12 + (panel_rect.height - 42 - label_height) / 2
+    for line in lines:
+      text_size = measure_text_cached(self._font, line, font_size)
+      text_x = panel_rect.x + (panel_rect.width - text_size.x) / 2
+      rl.draw_text_ex(self._font, line, rl.Vector2(text_x, text_y), font_size, 0, accent)
+      text_y += line_height
+
+    state_size = measure_text_cached(self._font, state_text, 20)
+    state_pos = rl.Vector2(panel_rect.x + (panel_rect.width - state_size.x) / 2, panel_rect.y + panel_rect.height - 30)
+    rl.draw_text_ex(self._font, state_text, state_pos, 20, 0, rl.Color(255, 255, 255, round(210 * alpha_scale)))
+
   def _render(self, rect: rl.Rectangle):
     visible_slots = self._visible_slots()
     self._button_rects = self._slot_rects(rect, visible_slots)
     slot_by_index = dict(visible_slots)
 
-    for slot_index, button_rect in self._button_rects:
-      slot = slot_by_index[slot_index]
-      pressed = self._pressed_slot == slot_index
-      bg = rl.Color(0, 0, 0, 190 if pressed else 166)
-      border = rl.Color(255, 255, 255, 120 if pressed else 78)
-      rl.draw_rectangle_rounded(button_rect, 0.18, 12, bg)
-      rl.draw_rectangle_rounded_lines_ex(button_rect, 0.18, 12, 2, border)
+    if self._feedback_slot not in slot_by_index:
+      self._feedback_slot = None
+      return
 
-      key = slot.get("key")
-      active = ui_state.params.get_bool(key) if key else False
-      indicator = rl.Color(48, 255, 156, 255) if active else rl.Color(135, 135, 135, 255)
-      indicator_x = button_rect.x + button_rect.width - self.INDICATOR_SIZE - 12
-      indicator_y = button_rect.y + 12
-      rl.draw_circle(int(indicator_x + self.INDICATOR_SIZE / 2), int(indicator_y + self.INDICATOR_SIZE / 2), self.INDICATOR_SIZE / 2, indicator)
+    elapsed = max(0.0, rl.get_time() - self._feedback_started_at)
+    held = self._pressed_slot == self._feedback_slot
+    if not held and elapsed >= self.FEEDBACK_DURATION_SECONDS:
+      self._feedback_slot = None
+      return
 
-      slot_text = f"#{slot_index + 1}"
-      rl.draw_text_ex(self._font, slot_text, rl.Vector2(button_rect.x + 12, button_rect.y + 9), 22, 0, rl.Color(255, 255, 255, 180))
-
-      lines, font_size = self._fit_label(
-        slot.get("label") or key or "Favorite",
-        button_rect.width - 24,
-        button_rect.height - 54,
-      )
-      line_height = font_size * 1.12
-      text_y = button_rect.y + 38 + (button_rect.height - 50 - len(lines) * line_height) / 2
-      for line in lines:
-        text_size = rl.measure_text_ex(self._font, line, font_size, 0)
-        text_x = button_rect.x + (button_rect.width - text_size.x) / 2
-        rl.draw_text_ex(self._font, line, rl.Vector2(text_x, text_y), font_size, 0, rl.Color(255, 255, 255, 242))
-        text_y += line_height
+    feedback_rect = next(button_rect for slot_index, button_rect in self._button_rects if slot_index == self._feedback_slot)
+    self._draw_feedback(feedback_rect, slot_by_index[self._feedback_slot], elapsed, held)
 
   def _slot_at(self, pos: MousePos) -> int | None:
     for slot_index, rect in self._button_rects:
@@ -249,14 +304,37 @@ class FavoriteSlotsOverlay(Widget):
   def _handle_mouse_press(self, mouse_pos: MousePos):
     self._pressed_slot = self._slot_at(mouse_pos)
     if self._pressed_slot is not None:
+      self._press_pos = mouse_pos
+      self._max_tap_travel = 0.0
+      self._feedback_slot = self._pressed_slot
+      self._feedback_started_at = rl.get_time()
+      slot = dict(self._visible_slots()).get(self._pressed_slot, {})
+      key = slot.get("key")
+      self._feedback_value = None if is_favorite_action_key(key) else (not ui_state.params.get_bool(key) if key else None)
       self._interacting = True
+
+  def _handle_mouse_event(self, mouse_event: MouseEvent):
+    if self._pressed_slot is None or self._press_pos is None:
+      return
+    travel = ((mouse_event.pos.x - self._press_pos.x) ** 2 + (mouse_event.pos.y - self._press_pos.y) ** 2) ** 0.5
+    self._max_tap_travel = max(self._max_tap_travel, travel)
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
     released_slot = self._slot_at(mouse_pos)
-    if self._pressed_slot is not None and released_slot == self._pressed_slot:
-      toggle_favorite_slot(self._pressed_slot, ui_state.params, ui_state.params_memory)
+    valid_tap = (
+      self._pressed_slot is not None and
+      released_slot == self._pressed_slot and
+      self._max_tap_travel <= self.MAX_TAP_TRAVEL
+    )
+    if valid_tap and toggle_favorite_slot(self._pressed_slot, ui_state.params, ui_state.params_memory):
+      self._feedback_slot = self._pressed_slot
+      self._feedback_started_at = rl.get_time()
       self._interacting = True
+    else:
+      self._feedback_slot = None
     self._pressed_slot = None
+    self._press_pos = None
+    self._max_tap_travel = 0.0
 
 
 class MinSteerSpeedBanner(Widget):
@@ -475,6 +553,7 @@ class AugmentedRoadView(CameraView):
     self._last_click_time = 0.0
     self._reverse_driver_camera_frames = 0
     self._reverse_driver_camera_active = False
+    self._sidebar_personality_pressed = False
 
     # Bookmark icon with swipe gesture
     self._bookmark_icon = BookmarkIcon(bookmark_callback)
@@ -528,7 +607,59 @@ class AugmentedRoadView(CameraView):
     else:
       self._offroad_label.set_text("start the car to\nuse openpilot")
 
+  def _sidebar_rect(self) -> rl.Rectangle:
+    return rl.Rectangle(
+      self.rect.x + self.rect.width - SIDE_PANEL_WIDTH,
+      self.rect.y,
+      SIDE_PANEL_WIDTH,
+      self.rect.height,
+    )
+
+  def _sidebar_widgets_visible(self) -> bool:
+    return not ui_state.params.get_bool("StockConfidenceBallWidget") or self._sidebar_widgets.demo_active
+
+  def _sidebar_personality_touch_enabled(self) -> bool:
+    return (
+      ui_state.started and
+      self._sidebar_widgets_visible() and
+      not ui_state.params.get_bool("SafeMode")
+    )
+
+  def _touch_in_sidebar(self, mouse_pos: MousePos) -> bool:
+    return rl.check_collision_point_rec(mouse_pos, self._sidebar_rect())
+
+  def _cycle_personality_profile(self) -> None:
+    current = ui_state.params.get_int("LongitudinalPersonality", return_default=True, default=int(log.LongitudinalPersonality.standard))
+    profiles = (
+      int(log.LongitudinalPersonality.aggressive),
+      int(log.LongitudinalPersonality.standard),
+      int(log.LongitudinalPersonality.relaxed),
+    )
+    try:
+      current_idx = profiles.index(int(current))
+    except ValueError:
+      current_idx = 1
+    next_personality = profiles[(current_idx + 1) % len(profiles)]
+    ui_state.params.put_int("LongitudinalPersonality", next_personality)
+    ui_state.personality = next_personality
+
+  def _handle_mouse_press(self, mouse_pos: MousePos):
+    self._sidebar_personality_pressed = (
+      self._sidebar_personality_touch_enabled() and
+      self._touch_in_sidebar(mouse_pos)
+    )
+    if not self._sidebar_personality_pressed:
+      super()._handle_mouse_press(mouse_pos)
+
   def _handle_mouse_release(self, mouse_pos: MousePos):
+    if self._sidebar_personality_pressed:
+      if self._sidebar_personality_touch_enabled() and self._touch_in_sidebar(mouse_pos):
+        self._cycle_personality_profile()
+      self._sidebar_personality_pressed = False
+      return
+
+    self._sidebar_personality_pressed = False
+
     # Don't trigger click callback if bookmark or HUD widgets consumed the tap.
     if not self._bookmark_icon.interacting() and not self._hud_renderer.user_interacting() and not self._favorite_slots.interacting():
       super()._handle_mouse_release(mouse_pos)
@@ -755,7 +886,11 @@ class AugmentedRoadView(CameraView):
 
   def _calc_frame_matrix(self, rect: rl.Rectangle) -> np.ndarray:
     if self.stream_type == DRIVER_CAM:
-      return CameraView._calc_frame_matrix(self, rect)
+      base = CameraView._calc_frame_matrix(self, rect)
+      driver_view_ratio = 1.5
+      base[0, 0] *= driver_view_ratio
+      base[1, 1] *= driver_view_ratio
+      return base
 
     # Get camera configuration
     # TODO: cache with vEgo?

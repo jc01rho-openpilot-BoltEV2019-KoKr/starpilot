@@ -13,7 +13,6 @@ CATEGORIES = [
     {"file": "sounds_settings.cc", "name": "Sounds & Alerts", "icon": "bi-volume-up"},
     {"file": "vehicle_settings.cc", "name": "Vehicle", "icon": "bi-car-front"},
     {"file": "device_settings.cc", "name": "Device & Data", "icon": "bi-hdd"},
-    {"file": "model_settings.cc", "name": "Model & Customization", "icon": "bi-cpu"},
 ]
 
 DROPDOWN_MAPPING = {
@@ -63,13 +62,66 @@ INJECTED_SECTION_PARAMS = {
 # Keys explicitly hidden from The Galaxy's generic settings UI.
 HIDDEN_KEYS = {
     "FrogsGoMoosTweak",
+    "HumanAcceleration",
+    "DisableWideRoad",
     "LockDoorsTimer",
     "NewLongAPI",
     "ToyotaDoors",
+    "ReverseCruise",
 }
+
+HIDDEN_SECTION_NAMES = {"Model & Customization"}
 
 # Keys that are boolean toggles despite ambiguous defaults in starpilot_variables.py.
 FORCE_BOOL_KEYS = {"EVTuning"}
+
+
+def get_param_settings_tiers():
+    params_path = os.path.join(REPO_ROOT, "common/params_keys.h")
+    tiers = {}
+    with open(params_path, "r", encoding="utf-8") as params_file:
+        for line in params_file:
+            match = re.match(r'\s*\{"([^"]+)",', line)
+            if match:
+                tiers[match.group(1)] = "simple" if "SETTINGS_SIMPLE" in line else "advanced"
+    return tiers
+
+
+PARAM_SETTINGS_TIERS = get_param_settings_tiers()
+
+
+def apply_settings_tiers(layout):
+    for section in layout:
+        params = section.get("params", [])
+        params_by_key = {param["key"]: param for param in params if "key" in param}
+        resolved = {}
+
+        def resolve_tier(key, resolving=None):
+            if key in resolved:
+                return resolved[key]
+
+            resolving = set(resolving or ())
+            if key in resolving:
+                return "advanced"
+            resolving.add(key)
+
+            parent_key = params_by_key.get(key, {}).get("parent_key")
+            own_tier = PARAM_SETTINGS_TIERS.get(key)
+            if parent_key:
+                parent_tier = resolve_tier(parent_key, resolving)
+                resolved[key] = parent_tier if own_tier is None else (
+                    "advanced" if "advanced" in (parent_tier, own_tier) else "simple"
+                )
+            else:
+                resolved[key] = own_tier or "advanced"
+            return resolved[key]
+
+        for param in params:
+            key = param.get("key")
+            if key:
+                param["settings_tier"] = resolve_tier(key)
+
+    return layout
 
 DEVELOPER_SIDEBAR_METRIC_KEYS = {
     "DeveloperSidebarMetric1",
@@ -557,6 +609,8 @@ def merge_layouts(existing_layout, generated_layout):
 
     for section in existing_layout:
         name = section["name"]
+        if name in HIDDEN_SECTION_NAMES:
+            continue
         generated = generated_sections.get(name)
         if generated is None:
             merged_layout.append(section)
@@ -615,8 +669,9 @@ def main():
         with open(output_path, 'r', encoding='utf-8') as f:
             existing_layout = json.load(f)
         layout = merge_layouts(existing_layout, generated_layout)
+    layout = apply_settings_tiers(layout)
     with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(layout, f, indent=2)
+        json.dump(layout, f, indent=2, ensure_ascii=False)
 
 if __name__ == '__main__':
     main()

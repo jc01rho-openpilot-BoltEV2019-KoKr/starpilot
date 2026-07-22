@@ -27,6 +27,40 @@ class FakeModelManager:
     return None
 
 
+def test_background_toggle_update_does_not_mutate_active_toggles():
+  active_toggles = SimpleNamespace(holiday_themes=False, random_themes=False, enabled=False)
+
+  class FakeVariables:
+    def __init__(self):
+      self.starpilot_toggles = active_toggles
+      self.clear_update_flag = None
+
+    def update(self, holiday_theme, started, clear_update_flag=True):
+      self.clear_update_flag = clear_update_flag
+      self.starpilot_toggles.enabled = True
+
+  theme_manager = FakeThemeManager()
+  theme_manager.holiday_theme = "stock"
+  theme_manager.theme_updated = False
+  result = {}
+
+  starpilot_process.update_toggles_in_background(
+    result,
+    FakeVariables(),
+    True,
+    theme_manager,
+    FakeThreadManager(),
+    False,
+    FakeParams(),
+    active_toggles,
+  )
+
+  updated_variables, updated_toggles = result["update"]
+  assert active_toggles.enabled is False
+  assert updated_toggles.enabled is True
+  assert updated_variables.clear_update_flag is False
+
+
 def test_transition_offroad_skips_invalid_gps_persist():
   params = FakeParams()
   planner = SimpleNamespace(gps_position={

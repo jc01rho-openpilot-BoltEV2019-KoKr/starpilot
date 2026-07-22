@@ -18,6 +18,13 @@ class CarInterface(CarInterfaceBase):
       return get_preap_accel_limits(current_speed)
     return CarInterfaceBase.get_pid_accel_limits(CP, current_speed, cruise_speed)
 
+  @classmethod
+  def get_params(cls, candidate, fingerprint, car_fw, alpha_long, is_release, docs, starpilot_toggles):
+    ret = super().get_params(candidate, fingerprint, car_fw, alpha_long, is_release, docs, starpilot_toggles)
+    if candidate == CAR.TESLA_MODEL_3 and getattr(starpilot_toggles, "tesla_cooperative_steering", False):
+      ret.safetyConfigs[0].safetyParam |= TeslaSafetyFlags.COOP_STEERING.value
+    return ret
+
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
     ret.brand = "tesla"

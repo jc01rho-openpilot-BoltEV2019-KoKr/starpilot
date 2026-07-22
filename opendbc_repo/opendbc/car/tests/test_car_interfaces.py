@@ -14,7 +14,7 @@ from opendbc.car.car_helpers import _apply_disable_openpilot_long, interfaces
 from opendbc.car.chrysler.carcontroller import CarController as ChryslerCarController
 from opendbc.car.chrysler.carstate import CarState as ChryslerCarState
 from opendbc.car.chrysler.interface import CarInterface as ChryslerCarInterface
-from opendbc.car.chrysler.values import CAR as CHRYSLER_CAR, DBC as CHRYSLER_DBC, ChryslerStarPilotFlags
+from opendbc.car.chrysler.values import CAR as CHRYSLER_CAR, DBC as CHRYSLER_DBC, ChryslerSafetyFlags, ChryslerStarPilotFlags
 from opendbc.car.fingerprints import FW_VERSIONS
 from opendbc.car.fw_versions import FW_QUERY_CONFIGS
 from opendbc.car.hyundai.interface import CarInterface as HyundaiCarInterface
@@ -79,6 +79,7 @@ def get_test_starpilot_toggles() -> SimpleNamespace:
     sng_hack=False,
     subaru_sng=False,
     subaru_sng_manual_parking_brake=False,
+    tesla_cooperative_steering=False,
     unlock_doors=False,
     vEgoStopping=0.5,
     volt_sng=False,
@@ -211,6 +212,33 @@ class TestCarInterfaces:
     lkas_parser = CANParser(CHRYSLER_DBC[car_params.carFingerprint][Bus.pt], [("LKAS_COMMAND", 50)], 0)
     lkas_parser.update([0, can_sends])
     assert lkas_parser.vl["LKAS_COMMAND"]["LKAS_CONTROL_BIT"] == 1
+
+  @pytest.mark.parametrize("candidate", (CHRYSLER_CAR.JEEP_GRAND_CHEROKEE, CHRYSLER_CAR.JEEP_GRAND_CHEROKEE_2019))
+  def test_jeep_brake_hold_safety_capability_is_provisioned(self, candidate):
+    car_params = ChryslerCarInterface.get_params(
+      candidate,
+      {bus: {} for bus in range(8)},
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=get_test_starpilot_toggles(),
+    )
+
+    assert car_params.safetyConfigs[0].safetyParam & ChryslerSafetyFlags.JEEP_BRAKE_HOLD.value
+
+  def test_jeep_brake_hold_safety_capability_is_not_provisioned_for_non_jeep(self):
+    car_params = ChryslerCarInterface.get_params(
+      CHRYSLER_CAR.CHRYSLER_PACIFICA_2020,
+      {bus: {} for bus in range(8)},
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=get_test_starpilot_toggles(),
+    )
+
+    assert not car_params.safetyConfigs[0].safetyParam & ChryslerSafetyFlags.JEEP_BRAKE_HOLD.value
 
   def test_gm_bolt_gen2_pedal_safety_flags(self):
     CarInterface = interfaces[GM_CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL]

@@ -4,7 +4,16 @@ import subprocess
 
 from pathlib import Path
 
-from openpilot.starpilot.navigation.mapd_wrapper import CorruptTileMonitor, quarantine_offline_tile, run_mapd_once, terminate_child, wait_for_road_state_change
+from openpilot.starpilot.navigation.mapd_wrapper import (
+  WAIT_FOR_GPS_EXIT_CODE,
+  CorruptTileMonitor,
+  is_null_island_tile,
+  quarantine_offline_tile,
+  run_mapd_once,
+  terminate_child,
+  wait_for_gps_fix_or_road_state_change,
+  wait_for_road_state_change,
+)
 
 
 def _loading_line(filename: str) -> str:
@@ -52,6 +61,12 @@ def test_quarantine_offline_tile_ignores_missing_file(tmp_path, monkeypatch):
   assert quarantine_offline_tile(missing_tile.as_posix()) is None
 
 
+def test_null_island_tile_detection():
+  assert is_null_island_tile("/data/media/0/osm/offline/-2/-2/-0.250000_-0.250000_0.000000_0.000000")
+  assert not is_null_island_tile("/data/media/0/osm/offline/42/-72/42.500000_-71.750000_42.750000_-71.500000")
+  assert not is_null_island_tile("not-a-tile")
+
+
 def test_run_mapd_once_stops_for_missing_offline_coverage(tmp_path, monkeypatch):
   missing_tile = tmp_path / "offline/36/-98/37.500000_-98.000000_37.750000_-97.750000"
   output = []
@@ -83,6 +98,35 @@ def test_run_mapd_once_stops_for_missing_offline_coverage(tmp_path, monkeypatch)
   assert proc.terminated
 
 
+def test_run_mapd_once_waits_for_gps_after_null_island_lookup(tmp_path, monkeypatch):
+  missing_tile = tmp_path / "offline/-2/-2/-0.250000_-0.250000_0.000000_0.000000"
+  output = (_loading_line(missing_tile.as_posix()), _error_line())
+
+  class CompletedProcess:
+    pid = 123
+
+    def __init__(self):
+      self.stdout = iter(f"{line}\n" for line in output)
+      self.terminated = False
+
+    def poll(self):
+      return 0 if self.terminated else None
+
+    def terminate(self):
+      self.terminated = True
+
+    def wait(self, timeout=None):
+      return 0
+
+  proc = CompletedProcess()
+  monkeypatch.setitem(run_mapd_once.__globals__, "OFFLINE_ROOT", tmp_path / "offline")
+  monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: proc)
+  monkeypatch.setattr("signal.signal", lambda *args: None)
+
+  assert run_mapd_once() == WAIT_FOR_GPS_EXIT_CODE
+  assert proc.terminated
+
+
 def test_missing_coverage_waits_for_road_state_change(monkeypatch):
   class Params:
     states = iter((True, True, False))
@@ -97,6 +141,37 @@ def test_missing_coverage_waits_for_road_state_change(monkeypatch):
   wait_for_road_state_change(Params())
 
   assert sleeps == [1.0]
+
+
+def test_null_island_wait_ends_when_gps_gets_a_fix():
+  class Params:
+    def get_bool(self, key):
+      assert key == "IsOnroad"
+      return True
+
+  class GpsLocation:
+    hasFix = False
+
+  class SubMaster:
+    def __init__(self):
+      self.updated = {"gpsLocationExternal": False}
+      self.location = GpsLocation()
+      self.update_count = 0
+
+    def update(self, timeout):
+      assert timeout == 1000
+      self.update_count += 1
+      self.updated["gpsLocationExternal"] = True
+      self.location.hasFix = self.update_count == 2
+
+    def __getitem__(self, key):
+      assert key == "gpsLocationExternal"
+      return self.location
+
+  sm = SubMaster()
+  wait_for_gps_fix_or_road_state_change(Params(), sm)
+
+  assert sm.update_count == 2
 
 
 def test_terminate_child_tolerates_wedged_process():

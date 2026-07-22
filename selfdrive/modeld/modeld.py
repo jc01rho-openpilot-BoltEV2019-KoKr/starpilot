@@ -16,7 +16,7 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType, VisionBuf
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
 from openpilot.common.filter_simple import FirstOrderFilter
-from openpilot.common.file_chunker import read_file_chunked
+from openpilot.common.file_chunker import file_chunked_exists, open_file_chunked, read_file_chunked
 from openpilot.common.realtime import config_realtime_process, DT_MDL
 from openpilot.common.transformations.camera import DEVICE_CAMERAS
 from openpilot.common.transformations.model import get_warp_matrix
@@ -38,8 +38,9 @@ from openpilot.selfdrive.modeld.compile_modeld import (
   make_split_input_queues,
   make_supercombo_input_queues,
 )
-from openpilot.selfdrive.modeld.helpers import get_tg_input_devices
-from openpilot.starpilot.assets.model_manager import ModelManager
+from openpilot.selfdrive.modeld.helpers import get_tg_input_devices, load_oob, tinygrad_dev_config, usbgpu_present
+from openpilot.selfdrive.modeld.usbgpu_link import wait_usbgpu_link
+from openpilot.starpilot.assets.model_manager import ModelManager, model_uses_external_gpu
 from openpilot.starpilot.common.model_versions import is_tinygrad_model_version
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles, MODELS_PATH, params_memory
 
@@ -51,7 +52,7 @@ BUILTIN_MODEL_KEY = "sc2"
 BUILTIN_MODEL_ALIASES = {BUILTIN_MODEL_KEY, "sc"}
 
 
-LAT_SMOOTH_SECONDS = 0.0
+LAT_SMOOTH_SECONDS = 0.1
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
 
@@ -171,6 +172,21 @@ class FrameMeta:
     if vipc is not None:
       self.frame_id, self.timestamp_sof, self.timestamp_eof = vipc.frame_id, vipc.timestamp_sof, vipc.timestamp_eof
 
+
+def _load_model_artifact(path: Path):
+  """Load legacy pickle artifacts and the streaming OOB format used by large GPU models."""
+  with open_file_chunked(path) as artifact_file:
+    pickle_header = artifact_file.peek(2)[:2]
+    legacy_pickle = (
+      len(pickle_header) == 2 and pickle_header[0] == 0x80 and pickle_header[1] <= pickle.HIGHEST_PROTOCOL
+    )
+    if legacy_pickle:
+      return pickle.load(artifact_file)
+
+  with open_file_chunked(path) as artifact_file:
+    return load_oob(artifact_file)
+
+
 class ModelState:
   prev_desire: np.ndarray
 
@@ -190,9 +206,13 @@ class ModelState:
     )
     return numpy_inputs, prev_desired_curv_key
 
-  def __init__(self, cam_w: int, cam_h: int):
+  def __init__(self, cam_w: int, cam_h: int, external_gpu_active: bool = False):
     params = Params()
     model_id = _canonical_model_id(_resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY)
+    requires_external_gpu = model_uses_external_gpu(model_id)
+    if requires_external_gpu and not external_gpu_active:
+      cloudlog.error(f"Model {model_id} requires an external GPU; falling back to {BUILTIN_MODEL_KEY}")
+      model_id = BUILTIN_MODEL_KEY
     use_builtin = model_id == BUILTIN_MODEL_KEY
     loaded_builtin = use_builtin
     if use_builtin:
@@ -200,22 +220,25 @@ class ModelState:
     else:
       model_path = MODELS_PATH / f"{model_id}_driving_tinygrad.pkl"
 
-    if not model_path.is_file() and not use_builtin:
+    if not file_chunked_exists(model_path) and not use_builtin:
       cloudlog.error(f"Missing model artifact {model_path}, downloading {model_id}...")
       try:
         ModelManager(params, params_memory).download_model(model_id)
       except Exception:
         cloudlog.exception(f"Failed to download model {model_id}")
-    if not model_path.is_file() and not use_builtin:
+    if not file_chunked_exists(model_path) and not use_builtin:
       fallback_path = Path(__file__).parent / "models" / "driving_tinygrad.pkl"
-      if fallback_path.is_file():
+      if file_chunked_exists(fallback_path):
         cloudlog.error(f"Falling back to builtin model artifact after {model_id} download failed")
         model_path = fallback_path
         loaded_builtin = True
-    if not model_path.is_file():
+        requires_external_gpu = False
+    if not file_chunked_exists(model_path):
       raise FileNotFoundError(model_path)
 
-    artifact = pickle.loads(read_file_chunked(str(model_path)))
+    self.uses_external_gpu = external_gpu_active and requires_external_gpu and not loaded_builtin
+    artifact = (_load_model_artifact(model_path) if self.uses_external_gpu
+                else pickle.loads(read_file_chunked(str(model_path))))
     if artifact.get("format_version") != ARTIFACT_FORMAT_VERSION:
       raise ValueError(
         f"Unsupported model artifact format {artifact.get('format_version')!r}; "
@@ -294,7 +317,7 @@ class ModelState:
   @property
   def QUEUE_DEV(self) -> str:
     if not hasattr(self, "_queue_dev"):
-      devices = get_tg_input_devices(PROCESS_NAME, usbgpu=False)
+      devices = get_tg_input_devices(PROCESS_NAME, usbgpu=self.uses_external_gpu)
       self._warp_dev = devices["WARP_DEV"]
       self._queue_dev = devices["QUEUE_DEV"]
     return self._queue_dev
@@ -415,6 +438,22 @@ def main(demo=False):
   setproctitle(PROCESS_NAME)
   config_realtime_process(7, 54)
 
+  params = Params()
+  selected_model = _canonical_model_id(_resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY)
+  usbgpu_present_now = usbgpu_present()
+  external_model_selected = model_uses_external_gpu(selected_model)
+  external_artifact = MODELS_PATH / f"{selected_model}_driving_tinygrad.pkl"
+  external_artifact_ready = external_model_selected and file_chunked_exists(external_artifact)
+  external_gpu_requested = usbgpu_present_now and external_model_selected
+  params.put_bool("UsbGpuPresent", usbgpu_present_now)
+  params.put_bool("UsbGpuCompiled", external_artifact_ready)
+  params.put_bool("UsbGpuActive", False)
+  if external_gpu_requested:
+    from tinygrad.helpers import DEV
+    device_config = tinygrad_dev_config(True, TICI)
+    DEV.value = device_config
+    os.environ["DEV"] = device_config
+
   # visionipc clients
   while True:
     available_streams = VisionIpcClient.available_streams("camerad", block=False)
@@ -440,7 +479,21 @@ def main(demo=False):
 
   start_time = time.monotonic()
   cloudlog.warning("loading model")
-  model = ModelState(vipc_client_main.width, vipc_client_main.height)
+  if external_gpu_requested:
+    wait_usbgpu_link()
+  try:
+    model = ModelState(vipc_client_main.width, vipc_client_main.height, external_gpu_requested)
+  except Exception:
+    if not external_gpu_requested:
+      raise
+    cloudlog.exception(f"Failed to load external-GPU model {selected_model}; falling back to {BUILTIN_MODEL_KEY}")
+    device_config = tinygrad_dev_config(False, TICI)
+    DEV.value = device_config
+    os.environ["DEV"] = device_config
+    model = ModelState(vipc_client_main.width, vipc_client_main.height, False)
+  external_gpu_active = model.uses_external_gpu
+  params.put_bool("UsbGpuCompiled", external_model_selected and file_chunked_exists(external_artifact))
+  params.put_bool("UsbGpuActive", external_gpu_active)
   cloudlog.warning(f"model loaded in {time.monotonic() - start_time:.1f}s, modeld starting")
 
   # messaging
@@ -448,7 +501,6 @@ def main(demo=False):
   sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay", "starpilotPlan"])
 
   publish_state = PublishState()
-  params = Params()
   # setup filter to track dropped frames
   frame_dropped_filter = FirstOrderFilter(0., 10., 1. / ModelConstants.MODEL_FREQ)
   frame_id = 0

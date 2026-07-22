@@ -8,6 +8,7 @@ from openpilot.starpilot.common.starpilot_variables import CITY_SPEED_LIMIT, CRU
 
 CALIBRATION_PROGRESS_THRESHOLD = 10 / DT_MDL
 CSC_MIN_SPEED = CITY_SPEED_LIMIT * CV.MPH_TO_MS
+CSC_MAX_DECEL_RATE = 1.5
 MAX_CURVATURE = 0.1
 MIN_CURVATURE = 0.001
 PERCENTILE = 90
@@ -139,10 +140,13 @@ class CurveSpeedController:
 
     if self.target_set:
       csc_speed = (lateral_acceleration / abs(self.starpilot_planner.road_curvature))**0.5
-      decel_rate = (v_ego - csc_speed) / self.starpilot_planner.time_to_curve
-
-      self.target -= decel_rate * DT_MDL
-      self.target = float(np.clip(self.target, CSC_MIN_SPEED, csc_speed))
+      csc_speed = max(float(csc_speed), CSC_MIN_SPEED)
+      if csc_speed >= v_ego:
+        self.target = v_ego
+      else:
+        time_to_curve = max(float(self.starpilot_planner.time_to_curve), DT_MDL)
+        decel_rate = float(np.clip((v_ego - csc_speed) / time_to_curve, 0.0, CSC_MAX_DECEL_RATE))
+        self.target = float(np.clip(self.target - decel_rate * DT_MDL, csc_speed, v_ego))
     else:
       self.target_set = True
       self.target = v_ego

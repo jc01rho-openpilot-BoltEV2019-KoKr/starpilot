@@ -84,9 +84,8 @@ class StarPilotFollowing:
     if self.starpilot_planner.starpilot_weather.weather_id != 0:
       self.t_follow = min(self.t_follow + self.starpilot_planner.starpilot_weather.increase_following_distance, MAX_T_FOLLOW)
 
-    prioritize_smooth_following = bool(getattr(starpilot_toggles, "prioritize_smooth_following", False))
     self.disable_throttle = False
-    if not prioritize_smooth_following and self.starpilot_planner.tracking_lead and self.starpilot_planner.lead_one.status:
+    if self.starpilot_planner.tracking_lead and self.starpilot_planner.lead_one.status:
       lead_distance = self.starpilot_planner.lead_one.dRel
       v_lead = self.starpilot_planner.lead_one.vLead
       closing_speed = max(0.0, v_ego - v_lead)

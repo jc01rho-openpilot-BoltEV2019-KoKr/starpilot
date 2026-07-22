@@ -10,7 +10,12 @@ import cv2
 
 import starpilot.system.speed_limit_vision as slv
 
-from scripts.speed_limit_vision import common
+if __package__ in (None, ""):
+  import sys
+  sys.path.insert(0, str(Path(__file__).resolve().parent))
+  import common  # type: ignore  # noqa: TID251
+else:
+  from . import common
 from scripts.speed_limit_vision import evaluate_bookmark_leadins as ebl
 
 
@@ -22,7 +27,12 @@ def parse_args():
   parser.add_argument("--clip-root", type=Path, default=ebl.DEFAULT_CLIP_ROOT, help="Copied route clip root.")
   parser.add_argument("--qlog-mtimes", type=Path, default=ebl.DEFAULT_QLOG_MTIMES, help="Text file with '<qlog path> <mtime epoch>' lines.")
   parser.add_argument("--session-root", type=Path, default=ebl.DEFAULT_SESSION_ROOT, help="Directory containing debug session folders.")
-  parser.add_argument("--session-route-map", type=Path, default=common.preferred_session_route_map_path(), help="JSON file mapping debug session ids to route log ids.")
+  parser.add_argument(
+    "--session-route-map",
+    type=Path,
+    default=common.preferred_session_route_map_path(),
+    help="JSON file mapping debug session ids to route log ids.",
+  )
   parser.add_argument("--models-dir", type=Path, help="Directory containing speed_limit_us_detector.onnx and speed_limit_us_value_classifier.onnx.")
   parser.add_argument("--search-before", type=float, default=18.0, help="Seconds before the bookmark to scan.")
   parser.add_argument("--search-after", type=float, default=2.0, help="Seconds after the bookmark to scan.")
@@ -46,19 +56,23 @@ def configure_models(models_dir: Path | None):
   slv.US_CLASSIFIER_MODEL_PATH = classifier_path
 
 
-def iter_video_samples(clip_path: Path, start_s: float, end_s: float, sample_every: float):
+def iter_video_samples(clip_path: Path, start_s: float, end_s: float, sample_every: float, seek: bool = False):
   capture = cv2.VideoCapture(str(clip_path))
-  fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
+  fps = common.source_video_fps(clip_path, capture.get(cv2.CAP_PROP_FPS))
   start_frame = max(int(start_s * fps), 0)
   end_frame = max(int(end_s * fps), start_frame)
 
   frame_index = 0
-  while frame_index < start_frame:
-    ok, _ = capture.read()
-    if not ok:
-      capture.release()
-      return
-    frame_index += 1
+  if seek:
+    capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    frame_index = max(round(capture.get(cv2.CAP_PROP_POS_FRAMES)), 0)
+  else:
+    while frame_index < start_frame:
+      ok, _ = capture.read()
+      if not ok:
+        capture.release()
+        return
+      frame_index += 1
 
   next_sample_s = start_s
   while frame_index <= end_frame:
@@ -76,7 +90,14 @@ def iter_video_samples(clip_path: Path, start_s: float, end_s: float, sample_eve
   capture.release()
 
 
-def iter_context_frames(clip_root: Path, window: ebl.BookmarkWindow, search_before: float, search_after: float, sample_every: float):
+def iter_context_frames(
+  clip_root: Path,
+  window: ebl.BookmarkWindow,
+  search_before: float,
+  search_after: float,
+  sample_every: float,
+  seek: bool = False,
+):
   ranges: list[tuple[Path, float, float]] = []
   start_s = window.segment_offset_s - search_before
   end_s = window.segment_offset_s + search_after
@@ -92,7 +113,7 @@ def iter_context_frames(clip_root: Path, window: ebl.BookmarkWindow, search_befo
     ranges.append((current_clip, max(start_s, 0.0), min(end_s, 60.0)))
 
   for clip_path, range_start_s, range_end_s in ranges:
-    for source_time_s, frame_bgr in iter_video_samples(clip_path, range_start_s, range_end_s, sample_every):
+    for source_time_s, frame_bgr in iter_video_samples(clip_path, range_start_s, range_end_s, sample_every, seek=seek):
       if clip_path.parent.name.endswith(f"--{window.segment - 1}"):
         relative_time_s = source_time_s - 60.0
       else:
@@ -216,6 +237,8 @@ def write_manifest(rows: list[dict], path: Path):
       "route",
       "segment",
       "relative_time_s",
+      "source_segment",
+      "source_time_s",
       "source_video_path",
       "score",
       "proposal_confidence",
@@ -270,7 +293,9 @@ def main():
         ranked.append((scored["score"], relative_time_s, source_video_path, source_time_s, frame_bgr, scored))
 
       ranked.sort(key=lambda item: item[0], reverse=True)
-      for rank_index, (_, relative_time_s, source_video_path, _, frame_bgr, scored) in enumerate(ranked[:max(args.top_k, 1)], start=1):
+      for rank_index, (_, relative_time_s, source_video_path, source_time_s, frame_bgr, scored) in enumerate(
+        ranked[:max(args.top_k, 1)], start=1,
+      ):
         x1, y1, x2, y2 = scored["box"]
         crop = frame_bgr[y1:y2, x1:x2]
 
@@ -293,6 +318,8 @@ def main():
           "route": route,
           "segment": window.segment,
           "relative_time_s": f"{relative_time_s:.3f}",
+          "source_segment": window.segment - int(relative_time_s < 0.0),
+          "source_time_s": f"{source_time_s:.3f}",
           "source_video_path": str(source_video_path),
           "score": f"{scored['score']:.4f}",
           "proposal_confidence": f"{scored['proposal_confidence']:.4f}",

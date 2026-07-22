@@ -17,6 +17,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPag
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   COMPACT_PANEL_METRICS,
+  AdjustorTogglesPanelView,
   AetherAdjustorRow,
   AetherListColors,
   PanelManagerView,
@@ -44,19 +45,12 @@ SOUNDS_PANEL_METRICS = replace(
 
 
 
-class SoundsManagerView(PanelManagerView):
+class SoundsManagerView(AdjustorTogglesPanelView):
   METRICS = SOUNDS_PANEL_METRICS
-
-  @property
-  def vertical_scrolling_disabled(self) -> bool:
-    return True
 
   def __init__(self, controller: StarPilotSoundsLayout):
     super().__init__()
     self._controller = controller
-    self._pressed_target: str | None = None
-    self._adjustor_rows: dict[str, AetherAdjustorRow] = {}
-    self._can_click = True
     self._reset_rect = rl.Rectangle(0, 0, 0, 0)
 
     self._tile_grid_h = 0.0
@@ -93,16 +87,6 @@ class SoundsManagerView(PanelManagerView):
     page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
     self._set_toggle_pages([toggle_defs[i:i+page_size] for i in range(0, len(toggle_defs), page_size)])
 
-  def _set_active_adjustor(self, key: str, active: bool):
-    if active:
-      if self._active_adjustor_key and self._active_adjustor_key != key:
-        old = self._adjustor_rows.get(self._active_adjustor_key)
-        if old:
-          old.reset_interaction()
-      self._active_adjustor_key = key
-    elif self._active_adjustor_key == key:
-      self._active_adjustor_key = None
-
   def _init_adjustors(self):
     for key in self._controller.VOLUME_KEYS:
       info = self._controller.VOLUME_INFO[key]
@@ -110,13 +94,13 @@ class SoundsManagerView(PanelManagerView):
       adjustor = AetherAdjustorRow(
         tr(info["title"]),
         tr(info["subtitle"]),
-        0.0, 101.0, 1.0,
+        float(info["min"]), 101.0, 1.0,
         get_value=lambda k=key: float(self._controller._params.get_int(k, return_default=True, default=101)),
         on_change=lambda _v: None,
         on_commit=None,
         unit="%",
         labels={0.0: tr("Muted"), 101.0: tr("Auto")},
-        presets=[0, 25, 50, 75, 101],
+        presets=[p for p in [0, 25, 50, 75, 101] if p >= info["min"]],
         is_active=lambda: False,
         set_active=lambda active, k=key: self._show_volume_slider(k) if active else None,
         style=PANEL_STYLE,
@@ -186,36 +170,18 @@ class SoundsManagerView(PanelManagerView):
     gui_app.push_widget(
       AetherSliderDialog(
         title=dialog_title,
-        min_val=0.0,
+        min_val=float(min_v),
         max_val=101.0,
         step=1.0,
         current_val=current_val,
         on_close=on_close,
-        presets=[0.0, 25.0, 50.0, 75.0, 101.0],
+        presets=[float(p) for p in [0, 25, 50, 75, 101] if p >= min_v],
         unit="%",
         labels={0.0: tr("Muted"), 101.0: tr("Auto")},
         color=PANEL_STYLE.accent,
         on_change=on_change,
       )
     )
-
-  def _handle_mouse_press(self, mouse_pos: MousePos):
-    super()._handle_mouse_press(mouse_pos)
-    for adjustor in self._adjustor_rows.values():
-      adjustor._handle_mouse_press(mouse_pos)
-    self._toggle_grid._handle_mouse_press(mouse_pos)
-
-  def _handle_mouse_release(self, mouse_pos: MousePos):
-    for adjustor in self._adjustor_rows.values():
-      adjustor._handle_mouse_release(mouse_pos)
-    self._toggle_grid._handle_mouse_release(mouse_pos)
-    super()._handle_mouse_release(mouse_pos)
-
-  def _handle_mouse_event(self, mouse_event: MouseEvent):
-    super()._handle_mouse_event(mouse_event)
-    for adjustor in self._adjustor_rows.values():
-      adjustor._handle_mouse_event(mouse_event)
-    self._toggle_grid._handle_mouse_event(mouse_event)
 
   def _target_at(self, mouse_pos: MousePos) -> str | None:
     if point_hits(mouse_pos, self._reset_rect, None, pad_x=6, pad_y=0):
@@ -225,16 +191,6 @@ class SoundsManagerView(PanelManagerView):
   def _activate_target(self, target: str):
     if target == "action:restore_defaults":
       self._controller._restore_defaults()
-
-  def show_event(self):
-    super().show_event()
-    self._pressed_target = None
-    self._can_click = True
-
-  def hide_event(self):
-    super().hide_event()
-    self._pressed_target = None
-    self._can_click = True
 
   def _measure_content_height(self, content_width: float) -> float:
     col_width = (content_width - SECTION_GAP) / 2
@@ -299,7 +255,7 @@ class SoundsManagerView(PanelManagerView):
 
   def _draw_utility_column(self, y: float, x: float, width: float):
     draw_list_group_shell(rl.Rectangle(x, y, width, self._tiles_container_h), style=PANEL_STYLE)
-    header_y = draw_group_header(x + 24, y + 4, width - 48, tr("ALERTS"))
+    header_y = draw_group_header(x + 24, y + 4, width - 48, tr("Alerts"))
     avail_h = self._tiles_container_h - (header_y - y)
     self._render_page_grid(self._toggle_grid, rl.Rectangle(x + 12, header_y, width - 24, max(0.0, avail_h - 12)))
 
@@ -433,4 +389,4 @@ while True:
     try:
       self._sound_player_process.stdin.write(f"{sound_path}|{volume}\n".encode())
       self._sound_player_process.stdin.flush()
-    except: pass
+    except (BrokenPipeError, OSError): pass

@@ -1,6 +1,7 @@
 import json
 import pyray as rl
 import numpy as np
+import socket
 import time
 import threading
 from collections.abc import Callable
@@ -10,8 +11,11 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
+from openpilot.selfdrive.modeld.helpers import usbgpu_present
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
+
+NETLINK_KOBJECT_UEVENT = 15
 
 BACKLIGHT_OFFROAD = 65 if HARDWARE.get_device_type() == "mici" else 50
 
@@ -81,6 +85,20 @@ class UIState:
     self.is_metric: bool = self.params.get_bool("IsMetric")
     self.is_release = self.params.get_bool("IsReleaseBranch")
     self.always_on_dm: bool = self.params.get_bool("AlwaysOnDM")
+    self.usbgpu: bool = usbgpu_present()
+    self.usbgpu_compiled: bool = self.params.get_bool("UsbGpuCompiled")
+    self.usbgpu_active: bool = self.params.get_bool("UsbGpuActive")
+    self._uevents: socket.socket | None = None
+    if hasattr(socket, "AF_NETLINK"):
+      try:
+        self._uevents = socket.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, NETLINK_KOBJECT_UEVENT)
+        self._uevents.bind((0, 1))
+        self._uevents.setblocking(False)
+      except OSError:
+        cloudlog.exception("failed to monitor USB hotplug events")
+        if self._uevents is not None:
+          self._uevents.close()
+          self._uevents = None
     self.started: bool = False
     self.ignition: bool = False
     self.recording_audio: bool = False
@@ -119,6 +137,12 @@ class UIState:
 
   def add_offroad_transition_callback(self, callback: Callable[[], None]):
     self._offroad_transition_callbacks.append(callback)
+
+  def remove_offroad_transition_callback(self, callback: Callable[[], None]):
+    try:
+      self._offroad_transition_callbacks.remove(callback)
+    except ValueError:
+      pass
 
   def add_engaged_transition_callback(self, callback: Callable[[], None]):
     self._engaged_transition_callbacks.append(callback)
@@ -176,6 +200,18 @@ class UIState:
 
     self.is_metric = self.params.get_bool("IsMetric")
     self.always_on_dm = self.params.get_bool("AlwaysOnDM")
+    if self._uevents is not None:
+      try:
+        while self._uevents.recv(4096):
+          self.usbgpu = usbgpu_present()
+      except BlockingIOError:
+        pass
+      except OSError:
+        cloudlog.exception("failed to read USB hotplug event")
+        self._uevents.close()
+        self._uevents = None
+    self.usbgpu_compiled = self.params.get_bool("UsbGpuCompiled")
+    self.usbgpu_active = self.params.get_bool("UsbGpuActive")
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled") if self.started else False
     if self.sm.valid.get("starpilotCarState", False):
       starpilot_car_state = self.sm["starpilotCarState"]

@@ -6,7 +6,6 @@ const FACTORY_RESET_STATUS_POLL_INTERVAL_MS = 1000
 
 const state = reactive({
   showResetDefaultModal: false,
-  showResetStockModal: false,
   showSaveMeModal: false,
   factoryResetBusy: false,
   factoryResetStatus: null,
@@ -99,9 +98,18 @@ async function fetchFactoryResetStatus() {
 
 async function restoreToggles(event) {
   const uploadedFile = event.target.files[0]
-  if (uploadedFile) {
+  if (!uploadedFile) return
+
+  try {
+    if (uploadedFile.size > 5_000_000) {
+      throw new Error("That toggle backup file is too large.")
+    }
+
     const fileContents = await uploadedFile.text()
     const toggleData = JSON.parse(fileContents)
+    if (!toggleData || typeof toggleData !== "object" || Array.isArray(toggleData)) {
+      throw new Error("That file is not a valid toggle backup.")
+    }
 
     const response = await fetch("/api/toggles/restore", {
       method: "POST",
@@ -109,9 +117,17 @@ async function restoreToggles(event) {
       body: JSON.stringify(toggleData),
     })
 
-    const result = await response.json()
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok || result.success === false) {
+      throw new Error(result.message || "Failed to restore toggles.")
+    }
     showSnackbar(result.message || "Toggles restored!")
-
+  } catch (error) {
+    const message = error instanceof SyntaxError
+      ? "That file is not a valid toggle backup."
+      : (error?.message || "Failed to restore toggles.")
+    showSnackbar(message, "error")
+  } finally {
     event.target.value = ""
   }
 }
@@ -139,15 +155,27 @@ export function ToggleControl() {
   fetchFactoryResetStatus()
 
   async function backupToggles() {
-    const response = await fetch("/api/toggles/backup", { method: "POST" })
-    const blob = await response.blob()
+    try {
+      const response = await fetch("/api/toggles/backup", { method: "POST" })
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}))
+        throw new Error(result.message || "Failed to create toggle backup.")
+      }
 
-    const downloadUrl = URL.createObjectURL(blob)
-    const downloadLink = document.createElement("a")
-    downloadLink.href = downloadUrl
-    downloadLink.download = "toggle-backup.json"
-    downloadLink.click()
-    URL.revokeObjectURL(downloadUrl)
+      const blob = await response.blob()
+      const downloadUrl = URL.createObjectURL(blob)
+      const downloadLink = document.createElement("a")
+      downloadLink.href = downloadUrl
+      downloadLink.download = "toggle-backup.json"
+      downloadLink.style.display = "none"
+      document.body.appendChild(downloadLink)
+      downloadLink.click()
+      downloadLink.remove()
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000)
+      showSnackbar("Toggle backup downloaded.")
+    } catch (error) {
+      showSnackbar(error?.message || "Failed to create toggle backup.", "error")
+    }
   }
 
   function confirmResetDefault() {
@@ -161,19 +189,6 @@ export function ToggleControl() {
     showSnackbar("Rebooting...");
     await new Promise(resolve => setTimeout(resolve, 3000));
     await fetch("/api/toggles/reset_default", { method: "POST" });
-  }
-
-  function confirmResetStock() {
-    state.showResetStockModal = true;
-  }
-
-  async function resetTogglesToStock() {
-    state.showResetStockModal = false;
-    showSnackbar("Resetting toggles to stock openpilot values...");
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    showSnackbar("Rebooting...");
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    await fetch("/api/toggles/reset_stock", { method: "POST" });
   }
 
   function triggerRestorePrompt() {
@@ -229,15 +244,12 @@ export function ToggleControl() {
       </section>
 
       <section class="toggle-control-widget" style="margin-left: 1.5rem">
-        <div class="toggle-control-title">Reset Toggles to Default StarPilot</div>
+        <div class="toggle-control-title">Reset Toggles to Default</div>
         <p class="toggle-control-text">
           Reset all toggles to default StarPilot settings.
         </p>
         <button class="toggle-control-button" @click="${confirmResetDefault}">
           Reset Toggles to Default
-        </button>
-        <button class="toggle-control-button" @click="${confirmResetStock}">
-          Reset Toggles to Stock
         </button>
         <div class="toggle-control-danger-zone">
           <div class="toggle-control-danger-title">WARNING: Factory Reset</div>
@@ -277,13 +289,6 @@ export function ToggleControl() {
     onConfirm: resetTogglesToDefault,
     onCancel: () => { state.showResetDefaultModal = false; },
     confirmText: "Reset to Default"
-  }) : ""}
-    ${() => state.showResetStockModal ? Modal({
-    title: "Reset Toggles",
-    message: "Are you sure you want to reset all toggles to stock openpilot values?",
-    onConfirm: resetTogglesToStock,
-    onCancel: () => { state.showResetStockModal = false; },
-    confirmText: "Reset to Stock"
   }) : ""}
     ${() => state.showSaveMeModal ? Modal({
     title: "SAVE ME",

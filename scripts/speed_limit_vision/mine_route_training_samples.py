@@ -20,10 +20,16 @@ import starpilot.system.speed_limit_vision as slv
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import VALUE_LABEL_FIELDS, ensure_dir, preferred_clip_root, resolve_workspace  # type: ignore
+  from common import (  # type: ignore  # noqa: TID251
+    VALUE_LABEL_FIELDS,
+    ensure_dir,
+    preferred_clip_root,
+    resolve_workspace,
+    source_video_fps,
+  )
   from localize_bookmark_signs import configure_models, score_frame  # type: ignore
 else:
-  from .common import VALUE_LABEL_FIELDS, ensure_dir, preferred_clip_root, resolve_workspace
+  from .common import VALUE_LABEL_FIELDS, ensure_dir, preferred_clip_root, resolve_workspace, source_video_fps
   from .localize_bookmark_signs import configure_models, score_frame
 
 
@@ -542,7 +548,7 @@ def mine_route(
       break
     contexts = load_segment_map_context(segment.path)
     capture = cv2.VideoCapture(str(segment.video_path))
-    fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
+    fps = source_video_fps(segment.video_path, capture.get(cv2.CAP_PROP_FPS))
     frame_count = capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0
     duration_s = frame_count / fps if frame_count > 0 else 60.0
     times = sample_times(duration_s, args.sample_every, transition_times(contexts), args.transition_radius, args.transition_step)

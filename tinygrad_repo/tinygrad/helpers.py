@@ -480,10 +480,16 @@ def fetch(url:str, name:pathlib.Path|str|None=None, subdir:str|None=None, gunzip
       if length and (file_size:=os.stat(fp).st_size) < length: raise RuntimeError(f"fetch size incomplete, {file_size} < {length}")
   return fp
 
-def fetch_fw(path:str, name:str, sha256:str) -> bytes:
-  if sys.version_info >= (3,14) and (p:=pathlib.Path(f"/lib/firmware/{path}/{name}.zst")).is_file():
+def _decompress_zstd(data:bytes) -> bytes:
+  if sys.version_info >= (3,14):
     from compression.zstd import decompress
-    if hashlib.sha256(b:=decompress(p.read_bytes())).hexdigest() == sha256: return b
+    return decompress(data)
+  from zstandard import ZstdDecompressor
+  return ZstdDecompressor().decompress(data)
+
+def fetch_fw(path:str, name:str, sha256:str) -> bytes:
+  if (p:=pathlib.Path(f"/lib/firmware/{path}/{name}.zst")).is_file():
+    if hashlib.sha256(b:=_decompress_zstd(p.read_bytes())).hexdigest() == sha256: return b
   return fetch(f"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/1e2c15348485939baf1b6d1f5a7a3b799d80703d/{path}/{name}",
                subdir="fw", sha256=sha256).read_bytes()
 

@@ -157,8 +157,8 @@ SPEED_LIMIT_CLASSES = {
   13: 90,
 }
 
-VALID_SPEED_LIMITS_MPH = set(range(10, 125, 5))
-MIN_PUBLISHABLE_SPEED_LIMIT_MPH = 20
+VALID_SPEED_LIMITS_MPH = set(range(5, 125, 5))
+MIN_PUBLISHABLE_SPEED_LIMIT_MPH = 5
 LEGACY_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_vision.onnx"
 US_DETECTOR_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_detector.onnx"
 US_CLASSIFIER_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_value_classifier.onnx"
@@ -168,10 +168,12 @@ US_DETECTOR_CLASSES = {
   1: "advisory_speed_limit",
   2: "school_zone_speed_limit",
 }
-US_CLASSIFIER_SPEED_VALUES = (15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75)
+US_CLASSIFIER_SPEED_VALUES = (10, 100, 15, 20, 25, 30, 35, 40, 45, 5, 50, 55, 60, 65, 70, 75, 80, 90)
+EXTENDED_CLASSIFIER_SPEED_VALUES = frozenset((5, 10, 80, 90, 100))
 SCHOOL_ZONE_SPEED_VALUES = frozenset((15, 20, 25))
 US_DETECTOR_MIN_CONFIDENCE = 0.06
 US_CLASSIFIER_MIN_CONFIDENCE = 0.60
+EXTENDED_CLASSIFIER_MIN_CONFIDENCE = 0.90
 US_CLASSIFIER_REJECT_MIN_CONFIDENCE = 0.85
 SEPARATE_REJECT_CLASSIFIER_ENABLED = False
 US_REJECT_CLASSIFIER_MIN_CONFIDENCE = 0.85
@@ -293,6 +295,7 @@ class SpeedLimitVisionDaemon:
     self.VisionIpcClient = None
     self.VisionStreamType = None
     self.sm = None
+    self.is_metric = False
 
     if self.use_runtime:
       from cereal import messaging
@@ -304,6 +307,7 @@ class SpeedLimitVisionDaemon:
       self.pm = messaging.PubMaster(["userBookmark"])
       self.params = Params(return_defaults=True)
       self.params_memory = Params(memory=True)
+      self.is_metric = self.params.get_bool("IsMetric")
       self.Ratekeeper = Ratekeeper
       self.VisionIpcClient = VisionIpcClient
       self.VisionStreamType = VisionStreamType
@@ -427,6 +431,20 @@ class SpeedLimitVisionDaemon:
     self.last_logged_candidate = None
     self.last_debug_heartbeat_at = 0.0
 
+  def _speed_value_unit(self):
+    return "km/h" if self.is_metric else "mph"
+
+  def _speed_value_to_ms(self, speed_value):
+    conversion = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
+    return speed_value * conversion
+
+  def _speed_value_from_ms(self, speed_ms):
+    conversion = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
+    return int(round(speed_ms * conversion)) if speed_ms > 0.0 else 0
+
+  def _format_speed_value(self, speed_value):
+    return f"{speed_value} {self._speed_value_unit()}"
+
   def _read_next_map_speed_limit(self):
     if self.params_memory is None:
       return {}
@@ -468,8 +486,9 @@ class SpeedLimitVisionDaemon:
         next_distance_m = filler_next_distance_m if filler_next_distance_m > 0.0 else next_distance_m
         source = "filler"
 
-    current_limit_mph = int(round(current_limit_ms * CV.MS_TO_MPH)) if current_limit_ms > 0.0 else 0
-    next_limit_mph = int(round(next_limit_ms * CV.MS_TO_MPH)) if next_limit_ms > 0.0 else 0
+    # Historical *_mph fields contain the numeric value printed on the sign.
+    current_limit_mph = self._speed_value_from_ms(current_limit_ms)
+    next_limit_mph = self._speed_value_from_ms(next_limit_ms)
     next_distance_m = round(next_distance_m, 1) if next_distance_m > 0.0 else 0.0
 
     return {
@@ -525,6 +544,7 @@ class SpeedLimitVisionDaemon:
       "mapNextSpeedLimitMph": next_limit_mph,
       "mapNextSpeedLimitDistanceM": next_distance_m,
       "mapExpectedSpeedLimitMph": expected_speed_limit_mph,
+      "mapSpeedLimitUnit": self._speed_value_unit(),
       "mapRelation": map_relation,
       "reviewBucket": review_bucket,
     }
@@ -556,6 +576,7 @@ class SpeedLimitVisionDaemon:
       "roadName": self.last_road_name,
       "stream": self.stream_name,
       "publishedSpeedLimitMph": self.published_speed_limit_mph,
+      "speedLimitUnit": self._speed_value_unit(),
       "publishedConfidence": round(self.published_confidence, 4),
       "bookmarkCount": self.debug_bookmark_count,
       "status": self.params_memory.get("VisionSpeedLimitStatus", encoding="utf-8") or "",
@@ -582,9 +603,9 @@ class SpeedLimitVisionDaemon:
 
     summary_parts = [event_type.replace("_", " ")]
     if "speedLimitMph" in fields:
-      summary_parts.append(f"{fields['speedLimitMph']} mph")
+      summary_parts.append(self._format_speed_value(fields["speedLimitMph"]))
     elif "candidateSpeedLimitMph" in fields:
-      summary_parts.append(f"{fields['candidateSpeedLimitMph']} mph")
+      summary_parts.append(self._format_speed_value(fields["candidateSpeedLimitMph"]))
     summary = " ".join(summary_parts)
     self.params_memory.put("VisionSpeedLimitLastEvent", summary[:160])
 
@@ -994,9 +1015,7 @@ class SpeedLimitVisionDaemon:
       stream_name = "wide camera"
 
     if desired_stream is None:
-      self.client = None
-      self.stream_type = None
-      self.stream_name = ""
+      self._disconnect_camera()
       return False
 
     if self.client is None or self.stream_type != desired_stream:
@@ -1008,6 +1027,32 @@ class SpeedLimitVisionDaemon:
       self.client.connect(True)
 
     return self.client.is_connected()
+
+  def _disconnect_camera(self):
+    # Dropping the client closes its imported VisionIPC buffer FDs. Keeping the
+    # client alive offroad pins the previous camerad allocation between drives.
+    self.client = None
+    self.stream_type = None
+    self.stream_name = ""
+
+  def _receive_frame_bgr(self):
+    # Keep VisionBuf and its NumPy view inside this short-lived scope. A local
+    # in run() survives loop iterations and can otherwise retain the old
+    # VisionIpcClient, including all imported camera buffers, while offroad.
+    client = self.client
+    if client is None:
+      return None
+
+    buffer = client.recv()
+    if buffer is None:
+      return None
+
+    data = buffer.data
+    if not data.any():
+      return None
+
+    image = np.frombuffer(data, dtype=np.uint8).reshape((len(data) // client.stride, client.stride))
+    return cv2.cvtColor(image[:client.height * 3 // 2, :client.width], cv2.COLOR_YUV2BGR_NV12)
 
   @staticmethod
   def _letterbox(image, shape=(640, 640), color=(114, 114, 114)):
@@ -1590,12 +1635,16 @@ class SpeedLimitVisionDaemon:
     speed_probabilities = probabilities[:speed_class_count]
     class_index = int(np.argmax(speed_probabilities))
     confidence = float(speed_probabilities[class_index])
+    speed_limit = US_CLASSIFIER_SPEED_VALUES[class_index]
     if has_reject_class and float(probabilities[speed_class_count]) >= max(confidence, US_CLASSIFIER_REJECT_MIN_CONFIDENCE):
       return None
-    if confidence < US_CLASSIFIER_MIN_CONFIDENCE:
+    minimum_confidence = (
+      EXTENDED_CLASSIFIER_MIN_CONFIDENCE if speed_limit in EXTENDED_CLASSIFIER_SPEED_VALUES else US_CLASSIFIER_MIN_CONFIDENCE
+    )
+    if confidence < minimum_confidence:
       return None
 
-    return US_CLASSIFIER_SPEED_VALUES[class_index], confidence
+    return speed_limit, confidence
 
   def _detect_sign_from_detector_classifier(self, frame_bgr):
     frame_height, frame_width = frame_bgr.shape[:2]
@@ -2203,6 +2252,14 @@ class SpeedLimitVisionDaemon:
     if self.params_memory is not None:
       self.params_memory.remove("VisionSpeedLimit")
       self.params_memory.remove("VisionSpeedLimitConfidence")
+      self.params_memory.remove("VisionSpeedLimitSupportCount")
+      self.params_memory.remove("VisionSpeedLimitSupportSpeed")
+
+  def _publish_detection_support(self, speed_limit_mph, support_count):
+    if self.params_memory is None:
+      return
+    self.params_memory.put_int("VisionSpeedLimitSupportCount", support_count)
+    self.params_memory.put_float("VisionSpeedLimitSupportSpeed", self._speed_value_to_ms(speed_limit_mph))
 
   def _publish_status(self, status, clear_speed=False):
     if clear_speed:
@@ -2296,6 +2353,7 @@ class SpeedLimitVisionDaemon:
         "cpuUsagePercent": cpu_usage,
         "livePoseInputsOK": live_pose_inputs_ok,
         "publishedSpeedLimitMph": self.published_speed_limit_mph,
+        "speedLimitUnit": self._speed_value_unit(),
         "publishedConfidence": round(self.published_confidence, 4),
         "lastCandidateSpeedLimitMph": self.last_candidate_speed_limit_mph,
         "lastCandidateConfidence": round(self.last_candidate_confidence, 4),
@@ -2351,14 +2409,14 @@ class SpeedLimitVisionDaemon:
         confidence=round(confidence, 4),
       )
       if self.params_memory is not None:
-        self.params_memory.put_float("VisionSpeedLimit", speed_limit_mph * CV.MPH_TO_MS)
+        self.params_memory.put_float("VisionSpeedLimit", self._speed_value_to_ms(speed_limit_mph))
         self.params_memory.put_float("VisionSpeedLimitConfidence", confidence)
       if published_changed:
         self.history.clear()
         self.history.append(HistoryEntry(speed_limit_mph, confidence, time.monotonic()))
         self._schedule_auto_bookmark(speed_limit_mph, confidence, self.last_publish_change_at)
 
-    status = f"{status_prefix} {speed_limit_mph} mph ({confidence * 100:.0f}%)"
+    status = f"{status_prefix} {self._format_speed_value(speed_limit_mph)} ({confidence * 100:.0f}%)"
     self._publish_status(status, clear_speed=False)
 
   def _should_hold_current_publish(self, speed_limit_mph, confidence, now):
@@ -2399,15 +2457,20 @@ class SpeedLimitVisionDaemon:
     confirmed = self._confirm_detection()
     if confirmed is not None:
       speed_limit_mph, confidence = confirmed
+      support_count = sum(entry.speed_limit_mph == speed_limit_mph for entry in self.history)
       if self._should_hold_current_publish(speed_limit_mph, confidence, now):
         self._publish_status(
-          f"Candidate {speed_limit_mph} mph ({confidence * 100:.0f}%)",
+          f"Candidate {self._format_speed_value(speed_limit_mph)} ({confidence * 100:.0f}%)",
           clear_speed=False,
         )
       else:
         self._publish_detection(speed_limit_mph, confidence, "Holding")
+        self._publish_detection_support(speed_limit_mph, support_count)
     else:
-      self._publish_status(f"Candidate {detection.speed_limit_mph} mph ({detection.confidence * 100:.0f}%)", clear_speed=False)
+      self._publish_status(
+        f"Candidate {self._format_speed_value(detection.speed_limit_mph)} ({detection.confidence * 100:.0f}%)",
+        clear_speed=False,
+      )
 
   def run(self):
     if not self.use_runtime or self.sm is None:
@@ -2436,6 +2499,7 @@ class SpeedLimitVisionDaemon:
         if self.started_prev:
           self._write_debug_event("session_end", reason="offroad")
           self._close_debug_session()
+          self._disconnect_camera()
         self.last_road_name = ""
         self.started_prev = False
         self.current_frame_bgr = None
@@ -2468,7 +2532,7 @@ class SpeedLimitVisionDaemon:
         stale_cleared = self._clear_published_detection_if_stale(now, "camera_unavailable")
         status = "Waiting for camera stream"
         if self.published_speed_limit_mph > 0 and not stale_cleared:
-          status = f"{status}, holding {self.published_speed_limit_mph} mph"
+          status = f"{status}, holding {self._format_speed_value(self.published_speed_limit_mph)}"
         self._publish_status(status, clear_speed=False)
         self._publish_runtime_telemetry(now, "camera_unavailable")
         ratekeeper.keep_time()
@@ -2491,7 +2555,7 @@ class SpeedLimitVisionDaemon:
         ratekeeper.keep_time()
         continue
 
-      buffer = self.client.recv() if self.client is not None else None
+      frame_bgr = self._receive_frame_bgr()
       self.inference_count += 1
       inference_started_at = time.monotonic()
       self.last_frame_process_duration_s = 0.0
@@ -2499,19 +2563,20 @@ class SpeedLimitVisionDaemon:
       self.last_detector_forward_duration_s = 0.0
       self.last_classifier_forward_count = 0
       self.last_classifier_forward_duration_s = 0.0
-      if buffer is None or not buffer.data.any():
+      if frame_bgr is None:
         self.empty_frame_count += 1
         stale_cleared = self._clear_published_detection_if_stale(now, "empty_frame")
         if self.published_speed_limit_mph > 0 and not stale_cleared:
-          self._publish_status(f"Waiting for {self.stream_name}, holding {self.published_speed_limit_mph} mph", clear_speed=False)
+          self._publish_status(
+            f"Waiting for {self.stream_name}, holding {self._format_speed_value(self.published_speed_limit_mph)}",
+            clear_speed=False,
+          )
         else:
           self._publish_status(f"Waiting for {self.stream_name}", clear_speed=False)
         self._publish_runtime_telemetry(now, "empty_frame")
         ratekeeper.keep_time()
         continue
 
-      image = np.frombuffer(buffer.data, dtype=np.uint8).reshape((len(buffer.data) // self.client.stride, self.client.stride))
-      frame_bgr = cv2.cvtColor(image[:self.client.height * 3 // 2, :self.client.width], cv2.COLOR_YUV2BGR_NV12)
       self.current_frame_bgr = frame_bgr
 
       if detector_due:

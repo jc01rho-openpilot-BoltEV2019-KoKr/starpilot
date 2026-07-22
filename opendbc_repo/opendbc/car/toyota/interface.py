@@ -28,6 +28,9 @@ class CarInterface(CarInterfaceBase):
     ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.toyota)]
     ret.safetyConfigs[0].safetyParam = EPS_SCALE[candidate]
 
+    if candidate == CAR.LEXUS_IS:
+      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.ALT_CRUISE.value
+
     # BRAKE_MODULE is on a different address for these cars
     if DBC[candidate][Bus.pt] == "toyota_new_mc_pt_generated":
       ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.ALT_BRAKE.value
@@ -59,6 +62,17 @@ class CarInterface(CarInterfaceBase):
     if use_sdsu:
       # sDSU / radar filter hardware needs the Toyota safety long-filter TX set.
       ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.LONG_FILTER.value
+
+    # A DSU bypass adapter reroutes the stock DSU messages to the camera bus.
+    # These messages are normally absent there on pre-TSS2 platforms.
+    camera_fingerprint = fingerprint.get(2, {})
+    has_dsu_bypass = 0x343 in camera_fingerprint or 0x4CB in camera_fingerprint
+    if candidate == CAR.LEXUS_IS:
+      # The IS mirrors its native buses onto camera bus during startup without a bypass adapter.
+      has_dsu_bypass = ((0x343 in camera_fingerprint and 0x343 not in fingerprint.get(1, {})) or
+                        (0x4CB in camera_fingerprint and 0x4CB not in fingerprint.get(0, {})))
+    if not use_sdsu and candidate not in TSS2_CAR and has_dsu_bypass:
+      ret.flags |= ToyotaFlags.DSU_BYPASS.value
 
     # In TSS2 cars, the camera does long control
     found_ecus = [fw.ecu for fw in car_fw]
@@ -137,6 +151,7 @@ class CarInterface(CarInterfaceBase):
     #  - TSS2 radar ACC cars (disables radar)
 
     ret.openpilotLongitudinalControl = (use_sdsu or
+                                        bool(ret.flags & ToyotaFlags.DSU_BYPASS.value) or
                                         candidate in (TSS2_CAR - RADAR_ACC_CAR) or
                                         bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value))
 

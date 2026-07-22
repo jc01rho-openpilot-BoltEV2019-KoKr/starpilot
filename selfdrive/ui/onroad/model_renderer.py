@@ -547,7 +547,7 @@ class ModelRenderer(Widget):
     from openpilot.system.ui.lib.application import gui_app, FontWeight
     from openpilot.selfdrive.ui.onroad.starpilot.path import _draw_text_with_outline
     font = gui_app.font(FontWeight.SEMI_BOLD)
-    font_size = 24
+    font_size = 36
     line_height = font_size + 2
 
     max_text_width = 0.0

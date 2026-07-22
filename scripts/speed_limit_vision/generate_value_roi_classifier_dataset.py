@@ -13,7 +13,7 @@ import numpy as np
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace  # type: ignore
+  from common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace  # type: ignore  # noqa: TID251
   from generate_synthetic_us_speed_limits import KNOWN_REAL_CROPS, augment_sign, render_regulatory_sign  # type: ignore
 else:
   from .common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace
@@ -146,6 +146,7 @@ def main():
   parser.add_argument("--train-per-class", type=int, default=1800, help="Synthetic training samples per value.")
   parser.add_argument("--val-per-class", type=int, default=260, help="Synthetic validation samples per value.")
   parser.add_argument("--real-augmentations", type=int, default=28, help="Augmented mask samples to create per known real crop.")
+  parser.add_argument("--speed-values", nargs="+", type=int, default=list(DEFAULT_SPEED_VALUES), help="Posted values to synthesize.")
   parser.add_argument("--seed", type=int, default=20260330, help="Random seed.")
   args = parser.parse_args()
 
@@ -157,7 +158,7 @@ def main():
   ensure_dir(classifier_dir / "val")
 
   rng = random.Random(args.seed)
-  speed_values = tuple(DEFAULT_SPEED_VALUES)
+  speed_values = tuple(dict.fromkeys(args.speed_values))
 
   for split, per_class in (("train", max(args.train_per_class, 0)), ("val", max(args.val_per_class, 0))):
     for speed_value in speed_values:

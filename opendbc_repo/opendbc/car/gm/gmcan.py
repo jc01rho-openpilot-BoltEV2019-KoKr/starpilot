@@ -18,6 +18,7 @@ MALIBU_BUTTON_MAP = {
 }
 
 ACC_CRUISE_STATE_ADAPTIVE = 2
+XT4_CC_BUTTON_BURST_FRAMES = 6
 
 
 def malibu_phase_map_for_button(button):
@@ -317,6 +318,34 @@ def create_gm_cc_spam_command(packer, controller, CS, actuators, starpilot_toggl
   else:
     cruise_btn = CruiseButtons.INIT
     controller.apply_speed = speed_setpoint
+
+  if CS.CP.carFingerprint == CAR.CADILLAC_XT4_CC:
+    if cruise_btn == CruiseButtons.INIT:
+      controller.xt4_cc_button_burst_remaining = 0
+      controller.xt4_cc_button_burst_button = CruiseButtons.INIT
+      return []
+
+    if (controller.xt4_cc_button_burst_remaining > 0 and
+        controller.xt4_cc_button_burst_button != cruise_btn):
+      controller.xt4_cc_button_burst_remaining = 0
+
+    if controller.xt4_cc_button_burst_remaining == 0:
+      if (controller.frame - controller.last_button_frame) * DT_CTRL <= rate:
+        return []
+      controller.last_button_frame = controller.frame
+      controller.xt4_cc_button_burst_button = cruise_btn
+      controller.xt4_cc_button_burst_remaining = XT4_CC_BUTTON_BURST_FRAMES
+      controller.xt4_cc_button_burst_last_counter = -1
+
+    # XT4 physical taps hold the button for 5-7 consecutive 33 Hz frames.
+    # Send once per observed stock counter so the injected sequence has the same cadence.
+    if controller.xt4_cc_button_burst_last_counter == CS.buttons_counter:
+      return []
+
+    controller.xt4_cc_button_burst_last_counter = CS.buttons_counter
+    controller.xt4_cc_button_burst_remaining -= 1
+    idx = (CS.buttons_counter + 1) % 4
+    return [create_buttons(packer, CanBus.POWERTRAIN, idx, controller.xt4_cc_button_burst_button)]
 
   # Check rlogs closely - our message shouldn't show up on the pt bus for us
   # Or bus 2, since we're forwarding... but I think it does

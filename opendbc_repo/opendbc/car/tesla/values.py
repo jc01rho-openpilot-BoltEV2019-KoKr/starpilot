@@ -130,6 +130,7 @@ class CarControllerParams:
 
 class TeslaSafetyFlags(IntFlag):
   LONG_CONTROL = 1
+  COOP_STEERING = 256
 
 
 class TeslaFlags(IntFlag):
@@ -158,3 +159,4 @@ class CruiseButtons:
 DBC = CAR.create_dbc_map()
 
 STEER_THRESHOLD = 1
+STEER_DISENGAGE_THRESHOLD = 5.0

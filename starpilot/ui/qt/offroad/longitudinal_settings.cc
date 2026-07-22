@@ -116,7 +116,7 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
     {"CustomPersonalities", tr("Driving Personalities"), tr("<b>Customize the \"Driving Personalities\"</b> to better match your driving style."), "../../starpilot/assets/toggle_icons/icon_personality.png"},
 
     {"TrafficPersonalityProfile", tr("Traffic Mode"), tr("<b>Customize the \"Traffic Mode\" personality profile.</b> Designed for stop-and-go driving."), "../../starpilot/assets/stock_theme/distance_icons/traffic.png"},
-    {"TrafficFollow", tr("Following Distance"), tr("<b>The minimum following distance to the lead vehicle in \"Traffic Mode\".</b> openpilot blends between this value and the \"Aggressive\" profile as speed increases. Increase for more space; decrease for tighter gaps."), ""},
+    {"TrafficFollow", tr("Following Distance"), tr("<b>The minimum following distance to the lead vehicle in \"Traffic Mode\".</b> openpilot blends between this value and the \"Relaxed\" profile as speed increases. Increase for more space; decrease for tighter gaps."), ""},
     {"TrafficJerkAcceleration", tr("Acceleration Smoothness"), tr("<b>How smoothly openpilot accelerates in \"Traffic Mode\".</b> Increase for gentler starts; decrease for faster but more abrupt takeoffs."), ""},
     {"TrafficJerkDeceleration", tr("Braking Smoothness"), tr("<b>How smoothly openpilot brakes in \"Traffic Mode\".</b> Increase for gentler stops; decrease for quicker but sharper braking."), ""},
     {"TrafficJerkDanger", tr("Safety Gap Bias"), tr("<b>How much extra space openpilot keeps from the vehicle ahead in \"Traffic Mode\".</b> Increase for larger gaps and more cautious following; decrease for tighter gaps and closer following."), ""},
@@ -157,8 +157,6 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
     {"LongitudinalTune", tr("Longitudinal Tuning"), tr("<b>Acceleration and braking control changes</b> to fine-tune how openpilot drives."), "../../starpilot/assets/toggle_icons/icon_longitudinal_tune.png"},
     {"AccelerationProfile", tr("Acceleration Profile"), tr("<b>How quickly openpilot speeds up.</b> \"Eco\" is gentle and efficient, \"Sport\" is firmer and more responsive, and \"Sport+\" accelerates at the maximum rate allowed."), ""},
     {"DecelerationProfile", tr("Deceleration Profile"), tr("<b>How firmly openpilot slows down.</b> \"Eco\" favors coasting, \"Sport\" applies stronger braking."), ""},
-    {"HumanAcceleration", tr("Human-Like Acceleration"), tr("<b>Acceleration that mimics human behavior</b> by easing the throttle at low speeds and adding extra power when taking off from a stop."), ""},
-    {"PrioritizeSmoothFollowing", tr("Prioritize Smooth Following"), tr("<b>Disable the newer far-lead follow logic that can cause springy gas/brake behavior on some cars.</b> Enable this if your vehicle shows lead-follow stutter or oscillation.<br><br><i>Tradeoff: the car may react later and brake less proactively in some edge-case lead approaches.</i>"), ""},
     {"HumanLaneChanges", tr("Human-Like Lane Changes"), tr("<b>Lane-change behavior that mimics human drivers</b> by anticipating and tracking adjacent vehicles during lane changes."), ""},
     {"LeadDetectionThreshold", tr("Lead Detection Sensitivity"), tr("<b>How sensitive openpilot is to detecting vehicles.</b> Higher sensitivity allows quicker detection at longer distances but may react to non-vehicle objects; lower sensitivity is more conservative and reduces false detections."), ""},
     {"TacoTune", tr("\"Taco Bell Run\" Turn Speed Hack"), tr("<b>The turn-speed hack from comma's 2022 \"Taco Bell Run\".</b> Designed to slow down for left and right turns."), ""},
@@ -669,7 +667,7 @@ StarPilotLongitudinalPanel::StarPilotLongitudinalPanel(StarPilotSettingsWindow *
     });
   }
 
-  QSet<QString> forceUpdateKeys = {"HumanAcceleration", "LongitudinalTune"};
+  QSet<QString> forceUpdateKeys = {"LongitudinalTune"};
   for (const QString &key : forceUpdateKeys) {
     QObject::connect(static_cast<ToggleControl*>(toggles[key]), &ToggleControl::toggleFlipped, this, &StarPilotLongitudinalPanel::updateToggles);
   }
@@ -1067,10 +1065,6 @@ void StarPilotLongitudinalPanel::updateToggles() {
 
       else if (key == "SLCMapboxFiller") {
         setVisible &= !params.get("MapboxSecretKey").empty();
-      }
-
-      else if (key == "StartAccel") {
-        setVisible &= !(params.getBool("LongitudinalTune") && params.getBool("HumanAcceleration"));
       }
 
       else if (key == "StoppingDecelRate" || key == "VEgoStarting" || key == "VEgoStopping") {

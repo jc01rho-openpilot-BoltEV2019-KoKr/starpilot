@@ -96,7 +96,8 @@ class CarState(CarStateBase):
     cp_cam = can_parsers[Bus.cam]
 
     ret = structs.CarState()
-    cp_acc = cp_cam if self.CP.carFingerprint in (TSS2_CAR - RADAR_ACC_CAR) else cp
+    dsu_bypass = bool(self.CP.flags & ToyotaFlags.DSU_BYPASS.value)
+    cp_acc = cp_cam if self.CP.carFingerprint in (TSS2_CAR - RADAR_ACC_CAR) or dsu_bypass else cp
 
     if not self.CP.flags & ToyotaFlags.SECOC.value:
       self.gvc = cp.vl["VSC1S07"]["GVC"]
@@ -188,7 +189,7 @@ class CarState(CarStateBase):
       conversion_factor = CV.KPH_TO_MS if is_metric else CV.MPH_TO_MS
       ret.cruiseState.speedCluster = cluster_set_speed * conversion_factor
 
-    if self.CP.carFingerprint in TSS2_CAR and not self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
+    if dsu_bypass or (self.CP.carFingerprint in TSS2_CAR and not self.CP.flags & ToyotaFlags.DISABLE_RADAR.value):
       # smartDSU can intercept ACC_CONTROL, so don't require it when it's no
       # longer forwarded on the PT bus.
       if not self.has_SDSU:

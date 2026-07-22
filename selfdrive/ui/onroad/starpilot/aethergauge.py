@@ -380,12 +380,37 @@ class AetherGauge:
       self._sources.insert(0, (_cem_demo_active, _cem_demo_data))
     self._chevron_accum = 0.0
     self._lead_chevron_accum = 0.0
+    self._active_priority = 999
+    self._cached_data = None
+    self._last_active_time = 0.0
+    self._cooldown = 0.5
+
+  def has_active_source(self) -> bool:
+    """Lightweight visibility check — no side effects, no data construction."""
+    for is_active, _ in self._sources:
+      if is_active():
+        return True
+    return False
 
   def get_active_data(self) -> AetherGaugeData | None:
-    for is_active, get_data in self._sources:
+    now = rl.get_time()
+    best_priority = 999
+    new_data = None
+    
+    for i, (is_active, get_data) in enumerate(self._sources):
       if is_active():
-        return get_data()
-    return None
+        best_priority = i
+        new_data = get_data()
+        break
+        
+    # Treat None as a priority 999 state: switch immediately if higher/equal priority,
+    # or wait for cooldown to downgrade/hide.
+    if best_priority <= self._active_priority or (now - self._last_active_time > self._cooldown):
+      self._cached_data = new_data
+      self._active_priority = best_priority
+      self._last_active_time = now if new_data is not None else 0.0
+
+    return self._cached_data
 
   def render(self, rect: rl.Rectangle, font_bold: rl.Font, font_medium: rl.Font, current_speed: float, cx: float | None = None, bottom: float | None = None):
     data = self.get_active_data()

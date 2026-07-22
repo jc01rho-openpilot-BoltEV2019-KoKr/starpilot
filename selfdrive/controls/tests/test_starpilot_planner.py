@@ -27,7 +27,6 @@ def make_toggles(**overrides):
     "pause_lateral_below_signal": True,
     "pause_lateral_signal_delay": 0.0,
     "set_speed_offset": 0,
-    "stop_distance": 6.0,
     "weather_presets": False,
   }
   defaults.update(overrides)
@@ -119,7 +118,7 @@ def test_lateral_resume_delay_ignores_signal_cycles_that_never_slow_enough(monke
     planner.shutdown()
 
 
-def test_prioritize_smooth_following_skips_radarless_follow_hold(monkeypatch):
+def test_radarless_follow_hold_applies_to_tracked_vision_lead(monkeypatch):
   planner = StarPilotPlanner(Path("/tmp/nonexistent"), DummyThemeManager())
 
   try:
@@ -136,28 +135,10 @@ def test_prioritize_smooth_following_skips_radarless_follow_hold(monkeypatch):
       radar=False,
     )
 
-    planner.update_lead_status(27.5, stop_distance=6.0, prioritize_smooth_following=False)
+    planner.update_lead_status(27.5)
     assert planner.radarless_follow_hold_until > 100.0
-
-    planner_smooth = StarPilotPlanner(Path("/tmp/nonexistent"), DummyThemeManager())
-    planner_smooth.model_length = 30.0
-    planner_smooth.tracking_lead = True
-    planner_smooth.starpilot_following.t_follow = 1.45
-    planner_smooth.lead_one = SimpleNamespace(
-      status=True,
-      dRel=46.0,
-      vLead=27.0,
-      aLeadK=0.0,
-      modelProb=0.98,
-      radar=False,
-    )
-
-    planner_smooth.update_lead_status(27.5, stop_distance=6.0, prioritize_smooth_following=True)
-    assert planner_smooth.radarless_follow_hold_until == 0.0
   finally:
     planner.shutdown()
-    if 'planner_smooth' in locals():
-      planner_smooth.shutdown()
 
 
 def test_tracked_vision_lead_uses_exit_hysteresis_at_mid_speed():
@@ -177,8 +158,7 @@ def test_tracked_vision_lead_uses_exit_hysteresis_at_mid_speed():
       radar=False,
     )
 
-    assert planner.update_lead_status(16.8, stop_distance=6.0, prioritize_smooth_following=False)
-    assert planner.update_lead_status(16.8, stop_distance=6.0, prioritize_smooth_following=True)
+    assert planner.update_lead_status(16.8)
   finally:
     planner.shutdown()
 
@@ -198,6 +178,6 @@ def test_untracked_vision_lead_still_uses_strict_entry_gate():
       radar=False,
     )
 
-    assert not planner.update_lead_status(16.8, stop_distance=6.0, prioritize_smooth_following=False)
+    assert not planner.update_lead_status(16.8)
   finally:
     planner.shutdown()

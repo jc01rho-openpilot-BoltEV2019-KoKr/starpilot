@@ -2203,6 +2203,7 @@ struct DriverStateV2 {
     rightBlinkProb @8 :Float32;
     sunglassesProb @9 :Float32;
     phoneProb @13 :Float32;
+    sleepProb @14 :Float32;
     notReadyProbDEPRECATED @12 :List(Float32);
     occludedProbDEPRECATED @10 :Float32;
     readyProbDEPRECATED @11 :List(Float32);
@@ -2274,7 +2275,8 @@ struct DriverMonitoringStateDEPRECATED @0xb83cda094a1da284 {
 
 struct DriverMonitoringState {
   lockout @0 :Bool;
-  lockoutRecoveryPercent @11 :Int8;
+  lockoutCount @15 :Int8;
+  lockoutMinutesRemaining @11 :Int8;
   alert3Count @12 :Int8;
   noResponseCount @13 :Int8;
   noResponseForceDecel @14 :Bool;

@@ -59,8 +59,8 @@ class SettingsLayout(Widget):
     # 0 = top level (settings main), 1+ = nested custom panels
     self._panel_depth = 0
 
-    # Collapse / swipe state (always start collapsed)
-    self._sidebar_expanded = False
+    # Collapse / swipe state (always start expanded)
+    self._sidebar_expanded = True
     self._swipe_start = None
     self._collapse_btn_rect = rl.Rectangle(0, 0, 0, 0)
     self._back_btn_rect = rl.Rectangle(0, 0, 0, 0)

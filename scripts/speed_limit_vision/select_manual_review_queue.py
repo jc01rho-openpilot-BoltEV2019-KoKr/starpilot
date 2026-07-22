@@ -9,7 +9,7 @@ from collections import Counter, defaultdict, deque
 from pathlib import Path
 
 
-PRIORITY_SPEED_ORDER = (60, 65, 55, 50, 45, 40, 35, 30, 25, 20, 70, 15, 75)
+PRIORITY_SPEED_ORDER = (60, 65, 55, 50, 45, 40, 35, 30, 25, 20, 70, 75, 80, 90, 100, 15, 10)
 COMPARISON_PRIORITY_BONUS = {
   "value_changed": 4.0,
   "gained_read": 3.0,

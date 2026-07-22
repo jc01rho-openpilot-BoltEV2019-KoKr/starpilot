@@ -51,6 +51,7 @@ FORCE_STOP_TURN_VETO_MAX_SPEED = 18.0 * CV.MPH_TO_MS
 # for *new* activation — an in-progress stop is carried through (see force_stop_timer logic).
 FORCE_STOP_TURN_VETO_STEERING_ANGLE = 25.0
 FORCE_STOP_CURVE_VETO_MAX_ROAD_CURVATURE = 0.003
+FORCE_STOP_TURN_VETO_STOP_SEEN_HOLD_TIME = 4.0
 
 # Knob bounds (mirror of UI slider; defense in depth)
 OFFSET_FT_MIN = -20
@@ -152,6 +153,7 @@ class StarPilotVCruise:
     self.tracked_model_length = 0.0
 
     self.stop_sign_confirmed = False
+    self.stop_seen_on_approach_at = None
     self.nav_turn_target = 0.0
     self._nav_instruction_state_raw = None
     self._nav_instruction_state = {}
@@ -273,10 +275,26 @@ class StarPilotVCruise:
       self._applied_slc_control_target = 0.0
 
     long_control_active = sm["carControl"].longActive
+
+    raw_stop_seen = bool(
+      self.starpilot_planner.starpilot_cem.stop_light_detected
+      or getattr(self.starpilot_planner, "raw_model_stopped", False)
+      or sm["starpilotCarState"].dashboardStopSign > 0
+    )
+    if raw_stop_seen and not sm["carState"].standstill:
+      self.stop_seen_on_approach_at = now
+    elif sm["carState"].standstill:
+      self.stop_seen_on_approach_at = None
+    stop_then_turn = (
+      self.stop_seen_on_approach_at is not None
+      and self._elapsed_seconds(now, self.stop_seen_on_approach_at) < FORCE_STOP_TURN_VETO_STOP_SEEN_HOLD_TIME
+    )
+
     turn_scene_active = bool(
       v_ego <= FORCE_STOP_TURN_VETO_MAX_SPEED and
       (getattr(sm["carState"], "leftBlinker", False) or getattr(sm["carState"], "rightBlinker", False)) and
-      abs(float(getattr(sm["carState"], "steeringAngleDeg", 0.0))) >= FORCE_STOP_TURN_VETO_STEERING_ANGLE
+      abs(float(getattr(sm["carState"], "steeringAngleDeg", 0.0))) >= FORCE_STOP_TURN_VETO_STEERING_ANGLE and
+      not stop_then_turn
     )
 
     # ----- Activation paths -----
@@ -287,7 +305,10 @@ class StarPilotVCruise:
     lead_present = (bool(getattr(lead, "status", False))
                     and float(getattr(lead, "dRel", float("inf"))) < ACTIVATION_M
                     and float(getattr(lead, "vLead", float("inf"))) < v_ego + 2.0)
-    curved_approach_scene = abs(float(getattr(self.starpilot_planner, "road_curvature", 0.0))) >= FORCE_STOP_CURVE_VETO_MAX_ROAD_CURVATURE
+    curved_approach_scene = (
+      abs(float(getattr(self.starpilot_planner, "road_curvature", 0.0))) >= FORCE_STOP_CURVE_VETO_MAX_ROAD_CURVATURE
+      and not stop_then_turn
+    )
 
     # CEM/model path: model predicted stop within ACTIVATION_M.
     # Exclude when a lead is present (raw or filtered) — the handoff_to_stopped_lead path

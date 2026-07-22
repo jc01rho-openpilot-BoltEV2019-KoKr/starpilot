@@ -866,13 +866,14 @@ def test_shape_truck_friction_brake_suppresses_boundary_chatter():
 
 
 def test_shape_truck_friction_brake_uses_hysteresis_once_engaged():
-  assert shape_truck_friction_brake(25, -0.3, False, False) == (25, True)
+  assert shape_truck_friction_brake(39, -0.3, False, False) == (0, False)
+  assert shape_truck_friction_brake(40, -0.3, False, False) == (40, True)
   assert shape_truck_friction_brake(14, -0.3, False, True) == (14, True)
   assert shape_truck_friction_brake(8, -0.3, False, True) == (0, False)
 
 
 def test_shape_truck_friction_brake_never_delays_meaningful_braking():
-  assert shape_truck_friction_brake(5, -0.65, False, False) == (5, True)
+  assert shape_truck_friction_brake(5, -0.85, False, False) == (5, True)
   assert shape_truck_friction_brake(5, -0.2, True, False) == (5, True)
 
 

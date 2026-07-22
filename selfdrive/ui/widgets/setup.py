@@ -14,12 +14,26 @@ LOGO_WIDTH = 750
 LOGO_HEIGHT = 770
 
 
+class StarPilotLogoWidget(Widget):
+  def __init__(self):
+    super().__init__()
+    self._logo_texture = gui_app.texture("images/StarPilotLogo.png", LOGO_WIDTH, LOGO_HEIGHT)
+
+  def _render(self, rect: rl.Rectangle):
+    scale = min(1.0, rect.width / self._logo_texture.width, rect.height / self._logo_texture.height)
+    width = self._logo_texture.width * scale
+    height = self._logo_texture.height * scale
+    x = rect.x + (rect.width - width) / 2
+    y = rect.y + (rect.height - height) / 2
+    rl.draw_texture_ex(self._logo_texture, rl.Vector2(x, y), 0.0, scale, rl.WHITE)
+
+
 class SetupWidget(Widget):
   def __init__(self):
     super().__init__()
     self._pairing_dialog: PairingDialog | None = None
     self._pair_device_btn = Button(lambda: tr("Pair device"), self._show_pairing, button_style=ButtonStyle.PRIMARY)
-    self._logo_texture = gui_app.texture("images/StarPilotLogo.png", LOGO_WIDTH, LOGO_HEIGHT)
+    self._logo_widget = StarPilotLogoWidget()
 
   def _render(self, rect: rl.Rectangle):
     if not ui_state.prime_state.is_paired():
@@ -53,11 +67,7 @@ class SetupWidget(Widget):
     self._pair_device_btn.render(button_rect)
 
   def _render_logo(self, rect: rl.Rectangle):
-    tex_w = self._logo_texture.width
-    tex_h = self._logo_texture.height
-    x = rect.x + (rect.width - tex_w) / 2
-    y = rect.y + (rect.height - tex_h) / 2
-    rl.draw_texture(self._logo_texture, int(x), int(y), rl.WHITE)
+    self._logo_widget.render(rect)
 
   def _show_pairing(self):
     if not system_time_valid():

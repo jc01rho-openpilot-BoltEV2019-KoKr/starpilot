@@ -6,11 +6,12 @@ from enum import IntEnum
 import pyray as rl
 
 from openpilot.common.params import Params
+from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import DialogResult, Widget
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
-from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import TileGrid, HubTile, ToggleTile, ValueTile, SliderTile, SPACING, AetherSliderDialog, AetherTransitionManager
+from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import TileGrid, HubTile, ToggleTile, ValueTile, SliderTile, SPACING, AetherSliderDialog, AetherTransitionManager, AetherListColors
 from openpilot.selfdrive.ui.layouts.settings.starpilot.sectioned_panel import SectionedTileLayout, TileSection
 import time
 
@@ -55,35 +56,29 @@ class FrameCachedParams:
       self._cache[cache_key] = self._params.get_float(key, **kwargs)
     return self._cache[cache_key]
 
+  def _notify_changed(self):
+    self._cache.clear()
+    update_starpilot_toggles()
+
   def put(self, key, val, **kwargs):
     self._params.put(key, val, **kwargs)
-    self._cache.clear()
-    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
-    update_starpilot_toggles()
+    self._notify_changed()
 
   def put_bool(self, key, val, **kwargs):
     self._params.put_bool(key, val, **kwargs)
-    self._cache.clear()
-    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
-    update_starpilot_toggles()
+    self._notify_changed()
 
   def put_int(self, key, val, **kwargs):
     self._params.put_int(key, val, **kwargs)
-    self._cache.clear()
-    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
-    update_starpilot_toggles()
+    self._notify_changed()
 
   def put_float(self, key, val, **kwargs):
     self._params.put_float(key, val, **kwargs)
-    self._cache.clear()
-    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
-    update_starpilot_toggles()
+    self._notify_changed()
 
   def remove(self, key):
     self._params.remove(key)
-    self._cache.clear()
-    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
-    update_starpilot_toggles()
+    self._notify_changed()
 
   def __getattr__(self, name):
     return getattr(self._params, name)
@@ -97,11 +92,8 @@ class StarPilotPanelType(IntEnum):
     LATERAL = 4
     MAPS = 5
     DEVICE = 6
-    UTILITIES = 7
     VISUALS = 8
-    THEMES = 9
     VEHICLE = 10
-    WHEEL = 11
     SYSTEM = 12
 
 
@@ -354,7 +346,7 @@ class _SettingsPage(StarPilotPanel):
   shared slider and selector dialog helpers.
   """
 
-  SLIDER_COLOR = "#8B5CF6"
+  SLIDER_COLOR = AetherListColors.PRIMARY
 
   def __init__(self):
     super().__init__()

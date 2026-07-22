@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import math
-import pyray as rl
-
 from openpilot.system.hardware import HARDWARE
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.system.ui.lib.application import gui_app, FontWeight
@@ -13,11 +10,10 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPag
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   DEFAULT_PANEL_STYLE,
   AetherSettingsView,
+  CardHubManagerView,
   ParentToggle,
   SettingRow,
   SettingSection,
-  TileGrid,
-  HubTile,
   AetherSliderDialog,
 )
 
@@ -48,87 +44,34 @@ def _sync_parent(params, parent_key, child_keys):
 
 
 # ═══════════════════════════════════════════════════════════════
-# SteeringManagerView — clean 3-card category hub
+# SteeringManagerView — 3-card category hub
 # ═══════════════════════════════════════════════════════════════
 
-class SteeringManagerView(AetherSettingsView):
-  @property
-  def vertical_scrolling_disabled(self) -> bool:
-    return True
-
+class SteeringManagerView(CardHubManagerView):
   def __init__(self, controller, **kwargs):
-    super().__init__(controller, [], panel_style=PANEL_STYLE, **kwargs)
-    self._grid = TileGrid(columns=3, padding=12)
-    self._grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
-    self._child(self._grid)
-    self._init_toggles()
+    super().__init__(controller, [], **kwargs)
 
-  def _init_toggles(self):
-    cards = [
+  def _build_cards(self):
+    return [
       {
         "title": tr("Steering Behavior"),
         "desc": tr("Configure Always On Lateral (AOL), pause speed thresholds, and turn signal behaviors."),
         "icon": "steering",
-        "color": "#8B5CF6",
-        "on_click": lambda: self._controller._navigate_to("behavior")
+        "on_click": lambda: self._controller._navigate_to("behavior"),
       },
       {
         "title": tr("Lane Changes"),
         "desc": tr("Configure automatic lane changes, speed/width thresholds, and smoothing parameters."),
         "icon": "road",
-        "color": "#8B5CF6",
-        "on_click": lambda: self._controller._navigate_to("lane_changes")
+        "on_click": lambda: self._controller._navigate_to("lane_changes"),
       },
       {
         "title": tr("Advanced Lateral Tuning"),
         "desc": tr("Adjust actuator delay, steer ratio, Kp, friction, and neural network feedforward controllers."),
         "icon": "system",
-        "color": "#8B5CF6",
-        "on_click": lambda: self._controller._navigate_to("advanced")
+        "on_click": lambda: self._controller._navigate_to("advanced"),
       },
     ]
-
-    self._grid.clear()
-    for d in cards:
-      self._grid.add_tile(
-        HubTile(
-          title=d["title"],
-          desc=d["desc"],
-          icon_key=d["icon"],
-          on_click=d["on_click"],
-          bg_color=d["color"],
-        )
-      )
-
-  def _render(self, rect: rl.Rectangle):
-    self.set_rect(rect)
-    self._interactive_rects.clear()
-
-    margin_x = 10.0
-    margin_y = 10.0
-
-    grid_x = rect.x + margin_x
-    grid_y = rect.y + margin_y
-    grid_w = rect.width - margin_x * 2
-    grid_h = rect.y + rect.height - grid_y - margin_y
-
-    self._scroll_rect = rl.Rectangle(grid_x, grid_y, grid_w, grid_h)
-    self._content_height = grid_h
-
-    self._scroll_panel.set_enabled(self.is_visible)
-    self._scroll_offset = self._scroll_panel.update(
-      self._scroll_rect, self._scroll_rect.height
-    )
-
-    if self.vertical_scrolling_disabled:
-      self._scroll_offset = 0.0
-
-    self._draw_scroll_content(self._scroll_rect, self._scroll_rect.width)
-
-  def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
-    y = rect.y + self._scroll_offset
-    self._grid.set_parent_rect(self._scroll_rect)
-    self._grid.render(rl.Rectangle(rect.x, y, width, rect.height))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -304,12 +247,12 @@ class StarPilotLateralLayout(_SettingsPage):
       ),
       SettingRow(
         "ForceAutoTuneOff", "toggle", tr_noop("Force Auto-Tune Off"),
-        subtitle=tr_noop("Force-disable auto-tuning and use your set values."),
+        subtitle=tr_noop("Force-disable learned lateral values and use your set values."),
         get_state=lambda: p.get_bool("ForceAutoTuneOff"),
         set_state=lambda s: (p.put_bool("ForceAutoTuneOff", s),
                              s and p.put_bool("ForceAutoTune", False),
                              _sync_parent(p, "AdvancedLateralTune", _ADVANCED_LATERAL_KEYS)),
-        enabled=lambda: cs.hasAutoTune and cs.isTorqueCar and not cs.isAngleCar,
+        enabled=lambda: cs.isTorqueCar and not cs.isAngleCar,
         disabled_label=tr_noop("Not Available"),
         visible=alt_on,
       ),
@@ -450,6 +393,6 @@ class StarPilotLateralLayout(_SettingsPage):
     def on_close(res, val):
       if res == DialogResult.CONFIRM:
         self._params.put_int("LaneChangeSmoothing", int(val))
-    current = self._params.get_int("LaneChangeSmoothing") if self._params.get_int("LaneChangeSmoothing") > 0 else 10
+    current = self._params.get_int("LaneChangeSmoothing") if self._params.get_int("LaneChangeSmoothing") > 0 else 5
     gui_app.push_widget(AetherSliderDialog(tr("Lane Change Smoothing"), 1, 10, 1, current, on_close,
                                             color=self.SLIDER_COLOR))

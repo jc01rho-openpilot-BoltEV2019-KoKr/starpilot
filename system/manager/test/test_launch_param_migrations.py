@@ -5,7 +5,9 @@ from openpilot.system.manager.launch_param_migrations import (
   BRANCH_DEFAULTS_MIGRATION_MARKER,
   DEVELOPER_METRIC_DISPLAY_KEYS,
   DEVELOPER_METRIC_DISPLAY_MIGRATION_MARKER,
+  DEFAULT_LANE_CHANGE_SMOOTHING,
   DEFAULT_STEER_KP,
+  LANE_CHANGE_SMOOTHING_MIGRATION_MARKER,
   LAUNCH_PARAM_MIGRATION_MARKER,
   LATERAL_METHOD_REBRAND_MIGRATION_MARKER,
   MARKER_DIRNAME,
@@ -309,3 +311,33 @@ def test_apply_launch_param_migrations_preserves_developer_metric_display_after_
 
   for key in DEVELOPER_METRIC_DISPLAY_KEYS:
     assert params.get_bool(key)
+
+
+def test_apply_launch_param_migrations_updates_legacy_lane_change_smoothing_once(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+  params.put_int("LaneChangeSmoothing", 10)
+
+  apply_launch_param_migrations(params)
+
+  assert params.get_int("LaneChangeSmoothing") == DEFAULT_LANE_CHANGE_SMOOTHING
+  assert marker_path(tmp_path, LANE_CHANGE_SMOOTHING_MIGRATION_MARKER).is_file()
+
+
+def test_apply_launch_param_migrations_preserves_custom_lane_change_smoothing(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+  params.put_int("LaneChangeSmoothing", 7)
+
+  apply_launch_param_migrations(params)
+
+  assert params.get_int("LaneChangeSmoothing") == 7
+  assert marker_path(tmp_path, LANE_CHANGE_SMOOTHING_MIGRATION_MARKER).is_file()
+
+
+def test_apply_launch_param_migrations_does_not_reapply_lane_change_smoothing_after_marker(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+  params.put_int("LaneChangeSmoothing", 10)
+  marker_path(tmp_path, LANE_CHANGE_SMOOTHING_MIGRATION_MARKER).touch()
+
+  apply_launch_param_migrations(params)
+
+  assert params.get_int("LaneChangeSmoothing") == 10

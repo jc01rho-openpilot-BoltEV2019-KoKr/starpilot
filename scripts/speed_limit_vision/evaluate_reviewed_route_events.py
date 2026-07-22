@@ -16,9 +16,11 @@ import starpilot.system.speed_limit_vision as slv
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
+  from common import source_video_fps  # type: ignore  # noqa: TID251
   from import_manual_review_queue import merged_review_rows, parse_speed  # type: ignore
   from replay_route_runtime import RouteReplayDaemon, configure_models  # type: ignore
 else:
+  from .common import source_video_fps
   from .import_manual_review_queue import merged_review_rows, parse_speed
   from .replay_route_runtime import RouteReplayDaemon, configure_models
 
@@ -46,6 +48,11 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--window-before", type=float, default=4.0, help="Seconds replayed before the reviewed frame.")
   parser.add_argument("--window-after", type=float, default=3.0, help="Seconds replayed after the reviewed frame.")
   parser.add_argument("--dedupe-seconds", type=float, default=3.0, help="Collapse nearby reviewed rows with the same expected value.")
+  parser.add_argument(
+    "--review-timebase-fps",
+    type=float,
+    help="FPS used when review timestamps were generated. Use 25 for legacy raw-HEVC queues created before comma's 20 FPS timebase fix.",
+  )
   parser.add_argument("--measured-base-inference-seconds", type=float, default=0.44, help="Measured no-proposal comma inference cost.")
   parser.add_argument("--measured-classifier-forward-seconds", type=float, default=0.066, help="Measured comma cost per classifier forward.")
   parser.add_argument("--measured-tracking-base-seconds", type=float, default=0.012, help="Measured optical-flow and crop preparation cost.")
@@ -57,6 +64,8 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--track-max-age", type=float, help="Override the maximum proposal track lifetime.")
   parser.add_argument("--crop-ocr", action="store_true", help="Evaluate with crop OCR confirmation enabled.")
   parser.add_argument("--classifier-min-confidence", type=float, help="Override the value classifier confidence threshold.")
+  parser.add_argument("--classifier-speed-values", help="Comma-separated classifier classes for a candidate model.")
+  parser.add_argument("--extended-classifier-min-confidence", type=float, help="Override confidence for 5/10/80/90/100.")
   parser.add_argument("--trusted-model-min-confidence", type=float, help="Override tiny-box trusted model confidence.")
   parser.add_argument("--classifier-expansion-limit", type=int, help="Evaluate only the first N detector crop expansions.")
   parser.add_argument("--classifier-expansion-indices", help="Comma-separated detector crop expansion indices to evaluate.")
@@ -164,13 +173,14 @@ def replay_video_cases(cases: list[ReviewedCase], args: argparse.Namespace) -> d
     daemon.published_speed_limit_mph = args.initial_speed_limit
     daemon.last_published_support_at = 0.0
   capture = cv2.VideoCapture(str(cases[0].source_video_path))
-  fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
+  fps = source_video_fps(cases[0].source_video_path, capture.get(cv2.CAP_PROP_FPS))
+  review_timebase_fps = args.review_timebase_fps or fps
   frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
   duration_s = frame_count / fps if frame_count > 0 else 60.0
   windows = {
     case.record_key: (
-      max(case.frame_time_s - args.window_before, 0.0),
-      min(case.frame_time_s + args.window_after, duration_s),
+      max(case.frame_time_s * review_timebase_fps / fps - args.window_before, 0.0),
+      min(case.frame_time_s * review_timebase_fps / fps + args.window_after, duration_s),
     )
     for case in cases
   }
@@ -212,6 +222,8 @@ def replay_video_cases(cases: list[ReviewedCase], args: argparse.Namespace) -> d
 
 def main() -> int:
   args = parse_args()
+  if args.review_timebase_fps is not None and args.review_timebase_fps <= 0.0:
+    raise ValueError("--review-timebase-fps must be greater than zero")
   queue_path = args.queue.expanduser().resolve()
   labels_path = args.labels.expanduser().resolve() if args.labels else queue_path.with_name("manual_review_labels.csv")
   configure_models(args.models_dir)
@@ -230,6 +242,10 @@ def main() -> int:
   slv.DETECTOR_CLASSIFIER_CROP_OCR_ENABLED = args.crop_ocr
   if args.classifier_min_confidence is not None:
     slv.US_CLASSIFIER_MIN_CONFIDENCE = args.classifier_min_confidence
+  if args.classifier_speed_values:
+    slv.US_CLASSIFIER_SPEED_VALUES = tuple(int(value) for value in args.classifier_speed_values.split(","))
+  if args.extended_classifier_min_confidence is not None:
+    slv.EXTENDED_CLASSIFIER_MIN_CONFIDENCE = args.extended_classifier_min_confidence
   if args.trusted_model_min_confidence is not None:
     slv.DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = args.trusted_model_min_confidence
   if args.classifier_expansion_indices:
@@ -384,6 +400,7 @@ def main() -> int:
   ))
   summary = {
     "models_dir": str(args.models_dir.expanduser().resolve()),
+    "review_timebase_fps": args.review_timebase_fps,
     "crop_ocr": args.crop_ocr,
     "classifier_min_confidence": slv.US_CLASSIFIER_MIN_CONFIDENCE,
     "measured_base_inference_seconds": args.measured_base_inference_seconds,

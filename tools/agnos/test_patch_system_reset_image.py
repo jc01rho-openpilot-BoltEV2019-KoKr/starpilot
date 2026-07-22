@@ -1,10 +1,16 @@
+from pathlib import Path
+import runpy
+
 import pytest
 
 from tools.agnos.patch_system_reset_image import (
+  AMDGPU_FIRMWARE_SHA256,
   COMMA_SH_DISPLAY_WAIT_PATCH_MARKER,
   comma_sh_has_expected_display_wait,
+  find_default_reference_manifest,
   format_debugfs_mode,
   patch_comma_sh_display_wait,
+  sha256_zstd_payload,
 )
 
 
@@ -52,3 +58,32 @@ def test_patch_comma_sh_display_wait_rejects_unknown_layout():
 ])
 def test_format_debugfs_mode(mode, expected):
   assert format_debugfs_mode(mode) == expected
+
+
+def test_external_gpu_firmware_matches_tinygrad_requirements():
+  firmware_metadata = Path(__file__).resolve().parents[2] / "tinygrad/runtime/autogen/am/fw.py"
+  hashes = runpy.run_path(firmware_metadata)["hashes"]
+  expected = {filename.removesuffix(".zst"): digest for filename, digest in AMDGPU_FIRMWARE_SHA256.items()}
+  assert all(hashes[filename] == digest for filename, digest in expected.items())
+
+
+def test_zstd_payload_hash(tmp_path):
+  import hashlib
+  import zstandard
+
+  payload = b"external GPU firmware payload"
+  compressed = tmp_path / "firmware.bin.zst"
+  compressed.write_bytes(zstandard.ZstdCompressor().compress(payload))
+
+  assert sha256_zstd_payload(compressed) == hashlib.sha256(payload).hexdigest()
+
+
+def test_default_reference_manifest_uses_sibling_openpilot(tmp_path):
+  primary = tmp_path / "starpilot/system/hardware/tici/agnos.json"
+  reference = tmp_path / "openpilot/openpilot/system/hardware/tici/agnos.json"
+  primary.parent.mkdir(parents=True)
+  reference.parent.mkdir(parents=True)
+  primary.write_text("[]")
+  reference.write_text("[]")
+
+  assert find_default_reference_manifest(primary) == reference.resolve()

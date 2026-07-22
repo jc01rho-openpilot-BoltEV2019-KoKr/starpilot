@@ -12,9 +12,14 @@ import cv2
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import DEFAULT_WORKSPACE, ensure_dir, resolve_workspace  # type: ignore
+  from common import (  # type: ignore  # noqa: TID251
+    DEFAULT_WORKSPACE,
+    ensure_dir,
+    resolve_workspace,
+    source_video_fps,
+  )
 else:
-  from .common import DEFAULT_WORKSPACE, ensure_dir, resolve_workspace
+  from .common import DEFAULT_WORKSPACE, ensure_dir, resolve_workspace, source_video_fps
 
 
 LOCALIZED_MANIFEST = Path(".tmp/bookmark_sign_localization/localized_bookmarks.csv")
@@ -96,7 +101,7 @@ def expand_bbox(x1: int, y1: int, x2: int, y2: int, image_shape: tuple[int, int,
 
 def read_frame_at(video_path: Path, target_time_s: float):
   capture = cv2.VideoCapture(str(video_path))
-  fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
+  fps = source_video_fps(video_path, capture.get(cv2.CAP_PROP_FPS))
   frame_index = max(int(round(target_time_s * fps)), 0)
   capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
   ok, frame_bgr = capture.read()

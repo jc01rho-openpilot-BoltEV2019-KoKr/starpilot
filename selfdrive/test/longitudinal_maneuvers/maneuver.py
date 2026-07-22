@@ -25,7 +25,6 @@ class Maneuver:
     self.e2e = kwargs.get("e2e", False)
     self.personality = kwargs.get("personality", 0)
     self.force_decel = kwargs.get("force_decel", False)
-    self.prioritize_smooth_following = kwargs.get("prioritize_smooth_following", False)
 
     self.duration = duration
     self.title = title
@@ -42,7 +41,6 @@ class Maneuver:
       e2e=self.e2e,
       personality=self.personality,
       force_decel=self.force_decel,
-      prioritize_smooth_following=self.prioritize_smooth_following,
     )
 
     valid = True

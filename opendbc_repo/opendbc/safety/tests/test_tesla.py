@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 
 from opendbc.car.lateral import get_max_angle_delta_vm, get_max_angle_vm
-from opendbc.car.tesla.values import CarControllerParams, TeslaSafetyFlags
+from opendbc.car.tesla.values import CarControllerParams, STEER_DISENGAGE_THRESHOLD, TeslaSafetyFlags
 from opendbc.car.tesla.carcontroller import get_safety_CP
 from opendbc.car.structs import CarParams
 from opendbc.car.vehicle_model import VehicleModel
@@ -78,8 +78,10 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
       self.__class__.cnt_angle_cmd += 1
     return self.packer.make_can_msg_safety("DAS_steeringControl", bus, values)
 
-  def _angle_meas_msg(self, angle: float, hands_on_level: int = 0, eac_status: int = 1, eac_error_code: int = 0):
+  def _angle_meas_msg(self, angle: float, hands_on_level: int = 0, eac_status: int = 1, eac_error_code: int = 0,
+                      torsion_bar_torque: float = 0.0):
     values = {"EPAS3S_internalSAS": angle, "EPAS3S_handsOnLevel": hands_on_level,
+              "EPAS3S_torsionBarTorque": torsion_bar_torque,
               "EPAS3S_eacStatus": eac_status, "EPAS3S_eacErrorCode": eac_error_code,
               "EPAS3S_sysStatusCounter": self.cnt_epas % 16}
     self.__class__.cnt_epas += 1
@@ -377,6 +379,26 @@ class TestTeslaStockSafety(TestTeslaSafetyBase):
       should_tx = acc_state == self.acc_states["ACC_CANCEL_GENERIC_SILENT"]
       self.assertFalse(self._tx(self._long_control_msg(0, acc_state=acc_state, accel_limits=(self.MIN_ACCEL, self.MAX_ACCEL))))
       self.assertEqual(should_tx, self._tx(self._long_control_msg(0, acc_state=acc_state)))
+
+  def test_cooperative_steering_torque_disengage_flag(self):
+    torque_cases = (
+      (-STEER_DISENGAGE_THRESHOLD - 0.01, True),
+      (-STEER_DISENGAGE_THRESHOLD, False),
+      (STEER_DISENGAGE_THRESHOLD, False),
+      (STEER_DISENGAGE_THRESHOLD + 0.01, True),
+    )
+
+    for param, cooperative_steering in ((0, False), (TeslaSafetyFlags.COOP_STEERING, True)):
+      self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, param)
+      self.safety.init_tests()
+
+      for torsion_bar_torque, exceeds_threshold in torque_cases:
+        self.safety.set_controls_allowed(True)
+        should_disengage = cooperative_steering and exceeds_threshold
+
+        self.assertTrue(self._rx(self._angle_meas_msg(0, torsion_bar_torque=torsion_bar_torque)))
+        self.assertNotEqual(should_disengage, self.safety.get_controls_allowed())
+        self.assertEqual(should_disengage, self.safety.get_steering_disengage_prev())
 
   def test_no_aeb(self):
     for aeb_event in range(4):

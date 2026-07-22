@@ -984,6 +984,7 @@ class SafetyTest(SafetyTestBase):
               continue
             if {attr, current_test}.issubset({'TestHyundaiLongitudinalSafety', 'TestHyundaiLongitudinalSafetyCameraSCC',
                                               'TestHyundaiSafetyFCEVLong', 'TestHyundaiLongitudinalAolLkasOnEngageSafety',
+                                              'TestHyundaiSafetyCanRefreshLong', 'TestHyundaiSafetyCanRefreshLongCameraSCC',
                                               'TestHyundaiCanCanfdBlendedLongitudinalSafety',
                                               'TestHyundaiLegacyLongitudinalSafetyHEV'}):
               continue

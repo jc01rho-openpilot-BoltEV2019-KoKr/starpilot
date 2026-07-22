@@ -45,6 +45,10 @@ A_CRUISE_MAX_VALS_STANDARD_GAS =   [2.00, 1.80, 1.55, 1.30, 1.05, 0.85, 0.55]
 A_CRUISE_MAX_VALS_SPORT_GAS =      [2.50, 2.25, 1.95, 1.60, 1.30, 1.05, 0.75]
 A_CRUISE_MAX_VALS_SPORT_PLUS_GAS = [3.50, 3.20, 2.80, 2.35, 1.90, 1.55, 1.15]
 
+# Traffic Mode: bumper-to-bumper stop-and-go, softer than Eco at every breakpoint.
+# Single curve for all vehicle types, derived from manual stop-and-go driving logs.
+A_CRUISE_MAX_VALS_TRAFFIC_ALL = [1.10, 0.87, 0.67, 0.53, 0.44, 0.34, 0.23]
+
 A_CRUISE_MAX_VALS_ECO_TRUCK = [3.00, 1.05, 0.60, 0.50, 0.50, 0.45, 0.35]
 A_CRUISE_MAX_VALS_STANDARD_TRUCK = [6.00, 1.10, 0.70, 0.60, 0.55, 0.45, 0.35]
 A_CRUISE_MAX_VALS_SPORT_TRUCK = [6.00, 1.15, 0.75, 0.70, 0.60, 0.50, 0.40]

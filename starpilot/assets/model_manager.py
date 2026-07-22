@@ -68,6 +68,19 @@ def model_key_aliases(model_key: str) -> list[str]:
   return [alias for alias in dict.fromkeys(alias for alias in aliases if alias)]
 
 
+def load_model_artifact_metadata(model_key: str) -> dict:
+  try:
+    payload = json.loads((MODELS_PATH / ARTIFACT_METADATA_CACHE).read_text())
+    metadata = payload.get(canonical_model_key(model_key), {}) if isinstance(payload, dict) else {}
+    return metadata if isinstance(metadata, dict) else {}
+  except (OSError, ValueError, TypeError):
+    return {}
+
+
+def model_uses_external_gpu(model_key: str) -> bool:
+  return bool(load_model_artifact_metadata(model_key).get("uses_external_gpu", False))
+
+
 class ModelManager:
   def __init__(self, params, params_memory, boot_run=False):
     self.params = params
@@ -291,6 +304,7 @@ class ModelManager:
         "artifact_size": int(model.get("artifact_size") or 0),
         "artifact_sha256": str(model.get("artifact_sha256") or "").strip().lower(),
         "artifact_url": str(model.get("artifact_url") or model.get("download_url") or "").strip(),
+        "uses_external_gpu": bool(model.get("uses_external_gpu", False)),
       }
     return metadata
 

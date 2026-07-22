@@ -80,6 +80,7 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument("--list", action="store_true", help="List staged models and exit.")
   parser.add_argument("--force", action="store_true", help="Accepted for compatibility; selected outputs are always replaced.")
+  parser.add_argument("--external-gpu", action="store_true", help="Compile the driving artifact for the USB AMD GPU.")
   parser.add_argument("--split-artifact", type=Path, help="Split an existing oversized PKL without compiling.")
   parser.add_argument("--chunk-size-mib", type=int, default=95, help="Multipart size in MiB; must be below 100.")
   parser.add_argument(
@@ -355,6 +356,7 @@ def compile_driving(
   version: str,
   output_dir: Path,
   image_history_pipeline: str,
+  external_gpu: bool = False,
 ) -> Path:
   model_type, source_args = driving_compile_args(files, input_format)
   output_path = output_dir / f"{model_key}_driving_tinygrad.pkl"
@@ -390,7 +392,20 @@ def compile_driving(
   ]
   if version:
     command += ["--behavior-version", version]
-  subprocess.run(command, cwd=REPO_ROOT, env=build_compile_env(), check=True)
+  compile_env = build_compile_env()
+  if external_gpu:
+    for qcom_only_flag in ("IMAGE", "NOLOCALS", "OPENPILOT_HACKS"):
+      compile_env.pop(qcom_only_flag, None)
+    compile_env.update({
+      "DEBUG": "2",
+      "DEV": "USB+AMD:LLVM",
+      "WARP_DEV": "QCOM",
+      "FLOAT16": "1",
+      "JIT_BATCH_SIZE": "0",
+      "GMMU": "0",
+    })
+    command.append("--out-of-band")
+  subprocess.run(command, cwd=REPO_ROOT, env=compile_env, check=True)
   return output_path
 
 
@@ -487,7 +502,8 @@ def main() -> int:
     version = "v15"
   version_label = version or "unspecified behavior"
   print(f"Compiling {model_key} ({input_format}, {version_label}) from {args.input_dir} -> {args.output_dir}")
-  output = compile_driving(model_key, files, input_format, version, args.output_dir, args.image_history_pipeline)
+  output = compile_driving(model_key, files, input_format, version, args.output_dir,
+                           args.image_history_pipeline, args.external_gpu)
   print(f"  saved {output.name}")
   multipart_outputs = split_oversized_artifact(output)
   if multipart_outputs:

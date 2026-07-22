@@ -33,6 +33,11 @@ enum ParamKeyType {
   BYTES = 6
 };
 
+enum ParamSettingsTier {
+  SETTINGS_SIMPLE = 0,
+  SETTINGS_ADVANCED = 1,
+};
+
 struct ParamKeyAttributes {
   uint32_t flags;
   ParamKeyType type;
@@ -42,6 +47,9 @@ struct ParamKeyAttributes {
   std::optional<std::string> stock_value = std::nullopt;
 
   int tuning_level = 0;
+
+  // Controls settings-page visibility only. It does not gate the param's runtime behavior.
+  ParamSettingsTier settings_tier = SETTINGS_ADVANCED;
 };
 
 class Params {
@@ -111,6 +119,8 @@ public:
   }
 
   int getTuningLevel(const std::string &key);
+
+  ParamSettingsTier getSettingsTier(const std::string &key);
 
   std::optional<std::string> getStockValue(const std::string &key);
 

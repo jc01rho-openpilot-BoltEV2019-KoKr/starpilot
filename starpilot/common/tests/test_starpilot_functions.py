@@ -1,4 +1,5 @@
 from openpilot.starpilot.common import connect_server as cs
+from openpilot.starpilot.common import starpilot_functions as sf
 
 
 class FakeParams:
@@ -8,6 +9,9 @@ class FakeParams:
   def get(self, key):
     return self.values.get(key)
 
+  def get_bool(self, key):
+    return self.values.get(key) in (True, 1, "1", b"1")
+
   def put(self, key, value):
     self.values[key] = value
 
@@ -16,6 +20,47 @@ class FakeParams:
 
   def remove(self, key):
     self.values.pop(key, None)
+
+
+class FakeThreadManager:
+  def is_thread_alive(self, name):
+    return False
+
+
+def test_automatic_update_requests_guarded_reboot(monkeypatch):
+  params = FakeParams({
+    "UpdaterState": "idle",
+    "UpdaterFetchAvailable": True,
+    "UpdateAvailable": False,
+    "IsOnroad": False,
+  })
+  state_reads = 0
+  update_checks = 0
+
+  def get(key):
+    nonlocal state_reads
+    if key == "UpdaterState" and params.values[key] == "checking...":
+      state_reads += 1
+      if state_reads % 2 == 0:
+        params.values[key] = "idle"
+    return params.values.get(key)
+
+  def run_cmd(command, *args, **kwargs):
+    nonlocal update_checks
+    if "-SIGUSR1" in command:
+      update_checks += 1
+      params.values["UpdaterState"] = "checking..."
+      params.values["UpdaterFetchAvailable"] = update_checks == 1
+    elif "-SIGHUP" in command:
+      params.values["UpdateAvailable"] = True
+
+  params.get = get
+  monkeypatch.setattr(sf, "run_cmd", run_cmd)
+  monkeypatch.setattr(sf.HARDWARE, "reboot", lambda: (_ for _ in ()).throw(AssertionError("direct reboot called")))
+
+  sf.update_openpilot(FakeThreadManager(), params)
+
+  assert params.get("DoReboot") == b"1"
 
 
 def test_sync_konik_dongle_id_preserves_stock_id_before_switching(monkeypatch, tmp_path):

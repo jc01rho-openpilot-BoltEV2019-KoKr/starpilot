@@ -7,6 +7,7 @@
 struct FavoriteSlotState {
   bool enabled = false;
   bool show_onroad = false;
+  bool action = false;
   bool value = false;
   QString key;
   QString label;

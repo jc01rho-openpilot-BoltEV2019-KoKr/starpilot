@@ -14,6 +14,38 @@ export function highlightRoute(map, routes, selectedRouteId) {
   });
 }
 
+const JAPANESE_KANA_PATTERN = /[\u3040-\u30ff]/u;
+
+function usesJapaneseLanguage(language) {
+  return typeof language === 'string' && /^(?:main_)?ja(?:[-_]|$)/i.test(language.trim());
+}
+
+function isLikelyInJapan(position) {
+  if (!position) return false;
+
+  const latitude = Number(position.latitude);
+  const longitude = Number(position.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+
+  // Main islands, Ryukyu Islands, and the Izu/Ogasawara island chains.
+  const mainIslands = latitude >= 30 && latitude <= 45.8 && longitude >= 129.2 && longitude <= 146;
+  const ryukyuIslands = latitude >= 24 && latitude < 30 && longitude >= 122.8 && longitude <= 131.5;
+  const pacificIslands = latitude >= 20 && latitude < 30 && longitude >= 136 && longitude <= 154;
+  return mainIslands || ryukyuIslands || pacificIslands;
+}
+
+export function getMapboxSearchContext(query, position, preferredLanguages = []) {
+  const languages = Array.isArray(preferredLanguages) ? preferredLanguages : [preferredLanguages];
+  const japaneseSearch = JAPANESE_KANA_PATTERN.test(query || '') || languages.some(usesJapaneseLanguage);
+  const hasPosition = Number.isFinite(Number(position?.latitude)) && Number.isFinite(Number(position?.longitude));
+
+  if (isLikelyInJapan(position) || (japaneseSearch && !hasPosition)) {
+    return { language: 'ja', country: 'jp' };
+  }
+  if (japaneseSearch) return { language: 'ja' };
+  return {};
+}
+
 function addRouteSource(map, sourceId, feature) {
   if (map.getSource(sourceId)) {
     const layerId = `route-line-${sourceId.replace('route-', '')}`;
@@ -141,11 +173,14 @@ export function addRouteToMap(map, routes, start, dest, onRouteSelect, useMetric
   map.fitBounds([start, dest], { padding, duration: 1000 });
 }
 
-export async function getCoordinatesFromSearch(searchValue, mapboxPublic) {
+export async function getCoordinatesFromSearch(searchValue, mapboxPublic, searchContext = {}) {
   const params = new URLSearchParams({ access_token: mapboxPublic, q: searchValue });
+  if (searchContext.language) params.set('language', searchContext.language);
+  if (searchContext.country) params.set('country', searchContext.country);
+  if (searchContext.proximity) params.set('proximity', searchContext.proximity);
   const response = await fetch(`https://api.mapbox.com/search/geocode/v6/forward?${params.toString()}`);
   const data = await response.json();
-  return data.features[0].geometry.coordinates;
+  return data.features?.[0]?.geometry?.coordinates;
 }
 
 export async function getRoutes(from, to, mapboxPublic) {

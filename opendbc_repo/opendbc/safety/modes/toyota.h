@@ -50,21 +50,36 @@
 #define TOYOTA_COMMON_RX_CHECKS(lta)                                                                                                       \
   {.msg = {{ 0xaa, 0, 8, 83U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
   {.msg = {{0x260, 0, 8, 50U, .ignore_counter = true, .ignore_quality_flag=!(lta)}, { 0 }, { 0 }}},                           \
-  /* StarPilot Variables */                                                                                                   \
+
+#define TOYOTA_CRUISE_RX_CHECK                                                                                                               \
   {.msg = {{0x1D3, 0, 8, 33U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
+
+#define TOYOTA_ALT_CRUISE_RX_CHECK                                                                                                           \
+  {.msg = {{0x1D3, 0, 8, 33U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},                  \
+           {0x1D3, 0, 5, 33U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},                  \
+           {0x365, 0, 7, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}}},                \
 
 #define TOYOTA_RX_CHECKS(lta)                                                                                                               \
   TOYOTA_COMMON_RX_CHECKS(lta)                                                                                                              \
+  TOYOTA_CRUISE_RX_CHECK                                                                                                                     \
+  {.msg = {{0x1D2, 0, 8, 33U, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},                            \
+  {.msg = {{0x226, 0, 8, 40U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},  { 0 }, { 0 }}},  \
+
+#define TOYOTA_ALT_CRUISE_RX_CHECKS(lta)                                                                                                    \
+  TOYOTA_COMMON_RX_CHECKS(lta)                                                                                                              \
+  TOYOTA_ALT_CRUISE_RX_CHECK                                                                                                                \
   {.msg = {{0x1D2, 0, 8, 33U, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},                            \
   {.msg = {{0x226, 0, 8, 40U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},  { 0 }, { 0 }}},  \
 
 #define TOYOTA_ALT_BRAKE_RX_CHECKS(lta)                                                                                                    \
   TOYOTA_COMMON_RX_CHECKS(lta)                                                                                                             \
+  TOYOTA_CRUISE_RX_CHECK                                                                                                                    \
   {.msg = {{0x1D2, 0, 8, 33U, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},                           \
   {.msg = {{0x224, 0, 8, 40U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
 
 #define TOYOTA_SECOC_RX_CHECKS                                                                                                             \
   TOYOTA_COMMON_RX_CHECKS(false)                                                                                                           \
+  TOYOTA_CRUISE_RX_CHECK                                                                                                                    \
   {.msg = {{0x176, 0, 8, 32U, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},                           \
   {.msg = {{0x116, 0, 8, 42U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
   {.msg = {{0x101, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
@@ -78,6 +93,7 @@ static bool toyota_stock_longitudinal = false;
 static bool toyota_lta = false;
 static int toyota_dbc_eps_torque_factor = 100;   // conversion factor for STEER_TORQUE_EPS in %: see dbc file
 static bool toyota_long_filter = false;
+static bool toyota_alt_cruise = false;
 
 static uint32_t toyota_compute_checksum(const CANPacket_t *msg) {
   int len = GET_LEN(msg);
@@ -106,6 +122,12 @@ static bool toyota_get_quality_flag_valid(const CANPacket_t *msg) {
     valid = !GET_BIT(msg, 3U);  // STEER_ANGLE_INITIALIZING
   }
   return valid;
+}
+
+static void toyota_rx_all_hook(const CANPacket_t *msg) {
+  if (toyota_alt_cruise && (msg->bus == 0U) && (msg->addr == 0x365U) && (GET_LEN(msg) == 7U)) {
+    acc_main_on = GET_BIT(msg, 0U);  // DSU_CRUISE.MAIN_ON
+  }
 }
 
 static void toyota_rx_hook(const CANPacket_t *msg) {
@@ -185,12 +207,8 @@ static void toyota_rx_hook(const CANPacket_t *msg) {
       UPDATE_VEHICLE_SPEED(speed / 4.0 * 0.01 * KPH_TO_MS);
     }
 
-    if (msg->addr == 0x1D3U) {
+    if ((msg->addr == 0x1D3U) && (GET_LEN(msg) == 8U)) {
       acc_main_on = GET_BIT(msg, 15U);
-    }
-
-    if (msg->addr == 0x365U) {
-      acc_main_on = GET_BIT(msg, 0U);
     }
 
     if (enable_gas_interceptor && (msg->addr == 0x201U)) {
@@ -437,6 +455,7 @@ static safety_config toyota_init(uint16_t param) {
   const uint32_t TOYOTA_PARAM_LTA = 4UL << TOYOTA_PARAM_OFFSET;
   const uint32_t TOYOTA_PARAM_LONG_FILTER = 16UL << TOYOTA_PARAM_OFFSET;
   const uint32_t TOYOTA_PARAM_GAS_INTERCEPTOR = 32UL << TOYOTA_PARAM_OFFSET;
+  const uint32_t TOYOTA_PARAM_ALT_CRUISE = 64UL << TOYOTA_PARAM_OFFSET;
 
 #ifdef ALLOW_DEBUG
   const uint32_t TOYOTA_PARAM_SECOC = 8UL << TOYOTA_PARAM_OFFSET;
@@ -448,6 +467,7 @@ static safety_config toyota_init(uint16_t param) {
   toyota_lta = GET_FLAG(param, TOYOTA_PARAM_LTA);
   toyota_long_filter = GET_FLAG(param, TOYOTA_PARAM_LONG_FILTER);
   enable_gas_interceptor = GET_FLAG(param, TOYOTA_PARAM_GAS_INTERCEPTOR);
+  toyota_alt_cruise = GET_FLAG(param, TOYOTA_PARAM_ALT_CRUISE);
   toyota_dbc_eps_torque_factor = param & TOYOTA_EPS_FACTOR;
 
   if (toyota_stock_longitudinal || toyota_secoc) {
@@ -515,8 +535,19 @@ static safety_config toyota_init(uint16_t param) {
       TOYOTA_ALT_BRAKE_RX_CHECKS(false)
       TOYOTA_GAS_INTERCEPTOR_ADDR_CHECK
     };
+    static RxCheck toyota_lka_alt_cruise_rx_checks[] = {
+      TOYOTA_ALT_CRUISE_RX_CHECKS(false)
+    };
+    static RxCheck toyota_lka_alt_cruise_interceptor_rx_checks[] = {
+      TOYOTA_ALT_CRUISE_RX_CHECKS(false)
+      TOYOTA_GAS_INTERCEPTOR_ADDR_CHECK
+    };
 
-    if (enable_gas_interceptor && !toyota_alt_brake) {
+    if (toyota_alt_cruise && enable_gas_interceptor) {
+      SET_RX_CHECKS(toyota_lka_alt_cruise_interceptor_rx_checks, ret);
+    } else if (toyota_alt_cruise) {
+      SET_RX_CHECKS(toyota_lka_alt_cruise_rx_checks, ret);
+    } else if (enable_gas_interceptor && !toyota_alt_brake) {
       SET_RX_CHECKS(toyota_lka_interceptor_rx_checks, ret);
     } else if (enable_gas_interceptor) {
       SET_RX_CHECKS(toyota_lka_alt_brake_interceptor_rx_checks, ret);
@@ -542,6 +573,7 @@ static bool toyota_fwd_hook(int bus_num, int addr) {
 const safety_hooks toyota_hooks = {
   .init = toyota_init,
   .rx = toyota_rx_hook,
+  .rx_all = toyota_rx_all_hook,
   .tx = toyota_tx_hook,
   .fwd = toyota_fwd_hook,
   .get_checksum = toyota_get_checksum,
