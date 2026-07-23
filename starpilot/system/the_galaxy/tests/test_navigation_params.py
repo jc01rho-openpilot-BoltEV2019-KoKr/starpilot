@@ -96,6 +96,52 @@ def _params_client(monkeypatch, values, device_type):
   return app.test_client(), fake_params
 
 
+def _low_voltage_client(monkeypatch, values):
+  fake_params = WritableFakeParams(values)
+  monkeypatch.setattr(the_galaxy, "params", fake_params)
+  monkeypatch.setattr(the_galaxy.Paths, "comma_home", lambda: "/tmp/dashboard-test-home", raising=False)
+  assert the_galaxy._import_galaxy_web_symbols()
+  app = the_galaxy.Flask("low_voltage_discord_test")
+  the_galaxy.setup(app)
+  return app.test_client(), fake_params
+
+
+def test_low_voltage_discord_status_never_returns_webhook(monkeypatch):
+  secret = "https://discord.com/api/webhooks/123/token"
+  client, _ = _low_voltage_client(monkeypatch, {
+    "GithubUsername": "jc01rho",
+    "GithubSshKeys": "ssh-key",
+    "LowVoltageDiscordReport": True,
+    "LowVoltageDiscordWebhook": secret,
+  })
+  response = client.get("/api/low_voltage_discord")
+  assert response.status_code == 200
+  assert response.get_json() == {"owner": True, "configured": True, "enabled": True}
+  assert secret.encode() not in response.data
+
+
+def test_low_voltage_discord_rejects_non_owner_updates(monkeypatch):
+  client, params = _low_voltage_client(monkeypatch, {"GithubUsername": "someone", "GithubSshKeys": "ssh-key"})
+  response = client.put("/api/low_voltage_discord", json={"webhook": "https://discord.com/api/webhooks/123/token", "enabled": True})
+  assert response.status_code == 403
+  assert "LowVoltageDiscordWebhook" not in params.values
+
+
+def test_low_voltage_discord_configures_and_removes_secret(monkeypatch):
+  client, params = _low_voltage_client(monkeypatch, {"GithubUsername": "jc01rho", "GithubSshKeys": "ssh-key"})
+  secret = "https://discord.com/api/webhooks/123/token"
+  response = client.put("/api/low_voltage_discord", json={"webhook": secret, "enabled": True})
+  assert response.status_code == 200
+  assert params.values["LowVoltageDiscordWebhook"] == secret
+  assert params.values["LowVoltageDiscordReport"] is True
+  assert secret.encode() not in response.data
+
+  response = client.delete("/api/low_voltage_discord")
+  assert response.status_code == 200
+  assert "LowVoltageDiscordWebhook" not in params.values
+  assert params.values["LowVoltageDiscordReport"] is False
+
+
 def test_params_compat_accepts_json_strings_for_json_keys():
   backend = FakeParamsBackend(
     key_types={"FavoriteDestinations": ParamKeyType.JSON},

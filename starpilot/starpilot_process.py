@@ -30,6 +30,11 @@ from openpilot.starpilot.common.starpilot_variables import ERROR_LOGS_PATH, Star
 from openpilot.starpilot.controls.starpilot_planner import StarPilotPlanner, serialize_starpilot_toggles
 from openpilot.starpilot.system.starpilot_stats import send_stats
 from openpilot.starpilot.system.starpilot_tracking import StarPilotTracking
+from openpilot.starpilot.system.low_voltage_discord import (
+  LowVoltageDriveReporter,
+  deliver_after_offroad_delay,
+  extract_voltage_mv,
+)
 
 ASSET_CHECK_RATE = (1 / DT_MDL)
 DASHBOARD_ANALYSIS_REFRESH_RATE = 60
@@ -247,7 +252,7 @@ def starpilot_thread():
   sm = messaging.SubMaster(["carControl", "carState", "controlsState", "deviceState", "driverMonitoringState",
                             "gpsLocation", "gpsLocationExternal", "liveParameters", "managerState", "modelV2",
                             "naviData", "onroadEvents", "pandaStates", "radarState", "selfdriveState", "starpilotCarState",
-                            "starpilotSelfdriveState", "starpilotModelV2", "starpilotOnroadEvents", "mapdOut"],
+                            "starpilotSelfdriveState", "starpilotModelV2", "starpilotOnroadEvents", "mapdOut", "peripheralState"],
                             poll="modelV2")
 
   params = Params(return_defaults=True)
@@ -258,6 +263,7 @@ def starpilot_thread():
   model_manager = ModelManager(params, params_memory)
   theme_manager = ThemeManager(params, params_memory)
   thread_manager = ThreadManager()
+  low_voltage_reporter = LowVoltageDriveReporter(params)
 
   starpilot_toggles = starpilot_variables.starpilot_toggles
   serialized_starpilot_toggles = serialize_starpilot_toggles(starpilot_toggles)
@@ -267,6 +273,7 @@ def starpilot_thread():
   drive_stats_session = requests.Session()
   next_dashboard_analysis_refresh = 0.0
   next_drive_stats_sync = 0.0
+  next_low_voltage_discord_retry = 0.0
   periodic_update_phase = get_update_check_phase_seconds(params_raw)
   next_periodic_update_check = get_next_periodic_update_check(time.monotonic(), periodic_update_phase)
 
@@ -290,6 +297,7 @@ def starpilot_thread():
     monotonic_now = time.monotonic()
 
     started = sm["deviceState"].started
+    low_voltage_reporter.sample(extract_voltage_mv(sm["peripheralState"], alive=sm.alive["peripheralState"], valid=sm.valid["peripheralState"]))
 
     if not started and started_previously:
       starpilot_planner.shutdown()
@@ -299,12 +307,21 @@ def starpilot_thread():
       toggle_broadcast_pending = True
       transition_offroad(starpilot_planner, model_manager, theme_manager, thread_manager, time_validated, sm, params, starpilot_toggles)
 
+      car_fingerprint = params.get("CarModel") or params.get("CarMake") or ""
+      if low_voltage_reporter.update_started(False, car_fingerprint=str(car_fingerprint)) is not None:
+        thread_manager.run_with_lock(deliver_after_offroad_delay, (params,), report=False)
+
       run_update_checks = True
     elif started and not started_previously:
+      low_voltage_reporter.update_started(True)
       starpilot_planner = StarPilotPlanner(error_log, theme_manager)
       starpilot_tracking = StarPilotTracking(starpilot_planner, starpilot_toggles)
 
       transition_onroad(error_log)
+
+    if not started and monotonic_now >= next_low_voltage_discord_retry and params.get("LowVoltageDiscordPendingReport"):
+      thread_manager.run_with_lock(deliver_after_offroad_delay, (params,), report=False)
+      next_low_voltage_discord_retry = monotonic_now + 120
 
     if started and sm.updated["modelV2"]:
       broadcast_toggles = toggle_broadcast_pending or (rate_keeper.frame % TOGGLE_BROADCAST_INTERVAL_FRAMES == 0)

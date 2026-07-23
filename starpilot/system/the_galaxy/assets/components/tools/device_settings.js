@@ -80,6 +80,8 @@ const state = reactive({
   favoriteSlots: [],
   favoriteFilters: ["", "", ""],
   favoriteValues: {},
+  lowVoltageDiscord: { owner: false, configured: false, enabled: false },
+  lowVoltageDiscordUpdating: false,
 })
 
 function slugifySectionName(name) {
@@ -104,6 +106,7 @@ function isVehicleSettingVisible(section, param) {
 function isSettingVisible(section, param) {
   // This policy controls Galaxy rendering only; hidden params retain their stored values.
   if (HIDDEN_SETTING_KEYS.has(param.key) || !isVehicleSettingVisible(section, param)) return false
+  if (param.ui_type === "discord_webhook" && !state.lowVoltageDiscord.owner) return false
   if (RADAR_REQUIRED_KEYS.has(param.key) && !state.values.HasRadar) return false
   if (state.values[GALAXY_DEVELOPER_MODE_KEY]) return true
   return section.name === "Favorites" || param.settings_tier === "simple"
@@ -357,7 +360,7 @@ async function fetchFlmWorkspace(force = false) {
 }
 
 async function refreshParamsAndDefaults() {
-  await Promise.all([fetchDefaultValues(), fetchFlmWorkspace(true)])
+  await Promise.all([fetchDefaultValues(), fetchFlmWorkspace(true), fetchLowVoltageDiscordStatus()])
 
   try {
     const valuesRes = await fetch("/api/params/all")
@@ -406,7 +409,7 @@ async function fetchLayoutAndParams() {
 
   // Pull params once at page load; local state handles subsequent edits.
   try {
-    const [defaultsLoaded] = await Promise.all([fetchDefaultValues(), fetchFlmWorkspace(true)])
+    const [defaultsLoaded] = await Promise.all([fetchDefaultValues(), fetchFlmWorkspace(true), fetchLowVoltageDiscordStatus()])
     if (!defaultsLoaded) {
       state.defaultValues = {}
     }
@@ -426,6 +429,59 @@ async function fetchLayoutAndParams() {
   // Resolve slug now that layout is available (uses stored route params)
   resolveActiveSectionSlug(lastParams)
   scheduleSyncInputs()
+}
+
+async function fetchLowVoltageDiscordStatus() {
+  try {
+    const response = await fetch("/api/low_voltage_discord", { cache: "no-store" })
+    if (response.ok) state.lowVoltageDiscord = await response.json()
+  } catch (error) {
+    console.warn("Failed to load low-voltage Discord status:", error)
+  }
+}
+
+async function saveLowVoltageDiscord() {
+  const webhookInput = document.getElementById("ds-LowVoltageDiscordWebhook")
+  const enabledInput = document.getElementById("ds-LowVoltageDiscordReport")
+  const webhook = String(webhookInput?.value || "").trim()
+  if (!webhook && !state.lowVoltageDiscord.configured) {
+    showParamSnackbar("Enter a Discord webhook URL first.", "error")
+    return
+  }
+  state.lowVoltageDiscordUpdating = true
+  try {
+    const response = await fetch("/api/low_voltage_discord", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ webhook: webhook || undefined, enabled: !!enabledInput?.checked }),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || "Failed to update Discord reporting.")
+    state.lowVoltageDiscord = data
+    if (webhookInput) webhookInput.value = ""
+    showParamSnackbar("Low-voltage Discord reporting updated.")
+    scheduleSyncInputs()
+  } catch (error) {
+    showParamSnackbar(error?.message || "Failed to update Discord reporting.", "error")
+  } finally {
+    state.lowVoltageDiscordUpdating = false
+  }
+}
+
+async function removeLowVoltageDiscord() {
+  state.lowVoltageDiscordUpdating = true
+  try {
+    const response = await fetch("/api/low_voltage_discord", { method: "DELETE" })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || "Failed to remove Discord webhook.")
+    state.lowVoltageDiscord = data
+    showParamSnackbar("Discord webhook removed.")
+    scheduleSyncInputs()
+  } catch (error) {
+    showParamSnackbar(error?.message || "Failed to remove Discord webhook.", "error")
+  } finally {
+    state.lowVoltageDiscordUpdating = false
+  }
 }
 
 function formatSliderValue(val, stepStr, precisionInt, key) {
@@ -1412,7 +1468,24 @@ function renderSettingRow(p) {
   const flmTrialSummary = p.key === "AdvancedLateralTune" ? getFlmTrialSummary() : null
   let rowControl = ""
 
-  if (isAction) {
+  if (p.ui_type === "discord_webhook") {
+    rowControl = html`
+      <div style="display:flex; flex-direction:column; gap:0.6rem; min-width:24rem;">
+        <div>${() => state.lowVoltageDiscord.configured ? "Configured" : "Not configured"}</div>
+        <input id="ds-LowVoltageDiscordWebhook" type="password" autocomplete="new-password"
+          placeholder="https://discord.com/api/webhooks/..." disabled="${() => state.lowVoltageDiscordUpdating}" />
+        <label style="display:flex; align-items:center; gap:0.5rem;">
+          <input id="ds-LowVoltageDiscordReport" type="checkbox"
+            checked="${() => state.lowVoltageDiscord.enabled}"
+            disabled="${() => state.lowVoltageDiscordUpdating}" /> Enable drive-end reports
+        </label>
+        <div style="display:flex; gap:0.5rem;">
+          <button class="ds-reset-btn" disabled="${() => state.lowVoltageDiscordUpdating}" @click="${saveLowVoltageDiscord}">Save</button>
+          <button class="ds-reset-btn" disabled="${() => state.lowVoltageDiscordUpdating || !state.lowVoltageDiscord.configured}" @click="${removeLowVoltageDiscord}">Remove</button>
+        </div>
+      </div>
+    `
+  } else if (isAction) {
     rowControl = html`
       <button
         class="ds-reset-btn"

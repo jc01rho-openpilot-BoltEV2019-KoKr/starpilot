@@ -22,6 +22,7 @@ from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 from openpilot.system.ui.widgets.label import gui_label
 
 from openpilot.selfdrive.ui.ui_state import device, ui_state
+from openpilot.starpilot.system.low_voltage_discord import configure_webhook, owner_is_allowed, remove_webhook, validate_webhook_url
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.scribble import draw_custom_icon
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
@@ -295,6 +296,13 @@ class SystemSettingsManagerView(PanelManagerView):
         "disabled_label": tr("Uploads must stay enabled"),
       },
     ]
+    if owner_is_allowed(self._controller._params):
+      self._toggle_defs.append({
+        "title": tr("Discord Battery Report"),
+        "subtitle": tr("Send the Panda/comma 12 V supply voltage after each drive."),
+        "get_state": lambda: self._controller._params.get_bool("LowVoltageDiscordReport"),
+        "set_state": self._controller._on_low_voltage_discord_toggle,
+      })
 
     self._basics_tile_grid_h = 0.0
 
@@ -815,6 +823,7 @@ class StarPilotSystemLayout(_SettingsPage):
   def __init__(self):
     super().__init__()
     self._keyboard = Keyboard(min_text_size=0)
+    self._secret_keyboard = Keyboard(min_text_size=1, password_mode=True, show_password_toggle=True)
     self._storage_text = "0 MB"
     self._storage_updated_at = 0.0
     self._storage_refresh_pending = False
@@ -822,6 +831,32 @@ class StarPilotSystemLayout(_SettingsPage):
     self._pending_storage_text: tuple[int, str] | None = None
     self._manager_view = SystemSettingsManagerView(self)
     self._refresh_storage_cache(force=True)
+
+  def _on_low_voltage_discord_toggle(self, enabled: bool):
+    if not owner_is_allowed(self._params):
+      self._params.put_bool("LowVoltageDiscordReport", False)
+      return
+    if not enabled:
+      remove_webhook(self._params)
+      return
+    if validate_webhook_url(self._params.get("LowVoltageDiscordWebhook") or ""):
+      self._params.put_bool("LowVoltageDiscordReport", True)
+      return
+
+    def on_webhook(result: DialogResult):
+      if result != DialogResult.CONFIRM:
+        self._params.put_bool("LowVoltageDiscordReport", False)
+      elif configure_webhook(self._params, self._secret_keyboard.text):
+        self._params.put_bool("LowVoltageDiscordReport", True)
+      else:
+        self._params.put_bool("LowVoltageDiscordReport", False)
+        gui_app.push_widget(alert_dialog(tr("Enter a valid Discord webhook URL.")))
+
+    self._secret_keyboard.reset(min_text_size=1)
+    self._secret_keyboard.set_title(tr("Discord Webhook URL"), tr("The saved URL will not be displayed again."))
+    self._secret_keyboard.set_text("")
+    self._secret_keyboard.set_callback(on_webhook)
+    gui_app.push_widget(self._secret_keyboard)
 
   def show_event(self):
     self._refresh_storage_cache(force=True)

@@ -82,6 +82,7 @@ from openpilot.starpilot.common.testing_grounds import (
   TESTING_GROUNDS_STATE_PATH as SHARED_TESTING_GROUNDS_STATE_PATH,
 )
 from openpilot.starpilot.navigation.destination_store import normalize_destination_payload, update_recent_destinations
+from openpilot.starpilot.system.low_voltage_discord import configure_webhook, owner_is_allowed, remove_webhook, webhook_status
 from openpilot.starpilot.system.the_galaxy.factory_reset import remove_path as _run_factory_reset_delete
 from openpilot.starpilot.system.the_galaxy import flm_workspace, utilities
 from openpilot.starpilot.system.the_galaxy.update_recovery import inspect_interrupted_update, public_recovery_status, recover_interrupted_update
@@ -2440,11 +2441,16 @@ _cached_default_values = None
 _cached_static_default_values = None
 
 GALAXY_MANUAL_BOOL_PARAM_KEYS = {"IsRHD", "IsRHDOverride"}
+GALAXY_PRIVATE_PARAM_KEYS = {
+  "LowVoltageDiscordLastDrive",
+  "LowVoltageDiscordPendingReport",
+  "LowVoltageDiscordWebhook",
+}
 
 def _get_param_type_info():
   global _cached_allowed_keys, _cached_param_types
   if _cached_allowed_keys is None:
-    _cached_allowed_keys = {k for k, _, _, _ in starpilot_default_params if k not in EXCLUDED_KEYS}
+    _cached_allowed_keys = {k for k, _, _, _ in starpilot_default_params if k not in EXCLUDED_KEYS and k not in GALAXY_PRIVATE_PARAM_KEYS}
 
     types = {}
     for k, default_val, _, _ in starpilot_default_params:
@@ -4713,6 +4719,29 @@ def setup(app):
     result["HasRadar"] = _get_has_radar()
 
     return jsonify(_sanitize_json_value(result)), 200
+
+  @app.route("/api/low_voltage_discord", methods=["GET", "PUT", "DELETE"])
+  def low_voltage_discord_settings():
+    if request.method == "GET":
+      return jsonify(webhook_status(params)), 200
+
+    if not owner_is_allowed(params):
+      return jsonify({"error": "This setting is restricted to the configured owner."}), 403
+
+    if request.method == "DELETE":
+      remove_webhook(params)
+      return jsonify(webhook_status(params)), 200
+
+    request_data = request.get_json(silent=True) or {}
+    webhook = request_data.get("webhook")
+    if webhook not in (None, "") and not configure_webhook(params, str(webhook)):
+      return jsonify({"error": "Enter a valid Discord webhook URL."}), 400
+
+    enabled = bool(request_data.get("enabled", False))
+    if enabled and not webhook_status(params)["configured"]:
+      return jsonify({"error": "Configure the Discord webhook before enabling reports."}), 400
+    params.put_bool("LowVoltageDiscordReport", enabled)
+    return jsonify(webhook_status(params)), 200
 
   @app.route("/api/params/defaults", methods=["GET"])
   def get_default_params():

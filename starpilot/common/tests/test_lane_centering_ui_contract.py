@@ -57,6 +57,17 @@ def test_qt_tuple_entries_and_constructor_contract():
   assert "0.01" in window, "LaneCenterOffset step must be 0.01"
 
 
+def test_qt_camera_offset_numeric_contract():
+  assert '{"CameraOffset"' in _QT_CC, "CameraOffset tuple entry missing"
+
+  idx = _QT_CC.find('param == "CameraOffset"')
+  assert idx != -1, "CameraOffset constructor branch missing"
+  window = _QT_CC[idx:idx + 400]
+  assert "StarPilotParamValueControl" in window
+  assert re.search(r"-0\.35,\s*0\.35", window), "CameraOffset range must be -0.35..0.35"
+  assert "0.01" in window, "CameraOffset step must be 0.01"
+
+
 def test_qt_offset_visibility_gated_on_lane_centering():
   idx = _QT_CC.find('key == "LaneCenterOffset"')
   assert idx != -1, "LaneCenterOffset updateToggles branch missing"
@@ -73,6 +84,7 @@ def test_qt_header_advanced_lateral_keys():
   window = _QT_H[idx:idx + 400]
   assert '"LaneCentering"' in window
   assert '"LaneCenterOffset"' in window
+  assert '"CameraOffset"' in window
 
 
 def test_galaxy_troubleshoot_advanced_lateral_keys():

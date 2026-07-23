@@ -40,6 +40,7 @@ StarPilotLateralPanel::StarPilotLateralPanel(StarPilotSettingsWindow *parent, bo
     {"SteerOffset", tr("Steer Offset"), tr("<b>Offsets steering torque to help compensate for alignment or tire issues.</b> More negative pulls the car right; more positive pulls it left. Most users should not need to touch this."), ""},
     {"LaneCentering", tr("Lane Centering"), tr("<b>Use both recognized lane lines to actively center the vehicle in the lane.</b> Falls back to stock steering when both lane lines are not confidently detected."), ""},
     {"LaneCenterOffset", tr("Lane Center Offset"), tr("<b>Shift the target position within the lane, in meters.</b> Negative moves the vehicle toward the left side of the lane; positive moves it toward the right. Only applies while \"Lane Centering\" is active."), ""},
+    {"CameraOffset", tr("Camera Offset"), tr("<b>Virtually shift the camera perspective used by the driving model.</b> Positive values bias the model center left; negative values bias it right. Use only for development."), ""},
     {"ForceAutoTune", tr("Force Auto-Tune On"), tr("<b>Force-enable openpilot's live auto-tuning for \"Friction\" and \"Lateral Acceleration\".</b>"), ""},
     {"ForceAutoTuneOff", tr("Force Auto-Tune Off"), tr("<b>Force-disable openpilot's live auto-tuning for \"Friction\" and \"Lateral Acceleration\" and use the set value instead.</b>"), ""},
     {"ForceTorqueController", tr("Force Torque Controller"), tr("<b>Use torque-based steering control instead of angle-based control for smoother lane keeping, especially in curves.</b>"), ""},
@@ -95,6 +96,8 @@ StarPilotLateralPanel::StarPilotLateralPanel(StarPilotSettingsWindow *parent, bo
       lateralToggle = new StarPilotParamValueButtonControl(param, title, desc, icon, -0.2, 0.2, QString(), std::map<float, QString>(), 0.005, false, {}, steerOffsetButton, false, false);
     } else if (param == "LaneCenterOffset") {
       lateralToggle = new StarPilotParamValueControl(param, title, desc, icon, -0.5, 0.5, tr(" m"), std::map<float, QString>(), 0.01);
+    } else if (param == "CameraOffset") {
+      lateralToggle = new StarPilotParamValueControl(param, title, desc, icon, -0.35, 0.35, tr(" m"), std::map<float, QString>(), 0.01);
 
     } else if (param == "AlwaysOnLateral") {
       StarPilotManageControl *aolToggle = new StarPilotManageControl(param, title, desc, icon);
