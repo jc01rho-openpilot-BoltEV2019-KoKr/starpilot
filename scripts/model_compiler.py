@@ -80,7 +80,8 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument("--list", action="store_true", help="List staged models and exit.")
   parser.add_argument("--force", action="store_true", help="Accepted for compatibility; selected outputs are always replaced.")
-  parser.add_argument("--external-gpu", action="store_true", help="Compile the driving artifact for the USB AMD GPU.")
+  parser.add_argument("--gpu", "--external-gpu", dest="external_gpu", action="store_true",
+                      help="Compile the driving artifact for the USB AMD GPU.")
   parser.add_argument("--split-artifact", type=Path, help="Split an existing oversized PKL without compiling.")
   parser.add_argument("--chunk-size-mib", type=int, default=95, help="Multipart size in MiB; must be below 100.")
   parser.add_argument(

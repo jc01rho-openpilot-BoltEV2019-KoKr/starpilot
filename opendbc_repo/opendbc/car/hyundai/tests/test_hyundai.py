@@ -308,11 +308,13 @@ class TestHyundaiFingerprint:
     assert direct_angle_request_allowed(8.47, 140.0, 140.0, True, controller.BASELINE_VM, controller.params)
     assert not direct_angle_request_allowed(8.47, 140.0, 140.0, False, controller.BASELINE_VM, controller.params)
 
-  def test_ev9_matches_other_angle_platform_standstill_behavior(self):
+  def test_angle_platforms_disable_standstill_steering(self):
     ev9_cp = CarInterface.get_params(CAR.KIA_EV9, gen_empty_fingerprint(), [], False, False, False, None)
+    ioniq_5_pe_cp = CarInterface.get_params(CAR.HYUNDAI_IONIQ_5_PE, gen_empty_fingerprint(), [], False, False, False, None)
     sportage_cp = CarInterface.get_params(CAR.KIA_SPORTAGE_HEV_2026, gen_empty_fingerprint(), [], False, False, False, None)
 
     assert not ev9_cp.steerAtStandstill
+    assert not ioniq_5_pe_cp.steerAtStandstill
     assert not sportage_cp.steerAtStandstill
 
   @pytest.mark.parametrize("candidate", (CAR.KIA_K4_2025, CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN))
@@ -1632,6 +1634,31 @@ class TestHyundaiFingerprint:
                                         get_test_toggles(), lka_icon=1, lfa_icon=1)
     lkas_msgs = [msg for msg in msgs if msg[0] == 0x110]
     assert len(lkas_msgs) == 0
+
+  @pytest.mark.parametrize(("standstill", "expected_lkas_msgs"), [(False, 1), (True, 0)])
+  def test_ioniq_5_pe_standstill_lets_safety_forward_stock_lkas(self, standstill, expected_lkas_msgs):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.HYUNDAI_IONIQ_5_PE
+    CP.flags = int(HyundaiFlags.CANFD | HyundaiFlags.EV | HyundaiFlags.CANFD_ANGLE_STEERING |
+                   HyundaiFlags.CANFD_LKA_STEERING | HyundaiFlags.CANFD_LKA_STEERING_ALT)
+    CP.openpilotLongitudinalControl = False
+
+    controller = CarController(DBC[CP.carFingerprint], CP)
+    cc = SimpleNamespace(enabled=True, latActive=False, actuators=SimpleNamespace(longControlState=LongCtrlState.off),
+                         leftBlinker=False, rightBlinker=False, hudControl=SimpleNamespace())
+    cs = SimpleNamespace(
+      stock_lfa_msg=None,
+      stock_lkas_msg={},
+      out=SimpleNamespace(
+        standstill=standstill,
+        steeringAngleDeg=0.0,
+        gearShifter=structs.CarState.GearShifter.drive,
+      ),
+    )
+
+    msgs = controller.create_canfd_msgs(0, False, 0.0, 0.0, 0.0, 0.0, False, cc.hudControl, cs, cc,
+                                        get_test_toggles(), lka_icon=1, lfa_icon=1)
+    assert len([msg for msg in msgs if msg[0] == 0x110]) == expected_lkas_msgs
 
   def test_ev9_inactive_angle_steering_does_not_suppress_stock_lfa(self):
     CP = CarParams.new_message()

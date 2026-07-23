@@ -146,6 +146,31 @@ def test_starting_accel_unchanged_when_custom_profile_disabled():
   assert output_accel == 1.5
 
 
+def test_starting_accel_uses_small_planner_target_for_lead_gap_settle():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=0.18,
+    should_stop=False,
+    accel_limits=(-3.0, 2.0),
+    starpilot_toggles=make_toggles(startAccel=1.5),
+    has_lead=True,
+  )
+
+  assert lc.long_control_state == LongCtrlState.starting
+  assert output_accel == pytest.approx(0.18)
+
+
 def test_starting_accel_obeys_a_target_cap_when_custom_profile_enabled():
   CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
   CP.longitudinalTuning.kpBP = [0.0]

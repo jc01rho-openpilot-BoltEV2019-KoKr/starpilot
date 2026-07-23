@@ -106,10 +106,11 @@ class FakeManagedProcess:
     return SimpleNamespace(name="ui")
 
 
-def test_reboot_guard_includes_raw_ignition_state():
-  assert manager.should_defer_reboot(started=True, ignition=False)
-  assert manager.should_defer_reboot(started=False, ignition=True)
-  assert not manager.should_defer_reboot(started=False, ignition=False)
+def test_reboot_guard_only_defers_automatic_requests():
+  assert manager.should_defer_reboot("DoReboot", started=True, ignition=False)
+  assert manager.should_defer_reboot("DoReboot", started=False, ignition=True)
+  assert not manager.should_defer_reboot("DoReboot", started=False, ignition=False)
+  assert not manager.should_defer_reboot("DoUserReboot", started=True, ignition=True)
 
 
 class TestManager:

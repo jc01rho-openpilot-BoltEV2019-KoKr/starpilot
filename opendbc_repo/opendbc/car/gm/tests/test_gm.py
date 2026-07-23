@@ -362,6 +362,9 @@ class TestGMInterface:
     assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_BOLT_2022_PEDAL.value
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
+    assert car_params.startingState
+    assert car_params.startAccel == pytest.approx(0.55)
+    assert car_params.vEgoStarting == pytest.approx(0.35)
 
   def test_cadillac_xt5_sdgm_sascm_gates_alpha_long(self):
     CarInterface = interfaces[CAR.CADILLAC_XT5]
@@ -564,6 +567,8 @@ class TestGMCarController:
       xt4_cc_button_burst_remaining=0,
       xt4_cc_button_burst_button=CruiseButtons.INIT,
       xt4_cc_button_burst_last_counter=-1,
+      xt4_cc_button_observed_counter=-1,
+      xt4_cc_button_counter_frame=0,
     )
     cs = SimpleNamespace(
       CP=SimpleNamespace(
@@ -580,12 +585,15 @@ class TestGMCarController:
     actuators = SimpleNamespace(accel=1.0)
 
     dats = []
+    send_counts = []
     for counter in (0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 0, 0, 0, 1, 1, 1):
       cs.buttons_counter = counter
       msgs = gmcan.create_gm_cc_spam_command(packer, controller, cs, actuators, SimpleNamespace(is_metric=False))
+      send_counts.append(len(msgs))
       dats.extend(bytes(msg[1]).hex() for msg in msgs)
       controller.frame += 1
 
+    assert send_counts == [0, 1, 0] * gmcan.XT4_CC_BUTTON_BURST_FRAMES
     assert dats == [
       "000000010125de",
       "00000001022acd",

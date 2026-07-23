@@ -3077,6 +3077,17 @@ def _get_starpilot_toggles_snapshot():
   except Exception:
     return {}
 
+def _get_has_radar():
+  cp_bytes = _safe_params_get_live_raw("CarParamsPersistent")
+  if not cp_bytes:
+    return False
+
+  try:
+    with car.CarParams.from_bytes(cp_bytes) as cp:
+      return not bool(getattr(cp, "radarUnavailable", False))
+  except Exception:
+    return False
+
 def _get_hardware_snapshot_items():
   starpilot_toggles = _get_starpilot_toggles_snapshot()
 
@@ -4698,6 +4709,8 @@ def setup(app):
         result[key] = _get_current_param_value(key, t, defaults_lookup)
       except Exception:
         result[key] = None
+
+    result["HasRadar"] = _get_has_radar()
 
     return jsonify(_sanitize_json_value(result)), 200
 

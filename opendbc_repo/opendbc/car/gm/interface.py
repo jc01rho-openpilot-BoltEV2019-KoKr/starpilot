@@ -625,6 +625,9 @@ class CarInterface(CarInterfaceBase):
       if is_bolt_2022_2023_pedal:
         # Gen2 Bolt pedal-long should follow the no-ACC panda path.
         ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_NO_ACC.value
+        ret.startingState = True
+        ret.startAccel = 0.55
+        ret.vEgoStarting = max(ret.vEgoStarting, 0.35)
 
       if candidate in (CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL, CAR.CHEVROLET_MALIBU_HYBRID_CC):
         ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_BOLT_2022_PEDAL.value

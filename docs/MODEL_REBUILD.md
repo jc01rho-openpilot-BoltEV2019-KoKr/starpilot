@@ -85,8 +85,10 @@ The lower-level device compiler also supports direct use:
 For a model that cannot run on the device GPU, compile with the USB AMD GPU attached:
 
 ```bash
-./models --model heavyweight --input-format supercombo --version v15 --external-gpu
+./models --model heavyweight --input-format supercombo --version v15 --gpu
 ```
+
+`--external-gpu` remains available as a compatibility alias for `--gpu`.
 
 This emits a streaming out-of-band pickle and keeps QCOM available for camera warps. Its manifest entry must include:
 

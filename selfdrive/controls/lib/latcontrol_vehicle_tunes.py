@@ -613,6 +613,8 @@ IONIQ_6_CURVY_UNWIND_LAT_START = 0.45
 IONIQ_6_CURVY_UNWIND_LAT_END = 3.6
 IONIQ_6_CURVY_UNWIND_LAT_ONSET_WIDTH = 0.14
 IONIQ_6_CURVY_UNWIND_LAT_CUTOFF_WIDTH = 0.55
+IONIQ_6_CURVY_RIGHT_UNWIND_JERK_ONSET = 0.40
+IONIQ_6_CURVY_RIGHT_UNWIND_JERK_WIDTH = 0.22
 IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MIN = 11.5
 IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MAX = 20.5
 IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_WIDTH = 1.2
@@ -658,6 +660,8 @@ KIA_EV6_TURN_IN_BOOST_LEFT = 0.62
 KIA_EV6_TURN_IN_BOOST_RIGHT = 0.60
 KIA_EV6_UNWIND_TAPER_LEFT = 0.56
 KIA_EV6_UNWIND_TAPER_RIGHT = 0.54
+KIA_EV6_BASE_UNWIND_TAPER_LEFT = 0.06
+KIA_EV6_BASE_UNWIND_TAPER_RIGHT = 0.05
 KIA_EV6_FRICTION_MULT = 1.01
 KIA_EV6_FRICTION_LAT_RISE = 0.18
 KIA_EV6_FRICTION_JERK_RISE = 0.22
@@ -2263,12 +2267,16 @@ def get_ioniq_6_directional_taper_scale(desired_lateral_accel: float, desired_la
   curvy_unwind_weight = 0.0
   curvy_unwind_floor_relief = 0.0
   if v_ego is not None:
+    curvy_unwind_phase_weight = unwind_weight
+    if desired_lateral_accel < 0.0:
+      curvy_unwind_phase_weight = max(-phase, 0.0) * _ioniq_6_sigmoid(
+        (abs(desired_lateral_jerk) - IONIQ_6_CURVY_RIGHT_UNWIND_JERK_ONSET) / IONIQ_6_CURVY_RIGHT_UNWIND_JERK_WIDTH)
     curvy_unwind_speed_weight = _ioniq_6_curvy_speed_weight(v_ego)
     curvy_unwind_lat_onset = _ioniq_6_sigmoid((abs_lateral_accel - IONIQ_6_CURVY_UNWIND_LAT_START) /
                                               IONIQ_6_CURVY_UNWIND_LAT_ONSET_WIDTH)
     curvy_unwind_lat_cutoff = _ioniq_6_sigmoid((IONIQ_6_CURVY_UNWIND_LAT_END - abs_lateral_accel) /
                                                IONIQ_6_CURVY_UNWIND_LAT_CUTOFF_WIDTH)
-    curvy_unwind_weight = curvy_unwind_speed_weight * curvy_unwind_lat_onset * curvy_unwind_lat_cutoff * unwind_weight
+    curvy_unwind_weight = curvy_unwind_speed_weight * curvy_unwind_lat_onset * curvy_unwind_lat_cutoff * curvy_unwind_phase_weight
     curvy_unwind_floor_relief = (_ioniq_6_side_value(desired_lateral_accel,
                                                      _flm_vehicle_knob("hyundai_ioniq_6.curvy_unwind_floor_relief_left", IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_LEFT),
                                                      _flm_vehicle_knob("hyundai_ioniq_6.curvy_unwind_floor_relief_right", IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_RIGHT)) *
@@ -2411,7 +2419,12 @@ def get_kia_ev6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
                          _flm_vehicle_knob("hyundai_kia_ev6.unwind_taper_right", KIA_EV6_UNWIND_TAPER_RIGHT),
                        ) *
                          unwind_weight * (0.35 + 0.65 * low_speed_factor))
-  return 1.0 + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
+  base_unwind_taper = 1.0 - (_kia_ev6_side_value(
+                              desired_lateral_accel,
+                              _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_left", KIA_EV6_BASE_UNWIND_TAPER_LEFT),
+                              _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_right", KIA_EV6_BASE_UNWIND_TAPER_RIGHT),
+                            ) * unwind_weight * onset * cutoff)
+  return base_unwind_taper + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
 
 
 def get_kia_ev6_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
@@ -2785,6 +2798,8 @@ FLM_SUPPORTED_VEHICLE_KNOBS = {
   "hyundai_kia_ev6.turn_in_boost_right": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 1.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_TURN_IN_BOOST_RIGHT},
   "hyundai_kia_ev6.unwind_taper_left": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 1.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_UNWIND_TAPER_LEFT},
   "hyundai_kia_ev6.unwind_taper_right": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 1.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_UNWIND_TAPER_RIGHT},
+  "hyundai_kia_ev6.base_unwind_taper_left": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_BASE_UNWIND_TAPER_LEFT},
+  "hyundai_kia_ev6.base_unwind_taper_right": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_BASE_UNWIND_TAPER_RIGHT},
   "hyundai_kia_ev6.center_taper_max": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.20, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_CENTER_TAPER_MAX},
   "hyundai_kia_ev6.turn_in_threshold_reduction_left": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.40, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_TURN_IN_THRESHOLD_REDUCTION_LEFT},
   "hyundai_kia_ev6.turn_in_threshold_reduction_right": {"profile": "hyundai_kia_ev6", "min": 0.0, "max": 0.40, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True, "defaultValue": KIA_EV6_TURN_IN_THRESHOLD_REDUCTION_RIGHT},

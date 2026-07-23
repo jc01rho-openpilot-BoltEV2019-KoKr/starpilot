@@ -147,8 +147,8 @@ def update_nav_offroad_clear_state(params, started: bool, tracked_destination, t
   return tracked_destination, tracked_started_at
 
 
-def should_defer_reboot(started: bool, ignition: bool) -> bool:
-  return started or ignition
+def should_defer_reboot(param: str, started: bool, ignition: bool) -> bool:
+  return param == "DoReboot" and (started or ignition)
 
 
 def _merge_starpilot_stat_values(existing, incoming, key=None):
@@ -1077,8 +1077,8 @@ def manager_thread() -> None:
 
     # Exit main loop when uninstall/shutdown/reboot is needed
     shutdown = False
-    for param in ("DoUninstall", "DoShutdown", "DoReboot"):
-      if param == "DoReboot" and should_defer_reboot(started, ignition):
+    for param in ("DoUninstall", "DoShutdown", "DoReboot", "DoUserReboot"):
+      if should_defer_reboot(param, started, ignition):
         if params.get_bool(param):
           if not warned_onroad_reboot:
             cloudlog.warning("ignoring DoReboot while started or ignition is on; deferring until offroad")
@@ -1117,7 +1117,7 @@ def main() -> None:
   if params.get_bool("DoUninstall"):
     cloudlog.warning("uninstalling")
     uninstall_starpilot()
-  elif params.get_bool("DoReboot"):
+  elif params.get_bool("DoReboot") or params.get_bool("DoUserReboot"):
     cloudlog.warning("reboot")
     HARDWARE.reboot()
   elif params.get_bool("DoShutdown"):

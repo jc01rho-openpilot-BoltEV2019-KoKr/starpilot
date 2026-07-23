@@ -866,6 +866,49 @@ def test_tracked_following_slower_lead_still_triggers_slow_lead():
   assert cem.slow_lead_detected
 
 
+def test_far_radar_slower_lead_waits_for_comfort_range_before_triggering():
+  v_ego = 75 * CV.MPH_TO_MS
+  cem = make_cem(
+    model_length=v_ego * 5.0,
+    tracking_lead=True,
+    lead_status=True,
+    lead_d_rel=136.0,
+    lead_v_lead=v_ego - 5.0,
+    lead_model_prob=1.0,
+    lead_radar=True,
+  )
+  toggles = SimpleNamespace(conditional_slower_lead=True, conditional_stopped_lead=False)
+  cem.starpilot_planner.starpilot_following.slower_lead = True
+
+  for _ in range(24):
+    cem.slow_lead(toggles, v_ego)
+  assert not cem.slow_lead_detected
+
+  cem.starpilot_planner.lead_one.dRel = 80.0
+  for _ in range(24):
+    cem.slow_lead(toggles, v_ego)
+  assert cem.slow_lead_detected
+
+
+def test_far_vision_slower_lead_keeps_existing_trigger_range():
+  v_ego = 75 * CV.MPH_TO_MS
+  cem = make_cem(
+    model_length=v_ego * 5.0,
+    tracking_lead=True,
+    lead_status=True,
+    lead_d_rel=110.0,
+    lead_v_lead=v_ego - 5.0,
+    lead_model_prob=1.0,
+    lead_radar=False,
+  )
+  toggles = SimpleNamespace(conditional_slower_lead=True, conditional_stopped_lead=False)
+  cem.starpilot_planner.starpilot_following.slower_lead = True
+
+  for _ in range(24):
+    cem.slow_lead(toggles, v_ego)
+  assert cem.slow_lead_detected
+
+
 def test_tracked_vision_slow_lead_continues_existing_experimental_mode():
   v_ego = 8.0
   cem = make_cem(

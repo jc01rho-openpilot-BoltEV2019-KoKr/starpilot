@@ -67,10 +67,10 @@ def make_toggles(**overrides):
   return SimpleNamespace(**defaults)
 
 
-def make_sm(*, gas_pressed, enabled=True, accel_pressed=False, decel_pressed=False):
+def make_sm(*, gas_pressed, enabled=True, accel_pressed=False, decel_pressed=False, long_active=True, v_cruise_kph=255.0):
   return {
-    "carControl": SimpleNamespace(longActive=True),
-    "carState": SimpleNamespace(gasPressed=gas_pressed, steeringAngleDeg=0.0),
+    "carControl": SimpleNamespace(longActive=long_active),
+    "carState": SimpleNamespace(gasPressed=gas_pressed, steeringAngleDeg=0.0, vCruise=v_cruise_kph),
     "liveParameters": SimpleNamespace(angleOffsetDeg=0.0),
     "mapdOut": SimpleNamespace(nextSpeedLimitDistance=0.0, nextSpeedLimit=0.0, speedLimit=0.0, waySelectionType=0),
     "selfdriveState": SimpleNamespace(enabled=enabled),
@@ -104,7 +104,7 @@ def test_large_vision_delta_requires_three_detector_frames():
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(15))
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimitSupportSpeed", mph(15))
     controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 2)
-    sm = make_sm(gas_pressed=False)
+    sm = make_sm(gas_pressed=False, v_cruise_kph=75 * CV.MPH_TO_KPH)
 
     controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm)
     assert controller.target == 0
@@ -124,10 +124,88 @@ def test_normal_vision_delta_keeps_fast_path():
   )
   try:
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(50))
-    sm = make_sm(gas_pressed=False)
+    sm = make_sm(gas_pressed=False, v_cruise_kph=75 * CV.MPH_TO_KPH)
 
     controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm)
     assert controller.target == pytest.approx(mph(50))
+    assert controller.source == "Vision"
+  finally:
+    controller.shutdown()
+
+
+def test_inactive_valid_cruise_still_applies_large_delta_guard():
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    vision_speed_limit_detection=True,
+  )
+  try:
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(20))
+    sm = make_sm(gas_pressed=False, long_active=False, v_cruise_kph=60 * CV.MPH_TO_KPH)
+
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(60), mph(25), sm)
+    assert controller.target == 0
+    assert controller.source == "None"
+  finally:
+    controller.shutdown()
+
+
+def test_unset_active_cruise_uses_vehicle_speed():
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    vision_speed_limit_detection=True,
+  )
+  try:
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(55))
+    sm = make_sm(gas_pressed=False)
+
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(90), mph(50), sm)
+    assert controller.target == pytest.approx(mph(55))
+    assert controller.source == "Vision"
+  finally:
+    controller.shutdown()
+
+
+def test_unset_cruise_applies_vehicle_speed_large_delta_guard():
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    vision_speed_limit_detection=True,
+  )
+  try:
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(15))
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimitSupportSpeed", mph(15))
+    controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 2)
+    sm = make_sm(gas_pressed=False)
+
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(90), mph(75), sm)
+    assert controller.target == 0
+    assert controller.source == "None"
+
+    controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 3)
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(90), mph(75), sm)
+    assert controller.target == pytest.approx(mph(15))
+    assert controller.source == "Vision"
+  finally:
+    controller.shutdown()
+
+
+def test_display_only_applies_large_delta_guard():
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    vision_speed_limit_detection=True,
+  )
+  try:
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(15))
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimitSupportSpeed", mph(15))
+    controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 1)
+    sm = make_sm(gas_pressed=False, v_cruise_kph=75 * CV.MPH_TO_KPH)
+
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm, display_only=True)
+    assert controller.target == 0
+    assert controller.source == "None"
+
+    controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 3)
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm, display_only=True)
+    assert controller.target == pytest.approx(mph(15))
     assert controller.source == "Vision"
   finally:
     controller.shutdown()

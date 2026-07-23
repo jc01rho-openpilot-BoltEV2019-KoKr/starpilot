@@ -283,6 +283,7 @@ class TestHyundaiCanfdAngleSteering(HyundaiButtonBase, common.CarSafetyTest):
                                   self.safety.get_angle_meas_min, self.safety.get_angle_meas_max)
 
   def test_angle_cmd_when_disabled(self):
+    self._reset_speed_measurement(self.STANDSTILL_THRESHOLD + 1)
     for controls_allowed in (True, False):
       self.safety.set_controls_allowed(controls_allowed)
       for angle_meas in np.arange(-90, 91, 10):
@@ -300,7 +301,7 @@ class TestHyundaiCanfdAngleSteering(HyundaiButtonBase, common.CarSafetyTest):
       speed = round_speed(away_round(speed / 0.03125 * 3.6) * 0.03125 / 3.6)
       speed = max(speed, 1)
       self.safety.set_controls_allowed(True)
-      self._reset_speed_measurement(speed + 1)
+      self._reset_speed_measurement(max(speed + 1, self.STANDSTILL_THRESHOLD + 1))
 
       max_angle = round(get_max_angle_vm(speed, vm, limits), 1)
       max_angle = float(np.clip(max_angle, -self.STEER_ANGLE_MAX, self.STEER_ANGLE_MAX))
@@ -315,7 +316,7 @@ class TestHyundaiCanfdAngleSteering(HyundaiButtonBase, common.CarSafetyTest):
       speed = round_speed(away_round(speed / 0.03125 * 3.6) * 0.03125 / 3.6)
       speed = max(speed, 1)
       self.safety.set_controls_allowed(True)
-      self._reset_speed_measurement(speed + 1)
+      self._reset_speed_measurement(max(speed + 1, self.STANDSTILL_THRESHOLD + 1))
       self.assertTrue(self._tx(self._angle_cmd_msg(0, True)))
 
       max_delta = round(get_max_angle_delta_vm(speed, vm, limits), 1)
@@ -325,6 +326,7 @@ class TestHyundaiCanfdAngleSteering(HyundaiButtonBase, common.CarSafetyTest):
       self.assertTrue(self._tx(self._angle_cmd_msg(0, True)))
 
   def test_rt_limits(self):
+    self._reset_speed_measurement(self.STANDSTILL_THRESHOLD + 1)
     self.safety.set_timer(0)
     self.safety.set_controls_allowed(True)
     max_rt_msgs = int(self.LATERAL_FREQUENCY * common.RT_INTERVAL / 1e6 * 1.2 + 1)
@@ -682,6 +684,7 @@ class TestHyundaiCanfdLKASteeringAltAngleLongEV(HyundaiLongitudinalBase, TestHyu
     return self.packer.make_can_msg_safety("ACCELERATOR", self.PT_BUS, values)
 
   def test_lka_alt_stock_forwarding_depends_on_controls_allowed(self):
+    self._reset_speed_measurement(self.STANDSTILL_THRESHOLD + 1)
     for addr in (0x110, 0x362):
       self.safety.set_controls_allowed(False)
       self.assertEqual(0, self.safety.safety_fwd_hook(2, addr))
@@ -690,6 +693,7 @@ class TestHyundaiCanfdLKASteeringAltAngleLongEV(HyundaiLongitudinalBase, TestHyu
       self.assertEqual(-1, self.safety.safety_fwd_hook(2, addr))
 
   def test_lka_alt_stock_forwarding_blocks_openpilot_tx(self):
+    self._reset_speed_measurement(self.STANDSTILL_THRESHOLD + 1)
     self.safety.set_controls_allowed(False)
     self.assertFalse(self._tx(self._angle_cmd_msg(0, enabled=False)))
     self.assertFalse(self._tx(common.make_msg(0, 0x362, 32)))
@@ -703,15 +707,27 @@ class TestHyundaiCanfdLKASteeringAltAngleLongEV(HyundaiLongitudinalBase, TestHyu
     self.safety.set_controls_allowed(False)
     self._toggle_aol(True)
     self._rx(self._gear_msg(5))
+    self._reset_speed_measurement(self.STANDSTILL_THRESHOLD + 1)
 
     for addr in (0x110, 0x362):
       self.assertEqual(-1, self.safety.safety_fwd_hook(2, addr))
 
     self._reset_angle_measurement(0)
-    self._reset_speed_measurement(1)
     self._set_prev_desired_angle(0)
     self.assertTrue(self._tx(self._angle_cmd_msg(0, enabled=True)))
     self.assertTrue(self._tx(common.make_msg(0, 0x362, 32)))
+
+  def test_lka_alt_standstill_forwards_stock_and_blocks_openpilot_tx(self):
+    self.safety.set_controls_allowed(True)
+    self._reset_speed_measurement(0)
+
+    for addr in (0x110, 0x362):
+      self.assertEqual(0, self.safety.safety_fwd_hook(2, addr))
+
+    self._reset_angle_measurement(0)
+    self._set_prev_desired_angle(0)
+    self.assertFalse(self._tx(self._angle_cmd_msg(0, enabled=False)))
+    self.assertFalse(self._tx(common.make_msg(0, 0x362, 32)))
 
   def test_lka_alt_aol_non_drive_gear_forwards_stock_and_blocks_openpilot_tx(self):
     self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL)
@@ -725,12 +741,13 @@ class TestHyundaiCanfdLKASteeringAltAngleLongEV(HyundaiLongitudinalBase, TestHyu
           self.assertEqual(0, self.safety.safety_fwd_hook(2, addr))
 
         self._reset_angle_measurement(0)
-        self._reset_speed_measurement(1)
+        self._reset_speed_measurement(self.STANDSTILL_THRESHOLD + 1)
         self._set_prev_desired_angle(0)
         self.assertFalse(self._tx(self._angle_cmd_msg(0, enabled=True)))
         self.assertFalse(self._tx(common.make_msg(0, 0x362, 32)))
 
   def test_angle_cmd_when_disabled(self):
+    self._reset_speed_measurement(self.STANDSTILL_THRESHOLD + 1)
     for controls_allowed in (True, False):
       self.safety.set_controls_allowed(controls_allowed)
       for angle_meas in np.arange(-90, 91, 10):

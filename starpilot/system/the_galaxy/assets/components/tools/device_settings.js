@@ -42,6 +42,7 @@ const VEHICLE_SETTING_MAKES = {
   SNGHack: ["Lexus", "Toyota"],
   ToyotaAutoHold: ["Lexus", "Toyota"],
 }
+const RADAR_REQUIRED_KEYS = new Set(["HumanLaneChanges", "RadarTakeoffs"])
 
 // Plain variables — scheduling/routing flags that must NOT be reactive
 let syncScheduled = false
@@ -103,6 +104,7 @@ function isVehicleSettingVisible(section, param) {
 function isSettingVisible(section, param) {
   // This policy controls Galaxy rendering only; hidden params retain their stored values.
   if (HIDDEN_SETTING_KEYS.has(param.key) || !isVehicleSettingVisible(section, param)) return false
+  if (RADAR_REQUIRED_KEYS.has(param.key) && !state.values.HasRadar) return false
   if (state.values[GALAXY_DEVELOPER_MODE_KEY]) return true
   return section.name === "Favorites" || param.settings_tier === "simple"
 }

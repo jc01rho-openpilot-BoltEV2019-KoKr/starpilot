@@ -1681,6 +1681,88 @@ def test_standstill_slow_creep_depart_does_not_release_on_gap_without_motion_sig
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
+def test_stationary_radar_lead_settles_excess_stop_gap_after_confirmation(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+  sm = make_sm(
+    0.0,
+    desired_accel=-0.12,
+    min_accel=-0.5,
+    experimental_mode=True,
+    tracking_lead=False,
+    lead_one=make_lead(status=True, d_rel=6.4, v_lead=0.0, a_lead=0.0, radar=True, model_prob=1.0),
+  )
+  sm["carState"].standstill = True
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["modelV2"].action.shouldStop = True
+
+  frames = int(round(longitudinal_planner_module.RADAR_STANDSTILL_GAP_SETTLE_CONFIRM_TIME / planner.dt))
+  for _ in range(max(frames - 1, 1)):
+    planner.update(sm, make_toggles(model_version))
+    assert planner.output_should_stop
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert not planner.output_should_stop
+  assert planner.output_a_target == pytest.approx(longitudinal_planner_module.RADAR_STANDSTILL_GAP_SETTLE_ACCEL)
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
+def test_stationary_radar_gap_settle_reholds_at_target_gap(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+  sm = make_sm(
+    0.0,
+    desired_accel=-0.12,
+    min_accel=-0.5,
+    experimental_mode=True,
+    tracking_lead=False,
+    lead_one=make_lead(status=True, d_rel=6.4, v_lead=0.0, a_lead=0.0, radar=True, model_prob=1.0),
+  )
+  sm["carState"].standstill = True
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["modelV2"].action.shouldStop = True
+
+  frames = int(round(longitudinal_planner_module.RADAR_STANDSTILL_GAP_SETTLE_CONFIRM_TIME / planner.dt))
+  for _ in range(frames):
+    planner.update(sm, make_toggles(model_version))
+  assert planner.radar_standstill_gap_settle_active
+
+  sm["carState"].vEgo = 0.15
+  sm["carState"].standstill = False
+  sm["radarState"].leadOne.dRel = 5.6
+  planner.update(sm, make_toggles(model_version))
+
+  assert not planner.radar_standstill_gap_settle_active
+  assert planner.output_should_stop
+  assert planner.output_a_target <= 0.0
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
+def test_stationary_gap_settle_never_uses_vision_only_lead(model_version):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+  sm = make_sm(
+    0.0,
+    desired_accel=-0.12,
+    min_accel=-0.5,
+    experimental_mode=True,
+    tracking_lead=False,
+    lead_one=make_lead(status=True, d_rel=6.4, v_lead=0.0, a_lead=0.0, radar=False, model_prob=1.0),
+  )
+  sm["carState"].standstill = True
+  sm["controlsState"].longControlState = LongCtrlState.stopping
+  sm["modelV2"].action.shouldStop = True
+
+  frames = int(round(longitudinal_planner_module.RADAR_STANDSTILL_GAP_SETTLE_CONFIRM_TIME / planner.dt)) + 2
+  for _ in range(frames):
+    planner.update(sm, make_toggles(model_version))
+
+  assert not planner.radar_standstill_gap_settle_active
+  assert planner.output_should_stop
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_standstill_moving_lead_applies_resume_floor_once_stop_clears(model_version):
   v_ego = 0.0
 
