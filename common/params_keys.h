@@ -373,15 +373,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"IssueReported", {CLEAR_ON_MANAGER_START, JSON, "{}", "{}"}},
     {"KonikDongleId", {PERSISTENT, STRING, "", "", 0}},
     {"KonikMinutes", {PERSISTENT, INT, "0", "0", 0}},
-<<<<<<< HEAD
     {"LaneCentering", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
+    {"LaneCenteringE2EAuthority", {PERSISTENT, FLOAT, "1.0", "1.0", 3}},
     {"LaneCenterOffset", {PERSISTENT, FLOAT, "0.0", "0.0", 3, SETTINGS_SIMPLE}},
-    {"LaneCenteringE2EAuthority", {PERSISTENT, FLOAT, "1.0", "1.0", 3}},
-=======
-    {"LaneCentering", {PERSISTENT, BOOL, "0", "0", 2}},
-    {"LaneCenteringE2EAuthority", {PERSISTENT, FLOAT, "1.0", "1.0", 3}},
-    {"LaneCenterOffset", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
->>>>>>> upstream/Dom
     {"LaneChanges", {PERSISTENT, BOOL, "1", "1", 0, SETTINGS_SIMPLE}},
     {"LaneChangeSmoothing", {PERSISTENT, INT, "5", "10", 1, SETTINGS_SIMPLE}},
     {"LaneChangeTime", {PERSISTENT, FLOAT, "1.0", "0.0", 1, SETTINGS_SIMPLE}},

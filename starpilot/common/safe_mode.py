@@ -33,14 +33,10 @@ SAFE_MODE_MANAGED_KEYS = (
   "SteerKP",
   "SteerLatAccel",
   "SteerRatio",
-<<<<<<< HEAD
   "SteerOffset",
-  "LaneCentering",
-=======
   "CameraOffset",
   "LaneCentering",
   "LaneCenteringE2EAuthority",
->>>>>>> upstream/Dom
   "LaneCenterOffset",
   "LaneChanges",
   "LaneChangeTime",

@@ -961,13 +961,9 @@ _TROUBLESHOOT_ADVANCED_LATERAL_KEYS = [
   "ForceAutoTune",
   "ForceAutoTuneOff",
   "ForceTorqueController",
-<<<<<<< HEAD
-  "LaneCentering",
-=======
   "CameraOffset",
   "LaneCentering",
   "LaneCenteringE2EAuthority",
->>>>>>> upstream/Dom
   "LaneCenterOffset",
 ]
 
