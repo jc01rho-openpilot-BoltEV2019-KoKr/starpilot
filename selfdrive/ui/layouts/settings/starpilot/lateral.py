@@ -314,6 +314,13 @@ class StarPilotLateralLayout(_SettingsPage):
         on_click=lambda: self._show_slider("LaneCenterOffset", -0.5, 0.5, step=0.01, unit=" m", value_type="float"),
         visible=lambda: alt_on() and p.get_bool("LaneCentering"),
       ),
+      SettingRow(
+        "CameraOffset", "value", tr_noop("Camera Offset"),
+        subtitle=tr_noop("Virtually shift the driving model camera. Positive biases the model left; negative biases it right. Development use only."),
+        get_value=lambda: f"{p.get_float('CameraOffset'):.2f} m",
+        on_click=lambda: self._show_slider("CameraOffset", -0.35, 0.35, step=0.01, unit=" m", value_type="float"),
+        visible=alt_on,
+      ),
     ]
 
     self._manager_view = SteeringManagerView(

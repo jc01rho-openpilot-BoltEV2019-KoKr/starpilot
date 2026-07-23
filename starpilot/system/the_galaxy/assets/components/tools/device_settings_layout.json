@@ -3807,6 +3807,15 @@
         "settings_tier": "simple"
       },
       {
+        "key": "LowVoltageDiscordSettings",
+        "label": "Drive-End Battery Discord Report",
+        "description": "Configure a Discord webhook and send the Panda/comma 12 V supply voltage after each drive. Available only when the GitHub SSH-key account is jc01rho.",
+        "data_type": "string",
+        "ui_type": "discord_webhook",
+        "parent_key": "DeviceManagement",
+        "settings_tier": "simple"
+      },
+      {
         "key": "IncreaseThermalLimits",
         "label": "Raise Temperature Limits",
         "description": "WARNING: Running at higher temperatures may damage your device!\n\nAllow the device to run at higher temperatures before throttling or shutting down. Use only if you understand the risks!",

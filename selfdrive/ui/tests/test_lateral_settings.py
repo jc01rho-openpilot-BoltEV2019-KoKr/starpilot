@@ -104,8 +104,10 @@ class TestLateralLaneCenteringRows(unittest.TestCase):
   def test_rows_exist_with_expected_types(self):
     self.assertIn("LaneCentering", self.rows)
     self.assertIn("LaneCenterOffset", self.rows)
+    self.assertIn("CameraOffset", self.rows)
     self.assertEqual(self.rows["LaneCentering"].type, "toggle")
     self.assertEqual(self.rows["LaneCenterOffset"].type, "value")
+    self.assertEqual(self.rows["CameraOffset"].type, "value")
 
   def test_visibility_requires_advanced_parent(self):
     self.params.put_bool("AdvancedLateralTune", False)
@@ -143,6 +145,20 @@ class TestLateralLaneCenteringRows(unittest.TestCase):
     self.assertEqual(len(calls), 1)
     args, kwargs = calls[0]
     self.assertEqual(args, ("LaneCenterOffset", -0.5, 0.5))
+    self.assertEqual(kwargs["step"], 0.01)
+    self.assertEqual(kwargs["unit"], " m")
+    self.assertEqual(kwargs["value_type"], "float")
+
+  def test_camera_offset_display_and_slider_contract(self):
+    self.params.put_float("CameraOffset", -0.12)
+    self.assertEqual(self.rows["CameraOffset"].get_value(), "-0.12 m")
+
+    calls = []
+    self.layout._show_slider = lambda *args, **kwargs: calls.append((args, kwargs))
+    self.rows["CameraOffset"].on_click()
+    self.assertEqual(len(calls), 1)
+    args, kwargs = calls[0]
+    self.assertEqual(args, ("CameraOffset", -0.35, 0.35))
     self.assertEqual(kwargs["step"], 0.01)
     self.assertEqual(kwargs["unit"], " m")
     self.assertEqual(kwargs["value_type"], "float")

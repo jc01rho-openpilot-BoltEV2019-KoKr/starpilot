@@ -1,5 +1,7 @@
 #include "starpilot/ui/screenrecorder/screenrecorder.h"
 #include "starpilot/ui/qt/offroad/device_settings.h"
+#include "selfdrive/ui/qt/widgets/input.h"
+#include <QUrl>
 
 namespace {
 
@@ -18,6 +20,20 @@ void prepareKonikServerSwitch(bool use_konik) {
     params.remove("DongleId");
     params_cache.remove("DongleId");
   }
+}
+
+bool lowVoltageDiscordOwner(const Params &params) {
+  return QString::fromStdString(params.get("GithubUsername")).trimmed().compare("jc01rho", Qt::CaseInsensitive) == 0 &&
+         !QString::fromStdString(params.get("GithubSshKeys")).trimmed().isEmpty();
+}
+
+bool validDiscordWebhook(const QString &url) {
+  QUrl parsed(url.trimmed());
+  const QString host = parsed.host().toLower();
+  const QSet<QString> allowedHosts = {"discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"};
+  const QStringList pathParts = parsed.path().split('/', Qt::SkipEmptyParts);
+  return parsed.scheme() == "https" && allowedHosts.contains(host) && pathParts.size() >= 4 &&
+         pathParts[0] == "api" && pathParts[1] == "webhooks" && !pathParts[2].isEmpty() && !pathParts[3].isEmpty();
 }
 
 }  // namespace
@@ -54,6 +70,7 @@ StarPilotDevicePanel::StarPilotDevicePanel(StarPilotSettingsWindow *parent, bool
     {"NoUploads", tr("Disable Uploads"), QString("<b>%1</b><br><br>%2").arg(tr("WARNING: This will prevent your drives from being uploaded to <b>comma connect</b> which will impact debugging and official support from comma!")).arg(tr("<b>Prevent the device from uploading driving data.</b>")), ""},
     {"HigherBitrate", tr("High-Quality Recording"), tr("<b>Save drive footage in higher video quality.</b>"), ""},
     {"LowVoltageShutdown", tr("Low-Voltage Cutoff"), tr("<b>While parked, if the battery voltage falls below the set level, the device shuts down</b> to prevent excessive battery drain."), ""},
+    {"LowVoltageDiscordReport", tr("Drive-End Battery Discord Report"), tr("<b>Send the Panda/comma 12 V supply voltage after each drive.</b> Available only for GitHub SSH-key account jc01rho."), ""},
     {"IncreaseThermalLimits", tr("Raise Temperature Limits"), QString("<b>%1</b><br><br>%2").arg(tr("WARNING: Running at higher temperatures may damage your device!")).arg(tr("<b>Allow the device to run at higher temperatures</b> before throttling or shutting down. Use only if you understand the risks!")), ""},
     {"UseKonikServer", tr("Use Konik Server"), tr("<b>Upload driving data to \"stable.konik.ai\" instead of \"connect.comma.ai\".</b>"), ""},
 
@@ -87,6 +104,30 @@ StarPilotDevicePanel::StarPilotDevicePanel(StarPilotSettingsWindow *parent, bool
       deviceToggle = new StarPilotButtonToggleControl(param, title, desc, icon, uploadsToggles, uploadsToggleNames);
     } else if (param == "LowVoltageShutdown") {
       deviceToggle = new StarPilotParamValueControl(param, title, desc, icon, 11.8, 12.5, tr(" volts"), std::map<float, QString>(), 0.1);
+
+    } else if (param == "LowVoltageDiscordReport") {
+      std::vector<QString> buttonNames{tr("Configure"), tr("Remove")};
+      StarPilotButtonsControl *discordToggle = new StarPilotButtonsControl(title, desc, icon, buttonNames);
+      QObject::connect(discordToggle, &StarPilotButtonsControl::buttonClicked, [this](int id) {
+        if (!lowVoltageDiscordOwner(params)) {
+          params.putBool("LowVoltageDiscordReport", false);
+          return;
+        }
+        if (id == 0) {
+          QString webhook = InputDialog::getText(tr("Discord Webhook URL"), this, tr("The saved URL will not be displayed again."), true, 1).trimmed();
+          if (validDiscordWebhook(webhook)) {
+            params.put("LowVoltageDiscordWebhook", webhook.toStdString());
+            params.putBool("LowVoltageDiscordReport", true);
+          } else if (!webhook.isEmpty()) {
+            ConfirmationDialog::alert(tr("Enter a valid Discord webhook URL."), this);
+          }
+        } else {
+          params.putBool("LowVoltageDiscordReport", false);
+          params.remove("LowVoltageDiscordWebhook");
+          params.remove("LowVoltageDiscordPendingReport");
+        }
+      });
+      deviceToggle = discordToggle;
 
     } else if (param == "ScreenManagement") {
       StarPilotManageControl *screenToggle = new StarPilotManageControl(param, title, desc, icon);
@@ -246,6 +287,10 @@ void StarPilotDevicePanel::updateToggles() {
     }
 
     bool setVisible = showAllToggles || parent->tuningLevel >= parent->starpilotToggleLevels[key].toDouble();
+
+    if (key == "LowVoltageDiscordReport") {
+      setVisible &= lowVoltageDiscordOwner(params);
+    }
 
     if (!showAllToggles && key == "HigherBitrate") {
       setVisible &= params.getBool("DeviceManagement") && params.getBool("NoUploads") && !params.getBool("DisableOnroadUploads");
