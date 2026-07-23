@@ -17,6 +17,7 @@ rl = types.SimpleNamespace(
   WHITE=ColorClass(255, 255, 255, 255),
   BLACK=ColorClass(0, 0, 0, 255),
   get_time=lambda: 1.0,
+  get_frame_time=lambda: 1.0 / 60.0,
 )
 sys.modules["pyray"] = rl
 
@@ -33,6 +34,18 @@ starpilot_border = types.SimpleNamespace(
   _glow_color=lambda i: rl.Color(0, 255, 0, 255),
 )
 sys.modules["openpilot.selfdrive.ui.onroad.starpilot.starpilot_border"] = starpilot_border
+
+# 4. Register Mock/Stub for starpilot_status (added by engagement color blend)
+starpilot_status = types.SimpleNamespace(
+  get_border_color=lambda state: rl.Color(22, 127, 64, 255),
+)
+sys.modules["openpilot.selfdrive.ui.lib.starpilot_status"] = starpilot_status
+
+# 5. Register Mock/Stub for application.gui_app (added by FirstOrderFilter import)
+gui_app = types.SimpleNamespace(target_fps=60.0)
+sys.modules["openpilot.system.ui.lib.application"] = types.SimpleNamespace(
+  gui_app=gui_app, FontWeight=type("FontWeight", (), {"BOLD": 0, "MEDIUM": 1})
+)
 
 class MockSubMaster:
   def __init__(self):

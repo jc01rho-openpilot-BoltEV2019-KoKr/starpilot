@@ -67,6 +67,10 @@ cdef class VisionBuf:
   def fd(self):
     return self.buf.fd
 
+  @property
+  def frame_id(self):
+    return self.buf.get_frame_id()
+
 
 cdef class VisionIpcServer:
   cdef cppVisionIpcServer * server

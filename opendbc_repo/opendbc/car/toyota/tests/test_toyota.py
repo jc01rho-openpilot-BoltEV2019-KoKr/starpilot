@@ -101,6 +101,32 @@ class TestToyotaInterfaces:
     assert abs(car_params.vEgoStopping - 0.25) < 1e-6
     assert abs(car_params.vEgoStarting - 0.25) < 1e-6
 
+  def test_highlander_ice_openpilot_long_uses_measured_actuator_delay(self):
+    stock_params = CarInterface.get_params(
+      CAR.TOYOTA_HIGHLANDER,
+      {bus: {} for bus in range(8)},
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+    long_params = CarInterface.get_params(
+      CAR.TOYOTA_HIGHLANDER,
+      {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)},
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+
+    assert not stock_params.openpilotLongitudinalControl
+    assert stock_params.longitudinalActuatorDelay == pytest.approx(0.15)
+    assert long_params.openpilotLongitudinalControl
+    assert not long_params.flags & ToyotaFlags.HYBRID.value
+    assert long_params.longitudinalActuatorDelay == pytest.approx(0.4)
+
   @pytest.mark.parametrize("camera_message", [0x343, 0x4CB])
   def test_dsu_bypass_enables_longitudinal(self, camera_message):
     fingerprint = {bus: {} for bus in range(8)}

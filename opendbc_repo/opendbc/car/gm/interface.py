@@ -612,13 +612,10 @@ class CarInterface(CarInterfaceBase):
         ret.longitudinalTuning.kiV = [0.09, 0.13, 0.19, 0.28]
 
       if candidate in BOLT_PEDAL_LONG_CARS:
-        ret.longitudinalTuning.kpV = [0.085, 0.075, 0.060, 0.045]
-        ret.longitudinalTuning.kiV = [0.13, 0.18, 0.22, 0.22]
-        ret.longitudinalTuning.kfDEPRECATED = 0.18
-        ret.longitudinalTuning.kdBP = [0.0, 5.0, 15.0, 35.0]
-        ret.longitudinalTuning.kdV = [0.015, 0.011, 0.008, 0.004]
-
-        ret.longitudinalActuatorDelay = 0.7
+        ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
+        ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
+        ret.longitudinalTuning.kfDEPRECATED = 0.20
+        ret.longitudinalActuatorDelay = 0.6
       else:
         ret.longitudinalTuning.kfDEPRECATED = 0.25
 

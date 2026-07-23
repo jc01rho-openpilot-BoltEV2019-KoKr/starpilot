@@ -171,11 +171,16 @@ def resolve_model_files(input_root: Path, model_key: str) -> dict[str, Path]:
   root_files = staged.get("_root")
   if root_files:
     return root_files
-  return {
+  matching_files = {
     component: path
     for path in sorted(input_root.glob(f"{model_key}_*.onnx"))
     if (component := detect_component(path)) is not None
   }
+  if matching_files:
+    return matching_files
+
+  named_sources = [files for key, files in staged.items() if key != "_root"]
+  return named_sources[0] if len(named_sources) == 1 else {}
 
 
 def find_staged_dm(input_root: Path) -> Path | None:

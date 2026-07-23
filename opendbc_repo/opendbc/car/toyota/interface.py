@@ -194,6 +194,9 @@ class CarInterface(CarInterfaceBase):
       ret.vEgoStarting = 0.25
       ret.stoppingDecelRate = 0.3
 
+    if candidate == CAR.TOYOTA_HIGHLANDER and ret.openpilotLongitudinalControl and not ret.flags & ToyotaFlags.HYBRID.value:
+      ret.longitudinalActuatorDelay = 0.4
+
     if ret.enableGasInterceptorDEPRECATED:
       # Pedal/SDSU Toyotas feel best with a softer final stop clamp.
       ret.longitudinalActuatorDelay = max(ret.longitudinalActuatorDelay, 0.2)

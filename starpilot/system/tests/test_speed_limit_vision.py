@@ -34,6 +34,15 @@ class StaticClassifierNet:
     return self.probabilities
 
 
+class ToggleParams:
+  def __init__(self, enabled):
+    self.enabled = enabled
+
+  def get_bool(self, key):
+    assert key == "VASMEnabled"
+    return self.enabled
+
+
 def daemon_with_history(current_speed, entries):
   daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
   daemon.published_speed_limit_mph = current_speed
@@ -69,6 +78,37 @@ def test_disconnect_camera_releases_client_state():
   assert daemon.client is None
   assert daemon.stream_type is None
   assert daemon.stream_name == ""
+
+
+def test_vasm_coexistence_mode_is_conditional(monkeypatch):
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.params = ToggleParams(False)
+  daemon.coexistence_mode = False
+  daemon.last_coexistence_param_refresh_at = -float("inf")
+  daemon.temporal_tracking_enabled = slv.TEMPORAL_TRACKING_ENABLED
+  daemon.track_detector_interval = slv.TRACK_DETECTOR_INTERVAL
+  daemon.detector_classifier_expansions = slv.DETECTOR_CLASSIFIER_EXPANSIONS
+  daemon.latest_detector_proposal = None
+  daemon.proposal_track = None
+  monkeypatch.setattr(slv, "PC", True)
+
+  daemon._update_coexistence_mode(0.0)
+  assert not daemon.coexistence_mode
+  assert daemon.detector_classifier_expansions == slv.DETECTOR_CLASSIFIER_EXPANSIONS
+  assert daemon._detector_interval(slv.INFERENCE_INTERVAL) == slv.INFERENCE_INTERVAL
+
+  daemon.params.enabled = True
+  daemon._update_coexistence_mode(slv.COEXISTENCE_PARAM_REFRESH_SECONDS + 0.1)
+  assert daemon.coexistence_mode
+  assert daemon.temporal_tracking_enabled
+  assert daemon.detector_classifier_expansions == slv.COEXISTENCE_DETECTOR_CLASSIFIER_EXPANSIONS
+  assert daemon._detector_interval(slv.INFERENCE_INTERVAL) == slv.COEXISTENCE_TRACK_DETECTOR_INTERVAL
+
+  daemon.params.enabled = False
+  daemon._update_coexistence_mode(2 * slv.COEXISTENCE_PARAM_REFRESH_SECONDS + 0.2)
+  assert not daemon.coexistence_mode
+  assert daemon.temporal_tracking_enabled == slv.TEMPORAL_TRACKING_ENABLED
+  assert daemon.detector_classifier_expansions == slv.DETECTOR_CLASSIFIER_EXPANSIONS
 
 
 def test_receive_frame_does_not_retain_vision_buffer(monkeypatch):

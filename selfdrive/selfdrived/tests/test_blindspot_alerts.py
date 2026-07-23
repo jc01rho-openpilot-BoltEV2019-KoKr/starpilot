@@ -45,6 +45,14 @@ def test_loud_blindspot_alert_without_lateral_for_matching_signal():
   assert should_loud_blindspot_alert_without_lateral(CS, _sm(lat_active=True, lateral_check=True, pause_lateral=True), _toggles())
 
 
+def test_loud_blindspot_alert_accepts_combined_vision_state():
+  CS = _car_state(left_blinker=True)
+
+  assert should_loud_blindspot_alert_without_lateral(
+    CS, _sm(lat_active=False), _toggles(), combined_left_bsm=True,
+  )
+
+
 def test_loud_blindspot_alert_without_lateral_ignores_active_lateral():
   CS = _car_state(right_blinker=True, right_blindspot=True)
 

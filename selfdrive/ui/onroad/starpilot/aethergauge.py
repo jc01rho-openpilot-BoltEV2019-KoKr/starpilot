@@ -4,10 +4,13 @@ import math
 import os
 import pyray as rl
 from openpilot.common.constants import CV
+from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.starpilot.common.experimental_state import CEStatus
+from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import _csc_state, _intensity, _glow_color
+from openpilot.selfdrive.ui.lib.starpilot_status import get_border_color
 
 
 # --- Scale factor (single knob for all pixel-space dimensions) ---
@@ -31,7 +34,7 @@ ROAD_W_TOP = 14.0 * SCALE
 ROAD_THICKNESS = 4.0 * SCALE
 ROAD_HALF_SIZE = 40.0 * SCALE
 ROAD_EDGE_INSET = 2.0 * SCALE
-FILL_ALPHA = 35
+FILL_ALPHA = 90
 
 MIN_SPEED_FOR_TIME = 0.3
 MAX_TIME_DISPLAY = 99.0
@@ -55,11 +58,11 @@ COLOR_FORCE_STOP = rl.Color(255, 30, 60, 255)
 COLOR_LEAD_STOPPED = rl.Color(255, 60, 60, 255)
 COLOR_LEAD_SLOWER = rl.Color(255, 191, 0, 255)
 COLOR_SHADOW = rl.Color(0, 0, 0, 100)
-COLOR_STOP_SIGN = rl.Color(196, 30, 58, 255)
 COLOR_STOP_SIGN_OUTLINE = rl.Color(255, 255, 255, 255)
 COLOR_STOP_LINE_GLOW = rl.Color(255, 30, 60, 255)
 COLOR_STOP_LINE_CORE = rl.Color(255, 200, 200, 255)
 COLOR_CEM_SPEED = rl.Color(112, 192, 216, 255)
+COLOR_REDUCTION = rl.Color(255, 191, 0, 220)
 
 # Set to True to force test-cycle mode (flip back to False before pushing)
 TEST_CYCLE = False
@@ -99,8 +102,30 @@ def _calc_reduction(v_cruise: float, target: float) -> int:
     return int(round((v_cruise - target) * _speed_conversion()))
   return 0
 
-def _with_alpha(color: rl.Color, a: int) -> rl.Color:
-  return rl.Color(color.r, color.g, color.b, max(0, min(255, a)))
+def _channels(color):
+  """Extract (r, g, b, a) from either an rl.Color struct or a 4-tuple."""
+  if hasattr(color, "r"):
+    return color.r, color.g, color.b, color.a
+  return color[0], color[1], color[2], color[3]
+
+def _with_alpha(color, a: int) -> rl.Color:
+  r, g, b, _ = _channels(color)
+  return rl.Color(r, g, b, max(0, min(255, a)))
+
+def _fade(color, alpha: float) -> rl.Color:
+  r, g, b, a = _channels(color)
+  return rl.Color(r, g, b, max(0, min(255, int(a * alpha))))
+
+def _lerp_color(a, b, t: float) -> rl.Color:
+  t = max(0.0, min(1.0, t))
+  ar, ag, ab, _ = _channels(a)
+  br, bg, bb, _ = _channels(b)
+  return rl.Color(
+    ar + int((br - ar) * t),
+    ag + int((bg - ag) * t),
+    ab + int((bb - ab) * t),
+    255,
+  )
 
 def _pulse(freq: float) -> float:
   return 0.5 + 0.5 * math.sin(rl.get_time() * freq)
@@ -109,10 +134,11 @@ def _get_road_height(data: 'AetherGaugeData | None') -> float:
   is_curve = data.indicator_type == IndicatorType.ROAD_CURVE if data else False
   return ROAD_HEIGHT if is_curve else (45.0 * SCALE)
 
-def _road_xy(distance: float, icx: float, bottom: float, data: 'AetherGaugeData') -> tuple[float, float, float]:
+def _road_xy(distance: float, icx: float, bottom: float, data: 'AetherGaugeData', road_h: float | None = None) -> tuple[float, float, float]:
   t = max(0.0, min(1.0, _get_t_from_x(distance)))
   offset = _get_perspective_offset(t, data)
-  return t, icx + offset, bottom - t * _get_road_height(data)
+  h = road_h if road_h is not None else _get_road_height(data)
+  return t, icx + offset, bottom - t * h
 
 def _get_t_from_x(x: float) -> float:
   x_clamped = max(X_MIN, min(X_MAX, x))
@@ -127,10 +153,10 @@ def _get_perspective_offset(t: float, data: 'AetherGaugeData | None') -> float:
   max_offset_top = math.tanh(path_y_far * PERSPECTIVE_GAIN) * PERSPECTIVE_MAX_OFFSET
   return max_offset_top * (t ** PERSPECTIVE_EXPONENT)
 
-def _draw_text_with_shadow(font: rl.Font, text: str, pos: rl.Vector2, size: int, color: rl.Color):
+def _draw_text_with_shadow(font: rl.Font, text: str, pos: rl.Vector2, size: int, color: rl.Color, alpha: float = 1.0):
   for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
-    rl.draw_text_ex(font, text, rl.Vector2(pos.x + dx, pos.y + dy), size, 0, rl.BLACK)
-  rl.draw_text_ex(font, text, pos, size, 0, color)
+    rl.draw_text_ex(font, text, rl.Vector2(pos.x + dx, pos.y + dy), size, 0, _fade(rl.BLACK, alpha))
+  rl.draw_text_ex(font, text, pos, size, 0, _fade(color, alpha))
 
 
 # --- Data model ---
@@ -162,11 +188,14 @@ def _build_curve_gauge_data(curvature: float, target_speed: float, v_cruise: flo
   display_speed, unit = _to_display_speed(min(v_ego, target_speed) if target_speed > 0.1 else v_ego)
   reduction = _calc_reduction(v_cruise, target_speed)
   intensity = _intensity(curvature)
+  severity_color = _glow_color(intensity)
+  engagement_color = get_border_color(ui_state)
+  curve_color = _lerp_color(severity_color, engagement_color, 0.35)
 
   return AetherGaugeData(
     text=str(display_speed),
     unit=unit,
-    color=_glow_color(intensity),
+    color=curve_color,
     indicator_type=IndicatorType.ROAD_CURVE,
     indicator_value=curvature,
     reduction_text=f"-{reduction}" if reduction > 0 else "",
@@ -384,6 +413,8 @@ class AetherGauge:
     self._cached_data = None
     self._last_active_time = 0.0
     self._cooldown = 0.5
+    self._road_h_filter = FirstOrderFilter(ROAD_HEIGHT, 0.06, 1 / gui_app.target_fps)
+    self._current_road_h = ROAD_HEIGHT
 
   def has_active_source(self) -> bool:
     """Lightweight visibility check — no side effects, no data construction."""
@@ -412,7 +443,7 @@ class AetherGauge:
 
     return self._cached_data
 
-  def render(self, rect: rl.Rectangle, font_bold: rl.Font, font_medium: rl.Font, current_speed: float, cx: float | None = None, bottom: float | None = None):
+  def render(self, rect: rl.Rectangle, font_bold: rl.Font, font_medium: rl.Font, current_speed: float, cx: float | None = None, bottom: float | None = None, alpha: float = 1.0):
     data = self.get_active_data()
     if not data:
       return
@@ -429,9 +460,9 @@ class AetherGauge:
       icy = bottom - ROAD_HALF_SIZE
 
     if data.indicator_type in (IndicatorType.ROAD_CURVE, IndicatorType.FORCE_STOP, IndicatorType.LEAD, IndicatorType.STOP_LIGHT):
-      self._render_unified_road(rect, icx, icy, data, font_bold, font_medium)
+      self._render_unified_road(rect, icx, icy, data, font_bold, font_medium, alpha)
 
-  def _render_unified_road(self, rect, icx, icy, data, font_bold, font_medium):
+  def _render_unified_road(self, rect, icx, icy, data, font_bold, font_medium, alpha=1.0):
     bottom = icy + ROAD_HALF_SIZE
 
     if data.indicator_type in (IndicatorType.FORCE_STOP, IndicatorType.STOP_LIGHT):
@@ -441,7 +472,8 @@ class AetherGauge:
 
     points_left = []
     points_right = []
-    road_h = _get_road_height(data)
+    self._current_road_h = self._road_h_filter.update(_get_road_height(data))
+    road_h = self._current_road_h
 
     for i in range(ROAD_SEGMENTS + 1):
       t = i / ROAD_SEGMENTS
@@ -453,36 +485,38 @@ class AetherGauge:
       points_left.append(rl.Vector2(cx_t - w_t, y_t))
       points_right.append(rl.Vector2(cx_t + w_t, y_t))
 
-    fill_color = _with_alpha(data.color, FILL_ALPHA)
+    fill_color = _fade(_with_alpha(data.color, FILL_ALPHA), alpha)
     for i in range(ROAD_SEGMENTS):
+      t = i / ROAD_SEGMENTS
+      stroke = ROAD_THICKNESS * (1.0 - 0.6 * t)
       rl.draw_triangle(points_left[i], points_right[i], points_left[i+1], fill_color)
       rl.draw_triangle(points_right[i], points_right[i+1], points_left[i+1], fill_color)
-      rl.draw_line_ex(points_left[i], points_left[i+1], ROAD_THICKNESS, COLOR_SHADOW)
-      rl.draw_line_ex(points_right[i], points_right[i+1], ROAD_THICKNESS, COLOR_SHADOW)
-      rl.draw_line_ex(points_left[i], points_left[i+1], ROAD_THICKNESS, data.color)
-      rl.draw_line_ex(points_right[i], points_right[i+1], ROAD_THICKNESS, data.color)
+      rl.draw_line_ex(points_left[i], points_left[i+1], stroke, _fade(COLOR_SHADOW, alpha))
+      rl.draw_line_ex(points_right[i], points_right[i+1], stroke, _fade(COLOR_SHADOW, alpha))
+      rl.draw_line_ex(points_left[i], points_left[i+1], stroke, _fade(data.color, alpha))
+      rl.draw_line_ex(points_right[i], points_right[i+1], stroke, _fade(data.color, alpha))
 
     it = data.indicator_type
 
     if it in (IndicatorType.STOP_LIGHT, IndicatorType.FORCE_STOP):
-      self._draw_stop_line(icx, bottom, distance, data)
+      self._draw_stop_line(icx, bottom, distance, data, alpha)
 
     if it == IndicatorType.LEAD:
-      self._draw_lead_car(icx, bottom, data)
+      self._draw_lead_car(icx, bottom, data, alpha)
 
     if it in (IndicatorType.ROAD_CURVE, IndicatorType.FORCE_STOP, IndicatorType.STOP_LIGHT):
-      self._draw_standard_chevrons(icx, bottom, distance, data)
+      self._draw_standard_chevrons(icx, bottom, distance, data, alpha)
 
     if it == IndicatorType.STOP_LIGHT:
-      self._draw_traffic_light(icx, icy, distance, data)
+      self._draw_traffic_light(icx, icy, distance, data, alpha)
 
     if it == IndicatorType.FORCE_STOP:
-      self._draw_approaching_stop_sign(icx, icy, bottom, distance, data, font_bold)
+      self._draw_approaching_stop_sign(icx, icy, bottom, distance, data, font_bold, alpha)
 
-    self._draw_mini_cradle(icx, bottom, data, font_bold, font_medium)
+    self._draw_mini_cradle(icx, bottom, data, font_bold, font_medium, alpha)
 
-  def _draw_stop_line(self, icx, bottom, distance, data):
-    t, cx_line, cy_line = _road_xy(distance, icx, bottom, data)
+  def _draw_stop_line(self, icx, bottom, distance, data, alpha=1.0):
+    t, cx_line, cy_line = _road_xy(distance, icx, bottom, data, self._current_road_h)
     w_line = ROAD_W_BOTTOM - t * (ROAD_W_BOTTOM - ROAD_W_TOP)
 
     p_left = rl.Vector2(cx_line - w_line + ROAD_EDGE_INSET, cy_line)
@@ -491,11 +525,11 @@ class AetherGauge:
     fade = 1.0 - t * 0.5
     glow_a = int(150 * fade)
 
-    rl.draw_line_ex(p_left, p_right, max(3.0 * SCALE, 7.0 * SCALE * fade), _with_alpha(COLOR_STOP_LINE_GLOW, glow_a))
-    rl.draw_line_ex(p_left, p_right, max(1.5 * SCALE, 3.5 * SCALE * fade), COLOR_STOP_LINE_CORE)
+    rl.draw_line_ex(p_left, p_right, max(3.0 * SCALE, 7.0 * SCALE * fade), _fade(_with_alpha(COLOR_STOP_LINE_GLOW, glow_a), alpha))
+    rl.draw_line_ex(p_left, p_right, max(1.5 * SCALE, 3.5 * SCALE * fade), _fade(COLOR_STOP_LINE_CORE, alpha))
 
-  def _draw_lead_car(self, icx, bottom, data):
-    t_lead, cx_lead, cy_lead = _road_xy(6.5, icx, bottom, data)
+  def _draw_lead_car(self, icx, bottom, data, alpha=1.0):
+    t_lead, cx_lead, cy_lead = _road_xy(6.5, icx, bottom, data, self._current_road_h)
     t_lead = max(0.15, min(0.85, t_lead))
 
     car_scale = 0.45 + (1.0 - t_lead) * 0.55
@@ -506,16 +540,16 @@ class AetherGauge:
     is_slower = data.indicator_extra == "slower"
 
     if is_stopped:
-      border_color = COLOR_LEAD_STOPPED
+      border_color = _fade(COLOR_LEAD_STOPPED, alpha)
     elif is_slower:
-      border_color = _with_alpha(data.color, int(160 + 95 * _pulse(1.2)))
+      border_color = _fade(_with_alpha(data.color, int(160 + 95 * _pulse(1.2))), alpha)
     else:
-      border_color = data.color
+      border_color = _fade(data.color, alpha)
 
     # Car body: cabin and main body
     for rect_args, corner_r, fill in [
-      ((cx_lead - W * 0.3, cy_lead - H, W * 0.6, H * 0.45), 0.5, rl.Color(15, 15, 15, 240)),
-      ((cx_lead - W / 2, cy_lead - H * 0.65, W, H * 0.55), 0.3, rl.Color(20, 20, 20, 240)),
+      ((cx_lead - W * 0.3, cy_lead - H, W * 0.6, H * 0.45), 0.5, _fade(rl.Color(15, 15, 15, 240), alpha)),
+      ((cx_lead - W / 2, cy_lead - H * 0.65, W, H * 0.55), 0.3, _fade(rl.Color(20, 20, 20, 240), alpha)),
     ]:
       r = rl.Rectangle(*rect_args)
       rl.draw_rectangle_rounded(r, corner_r, 4, fill)
@@ -531,22 +565,22 @@ class AetherGauge:
       if is_stopped:
         pulse = _pulse(2.5)
         r_glow = int(W * 0.08 * (1.0 + 0.4 * pulse))
-        rl.draw_circle(glow_x, glow_y, r_glow, rl.Color(255, 30, 60, int(150 + 105 * pulse)))
-        c_tl = rl.Color(255, 220, 220, 255)
+        rl.draw_circle(glow_x, glow_y, r_glow, _fade(rl.Color(255, 30, 60, int(150 + 105 * pulse)), alpha))
+        c_tl = _fade(rl.Color(255, 220, 220, 255), alpha)
       elif is_slower:
         pulse = _pulse(1.2)
         r_glow = int(W * 0.06 * (1.0 + 0.2 * pulse))
-        rl.draw_circle(glow_x, glow_y, r_glow, rl.Color(255, 140, 30, int(100 + 80 * pulse)))
-        c_tl = rl.Color(255, 160, 60, int(180 + 75 * pulse))
+        rl.draw_circle(glow_x, glow_y, r_glow, _fade(rl.Color(255, 140, 30, int(100 + 80 * pulse)), alpha))
+        c_tl = _fade(rl.Color(255, 160, 60, int(180 + 75 * pulse)), alpha)
       else:
-        c_tl = COLOR_FORCE_STOP
+        c_tl = _fade(COLOR_FORCE_STOP, alpha)
       rl.draw_rectangle(tl_x, tl_y, int(tl_w), int(tl_h), c_tl)
 
     # Wheels
     wheel_y = int(cy_lead - H * 0.1)
     wheel_w = int(W * 0.12)
     wheel_h = int(H * 0.1)
-    wheel_c = rl.Color(10, 10, 10, 255)
+    wheel_c = _fade(rl.Color(10, 10, 10, 255), alpha)
     rl.draw_rectangle(int(cx_lead - W * 0.4), wheel_y, wheel_w, wheel_h, wheel_c)
     rl.draw_rectangle(int(cx_lead + W * 0.28), wheel_y, wheel_w, wheel_h, wheel_c)
 
@@ -560,7 +594,7 @@ class AetherGauge:
       t = t_lead * (1.0 - ((i + progress) / 2) % 1.0)
 
       cx_t = icx + _get_perspective_offset(t, data)
-      road_h = _get_road_height(data)
+      road_h = self._current_road_h
       cy_t = bottom - t * road_h
 
       chevron_w = 12.0 * SCALE - t * 5.0 * SCALE
@@ -568,13 +602,13 @@ class AetherGauge:
       lx = cx_t - chevron_w
       rx = cx_t + chevron_w
 
-      alpha = max(0, min(255, int(data.color.a * (1.0 - t / t_lead) * math.sin(t / t_lead * math.pi))))
-      c_color = _with_alpha(data.color, alpha)
+      chev_a = max(0, min(255, int(data.color.a * (1.0 - t / t_lead) * math.sin(t / t_lead * math.pi))))
+      c_color = _fade(_with_alpha(data.color, chev_a), alpha)
 
       rl.draw_line_ex(rl.Vector2(lx, cy_t - chevron_w * 0.5), rl.Vector2(cx_t, cy_t), chevron_thick, c_color)
       rl.draw_line_ex(rl.Vector2(rx, cy_t - chevron_w * 0.5), rl.Vector2(cx_t, cy_t), chevron_thick, c_color)
 
-  def _draw_standard_chevrons(self, icx, bottom, distance, data):
+  def _draw_standard_chevrons(self, icx, bottom, distance, data, alpha=1.0):
     is_stop = data.indicator_type in (IndicatorType.FORCE_STOP, IndicatorType.STOP_LIGHT)
     dt = rl.get_frame_time()
     v_ego = _get_val("carState", "vEgo", 0.0)
@@ -593,7 +627,7 @@ class AetherGauge:
       cx_t = icx + _get_perspective_offset(t, data)
       cx_next = icx + _get_perspective_offset(t_next, data)
 
-      road_h = _get_road_height(data)
+      road_h = self._current_road_h
       cy_t = bottom - t * road_h
       cy_next = bottom - t_next * road_h
 
@@ -615,17 +649,17 @@ class AetherGauge:
       ry = cy_t + dir_right_y * chevron_w + dir_up_y * chevron_h
 
       alpha_factor = math.sin((t / max_t) * math.pi) if max_t > 0.01 else 0.0
-      alpha = max(0, min(255, int(data.color.a * alpha_factor)))
-      chev_color = _with_alpha(data.color, alpha)
-      chev_shadow = rl.Color(0, 0, 0, int(alpha * 0.5))
+      chev_a = max(0, min(255, int(data.color.a * alpha_factor)))
+      chev_color = _fade(_with_alpha(data.color, chev_a), alpha)
+      chev_shadow = _fade(rl.Color(0, 0, 0, int(chev_a * 0.5)), alpha)
 
       rl.draw_line_ex(rl.Vector2(lx, ly + 1.5), rl.Vector2(cx_t, cy_t + 1.5), chevron_thick, chev_shadow)
       rl.draw_line_ex(rl.Vector2(rx, ry + 1.5), rl.Vector2(cx_t, cy_t + 1.5), chevron_thick, chev_shadow)
       rl.draw_line_ex(rl.Vector2(lx, ly), rl.Vector2(cx_t, cy_t), chevron_thick, chev_color)
       rl.draw_line_ex(rl.Vector2(rx, ry), rl.Vector2(cx_t, cy_t), chevron_thick, chev_color)
 
-  def _draw_traffic_light(self, icx, icy, distance, data):
-    t_light, cx_light, cy_road = _road_xy(distance, icx, icy + ROAD_HALF_SIZE, data)
+  def _draw_traffic_light(self, icx, icy, distance, data, alpha=1.0):
+    t_light, cx_light, cy_road = _road_xy(distance, icx, icy + ROAD_HALF_SIZE, data, self._current_road_h)
     s_light = 1.0 - t_light
 
     scale_light = 0.6 + (s_light ** 2.0) * 1.4
@@ -633,10 +667,10 @@ class AetherGauge:
     width = 11.0 * SCALE * scale_light
     height = 27.0 * SCALE * scale_light
 
-    rl.draw_rectangle_rounded(rl.Rectangle(cx_light - width/2, cy_light - height/2 + 1.5, width, height), 0.2, 4, rl.Color(0, 0, 0, 120))
+    rl.draw_rectangle_rounded(rl.Rectangle(cx_light - width/2, cy_light - height/2 + 1.5, width, height), 0.2, 4, _fade(rl.Color(0, 0, 0, 120), alpha))
     rect_housing = rl.Rectangle(cx_light - width/2, cy_light - height/2, width, height)
-    rl.draw_rectangle_rounded(rect_housing, 0.2, 4, rl.Color(22, 22, 22, 255))
-    rl.draw_rectangle_rounded_lines_ex(rect_housing, 0.2, 4, 1.0, rl.Color(80, 80, 80, 255))
+    rl.draw_rectangle_rounded(rect_housing, 0.2, 4, _fade(rl.Color(22, 22, 22, 255), alpha))
+    rl.draw_rectangle_rounded_lines_ex(rect_housing, 0.2, 4, 1.0, _fade(rl.Color(80, 80, 80, 255), alpha))
 
     r_bulb = 2.2 * SCALE * scale_light
     active_light = data.indicator_extra if data.indicator_extra in ("red", "yellow", "green") else "red"
@@ -649,19 +683,19 @@ class AetherGauge:
     for y, name, active_c, inactive_c in bulbs:
       if name == "red" and active_light == "red":
         glow_pulse = _pulse(1.5)
-        rl.draw_circle_v(rl.Vector2(cx_light, y), r_bulb + 3.0 * SCALE * glow_pulse, rl.Color(255, 30, 60, 45))
-        rl.draw_circle_v(rl.Vector2(cx_light, y), r_bulb + 6.0 * SCALE * glow_pulse, rl.Color(255, 30, 60, 15))
-      c = active_c if active_light == name else inactive_c
+        rl.draw_circle_v(rl.Vector2(cx_light, y), r_bulb + 3.0 * SCALE * glow_pulse, _fade(rl.Color(255, 30, 60, 45), alpha))
+        rl.draw_circle_v(rl.Vector2(cx_light, y), r_bulb + 6.0 * SCALE * glow_pulse, _fade(rl.Color(255, 30, 60, 15), alpha))
+      c = _fade(active_c if active_light == name else inactive_c, alpha)
       rl.draw_circle_v(rl.Vector2(cx_light, y), r_bulb, c)
 
-  def _draw_approaching_stop_sign(self, cx, icy, bottom, smoothed_distance, data, font_bold):
+  def _draw_approaching_stop_sign(self, cx, icy, bottom, smoothed_distance, data, font_bold, alpha=1.0):
     t_stop_gauge = _get_t_from_x(smoothed_distance)
     smoothed_s = max(0.0, min(1.0, 1.0 - (smoothed_distance / STOP_DISTANCE_MAX)))
 
     offset_stop = _get_perspective_offset(t_stop_gauge, data) if data else 0.0
     cx_stop = cx + offset_stop
 
-    road_h = _get_road_height(data)
+    road_h = self._current_road_h
     cy_road = bottom - t_stop_gauge * road_h
     y_sign = cy_road - 25.0 * SCALE * smoothed_s
 
@@ -670,8 +704,8 @@ class AetherGauge:
     r_sign = r_min + (smoothed_s ** 2.0) * (r_max - r_min)
 
     shadow_alpha = int(min(120, r_sign * 12))
-    rl.draw_poly(rl.Vector2(cx_stop, y_sign + 2.0), 8, r_sign, 22.5, rl.Color(0, 0, 0, shadow_alpha))
-    rl.draw_poly(rl.Vector2(cx_stop, y_sign), 8, r_sign, 22.5, COLOR_STOP_SIGN)
+    rl.draw_poly(rl.Vector2(cx_stop, y_sign + 2.0), 8, r_sign, 22.5, _fade(rl.Color(0, 0, 0, shadow_alpha), alpha))
+    rl.draw_poly(rl.Vector2(cx_stop, y_sign), 8, r_sign, 22.5, _fade(COLOR_FORCE_STOP, alpha))
 
     outline_t = max(0.8, min(1.5, r_sign * 0.07))
     outline_a = int(max(0, min(200, (r_sign - 5.0) * 20)))
@@ -681,31 +715,43 @@ class AetherGauge:
         a2 = math.radians(22.5 + ((i + 1) % 8) * 45.0)
         p1 = rl.Vector2(cx_stop + r_sign * math.cos(a1), y_sign + r_sign * math.sin(a1))
         p2 = rl.Vector2(cx_stop + r_sign * math.cos(a2), y_sign + r_sign * math.sin(a2))
-        rl.draw_line_ex(p1, p2, outline_t, _with_alpha(COLOR_STOP_SIGN_OUTLINE, outline_a))
+        rl.draw_line_ex(p1, p2, outline_t, _fade(_with_alpha(COLOR_STOP_SIGN_OUTLINE, outline_a), alpha))
 
-    stop_font_size = max(4, int(r_sign * 0.7))
+    if r_sign < 8.0 * SCALE:
+      return
+    stop_font_size = max(10, int(r_sign * 0.7))
     stop_txt_size = measure_text_cached(font_bold, "STOP", stop_font_size)
-    rl.draw_text_ex(font_bold, "STOP", rl.Vector2(cx_stop - stop_txt_size.x / 2, y_sign - stop_txt_size.y / 2), stop_font_size, 0, rl.WHITE)
+    rl.draw_text_ex(font_bold, "STOP", rl.Vector2(cx_stop - stop_txt_size.x / 2, y_sign - stop_txt_size.y / 2), stop_font_size, 0, _fade(rl.WHITE, alpha))
 
-  def _draw_mini_cradle(self, cx, bottom, data, font_bold, font_medium):
+  def _draw_mini_cradle(self, cx, bottom, data, font_bold, font_medium, alpha=1.0):
     if not data.text:
       return
 
     if data.is_numeric:
       val_size = measure_text_cached(font_bold, data.text, int(48 * SCALE))
       val_pos = rl.Vector2(int(cx - val_size.x / 2), int(bottom + 12 * SCALE))
-      _draw_text_with_shadow(font_bold, data.text, val_pos, int(48 * SCALE), data.color)
+      _draw_text_with_shadow(font_bold, data.text, val_pos, int(48 * SCALE), data.color, alpha)
+
+      accent_y = int(bottom + 12 * SCALE + val_size.y + 2 * SCALE)
+      accent_w = int(val_size.x + 12 * SCALE)
+      accent_x = int(cx - accent_w / 2)
+      rl.draw_line_ex(
+        rl.Vector2(accent_x, accent_y),
+        rl.Vector2(accent_x + accent_w, accent_y),
+        2.0 * SCALE,
+        _fade(_with_alpha(data.color, 150), alpha),
+      )
 
       if data.reduction_text:
         red_size = measure_text_cached(font_medium, data.reduction_text, int(20 * SCALE))
         red_pos = rl.Vector2(int(cx + val_size.x / 2 + 8 * SCALE), int(bottom + 12 * SCALE + val_size.y / 2 - red_size.y / 2))
-        _draw_text_with_shadow(font_medium, data.reduction_text, red_pos, int(20 * SCALE), rl.Color(255, 255, 255, 160))
+        _draw_text_with_shadow(font_medium, data.reduction_text, red_pos, int(20 * SCALE), COLOR_REDUCTION, alpha)
 
       if data.unit:
-        unit_size = measure_text_cached(font_medium, data.unit, int(16 * SCALE))
+        unit_size = measure_text_cached(font_medium, data.unit, int(18 * SCALE))
         unit_pos = rl.Vector2(int(cx - unit_size.x / 2), int(bottom + 12 * SCALE + val_size.y + 4 * SCALE))
-        _draw_text_with_shadow(font_medium, data.unit, unit_pos, int(16 * SCALE), rl.Color(255, 255, 255, 160))
+        _draw_text_with_shadow(font_medium, data.unit, unit_pos, int(18 * SCALE), rl.Color(255, 255, 255, 160), alpha)
     else:
       val_size = measure_text_cached(font_bold, data.text, int(24 * SCALE))
       val_pos = rl.Vector2(int(cx - val_size.x / 2), int(bottom + 16 * SCALE))
-      _draw_text_with_shadow(font_bold, data.text, val_pos, int(24 * SCALE), data.color)
+      _draw_text_with_shadow(font_bold, data.text, val_pos, int(24 * SCALE), data.color, alpha)

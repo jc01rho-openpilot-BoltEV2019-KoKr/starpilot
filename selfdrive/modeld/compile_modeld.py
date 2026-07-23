@@ -477,8 +477,13 @@ def read_file_chunked_to_disk(path):
   from openpilot.common.file_chunker import open_file_chunked
 
   temporary_path = f"{path}.unchunked"
-  with open(temporary_path, "wb") as output, open_file_chunked(path) as source:
-    shutil.copyfileobj(source, output)
+  try:
+    with open(temporary_path, "wb") as output, open_file_chunked(path) as source:
+      shutil.copyfileobj(source, output)
+  except Exception:
+    if os.path.exists(temporary_path):
+      os.remove(temporary_path)
+    raise
   atexit.register(lambda: os.path.exists(temporary_path) and os.remove(temporary_path))
   return temporary_path
 

@@ -12,25 +12,17 @@ SPEC.loader.exec_module(PANDAD)
 
 
 class FakeParams:
-  def __init__(self, car_make, ignore_ignition_line):
-    self.car_make = car_make
+  def __init__(self, ignore_ignition_line):
     self.ignore_ignition_line = ignore_ignition_line
-
-  def get(self, key, encoding=None):
-    assert key == "CarMake"
-    return self.car_make
 
   def get_bool(self, key):
     assert key == "IgnoreIgnitionLine"
     return self.ignore_ignition_line
 
 
-@pytest.mark.parametrize(("car_make", "enabled", "expected"), [
-  ("gm", True, True),
-  ("GM", True, True),
-  ("tesla", True, False),
-  ("tesla", False, False),
-  (None, True, False),
+@pytest.mark.parametrize(("enabled", "expected"), [
+  (True, True),
+  (False, False),
 ])
-def test_ignore_ignition_line_is_gm_only(car_make, enabled, expected):
-  assert PANDAD.get_ignore_ignition_line(FakeParams(car_make, enabled)) == expected
+def test_ignore_ignition_line_follows_toggle(enabled, expected):
+  assert PANDAD.get_ignore_ignition_line(FakeParams(enabled)) == expected

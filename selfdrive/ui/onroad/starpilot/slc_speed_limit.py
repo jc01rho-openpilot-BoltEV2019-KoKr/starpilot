@@ -362,11 +362,9 @@ def _draw_active_source_label(state: dict, cx: float, bottom_y: float, sign_widt
   if not source or source == "None" or source == "":
     return None
   label = _SOURCE_ABBREV.get(source, source.upper())
-  indicator = " \u25c0" if expanded else " \u25b6"
-  full_label = label + indicator
   font = _get_semi_bold()
   font_size = 24
-  sz = measure_text_cached(font, full_label, font_size)
+  sz = measure_text_cached(font, label, font_size)
   
   pill_w = sign_width
   pill_h = 32
@@ -376,7 +374,7 @@ def _draw_active_source_label(state: dict, cx: float, bottom_y: float, sign_widt
   rl.draw_rectangle_rounded_lines_ex(rect, 0.4, 8, 1, rl.Color(255, 255, 255, 100))
   
   text_y = bottom_y + 8 + (pill_h - font_size) / 2
-  rl.draw_text_ex(font, full_label, rl.Vector2(cx - sz.x / 2, text_y), font_size, 0, rl.WHITE)
+  rl.draw_text_ex(font, label, rl.Vector2(cx - sz.x / 2, text_y), font_size, 0, rl.WHITE)
   return rect
 
 
@@ -393,7 +391,7 @@ def _draw_text_outlined(font, text: str, pos: rl.Vector2, font_size: int, fill: 
 _BUBBLE_PAD_X = 24
 _BUBBLE_ROW_H = 48
 _BUBBLE_GAP = 2
-_BUBBLE_FONT = 30
+_BUBBLE_FONT = 34
 _BUBBLE_BG = rl.Color(0, 0, 0, 200)
 _BUBBLE_BORDER = rl.Color(255, 255, 255, 80)
 _BUBBLE_ACCENT = rl.Color(201, 34, 49, 255)
@@ -414,7 +412,7 @@ def _draw_sources_bubble(state: dict, anchor_rect: rl.Rectangle, sign_rect: rl.R
   if not rows:
     return
 
-  bubble_w = sign_rect.width
+  bubble_w = sign_rect.width + 24
   bubble_h = sign_rect.height
 
   bubble_x = sign_rect.x + sign_rect.width + 12
@@ -432,7 +430,7 @@ def _draw_sources_bubble(state: dict, anchor_rect: rl.Rectangle, sign_rect: rl.R
     _BUBBLE_BG,
   )
 
-  row_h = min(40.0, (bubble_h - 8 - (len(rows) - 1) * _BUBBLE_GAP) / len(rows))
+  row_h = min(44.0, (bubble_h - 8 - (len(rows) - 1) * _BUBBLE_GAP) / len(rows))
   total_content_h = len(rows) * row_h + (len(rows) - 1) * _BUBBLE_GAP
   y = bubble_y + (bubble_h - total_content_h) / 2
 
@@ -451,7 +449,7 @@ def _draw_sources_bubble(state: dict, anchor_rect: rl.Rectangle, sign_rect: rl.R
     available_w = bubble_w - 16
     needed_w = abbrev_size.x + value_size.x + 8
     if needed_w > available_w:
-      font_size = int(_BUBBLE_FONT * (available_w / needed_w))
+      font_size = max(26, int(_BUBBLE_FONT * (available_w / needed_w)))
       abbrev_size = measure_text_cached(text_font, abbrev_text, font_size)
       value_size = measure_text_cached(text_font, value_text, font_size)
 

@@ -210,6 +210,8 @@ import msgq.ipc_pyx  # noqa: F401
 import msgq.visionipc.visionipc_pyx  # noqa: F401
 import openpilot.selfdrive.controls.lib.lateral_mpc_lib.c_generated_code.acados_ocp_solver_pyx  # noqa: F401
 import openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.c_generated_code.acados_ocp_solver_pyx  # noqa: F401
+
+assert hasattr(msgq.visionipc.visionipc_pyx.VisionBuf, "frame_id")
 PY
 }
 

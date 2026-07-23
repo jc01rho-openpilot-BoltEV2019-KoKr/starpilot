@@ -25,21 +25,59 @@ git merge upstream/StarPilot --no-edit
 
 - **마커 잔여 확인**: `grep -rn '^<<<<<<<\|^=======\|^>>>>>>>' --include='*.py' --include='*.capnp' .` → 결과 없어야 함.
 - **py_compile**: 편집·해결한 모든 `.py` 파일을 `python3 -m py_compile <files...>` → 전부 통과해야 함(마커 잔여·union 들여쓰기 오류 탐지).
-- **capnp 스키마 로드 + ordinal 무결성** (`cereal/log.capnp` 수정 시 필수):
+- **capnp 스키마 + ordinal + union + round-trip + consumer 검증** (`*.capnp` 변경 시 필수, `cereal/log.capnp` 등). `capnp.load` 성공은 "문법·로딩 가능"만 증명할 뿐, ordinal 중복/갭이나 의미적 누락을 **탐지하지 않는다**. 아래 heredoc을 실행한다:
+  ```bash
+  python3 - <<'PY'
+  import capnp  # pycapnp
+  capnp.remove_import_hook()
+  log = capnp.load('cereal/log.capnp')          # 로드 성공 = 문법·참조 해결 OK (중복/갭 미탐지)
+
+  ev = log.Event.schema
+
+  # (1) 명시 ordinal: 고유 + 연속(0..max). 비-union 필드(logMonoTime@0, valid@67 등)는
+  #     ordinal이 explicit여도 순수 스칼라 필드이므로 반드시 대상에 포함해 함께 검사한다.
+  ords = sorted(f.proto.ordinal.explicit for f in ev.fields_list
+                if f.proto.ordinal.which() == 'explicit')
+  assert len(ords) == len(set(ords)), f'ordinal 중복: {[o for o in ords if ords.count(o)>1]}'
+  assert ords == list(range(min(ords), max(ords)+1)), f'ordinal 갭/불연속: {ords}'
+
+  # (2) union 멤버 식별: discriminant 값이 0xffff(65535)가 아니면 union arm.
+  #     logMonoTime/valid는 비-union 일반 필드이므로 제외된다.
+  members = [f for f in ev.fields_list if f.proto.discriminantValue != 0xffff]
+  assert members, 'Event union 멤버 없음(스키마 파싱 이상)'
+
+  # (3) 모든 union 멤버 init 가능 여부 — 로컬/업스트림 신규 arm 포함 전수 검증.
+  #     list-backed arm은 0-길이 초기화에 실패할 수 있으므로 KjException 시 길이 1로 재시도.
+  for f in members:
+      try:
+          log.Event.new_message().init(f.proto.name)
+      except capnp.lib.capnp.KjException:
+          m = log.Event.new_message()
+          m.init(f.proto.name, 1)
+
+  # (4) round-trip: 변경/신규 필드 + 로컬 보존 union arm(naviData 등) 직렬화→역직렬화.
+  #     list-backed arm을 포함해 KjException 가능하니 동일 폴백. reader는 반드시
+  #     context manager로 열고 닫고, which()로 활성 arm을 재확인한다.
+  #     ⟦필드명 목록은 실제 diff에 맞춰 갱신⟧
+  for name in ('naviData', 'driverMonitoringState'):
+      root = log.Event.new_message()
+      try:
+          root.init(name)
+      except capnp.lib.capnp.KjException:
+          root = log.Event.new_message()
+          root.init(name, 1)
+      wire = root.to_bytes()
+      with log.Event.from_bytes(wire) as reader:
+          assert reader.which() == name, f'{name} round-trip 실패: {reader.which()}'
+
+  print('capnp OK: load, ordinals unique+contiguous, union init, round-trip')
+  PY
   ```
-  python3 -c "
-  import capnp; capnp.remove_import_hook()
-  log = capnp.load('cereal/log.capnp')            # 컴파일 성공 = 중복/갭/순서 통과
-  for st in (log.Event.schema,):
-    ords = [f.proto.ordinal.explicit for f in st.fields_list if f.proto.ordinal.which()=='explicit']
-    assert len(ords)==len(set(ords)), 'ordinal 중복'
-    assert sorted(ords)==list(range(min(ords),max(ords)+1)), 'ordinal 갭'
-  log.Event.new_message().init('naviData')        # 로컬 nda 필드 런타임 검증
-  print('capnp OK')
-  "
-  ```
-  - **naviData/nda 필드는 upstream 신규 필드(예: driverMonitoringState @151)와 필드번호가 겹치지 않도록 다음 빈 번호로 이동**해야 한다. ordinal은 `0..max` 연속·중복 없음이 강제된다(capnp 규칙). 겹치면 `capnp.load` 실패.
-- **검증 실패 시 커밋·push 금지.** 원인 수정 후 재검증.
+  - **ordinal 규칙**: union arm은 discriminant ordinal(0..N)을 중복 없이 연속으로 유지해야 한다. 로컬 커스텀 필드(예: `naviData @152`)는 업스트림 신규 필드(예: `driverMonitoringState @151`)와 번호가 겹치지 않도록 다음 빈 번호로 배치한다.
+  - **중첩 struct/enum 변경은 별도 round-trip·consumer 검증이 필요**: `Event` top-level ordinal 검증만으로는 `DriverData.sleepProb`, `DriverMonitoringState.lockoutCount`/`lockoutMinutesRemaining` 같은 중첩 필드 추가·이름 변경을 **기계적으로 탐지할 수 없다**. 변경된 중첩 struct/enum(예: `DriverStateV2`, `DriverMonitoringState.MonitoringPolicy`)은:
+    - **serialize/deserialize round-trip**: 값 채워서 `to_bytes()`→`from_bytes()`→필드 접근 정상 확인.
+    - **consumer 일치**: 추가/이름변경한 enum 값(예: alert, `EventName` 등)이 모든 consumer에서 유일하게 존재하는지 확인. 변경된 스키마를 참조하는 Python consumer 파일(예: `selfdrive/monitoring/policy.py`, `selfdrive/ui/*/driver_state.py`, migration `selfdrive/test/process_replay/migration.py`)을 `py_compile` 또는 타겟 테스트로 검증.
+- **검증 실패 시 커밋·push 금지.** 원인 수정 후 Step 1.5 전체 재실행.
 
 ### 2. paddle5_215-55-17 동기화
 ```
@@ -49,6 +87,8 @@ git merge paddle5 --no-edit
 
 충돌 발생 시: `--ours`(paddle5_215-55-17 유지)로 해결.
 
+> **capnp 변경 병합 시 재게이트**: Step 2 머지 결과에 `*.capnp` 변경이 포함되어 있으면 **병합 완료 직후** Step 1.5를 다시 통과해야 한다. 로컬 `paddle5`에서 통과한 게이트가 `215-55-17` 측 변경과의 충돌 해결로 의미가 달라질 수 있다.
+
 ### 3. Push
 ```
 git push origin paddle5
@@ -57,6 +97,6 @@ git push origin paddle5_215-55-17
 
 ## 원칙
 - Step 1 충돌은 파일 유형별로 superset 확인/3-way 머지 또는 `--theirs`(upstream 최신), `--ours`는 예외에만. Step 2 충돌만 `--ours`(215-55-17 지역 커스터마이징 유지).
-- **충돌 해결 후 커밋 전 반드시 py_compile + capnp 로드/ordinal 검증(Step 1.5)을 통과해야 한다. 실패 시 push 금지.**
+- **충돌 해결 후 커밋 전 반드시 py_compile + capnp load+ordinal+union init+round-trip+consumer 검증(Step 1.5)을 통과해야 한다. 실패 시 push 금지.**
 - merge는 `--no-edit`으로 자동 커밋 메시지 사용.
-- 완료 후 `paddle5_215-55-17` 브랜치에서 대기.
+- 완료 후 `paddle5` 브랜치에서 대기.

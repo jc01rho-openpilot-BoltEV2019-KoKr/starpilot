@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from cereal import car, custom, log
 import openpilot.selfdrive.controls.lib.latcontrol_torque as latcontrol_torque
 import openpilot.selfdrive.controls.lib.latcontrol_pid as latcontrol_pid
+import openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes as latcontrol_vehicle_tunes
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
@@ -12,6 +13,7 @@ from opendbc.car.toyota.values import CAR as TOYOTA
 from opendbc.car.nissan.values import CAR as NISSAN
 from opendbc.car.gm.values import CAR as GM
 from opendbc.car.hyundai.values import CAR as HYUNDAI
+from opendbc.car.subaru.values import CAR as SUBARU
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle
@@ -24,6 +26,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   clear_flm_runtime_overrides,
   get_flm_runtime_overrides,
   get_hkg_canfd_base_friction_threshold,
+  get_subaru_impreza_pid_output_scale,
   normalize_flm_overrides,
   set_flm_runtime_overrides,
 )
@@ -61,6 +64,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_rav4_prime_friction_scale,
   get_rav4_prime_friction_threshold,
   get_rav4_prime_output_taper_scale,
+  get_lexus_is_ff_scale,
   get_ioniq_5_ff_scale,
   get_ioniq_5_friction_scale,
   get_ioniq_5_friction_threshold,
@@ -753,6 +757,17 @@ class TestLatControl:
     assert right_turn_in > left_turn_in > base
     assert base > left_unwind >= right_unwind
 
+  def test_lexus_is_ff_scale_curve(self):
+    steady_left = get_lexus_is_ff_scale(0.6, 0.0, 22.0)
+    turn_in_left = get_lexus_is_ff_scale(0.6, 0.5, 22.0)
+    unwind_left = get_lexus_is_ff_scale(0.6, -0.5, 22.0)
+    unwind_right = get_lexus_is_ff_scale(-0.6, 0.5, 22.0)
+    low_speed_unwind_right = get_lexus_is_ff_scale(-0.6, 0.5, 5.0)
+    assert steady_left == 1.0
+    assert turn_in_left == 1.0
+    assert unwind_right < unwind_left < steady_left
+    assert unwind_right < low_speed_unwind_right < 1.0
+
   def test_volt_plexy_friction_threshold_curve(self):
     base = get_gm_base_friction_threshold(6.0)
     left_turn_in = get_volt_plexy_friction_threshold(6.0, 0.7, 0.8)
@@ -955,6 +970,26 @@ class TestLatControl:
     assert controller.pid._k_p[1] == pytest.approx([value * 2.0 for value in base_kp_v])
     assert controller.pid._k_i[1] == pytest.approx([value * 1.25 for value in base_ki_v])
 
+  def test_subaru_impreza_pid_output_scale_preserves_small_errors(self):
+    assert get_subaru_impreza_pid_output_scale(0.0) == 1.0
+    assert get_subaru_impreza_pid_output_scale(0.75) == 1.0
+    assert get_subaru_impreza_pid_output_scale(2.0) < 1.0
+    assert get_subaru_impreza_pid_output_scale(4.0) == pytest.approx(0.58)
+    assert get_subaru_impreza_pid_output_scale(-4.0) == pytest.approx(0.58)
+
+  def test_subaru_impreza_pid_output_taper_path(self, monkeypatch):
+    controller, VM, CS, params, starpilot_toggles = self._build_pid_controller(SUBARU.SUBARU_IMPREZA)
+    CS.steeringAngleDeg = 3.0
+    tapered_output, _, lac_log = controller.update(True, CS, VM, params, False, 0.0, False, 0.2, None, None, starpilot_toggles)
+
+    monkeypatch.setattr(latcontrol_pid, "get_subaru_impreza_pid_output_scale", lambda _error: 1.0)
+    base_controller, VM, CS, params, starpilot_toggles = self._build_pid_controller(SUBARU.SUBARU_IMPREZA)
+    CS.steeringAngleDeg = 3.0
+    base_output, _, _ = base_controller.update(True, CS, VM, params, False, 0.0, False, 0.2, None, None, starpilot_toggles)
+
+    assert lac_log.active
+    assert abs(tapered_output) < abs(base_output)
+
   def test_modified_civic_b_torque_path_uses_fixed_friction_threshold(self, monkeypatch):
     CarInterface = interfaces[HONDA.HONDA_CIVIC_BOSCH]
     CP = CarInterface.get_non_essential_params(HONDA.HONDA_CIVIC_BOSCH)
@@ -1118,6 +1153,22 @@ class TestLatControl:
     assert lac_log.active
     assert calls == 1
 
+  def test_lexus_is_update_path(self, monkeypatch):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(TOYOTA.LEXUS_IS)
+    calls = 0
+
+    def record_ff_scale(*_args):
+      nonlocal calls
+      calls += 1
+      return 1.0
+
+    monkeypatch.setattr(latcontrol_torque, "get_lexus_is_ff_scale", record_ff_scale)
+
+    _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert lac_log.active
+    assert calls == 1
+
   def test_kia_ev6_ff_scale_curve(self):
     clear_flm_runtime_overrides()
     assert get_kia_ev6_ff_scale(0.0, 0.0, 20.0) == 1.0
@@ -1135,6 +1186,22 @@ class TestLatControl:
     assert unwind_right < steady_right
     assert unwind_left < 1.03
     assert unwind_right < 1.07
+
+  def test_kia_ev6_jwarm_testing_ground_phase_correction(self, monkeypatch):
+    clear_flm_runtime_overrides()
+    monkeypatch.setattr(latcontrol_vehicle_tunes, "kia_ev6_lateral_testing_ground_active", lambda: False)
+    normal_steady = get_kia_ev6_ff_scale(0.45, 0.0, 10.0)
+    normal_turn_in_left = get_kia_ev6_ff_scale(0.45, 0.7, 10.0)
+    normal_turn_in_right = get_kia_ev6_ff_scale(-0.45, -0.7, 10.0)
+    normal_unwind_left = get_kia_ev6_ff_scale(0.45, -0.7, 10.0)
+    normal_unwind_right = get_kia_ev6_ff_scale(-0.45, 0.7, 10.0)
+
+    monkeypatch.setattr(latcontrol_vehicle_tunes, "kia_ev6_lateral_testing_ground_active", lambda: True)
+    assert get_kia_ev6_ff_scale(0.45, 0.0, 10.0) == pytest.approx(normal_steady)
+    assert get_kia_ev6_ff_scale(0.45, 0.7, 10.0) > normal_turn_in_left + 0.08
+    assert get_kia_ev6_ff_scale(-0.45, -0.7, 10.0) > normal_turn_in_right + 0.10
+    assert get_kia_ev6_ff_scale(0.45, -0.7, 10.0) < normal_unwind_left - 0.07
+    assert get_kia_ev6_ff_scale(-0.45, 0.7, 10.0) < normal_unwind_right - 0.08
 
   def test_kia_ev6_center_taper_curve(self):
     assert get_kia_ev6_center_taper_scale(0.0, 25.0) < get_kia_ev6_center_taper_scale(0.0, 10.0)

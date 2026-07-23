@@ -5,6 +5,7 @@ from collections.abc import Callable
 from enum import Enum
 import pyray as rl
 from openpilot.selfdrive.ui import UI_BORDER_SIZE
+from openpilot.starpilot.common.vision_bsm import get_fresh_vasm_state
 
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.lib.starpilot_status import (
@@ -180,6 +181,10 @@ def render_background_effects(rect: rl.Rectangle, border_width: float):
     if show_signal or show_blindspot:
       left_blindspot = car_state.leftBlindspot
       right_blindspot = car_state.rightBlindspot
+      if ui_state.starpilot_toggles.get("v_asm_enabled", False):
+        vasm_left, vasm_right = get_fresh_vasm_state(ui_state.params_memory)
+        left_blindspot = left_blindspot or vasm_left
+        right_blindspot = right_blindspot or vasm_right
       left_blinker = car_state.leftBlinker
       right_blinker = car_state.rightBlinker
 

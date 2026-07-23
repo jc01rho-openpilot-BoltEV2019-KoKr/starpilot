@@ -8,6 +8,7 @@ import pyray as rl
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.lib.starpilot_theme import get_param_color, get_theme_color, is_stock_color_scheme, with_alpha
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.starpilot.common.vision_bsm import get_fresh_vasm_state
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.shader_polygon import draw_polygon, Gradient
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -68,6 +69,10 @@ def render_adjacent_lanes(renderer) -> None:
     car_state = sm["carState"]
     blindspot_left = bool(car_state.leftBlindspot)
     blindspot_right = bool(car_state.rightBlindspot)
+    if ui_state.starpilot_toggles.get("v_asm_enabled", False):
+      vasm_left, vasm_right = get_fresh_vasm_state(ui_state.params_memory)
+      blindspot_left = blindspot_left or vasm_left
+      blindspot_right = blindspot_right or vasm_right
 
   # Fetch adjacent lane widths if adjacent path is enabled
   lane_width_left = 0.0
