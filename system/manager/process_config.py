@@ -85,6 +85,10 @@ def run_navigationd(started: bool, params: Params, CP: car.CarParams, starpilot_
   return started and params.get("NavDestination") is not None
 
 
+def run_v_asm(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
+  return started and getattr(starpilot_toggles, "v_asm_enabled", False)
+
+
 class BigDeviceUIProcess:
   name = "ui"
   enabled = True
@@ -238,6 +242,7 @@ procs += [
   PythonProcess("road_speed_limiter", "selfdrive.road_speed_limiter", only_onroad),
   PythonProcess("speed_limit_filler", "starpilot.system.speed_limit_filler", run_speed_limit_filler, nice=19),
   PythonProcess("speed_limit_vision", "starpilot.system.speed_limit_vision", run_speed_limit_vision, nice=19),
+  PythonProcess("adj_spot_monitor_vision", "starpilot.system.adj_spot_monitor_vision", run_v_asm, nice=19),
 ]
 
 managed_processes = {p.name: p for p in procs}

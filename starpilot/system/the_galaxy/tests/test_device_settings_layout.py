@@ -129,3 +129,16 @@ def test_human_acceleration_param_is_removed():
   params_source = PARAM_KEYS_PATH.read_text(encoding="utf-8")
   assert '{"HumanAcceleration",' not in params_source
 
+
+def test_vasm_is_default_off_and_configured_only_in_galaxy():
+  sections = _params_by_section(_layout())
+  lateral = sections["Lateral (Steering)"]
+
+  assert {"VASMEnabled", "VASMConfidenceThreshold", "VASMSmoothSeconds"} <= lateral.keys()
+  assert _declared_default("VASMEnabled") == "0"
+
+  physical_settings = (
+    REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/aethergrid.py",
+    REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/lateral.py",
+  )
+  assert all("VASM" not in path.read_text(encoding="utf-8") for path in physical_settings)

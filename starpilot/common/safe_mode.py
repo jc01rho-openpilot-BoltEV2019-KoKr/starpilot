@@ -33,8 +33,14 @@ SAFE_MODE_MANAGED_KEYS = (
   "SteerKP",
   "SteerLatAccel",
   "SteerRatio",
+<<<<<<< HEAD
   "SteerOffset",
   "LaneCentering",
+=======
+  "CameraOffset",
+  "LaneCentering",
+  "LaneCenteringE2EAuthority",
+>>>>>>> upstream/Dom
   "LaneCenterOffset",
   "LaneChanges",
   "LaneChangeTime",
@@ -148,6 +154,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "Offset7",
   "SpeedLimitFiller",
   "VisionSpeedLimitDetection",
+  "VASMEnabled",
   "CustomPersonalities",
   "TrafficPersonalityProfile",
   "AggressivePersonalityProfile",

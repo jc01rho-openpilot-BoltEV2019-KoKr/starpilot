@@ -929,7 +929,7 @@ class StarPilotSystemLayout(_SettingsPage):
   def backup_status_text(self) -> str:
     system_count = len(self._get_backups("backups"))
     toggle_count = len(self._get_backups("toggle_backups"))
-    return tr("{} full • {} toggle").format(system_count, toggle_count)
+    return tr("{} full | {} toggle").format(system_count, toggle_count)
 
   def open_backup_manager(self, backup_kind: str):
     if backup_kind == "system":

@@ -199,7 +199,7 @@ def flash_panda(params_memory):
   except Exception:
     hkg_remote_start = False
   try:
-    ignore_ignition_line = (params.get("CarMake", encoding="utf-8") or "").lower() == "gm" and params.get_bool("IgnoreIgnitionLine")
+    ignore_ignition_line = params.get_bool("IgnoreIgnitionLine")
   except Exception:
     ignore_ignition_line = False
 

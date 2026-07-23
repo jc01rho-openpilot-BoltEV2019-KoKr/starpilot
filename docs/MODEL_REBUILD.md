@@ -85,16 +85,19 @@ The lower-level device compiler also supports direct use:
 For a model that cannot run on the device GPU, compile with the USB AMD GPU attached:
 
 ```bash
-./models --model heavyweight --input-format supercombo --version v15 --gpu
+./models --lebowski --gpu
 ```
 
-`--external-gpu` remains available as a compatibility alias for `--gpu`.
+The dynamic flag (`--lebowski` above) sets the output and manifest model ID;
+when only one source model is staged, its ONNX filename does not need to match
+that ID. Input format and behavior version are inferred. `--external-gpu`
+remains available as a compatibility alias for `--gpu`.
 
 This emits a streaming out-of-band pickle and keeps QCOM available for camera warps. Its manifest entry must include:
 
 ```json
 {
-  "id": "heavyweight",
+  "id": "lebowski",
   "uses_external_gpu": true
 }
 ```

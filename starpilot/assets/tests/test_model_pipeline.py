@@ -71,6 +71,14 @@ def test_gpu_is_external_gpu_cli_alias(monkeypatch):
   assert args.external_gpu
 
 
+def test_requested_model_id_uses_only_staged_source(tmp_path):
+  source = tmp_path / "big_driving_supercombo.onnx"
+  source.touch()
+  assert model_compiler.resolve_model_files(tmp_path, "lebowski") == {
+    "driving_supercombo": source,
+  }
+
+
 def test_fat_onnx_is_streamed_to_disk(tmp_path, monkeypatch):
   payload = b"fat model" * 1024
 

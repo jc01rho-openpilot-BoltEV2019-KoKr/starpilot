@@ -66,6 +66,38 @@ class TestGMFingerprint:
 
 
 class TestGMInterface:
+  @parameterized.expand([
+    CAR.CHEVROLET_BOLT_CC_2017,
+    CAR.CHEVROLET_BOLT_CC_2018_2021,
+    CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+    CAR.CHEVROLET_BOLT_CC_2022_2023,
+    CAR.CHEVROLET_MALIBU_HYBRID_CC,
+  ])
+  def test_bolt_pedal_long_uses_shared_planning_delay_without_retuning_pid(self, car_model):
+    CarInterface = interfaces[car_model]
+    fingerprint = _empty_fingerprint()
+    fingerprint[0][0x201] = 8
+    params = Params()
+
+    try:
+      params.put_bool("GMPedalLongitudinal", True)
+      car_params = CarInterface.get_params(
+        car_model,
+        fingerprint,
+        [],
+        alpha_long=False,
+        is_release=False,
+        docs=False,
+        starpilot_toggles=_test_starpilot_toggles(),
+      )
+    finally:
+      params.remove("GMPedalLongitudinal")
+
+    assert car_params.longitudinalActuatorDelay == pytest.approx(0.6)
+    assert list(car_params.longitudinalTuning.kpV) == pytest.approx([0.095, 0.085, 0.065, 0.050])
+    assert list(car_params.longitudinalTuning.kiV) == pytest.approx([0.07, 0.10, 0.15, 0.24])
+    assert car_params.longitudinalTuning.kfDEPRECATED == pytest.approx(0.20)
+
   def test_bolt_acc_pedal_pid_accel_limits_keep_full_negative_authority(self):
     cp = SimpleNamespace(
       enableGasInterceptorDEPRECATED=True,

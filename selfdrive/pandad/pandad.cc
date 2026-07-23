@@ -502,9 +502,7 @@ void pandad_run(std::vector<Panda *> &pandas) {
         sm["selfdriveState"].getSelfdriveState().getEnabled() || preap_aol_engaged
       );
       is_onroad = params.getBool("IsOnroad");
-      const std::string car_make = params.get("CarMake");
-      const bool is_gm = car_make == "gm" || car_make == "GM" || car_make == "Gm";
-      const bool ignore_ignition_line = is_gm && params.getBool("IgnoreIgnitionLine");
+      const bool ignore_ignition_line = params.getBool("IgnoreIgnitionLine");
       process_panda_state(pandas, &pm, engaged, is_onroad, spoofing_started, ignore_ignition_line);
       panda_safety.configureSafetyMode(is_onroad);
     }

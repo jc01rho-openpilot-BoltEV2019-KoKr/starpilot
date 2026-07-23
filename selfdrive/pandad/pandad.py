@@ -64,7 +64,7 @@ def get_hkg_remote_start_boots_comma(params: Params) -> bool:
 
 def get_ignore_ignition_line(params: Params) -> bool:
   try:
-    return (params.get("CarMake", encoding="utf-8") or "").lower() == "gm" and params.get_bool("IgnoreIgnitionLine")
+    return params.get_bool("IgnoreIgnitionLine")
   except UnknownKeyName:
     return False
 

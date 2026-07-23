@@ -264,6 +264,9 @@ class CarInterface(CarInterfaceBase):
       ret.stopAccel = -1.5
       ret.stoppingDecelRate = 0.5
 
+    if candidate == CAR.HYUNDAI_ELANTRA_HEV_2024:
+      ret.longitudinalActuatorDelay = 0.22
+
     if candidate == CAR.HYUNDAI_IONIQ_6:
       ret.longitudinalActuatorDelay = 0.6
 

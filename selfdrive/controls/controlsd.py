@@ -13,7 +13,12 @@ from opendbc.car.car_helpers import interfaces
 from opendbc.car.chrysler.values import pacifica_hybrid_aol_stock_acc_mode
 from opendbc.car.gm.values import CAR as GM_CAR
 from opendbc.car.vehicle_model import VehicleModel
+<<<<<<< HEAD
 from openpilot.selfdrive.controls.lib.drive_helpers import LaneCenteringController, MAX_LATERAL_JERK, clip_curvature, get_lateral_active
+=======
+from openpilot.selfdrive.controls.lib.drive_helpers import MAX_LATERAL_JERK, clip_curvature, get_lateral_active
+from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
+>>>>>>> upstream/Dom
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
@@ -587,6 +592,7 @@ class Controls:
             held_mag = min(lead_curvature * blinker_dir, abs(self.turn_hold_curvature) + CURVATURE_HOLD_RATCHET_RATE * DT_CTRL)
             self.turn_hold_curvature = math.copysign(held_mag, lead_curvature)
 
+<<<<<<< HEAD
     # Apply lane-line centering to the final model/turn-adjusted request. This keeps
     # turn hold/lead bookkeeping on the raw model command while still subjecting the
     # centering correction to the downstream curvature/jerk safety limits.
@@ -594,6 +600,13 @@ class Controls:
       new_desired_curvature, model_v2, CS.vEgo,
       bool(getattr(self.starpilot_toggles, "lane_centering", False)),
       float(getattr(self.starpilot_toggles, "lane_center_offset", 0.0) or 0.0),
+=======
+    new_desired_curvature = self.lane_centering.update(
+      new_desired_curvature, model_v2, CS.vEgo,
+      self.starpilot_toggles.lane_centering,
+      self.starpilot_toggles.lane_center_offset,
+      self.starpilot_toggles.lane_centering_e2e_authority,
+>>>>>>> upstream/Dom
       CC.latActive,
       bool(self.sm.all_checks(['modelV2'])))
 

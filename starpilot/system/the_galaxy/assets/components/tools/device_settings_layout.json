@@ -335,6 +335,43 @@
         "step": 0.1,
         "parent_key": "QOLLateral",
         "settings_tier": "simple"
+      },
+      {
+        "key": "VASMEnabled",
+        "label": "Enable V-ASM",
+        "description": "Camera-based adjacent spot monitoring using the driver camera. Supplements factory blind spot monitoring.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true,
+        "requires_nonempty_key": "VASMAnnotationConfig",
+        "disabled_reason": "Configure window annotations first in Galaxy > V-ASM Annotations",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "VASMConfidenceThreshold",
+        "label": "Confidence Threshold",
+        "description": "Minimum vehicle-detection confidence (0.25-1.00, default 0.85). Higher values reduce false positives but may miss detections.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.25,
+        "max": 1.00,
+        "step": 0.05,
+        "precision": 2,
+        "parent_key": "VASMEnabled",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "VASMSmoothSeconds",
+        "label": "Smoothing Duration",
+        "description": "Temporal smoothing duration (0.1-0.5 seconds, default 0.2). Higher values reduce flicker but add latency.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.1,
+        "max": 0.5,
+        "step": 0.1,
+        "precision": 1,
+        "parent_key": "VASMEnabled",
+        "settings_tier": "advanced"
       }
     ]
   },
@@ -4000,6 +4037,41 @@
         "max": 0.35,
         "step": 0.01,
         "precision": 2,
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LaneCentering",
+        "label": "Lane Centering",
+        "description": "Experimentally bias the model command toward the detected lane center. Requires two confident lane lines and remains subject to normal curvature and jerk limits.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true,
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LaneCenterOffset",
+        "label": "Lane Center Offset",
+        "description": "Shift the lane target left or right in meters. The controller reduces this offset automatically when the detected lane is narrow.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": -0.3,
+        "max": 0.3,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "LaneCentering",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LaneCenteringE2EAuthority",
+        "label": "E2E Break-In Authority",
+        "description": "How strongly a confident end-to-end path can override lane centering when it deliberately departs the lane target. 1.0 gives the model full authority; 0.0 disables break-in.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.05,
+        "precision": 2,
+        "parent_key": "LaneCentering",
         "settings_tier": "advanced"
       },
       {

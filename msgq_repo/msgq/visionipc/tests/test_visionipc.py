@@ -61,6 +61,7 @@ class TestVisionIpc:
     recv_buf = self.client.recv()
     assert recv_buf is not None
     assert recv_buf.data.view('<i4')[0] == 1234
+    assert recv_buf.frame_id == 1337
     assert self.client.frame_id == 1337
     del self.client
     del self.server
