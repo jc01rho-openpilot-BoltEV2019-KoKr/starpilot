@@ -94,7 +94,6 @@ class VehicleSettingsManagerView(PanelManagerView):
     self.register_page_grid(self._toggle_grid)
     self._last_make = ""
     self._last_model = ""
-    self._left_row_height = ROW_HEIGHT
 
   @property
   def vertical_scrolling_disabled(self) -> bool:

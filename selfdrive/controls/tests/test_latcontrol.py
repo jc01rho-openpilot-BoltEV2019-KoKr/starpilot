@@ -672,7 +672,7 @@ class TestLatControl:
     assert get_ioniq_6_directional_taper_scale(1.2, -0.40) > get_ioniq_6_directional_taper_scale(1.2, -0.7)
     assert get_ioniq_6_directional_taper_scale(-1.2, -0.40, 8.0) > get_ioniq_6_directional_taper_scale(-1.2, -0.40, 25.0)
     assert get_ioniq_6_directional_taper_scale(1.2, 0.40, 8.0) > get_ioniq_6_directional_taper_scale(1.2, 0.40, 25.0)
-    assert get_ioniq_6_directional_taper_scale(-1.2, 1.6, 8.0) == pytest.approx(get_ioniq_6_directional_taper_scale(-1.2, 1.6, 25.0), abs=0.02)
+    assert get_ioniq_6_directional_taper_scale(-1.2, 1.6, 8.0) < get_ioniq_6_directional_taper_scale(-1.2, 1.6, 25.0)
     assert get_ioniq_6_directional_taper_scale(-0.18, -0.40, 3.0) > get_ioniq_6_directional_taper_scale(-0.18, -0.40, 9.0)
     assert get_ioniq_6_directional_taper_scale(-0.18, -0.40, 9.0) > get_ioniq_6_directional_taper_scale(-0.18, -0.40, 20.0)
     assert get_ioniq_6_directional_taper_scale(-0.50, -0.40, 3.0) > get_ioniq_6_directional_taper_scale(-0.50, -0.40, 6.0)
@@ -681,6 +681,7 @@ class TestLatControl:
     assert get_ioniq_6_directional_taper_scale(-0.70, -0.70, 6.0) > get_ioniq_6_directional_taper_scale(-0.70, -0.70, 12.0)
     assert get_ioniq_6_directional_taper_scale(-0.70, -0.70, 12.0) > get_ioniq_6_directional_taper_scale(-0.70, -0.70, 20.0)
     assert get_ioniq_6_directional_taper_scale(0.30, 0.60, 5.0) > get_ioniq_6_directional_taper_scale(0.30, 0.60, 12.0)
+    assert get_ioniq_6_directional_taper_scale(-3.0, 0.45, 10.5) < get_ioniq_6_directional_taper_scale(-3.0, 0.45, 3.0) - 0.10
 
   def test_ioniq_6_output_taper_curve(self):
     assert get_ioniq_6_output_taper_scale(0.0, 0.0, 25.0) < get_ioniq_6_output_taper_scale(0.0, 0.0, 8.0) <= 1.0
@@ -1118,6 +1119,7 @@ class TestLatControl:
     assert calls == 1
 
   def test_kia_ev6_ff_scale_curve(self):
+    clear_flm_runtime_overrides()
     assert get_kia_ev6_ff_scale(0.0, 0.0, 20.0) == 1.0
     steady_left = get_kia_ev6_ff_scale(0.45, 0.0, 25.0)
     steady_right = get_kia_ev6_ff_scale(-0.45, 0.0, 25.0)
@@ -1131,6 +1133,8 @@ class TestLatControl:
     assert turn_in_right > steady_right
     assert unwind_left < steady_left
     assert unwind_right < steady_right
+    assert unwind_left < 1.03
+    assert unwind_right < 1.07
 
   def test_kia_ev6_center_taper_curve(self):
     assert get_kia_ev6_center_taper_scale(0.0, 25.0) < get_kia_ev6_center_taper_scale(0.0, 10.0)

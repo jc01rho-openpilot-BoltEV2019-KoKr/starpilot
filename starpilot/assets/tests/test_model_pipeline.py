@@ -1,8 +1,13 @@
 import hashlib
+import io
 import json
+import sys
+from pathlib import Path
 
 from scripts import model_compiler
 from scripts.model_compiler import split_oversized_artifact
+from openpilot.common import file_chunker
+from openpilot.selfdrive.modeld import compile_modeld
 from openpilot.starpilot.assets import download_functions
 from openpilot.starpilot.assets import model_manager
 from openpilot.starpilot.assets.model_manager import MANIFEST_CANDIDATES, ModelManager
@@ -58,6 +63,30 @@ def test_external_gpu_compilation_is_opt_in(tmp_path, monkeypatch):
   assert external_kwargs["env"]["DEV"] == "USB+AMD:LLVM"
   assert external_kwargs["env"]["WARP_DEV"] == "QCOM"
   assert all(flag not in external_kwargs["env"] for flag in ("IMAGE", "NOLOCALS", "OPENPILOT_HACKS"))
+
+
+def test_gpu_is_external_gpu_cli_alias(monkeypatch):
+  monkeypatch.setattr(sys, "argv", ["models", "--model", "large", "--gpu"])
+  args = model_compiler.parse_args()
+  assert args.external_gpu
+
+
+def test_fat_onnx_is_streamed_to_disk(tmp_path, monkeypatch):
+  payload = b"fat model" * 1024
+
+  class StreamingOnly(io.BytesIO):
+    def read(self, size=-1):
+      assert size >= 0, "staging must not materialize the whole ONNX"
+      return super().read(size)
+
+  monkeypatch.setattr(file_chunker, "open_file_chunked", lambda _: StreamingOnly(payload))
+  source = tmp_path / "big_driving_supercombo.onnx"
+  staged = compile_modeld.read_file_chunked_to_disk(source)
+  try:
+    assert staged == f"{source}.unchunked"
+    assert Path(staged).read_bytes() == payload
+  finally:
+    Path(staged).unlink(missing_ok=True)
 
 
 def test_dropbox_urls_are_direct_downloads():

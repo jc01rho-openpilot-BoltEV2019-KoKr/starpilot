@@ -89,7 +89,9 @@ static bool hyundai_canfd_lka_alt_forward_addr(int addr) {
 }
 
 static bool hyundai_canfd_lka_alt_openpilot_allowed(void) {
-  return (aol_allowed || controls_allowed) && (!hyundai_ev_gas_signal || hyundai_canfd_lka_alt_drive_gear);
+  const bool angle_steering_allowed = !hyundai_canfd_angle_steering || vehicle_moving;
+  return (aol_allowed || controls_allowed) && angle_steering_allowed &&
+         (!hyundai_ev_gas_signal || hyundai_canfd_lka_alt_drive_gear);
 }
 
 static bool hyundai_canfd_lka_alt_stock_forwarding(void) {

@@ -4,6 +4,7 @@ import atexit
 import math
 import os
 import pickle
+import shutil
 import tempfile
 import time
 from collections import namedtuple
@@ -472,13 +473,12 @@ def _parse_size(value):
   return int(width), int(height)
 
 
-def read_file_chunked_to_shm(path):
-  from openpilot.common.file_chunker import read_file_chunked
-  from openpilot.system.hardware.hw import Paths
+def read_file_chunked_to_disk(path):
+  from openpilot.common.file_chunker import open_file_chunked
 
-  with tempfile.NamedTemporaryFile(prefix="compile_modeld_", dir=Paths.shm_path(), delete=False) as output:
-    output.write(read_file_chunked(path))
-    temporary_path = output.name
+  temporary_path = f"{path}.unchunked"
+  with open(temporary_path, "wb") as output, open_file_chunked(path) as source:
+    shutil.copyfileobj(source, output)
   atexit.register(lambda: os.path.exists(temporary_path) and os.remove(temporary_path))
   return temporary_path
 
@@ -538,7 +538,7 @@ def main():
   if args.model_type == "supercombo":
     if not args.supercombo_onnx:
       parser.error("--supercombo-onnx is required for supercombo")
-    model_path = read_file_chunked_to_shm(args.supercombo_onnx)
+    model_path = read_file_chunked_to_disk(args.supercombo_onnx)
     model_runner = OnnxRunner(model_path)
     output["metadata"]["model"] = make_metadata_dict(model_path)
     validate_metadata(output["metadata"]["model"])
@@ -565,8 +565,8 @@ def main():
     if args.model_type == "vision_multi_policy" and not policy_paths:
       parser.error("vision_multi_policy requires at least one policy ONNX")
 
-    vision_path = read_file_chunked_to_shm(args.vision_onnx)
-    resolved_policy_paths = {key: read_file_chunked_to_shm(path) for key, path in policy_paths.items()}
+    vision_path = read_file_chunked_to_disk(args.vision_onnx)
+    resolved_policy_paths = {key: read_file_chunked_to_disk(path) for key, path in policy_paths.items()}
     vision_runner = OnnxRunner(vision_path)
     policy_runners = {key: OnnxRunner(path) for key, path in resolved_policy_paths.items()}
     output["metadata"]["vision"] = make_metadata_dict(vision_path)

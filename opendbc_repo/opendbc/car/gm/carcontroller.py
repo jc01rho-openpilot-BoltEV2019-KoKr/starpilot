@@ -482,6 +482,8 @@ class CarController(CarControllerBase):
     self.xt4_cc_button_burst_remaining = 0
     self.xt4_cc_button_burst_button = CruiseButtons.INIT
     self.xt4_cc_button_burst_last_counter = -1
+    self.xt4_cc_button_observed_counter = -1
+    self.xt4_cc_button_counter_frame = 0
 
     self.lka_steering_cmd_counter = 0
     self.lka_icon_status_last = (False, False)
@@ -942,6 +944,8 @@ class CarController(CarControllerBase):
     elif self.CP.carFingerprint == CAR.CADILLAC_XT4_CC:
       self.xt4_cc_button_burst_remaining = 0
       self.xt4_cc_button_burst_button = CruiseButtons.INIT
+      self.xt4_cc_button_burst_last_counter = -1
+      self.xt4_cc_button_observed_counter = -1
 
     if self.CP.openpilotLongitudinalControl:
       # Gas/regen, brakes, and UI commands - all at 25Hz

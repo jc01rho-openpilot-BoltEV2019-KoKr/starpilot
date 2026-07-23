@@ -58,6 +58,8 @@ class ConditionalExperimentalMode:
   SLOW_LEAD_MODE_RELEASE_HOLD_TIME = 1.5
   SLOW_LEAD_MIN_CLOSING_SPEED = 0.75
   SLOW_LEAD_CLEAR_FASTER_FACTOR = 0.5
+  SLOW_RADAR_LEAD_TRIGGER_MAX_DISTANCE_TIME = 2.5
+  SLOW_RADAR_LEAD_TRIGGER_MIN_DISTANCE = 40.0
   POST_STOP_LAUNCH_TRIGGER_SUPPRESS_TIME = 2.0
   TURN_STOP_LIGHT_VETO_MAX_SPEED = 15 * CV.MPH_TO_MS
   TURN_STOP_LIGHT_VETO_STEERING_ANGLE = 45.0
@@ -295,6 +297,7 @@ class ConditionalExperimentalMode:
     lead_distance = float(getattr(lead, "dRel", float("inf")))
     lead_speed = float(getattr(lead, "vLead", float("inf")))
     lead_prob = float(getattr(lead, "modelProb", 1.0))
+    lead_radar = bool(getattr(lead, "radar", False))
     closing_speed = max(0.0, v_ego - lead_speed)
     min_closing_speed = max(self.SLOW_LEAD_MIN_CLOSING_SPEED, 0.04 * v_ego)
 
@@ -302,7 +305,16 @@ class ConditionalExperimentalMode:
       self.clear_slow_lead_state(tracking_lead)
       return
 
-    slower_lead = starpilot_toggles.conditional_slower_lead and self.starpilot_planner.starpilot_following.slower_lead
+    radar_slow_lead_in_range = bool(
+      not lead_radar or
+      lead_distance < max(self.SLOW_RADAR_LEAD_TRIGGER_MIN_DISTANCE,
+                          v_ego * self.SLOW_RADAR_LEAD_TRIGGER_MAX_DISTANCE_TIME)
+    )
+    slower_lead = bool(
+      starpilot_toggles.conditional_slower_lead and
+      self.starpilot_planner.starpilot_following.slower_lead and
+      radar_slow_lead_in_range
+    )
     stopped_lead = bool(
       starpilot_toggles.conditional_stopped_lead and
       lead_status and
@@ -311,6 +323,7 @@ class ConditionalExperimentalMode:
     )
     vision_slow_lead_candidate = bool(
       lead_status and
+      not lead_radar and
       lead_prob >= self.SLOW_LEAD_CONTINUITY_MIN_MODEL_PROB and
       lead_distance < max(40.0, v_ego * self.SLOW_LEAD_CONTINUITY_MAX_DISTANCE_TIME) and
       closing_speed >= min_closing_speed and

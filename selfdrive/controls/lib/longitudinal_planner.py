@@ -56,6 +56,14 @@ STANDSTILL_LEAD_CREEP_RELEASE_MIN_LEAD_SPEED = 0.25
 STANDSTILL_LEAD_CREEP_RELEASE_MIN_LEAD_ACCEL = 0.08
 STANDSTILL_LEAD_CREEP_RELEASE_MIN_GAP_MARGIN = 0.1
 STANDSTILL_LEAD_CREEP_RELEASE_CONFIRM_TIME = 0.30
+RADAR_STANDSTILL_GAP_SETTLE_ACCEL = 0.18
+RADAR_STANDSTILL_GAP_SETTLE_CONFIRM_TIME = 0.50
+RADAR_STANDSTILL_GAP_SETTLE_ENTRY_MARGIN = 0.60
+RADAR_STANDSTILL_GAP_SETTLE_EXIT_MARGIN = 0.15
+RADAR_STANDSTILL_GAP_SETTLE_MAX_EXTRA_GAP = 1.5
+RADAR_STANDSTILL_GAP_SETTLE_MAX_EGO_SPEED = 0.45
+RADAR_STANDSTILL_GAP_SETTLE_MAX_LEAD_SPEED = 0.15
+RADAR_STANDSTILL_GAP_SETTLE_MAX_LATERAL_OFFSET = 1.0
 LEAD_DEPART_CONFIDENT_MIN_GAP = 3.75
 LEAD_DEPART_CONFIDENT_MAX_GAP = 5.25
 LEAD_DEPART_CONFIDENT_MIN_LEAD_SPEED = 0.3
@@ -640,6 +648,8 @@ class LongitudinalPlanner:
     self.model_launch_stop_seen = False
     self.confident_lead_depart_elapsed = 0.0
     self.slow_creep_lead_depart_elapsed = 0.0
+    self.radar_standstill_gap_settle_elapsed = 0.0
+    self.radar_standstill_gap_settle_active = False
 
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
@@ -1441,6 +1451,62 @@ class LongitudinalPlanner:
       lead_speed >= STANDSTILL_LEAD_CREEP_RELEASE_MIN_LEAD_SPEED and
       lead_accel >= STANDSTILL_LEAD_CREEP_RELEASE_MIN_LEAD_ACCEL
     )
+
+  @staticmethod
+  def is_radar_standstill_gap_settle_candidate(lead, v_ego, target_gap, active=False):
+    if lead is None or not lead.status or not bool(getattr(lead, "radar", False)):
+      return False
+    if float(v_ego) > RADAR_STANDSTILL_GAP_SETTLE_MAX_EGO_SPEED:
+      return False
+    if abs(float(getattr(lead, "yRel", 0.0))) > RADAR_STANDSTILL_GAP_SETTLE_MAX_LATERAL_OFFSET:
+      return False
+    if abs(float(getattr(lead, "vLead", 0.0))) > RADAR_STANDSTILL_GAP_SETTLE_MAX_LEAD_SPEED:
+      return False
+
+    lead_gap = float(getattr(lead, "dRel", 0.0))
+    min_margin = RADAR_STANDSTILL_GAP_SETTLE_EXIT_MARGIN if active else RADAR_STANDSTILL_GAP_SETTLE_ENTRY_MARGIN
+    return bool(
+      lead_gap > target_gap + min_margin and
+      lead_gap <= target_gap + RADAR_STANDSTILL_GAP_SETTLE_MAX_EXTRA_GAP
+    )
+
+  def update_radar_standstill_gap_settle(self, sm, target_gap):
+    vetoed = bool(
+      getattr(sm["carState"], "brakePressed", False) or
+      getattr(sm["carState"], "gasPressed", False) or
+      getattr(sm["starpilotPlan"], "forcingStop", False) or
+      getattr(sm["starpilotPlan"], "redLight", False)
+    )
+    candidates = [
+      lead for lead in (self.lead_one, self.lead_two)
+      if self.is_radar_standstill_gap_settle_candidate(
+        lead,
+        float(sm["carState"].vEgo),
+        target_gap,
+        active=self.radar_standstill_gap_settle_active,
+      )
+    ]
+
+    if vetoed or not candidates:
+      self.radar_standstill_gap_settle_elapsed = 0.0
+      self.radar_standstill_gap_settle_active = False
+      return False
+
+    if self.radar_standstill_gap_settle_active:
+      return True
+
+    if not bool(sm["carState"].standstill):
+      self.radar_standstill_gap_settle_elapsed = 0.0
+      return False
+
+    self.radar_standstill_gap_settle_elapsed = min(
+      RADAR_STANDSTILL_GAP_SETTLE_CONFIRM_TIME,
+      self.radar_standstill_gap_settle_elapsed + self.dt,
+    )
+    self.radar_standstill_gap_settle_active = (
+      self.radar_standstill_gap_settle_elapsed + 1e-6 >= RADAR_STANDSTILL_GAP_SETTLE_CONFIRM_TIME
+    )
+    return self.radar_standstill_gap_settle_active
 
   @staticmethod
   def get_centered_model_lead(model_data):
@@ -3233,11 +3299,12 @@ class LongitudinalPlanner:
       slow_creep_depart_detected and
       self.slow_creep_lead_depart_elapsed >= STANDSTILL_LEAD_CREEP_RELEASE_CONFIRM_TIME
     )
+    radar_gap_settle_active = self.update_radar_standstill_gap_settle(sm, standstill_nudge_gap)
 
     standstill_stopped_lead_guard_cap = None
     standstill_guard_lead_present = any(bool(getattr(lead, "status", False)) for lead in (self.lead_one, self.lead_two))
     if standstill_guard_lead_present and (bool(sm['carState'].standstill) or float(sm['carState'].vEgo) <= STANDSTILL_STOPPED_LEAD_GUARD_MAX_EGO_SPEED):
-      release_ready = bool(lead_depart_ready or confident_depart_ready or slow_creep_depart_ready)
+      release_ready = bool(lead_depart_ready or confident_depart_ready or slow_creep_depart_ready or radar_gap_settle_active)
       standstill_stopped_lead_guard_caps = [
         cap for cap in (
           self.get_standstill_stopped_lead_guard_cap(
@@ -3285,6 +3352,11 @@ class LongitudinalPlanner:
     if lead_control_active and lead_depart_ready and not depart_safety_veto and not output_should_stop and float(sm['carState'].vEgo) <= STANDSTILL_LEAD_DEPART_MAX_EGO_SPEED:
       output_a_target = max(output_a_target, STANDSTILL_LEAD_DEPART_MIN_ACCEL)
       self.post_departure_follow_settle_until = now_t + POST_DEPARTURE_FOLLOW_SETTLE_LATCH_TIME
+
+    if radar_gap_settle_active:
+      vision_low_speed_stop_active = False
+      output_should_stop = False
+      output_a_target = RADAR_STANDSTILL_GAP_SETTLE_ACCEL
 
     lead_present = any(bool(getattr(lead, "status", False)) for lead in (self.lead_one, self.lead_two))
     confirmed_lead_release = bool(confident_depart_ready or lead_depart_ready or slow_creep_depart_ready)
@@ -3677,6 +3749,10 @@ class LongitudinalPlanner:
     if experimental_release_accel_target is not None:
       self.a_desired = min(self.a_desired, experimental_release_accel_target)
       output_a_target = min(output_a_target, experimental_release_accel_target)
+
+    if radar_gap_settle_active:
+      output_a_target = RADAR_STANDSTILL_GAP_SETTLE_ACCEL
+      output_should_stop = False
 
     self.output_a_target = output_a_target
     self.output_should_stop = bool(output_should_stop or vision_low_speed_stop_active)

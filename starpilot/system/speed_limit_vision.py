@@ -159,6 +159,7 @@ SPEED_LIMIT_CLASSES = {
 
 VALID_SPEED_LIMITS_MPH = set(range(5, 125, 5))
 MIN_PUBLISHABLE_SPEED_LIMIT_MPH = 5
+MAX_IMPERIAL_PUBLISHABLE_SPEED_LIMIT_MPH = 80
 LEGACY_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_vision.onnx"
 US_DETECTOR_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_detector.onnx"
 US_CLASSIFIER_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_value_classifier.onnx"
@@ -1306,6 +1307,8 @@ class SpeedLimitVisionDaemon:
     if detection is None:
       return None
     if detection.speed_limit_mph < MIN_PUBLISHABLE_SPEED_LIMIT_MPH:
+      return None
+    if not getattr(self, "is_metric", False) and detection.speed_limit_mph > MAX_IMPERIAL_PUBLISHABLE_SPEED_LIMIT_MPH:
       return None
     return detection
 

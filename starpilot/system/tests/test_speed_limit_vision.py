@@ -140,11 +140,32 @@ def test_extended_classifier_values_require_high_confidence(monkeypatch, confide
 
 def test_five_mph_detection_is_publishable():
   daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.is_metric = False
 
   detection = daemon._publishable_detection(slv.Detection(5, 0.95))
 
   assert detection is not None
   assert detection.speed_limit_mph == 5
+
+
+@pytest.mark.parametrize(("speed_limit", "expected"), ((80, 80), (90, None), (100, None)))
+def test_imperial_detection_blocks_speeds_above_80(speed_limit, expected):
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.is_metric = False
+
+  detection = daemon._publishable_detection(slv.Detection(speed_limit, 0.99))
+
+  assert (detection.speed_limit_mph if detection else None) == expected
+
+
+def test_metric_detection_allows_100():
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.is_metric = True
+
+  detection = daemon._publishable_detection(slv.Detection(100, 0.99))
+
+  assert detection is not None
+  assert detection.speed_limit_mph == 100
 
 
 def test_detection_support_counts_independent_frames():

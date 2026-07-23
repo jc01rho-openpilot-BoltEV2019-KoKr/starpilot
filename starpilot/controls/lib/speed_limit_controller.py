@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
+from openpilot.selfdrive.car.cruise import V_CRUISE_UNSET
 
 from cereal import custom
 from openpilot.starpilot.common.starpilot_utilities import calculate_bearing_offset, calculate_distance_to_point, is_url_pingable
@@ -39,7 +40,7 @@ OFFSET_MAP_METRIC = [
 CAMERA_SPEED_FACTOR = 1.00
 
 SLC_OVERRIDE_DISABLE_CLEAR_TIME = 0.75
-VISION_LARGE_SET_SPEED_DELTA = 30 * CV.MPH_TO_MS
+VISION_LARGE_REFERENCE_SPEED_DELTA = 30 * CV.MPH_TO_MS
 VISION_LARGE_SET_SPEED_MIN_SUPPORT = 3
 VISION_SUPPORT_SPEED_TOLERANCE = 0.5 * CV.MPH_TO_MS
 
@@ -335,7 +336,14 @@ class SpeedLimitController:
     vision_enabled = getattr(self.starpilot_toggles, "vision_speed_limit_detection", False)
     self.vision_limit = self.starpilot_planner.params_memory.get_float("VisionSpeedLimit") if vision_enabled else 0
     usable_vision_limit = self.vision_limit
-    if usable_vision_limit > 0 and v_cruise > 0 and abs(usable_vision_limit - v_cruise) >= VISION_LARGE_SET_SPEED_DELTA:
+    # The planner clamps V_CRUISE_UNSET to V_CRUISE_MAX, so plausibility must use the raw selected speed.
+    raw_set_speed_kph = float(sm["carState"].vCruise)
+    selected_set_speed = raw_set_speed_kph * CV.KPH_TO_MS if 0 < raw_set_speed_kph < V_CRUISE_UNSET else 0
+    reference_speed = selected_set_speed if selected_set_speed > 0 else max(float(v_ego), 0)
+    if (
+      usable_vision_limit > 0 and reference_speed > 0 and
+      abs(usable_vision_limit - reference_speed) >= VISION_LARGE_REFERENCE_SPEED_DELTA
+    ):
       support_count = self.starpilot_planner.params_memory.get_int("VisionSpeedLimitSupportCount")
       support_speed = self.starpilot_planner.params_memory.get_float("VisionSpeedLimitSupportSpeed")
       if support_count < VISION_LARGE_SET_SPEED_MIN_SUPPORT or abs(support_speed - usable_vision_limit) > VISION_SUPPORT_SPEED_TOLERANCE:

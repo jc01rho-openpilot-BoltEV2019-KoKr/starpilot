@@ -16,6 +16,7 @@ D_TERM_OUTPUT_CLAMP = 0.03
 
 STOPPING_RELEASE_MIN_ACCEL = 0.15
 STOPPING_RELEASE_STRONG_ACCEL = 0.45
+LEAD_GAP_SETTLE_MAX_START_ACCEL = 0.25
 MOVING_STOP_FOLLOW_MIN_GAP = 0.25
 NEGATIVE_TARGET_CREEP_GUARD_SPEED = 0.35
 NEGATIVE_TARGET_CREEP_GUARD_DECEL = 0.40
@@ -302,6 +303,8 @@ class LongControl:
         # StartAccel kick used elsewhere so launches stay within the traffic cap.
         output_accel = clip(a_target, 0.0, starpilot_toggles.startAccel)
       elif getattr(starpilot_toggles, "custom_accel_profile", False):
+        output_accel = clip(a_target, 0.0, starpilot_toggles.startAccel)
+      elif has_lead and a_target <= LEAD_GAP_SETTLE_MAX_START_ACCEL:
         output_accel = clip(a_target, 0.0, starpilot_toggles.startAccel)
       elif profile_max_accel > 0.0:
         # Keep the StartAccel friction-overcoming shove, but cap it at the selected
