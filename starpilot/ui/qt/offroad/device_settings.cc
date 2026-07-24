@@ -22,7 +22,7 @@ void prepareKonikServerSwitch(bool use_konik) {
   }
 }
 
-bool lowVoltageDiscordOwner(const Params &params) {
+bool lowVoltageDiscordOwner(Params &params) {
   return QString::fromStdString(params.get("GithubUsername")).trimmed().compare("jc01rho", Qt::CaseInsensitive) == 0 &&
          !QString::fromStdString(params.get("GithubSshKeys")).trimmed().isEmpty();
 }
