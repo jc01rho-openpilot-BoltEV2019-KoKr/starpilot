@@ -31,7 +31,7 @@ bool validDiscordWebhook(const QString &url) {
   QUrl parsed(url.trimmed());
   const QString host = parsed.host().toLower();
   const QSet<QString> allowedHosts = {"discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"};
-  const QStringList pathParts = parsed.path().split('/', Qt::SkipEmptyParts);
+  const QStringList pathParts = parsed.path().split('/', QString::SkipEmptyParts);
   return parsed.scheme() == "https" && allowedHosts.contains(host) && pathParts.size() >= 4 &&
          pathParts[0] == "api" && pathParts[1] == "webhooks" && !pathParts[2].isEmpty() && !pathParts[3].isEmpty();
 }
