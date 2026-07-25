@@ -56,6 +56,36 @@
   gap: var(--gap-sm);
 }
 
+.flmRouteSelection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+}
+
+.flmSegmentRange {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--font-size-xs);
+  gap: var(--gap-xs);
+  padding: 0 var(--padding-sm) var(--padding-xs);
+}
+
+.flmSegmentRange input {
+  background: var(--input-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--border-radius-sm);
+  color: var(--text-color);
+  max-width: 5.5rem;
+  padding: var(--padding-xs);
+}
+
+.flmSegmentRange small {
+  color: var(--text-muted);
+  flex: 1 1 10rem;
+}
+
 .flmRouteItem,
 .flmWorkspaceItem {
   align-items: flex-start;

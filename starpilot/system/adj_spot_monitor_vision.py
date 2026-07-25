@@ -52,6 +52,7 @@ class VASMDaemon:
 
     self.followup_until = 0.0
     self.onroad_prev = False
+    self.parked_prev = False
 
     self._last_pub_left = False
     self._last_pub_right = False
@@ -179,12 +180,15 @@ class VASMDaemon:
         onroad = self.sm["deviceState"].started if self.sm.valid.get("deviceState", False) else False
         parked = self.sm["starpilotCarState"].isParked if self.sm.valid.get("starpilotCarState", False) else False
 
-        if not onroad or not self._enabled or not self.inference.valid or not self._annotation_loaded:
-          self._update_inactive(reset_inference=(onroad != self.onroad_prev))
-          if onroad != self.onroad_prev:
+        if not onroad or parked or not self._enabled or not self.inference.valid or not self._annotation_loaded:
+          state_changed = onroad != self.onroad_prev or parked != self.parked_prev
+          self._update_inactive(reset_inference=state_changed)
+          if state_changed:
             self.last_inference_at = 0.0
+            self.followup_until = 0.0
           self.onroad_prev = onroad
-          if now - self._last_status_log >= STATUS_LOG_INTERVAL and not onroad:
+          self.parked_prev = parked
+          if now - self._last_status_log >= STATUS_LOG_INTERVAL and (not onroad or parked):
             cpu = list(self.sm["deviceState"].cpuUsagePercent) if self.sm.valid.get("deviceState", False) else []
             cpu_str = f"avg={sum(cpu)/len(cpu):.0f}% cores={','.join(f'{c:.0f}' for c in cpu)}" if cpu else "?"
             status = f"[VASM] idle | {cpu_str} | onroad={onroad} parked={parked}"
@@ -195,6 +199,7 @@ class VASMDaemon:
           continue
 
         self.onroad_prev = onroad
+        self.parked_prev = parked
 
         if not self._connect_camera():
           self._update_inactive(reset_inference=True)

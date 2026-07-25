@@ -46,9 +46,14 @@ FLM_ANALYZER_PROCESS = None
 FLM_ANALYZER_LOCK = threading.Lock()
 FLM_PROGRESS_FILENAME = "progress.json"
 FLM_ONROAD_POLL_INTERVAL_SECONDS = 0.25
+FLM_SEGMENT_TIMEOUT_SECONDS = 180.0
 
 
 class FLMAnalysisCancelled(RuntimeError):
+  pass
+
+
+class FLMSegmentTimeout(RuntimeError):
   pass
 
 
@@ -133,7 +138,7 @@ FLM_DRIVER_OVERRIDE_PRE_BUFFER_S = 0.35
 FLM_DRIVER_OVERRIDE_POST_BUFFER_S = 1.0
 
 
-@dataclass
+@dataclass(slots=True)
 class RouteSource:
   route: str
   footage_path: str
@@ -143,7 +148,7 @@ class RouteSource:
   used_qlog: bool
 
 
-@dataclass
+@dataclass(slots=True)
 class FLMSample:
   route: str
   segment: int
@@ -513,12 +518,42 @@ def cancel_flm_if_onroad() -> bool:
   return stop_flm_background_analysis(reason="onroad")
 
 
-def start_flm_background_analysis(route_names: list[str], footage_paths: list[str]) -> bool:
+def _optional_segment_number(value: Any) -> int | None:
+  if value is None or str(value).strip() == "":
+    return None
+  number = int(value)
+  if number < 0:
+    raise ValueError("Segment numbers cannot be negative.")
+  return number
+
+
+def normalize_segment_ranges(route_names: list[str], segment_ranges: Any) -> dict[str, dict[str, int | None]]:
+  if not isinstance(segment_ranges, dict):
+    return {}
+
+  normalized: dict[str, dict[str, int | None]] = {}
+  valid_routes = set(route_names)
+  for route, raw_range in segment_ranges.items():
+    route_name = str(route).strip()
+    if route_name not in valid_routes or not isinstance(raw_range, dict):
+      continue
+    start = _optional_segment_number(raw_range.get("start"))
+    end = _optional_segment_number(raw_range.get("end"))
+    if start is not None and end is not None and start > end:
+      raise ValueError(f"{route_name}: the first segment cannot be after the last segment.")
+    if start is not None or end is not None:
+      normalized[route_name] = {"start": start, "end": end}
+  return normalized
+
+
+def start_flm_background_analysis(route_names: list[str], footage_paths: list[str],
+                                  segment_ranges: dict[str, dict[str, int | None]] | None = None) -> bool:
   global FLM_ANALYZER_PROCESS
 
   route_names = [str(route) for route in route_names if str(route).strip()]
   if not route_names:
     return False
+  segment_ranges = normalize_segment_ranges(route_names, segment_ranges)
   try:
     _require_flm_offroad()
   except FLMAnalysisCancelled:
@@ -541,6 +576,11 @@ def start_flm_background_analysis(route_names: list[str], footage_paths: list[st
       json.dumps({
         "routes": route_names[:FLM_ANALYZER_ROUTE_LIMIT],
         "footagePaths": [str(path) for path in footage_paths],
+        "segmentRanges": {
+          route: segment_range
+          for route, segment_range in segment_ranges.items()
+          if route in route_names[:FLM_ANALYZER_ROUTE_LIMIT]
+        },
       }),
     ]
     log_file = None
@@ -561,6 +601,7 @@ def start_flm_background_analysis(route_names: list[str], footage_paths: list[st
         "running": True,
         "state": "queued",
         "routes": route_names[:FLM_ANALYZER_ROUTE_LIMIT],
+        "segmentRanges": segment_ranges,
         "progress": 0,
         "total": len(route_names[:FLM_ANALYZER_ROUTE_LIMIT]),
       })
@@ -584,16 +625,26 @@ def _parse_segment_num(segment_name: str) -> int:
     return 0
 
 
-def resolve_route_sources(route_names: list[str], footage_paths: list[str]) -> tuple[list[RouteSource], list[str]]:
+def resolve_route_sources(route_names: list[str], footage_paths: list[str],
+                          segment_ranges: dict[str, dict[str, int | None]] | None = None) -> tuple[list[RouteSource], list[str]]:
   sources: list[RouteSource] = []
   warnings: list[str] = []
+  segment_ranges = normalize_segment_ranges(route_names, segment_ranges)
   for route in route_names:
     route_added = False
+    segment_range = segment_ranges.get(route, {})
+    segment_start = segment_range.get("start")
+    segment_end = segment_range.get("end")
     for footage_path in footage_paths:
       segments = utilities.get_segments_in_route(route, footage_path)
       if not segments:
         continue
       for segment in segments:
+        segment_num = _parse_segment_num(segment)
+        if segment_start is not None and segment_num < segment_start:
+          continue
+        if segment_end is not None and segment_num > segment_end:
+          continue
         segment_path = Path(footage_path) / segment
         rlog_path = None
         qlog_path = None
@@ -616,7 +667,7 @@ def resolve_route_sources(route_names: list[str], footage_paths: list[str]) -> t
           route=route,
           footage_path=str(footage_path),
           segment=segment,
-          segment_num=_parse_segment_num(segment),
+          segment_num=segment_num,
           log_path=str(log_path),
           used_qlog=rlog_path is None,
         ))
@@ -624,7 +675,12 @@ def resolve_route_sources(route_names: list[str], footage_paths: list[str]) -> t
       if route_added:
         break
     if not route_added:
-      warnings.append(f"{route} could not be resolved to a local route with logs.")
+      if segment_range:
+        start_label = segment_start if segment_start is not None else "first"
+        end_label = segment_end if segment_end is not None else "last"
+        warnings.append(f"{route} had no local logs in the selected segment range {start_label}-{end_label}.")
+      else:
+        warnings.append(f"{route} could not be resolved to a local route with logs.")
   sources.sort(key=lambda source: (source.route, source.segment_num))
   return sources, warnings
 
@@ -874,7 +930,7 @@ def _segment_samples(segment_source: RouteSource, params: Params | None = None) 
 
   _require_flm_offroad(params)
 
-  for msg in LogReader(segment_source.log_path, sort_by_time=True):
+  for msg in LogReader(segment_source.log_path):
     now = time.monotonic()
     if now - last_offroad_check >= FLM_ONROAD_POLL_INTERVAL_SECONDS:
       _require_flm_offroad(params)
@@ -948,6 +1004,33 @@ def _segment_samples(segment_source: RouteSource, params: Params | None = None) 
     ))
 
   return samples, car_params, init_data, control_states
+
+
+def _segment_samples_with_timeout(segment_source: RouteSource, params: Params,
+                                  timeout_seconds: float = FLM_SEGMENT_TIMEOUT_SECONDS):
+  if (
+    timeout_seconds <= 0.0
+    or threading.current_thread() is not threading.main_thread()
+    or not hasattr(signal, "SIGALRM")
+    or not hasattr(signal, "setitimer")
+  ):
+    return _segment_samples(segment_source, params=params)
+
+  def handle_timeout(_signum, _frame):
+    raise FLMSegmentTimeout(
+      f"{segment_source.route} segment {segment_source.segment_num} exceeded the {timeout_seconds:.0f}-second read limit."
+    )
+
+  previous_handler = signal.getsignal(signal.SIGALRM)
+  signal.signal(signal.SIGALRM, handle_timeout)
+  previous_timer = signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+  try:
+    return _segment_samples(segment_source, params=params)
+  finally:
+    signal.setitimer(signal.ITIMER_REAL, 0.0)
+    signal.signal(signal.SIGALRM, previous_handler)
+    if previous_timer[0] > 0.0:
+      signal.setitimer(signal.ITIMER_REAL, previous_timer[0], previous_timer[1])
 
 
 def _current_param_state(CP, params: Params) -> dict[str, Any]:
@@ -2133,14 +2216,16 @@ def _render_report_html(report: dict[str, Any]) -> str:
   )
 
 
-def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: dict[str, Any] | None = None, report_id: str | None = None) -> dict[str, Any]:
+def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: dict[str, Any] | None = None,
+                   report_id: str | None = None, segment_ranges: dict[str, dict[str, int | None]] | None = None) -> dict[str, Any]:
   ensure_flm_workspace()
   params = Params(return_defaults=True)
   _require_flm_offroad(params)
   report_id = report_id or f"flm-{int(time.time())}"
   feedback = feedback or {}
+  segment_ranges = normalize_segment_ranges(route_names, segment_ranges)
 
-  sources, warnings = resolve_route_sources(route_names, footage_paths)
+  sources, warnings = resolve_route_sources(route_names, footage_paths, segment_ranges)
   if not sources:
     raise RuntimeError("No local routes with qlogs or rlogs were found for the selected routes.")
 
@@ -2150,6 +2235,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
   observed_control_states: dict[str, int] = {}
   used_qlog = False
   processed_segments = 0
+  skipped_segments = 0
   for idx, source in enumerate(sources, start=1):
     _require_flm_offroad(params)
     _write_flm_status({
@@ -2158,11 +2244,25 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
       "running": True,
       "state": "analyzing",
       "routes": route_names,
+      "segmentRanges": segment_ranges,
       "progress": idx - 1,
       "total": len(sources),
       "currentSegment": source.segment,
     })
-    segment_samples, segment_car_params, segment_init, segment_control_states = _segment_samples(source, params=params)
+    try:
+      segment_samples, segment_car_params, segment_init, segment_control_states = _segment_samples_with_timeout(source, params)
+    except FLMAnalysisCancelled:
+      raise
+    except FLMSegmentTimeout as error:
+      warnings.append(str(error) + " The segment was skipped.")
+      skipped_segments += 1
+      continue
+    except Exception as error:
+      warnings.append(
+        f"{source.route} segment {source.segment_num} could not be read ({type(error).__name__}). The segment was skipped."
+      )
+      skipped_segments += 1
+      continue
     _require_flm_offroad(params)
     if segment_car_params is not None:
       car_params_candidates.append(segment_car_params)
@@ -2293,6 +2393,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
     "reportId": report_id,
     "createdAt": time.time(),
     "routeNames": route_names,
+    "segmentRanges": segment_ranges,
     "warnings": warnings,
     "feedback": feedback,
     "car": {
@@ -2311,6 +2412,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
     "summary": {
       **summary_stats,
       "processedSegments": processed_segments,
+      "skippedSegments": skipped_segments,
       "usedQlogFallback": used_qlog,
     },
     "primaryPathKey": path_decision["primaryPathKey"],
@@ -2342,8 +2444,10 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
     "running": False,
     "state": "complete",
     "routes": route_names,
-    "progress": processed_segments,
-    "total": processed_segments,
+    "segmentRanges": segment_ranges,
+    "progress": len(sources),
+    "total": len(sources),
+    "skippedSegments": skipped_segments,
     "reportId": report_id,
   })
   return report
@@ -2875,6 +2979,7 @@ def run_worker(payload_json: str) -> None:
   payload = json.loads(payload_json)
   routes = [str(route) for route in payload.get("routes", [])]
   footage_paths = [str(path) for path in payload.get("footagePaths", [])]
+  segment_ranges = normalize_segment_ranges(routes, payload.get("segmentRanges", {}))
   ensure_flm_workspace()
   _write_flm_status({
     "pid": os.getpid(),
@@ -2882,21 +2987,27 @@ def run_worker(payload_json: str) -> None:
     "running": True,
     "state": "starting",
     "routes": routes,
+    "segmentRanges": segment_ranges,
     "progress": 0,
     "total": len(routes),
   })
   threading.Thread(target=_watch_flm_worker_for_onroad, daemon=True).start()
   try:
     _require_flm_offroad()
-    report = analyze_routes(routes, footage_paths)
+    report = analyze_routes(routes, footage_paths, segment_ranges=segment_ranges)
+    processed_segments = int(report.get("summary", {}).get("processedSegments", 0) or 0)
+    skipped_segments = int(report.get("summary", {}).get("skippedSegments", 0) or 0)
+    total_segments = processed_segments + skipped_segments
     _write_flm_status({
       "pid": os.getpid(),
       "startedAt": time.time(),
       "running": False,
       "state": "complete",
       "routes": routes,
-      "progress": len(routes),
-      "total": len(routes),
+      "segmentRanges": segment_ranges,
+      "progress": total_segments,
+      "total": total_segments,
+      "skippedSegments": skipped_segments,
       "reportId": report["reportId"],
     })
   except FLMAnalysisCancelled as error:
@@ -2906,6 +3017,7 @@ def run_worker(payload_json: str) -> None:
       "running": False,
       "state": "cancelled_onroad",
       "routes": routes,
+      "segmentRanges": segment_ranges,
       "progress": 0,
       "total": len(routes),
       "error": str(error),
@@ -2917,6 +3029,7 @@ def run_worker(payload_json: str) -> None:
       "running": False,
       "state": "failed",
       "routes": routes,
+      "segmentRanges": segment_ranges,
       "progress": 0,
       "total": len(routes),
       "error": str(error),

@@ -219,6 +219,41 @@ def test_hyundai_aol_does_not_auto_start_from_cruise_availability(monkeypatch, t
   assert ret.alwaysOnLateralEnabled is False
 
 
+def test_genesis_g90_main_aol_can_start_before_set(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(
+    SimpleNamespace(brand="hyundai", carFingerprint=spc.HYUNDAI_CAR.GENESIS_G90),
+    SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
+  )
+
+  ret = card.update(make_car_state(available=True), SimpleNamespace(distancePressed=False), make_sm(),
+                    make_toggles(always_on_lateral=True, always_on_lateral_main=True))
+
+  assert card.hyundai_aol_needs_engagement is False
+  assert ret.alwaysOnLateralAllowed is True
+  assert ret.alwaysOnLateralEnabled is True
+
+
+def test_other_legacy_hyundai_main_aol_still_waits_for_set(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(
+    SimpleNamespace(brand="hyundai", carFingerprint=spc.HYUNDAI_CAR.GENESIS_G80),
+    SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
+  )
+
+  ret = card.update(make_car_state(available=True), SimpleNamespace(distancePressed=False), make_sm(),
+                    make_toggles(always_on_lateral=True, always_on_lateral_main=True))
+
+  assert card.hyundai_aol_needs_engagement is True
+  assert ret.alwaysOnLateralEnabled is False
+
+
 def test_nissan_main_aol_can_start_before_normal_engagement(monkeypatch, tmp_path):
   monkeypatch.setattr(spc, "Params", FakeParams)
   monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
@@ -293,6 +328,33 @@ def test_kia_forte_non_scc_main_cruise_button_waits_for_main_confirmation(monkey
       carFingerprint=spc.HYUNDAI_CAR.KIA_FORTE_2021_NON_SCC,
       flags=spc.HyundaiFlags.NON_SCC,
     ),
+    SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
+  )
+
+  car_state = make_car_state(button_events=[SimpleNamespace(type=spc.ButtonType.mainCruise, pressed=True)])
+  starpilot_car_state = SimpleNamespace(distancePressed=False)
+  sm = make_sm()
+  toggles = make_toggles(always_on_lateral=True, main_cruise_aol_toggle=True)
+
+  card.update(make_car_state(), starpilot_car_state, sm, toggles)
+  ret = card.update(car_state, starpilot_car_state, sm, toggles)
+  assert ret.alwaysOnLateralAllowed is False
+  assert ret.alwaysOnLateralEnabled is False
+
+  car_state.buttonEvents = []
+  car_state.cruiseState.available = True
+  ret = card.update(car_state, starpilot_car_state, sm, toggles)
+  assert ret.alwaysOnLateralAllowed is True
+  assert ret.alwaysOnLateralEnabled is True
+
+
+def test_genesis_g90_main_cruise_button_waits_for_main_confirmation(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(
+    SimpleNamespace(brand="hyundai", carFingerprint=spc.HYUNDAI_CAR.GENESIS_G90),
     SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
   )
 

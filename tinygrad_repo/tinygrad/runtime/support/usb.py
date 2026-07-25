@@ -22,7 +22,6 @@ class USB3:
     return ctx
 
   @classmethod
-  @functools.cache
   def list_devices(cls, vendor:int, dev:int) -> list[tuple[c.POINTER[libusb.struct_libusb_device], str]]:
     ret = []
     for i in range(checked(libusb.libusb_get_device_list)(cls.ctx(), devs:=ctypes.POINTER(ctypes.POINTER(libusb.struct_libusb_device))())):
@@ -32,6 +31,20 @@ class USB3:
     libusb.libusb_free_device_list(devs, 1)
     return ret
 
+  @classmethod
+  def reopen_device(cls, vendor:int, product:int, bus_number:int, timeout:float=10.0):
+    deadline = time.monotonic() + timeout
+    while True:
+      for dev, _ in cls.list_devices(vendor, product):
+        handle = ctypes.POINTER(libusb.struct_libusb_device_handle)()
+        rc = libusb.libusb_open(dev, ctypes.byref(handle)) if libusb.libusb_get_bus_number(dev) == bus_number else libusb.LIBUSB_ERROR_NOT_FOUND
+        libusb.libusb_unref_device(dev)
+        if rc == 0:
+          return handle
+      if time.monotonic() >= deadline:
+        raise RuntimeError(f"device {vendor:04x}:{product:04x} did not reappear after reset")
+      time.sleep(0.1)
+
   def __init__(self, dev:c.POINTER[libusb.struct_libusb_device], ep_data_in:int, ep_stat_in:int, ep_data_out:int, ep_cmd_out:int,
                max_streams:int=31, use_bot=False):
     self.ep_data_in, self.ep_stat_in, self.ep_data_out, self.ep_cmd_out = ep_data_in, ep_stat_in, ep_data_out, ep_cmd_out
@@ -40,7 +53,9 @@ class USB3:
     self._bulk_in_buf, self._bulk_in_mv = alloc_cbuffer(4 << 20)
     self._bulk_out_buf, self._bulk_out_mv = alloc_cbuffer(4 << 20)
 
-    self.handle = c.init_c_var(c.POINTER[libusb.struct_libusb_device_handle], lambda x: checked(libusb.libusb_open)(dev, x))
+    bus_number = libusb.libusb_get_bus_number(dev)
+    self.handle = c.init_c_var(c.POINTER(libusb.struct_libusb_device_handle), lambda x: checked(libusb.libusb_open)(dev, x))
+    libusb.libusb_unref_device(dev)
 
     # Read product string descriptor
     _buf = (ctypes.c_ubyte * 256)()
@@ -54,7 +69,14 @@ class USB3:
     # Detach kernel driver if needed
     if checked(libusb.libusb_kernel_driver_active)(self.handle, 0):
       checked(libusb.libusb_detach_kernel_driver)(self.handle, 0)
-      checked(libusb.libusb_reset_device)(self.handle)
+      reset_rc = libusb.libusb_reset_device(self.handle)
+      if reset_rc in (libusb.LIBUSB_ERROR_NO_DEVICE, libusb.LIBUSB_ERROR_NOT_FOUND):
+        libusb.libusb_close(self.handle)
+        self.handle = self.reopen_device(_desc.idVendor, _desc.idProduct, bus_number)
+        if checked(libusb.libusb_kernel_driver_active)(self.handle, 0):
+          checked(libusb.libusb_detach_kernel_driver)(self.handle, 0)
+      elif reset_rc < 0:
+        raise RuntimeError(f"libusb_reset_device: {ctypes.string_at(libusb.libusb_strerror(reset_rc)).decode()}")
 
     # Set configuration and claim interface
     checked(libusb.libusb_set_configuration)(self.handle, 1)

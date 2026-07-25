@@ -28,6 +28,7 @@ ENABLE_BUTTONS = (ButtonType.accelCruise, ButtonType.decelCruise, ButtonType.can
 # Track when ECU disable happened - used to permanently suppress CAN errors from disabled ECU
 ECU_DISABLE_TIMESTAMP = 0.0
 KONA_NON_SCC_FCA_RADAR_ADDR = 0x602
+KIA_EV9_ACCEL_MAX = 2.5
 
 
 def apply_platform_longitudinal_params(ret: structs.CarParams) -> None:
@@ -80,7 +81,8 @@ class CarInterface(CarInterfaceBase):
 
   @staticmethod
   def get_pid_accel_limits(CP, current_speed, cruise_speed):
-    return ACCEL_MIN, CarControllerParams.ACCEL_MAX
+    accel_max = KIA_EV9_ACCEL_MAX if CP.carFingerprint == CAR.KIA_EV9 else CarControllerParams.ACCEL_MAX
+    return ACCEL_MIN, accel_max
 
   @staticmethod
   def apply_post_fingerprint_params(CP: structs.CarParams, candidate, fingerprint, car_fw) -> None:

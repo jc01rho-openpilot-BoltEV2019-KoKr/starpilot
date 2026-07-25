@@ -1419,6 +1419,20 @@ def _load_server_module():
   return module
 
 
+def test_troubleshoot_steer_delay_normalizes_vehicle_delay_for_display():
+  server = _load_server_module()
+
+  assert server._normalize_troubleshoot_current_display_value("SteerDelay", 0.1, 0.3) == 0.3
+  assert server._normalize_troubleshoot_current_display_value("SteerDelay", 0.3, 0.3) == 0.3
+
+
+def test_troubleshoot_steer_delay_preserves_real_custom_values():
+  server = _load_server_module()
+
+  assert server._normalize_troubleshoot_current_display_value("SteerDelay", 0.2, 0.3) == 0.2
+  assert server._normalize_troubleshoot_current_display_value("LongitudinalActuatorDelay", 0.1, 0.3) == 0.1
+
+
 def test_stats_endpoint_keeps_existing_keys_and_adds_dashboard(monkeypatch):
   server = _load_server_module()
   assert server._import_galaxy_web_symbols()

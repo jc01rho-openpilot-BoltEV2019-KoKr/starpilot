@@ -16,7 +16,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import shoul
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import STOP_DISTANCE
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.lead_behavior import is_radarless_matched_follow_window
-from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import get_far_follow_output_slew_rates
+from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import get_far_follow_output_slew_rates, get_untracked_slow_lead_decel_scale
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.selfdrive.car.cruise import V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
@@ -674,6 +674,7 @@ class LongitudinalPlanner:
     self.output_a_target = 0.0
     self.output_should_stop = False
     self.far_follow_brake_slew_rate, self.far_follow_release_slew_rate = get_far_follow_output_slew_rates(CP)
+    self.untracked_slow_lead_decel_scale = get_untracked_slow_lead_decel_scale(CP)
     self.far_follow_output_slew_active = False
     self.model_launch_armed = False
     self.model_launch_stop_seen = False
@@ -1012,7 +1013,7 @@ class LongitudinalPlanner:
     closing_factor = float(np.clip((closing_ratio - min_closing_ratio) /
                                    (VISION_UNTRACKED_SLOW_LEAD_FULL_CLOSING_RATIO - min_closing_ratio),
                                    0.0, 1.0))
-    approach_decel = VISION_UNTRACKED_SLOW_LEAD_MAX_DECEL * np.clip(
+    approach_decel = VISION_UNTRACKED_SLOW_LEAD_MAX_DECEL * self.untracked_slow_lead_decel_scale * np.clip(
       0.5 * time_factor + 0.3 * prob_factor + 0.2 * closing_factor, 0.0, 1.0)
     if approach_decel < VISION_UNTRACKED_SLOW_LEAD_MIN_DECEL:
       return None

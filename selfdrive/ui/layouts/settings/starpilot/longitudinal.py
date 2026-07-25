@@ -467,7 +467,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     return self._params.get_bool("AdvancedLongitudinalTune")
 
   def _show_stop_tuning_values(self) -> bool:
-    return self._advanced_enabled() and not (starpilot_state.car_state.isToyota and self._params.get_bool("FrogsGoMoosTweak"))
+    return self._advanced_enabled()
 
   def _make_parent(self, key: str, label: str, subtitle: str = "") -> ParentToggle:
     return ParentToggle(

@@ -344,7 +344,7 @@
         "ui_type": "toggle",
         "is_parent_toggle": true,
         "requires_nonempty_key": "VASMAnnotationConfig",
-        "disabled_reason": "Configure window annotations first in Galaxy > V-ASM Annotations",
+        "disabled_reason": "Configure window annotations first in Galaxy > V-Adj Spot Monitor",
         "settings_tier": "advanced"
       },
       {
@@ -4063,7 +4063,7 @@
       },
       {
         "key": "LaneCenteringE2EAuthority",
-        "label": "E2E Break-In Authority",
+        "label": "E2E Override Strength",
         "description": "How strongly a confident end-to-end path can override lane centering when it deliberately departs the lane target. 1.0 gives the model full authority; 0.0 disables break-in.",
         "data_type": "float",
         "ui_type": "numeric",

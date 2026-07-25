@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import cast
-import os, ctypes, struct, hashlib, functools, importlib, mmap, errno, array, contextlib, sys, weakref, itertools, collections, atexit
+import os, ctypes, struct, hashlib, functools, importlib, mmap, errno, array, contextlib, sys, weakref, itertools, collections, atexit, time
 assert sys.platform != 'win32'
 from dataclasses import dataclass
 from tinygrad.runtime.support.hcq import HCQCompiled, HCQAllocator, HCQBuffer, HWQueue, CLikeArgsState, HCQSignal, HCQProgram, FileIOInterface
@@ -912,7 +912,11 @@ class PCIIface(PCIIfaceBase):
 
 class USBIface(PCIIface):
   def __init__(self, dev, dev_id): # pylint: disable=super-init-not-called
-    if dev_id >= len(visible:=hcq_filter_visible_devices(USB3.list_devices(0xADD1, 0x0001), "AMD")):
+    deadline, visible = time.monotonic() + 5.0, []
+    while dev_id >= len(visible) and time.monotonic() < deadline:
+      visible = hcq_filter_visible_devices(USB3.list_devices(0xADD1, 0x0001), "AMD")
+      if dev_id >= len(visible): time.sleep(0.1)
+    if dev_id >= len(visible):
       raise RuntimeError(f"AMD:{dev_id} does not exist ({pluralize('device', len(visible))} available)")
     self.dev, self.pci_dev, self.vram_bar, self.count = dev, USBPCIDevice("AM", *visible[dev_id]), 0, len(visible)
     self.dev_impl = AMDev(self.pci_dev)

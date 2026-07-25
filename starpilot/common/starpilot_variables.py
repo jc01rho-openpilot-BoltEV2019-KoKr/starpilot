@@ -656,6 +656,12 @@ class StarPilotVariables:
     toggle.stoppingDecelRate = CP.stoppingDecelRate
     toggle.vEgoStarting = CP.vEgoStarting
     toggle.vEgoStopping = CP.vEgoStopping
+    if toggle.openpilot_longitudinal and toggle.car_make == "toyota":
+      # Preserve StarPilot's established Toyota stop-state behavior without
+      # coupling it to the removed FrogsGoMoo controller experiment.
+      toggle.stoppingDecelRate = 0.01
+      toggle.vEgoStarting = 0.1
+      toggle.vEgoStopping = 0.5
 
     # Keep stock tuning params synchronized for all device UIs.
     self._migrate_steer_delay_mode(steerActuatorDelay)
@@ -1022,11 +1028,6 @@ class StarPilotVariables:
     toggle.traffic_mode_via_cancel_very_long = toggle.openpilot_longitudinal and cancel_button_control_very_long == BUTTON_FUNCTIONS["TRAFFIC_MODE"]
     toggle.bookmark_via_cancel_very_long = cancel_button_control_very_long == BUTTON_FUNCTIONS["BOOKMARK"]
     self.set_favorite_button_flags(toggle, "cancel_very_long", cancel_button_control_very_long)
-
-    toggle.frogsgomoo_tweak = self.get_value("FrogsGoMoosTweak", condition=toggle.openpilot_longitudinal and toggle.car_make == "toyota")
-    toggle.stoppingDecelRate = 0.01 if toggle.frogsgomoo_tweak else toggle.stoppingDecelRate
-    toggle.vEgoStarting = 0.1 if toggle.frogsgomoo_tweak else toggle.vEgoStarting
-    toggle.vEgoStopping = 0.5 if toggle.frogsgomoo_tweak else toggle.vEgoStopping
 
     toggle.holiday_themes = self.get_value("HolidayThemes")
     toggle.current_holiday_theme = holiday_theme if toggle.holiday_themes else "stock"

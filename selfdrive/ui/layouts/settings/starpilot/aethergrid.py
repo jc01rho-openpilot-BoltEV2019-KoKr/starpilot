@@ -3658,115 +3658,6 @@ class AetherCategoryDrawer(AetherSettingsView):
 AetherCategoryTileView = AetherCategoryDrawer
 
 
-# ── AetherTransitionManager — Spatial Parallax Page Transitions ──
-
-class AetherTransitionManager:
-  def __init__(self, duration: float = 0.24):
-    self.duration = duration
-    self._time = 0.0
-    self._progress = 1.0
-    self._direction = 1 # 1 = forward (right to left), -1 = backward (left to right)
-    self._active = False
-    self._outgoing_render_fn = None
-    self._incoming_render_fn = None
-
-  def start(self, outgoing_render_fn, incoming_render_fn, direction: int):
-    self._outgoing_render_fn = None
-    self._incoming_render_fn = None
-    self._direction = direction
-    self._time = 0.0
-    self._progress = 1.0
-    self._active = False
-
-  def is_animating(self) -> bool:
-    return self._active
-
-  def update(self, dt: float):
-    if not self._active:
-      return
-    # Cap dt to avoid large visual jumps on frame spikes
-    dt = min(0.016, dt)
-    self._time += dt
-    
-    t = self._time / self.duration
-    if t >= 1.0:
-      t = 1.0
-      self._progress = 1.0
-      self._active = False
-      self._outgoing_render_fn = None
-      self._incoming_render_fn = None
-    else:
-      # Ease-in-out cubic curve (zero initial velocity, smooth acceleration & deceleration)
-      if t < 0.5:
-        self._progress = 4.0 * t * t * t
-      else:
-        self._progress = 1.0 - (-2.0 * t + 2.0) ** 3 / 2.0
-
-  def render(self, rect: rl.Rectangle):
-    if not self._active:
-      return
-
-    global _GLOBAL_SCISSOR_LIMIT
-    _GLOBAL_SCISSOR_LIMIT = rect
-
-    # 1. Enforce strict content boundary clipping to block drawing over the sidebar on the left
-    rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
-
-    # Clear the transition area with solid background to prevent ghosting/bleeding of transparent areas
-    rl.draw_rectangle_rec(rect, rl.Color(12, 10, 18, 255))
-
-    # Use progress directly since the exponential decay is already eased
-    eased = self._progress
-
-    # Outgoing and incoming rect calculations
-    if self._direction == 1:
-      # Forward: incoming slides right to left, outgoing slides left slightly (parallax)
-      out_x = rect.x - 0.25 * rect.width * eased
-      in_x = rect.x + rect.width * (1.0 - eased)
-    else:
-      # Backward: incoming slides left to right, outgoing slides right slightly (parallax)
-      out_x = rect.x + 0.25 * rect.width * eased
-      in_x = rect.x - rect.width * (1.0 - eased)
-
-    out_rect = rl.Rectangle(out_x, rect.y, rect.width, rect.height)
-    in_rect = rl.Rectangle(in_x, rect.y, rect.width, rect.height)
-
-    # 2. Render outgoing content
-    if self._outgoing_render_fn:
-      self._outgoing_render_fn(out_rect)
-
-    # Re-assert content scissor clip after child finishes rendering to override any nested disable calls
-    rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
-
-    # 3. Draw dimming overlay on outgoing content
-    dim_alpha = int(120 * (1.0 - eased))
-    if dim_alpha > 0:
-      rl.draw_rectangle_rec(out_rect, rl.Color(0, 0, 0, dim_alpha))
-
-    # 4. Render incoming content
-    if self._incoming_render_fn:
-      self._incoming_render_fn(in_rect)
-
-    # Re-assert content scissor clip after child finishes rendering
-    rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
-
-    # 5. Draw edge shadow/glow on incoming edge to separate layers
-    shadow_w = 40
-    if self._direction == 1:
-      rl.draw_rectangle_gradient_h(
-        int(in_rect.x - shadow_w), int(in_rect.y), shadow_w, int(in_rect.height),
-        rl.Color(0, 0, 0, 0), rl.Color(0, 0, 0, 100)
-      )
-    else:
-      rl.draw_rectangle_gradient_h(
-        int(in_rect.x + in_rect.width), int(in_rect.y), shadow_w, int(in_rect.height),
-        rl.Color(0, 0, 0, 100), rl.Color(0, 0, 0, 0)
-      )
-
-    # 6. Disable scissor globally when exiting transition rendering and clear global limit
-    rl.end_scissor_mode()
-    _GLOBAL_SCISSOR_LIMIT = None
-
 
 class AetherTile(Widget):
   def __init__(self, surface_color: rl.Color | str | None = None, on_click: Callable | None = None):
@@ -4080,10 +3971,10 @@ class ToggleTile(AetherTile):
     title_size = max(32, int(round(41 * text_scale)))
 
     if not enabled:
-      title_lines = self._wrap_text(self._font, self.title, max_w, title_size, max_lines=2)
+      title_lines = wrap_text(self._font, self.title, max_w, title_size, max_lines=2)
       desc_size = max(25, int(round(26 * text_scale)))
       disabled_text = tr(self._disabled_label) if self._disabled_label else tr("LOCKED")
-      desc_lines = self._wrap_text(self._font_desc, disabled_text, max_w, desc_size, max_lines=2)
+      desc_lines = wrap_text(self._font_desc, disabled_text, max_w, desc_size, max_lines=2)
 
       total_text_h = len(title_lines) * (title_size + 4) + len(desc_lines) * (desc_size + 2) + 6
       start_y = ry + (rh - total_text_h) / 2
@@ -4099,9 +3990,9 @@ class ToggleTile(AetherTile):
     else:
       title_color = rl.WHITE if active else _HUD_TEXT_DIM
       if self.desc:
-        title_lines = self._wrap_text(self._font, self.title, max_w, title_size, max_lines=2)
+        title_lines = wrap_text(self._font, self.title, max_w, title_size, max_lines=2)
         desc_size = max(25, int(round(26 * text_scale)))
-        desc_lines = self._wrap_text(self._font_desc, self.desc, max_w, desc_size, max_lines=2)
+        desc_lines = wrap_text(self._font_desc, self.desc, max_w, desc_size, max_lines=2)
 
         if len(title_lines) == 1:
           title_y = ry + int(rh * 0.22)
@@ -4122,7 +4013,7 @@ class ToggleTile(AetherTile):
         led_cx = rx + rw // 2
         led_cy = ry + rh - 32
       else:
-        title_lines = self._wrap_text(self._font, self.title, max_w, title_size, max_lines=2)
+        title_lines = wrap_text(self._font, self.title, max_w, title_size, max_lines=2)
         led_cy = ry + rh - 35
         total_text_h = len(title_lines) * (title_size + 4)
         title_y = ry + (rh - 24 - total_text_h) / 2
@@ -5557,7 +5448,7 @@ class TileGrid(Widget):
           tile_h = min(self.max_tile_height, tile_h)
       uniform_tile_w = (rect.width - (self._gap * (cols - 1))) / cols if self._uniform_width else 0
     content_height = rows * tile_h + max(0, rows - 1) * self._gap
-    y_offset = 0
+    y_offset = (rect.height - content_height) / 2 if content_height < rect.height else 0
     tile_idx = 0
     for r in range(rows):
       remaining = count - tile_idx

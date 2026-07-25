@@ -110,7 +110,6 @@ ForceStandstill
 ForceStopDistanceOffset
 ForceStops
 ForceTorqueController
-FrogsGoMoosTweak
 GMDashSpoofOffsets
 GMPedalLongitudinal
 HKGRemoteStartBootsComma

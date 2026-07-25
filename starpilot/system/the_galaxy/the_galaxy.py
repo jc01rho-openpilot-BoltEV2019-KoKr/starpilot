@@ -23,6 +23,9 @@ import selectors
 import shutil
 import signal
 import subprocess
+import numpy as np
+from msgq.visionipc import VisionIpcClient, VisionStreamType
+from PIL import Image
 import threading
 import time
 import traceback
@@ -2602,6 +2605,18 @@ def _normalize_vasm_config(data):
     raise ValueError("At least one window polygon is required.")
   return config
 
+
+def _decode_json_object(value):
+  if isinstance(value, bytes):
+    value = value.decode("utf-8", errors="replace")
+  if isinstance(value, str):
+    try:
+      value = json.loads(value)
+    except json.JSONDecodeError:
+      return {}
+  return value if isinstance(value, dict) else {}
+
+
 def _is_blank_param_raw(raw_value):
   if raw_value is None:
     return True
@@ -2921,6 +2936,20 @@ def _resolve_troubleshoot_default_value(key, value_type, default_values):
       return _coerce_param_value(stock_default_raw, safe_type)
 
   return _coerce_param_value(default_raw_value, safe_type)
+
+def _normalize_troubleshoot_current_display_value(key, current_value, default_value):
+  if key != "SteerDelay":
+    return current_value
+
+  try:
+    full_current_delay = full_lateral_delay(float(current_value))
+    numeric_default = float(default_value)
+  except (TypeError, ValueError):
+    return current_value
+
+  if math.isfinite(full_current_delay) and math.isfinite(numeric_default) and math.isclose(full_current_delay, numeric_default, abs_tol=1e-6):
+    return default_value
+  return current_value
 
 def _normalize_live_delay_status(status):
   status_text = str(status or "").strip().lower()
@@ -3251,6 +3280,7 @@ def _build_troubleshoot_section_payload(section_definition, value_types, default
     try:
       current_value = _resolve_troubleshoot_current_value(key, value_type, default_values)
       default_value = _resolve_troubleshoot_default_value(key, value_type, default_values)
+      current_value = _normalize_troubleshoot_current_display_value(key, current_value, default_value)
     except Exception:
       current_value = "Unavailable"
       default_value = "n/a"
@@ -5947,7 +5977,12 @@ def setup(app):
     if not route_names:
       return jsonify({"error": "No routes were selected."}), 400
 
-    started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS)
+    try:
+      segment_ranges = flm_workspace.normalize_segment_ranges(route_names, data.get("segmentRanges", {}))
+    except (TypeError, ValueError) as error:
+      return jsonify({"error": str(error)}), 400
+
+    started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS, segment_ranges)
     if not started:
       return jsonify({"error": "Failed to start FLM analysis."}), 500
 
@@ -6378,10 +6413,10 @@ def setup(app):
     pw_hash = hashlib.sha256(password.encode()).hexdigest()
     GALAXY_DIR.mkdir(parents=True, exist_ok=True)
     GALAXY_AUTH_FILE.write_text(pw_hash)
-    
+
     # Generate 256-bit secure session token
     GALAXY_SESSION_FILE.write_text(secrets.token_hex(32))
-    
+
     # Generate 16-character alphanumeric routing slug
     charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     slug = ''.join(secrets.choice(charset) for _ in range(16))
@@ -7443,36 +7478,65 @@ def setup(app):
 
   @app.route("/api/v_asm/snapshot", methods=["GET"])
   def v_asm_snapshot():
-    if params.get_bool("IsOnroad"):
-      return jsonify({"error": "Snapshot only available while offroad."}), 409
+    jpeg = _get_live_driver_jpeg()
+    if jpeg is not None:
+      return Response(jpeg, mimetype="image/jpeg")
+    return jsonify({"error": "Unable to capture live frame from driver camera."}), 503
 
-    for footage_path in FOOTAGE_PATHS:
-      if not os.path.isdir(footage_path):
-        continue
+
+  def _get_live_driver_jpeg():
+    from openpilot.system.manager.process_config import managed_processes
+    started = False
+    try:
       try:
-        entries = sorted((e for e in os.listdir(footage_path) if utilities.SEGMENT_RE.fullmatch(e)), reverse=True)
-      except OSError:
-        continue
-      for entry in entries[:3]:
-        camera_file = os.path.join(footage_path, entry, "dcamera.hevc")
-        if not os.path.isfile(camera_file):
-          continue
-        for seek_time in ("5", "2", None):
-          command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", camera_file]
-          if seek_time is not None:
-            command.extend(["-ss", seek_time])
-          command.extend(["-frames:v", "1", "-q:v", "2", "-f", "image2pipe", "-vcodec", "mjpeg", "-"])
-          try:
-            result = subprocess.run(command, capture_output=True, check=True, timeout=5, stdin=subprocess.DEVNULL)
-            return Response(result.stdout, mimetype="image/jpeg")
-          except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-            continue
-    return jsonify({"error": "No driver camera footage available."}), 404
+        subprocess.check_call(["pgrep", "camerad"])
+      except subprocess.CalledProcessError:
+        managed_processes['camerad'].start()
+        started = True
+
+      client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_DRIVER, True)
+      if not client.connect(True):
+        return None
+
+      if started:
+        settle_deadline = time.monotonic() + 4.0
+        while time.monotonic() < settle_deadline:
+          client.recv(timeout_ms=100)
+
+      buf = client.recv(timeout_ms=5000)
+      if buf is None:
+        return None
+
+      y = np.array(buf.data[:buf.uv_offset], dtype=np.uint8).reshape((-1, buf.stride))[:buf.height, :buf.width]
+      u = np.array(buf.data[buf.uv_offset::2], dtype=np.uint8).reshape((-1, buf.stride // 2))[:buf.height // 2, :buf.width // 2]
+      v = np.array(buf.data[buf.uv_offset + 1::2], dtype=np.uint8).reshape((-1, buf.stride // 2))[:buf.height // 2, :buf.width // 2]
+
+      ul = np.repeat(np.repeat(u, 2).reshape(u.shape[0], y.shape[1]), 2, axis=0).reshape(y.shape)
+      vl = np.repeat(np.repeat(v, 2).reshape(v.shape[0], y.shape[1]), 2, axis=0).reshape(y.shape)
+
+      yuv = np.dstack((y, ul, vl)).astype(np.int16)
+      yuv[:, :, 1:] -= 128
+
+      m = np.array([
+        [1.00000,  1.00000, 1.00000],
+        [0.00000, -0.39465, 2.03211],
+        [1.13983, -0.58060, 0.00000],
+      ])
+      rgb = np.dot(yuv, m).clip(0, 255).astype(np.uint8)
+
+      img = Image.fromarray(rgb)
+      buf_io = BytesIO()
+      img.save(buf_io, format="JPEG", quality=85)
+      return buf_io.getvalue()
+    except Exception:
+      return None
+    finally:
+      if started:
+        managed_processes['camerad'].stop()
 
   @app.route("/api/v_asm/config", methods=["GET"])
   def v_asm_get_config():
-    config = params.get("VASMAnnotationConfig")
-    return jsonify(config if isinstance(config, dict) else {})
+    return jsonify(_decode_json_object(params.get("VASMAnnotationConfig")))
 
   @app.route("/api/v_asm/config", methods=["POST"])
   def v_asm_save_config():

@@ -639,6 +639,21 @@ def test_vision_untracked_slow_lead_cap_relaxes_confidence_for_near_stopped_high
   assert route_cap < -0.55
 
 
+def test_hrv_untracked_slow_lead_cap_prepares_more_for_high_speed_stop():
+  v_ego = 21.8
+  lead = make_lead(status=True, d_rel=86.5, v_lead=8.3, a_lead=0.0, radar=False, model_prob=0.93, y_rel=-0.14)
+
+  civic_planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=v_ego)
+  hrv_planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_HRV_3G), init_v=v_ego)
+  civic_cap = civic_planner.get_vision_untracked_slow_lead_cap(lead, v_ego, -3.5)
+  hrv_cap = hrv_planner.get_vision_untracked_slow_lead_cap(lead, v_ego, -3.5)
+
+  assert civic_cap is not None
+  assert hrv_cap is not None
+  assert hrv_cap < civic_cap - 0.15
+  assert -1.2 < hrv_cap < -0.8
+
+
 def test_vision_untracked_slow_lead_cap_keeps_low_confidence_floor_for_less_threatening_lead():
   v_ego = 20.35
 
