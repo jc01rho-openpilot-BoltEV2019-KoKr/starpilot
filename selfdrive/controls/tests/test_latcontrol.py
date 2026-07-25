@@ -8,6 +8,7 @@ import openpilot.selfdrive.controls.lib.latcontrol_pid as latcontrol_pid
 import openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes as latcontrol_vehicle_tunes
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.interfaces import CarInterfaceBase
+from opendbc.car.chrysler.values import CAR as CHRYSLER
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from opendbc.car.toyota.values import CAR as TOYOTA
 from opendbc.car.nissan.values import CAR as NISSAN
@@ -26,6 +27,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   clear_flm_runtime_overrides,
   get_flm_runtime_overrides,
   get_hkg_canfd_base_friction_threshold,
+  get_ram_1500_transition_output_scale,
   get_subaru_impreza_pid_output_scale,
   normalize_flm_overrides,
   set_flm_runtime_overrides,
@@ -84,12 +86,15 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_kia_carnival_center_taper_scale,
   get_kia_carnival_friction_center_fade_scale,
   get_kia_carnival_friction_threshold,
+  get_kia_stinger_2022_center_taper_scale,
+  get_kia_stinger_2022_friction_threshold,
   get_tucson_4th_gen_center_taper_scale,
   get_tucson_4th_gen_friction_threshold,
   get_kia_ev6_center_taper_scale,
   get_kia_ev6_ff_scale,
   get_kia_ev6_friction_scale,
   get_kia_ev6_friction_threshold,
+  get_kia_ev6_jwarm_phase_confidence,
   get_sonata_center_taper_scale,
   get_sonata_ff_scale,
   get_sonata_hybrid_center_taper_scale,
@@ -625,6 +630,33 @@ class TestLatControl:
     assert lac_log.active
     assert tapered_output == pytest.approx(base_output * 0.5)
 
+  def test_ram_1500_transition_taper_curve(self):
+    assert get_ram_1500_transition_output_scale(0.4, 0.2, 17.0) == pytest.approx(1.0)
+    assert get_ram_1500_transition_output_scale(0.4, 1.1, 8.0) == pytest.approx(1.0)
+
+    center_transition = get_ram_1500_transition_output_scale(0.4, 1.1, 17.0)
+    medium_transition = get_ram_1500_transition_output_scale(1.2, -1.1, 17.0)
+    assert 0.6 < center_transition < medium_transition < 1.0
+    assert get_ram_1500_transition_output_scale(1.85, 2.5, 17.0) == pytest.approx(1.0)
+
+  def test_ram_1500_transition_taper_update_path(self, monkeypatch):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(CHRYSLER.RAM_1500_5TH_GEN)
+    base_output, _, lac_log = controller.update(
+      True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles,
+    )
+
+    monkeypatch.setattr(latcontrol_torque, "get_ram_1500_transition_output_scale", lambda *_args: 0.5)
+    tapered_controller, tapered_VM, tapered_CS, tapered_params, tapered_toggles = self._build_torque_controller(
+      CHRYSLER.RAM_1500_5TH_GEN,
+    )
+    tapered_output, _, _ = tapered_controller.update(
+      True, tapered_CS, tapered_VM, tapered_params, False, 0.0025, False, 0.2, None, None, tapered_toggles,
+    )
+
+    assert controller.is_ram_1500
+    assert lac_log.active
+    assert tapered_output == pytest.approx(base_output * 0.5)
+
   def test_ioniq_5_center_taper_curve(self):
     assert get_ioniq_5_center_taper_scale(0.0, 25.0) < get_ioniq_5_center_taper_scale(0.0, 10.0)
     assert get_ioniq_5_center_taper_scale(0.0, 25.0) < get_ioniq_5_center_taper_scale(0.20, 25.0) <= 1.0
@@ -899,6 +931,48 @@ class TestLatControl:
 
     assert controller.is_kia_carnival
     assert lac_log.active
+
+  def test_kia_stinger_2022_near_center_stabilization(self):
+    low_speed_center = get_kia_stinger_2022_center_taper_scale(0.0, 4.0)
+    highway_center = get_kia_stinger_2022_center_taper_scale(0.0, 20.0)
+    highway_moderate = get_kia_stinger_2022_center_taper_scale(0.30, 20.0)
+    highway_turn = get_kia_stinger_2022_center_taper_scale(0.60, 20.0)
+
+    assert highway_center < 0.89
+    assert highway_center < highway_moderate < highway_turn
+    assert low_speed_center > 0.98
+    assert highway_turn > 0.99
+
+    base_threshold = get_standard_friction_threshold(20.0)
+    center_threshold = get_kia_stinger_2022_friction_threshold(20.0, 0.0)
+    turn_threshold = get_kia_stinger_2022_friction_threshold(20.0, 0.60)
+    assert center_threshold == pytest.approx(base_threshold * 1.10, rel=0.01)
+    assert turn_threshold == pytest.approx(base_threshold, rel=0.01)
+
+  def test_kia_stinger_2022_default_update_path(self):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_STINGER_2022)
+    CS.vEgo = 20.0
+
+    _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert controller.is_kia_stinger_2022
+    assert lac_log.active
+
+  def test_kia_stinger_2022_tapers_near_center_output(self, monkeypatch):
+    tapered_controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_STINGER_2022)
+    CS.vEgo = 20.0
+    tapered_output, _, _ = tapered_controller.update(
+      True, CS, VM, params, False, 0.00025, False, 0.2, None, None, starpilot_toggles,
+    )
+
+    monkeypatch.setattr(latcontrol_torque, "get_kia_stinger_2022_center_taper_scale", lambda *_args: 1.0)
+    base_controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_STINGER_2022)
+    CS.vEgo = 20.0
+    base_output, _, _ = base_controller.update(
+      True, CS, VM, params, False, 0.00025, False, 0.2, None, None, starpilot_toggles,
+    )
+
+    assert abs(tapered_output) < abs(base_output)
 
   def test_tucson_4th_gen_low_speed_center_taper_curve(self):
     low_speed_center = get_tucson_4th_gen_center_taper_scale(0.0, 8.5)
@@ -1202,6 +1276,17 @@ class TestLatControl:
     assert get_kia_ev6_ff_scale(-0.45, -0.7, 10.0) > normal_turn_in_right + 0.10
     assert get_kia_ev6_ff_scale(0.45, -0.7, 10.0) < normal_unwind_left - 0.07
     assert get_kia_ev6_ff_scale(-0.45, 0.7, 10.0) < normal_unwind_right - 0.08
+
+  def test_kia_ev6_jwarm_abrupt_low_speed_phase_correction_is_bounded(self):
+    calm_low_speed = get_kia_ev6_jwarm_phase_confidence(6.0, 0.25)
+    abrupt_low_speed = get_kia_ev6_jwarm_phase_confidence(6.0, 1.40)
+    abrupt_high_speed = get_kia_ev6_jwarm_phase_confidence(18.0, 1.40)
+
+    assert abrupt_low_speed < calm_low_speed
+    assert abrupt_low_speed < abrupt_high_speed
+    assert 0.75 <= abrupt_low_speed < 0.82
+    assert calm_low_speed > 0.90
+    assert abrupt_high_speed > 0.98
 
   def test_kia_ev6_center_taper_curve(self):
     assert get_kia_ev6_center_taper_scale(0.0, 25.0) < get_kia_ev6_center_taper_scale(0.0, 10.0)

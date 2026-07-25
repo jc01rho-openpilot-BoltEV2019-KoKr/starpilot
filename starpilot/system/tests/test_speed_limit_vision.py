@@ -111,6 +111,33 @@ def test_vasm_coexistence_mode_is_conditional(monkeypatch):
   assert daemon.detector_classifier_expansions == slv.DETECTOR_CLASSIFIER_EXPANSIONS
 
 
+def test_enter_parked_preserves_published_limit_and_clears_transient_work():
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.current_frame_bgr = np.ones((2, 2, 3), dtype=np.uint8)
+  daemon.latest_detector_proposal = object()
+  daemon.proposal_track = object()
+  daemon.pending_auto_bookmark = object()
+  daemon.pending_training_capture = object()
+  daemon.followup_until = 100.0
+  daemon.published_speed_limit_mph = 55
+  published = []
+  telemetry = []
+  daemon._publish_status = lambda status, clear_speed=False: published.append((status, clear_speed))
+  daemon._publish_runtime_telemetry = lambda now, phase, force=False: telemetry.append((now, phase, force))
+
+  daemon._enter_parked(10.0)
+
+  assert daemon.current_frame_bgr is None
+  assert daemon.latest_detector_proposal is None
+  assert daemon.proposal_track is None
+  assert daemon.pending_auto_bookmark is None
+  assert daemon.pending_training_capture is None
+  assert daemon.followup_until == 0.0
+  assert daemon.published_speed_limit_mph == 55
+  assert published == [("Idle - parked", False)]
+  assert telemetry == [(10.0, "parked", True)]
+
+
 def test_receive_frame_does_not_retain_vision_buffer(monkeypatch):
   buffer_refs = []
 

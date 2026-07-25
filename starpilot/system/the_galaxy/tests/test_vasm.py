@@ -1,6 +1,6 @@
 import pytest
 
-from openpilot.starpilot.system.the_galaxy.the_galaxy import _normalize_vasm_config
+from openpilot.starpilot.system.the_galaxy.the_galaxy import _decode_json_object, _normalize_vasm_config
 
 
 def test_normalize_vasm_config_accepts_bounded_polygons():
@@ -28,3 +28,21 @@ def test_normalize_vasm_config_accepts_bounded_polygons():
 def test_normalize_vasm_config_rejects_unsafe_config(config):
   with pytest.raises(ValueError):
     _normalize_vasm_config(config)
+
+
+@pytest.mark.parametrize("raw", (
+  '{"width":1928,"height":1208,"poly_left":[],"poly_right":[]}',
+  b'{"width":1928,"height":1208,"poly_left":[],"poly_right":[]}',
+))
+def test_decode_vasm_config_from_legacy_params_payload(raw):
+  assert _decode_json_object(raw) == {
+    "width": 1928,
+    "height": 1208,
+    "poly_left": [],
+    "poly_right": [],
+  }
+
+
+@pytest.mark.parametrize("raw", (None, "", "invalid", [], 1))
+def test_decode_vasm_config_rejects_non_objects(raw):
+  assert _decode_json_object(raw) == {}

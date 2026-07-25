@@ -320,7 +320,7 @@ class SpeedLimitVisionDaemon:
       self.Ratekeeper = Ratekeeper
       self.VisionIpcClient = VisionIpcClient
       self.VisionStreamType = VisionStreamType
-      self.sm = messaging.SubMaster(["deviceState", "mapdOut", "userBookmark", "livePose"])
+      self.sm = messaging.SubMaster(["deviceState", "mapdOut", "userBookmark", "livePose", "starpilotCarState"])
 
     self.client = None
     self.stream_name = ""
@@ -344,6 +344,7 @@ class SpeedLimitVisionDaemon:
     self.track_start_count = 0
     self.max_track_proposal_confidence = 0.0
     self.started_prev = False
+    self.parked_prev = False
 
     self.history: deque[HistoryEntry] = deque()
     self.published_speed_limit_mph = 0
@@ -2316,6 +2317,16 @@ class SpeedLimitVisionDaemon:
       self.params_memory.remove("VisionSpeedLimitSupportCount")
       self.params_memory.remove("VisionSpeedLimitSupportSpeed")
 
+  def _enter_parked(self, now):
+    self.current_frame_bgr = None
+    self.latest_detector_proposal = None
+    self._clear_proposal_track()
+    self.pending_auto_bookmark = None
+    self.pending_training_capture = None
+    self.followup_until = 0.0
+    self._publish_status("Idle - parked", clear_speed=False)
+    self._publish_runtime_telemetry(now, "parked", force=True)
+
   def _publish_detection_support(self, speed_limit_mph, support_count):
     if self.params_memory is None:
       return
@@ -2563,6 +2574,7 @@ class SpeedLimitVisionDaemon:
           self._disconnect_camera()
         self.last_road_name = ""
         self.started_prev = False
+        self.parked_prev = False
         self.current_frame_bgr = None
         self.pending_auto_bookmark = None
         self._publish_status("Idle - offroad", clear_speed=True)
@@ -2581,6 +2593,20 @@ class SpeedLimitVisionDaemon:
         self._start_debug_session()
         self._write_debug_event("session_recovered", reason="missing_debug_session_while_onroad")
         self._publish_runtime_telemetry(now, "session_recovered", force=True)
+
+      parked = self.sm["starpilotCarState"].isParked if self.sm.valid.get("starpilotCarState", False) else False
+      if parked:
+        if not self.parked_prev:
+          self._enter_parked(now)
+        else:
+          self._publish_runtime_telemetry(now, "parked")
+        self.parked_prev = True
+        ratekeeper.keep_time()
+        continue
+      if self.parked_prev:
+        self.parked_prev = False
+        self.last_inference_at = -float("inf")
+        self._publish_runtime_telemetry(now, "parked_exit", force=True)
 
       road_name = self.sm["mapdOut"].roadName
       if self.last_road_name and road_name and road_name != self.last_road_name:

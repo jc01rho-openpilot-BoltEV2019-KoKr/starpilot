@@ -2,6 +2,7 @@ import importlib.util
 import json
 import math
 import sys
+import time
 
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -208,6 +209,48 @@ def test_effective_control_path_keeps_true_angle_and_mixed_routes_diagnostic(tmp
   assert module._effective_control_path(angle_cp, {}) == ("angle", "carParams")
   assert module._effective_control_path(angle_cp, {"angleState": 900}) == ("angle", "controlsState")
   assert module._effective_control_path(angle_cp, {"angleState": 900, "torqueState": 900}) == ("mixed", "controlsState")
+
+
+def test_segment_ranges_limit_resolved_route_sources(tmp_path, monkeypatch):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  route = "00000001--abcdef1234"
+  segment_names = [f"{route}--{segment}" for segment in range(12)]
+  for segment_name in segment_names:
+    segment_path = tmp_path / segment_name
+    segment_path.mkdir()
+    (segment_path / "rlog.zst").write_bytes(b"log")
+
+  monkeypatch.setattr(module.utilities, "get_segments_in_route", lambda *_args: segment_names)
+  sources, warnings = module.resolve_route_sources(
+    [route],
+    [str(tmp_path)],
+    {route: {"start": 4, "end": 9}},
+  )
+
+  assert [source.segment_num for source in sources] == [4, 5, 6, 7, 8, 9]
+  assert warnings == []
+
+
+def test_segment_range_rejects_reversed_bounds(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  with pytest.raises(ValueError, match="first segment"):
+    module.normalize_segment_ranges(["route"], {"route": {"start": 9, "end": 4}})
+
+
+def test_segment_reader_timeout_interrupts_stalled_log(tmp_path, monkeypatch):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  source = module.RouteSource(
+    route="route",
+    footage_path=str(tmp_path),
+    segment="route--41",
+    segment_num=41,
+    log_path=str(tmp_path / "route--41" / "rlog.zst"),
+    used_qlog=False,
+  )
+  monkeypatch.setattr(module, "_segment_samples", lambda *_args, **_kwargs: time.sleep(0.2))
+
+  with pytest.raises(module.FLMSegmentTimeout, match="segment 41"):
+    module._segment_samples_with_timeout(source, module.Params(), timeout_seconds=0.02)
 
 
 def test_analysis_is_rejected_while_onroad(tmp_path):

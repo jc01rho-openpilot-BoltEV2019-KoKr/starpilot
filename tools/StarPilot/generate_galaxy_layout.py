@@ -61,7 +61,6 @@ INJECTED_SECTION_PARAMS = {
 
 # Keys explicitly hidden from The Galaxy's generic settings UI.
 HIDDEN_KEYS = {
-    "FrogsGoMoosTweak",
     "HumanAcceleration",
     "DisableWideRoad",
     "LockDoorsTimer",

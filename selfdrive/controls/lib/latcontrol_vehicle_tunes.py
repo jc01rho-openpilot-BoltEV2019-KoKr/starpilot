@@ -2,6 +2,7 @@ import json
 import math
 import numpy as np
 
+from opendbc.car.chrysler.values import CAR as CHRYSLER_CAR
 from opendbc.car.gm.values import CAR as GM_CAR
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR
 from opendbc.car.subaru.values import CAR as SUBARU_CAR
@@ -124,6 +125,9 @@ KIA_XCEED_CARS = (
 KIA_NIRO_PHEV_2022_CARS = (
   HYUNDAI_CAR.KIA_NIRO_PHEV_2022,
 )
+KIA_STINGER_2022_CARS = (
+  HYUNDAI_CAR.KIA_STINGER_2022,
+)
 KIA_FORTE_CARS = (
   HYUNDAI_CAR.KIA_FORTE,
   HYUNDAI_CAR.KIA_FORTE_2019_NON_SCC,
@@ -143,6 +147,10 @@ LEXUS_IS_CARS = (
 
 SUBARU_IMPREZA_CARS = (
   SUBARU_CAR.SUBARU_IMPREZA,
+)
+
+RAM_1500_CARS = (
+  CHRYSLER_CAR.RAM_1500_5TH_GEN,
 )
 
 BOLT_2017_LATERAL_TESTING_GROUND_ID = testing_ground.id_3
@@ -348,6 +356,13 @@ KIA_NIRO_PHEV_2022_FRICTION_SPEED_WIDTH = 2.5
 KIA_NIRO_PHEV_2022_FRICTION_CALM_JERK = 0.22
 KIA_NIRO_PHEV_2022_FRICTION_CALM_JERK_WIDTH = 0.06
 KIA_NIRO_PHEV_2022_FRICTION_THRESHOLD_GAIN = 0.12
+
+KIA_STINGER_2022_CENTER_TAPER_MAX = 0.12
+KIA_STINGER_2022_CENTER_TAPER_LAT = 0.30
+KIA_STINGER_2022_CENTER_TAPER_LAT_WIDTH = 0.05
+KIA_STINGER_2022_CENTER_TAPER_SPEED = 10.0
+KIA_STINGER_2022_CENTER_TAPER_SPEED_WIDTH = 2.5
+KIA_STINGER_2022_FRICTION_THRESHOLD_GAIN = 0.10
 
 KIA_CARNIVAL_CENTER_TAPER_MAX = 0.20
 KIA_CARNIVAL_CENTER_TAPER_LAT = 0.20
@@ -675,6 +690,11 @@ KIA_EV6_JWARM_BASE_TURN_IN_BOOST_LEFT = 0.12
 KIA_EV6_JWARM_BASE_TURN_IN_BOOST_RIGHT = 0.14
 KIA_EV6_JWARM_BASE_UNWIND_TAPER_LEFT = 0.15
 KIA_EV6_JWARM_BASE_UNWIND_TAPER_RIGHT = 0.16
+KIA_EV6_JWARM_PHASE_STABILITY_MAX_REDUCTION = 0.25
+KIA_EV6_JWARM_PHASE_STABILITY_SPEED = 10.0
+KIA_EV6_JWARM_PHASE_STABILITY_SPEED_WIDTH = 1.8
+KIA_EV6_JWARM_PHASE_STABILITY_JERK = 0.70
+KIA_EV6_JWARM_PHASE_STABILITY_JERK_WIDTH = 0.18
 KIA_EV6_FRICTION_MULT = 1.01
 KIA_EV6_FRICTION_LAT_RISE = 0.18
 KIA_EV6_FRICTION_JERK_RISE = 0.22
@@ -759,6 +779,14 @@ LEXUS_IS_UNWIND_SPEED_WIDTH = 2.0
 SUBARU_IMPREZA_PID_TAPER_START_DEG = 0.75
 SUBARU_IMPREZA_PID_TAPER_FULL_DEG = 4.0
 SUBARU_IMPREZA_PID_TAPER_MIN = 0.58
+
+RAM_1500_TRANSITION_TAPER_MAX = 0.34
+RAM_1500_TRANSITION_SPEED_ONSET = 10.0
+RAM_1500_TRANSITION_SPEED_FULL = 15.0
+RAM_1500_TRANSITION_JERK_ONSET = 0.35
+RAM_1500_TRANSITION_JERK_FULL = 1.10
+RAM_1500_TRANSITION_LAT_FADE_START = 0.65
+RAM_1500_TRANSITION_LAT_FADE_END = 1.85
 
 TRAILER_LOAD_FULL_ASSIST_KG = 15000.0 * CV.LB_TO_KG
 TRAILER_LATERAL_MIN_SPEED = 15.0 * CV.MPH_TO_MS
@@ -1074,6 +1102,15 @@ def get_subaru_impreza_pid_output_scale(angle_error_deg: float) -> float:
   error_weight = min(max((abs(angle_error_deg) - SUBARU_IMPREZA_PID_TAPER_START_DEG) /
                          (SUBARU_IMPREZA_PID_TAPER_FULL_DEG - SUBARU_IMPREZA_PID_TAPER_START_DEG), 0.0), 1.0)
   return 1.0 - ((1.0 - SUBARU_IMPREZA_PID_TAPER_MIN) * error_weight)
+
+
+def get_ram_1500_transition_output_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  speed_weight = float(np.interp(v_ego, [RAM_1500_TRANSITION_SPEED_ONSET, RAM_1500_TRANSITION_SPEED_FULL], [0.0, 1.0]))
+  jerk_weight = float(np.interp(abs(desired_lateral_jerk),
+                                [RAM_1500_TRANSITION_JERK_ONSET, RAM_1500_TRANSITION_JERK_FULL], [0.0, 1.0]))
+  lat_weight = 1.0 - float(np.interp(abs(desired_lateral_accel),
+                                     [RAM_1500_TRANSITION_LAT_FADE_START, RAM_1500_TRANSITION_LAT_FADE_END], [0.0, 1.0]))
+  return 1.0 - (RAM_1500_TRANSITION_TAPER_MAX * speed_weight * jerk_weight * lat_weight)
 
 
 def civic_bosch_modified_lateral_testing_ground_active() -> bool:
@@ -1735,6 +1772,25 @@ def get_kia_niro_phev_2022_friction_threshold(v_ego: float, desired_lateral_acce
   calm_jerk_weight = _sigmoid((KIA_NIRO_PHEV_2022_FRICTION_CALM_JERK - abs(desired_lateral_jerk)) / KIA_NIRO_PHEV_2022_FRICTION_CALM_JERK_WIDTH)
   threshold_scale = 1.0 + (KIA_NIRO_PHEV_2022_FRICTION_THRESHOLD_GAIN * speed_weight * center_weight * calm_jerk_weight)
   return base_threshold * min(max(threshold_scale, 1.0), 1.18)
+
+
+def _kia_stinger_2022_center_weights(desired_lateral_accel: float, v_ego: float) -> tuple[float, float]:
+  speed_weight = _sigmoid((v_ego - KIA_STINGER_2022_CENTER_TAPER_SPEED) / KIA_STINGER_2022_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _sigmoid((KIA_STINGER_2022_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                           KIA_STINGER_2022_CENTER_TAPER_LAT_WIDTH)
+  return speed_weight, center_weight
+
+
+def get_kia_stinger_2022_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight, center_weight = _kia_stinger_2022_center_weights(desired_lateral_accel, v_ego)
+  return 1.0 - (KIA_STINGER_2022_CENTER_TAPER_MAX * speed_weight * center_weight)
+
+
+def get_kia_stinger_2022_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0,
+                                            desired_lateral_jerk: float = 0.0) -> float:
+  del desired_lateral_jerk
+  speed_weight, center_weight = _kia_stinger_2022_center_weights(desired_lateral_accel, v_ego)
+  return get_standard_friction_threshold(v_ego) * (1.0 + KIA_STINGER_2022_FRICTION_THRESHOLD_GAIN * speed_weight * center_weight)
 
 
 def _kia_carnival_center_weights(desired_lateral_accel: float, v_ego: float) -> tuple[float, float]:
@@ -2433,6 +2489,16 @@ def _kia_ev6_transition_envelope(v_ego: float, desired_lateral_accel: float, des
   return _kia_ev6_low_speed_factor(v_ego) * lat_factor * jerk_factor
 
 
+def get_kia_ev6_jwarm_phase_confidence(v_ego: float, desired_lateral_jerk: float) -> float:
+  low_speed_weight = _kia_ev6_sigmoid(
+    (KIA_EV6_JWARM_PHASE_STABILITY_SPEED - v_ego) / KIA_EV6_JWARM_PHASE_STABILITY_SPEED_WIDTH
+  )
+  abrupt_transition_weight = _kia_ev6_sigmoid(
+    (abs(desired_lateral_jerk) - KIA_EV6_JWARM_PHASE_STABILITY_JERK) / KIA_EV6_JWARM_PHASE_STABILITY_JERK_WIDTH
+  )
+  return 1.0 - (KIA_EV6_JWARM_PHASE_STABILITY_MAX_REDUCTION * low_speed_weight * abrupt_transition_weight)
+
+
 def get_kia_ev6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
   if desired_lateral_accel == 0.0:
     return 1.0
@@ -2463,17 +2529,22 @@ def get_kia_ev6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
                        ) *
                          unwind_weight * (0.35 + 0.65 * low_speed_factor))
   jwarm_tune = kia_ev6_lateral_testing_ground_active()
+  jwarm_phase_confidence = get_kia_ev6_jwarm_phase_confidence(v_ego, desired_lateral_jerk) if jwarm_tune else 0.0
   base_turn_in_boost = 1.0 + ((_kia_ev6_side_value(
                                 desired_lateral_accel,
                                 KIA_EV6_JWARM_BASE_TURN_IN_BOOST_LEFT,
                                 KIA_EV6_JWARM_BASE_TURN_IN_BOOST_RIGHT,
-                              ) if jwarm_tune else 0.0) * turn_in_weight * onset * cutoff)
+                              ) if jwarm_tune else 0.0) *
+                                jwarm_phase_confidence * turn_in_weight * onset * cutoff)
+  base_unwind_taper_left = _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_left", KIA_EV6_BASE_UNWIND_TAPER_LEFT)
+  base_unwind_taper_right = _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_right", KIA_EV6_BASE_UNWIND_TAPER_RIGHT)
+  if jwarm_tune:
+    base_unwind_taper_left += (KIA_EV6_JWARM_BASE_UNWIND_TAPER_LEFT - base_unwind_taper_left) * jwarm_phase_confidence
+    base_unwind_taper_right += (KIA_EV6_JWARM_BASE_UNWIND_TAPER_RIGHT - base_unwind_taper_right) * jwarm_phase_confidence
   base_unwind_taper = 1.0 - (_kia_ev6_side_value(
                               desired_lateral_accel,
-                              KIA_EV6_JWARM_BASE_UNWIND_TAPER_LEFT if jwarm_tune else
-                                _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_left", KIA_EV6_BASE_UNWIND_TAPER_LEFT),
-                              KIA_EV6_JWARM_BASE_UNWIND_TAPER_RIGHT if jwarm_tune else
-                                _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_right", KIA_EV6_BASE_UNWIND_TAPER_RIGHT),
+                              base_unwind_taper_left,
+                              base_unwind_taper_right,
                             ) * unwind_weight * onset * cutoff)
   return (base_unwind_taper * base_turn_in_boost) + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
 
