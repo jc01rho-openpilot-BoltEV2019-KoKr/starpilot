@@ -129,6 +129,7 @@ _TESTING_GROUND_CUSTOM_RESERVED_LAST_PUBLISH_MONO = 0.0
 PANDA_FIRMWARE_TOGGLE_KEYS = {"IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma"}
 PANDA_FIRMWARE_CONFIRMATION_FIELD = "confirmedPandaFirmwareFlash"
 _PANDA_FLASH_REBOOT_LOCK = threading.Lock()
+_VASM_SNAPSHOT_LOCK = threading.Lock()
 
 
 def _flash_panda_then_reboot() -> None:
@@ -7478,7 +7479,14 @@ def setup(app):
 
   @app.route("/api/v_asm/snapshot", methods=["GET"])
   def v_asm_snapshot():
-    jpeg = _get_live_driver_jpeg()
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot capture a V-ASM snapshot while driving."}), 409
+    if not _VASM_SNAPSHOT_LOCK.acquire(blocking=False):
+      return jsonify({"error": "A V-ASM snapshot capture is already in progress."}), 429
+    try:
+      jpeg = _get_live_driver_jpeg()
+    finally:
+      _VASM_SNAPSHOT_LOCK.release()
     if jpeg is not None:
       return Response(jpeg, mimetype="image/jpeg")
     return jsonify({"error": "Unable to capture live frame from driver camera."}), 503
