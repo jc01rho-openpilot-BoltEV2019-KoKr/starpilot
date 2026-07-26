@@ -52,6 +52,7 @@ source_list = ['lat_mpc.py',
   '#selfdrive/modeld/constants.py',
   f'{acados_dir}/include/acados_c/ocp_nlp_interface.h',
   f'{acados_templates_dir}/acados_solver.in.c',
+  f'{acados_templates_dir}/acados_solver.in.pxd',
 ]
 
 lenv = env.Clone()
