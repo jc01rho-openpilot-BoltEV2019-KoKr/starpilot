@@ -924,12 +924,12 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
         self._page_anim_prev_tiles.clear()
       self._page_drag_start_x = mouse_pos.x
       self._page_drag_start_y = mouse_pos.y
-      self._page_drag_active = True
+      self._page_drag_active = False
       self._page_drag_offset = 0.0
 
   def _handle_mouse_event(self, mouse_event: MouseEvent) -> None:
     super()._handle_mouse_event(mouse_event)
-    if self._page_drag_active and self._has_pagination:
+    if self._has_pagination:
       dx = mouse_event.pos.x - self._page_drag_start_x
       dy = abs(mouse_event.pos.y - self._page_drag_start_y)
       if dy > abs(dx) * 1.2 and dy > 32:
@@ -941,6 +941,7 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
         dx = 0
       self._page_drag_offset = dx
       if abs(dx) > 6:
+        self._page_drag_active = True
         self._pressed_target = None
         self._can_click = False
 
@@ -1988,11 +1989,13 @@ def draw_section_header(
   title_color: rl.Color | None = None,
   trailing_color: rl.Color | None = None,
   style: PanelStyle = DEFAULT_PANEL_STYLE,
+  align_center: bool = False,
 ):
   if title:
     trailing_reserved = min(320.0, rect.width * 0.38) if trailing_text else 0.0
     title_rect = rl.Rectangle(rect.x, rect.y + (rect.height - title_size) / 2, max(1.0, rect.width - trailing_reserved), title_size + 4)
-    gui_label(title_rect, title, title_size, title_color or style.subtitle_color, FontWeight.MEDIUM)
+    alignment = rl.GuiTextAlignment.TEXT_ALIGN_CENTER if align_center else rl.GuiTextAlignment.TEXT_ALIGN_LEFT
+    gui_label(title_rect, title, title_size, title_color or style.subtitle_color, FontWeight.MEDIUM, alignment=alignment)
 
   if trailing_text:
     trailing_rect = rl.Rectangle(rect.x, rect.y + (rect.height - trailing_size) / 2, rect.width, trailing_size + 4)
@@ -2728,7 +2731,7 @@ class AetherAdjustorRow(Widget):
                     value_fs, 0, self._style.title_color)
 
     if self._subtitle:
-      sub_fs = 20
+      sub_fs = 26
       sub_y = bar_rect.y - sub_fs - 4
       gui_label(rl.Rectangle(content_left, sub_y, bar_width, sub_fs),
                 self._subtitle, sub_fs, self._style.subtitle_color, FontWeight.NORMAL)
@@ -3752,13 +3755,13 @@ class AetherTile(Widget):
     rx, ry, rw, rh = face.x, face.y, face.width, face.height
     content_pad = max(24, int(rh * 0.15))
     
-    title_size = max(20, min(26, int(rh * 0.22)))
-    status_size = max(16, min(24, int(rh * 0.18)))
+    title_size = max(26, min(32, int(rh * 0.26)))
+    status_size = max(20, min(25, int(rh * 0.20)))
     
     title_color = rl.WHITE if (enabled and is_active) else rl.Color(220, 220, 230, 255)
     
-    title_y = ry + (rh / 2) - title_size - 2
-    status_y = ry + (rh / 2) + 12
+    title_y = ry + (rh / 2) - title_size - 4
+    status_y = ry + (rh / 2) + 8
     
     max_text_width = rw - (content_pad * 2) - int(rh * 0.40) - 10
     font = getattr(self, "_font", gui_app.font(FontWeight.BOLD))
@@ -3967,12 +3970,12 @@ class ToggleTile(AetherTile):
 
     content_pad = SPACING.tile_content
     max_w = rw - content_pad * 2
-    text_scale = max(0.82, min(1.12, rh / 205.0))
-    title_size = max(32, int(round(41 * text_scale)))
+    text_scale = max(0.92, min(1.15, rh / 185.0))
+    title_size = max(36, int(round(44 * text_scale)))
 
     if not enabled:
       title_lines = wrap_text(self._font, self.title, max_w, title_size, max_lines=2)
-      desc_size = max(25, int(round(26 * text_scale)))
+      desc_size = max(26, int(round(28 * text_scale)))
       disabled_text = tr(self._disabled_label) if self._disabled_label else tr("LOCKED")
       desc_lines = wrap_text(self._font_desc, disabled_text, max_w, desc_size, max_lines=2)
 
@@ -3991,11 +3994,11 @@ class ToggleTile(AetherTile):
       title_color = rl.WHITE if active else _HUD_TEXT_DIM
       if self.desc:
         title_lines = wrap_text(self._font, self.title, max_w, title_size, max_lines=2)
-        desc_size = max(25, int(round(26 * text_scale)))
+        desc_size = max(26, int(round(28 * text_scale)))
         desc_lines = wrap_text(self._font_desc, self.desc, max_w, desc_size, max_lines=2)
 
         if len(title_lines) == 1:
-          title_y = ry + int(rh * 0.22)
+          title_y = ry + int(rh * 0.20)
         else:
           title_y = ry + int(rh * 0.16)
 
