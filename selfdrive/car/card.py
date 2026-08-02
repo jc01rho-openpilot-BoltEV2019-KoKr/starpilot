@@ -157,7 +157,11 @@ class Car:
 
       secoc_key = self.params.get("SecOCKey")
       if secoc_key is not None:
-        saved_secoc_key = bytes.fromhex(secoc_key.strip())
+        try:
+          saved_secoc_key = bytes.fromhex(secoc_key.strip())
+        except (TypeError, ValueError):
+          saved_secoc_key = b""
+
         if len(saved_secoc_key) == 16:
           self.CP.secOcKeyAvailable = True
           self.CI.CS.secoc_key = saved_secoc_key
@@ -165,6 +169,12 @@ class Car:
             self.CI.CC.secoc_key = saved_secoc_key
         else:
           cloudlog.warning("Saved SecOC key is invalid")
+
+    if self.CP.secOcRequired and not self.CP.secOcKeyAvailable:
+      self.CP.passive = True
+      safety_config = structs.CarParams.SafetyConfig()
+      safety_config.safetyModel = structs.CarParams.SafetyModel.noOutput
+      self.CP.safetyConfigs = [safety_config]
 
     # Write previous route's CarParams
     prev_cp = self.params.get("CarParamsPersistent")

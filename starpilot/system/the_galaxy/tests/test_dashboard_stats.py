@@ -248,6 +248,74 @@ class FailingPutParams(FakeParams):
     raise RuntimeError("unknown key")
 
 
+class FakeDashboardAnalyzerProcess:
+  def __init__(self):
+    self.terminated = False
+
+  def poll(self):
+    return None
+
+  def terminate(self):
+    self.terminated = True
+
+
+def test_route_inventory_counts_segments_without_video_probing(monkeypatch):
+  segments = [
+    SimpleNamespace(route_name=SimpleNamespace(time_str="route-new")),
+    SimpleNamespace(route_name=SimpleNamespace(time_str="route-new")),
+    SimpleNamespace(route_name=SimpleNamespace(time_str="route-new")),
+    SimpleNamespace(route_name=SimpleNamespace(time_str="route-old")),
+  ]
+  monkeypatch.setattr(utilities, "get_all_segment_names", lambda _path: segments)
+
+  assert utilities.get_routes_with_segment_counts("/tmp/routes") == [
+    ("route-old", 1),
+    ("route-new", 3),
+  ]
+
+
+def test_dashboard_background_analysis_does_not_start_onroad(monkeypatch):
+  def fail_if_started(*args, **kwargs):
+    raise AssertionError("worker started onroad")
+
+  monkeypatch.setattr(utilities, "params", FakeParams({"IsOnroad": True}))
+  monkeypatch.setattr(utilities.subprocess, "Popen", fail_if_started)
+
+  started = utilities._start_dashboard_background_analysis(
+    ["/tmp/routes"],
+    [{"name": "route"}],
+    {},
+    [{"name": "route"}],
+  )
+
+  assert started is False
+
+
+def test_dashboard_analysis_worker_exits_onroad_before_scanning(monkeypatch):
+  def fail_if_scanned(*args, **kwargs):
+    raise AssertionError("routes scanned onroad")
+
+  monkeypatch.setattr(utilities, "params", FakeParams({"IsOnroad": True}))
+  monkeypatch.setattr(utilities, "_list_dashboard_routes", fail_if_scanned)
+
+  utilities.warm_dashboard_stats(["/tmp/routes"])
+
+
+def test_stop_dashboard_background_analysis_terminates_owned_worker(monkeypatch, tmp_path):
+  process = FakeDashboardAnalyzerProcess()
+  status_path = tmp_path / "dashboard_analyzer_status.json"
+  status_path.write_text('{"pid":123}')
+  monkeypatch.setattr(utilities, "_DASHBOARD_ANALYZER_PROCESS", process)
+  monkeypatch.setattr(utilities, "DASHBOARD_ANALYZER_STATUS_PATH", status_path)
+
+  stopped = utilities.stop_dashboard_background_analysis()
+
+  assert stopped is True
+  assert process.terminated is True
+  assert utilities._DASHBOARD_ANALYZER_PROCESS is None
+  assert not status_path.exists()
+
+
 class FakeMessage:
   def __init__(self, kind, log_mono_time, payload):
     self._kind = kind

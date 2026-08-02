@@ -10,6 +10,11 @@ interp = np.interp
 
 BOLT_ACC_PEDAL_REGEN_LIMIT_BP = [0.0, 1.5, 4.0, 8.0, 15.0, 30.0]
 BOLT_ACC_PEDAL_REGEN_LIMIT_V = [-0.93, -1.28, -1.98, -2.58, -2.86, -2.95]
+BOLT_ACC_PEDAL_START_HANDOFF_TIME = 0.75
+BOLT_ACC_PEDAL_START_HANDOFF_MAX_SPEED = 1.25
+BOLT_ACC_PEDAL_START_HANDOFF_MIN_TARGET = 0.15
+BOLT_ACC_PEDAL_START_HANDOFF_FLOOR_BP = [0.0, 0.5, BOLT_ACC_PEDAL_START_HANDOFF_MAX_SPEED]
+BOLT_ACC_PEDAL_START_HANDOFF_FLOOR_V = [0.22, 0.18, 0.10]
 NEGATIVE_TARGET_CREEP_GUARD_SPEED = 0.35
 NEGATIVE_TARGET_CREEP_GUARD_DECEL = 0.40
 GM_TRUCK_TARGET_FILTER_MIN_SPEED = 12.0
@@ -94,6 +99,32 @@ class LongControlVehicleTuning:
     self.integrator_hold_frames = 0
     self.gm_truck_filtered_a_target = 0.0
     self.gm_truck_target_filter_initialized = False
+    self.bolt_start_handoff_frames = 0
+
+  def apply_bolt_start_handoff_floor(self, output_accel, last_output_accel, a_target, v_ego,
+                                     starting_handoff, should_stop, has_lead):
+    if not self.is_bolt_acc_pedal_friction_car:
+      return output_accel
+
+    if starting_handoff:
+      self.bolt_start_handoff_frames = int(round(BOLT_ACC_PEDAL_START_HANDOFF_TIME / DT_CTRL))
+
+    safe_to_hold = (
+      self.bolt_start_handoff_frames > 0 and
+      has_lead and
+      not should_stop and
+      a_target > BOLT_ACC_PEDAL_START_HANDOFF_MIN_TARGET and
+      v_ego < BOLT_ACC_PEDAL_START_HANDOFF_MAX_SPEED
+    )
+    if not safe_to_hold:
+      self.bolt_start_handoff_frames = 0
+      return output_accel
+
+    self.bolt_start_handoff_frames -= 1
+    speed_floor = float(interp(v_ego, BOLT_ACC_PEDAL_START_HANDOFF_FLOOR_BP,
+                               BOLT_ACC_PEDAL_START_HANDOFF_FLOOR_V))
+    target_floor = min(speed_floor, max(0.0, 0.4 * float(a_target)))
+    return max(float(output_accel), min(float(last_output_accel), target_floor))
 
   def shape_gm_truck_accel_target(self, a_target, v_ego, should_stop):
     if not self.is_gm_stock_truck:

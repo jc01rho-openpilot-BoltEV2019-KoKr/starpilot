@@ -1,7 +1,7 @@
 import pyray as rl
-from cereal import car, log, messaging
+from cereal import log, messaging
 from msgq.visionipc import VisionStreamType
-from openpilot.selfdrive.ui.mici.onroad.cameraview import CameraView
+from openpilot.selfdrive.ui.onroad.cameraview import CameraView
 from openpilot.selfdrive.ui.mici.onroad.driver_state import DriverStateRenderer
 from openpilot.selfdrive.ui.ui_state import ui_state, device
 from openpilot.system.ui.lib.application import gui_app, FontWeight
@@ -161,6 +161,8 @@ class BaseDriverCameraDialog(Widget):
     dm_state = ui_state.sm["driverMonitoringState"]
     driver_data = self.driver_state_renderer.get_driver_data()
     if not dm_state.visionPolicyState.faceDetected:
+      return
+    if len(driver_data.facePosition) < 2 or len(driver_data.faceOrientationStd) < 2:
       return
 
     # Get face position and orientation

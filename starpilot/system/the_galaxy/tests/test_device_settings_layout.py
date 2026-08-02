@@ -53,6 +53,14 @@ def test_galaxy_layout_contains_basic_mode_controls():
   assert {"GalaxyDeveloperMode", "UseOldUI"} <= sections["Developer"].keys()
 
 
+def test_curve_speed_controller_no_lead_toggle_is_nested_under_csc():
+  csc_no_lead = _params_by_section(_layout())["Longitudinal (Speed & Following)"]["CurveSpeedControllerNoLead"]
+
+  assert csc_no_lead["parent_key"] == "CurveSpeedController"
+  assert csc_no_lead["data_type"] == "bool"
+  assert _declared_default("CurveSpeedControllerNoLead") == "0"
+
+
 def test_every_galaxy_setting_has_a_shared_settings_tier():
   layout = _layout()
   tiers = {

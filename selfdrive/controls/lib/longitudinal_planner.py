@@ -3095,11 +3095,20 @@ class LongitudinalPlanner:
     dec_mpc_mode = self.get_mpc_mode()
     if not self.mlsim:
       self.mpc.mode = dec_mpc_mode
+    # Hand the forced stop to the solver as a position. The obstacle sits STOP_DISTANCE
+    # beyond the line because the safe-distance term already includes it — placing it on
+    # the line parks us short. Below that the existing v_cruise=0 path finishes the stop,
+    # since forcingStopLength is decaying to zero and the obstacle would land behind us.
+    force_stop_x = None
+    if sm['starpilotPlan'].forcingStop and sm['starpilotPlan'].forcingStopLength > STOP_DISTANCE:
+      force_stop_x = float(sm['starpilotPlan'].forcingStopLength) + STOP_DISTANCE
+
     self.mpc.update(sm['radarState'], v_cruise, x, v, a, j,
                     sm['starpilotPlan'].dangerFactor, effective_t_follow,
                     personality=personality, tracking_lead=lead_control_active,
                     optional_far_lead_comfort=True,
-                    smooth_duplicate_vision=nonurgent_duplicate_vision_follow and not panic_bypass)
+                    smooth_duplicate_vision=nonurgent_duplicate_vision_follow and not panic_bypass,
+                    stop_x=force_stop_x)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)

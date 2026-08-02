@@ -224,6 +224,16 @@ struct StarPilotPlan @0xf98d843bfd7004a3 {
 struct StarPilotRadarState @0xb86e6369214c01c8 {
   leadLeft @0 :LeadData;
   leadRight @1 :LeadData;
+  adjacentStopped @2 :AdjacentStopped;
+
+  # A vehicle in an adjacent lane that was observed MOVING and then came to rest.
+  # Distinct from leadLeft/leadRight, which are moving-target-only by design.
+  struct AdjacentStopped {
+    status @0 :Bool;
+    dRel @1 :Float32;
+    yRel @2 :Float32;
+    radarTrackId @3 :Int32 = -1;
+  }
 
   struct LeadData {
     dRel @0 :Float32;

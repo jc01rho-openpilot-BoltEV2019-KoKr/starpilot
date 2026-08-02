@@ -13,6 +13,7 @@ from openpilot.system.ui.widgets import Widget, DialogResult
 from openpilot.system.ui.widgets.label import gui_label
 
 from openpilot.selfdrive.ui.layouts.settings.starpilot.scribble import draw_custom_icon
+from openpilot.selfdrive.ui.lib.ui_param_cache import shared_ui_params
 
 
 GEOMETRY_OFFSET = 10
@@ -3538,8 +3539,7 @@ class AetherCategoryDrawer(AetherSettingsView):
     
     # Read driving side dynamically for ergonomic layout (LHD vs RHD)
     try:
-      from openpilot.common.params import Params
-      self._is_rhd = Params().get_bool("IsRHD")
+      self._is_rhd = shared_ui_params().get_bool("IsRHD")
     except Exception:
       self._is_rhd = False
 
@@ -5472,7 +5472,6 @@ class TileGrid(Widget):
           tile.set_parent_rect(parent_rect)
         tile.render(snap_rect(rl.Rectangle(row_x + c * (row_tile_w + self._gap), rect.y + y_offset + r * (tile_h + self._gap), row_tile_w, tile_h)))
         tile_idx += 1
-
 
 
 

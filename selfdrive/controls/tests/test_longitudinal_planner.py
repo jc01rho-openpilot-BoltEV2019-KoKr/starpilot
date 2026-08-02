@@ -54,6 +54,52 @@ def test_mpc_duplicate_lead_filters_do_not_cross_contaminate_tracks():
   assert mpc.duplicate_lead_v_filters[1].x == pytest.approx(28.0)
 
 
+def test_mpc_duplicate_vision_filter_smooths_distance_jumps_per_track():
+  mpc = LongitudinalMpc()
+  mpc.set_cur_state(27.0, 0.0)
+  mpc.current_filter_time = 1.2
+  lead_one = make_lead(status=True, d_rel=52.0, v_lead=25.0, model_prob=1.0)
+  lead_two = make_lead(status=True, d_rel=70.0, v_lead=25.0, model_prob=1.0)
+
+  first_one = mpc.process_lead(lead_one, lead_index=0, smooth_duplicate_vision=True)
+  first_two = mpc.process_lead(lead_two, lead_index=1, smooth_duplicate_vision=True)
+  assert first_one[0, 0] == pytest.approx(52.0)
+  assert first_two[0, 0] == pytest.approx(70.0)
+
+  lead_one.dRel = 60.0
+  filtered_one = mpc.process_lead(lead_one, lead_index=0, smooth_duplicate_vision=True)
+
+  assert 52.0 < filtered_one[0, 0] < 54.0
+  assert mpc.duplicate_lead_x_filters[1].x == pytest.approx(70.0)
+
+
+def test_mpc_duplicate_vision_distance_filter_bypasses_urgent_path():
+  mpc = LongitudinalMpc()
+  mpc.set_cur_state(27.0, 0.0)
+  mpc.current_filter_time = 1.2
+  lead = make_lead(status=True, d_rel=60.0, v_lead=25.0, model_prob=1.0)
+
+  mpc.process_lead(lead, lead_index=0, smooth_duplicate_vision=True)
+  lead.dRel = 35.0
+  raw = mpc.process_lead(lead, lead_index=0, smooth_duplicate_vision=False)
+
+  assert raw[0, 0] == pytest.approx(35.0)
+  assert not mpc.duplicate_lead_x_filters[0].initialized
+
+
+def test_mpc_duplicate_vision_distance_filter_never_delays_closer_lead():
+  mpc = LongitudinalMpc()
+  mpc.set_cur_state(27.0, 0.0)
+  mpc.current_filter_time = 1.2
+  lead = make_lead(status=True, d_rel=60.0, v_lead=25.0, model_prob=1.0)
+
+  mpc.process_lead(lead, lead_index=0, smooth_duplicate_vision=True)
+  lead.dRel = 42.0
+  closer = mpc.process_lead(lead, lead_index=0, smooth_duplicate_vision=True)
+
+  assert closer[0, 0] == pytest.approx(42.0)
+
+
 def test_mpc_duplicate_vision_filter_damps_low_speed_velocity_noise():
   mpc = LongitudinalMpc()
   mpc.set_cur_state(18.0, 0.0)
@@ -2467,7 +2513,7 @@ def test_modeld_action_uses_direct_action_head_for_v14(monkeypatch):
     starpilot_toggles=toggles,
   )
 
-  assert action.desiredCurvature == pytest.approx(0.12)
+  assert action.desiredCurvature == pytest.approx(modeld.smooth_value(0.12, prev_action.desiredCurvature, modeld.LAT_SMOOTH_SECONDS))
   assert action.desiredAcceleration < -0.2
   assert not action.shouldStop
 
@@ -2499,7 +2545,7 @@ def test_modeld_action_uses_current_action_head_scaling_for_v15(monkeypatch):
     starpilot_toggles=toggles,
   )
 
-  assert action.desiredCurvature == pytest.approx(0.48)
+  assert action.desiredCurvature == pytest.approx(modeld.smooth_value(0.48, prev_action.desiredCurvature, modeld.LAT_SMOOTH_SECONDS))
   assert action.desiredAcceleration < -0.2
   assert not action.shouldStop
 

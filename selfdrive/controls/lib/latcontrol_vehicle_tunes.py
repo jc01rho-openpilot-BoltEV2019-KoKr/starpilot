@@ -153,6 +153,8 @@ RAM_1500_CARS = (
   CHRYSLER_CAR.RAM_1500_5TH_GEN,
 )
 
+RAM_1500_BASE_LAT_ACCEL_FACTOR_MULT = 1.20
+
 BOLT_2017_LATERAL_TESTING_GROUND_ID = testing_ground.id_3
 BOLT_2017_STEER_RATIO_TEST_SCALE = 1.045
 BOLT_2017_STEER_RATIO_ONSET_SPEED = 20.0 * CV.MPH_TO_MS
@@ -221,6 +223,13 @@ BOLT_2022_2023_CENTER_TAPER_LAT = 0.18
 BOLT_2022_2023_CENTER_TAPER_LAT_WIDTH = 0.03
 BOLT_2022_2023_CENTER_TAPER_SPEED = 25.0
 BOLT_2022_2023_CENTER_TAPER_SPEED_WIDTH = 2.5
+BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_MAX = 0.07
+BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_LAT = 0.14
+BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_LAT_WIDTH = 0.04
+BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_SPEED = 4.0
+BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_SPEED_WIDTH = 1.5
+BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_SPEED_MAX = 14.0
+BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_SPEED_MAX_WIDTH = 2.0
 BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.16
 BOLT_2022_2023_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.12
 BOLT_2022_2023_UNWIND_THRESHOLD_INCREASE_LEFT = 0.26
@@ -373,6 +382,18 @@ KIA_CARNIVAL_CENTER_TAPER_SPEED_MAX = 14.5
 KIA_CARNIVAL_CENTER_TAPER_SPEED_MAX_WIDTH = 2.0
 KIA_CARNIVAL_FRICTION_THRESHOLD_GAIN = 0.24
 KIA_CARNIVAL_FRICTION_CENTER_FADE_MAX = 0.34
+KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_MAX = 0.14
+KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_LAT = 0.24
+KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_LAT_WIDTH = 0.06
+KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_SPEED = 28.0
+KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_SPEED_WIDTH = 2.0
+KIA_CARNIVAL_HIGHWAY_FRICTION_THRESHOLD_GAIN = 0.14
+KIA_CARNIVAL_HIGHWAY_FRICTION_CENTER_FADE_MAX = 0.20
+KIA_CARNIVAL_HIGHWAY_TRANSITION_TAPER_MAX = 0.28
+KIA_CARNIVAL_HIGHWAY_TRANSITION_JERK = 0.45
+KIA_CARNIVAL_HIGHWAY_TRANSITION_JERK_WIDTH = 0.15
+KIA_CARNIVAL_HIGHWAY_TRANSITION_LAT_CUTOFF = 1.20
+KIA_CARNIVAL_HIGHWAY_TRANSITION_LAT_WIDTH = 0.20
 
 TUCSON_4TH_GEN_CENTER_TAPER_MAX = 0.44
 TUCSON_4TH_GEN_CENTER_TAPER_LAT = 0.28
@@ -684,8 +705,8 @@ KIA_EV6_TURN_IN_BOOST_LEFT = 0.62
 KIA_EV6_TURN_IN_BOOST_RIGHT = 0.60
 KIA_EV6_UNWIND_TAPER_LEFT = 0.56
 KIA_EV6_UNWIND_TAPER_RIGHT = 0.54
-KIA_EV6_BASE_UNWIND_TAPER_LEFT = 0.06
-KIA_EV6_BASE_UNWIND_TAPER_RIGHT = 0.05
+KIA_EV6_BASE_UNWIND_TAPER_LEFT = 0.10
+KIA_EV6_BASE_UNWIND_TAPER_RIGHT = 0.13
 KIA_EV6_JWARM_BASE_TURN_IN_BOOST_LEFT = 0.12
 KIA_EV6_JWARM_BASE_TURN_IN_BOOST_RIGHT = 0.14
 KIA_EV6_JWARM_BASE_UNWIND_TAPER_LEFT = 0.15
@@ -754,12 +775,12 @@ PRIUS_CENTER_TAPER_SPEED = 18.0
 PRIUS_CENTER_TAPER_SPEED_WIDTH = 2.2
 
 RAV4_PRIME_PHASE_SCALE = 0.12
-RAV4_PRIME_UNWIND_FF_REDUCTION_LEFT = 0.15
-RAV4_PRIME_UNWIND_FF_REDUCTION_RIGHT = 0.13
-RAV4_PRIME_UNWIND_FRICTION_REDUCTION_LEFT = 0.16
-RAV4_PRIME_UNWIND_FRICTION_REDUCTION_RIGHT = 0.14
-RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_LEFT = 0.12
-RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_RIGHT = 0.14
+RAV4_PRIME_UNWIND_FF_REDUCTION_LEFT = 0.18
+RAV4_PRIME_UNWIND_FF_REDUCTION_RIGHT = 0.19
+RAV4_PRIME_UNWIND_FRICTION_REDUCTION_LEFT = 0.19
+RAV4_PRIME_UNWIND_FRICTION_REDUCTION_RIGHT = 0.20
+RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_LEFT = 0.17
+RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_RIGHT = 0.21
 RAV4_PRIME_FRICTION_THRESHOLD_GAIN = 0.24
 RAV4_PRIME_FRICTION_CENTER_LAT = 0.30
 RAV4_PRIME_FRICTION_CENTER_LAT_WIDTH = 0.07
@@ -1448,6 +1469,24 @@ def get_bolt_2022_2023_ff_scale(desired_lateral_accel: float, desired_lateral_je
   return 1.0 + (extra_scale * center_taper * turn_in_boost * max(unwind_taper, 0.0))
 
 
+def get_bolt_2022_2023_center_output_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  highway_speed_weight = _bolt_2022_2023_sigmoid((v_ego - BOLT_2022_2023_CENTER_TAPER_SPEED) /
+                                                  BOLT_2022_2023_CENTER_TAPER_SPEED_WIDTH)
+  highway_center_weight = _bolt_2022_2023_sigmoid((BOLT_2022_2023_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                                                   BOLT_2022_2023_CENTER_TAPER_LAT_WIDTH)
+  low_speed_onset = _bolt_2022_2023_sigmoid((v_ego - BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_SPEED) /
+                                             BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_SPEED_WIDTH)
+  low_speed_cutoff = _bolt_2022_2023_sigmoid((BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_SPEED_MAX - v_ego) /
+                                              BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_SPEED_MAX_WIDTH)
+  low_speed_center_weight = _bolt_2022_2023_sigmoid((BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                                                     BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_LAT_WIDTH)
+  highway_reduction = (_flm_vehicle_knob("gm_bolt_2022_2023.center_taper_max", BOLT_2022_2023_CENTER_TAPER_MAX) *
+                       highway_speed_weight * highway_center_weight)
+  low_speed_reduction = (BOLT_2022_2023_LOW_SPEED_CENTER_TAPER_MAX * low_speed_onset * low_speed_cutoff *
+                         low_speed_center_weight)
+  return 1.0 - min(highway_reduction + low_speed_reduction, 0.95)
+
+
 def get_bolt_2022_2023_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
   base_threshold = get_gm_base_friction_threshold(v_ego)
   transition_envelope = _bolt_2022_2023_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
@@ -1801,20 +1840,48 @@ def _kia_carnival_center_weights(desired_lateral_accel: float, v_ego: float) -> 
   return speed_weight, center_weight
 
 
+def _kia_carnival_highway_center_weights(desired_lateral_accel: float, v_ego: float) -> tuple[float, float]:
+  speed_weight = _sigmoid((v_ego - KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_SPEED) /
+                          KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _sigmoid((KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                           KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_LAT_WIDTH)
+  return speed_weight, center_weight
+
+
 def get_kia_carnival_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
   speed_weight, center_weight = _kia_carnival_center_weights(desired_lateral_accel, v_ego)
-  return 1.0 - (KIA_CARNIVAL_CENTER_TAPER_MAX * speed_weight * center_weight)
+  highway_speed_weight, highway_center_weight = _kia_carnival_highway_center_weights(desired_lateral_accel, v_ego)
+  reduction = KIA_CARNIVAL_CENTER_TAPER_MAX * speed_weight * center_weight
+  reduction += KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_MAX * highway_speed_weight * highway_center_weight
+  return 1.0 - min(reduction, 0.95)
 
 
 def get_kia_carnival_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
   del desired_lateral_jerk
   speed_weight, center_weight = _kia_carnival_center_weights(desired_lateral_accel, v_ego)
-  return get_hkg_canfd_base_friction_threshold(v_ego) * (1.0 + KIA_CARNIVAL_FRICTION_THRESHOLD_GAIN * speed_weight * center_weight)
+  highway_speed_weight, highway_center_weight = _kia_carnival_highway_center_weights(desired_lateral_accel, v_ego)
+  gain = KIA_CARNIVAL_FRICTION_THRESHOLD_GAIN * speed_weight * center_weight
+  gain += KIA_CARNIVAL_HIGHWAY_FRICTION_THRESHOLD_GAIN * highway_speed_weight * highway_center_weight
+  return get_hkg_canfd_base_friction_threshold(v_ego) * (1.0 + gain)
 
 
 def get_kia_carnival_friction_center_fade_scale(desired_lateral_accel: float, v_ego: float) -> float:
   speed_weight, center_weight = _kia_carnival_center_weights(desired_lateral_accel, v_ego)
-  return 1.0 - (KIA_CARNIVAL_FRICTION_CENTER_FADE_MAX * speed_weight * center_weight)
+  highway_speed_weight, highway_center_weight = _kia_carnival_highway_center_weights(desired_lateral_accel, v_ego)
+  reduction = KIA_CARNIVAL_FRICTION_CENTER_FADE_MAX * speed_weight * center_weight
+  reduction += KIA_CARNIVAL_HIGHWAY_FRICTION_CENTER_FADE_MAX * highway_speed_weight * highway_center_weight
+  return 1.0 - min(reduction, 0.95)
+
+
+def get_kia_carnival_highway_transition_output_scale(desired_lateral_accel: float, desired_lateral_jerk: float,
+                                                      v_ego: float) -> float:
+  speed_weight = _sigmoid((v_ego - KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_SPEED) /
+                          KIA_CARNIVAL_HIGHWAY_CENTER_TAPER_SPEED_WIDTH)
+  jerk_weight = _sigmoid((abs(desired_lateral_jerk) - KIA_CARNIVAL_HIGHWAY_TRANSITION_JERK) /
+                         KIA_CARNIVAL_HIGHWAY_TRANSITION_JERK_WIDTH)
+  lat_weight = _sigmoid((KIA_CARNIVAL_HIGHWAY_TRANSITION_LAT_CUTOFF - abs(desired_lateral_accel)) /
+                        KIA_CARNIVAL_HIGHWAY_TRANSITION_LAT_WIDTH)
+  return 1.0 - (KIA_CARNIVAL_HIGHWAY_TRANSITION_TAPER_MAX * speed_weight * jerk_weight * lat_weight)
 
 
 def _tucson_4th_gen_center_weights(desired_lateral_accel: float, v_ego: float) -> tuple[float, float]:
@@ -2642,6 +2709,11 @@ FLM_FULL_SURFACE_SUFFIX_METADATA = {
   "unwind_taper_right": {"min": 0.0, "max": 12.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
   "center_taper_max": {"min": 0.0, "max": 0.18, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
   "highway_center_taper_max": {"min": 0.0, "max": 0.18, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
+  "center_deadband_crawl_deg": {"min": 0.0, "max": 0.30, "precision": 0.005, "deltaType": "absolute", "safeLiveTrial": True},
+  "center_deadband_low_deg": {"min": 0.0, "max": 0.30, "precision": 0.005, "deltaType": "absolute", "safeLiveTrial": True},
+  "center_deadband_mid_deg": {"min": 0.0, "max": 0.20, "precision": 0.005, "deltaType": "absolute", "safeLiveTrial": True},
+  "center_deadband_fast_deg": {"min": 0.0, "max": 0.12, "precision": 0.005, "deltaType": "absolute", "safeLiveTrial": True},
+  "center_deadband_highway_deg": {"min": 0.0, "max": 0.08, "precision": 0.005, "deltaType": "absolute", "safeLiveTrial": True},
   "turn_in_threshold_reduction_left": {"min": 0.0, "max": 2.00, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
   "turn_in_threshold_reduction_right": {"min": 0.0, "max": 2.00, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
   "unwind_threshold_increase_left": {"min": 0.0, "max": 12.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
@@ -2670,6 +2742,11 @@ FLM_FULL_SURFACE_NEUTRAL_DEFAULTS = {
   "unwind_taper_right": 0.0,
   "center_taper_max": 0.0,
   "highway_center_taper_max": 0.0,
+  "center_deadband_crawl_deg": 0.0,
+  "center_deadband_low_deg": 0.0,
+  "center_deadband_mid_deg": 0.0,
+  "center_deadband_fast_deg": 0.0,
+  "center_deadband_highway_deg": 0.0,
   "turn_in_threshold_reduction_left": 0.0,
   "turn_in_threshold_reduction_right": 0.0,
   "unwind_threshold_increase_left": 0.0,
@@ -2754,6 +2831,24 @@ def get_flm_full_surface_center_taper_scale(profile_key: str | None, desired_lat
     reduction += _flm_vehicle_knob(_flm_profile_symbol(profile_key, "highway_center_taper_max"), 0.0) * speed_weight * center_weight
 
   return 1.0 - min(reduction, 0.20)
+
+
+def get_flm_full_surface_center_deadband_deg(profile_key: str | None, v_ego: float) -> float:
+  if not profile_key:
+    return 0.0
+
+  suffixes = (
+    "center_deadband_crawl_deg",
+    "center_deadband_low_deg",
+    "center_deadband_mid_deg",
+    "center_deadband_fast_deg",
+    "center_deadband_highway_deg",
+  )
+  values = [
+    _flm_vehicle_knob(_flm_profile_symbol(profile_key, suffix), 0.0)
+    for suffix in suffixes
+  ]
+  return float(np.interp(max(v_ego, 0.0), FLM_FRICTION_SPEED_KNOTS, values))
 
 
 def get_flm_full_surface_ff_scale(profile_key: str | None, desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float,

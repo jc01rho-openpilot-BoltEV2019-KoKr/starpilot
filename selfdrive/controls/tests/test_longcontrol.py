@@ -306,6 +306,96 @@ def test_starting_accel_keeps_start_accel_shove_below_profile_ceiling():
   assert output_accel == pytest.approx(1.5)
 
 
+def test_bolt_acc_pedal_starting_handoff_keeps_small_positive_command():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    startingState=True,
+    vEgoStarting=0.35,
+    enableGasInterceptorDEPRECATED=True,
+    flags=GMFlags.PEDAL_LONG.value,
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+  )
+  CP.longitudinalTuning.kpV = [0.8]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.starting
+  lc.last_output_accel = 0.55
+  CS = car.CarState.new_message(vEgo=0.4, aEgo=1.5, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=0.55,
+    should_stop=False,
+    accel_limits=(-3.0, 2.0),
+    starpilot_toggles=make_toggles(vEgoStarting=0.35),
+    has_lead=True,
+  )
+
+  assert lc.long_control_state == LongCtrlState.pid
+  assert output_accel == pytest.approx(0.188, abs=0.01)
+
+
+@pytest.mark.parametrize(("a_target", "should_stop"), ((-0.2, False), (0.55, True)))
+def test_bolt_acc_pedal_starting_handoff_never_overrides_stop_request(a_target, should_stop):
+  CP = make_longcontrol_cp(
+    brand="gm",
+    startingState=True,
+    vEgoStarting=0.35,
+    enableGasInterceptorDEPRECATED=True,
+    flags=GMFlags.PEDAL_LONG.value,
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+  )
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.starting
+  lc.last_output_accel = 0.55
+  CS = car.CarState.new_message(vEgo=0.4, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=a_target,
+    should_stop=should_stop,
+    accel_limits=(-3.0, 2.0),
+    starpilot_toggles=make_toggles(vEgoStarting=0.35),
+    has_lead=True,
+  )
+
+  assert output_accel <= 0.0
+
+
+def test_bolt_acc_pedal_starting_handoff_floor_clears_when_lead_brakes_again():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    startingState=True,
+    vEgoStarting=0.35,
+    enableGasInterceptorDEPRECATED=True,
+    flags=GMFlags.PEDAL_LONG.value,
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+  )
+  CP.longitudinalTuning.kpV = [0.8]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.starting
+  lc.last_output_accel = 0.55
+  CS = car.CarState.new_message(vEgo=0.4, aEgo=1.5, brakePressed=False)
+  CS.cruiseState.standstill = False
+  toggles = make_toggles(vEgoStarting=0.35)
+
+  launch_output = lc.update(True, CS, 0.55, False, (-3.0, 2.0), toggles, has_lead=True)
+  assert launch_output > 0.0
+
+  CS.vEgo = 0.5
+  CS.aEgo = 0.0
+  brake_output = lc.update(True, CS, -0.5, True, (-3.0, 2.0), toggles, has_lead=True)
+  assert lc.long_control_state == LongCtrlState.stopping
+  assert brake_output < 0.0
+  assert lc.vehicle_tuning.bolt_start_handoff_frames == 0
+
+
 def test_update_requires_sustained_moderate_positive_target_to_leave_stopping():
   CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
   CP.longitudinalTuning.kpBP = [0.0]

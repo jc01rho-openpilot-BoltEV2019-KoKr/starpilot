@@ -128,6 +128,9 @@ class LatControlTorque(LatControl):
       self.torque_params.latAccelFactor *= SONATA_HYBRID_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_kia_forte:
       self.torque_params.latAccelFactor *= KIA_FORTE_BASE_LAT_ACCEL_FACTOR_MULT
+    if self.is_ram_1500:
+      self.torque_params.latAccelFactor *= RAM_1500_BASE_LAT_ACCEL_FACTOR_MULT
+      self.update_limits()
     if self.is_civic_bosch_modified:
       self.torque_params.latAccelFactor *= CIVIC_BOSCH_MODIFIED_B_LAT_ACCEL_FACTOR_MULT
       if civic_bosch_modified_a_lateral_testing_ground_active():
@@ -157,6 +160,8 @@ class LatControlTorque(LatControl):
       latAccelFactor *= SONATA_HYBRID_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_kia_forte:
       latAccelFactor *= KIA_FORTE_BASE_LAT_ACCEL_FACTOR_MULT
+    if self.is_ram_1500:
+      latAccelFactor *= RAM_1500_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_civic_bosch_modified:
       latAccelFactor *= CIVIC_BOSCH_MODIFIED_B_LAT_ACCEL_FACTOR_MULT
       if civic_bosch_modified_a_lateral_testing_ground_active():
@@ -203,7 +208,11 @@ class LatControlTorque(LatControl):
 
       roll_offset_fade = np.interp(CS.vEgo, FF_ROLL_OFFSET_FADE_BP, FF_ROLL_OFFSET_FADE_V)
       roll_compensation = params.roll * ACCELERATION_DUE_TO_GRAVITY * roll_offset_fade
-      curvature_deadzone = abs(VM.calc_curvature(math.radians(self.steering_angle_deadzone_deg), CS.vEgo, 0.0))
+      flm_center_deadband_deg = (
+        get_flm_full_surface_center_deadband_deg(self.flm_surface_profile_key, CS.vEgo) if flm_surface_active else 0.0
+      )
+      effective_deadband_deg = self.steering_angle_deadzone_deg + flm_center_deadband_deg
+      curvature_deadzone = abs(VM.calc_curvature(math.radians(effective_deadband_deg), CS.vEgo, 0.0))
       lateral_accel_deadzone = curvature_deadzone * CS.vEgo ** 2
 
       delay_frames = int(np.clip(lat_delay / self.dt, 1, self.request_buffer_len))
@@ -403,7 +412,9 @@ class LatControlTorque(LatControl):
                            CS.vEgo < self.low_speed_reset_threshold or unwind_detected)
       output_lataccel = self.pid.update(pid_log.error, error_rate=-measurement_rate, speed=CS.vEgo, feedforward=ff, freeze_integrator=freeze_integrator)
       output_torque = self.torque_from_lateral_accel(output_lataccel, self.torque_params)
-      if self.is_bolt_2017:
+      if bolt_2022_2023_tuned_path_active:
+        output_torque *= get_bolt_2022_2023_center_output_scale(setpoint, CS.vEgo)
+      elif self.is_bolt_2017:
         output_torque *= get_bolt_2017_torque_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif bolt_2018_2021_tuned_path_active:
         output_torque *= get_bolt_2018_2021_dynamic_torque_scale(setpoint, desired_lateral_jerk, CS.vEgo)
@@ -420,7 +431,7 @@ class LatControlTorque(LatControl):
       if ioniq_6_active:
         output_torque *= get_ioniq_6_highway_output_taper_scale(setpoint, CS.vEgo)
         output_torque *= get_ioniq_6_highway_transition_output_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo)
-      elif self.is_ram_1500:
+      elif self.is_ram_1500 and output_torque * setpoint > 0.0:
         output_torque *= get_ram_1500_transition_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif rav4_prime_active:
         output_torque *= get_rav4_prime_output_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo)
@@ -434,6 +445,7 @@ class LatControlTorque(LatControl):
         output_torque *= kia_ev6_low_speed_center_taper
       elif kia_carnival_active:
         output_torque *= kia_carnival_center_taper
+        output_torque *= get_kia_carnival_highway_transition_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif tucson_4th_gen_active:
         output_torque *= tucson_4th_gen_center_taper
       elif self.is_silverado:
