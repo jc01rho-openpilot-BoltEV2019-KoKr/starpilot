@@ -804,7 +804,7 @@ FINGERPRINT_MAKE_TO_VALUES_DIR = {
   "volkswagen": "volkswagen",
 }
 
-_FINGERPRINT_CARDOCS_RE = re.compile(r'\w*CarDocs\(\s*"([^"]+)"')
+_FINGERPRINT_CARDOCS_RE = re.compile(r'\w*CarDocs\w*\(\s*"([^"]+)"')
 _FINGERPRINT_PLATFORM_RE = re.compile(r'(\w+)\s*=\s*\w+\s*\(\s*\[([\s\S]*?)\]\s*,')
 _FINGERPRINT_PLATFORM_NAME_RE = re.compile(r'^[A-Z0-9_]+$')
 _FINGERPRINT_VALID_NAME_RE = re.compile(r'^[A-Za-z0-9 \u0160.(),&\-]+$')
@@ -5380,13 +5380,20 @@ def setup(app):
   @app.route("/api/routes", methods=["GET"])
   def list_routes():
     def generate():
-      routes = [(path, name) for path in FOOTAGE_PATHS for name in utilities.get_routes_names(path)]
+      routes = [
+        (path, name, segment_count)
+        for path in FOOTAGE_PATHS
+        for name, segment_count in utilities.get_routes_with_segment_counts(path)
+      ]
       total = len(routes)
       connect_dongle_id = params.get("StockDongleId", encoding="utf-8") or params.get("DongleId", encoding="utf-8") or ""
       yield f"data: {json.dumps({'progress': 0, 'total': total, 'connectDongleId': connect_dongle_id})}\n\n"
 
       with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(utilities.process_route, path, name): (path, name) for path, name in routes}
+        futures = {
+          executor.submit(utilities.process_route, path, name, segment_count): (path, name)
+          for path, name, segment_count in routes
+        }
         for processed, future in enumerate(as_completed(futures), start=1):
           try:
             result = future.result()
@@ -5965,6 +5972,7 @@ def setup(app):
       "status": flm_workspace.read_flm_status(),
       "activeTrial": workspace.get("activeTrial"),
       "reports": workspace.get("reports", [])[:10],
+      "savedTunes": workspace.get("savedTunes", []),
     }), 200
 
   @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/analyze", methods=["POST"])
@@ -6045,6 +6053,48 @@ def setup(app):
   def clear_flm_workspace():
     try:
       return jsonify(flm_workspace.clear_workspace()), 200
+    except RuntimeError as error:
+      return jsonify({"error": str(error)}), 409
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/saved-tunes", methods=["POST"])
+  @app.route("/api/flm/saved-tunes", methods=["POST"])
+  def save_flm_tune():
+    data = request.get_json(silent=True) or {}
+    try:
+      return jsonify(flm_workspace.save_active_trial_as_tune(str(data.get("name") or ""))), 200
+    except ValueError as error:
+      return jsonify({"error": str(error)}), 400
+    except RuntimeError as error:
+      return jsonify({"error": str(error)}), 409
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/saved-tunes/<tune_id>/apply", methods=["POST"])
+  @app.route("/api/flm/saved-tunes/<tune_id>/apply", methods=["POST"])
+  def apply_flm_saved_tune(tune_id):
+    try:
+      return jsonify(flm_workspace.apply_saved_tune(tune_id)), 200
+    except FileNotFoundError:
+      return jsonify({"error": "Saved FLM tune not found."}), 404
+    except RuntimeError as error:
+      return jsonify({"error": str(error)}), 409
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/saved-tunes/<tune_id>", methods=["PATCH"])
+  @app.route("/api/flm/saved-tunes/<tune_id>", methods=["PATCH"])
+  def rename_flm_saved_tune(tune_id):
+    data = request.get_json(silent=True) or {}
+    try:
+      return jsonify(flm_workspace.rename_saved_tune(tune_id, str(data.get("name") or ""))), 200
+    except FileNotFoundError:
+      return jsonify({"error": "Saved FLM tune not found."}), 404
+    except ValueError as error:
+      return jsonify({"error": str(error)}), 400
+
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/saved-tunes/<tune_id>", methods=["DELETE"])
+  @app.route("/api/flm/saved-tunes/<tune_id>", methods=["DELETE"])
+  def delete_flm_saved_tune(tune_id):
+    try:
+      return jsonify(flm_workspace.delete_saved_tune(tune_id)), 200
+    except FileNotFoundError:
+      return jsonify({"error": "Saved FLM tune not found."}), 404
     except RuntimeError as error:
       return jsonify({"error": str(error)}), 409
 

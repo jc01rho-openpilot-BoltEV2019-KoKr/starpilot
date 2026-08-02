@@ -170,6 +170,16 @@ def test_runtime_values_ignore_legacy_tuning_level_metadata():
   assert variables.get_button_function("LKASButtonControl") == spv.BUTTON_FUNCTIONS["AOL_TOGGLE"]
 
 
+def test_missing_bounded_value_uses_explicit_default():
+  variables = object.__new__(spv.StarPilotVariables)
+  variables.params = _FakeParams()
+  variables.default_values = {}
+
+  value = variables.get_value("LaneChangeCloseGapSeconds", cast=float, default=1.0, min=0.5, max=3.0)
+
+  assert value == 1.0
+
+
 def test_favorite_button_flags_map_to_three_slots():
   toggle = SimpleNamespace()
 

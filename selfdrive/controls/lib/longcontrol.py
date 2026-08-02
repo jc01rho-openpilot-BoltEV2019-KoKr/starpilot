@@ -280,6 +280,7 @@ class LongControl:
     self.pid.neg_limit = accel_limits[0]
     self.pid.pos_limit = accel_limits[1]
 
+    previous_long_control_state = self.long_control_state
     allow_stopping_release = self._stop_release_ready(CS, a_target, should_stop, has_lead, starpilot_toggles)
     self.long_control_state = long_control_state_trans(self.CP, active, self.long_control_state, CS.vEgo,
                                                        should_stop, CS.brakePressed,
@@ -337,7 +338,15 @@ class LongControl:
                                          freeze_integrator=freeze_integrator)
       raw_output_accel = self._cap_positive_output_on_negative_target(raw_output_accel, a_target, error, CS)
       raw_output_accel = self.vehicle_tuning.apply_pedal_long_brake_bias(raw_output_accel, a_target, CS)
-
+      raw_output_accel = self.vehicle_tuning.apply_bolt_start_handoff_floor(
+        raw_output_accel,
+        self.last_output_accel,
+        a_target,
+        CS.vEgo,
+        previous_long_control_state == LongCtrlState.starting,
+        should_stop,
+        has_lead,
+      )
 
       if self.transitioning and self.prev_mode == 'acc' and self.current_mode == 'blended':
         if raw_output_accel < 0 and raw_output_accel < self.last_output_accel:

@@ -250,6 +250,27 @@
         "settings_tier": "simple"
       },
       {
+        "key": "LaneChangeCloseGap",
+        "label": "Close Gap On Lane Change",
+        "description": "Allows for a temporary shorter follow distance behind lead so that openpilot merges smoothly out of current lane, it will allow car to accelerate as it changes lanes.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LaneChanges",
+        "settings_tier": "simple"
+      },
+      {
+        "key": "LaneChangeCloseGapSeconds",
+        "label": "Temporary Follow Distance",
+        "description": "Follow distance to hold while changing lanes. Only applied when shorter than your normal gap.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 3.0,
+        "step": 0.05,
+        "parent_key": "LaneChanges",
+        "settings_tier": "simple"
+      },
+      {
         "key": "LateralTune",
         "label": "Lateral Tuning",
         "description": "Miscellaneous steering control changes to fine-tune how openpilot drives.",
@@ -742,6 +763,15 @@
         "key": "ShowCSCStatus",
         "label": "Status Widget",
         "description": "Show the \"Curve Speed Controller\" target speed on the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CurveSpeedController",
+        "settings_tier": "simple"
+      },
+      {
+        "key": "CurveSpeedControllerNoLead",
+        "label": "Only Without Lead",
+        "description": "Only use Curve Speed Controller when not following a lead vehicle.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "CurveSpeedController",

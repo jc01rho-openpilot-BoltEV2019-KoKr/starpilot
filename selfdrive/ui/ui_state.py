@@ -10,6 +10,7 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
+from openpilot.selfdrive.ui.lib.ui_param_cache import shared_ui_params
 from openpilot.system.hardware.usb import chestnut_present
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
@@ -35,6 +36,7 @@ class UIState:
 
   def _initialize(self):
     self.params = Params()
+    self.ui_params = shared_ui_params()
     self.params_memory = Params(memory=True)
     self.sm = messaging.SubMaster(
       [
@@ -83,10 +85,11 @@ class UIState:
     self.is_metric: bool = self.params.get_bool("IsMetric")
     self.is_release = self.params.get_bool("IsReleaseBranch")
     self.always_on_dm: bool = self.params.get_bool("AlwaysOnDM")
-    self.usbgpu: bool = chestnut_present()
+    self.usbgpu: bool = False
     self.usbgpu_compiled: bool = self.params.get_bool("UsbGpuCompiled")
     self.usbgpu_active: bool = self.params.get_bool("UsbGpuActive")
     self._usbgpu_update_time: float = 0.0
+    self._usbgpu_poll_thread: threading.Thread | None = None
     self.started: bool = False
     self.ignition: bool = False
     self.recording_audio: bool = False
@@ -121,7 +124,25 @@ class UIState:
     self._offroad_transition_callbacks: list[Callable[[], None]] = []
     self._engaged_transition_callbacks: list[Callable[[], None]] = []
 
+    self._schedule_usbgpu_poll(force=True)
     self.update_params()
+
+  def _poll_usbgpu_presence(self) -> None:
+    try:
+      self.usbgpu = chestnut_present()
+    except Exception:
+      cloudlog.exception("USB GPU presence poll failed")
+
+  def _schedule_usbgpu_poll(self, now: float | None = None, force: bool = False) -> None:
+    now = time.monotonic() if now is None else now
+    if not force and now - self._usbgpu_update_time < USBGPU_POLL_INTERVAL:
+      return
+    if self._usbgpu_poll_thread is not None and self._usbgpu_poll_thread.is_alive():
+      return
+
+    self._usbgpu_update_time = now
+    self._usbgpu_poll_thread = threading.Thread(target=self._poll_usbgpu_presence, name="ui_usbgpu_poll", daemon=True)
+    self._usbgpu_poll_thread.start()
 
   def add_offroad_transition_callback(self, callback: Callable[[], None]):
     self._offroad_transition_callbacks.append(callback)
@@ -176,24 +197,23 @@ class UIState:
       self.light_sensor = -1
 
     # Trust hardwared's filtered started state; raw ignition can flap on Toyota.
-    force_onroad = self.params.get_bool("ForceOnroad")
-    force_offroad = self.params.get_bool("ForceOffroad")
+    params = self.ui_params
+    force_onroad = params.get_bool("ForceOnroad")
+    force_offroad = params.get_bool("ForceOffroad")
     started = self.sm["deviceState"].started
     started |= force_onroad
     started &= not force_offroad
     self.started = started
 
     # Update recording audio state
-    self.recording_audio = self.params.get_bool("RecordAudio") and self.started
+    self.recording_audio = params.get_bool("RecordAudio") and self.started
 
-    self.is_metric = self.params.get_bool("IsMetric")
-    self.always_on_dm = self.params.get_bool("AlwaysOnDM")
+    self.is_metric = params.get_bool("IsMetric")
+    self.always_on_dm = params.get_bool("AlwaysOnDM")
     now = time.monotonic()
-    if now - self._usbgpu_update_time >= USBGPU_POLL_INTERVAL:
-      self.usbgpu = chestnut_present()
-      self._usbgpu_update_time = now
-    self.usbgpu_compiled = self.params.get_bool("UsbGpuCompiled")
-    self.usbgpu_active = self.params.get_bool("UsbGpuActive")
+    self._schedule_usbgpu_poll(now)
+    self.usbgpu_compiled = params.get_bool("UsbGpuCompiled")
+    self.usbgpu_active = params.get_bool("UsbGpuActive")
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled") if self.started else False
     if self.sm.valid.get("starpilotCarState", False):
       starpilot_car_state = self.sm["starpilotCarState"]
@@ -269,7 +289,7 @@ class Device:
     self._interactive_timeout_callbacks: list[Callable] = []
     self._prev_timed_out = False
     self._awake: bool = True
-    self._params = Params()
+    self._params = ui_state.ui_params
 
     self._offroad_brightness: int = BACKLIGHT_OFFROAD
     self._last_brightness: int = 0

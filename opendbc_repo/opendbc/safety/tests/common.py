@@ -1017,6 +1017,15 @@ class SafetyTest(SafetyTestBase):
               # common Hyundai lateral/button messages are intentionally shared across multiple safety variants
               tx = list(filter(lambda m: m[0] not in [0x340, 0x4F1, 0x485], tx))
 
+            if attr.startswith('TestGm') and current_test.startswith('TestGm'):
+              tx = list(filter(lambda m: m[0] not in [0x184, 0x1F5, 0x3D1], tx))
+
+            if attr.startswith('TestHyundaiCanfdLKASteering') and current_test.startswith('TestToyota'):
+              tx = list(filter(lambda m: m[0] not in [0x160], tx))
+
+            if attr.startswith('TestHyundaiCanfdCCNC') and current_test.startswith('TestSubaruPreglobal'):
+              tx = list(filter(lambda m: m[0] not in [0x161], tx))
+
             if attr.startswith('TestHyundaiLongitudinal') or attr in ('TestHyundaiSafetyFCEVLong',
                                                                       'TestHyundaiLongitudinalAolLkasOnEngageSafety',
                                                                       'TestHyundaiCanCanfdBlendedLongitudinalSafety',

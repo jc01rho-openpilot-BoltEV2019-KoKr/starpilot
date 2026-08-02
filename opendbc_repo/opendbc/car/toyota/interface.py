@@ -197,6 +197,9 @@ class CarInterface(CarInterfaceBase):
     if candidate == CAR.TOYOTA_HIGHLANDER and ret.openpilotLongitudinalControl and not ret.flags & ToyotaFlags.HYBRID.value:
       ret.longitudinalActuatorDelay = 0.4
 
+    if candidate == CAR.TOYOTA_SIENNA and ret.openpilotLongitudinalControl:
+      ret.longitudinalActuatorDelay = 0.5
+
     if ret.enableGasInterceptorDEPRECATED:
       # Pedal/SDSU Toyotas feel best with a softer final stop clamp.
       ret.longitudinalActuatorDelay = max(ret.longitudinalActuatorDelay, 0.2)

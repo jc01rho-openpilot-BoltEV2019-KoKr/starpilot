@@ -309,6 +309,44 @@ def migrate_legacy_starpilot_params_cache(params: Params, legacy_cache_root: str
     cloudlog.exception(f"Failed to write migration flag: {STARPILOT_PARAMS_CACHE_MIGRATION_FLAG}")
 
 
+def _normalize_secoc_key(candidate) -> str | None:
+  if isinstance(candidate, bytes):
+    candidate = candidate.decode("utf-8", errors="ignore")
+  if not isinstance(candidate, str):
+    return None
+
+  candidate = candidate.strip()
+  try:
+    return candidate if len(bytes.fromhex(candidate)) == 16 else None
+  except ValueError:
+    return None
+
+
+def migrate_legacy_secoc_key(params: Params, params_cache: Params, legacy_cache_root: str | Path) -> None:
+  if _normalize_secoc_key(params.get("SecOCKey")) is not None or _normalize_secoc_key(params_cache.get("SecOCKey")) is not None:
+    return
+
+  legacy_cache_root = Path(legacy_cache_root)
+  candidates = []
+  try:
+    candidates.append(Params(str(legacy_cache_root)).get("SecOCKey"))
+  except Exception:
+    pass
+
+  try:
+    candidates.append((legacy_cache_root / "SecOCKey").read_text())
+  except OSError:
+    pass
+
+  for candidate in candidates:
+    normalized_key = _normalize_secoc_key(candidate)
+    if normalized_key is not None:
+      params.put("SecOCKey", normalized_key)
+      params_cache.put("SecOCKey", normalized_key)
+      cloudlog.warning("Recovered Toyota SecOC key from legacy params cache")
+      return
+
+
 def cleanup_removed_starpilot_params(params: Params, params_cache: Params) -> None:
   removed_keys = []
   for key in STARPILOT_REMOVED_PARAM_KEYS:
@@ -852,6 +890,7 @@ def manager_init() -> None:
   cache_params_path = Paths.params_cache_root()
   migrate_legacy_starpilot_params_cache(params, Paths.legacy_params_cache_root(), cache_params_path)
   params_cache = Params(cache_params_path, return_defaults=True)
+  migrate_legacy_secoc_key(params, params_cache, Paths.legacy_params_cache_root())
   last_timing = _log_boot_timing("manager_init", "params_cache", manager_init_start, last_timing)
 
   # Legacy FrogPilot params are unknown to the renamed schema and would be
