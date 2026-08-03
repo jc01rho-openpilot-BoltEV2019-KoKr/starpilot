@@ -312,7 +312,7 @@ class TorqueSteeringSafetyTestBase(SafetyTestBase, abc.ABC):
 
   def _toggle_aol(self, toggle_on):
     """Toggles "Always On Lateral" On/Off"""
-    pass
+    return None
 
   def test_always_on_lateral(self):
     if self._toggle_aol(True) is None:
@@ -852,7 +852,7 @@ class AngleSteeringSafetyTest(VehicleSpeedSafetyTest):
 
   def _toggle_aol(self, toggle_on):
     """Toggles "Always On Lateral" on/off"""
-    pass
+    return None
 
   def test_always_on_lateral(self):
     if self._toggle_aol(True) is None:

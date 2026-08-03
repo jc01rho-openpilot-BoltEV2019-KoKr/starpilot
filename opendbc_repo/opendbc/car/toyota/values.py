@@ -207,7 +207,7 @@ class CAR(Platforms):
     dbc_dict('toyota_new_mc_pt_generated', 'toyota_adas'),
   )
   TOYOTA_MATRIX_RETROFIT = PlatformConfig(
-    [ToyotaCommunityCarDocs("Toyota Matrix 2005 Retrofit", package="Custom retrofit")],
+    [ToyotaCommunityCarDocs("Toyota Matrix Retrofit 2005", package="Custom retrofit")],
     TOYOTA_COROLLA.specs,
     dbc_dict('toyota_new_mc_pt_generated', 'toyota_adas'),
   )

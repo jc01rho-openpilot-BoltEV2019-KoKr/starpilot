@@ -3987,6 +3987,32 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "LatSmoothSeconds",
+        "label": "Model Lateral Smoothing (s)",
+        "description": "Developer-only model lateral action smoothing. Default is 0.10 seconds.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.005,
+        "max": 2.0,
+        "step": 0.01,
+        "precision": 3,
+        "parent_key": "DeveloperUI",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LongSmoothSeconds",
+        "label": "Model Longitudinal Smoothing (s)",
+        "description": "Developer-only model longitudinal action smoothing. Default is 0.30 seconds.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.005,
+        "max": 2.0,
+        "step": 0.01,
+        "precision": 3,
+        "parent_key": "DeveloperUI",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "DeveloperMetrics",
         "label": "Developer Metrics",
         "description": "Performance data, sensor readings, and system metrics for debugging and optimizing openpilot.",

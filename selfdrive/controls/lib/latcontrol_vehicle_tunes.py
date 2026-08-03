@@ -1,3 +1,4 @@
+import ast
 import json
 import math
 import numpy as np
@@ -133,12 +134,19 @@ KIA_FORTE_CARS = (
   HYUNDAI_CAR.KIA_FORTE_2019_NON_SCC,
   HYUNDAI_CAR.KIA_FORTE_2021_NON_SCC,
 )
+KONA_NON_SCC_CARS = (
+  HYUNDAI_CAR.HYUNDAI_KONA_NON_SCC,
+)
 PRIUS_CARS = (
   TOYOTA_CAR.TOYOTA_PRIUS,
 )
 
 RAV4_PRIME_CARS = (
   TOYOTA_CAR.TOYOTA_RAV4_PRIME,
+)
+
+SIENNA_4TH_GEN_CARS = (
+  TOYOTA_CAR.TOYOTA_SIENNA_4TH_GEN,
 )
 
 LEXUS_IS_CARS = (
@@ -775,19 +783,46 @@ PRIUS_CENTER_TAPER_SPEED = 18.0
 PRIUS_CENTER_TAPER_SPEED_WIDTH = 2.2
 
 RAV4_PRIME_PHASE_SCALE = 0.12
+RAV4_PRIME_TURN_IN_FF_BOOST_LEFT = 0.055
+RAV4_PRIME_TURN_IN_FF_BOOST_RIGHT = 0.040
 RAV4_PRIME_UNWIND_FF_REDUCTION_LEFT = 0.18
 RAV4_PRIME_UNWIND_FF_REDUCTION_RIGHT = 0.19
 RAV4_PRIME_UNWIND_FRICTION_REDUCTION_LEFT = 0.19
 RAV4_PRIME_UNWIND_FRICTION_REDUCTION_RIGHT = 0.20
-RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_LEFT = 0.17
-RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_RIGHT = 0.21
-RAV4_PRIME_FRICTION_THRESHOLD_GAIN = 0.24
+RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_LEFT = 0.185
+RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_RIGHT = 0.225
+RAV4_PRIME_HARD_UNWIND_OUTPUT_REDUCTION_LEFT = 0.04
+RAV4_PRIME_HARD_UNWIND_OUTPUT_REDUCTION_RIGHT = 0.025
+RAV4_PRIME_HARD_UNWIND_LAT = 1.25
+RAV4_PRIME_HARD_UNWIND_LAT_WIDTH = 0.20
+RAV4_PRIME_FRICTION_THRESHOLD_GAIN = 0.30
 RAV4_PRIME_FRICTION_CENTER_LAT = 0.30
 RAV4_PRIME_FRICTION_CENTER_LAT_WIDTH = 0.07
 RAV4_PRIME_SPEED_ONSET = 5.0
 RAV4_PRIME_SPEED_ONSET_WIDTH = 1.5
 RAV4_PRIME_SPEED_MAX = 20.0
 RAV4_PRIME_SPEED_MAX_WIDTH = 2.5
+
+SIENNA_4TH_GEN_PHASE_SCALE = 0.12
+SIENNA_4TH_GEN_TURN_IN_FF_BOOST = 0.08
+SIENNA_4TH_GEN_TURN_IN_LAT = 0.24
+SIENNA_4TH_GEN_TURN_IN_LAT_WIDTH = 0.08
+SIENNA_4TH_GEN_TURN_IN_SPEED_ONSET = 3.0
+SIENNA_4TH_GEN_TURN_IN_SPEED_WIDTH = 1.5
+SIENNA_4TH_GEN_TURN_IN_SPEED_MAX = 14.0
+SIENNA_4TH_GEN_TURN_IN_SPEED_MAX_WIDTH = 2.0
+SIENNA_4TH_GEN_FRICTION_THRESHOLD_GAIN = 0.30
+SIENNA_4TH_GEN_FRICTION_CENTER_LAT = 0.30
+SIENNA_4TH_GEN_FRICTION_CENTER_LAT_WIDTH = 0.07
+SIENNA_4TH_GEN_FRICTION_SPEED_ONSET = 3.0
+SIENNA_4TH_GEN_FRICTION_SPEED_WIDTH = 1.5
+SIENNA_4TH_GEN_FRICTION_SPEED_MAX = 14.0
+SIENNA_4TH_GEN_FRICTION_SPEED_MAX_WIDTH = 2.0
+SIENNA_4TH_GEN_CENTER_TAPER_MAX = 0.12
+SIENNA_4TH_GEN_CENTER_TAPER_LAT = 0.20
+SIENNA_4TH_GEN_CENTER_TAPER_LAT_WIDTH = 0.06
+SIENNA_4TH_GEN_CENTER_TAPER_SPEED_MAX = 13.0
+SIENNA_4TH_GEN_CENTER_TAPER_SPEED_WIDTH = 2.0
 
 LEXUS_IS_PHASE_SCALE = 0.10
 LEXUS_IS_UNWIND_FF_REDUCTION_LEFT = 0.06
@@ -808,6 +843,18 @@ RAM_1500_TRANSITION_JERK_ONSET = 0.35
 RAM_1500_TRANSITION_JERK_FULL = 1.10
 RAM_1500_TRANSITION_LAT_FADE_START = 0.65
 RAM_1500_TRANSITION_LAT_FADE_END = 1.85
+
+# The Kona route is exceptionally accurate below highway speed, but Pop V2
+# reverses the requested lateral acceleration roughly once per second at
+# 29-30 m/s. Fade only rapid, high-speed turn-building torque so the EPS has
+# less stored torque to unwind while leaving steady curves and counter-torque.
+KONA_NON_SCC_TRANSITION_TAPER_MAX = 0.28
+KONA_NON_SCC_TRANSITION_SPEED_ONSET = 23.0
+KONA_NON_SCC_TRANSITION_SPEED_FULL = 29.0
+KONA_NON_SCC_TRANSITION_JERK_ONSET = 0.45
+KONA_NON_SCC_TRANSITION_JERK_FULL = 1.25
+KONA_NON_SCC_TRANSITION_LAT_FADE_START = 0.55
+KONA_NON_SCC_TRANSITION_LAT_FADE_END = 1.65
 
 TRAILER_LOAD_FULL_ASSIST_KG = 15000.0 * CV.LB_TO_KG
 TRAILER_LATERAL_MIN_SPEED = 15.0 * CV.MPH_TO_MS
@@ -859,7 +906,10 @@ def normalize_flm_overrides(overrides) -> dict:
     try:
       overrides = json.loads(stripped)
     except Exception:
-      return {}
+      try:
+        overrides = ast.literal_eval(stripped)
+      except (SyntaxError, ValueError):
+        return {}
 
   if not isinstance(overrides, dict):
     return {}
@@ -1074,12 +1124,22 @@ def _rav4_prime_unwind_weight(desired_lateral_accel: float, desired_lateral_jerk
   return max(-phase, 0.0) * lat_weight
 
 
+def _rav4_prime_turn_in_weight(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  phase = math.tanh((desired_lateral_accel * desired_lateral_jerk) / RAV4_PRIME_PHASE_SCALE)
+  lat_weight = _sigmoid((abs(desired_lateral_accel) - 0.20) / 0.07)
+  return max(phase, 0.0) * lat_weight
+
+
 def get_rav4_prime_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  turn_in_boost = _rav4_prime_side_value(desired_lateral_accel,
+                                         RAV4_PRIME_TURN_IN_FF_BOOST_LEFT,
+                                         RAV4_PRIME_TURN_IN_FF_BOOST_RIGHT)
   reduction = _rav4_prime_side_value(desired_lateral_accel,
                                      RAV4_PRIME_UNWIND_FF_REDUCTION_LEFT,
                                      RAV4_PRIME_UNWIND_FF_REDUCTION_RIGHT)
-  return 1.0 - (reduction * _rav4_prime_unwind_weight(desired_lateral_accel, desired_lateral_jerk) *
-                _rav4_prime_speed_weight(v_ego))
+  speed_weight = _rav4_prime_speed_weight(v_ego)
+  return (1.0 + (turn_in_boost * _rav4_prime_turn_in_weight(desired_lateral_accel, desired_lateral_jerk) * speed_weight) -
+          (reduction * _rav4_prime_unwind_weight(desired_lateral_accel, desired_lateral_jerk) * speed_weight))
 
 
 def get_rav4_prime_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0,
@@ -1103,8 +1163,55 @@ def get_rav4_prime_output_taper_scale(desired_lateral_accel: float, desired_late
   reduction = _rav4_prime_side_value(desired_lateral_accel,
                                      RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_LEFT,
                                      RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_RIGHT)
+  hard_reduction = _rav4_prime_side_value(desired_lateral_accel,
+                                          RAV4_PRIME_HARD_UNWIND_OUTPUT_REDUCTION_LEFT,
+                                          RAV4_PRIME_HARD_UNWIND_OUTPUT_REDUCTION_RIGHT)
+  hard_curve_weight = _sigmoid((abs(desired_lateral_accel) - RAV4_PRIME_HARD_UNWIND_LAT) /
+                               RAV4_PRIME_HARD_UNWIND_LAT_WIDTH)
+  reduction += hard_reduction * hard_curve_weight
   return 1.0 - (reduction * _rav4_prime_unwind_weight(desired_lateral_accel, desired_lateral_jerk) *
                 _rav4_prime_speed_weight(v_ego))
+
+
+def _sienna_4th_gen_speed_weight(v_ego: float) -> float:
+  onset = _sigmoid((v_ego - SIENNA_4TH_GEN_TURN_IN_SPEED_ONSET) / SIENNA_4TH_GEN_TURN_IN_SPEED_WIDTH)
+  cutoff = _sigmoid((SIENNA_4TH_GEN_TURN_IN_SPEED_MAX - v_ego) / SIENNA_4TH_GEN_TURN_IN_SPEED_MAX_WIDTH)
+  return onset * cutoff
+
+
+def _sienna_4th_gen_turn_in_weight(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  phase = math.tanh((desired_lateral_accel * desired_lateral_jerk) / SIENNA_4TH_GEN_PHASE_SCALE)
+  lat_weight = _sigmoid((abs(desired_lateral_accel) - SIENNA_4TH_GEN_TURN_IN_LAT) /
+                        SIENNA_4TH_GEN_TURN_IN_LAT_WIDTH)
+  return max(phase, 0.0) * lat_weight
+
+
+def get_sienna_4th_gen_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  if desired_lateral_accel == 0.0:
+    return 1.0
+  return 1.0 + (SIENNA_4TH_GEN_TURN_IN_FF_BOOST *
+                _sienna_4th_gen_turn_in_weight(desired_lateral_accel, desired_lateral_jerk) *
+                _sienna_4th_gen_speed_weight(v_ego))
+
+
+def get_sienna_4th_gen_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0,
+                                          desired_lateral_jerk: float = 0.0) -> float:
+  del desired_lateral_jerk
+  center_weight = _sigmoid((SIENNA_4TH_GEN_FRICTION_CENTER_LAT - abs(desired_lateral_accel)) /
+                           SIENNA_4TH_GEN_FRICTION_CENTER_LAT_WIDTH)
+  onset = _sigmoid((v_ego - SIENNA_4TH_GEN_FRICTION_SPEED_ONSET) / SIENNA_4TH_GEN_FRICTION_SPEED_WIDTH)
+  cutoff = _sigmoid((SIENNA_4TH_GEN_FRICTION_SPEED_MAX - v_ego) / SIENNA_4TH_GEN_FRICTION_SPEED_MAX_WIDTH)
+  return get_standard_friction_threshold(v_ego) * (
+    1.0 + SIENNA_4TH_GEN_FRICTION_THRESHOLD_GAIN * center_weight * onset * cutoff
+  )
+
+
+def get_sienna_4th_gen_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _sigmoid((SIENNA_4TH_GEN_CENTER_TAPER_SPEED_MAX - v_ego) /
+                          SIENNA_4TH_GEN_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _sigmoid((SIENNA_4TH_GEN_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                           SIENNA_4TH_GEN_CENTER_TAPER_LAT_WIDTH)
+  return 1.0 - (SIENNA_4TH_GEN_CENTER_TAPER_MAX * speed_weight * center_weight)
 
 
 def get_lexus_is_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
@@ -1132,6 +1239,16 @@ def get_ram_1500_transition_output_scale(desired_lateral_accel: float, desired_l
   lat_weight = 1.0 - float(np.interp(abs(desired_lateral_accel),
                                      [RAM_1500_TRANSITION_LAT_FADE_START, RAM_1500_TRANSITION_LAT_FADE_END], [0.0, 1.0]))
   return 1.0 - (RAM_1500_TRANSITION_TAPER_MAX * speed_weight * jerk_weight * lat_weight)
+
+
+def get_kona_non_scc_highway_transition_output_scale(desired_lateral_accel: float, desired_lateral_jerk: float,
+                                                       v_ego: float) -> float:
+  speed_weight = float(np.interp(v_ego, [KONA_NON_SCC_TRANSITION_SPEED_ONSET, KONA_NON_SCC_TRANSITION_SPEED_FULL], [0.0, 1.0]))
+  jerk_weight = float(np.interp(abs(desired_lateral_jerk),
+                                [KONA_NON_SCC_TRANSITION_JERK_ONSET, KONA_NON_SCC_TRANSITION_JERK_FULL], [0.0, 1.0]))
+  lat_weight = 1.0 - float(np.interp(abs(desired_lateral_accel),
+                                     [KONA_NON_SCC_TRANSITION_LAT_FADE_START, KONA_NON_SCC_TRANSITION_LAT_FADE_END], [0.0, 1.0]))
+  return 1.0 - (KONA_NON_SCC_TRANSITION_TAPER_MAX * speed_weight * jerk_weight * lat_weight)
 
 
 def civic_bosch_modified_lateral_testing_ground_active() -> bool:
@@ -3090,11 +3207,11 @@ def get_flm_capabilities(car_fingerprint, brand: str = "", hyundai_canfd: bool =
 
   dedicated_friction = car_fingerprint in (
     set(BOLT_2022_2023_CARS) | set(BOLT_2018_2021_CARS) | set(VOLT_STANDARD_CARS) | set(PALISADE_CARS) |
-    set(PRIUS_CARS) | set(RAV4_PRIME_CARS) | set(IONIQ_5_CARS) | set(IONIQ_6_CARS) | set(KIA_EV6_CARS) | set(KIA_FORTE_CARS) |
+    set(PRIUS_CARS) | set(RAV4_PRIME_CARS) | set(SIENNA_4TH_GEN_CARS) | set(IONIQ_5_CARS) | set(IONIQ_6_CARS) | set(KIA_EV6_CARS) | set(KIA_FORTE_CARS) |
     set(KIA_NIRO_PHEV_2022_CARS) | set(KIA_CARNIVAL_CARS) | set(GENESIS_G90_CARS)
   )
   dedicated_center_taper = car_fingerprint in (
-    set(PRIUS_CARS) | set(BOLT_CARS) | set(VOLT_STANDARD_CARS) | set(IONIQ_5_CARS) |
+    set(PRIUS_CARS) | set(SIENNA_4TH_GEN_CARS) | set(BOLT_CARS) | set(VOLT_STANDARD_CARS) | set(IONIQ_5_CARS) |
     set(IONIQ_EV_OLD_CARS) | set(IONIQ_6_CARS) | set(SONATA_CARS) | set(SONATA_HYBRID_CARS) |
     set(KIA_XCEED_CARS) | set(KIA_NIRO_PHEV_2022_CARS) | set(KIA_FORTE_CARS) | set(KIA_EV6_CARS) |
     set(KIA_CARNIVAL_CARS) | set(TUCSON_4TH_GEN_CARS) | set(SILVERADO_CARS)

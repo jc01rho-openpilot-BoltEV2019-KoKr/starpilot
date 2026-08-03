@@ -92,8 +92,8 @@ class TestUIParamCache(unittest.TestCase):
       lambda cache: cache.put_nonblocking("enabled", True),
       lambda cache: cache.put_bool_nonblocking("enabled", True),
     )
-    for operation in operations:
-      with self.subTest(operation=operation):
+    for operation_index, operation in enumerate(operations):
+      with self.subTest(operation_index=operation_index):
         params = FakeParams()
         cached = UIParamCache(params, ttl=10.0)
         self.assertFalse(cached.get_bool("enabled"))

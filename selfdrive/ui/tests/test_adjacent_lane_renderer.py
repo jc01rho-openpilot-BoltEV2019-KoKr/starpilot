@@ -1,39 +1,8 @@
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-
-def _stub_ui_dependencies() -> None:
-  """Keep this focused renderer test independent from a live raylib context."""
-  application = ModuleType("openpilot.system.ui.lib.application")
-  application.gui_app = SimpleNamespace(target_fps=20)
-  application.GL_VERSION = ""
-  application.FONT_SCALE = 1.0
-  application.font_fallback = lambda font: font
-  sys.modules[application.__name__] = application
-
-  shader_polygon = ModuleType("openpilot.system.ui.lib.shader_polygon")
-  shader_polygon.Gradient = lambda **kwargs: SimpleNamespace(**kwargs)
-  shader_polygon.draw_polygon = lambda *args, **kwargs: None
-  sys.modules[shader_polygon.__name__] = shader_polygon
-
-  text_measure = ModuleType("openpilot.system.ui.lib.text_measure")
-  text_measure.measure_text_cached = lambda *args, **kwargs: None
-  sys.modules[text_measure.__name__] = text_measure
-
-  widgets = ModuleType("openpilot.system.ui.widgets")
-  widgets.Widget = object
-  sys.modules[widgets.__name__] = widgets
-
-  ui_state = ModuleType("openpilot.selfdrive.ui.ui_state")
-  ui_state.ui_state = SimpleNamespace()
-  ui_state.UIStatus = SimpleNamespace()
-  sys.modules[ui_state.__name__] = ui_state
-
-
-_stub_ui_dependencies()
 import openpilot.selfdrive.ui.onroad.model_renderer as model_renderer
 
 

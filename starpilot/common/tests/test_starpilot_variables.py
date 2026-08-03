@@ -41,9 +41,27 @@ def test_get_starpilot_toggles_uses_persisted_force_torque_request(monkeypatch):
   monkeypatch.setattr(spv.get_starpilot_toggles, "_params", params, raising=False)
 
   payload = '{"force_torque_controller": false}'
-  toggles = spv.get_starpilot_toggles({"starpilotPlan": SimpleNamespace(starpilotToggles=payload)})
+  toggles = spv.get_starpilot_toggles(
+    {"starpilotPlan": SimpleNamespace(starpilotToggles=payload)},
+    read_persisted_force_params=True,
+  )
 
   assert toggles.force_torque_controller is True
+
+
+def test_get_starpilot_toggles_realtime_path_does_not_read_persisted_force_params(monkeypatch):
+  class UnexpectedParamsRead:
+    def get_bool(self, key):
+      raise AssertionError(f"unexpected persisted param read: {key}")
+
+  monkeypatch.setattr(spv.get_starpilot_toggles, "_params", UnexpectedParamsRead(), raising=False)
+
+  payload = '{"force_offroad": false, "force_onroad": true, "force_torque_controller": false}'
+  toggles = spv.get_starpilot_toggles({"starpilotPlan": SimpleNamespace(starpilotToggles=payload)})
+
+  assert toggles.force_offroad is False
+  assert toggles.force_onroad is True
+  assert toggles.force_torque_controller is False
 
 
 class _FakeParams:

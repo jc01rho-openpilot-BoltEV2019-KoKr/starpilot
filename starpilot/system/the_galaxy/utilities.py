@@ -2211,7 +2211,7 @@ def _model_usage_key(model_name):
   clean_name = _clean_model_label(model_name)
   if not clean_name or clean_name == "Unknown model":
     return ""
-  return canonical_model_key(clean_name) or clean_name.lower()
+  return re.sub(r"[^a-z0-9]+", "-", clean_name.lower()).strip("-")
 
 
 def _better_record(current, previous, metric_key):

@@ -336,6 +336,47 @@ class TestHyundaiLegacySafetyHEV(TestHyundaiSafety):
     return self.packer.make_can_msg_safety("E_EMS11", 0, values, fix_checksum=checksum)
 
 
+def test_hyundai_starpilot_safety_flag_combinations():
+  safety = libsafety_py.libsafety
+  lda = HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON
+  combinations = (
+    HyundaiSafetyFlags.LONG | HyundaiSafetyFlags.FCEV_GAS | lda,
+    HyundaiSafetyFlags.LONG | lda,
+    HyundaiSafetyFlags.CAMERA_SCC | lda,
+    HyundaiSafetyFlags.CAN_CANFD_BLENDED | HyundaiSafetyFlags.CANFD_LKA_STEERING | lda,
+    HyundaiSafetyFlags.CAN_CANFD_BLENDED | lda,
+    HyundaiSafetyFlags.FCEV_GAS | lda,
+    HyundaiSafetyFlags.NON_SCC | HyundaiSafetyFlags.EV_GAS | lda,
+    HyundaiSafetyFlags.NON_SCC | HyundaiSafetyFlags.EV_GAS,
+    HyundaiSafetyFlags.NON_SCC | HyundaiSafetyFlags.HYBRID_GAS | lda,
+    HyundaiSafetyFlags.NON_SCC | HyundaiSafetyFlags.HYBRID_GAS,
+    HyundaiSafetyFlags.NON_SCC | lda,
+  )
+  for flags in combinations:
+    assert safety.set_safety_hooks(CarParams.SafetyModel.hyundai, flags) == 0
+    safety.init_tests()
+
+
+def test_hyundai_starpilot_rx_sources():
+  safety = libsafety_py.libsafety
+  flags = HyundaiSafetyFlags.NON_SCC | HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON
+  assert safety.set_safety_hooks(CarParams.SafetyModel.hyundai, flags) == 0
+  safety.init_tests()
+
+  for addr, dat in (
+    (0x367, b"\x64\x00\x00\x00\x00\x00\x00\x00"),
+    (0x592, b"\x00\x00\x00\x00\x0c\x00\x00\x00"),
+    (0x595, b"\x00\x00\x00\x00\x00\x0c\x00\x00"),
+    (0x50C, b"\x00\x00\x00\x00\x00\x00\x00\x01"),
+  ):
+    assert safety.safety_rx_hook(libsafety_py.make_CANPacket(addr, 0, dat))
+
+  flags = HyundaiSafetyFlags.CAN_CANFD_BLENDED
+  assert safety.set_safety_hooks(CarParams.SafetyModel.hyundai, flags) == 0
+  safety.init_tests()
+  safety.safety_rx_hook(libsafety_py.make_CANPacket(0x421, 0, bytes(8)))
+
+
 class TestHyundaiLongitudinalSafety(HyundaiLongitudinalBase, TestHyundaiSafety):
   TX_MSGS = [[0x340, 0], [0x4F1, 0], [0x485, 0], [0x420, 0], [0x421, 0], [0x50A, 0], [0x389, 0], [0x4A2, 0], [0x38D, 0], [0x483, 0], [0x7D0, 0]]
 

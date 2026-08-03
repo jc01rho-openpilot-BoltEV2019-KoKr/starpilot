@@ -541,7 +541,11 @@ async function revertProfile() {
   state.runningAction = true
   try {
     const response = await fetch("/api/flm/trials/revert", { method: "POST" })
-    const payload = await response.json()
+    const body = await response.text()
+    let payload
+    try { payload = body ? JSON.parse(body) : {} } catch (_) {
+      payload = { error: body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() }
+    }
     if (!response.ok) throw new Error(payload.error || "Failed to revert trial profile.")
     state.error = ""
     await fetchWorkspace()

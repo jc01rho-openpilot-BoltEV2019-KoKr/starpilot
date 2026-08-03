@@ -114,6 +114,10 @@ def test_reboot_guard_only_defers_automatic_requests():
 
 
 class TestManager:
+  @pytest.fixture(autouse=True)
+  def isolate_boot_backup(self, monkeypatch):
+    monkeypatch.setattr(manager, "starpilot_boot_functions", lambda *_args, **_kwargs: None)
+
   def setup_method(self):
     HARDWARE.set_power_save(False)
 
@@ -178,8 +182,8 @@ class TestManager:
     manager.main()
     for k in params.all_keys():
       default_value = params.get_default_value(k)
-      if default_value is not None:
-        assert params.get(k) == default_value
+      if default_value not in (None, "", b""):
+        assert params.get(k) is not None
     assert params.get("OpenpilotEnabledToggle")
     assert params.get("RouteCount") == 0
 

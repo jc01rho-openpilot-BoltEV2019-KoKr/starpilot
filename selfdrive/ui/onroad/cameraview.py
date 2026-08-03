@@ -183,6 +183,9 @@ class CameraView(Widget):
 
   def switch_stream(self, stream_type: VisionStreamType) -> None:
     if getattr(self, "_onroad_reentry_pending", False):
+      if (getattr(self, "_reentry_stream_selected", False) and self._stream_type == stream_type and
+          (not self._switching or self._target_stream_type == stream_type)):
+        return
       self._select_reentry_stream(stream_type)
       return
 
@@ -485,11 +488,7 @@ class CameraView(Widget):
       return False
     self.last_connection_attempt = current_time
 
-    # Do not create a client until camerad advertises the requested stream.
     stream_type = self._target_stream_type or self._stream_type
-    if stream_type not in VisionIpcClient.available_streams(self._name, block=False):
-      return False
-
     self._target_stream_type = stream_type
     self._target_client = VisionIpcClient(self._name, stream_type, conflate=True)
     self._switching = True

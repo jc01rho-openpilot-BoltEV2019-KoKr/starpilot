@@ -82,7 +82,7 @@ void hyundai_common_init(uint16_t param) {
   const uint16_t HYUNDAI_PARAM_NON_SCC = 4096;
   const uint16_t HYUNDAI_PARAM_CAN_CANFD_BLENDED = 8192;
   const uint16_t HYUNDAI_PARAM_CANCEL_BTN_ENABLE = 16384;
-  const uint16_t HYUNDAI_PARAM_CAN_REFRESH_MSGS = 32768;
+  const uint16_t HYUNDAI_PARAM_CAN_REFRESH_MSGS = 32768U;
 
   hyundai_ev_gas_signal = GET_FLAG(param, HYUNDAI_PARAM_EV_GAS);
   hyundai_hybrid_gas_signal = !hyundai_ev_gas_signal && GET_FLAG(param, HYUNDAI_PARAM_HYBRID_GAS);

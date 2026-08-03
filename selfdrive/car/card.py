@@ -122,7 +122,8 @@ class Car:
         with car.CarParams.from_bytes(cached_params_raw) as _cached_params:
           cached_params = _cached_params
 
-      self.CI = get_car(*self.can_callbacks, obd_callback(self.params), alpha_long_allowed, is_release, self.params, num_pandas, cached_params, get_starpilot_toggles())
+      self.CI = get_car(*self.can_callbacks, obd_callback(self.params), alpha_long_allowed, is_release, self.params, num_pandas, cached_params,
+                        get_starpilot_toggles(read_persisted_force_params=True))
       self.RI = interfaces[self.CI.CP.carFingerprint].RadarInterface(self.CI.CP)
       self.CP = self.CI.CP
 
@@ -200,7 +201,7 @@ class Car:
 
     self.resume_prev_button = False
 
-    self.starpilot_toggles = get_starpilot_toggles()
+    self.starpilot_toggles = get_starpilot_toggles(read_persisted_force_params=True)
 
     self.FPCP.alternativeExperience |= interface_alternative_experience
 

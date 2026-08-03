@@ -213,9 +213,6 @@ class CarInterfaceBase(ABC):
 
     if platform not in MOCK:
       if platform in CHRYSLER:
-        if candidate == CHRYSLER.RAM_HD_5TH_GEN:
-          if 570 not in fingerprint[0]:
-            fp_ret.flags |= ChryslerStarPilotFlags.RAM_HD_ALT_BUTTONS.value
         if 0x4FF in fingerprint[0]:
           fp_ret.flags |= ChryslerStarPilotFlags.NO_MIN_STEERING_SPEED.value
           CP.minSteerSpeed = 0.
@@ -250,6 +247,9 @@ class CarInterfaceBase(ABC):
         )
         if hyundai_has_lda_button:
           fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON.value
+
+        if getattr(starpilot_toggles, "always_on_lateral_lkas", False):
+          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
 
         # LKASButtonControl == 9 means BUTTON_FUNCTIONS["AOL_TOGGLE"] in starpilot_variables.
         if params.get_bool("AlwaysOnLateral") and params.get_int("LKASButtonControl") == 9:

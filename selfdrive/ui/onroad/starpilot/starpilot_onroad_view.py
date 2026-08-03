@@ -1,5 +1,4 @@
 import pyray as rl
-import time
 from msgq.visionipc import VisionStreamType
 from openpilot.selfdrive.ui.onroad.augmented_road_view import AugmentedRoadView
 from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import render_behind, render_overlay, render_background_effects
@@ -10,14 +9,13 @@ from openpilot.selfdrive.ui.onroad.starpilot.widget_layout_manager import Widget
 from openpilot.selfdrive.ui.onroad.starpilot.widgets import (
   SetSpeedWidget, SpeedLimitWidget, PedalIconsWidget,
   AetherGaugeWidget, PersonalityButtonWidget, DriverMonitorWidget,
-  SteeringWheelWidget
+  SteeringWheelWidget, StoppedTimerWidget
 )
 from openpilot.selfdrive.ui.onroad.starpilot.stopping_point import render_stopping_point
 from openpilot.selfdrive.ui.onroad.starpilot.pause_indicators import render_lateral_paused, render_longitudinal_paused
 from openpilot.selfdrive.ui.onroad.starpilot.weather_icon import render_weather_icon
 from openpilot.selfdrive.ui.lib.starpilot_status import (
-  get_screen_edge_color, ENGAGED_COLOR,
-  EXPERIMENTAL_COLOR, TRAFFIC_COLOR,
+  get_screen_edge_color,
 )
 
 from openpilot.system.ui.lib.application import MousePos, gui_app, FontWeight
@@ -34,7 +32,6 @@ class StarPilotOnroadView(AugmentedRoadView):
 
     self._font_bold = gui_app.font(FontWeight.BOLD)
     self._font_medium = gui_app.font(FontWeight.MEDIUM)
-    self._standstill_started_at = 0.0
     self._torque_bar = TorqueBar()
     self._min_fps = 99.9
     self._max_fps = 0.0
@@ -55,6 +52,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._pedals_widget = PedalIconsWidget()
     self._personality_button_widget = PersonalityButtonWidget()
     self._driver_monitor_widget = DriverMonitorWidget(self.driver_state_renderer)
+    self._stopped_timer_widget = StoppedTimerWidget(self.is_in_reverse)
 
     # Register to layout zones
     self.layout_manager.register_widget("left", self._set_speed_widget)
@@ -73,12 +71,17 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._child(self._pedals_widget)
     self._child(self._personality_button_widget)
     self._child(self._driver_monitor_widget)
+    self._child(self._stopped_timer_widget)
 
   def _render(self, rect: rl.Rectangle):
     border_width = self._get_border_width()
     border_color = get_screen_edge_color(ui_state)
     rl.draw_rectangle_rounded(rect, 0.12, 10, border_color)
     render_background_effects(rect, border_width)
+
+    self._hud_renderer.draw_current_speed = (
+      ui_state.started and not self._stopped_timer_widget.replaces_current_speed
+    )
     super()._render(rect)
 
     if not ui_state.started:
@@ -109,10 +112,13 @@ class StarPilotOnroadView(AugmentedRoadView):
 
   def _render_overlays(self):
     alert_showing, _ = self.alert_renderer.will_render()
+    if alert_showing is not None and alert_showing.size == AlertSize.full:
+      return
+
+    self._stopped_timer_widget.render(self._content_rect)
     if alert_showing is not None:
       return
 
-    self._render_standstill_timer()
     self._render_developer_metrics()
 
     self.layout_manager.render_widgets(exclude={"speed_limit", "set_speed"})
@@ -154,71 +160,6 @@ class StarPilotOnroadView(AugmentedRoadView):
   def _full_alert_showing(self) -> bool:
     alert_showing, _ = self.alert_renderer.will_render()
     return alert_showing is not None and alert_showing.size == AlertSize.full
-
-  def _render_standstill_timer(self):
-    if not self._params.get_bool("stopped_timer"):
-      self._standstill_started_at = 0.0
-      return
-    if not ui_state.sm.valid.get("carState", False):
-      return
-
-    car_state = ui_state.sm["carState"]
-    if getattr(car_state, "standstill", False):
-      if self._standstill_started_at == 0.0:
-        self._standstill_started_at = time.monotonic()
-    else:
-      self._standstill_started_at = 0.0
-      return
-
-    if self._standstill_started_at == 0.0:
-      return
-
-    duration = int(time.monotonic() - self._standstill_started_at)
-    if duration < 60:
-      return
-
-    minutes = duration // 60
-    seconds = duration % 60
-    minute_text = f"{minutes} minute{'s' if minutes != 1 else ''}"
-    second_text = f"{seconds} second{'s' if seconds != 1 else ''}"
-    minute_size = measure_text_cached(self._font_bold, minute_text, 176)
-    second_size = measure_text_cached(self._font_medium, second_text, 66)
-
-    def blend_colors(start: rl.Color, end: rl.Color, transition: float) -> rl.Color:
-      transition = float(min(max(transition, 0.0), 1.0))
-      return rl.Color(
-        int(start.r + transition * (end.r - start.r)),
-        int(start.g + transition * (end.g - start.g)),
-        int(start.b + transition * (end.b - start.b)),
-        255,
-      )
-
-    if duration < 150:
-      transition = (duration - 60) / 90.0
-      duration_color = blend_colors(ENGAGED_COLOR, EXPERIMENTAL_COLOR, transition)
-    elif duration < 300:
-      transition = (duration - 150) / 150.0
-      duration_color = blend_colors(EXPERIMENTAL_COLOR, TRAFFIC_COLOR, transition)
-    else:
-      duration_color = TRAFFIC_COLOR
-
-    x = gui_app.width / 2
-    rl.draw_text_ex(
-      self._font_bold,
-      minute_text,
-      rl.Vector2(x - minute_size.x / 2, 210 - minute_size.y / 2),
-      176,
-      0,
-      duration_color,
-    )
-    rl.draw_text_ex(
-      self._font_medium,
-      second_text,
-      rl.Vector2(x - second_size.x / 2, 290 - second_size.y / 2),
-      66,
-      0,
-      rl.Color(255, 255, 255, 242),
-    )
 
   def _handle_mouse_press(self, mouse_pos: MousePos):
     # Check if click maps to any of the layout widgets
