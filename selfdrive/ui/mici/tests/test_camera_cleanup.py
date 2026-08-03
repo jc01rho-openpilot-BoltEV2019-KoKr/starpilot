@@ -2,7 +2,10 @@ import gc
 from types import SimpleNamespace
 import weakref
 
+import pytest
+
 from openpilot.selfdrive.ui.onroad import cameraview as big_cameraview
+from openpilot.selfdrive.ui.onroad import augmented_road_view as big_augmented_road_view
 from openpilot.selfdrive.ui.mici.onroad import augmented_road_view as mici_augmented_road_view
 
 
@@ -179,6 +182,28 @@ def test_reverse_activation_cancels_mismatched_pending_switch():
   assert view._target_client is None
   assert view._target_stream_type is None
   assert not view._switching
+
+
+def test_onroad_reentry_keeps_matching_candidate_alive():
+  for module in (big_augmented_road_view, mici_augmented_road_view):
+    view = module.AugmentedRoadView.__new__(module.AugmentedRoadView)
+    candidate = object()
+    view._stream_type = module.ROAD_CAM
+    view._target_stream_type = module.ROAD_CAM
+    view._target_client = candidate
+    view._switching = True
+    view._onroad_reentry_pending = True
+    view._reentry_stream_selected = True
+    view.available_streams = [module.ROAD_CAM]
+    view._closed = True
+    view._update_reverse_driver_camera_state = lambda: False
+    view._refresh_available_streams = lambda: pytest.fail("reentry selection was repeated")
+
+    view._switch_stream_if_needed(None, module.CAMERA_VIEW_STANDARD)
+
+    assert view._target_client is candidate
+    assert view._target_stream_type == module.ROAD_CAM
+    assert view._switching
 
 
 def test_onroad_transition_marks_camera_reentry(monkeypatch):

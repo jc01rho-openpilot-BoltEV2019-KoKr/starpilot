@@ -2895,7 +2895,11 @@ def clear_workspace() -> dict[str, Any]:
   params = Params(return_defaults=True)
   active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
   if params.get_bool("FLMTrialApplied") or (isinstance(active_snapshot, dict) and active_snapshot.get("params")):
-    raise RuntimeError("Revert or keep the active FLM trial before clearing the workspace.")
+    params.put_bool("FLMTrialApplied", False)
+    params.put("FLMActiveProfileId", "")
+    params.put("FLMActiveOverrides", {})
+    _clear_persistent_trial_baseline(params)
+    Params(memory=True).put_bool("StarPilotTogglesUpdated", True)
 
   removed = []
   for key in ("reports", "profiles", "feedback", "snapshots"):
@@ -3417,7 +3421,16 @@ def revert_trial_profile() -> dict[str, Any]:
   current_profile_id = params.get("FLMActiveProfileId", encoding="utf-8") or ""
   revert_snapshot = _find_revert_snapshot(paths, snapshot if isinstance(snapshot, dict) else {}, current_profile_id, params)
   if revert_snapshot is None:
-    raise FileNotFoundError("active trial snapshot")
+    params.put_bool("FLMTrialApplied", False)
+    params.put("FLMActiveProfileId", "")
+    params.put("FLMActiveOverrides", {})
+    _clear_persistent_trial_baseline(params)
+    try:
+      snapshot_path.unlink()
+    except FileNotFoundError:
+      pass
+    Params(memory=True).put_bool("StarPilotTogglesUpdated", True)
+    return {"message": "Recovered the incomplete FLM trial; no rollback snapshot was available.", "recovered": True}
   _apply_param_bundle(params, revert_snapshot["params"])
   _clear_persistent_trial_baseline(params)
   try:

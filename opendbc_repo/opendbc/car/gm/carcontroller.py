@@ -492,6 +492,10 @@ class CarController(CarControllerBase):
     self.xt4_cc_button_burst_last_counter = -1
     self.xt4_cc_button_observed_counter = -1
     self.xt4_cc_button_counter_frame = 0
+    self.gm_cc_last_direction_button = CruiseButtons.INIT
+    self.gm_cc_last_direction_frame = 0
+    self.gm_cc_pending_reverse_button = CruiseButtons.INIT
+    self.gm_cc_pending_reverse_frame = 0
 
     self.lka_steering_cmd_counter = 0
     self.lka_icon_status_last = (False, False)

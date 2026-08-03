@@ -43,6 +43,22 @@ def test_pending_switch_is_cancelled_when_requested_stream_is_current():
   assert not view._switching
 
 
+def test_reentry_switch_request_keeps_matching_candidate():
+  view = _camera_view()
+  candidate = object()
+  view._onroad_reentry_pending = True
+  view._reentry_stream_selected = True
+  view._target_stream_type = view._stream_type
+  view._target_client = candidate
+  view._switching = True
+
+  view.switch_stream(view._stream_type)
+
+  assert view._target_client is candidate
+  assert view._target_stream_type == view._stream_type
+  assert view._switching
+
+
 def test_onroad_reentry_selects_requested_stream_before_rendering(monkeypatch):
   view = _camera_view()
   view._name = "camerad"
@@ -196,7 +212,7 @@ def test_shared_camera_fallback_reloads_texture_backend(monkeypatch):
   assert not view._use_egl
 
 
-def test_connection_retry_discards_failed_client_and_uses_fresh_candidate(monkeypatch):
+def test_connection_retry_does_not_wait_for_advertisement_and_uses_fresh_candidate(monkeypatch):
   view = _camera_view()
   view._name = "camerad"
   view._clear_textures = lambda: None
@@ -212,7 +228,7 @@ def test_connection_retry_discards_failed_client_and_uses_fresh_candidate(monkey
   class FakeClient:
     @staticmethod
     def available_streams(_name, block=False):
-      return [view._stream_type]
+      pytest.fail("startup connection waited for stream advertisement")
 
     def __init__(self, *_args, **_kwargs):
       candidates.append(self)

@@ -17,6 +17,26 @@ from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPl
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, soften_far_radar_lead_accel, should_trigger_planner_fcw
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
+from openpilot.selfdrive.modeld import modeld
+
+
+class _SmoothParams:
+  def __init__(self, value, developer=True, safe=False):
+    self.value = value
+    self.developer = developer
+    self.safe = safe
+
+  def get_bool(self, key):
+    return self.developer if key == "DeveloperUI" else self.safe
+
+  def get_float(self, key, **kwargs):
+    return self.value
+
+
+def test_model_smoothing_is_developer_gated_and_quantized():
+  assert modeld._model_smooth_seconds(_SmoothParams(0.126), "LatSmoothSeconds", 0.1) == pytest.approx(0.125)
+  assert modeld._model_smooth_seconds(_SmoothParams(0.126, developer=False), "LatSmoothSeconds", 0.1) == pytest.approx(0.1)
+  assert modeld._model_smooth_seconds(_SmoothParams(0.126, safe=True), "LatSmoothSeconds", 0.1) == pytest.approx(0.1)
 
 
 def make_lead(*, status: bool, d_rel: float = 200.0, v_lead: float = 0.0, a_lead: float = 0.0,

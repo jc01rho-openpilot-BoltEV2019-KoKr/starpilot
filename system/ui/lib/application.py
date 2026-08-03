@@ -1304,6 +1304,9 @@ class GuiApplication:
     sys.exit(0)
 
   def _calculate_auto_scale(self) -> float:
+    if os.getenv("SP_HEADLESS_TEST") == "1":
+      return 1.0
+
      # Create temporary window to query monitor info
     rl.init_window(1, 1, "")
     w, h = rl.get_monitor_width(0), rl.get_monitor_height(0)

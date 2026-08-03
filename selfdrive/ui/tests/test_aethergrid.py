@@ -4,10 +4,22 @@ import types
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 MODULE_NAME = "openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid"
 PANEL_MODULE_NAME = "openpilot.selfdrive.ui.layouts.settings.starpilot.panel"
 SECTIONED_PANEL_MODULE_NAME = "openpilot.selfdrive.ui.layouts.settings.starpilot.sectioned_panel"
+
+
+@pytest.fixture(autouse=True)
+def restore_ui_modules():
+  modules = {name: module for name, module in sys.modules.items() if name == "pyray" or name.startswith("openpilot.")}
+  yield
+  for name in tuple(sys.modules):
+    if (name == "pyray" or name.startswith("openpilot.")) and name not in modules:
+      sys.modules.pop(name, None)
+  sys.modules.update(modules)
 
 
 def _clear_modules(*module_names):

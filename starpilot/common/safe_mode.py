@@ -19,6 +19,8 @@ SAFE_MODE_MANAGED_KEYS = (
   "ModelVersion",
   "DrivingModelVersion",
   "ModelRandomizer",
+  "LatSmoothSeconds",
+  "LongSmoothSeconds",
   "DisableOpenpilotLongitudinal",
   "ClusterOffset",
   "LateralTune",

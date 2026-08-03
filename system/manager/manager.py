@@ -1043,7 +1043,7 @@ def manager_thread() -> None:
   last_timing = _log_boot_timing("manager_thread", "messaging", manager_thread_start, last_timing)
 
   write_onroad_params(False, params)
-  initial_toggles = get_starpilot_toggles()
+  initial_toggles = get_starpilot_toggles(read_persisted_force_params=True)
   last_timing = _log_boot_timing("manager_thread", "initial_toggles", manager_thread_start, last_timing)
   ensure_running(managed_processes.values(), False, params=params, CP=sm['carParams'], not_run=ignore, starpilot_toggles=initial_toggles)
   last_timing = _log_boot_timing("manager_thread", "initial_ensure_running", manager_thread_start, last_timing)
@@ -1059,7 +1059,7 @@ def manager_thread() -> None:
 
   params_memory = Params(memory=True)
 
-  starpilot_toggles = get_starpilot_toggles()
+  starpilot_toggles = get_starpilot_toggles(read_persisted_force_params=True)
   last_timing = _log_boot_timing("manager_thread", "loop_toggles", manager_thread_start, last_timing)
   _log_boot_timing("manager_thread", "loop_ready", manager_thread_start, last_timing)
 
@@ -1133,7 +1133,7 @@ def manager_thread() -> None:
       break
 
     # StarPilot variables
-    starpilot_toggles = get_starpilot_toggles(sm)
+    starpilot_toggles = get_starpilot_toggles(sm, read_persisted_force_params=True)
 
 
 def main() -> None:

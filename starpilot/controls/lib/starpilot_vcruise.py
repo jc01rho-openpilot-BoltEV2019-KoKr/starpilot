@@ -421,6 +421,8 @@ class StarPilotVCruise:
       )
       if pedal_override:
         self.override_force_stop_timer = OVERRIDE_FORCE_STOP_TIMER
+      elif light_hold_expired:
+        self.override_force_stop_timer = OVERRIDE_FORCE_STOP_TIMER
       if (not controls_enabled) or (not standstill) or lead_present or pedal_override or light_hold_expired:
         self._clear_standstill_force_stop_hold()
       elif standstill_force_stop_scene_active:
@@ -451,6 +453,9 @@ class StarPilotVCruise:
     # abandon a stop already in progress — we bring the car to the stop line, then turn.
     force_stop_enabled |= self.forcing_stop and not sm["carState"].standstill
     force_stop_enabled |= self.standstill_force_stop_hold
+
+    if self.forcing_stop and standstill and not force_stop_enabled and self.standstill_force_stop_reason != "sign":
+      self.override_force_stop_timer = OVERRIDE_FORCE_STOP_TIMER
 
     # Override: gas/accel pedal during an active force stop
     self.override_force_stop |= sm["carState"].gasPressed

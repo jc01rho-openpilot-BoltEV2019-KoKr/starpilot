@@ -97,6 +97,7 @@ GITLAB_SUBMISSIONS_PROJECT_ID = "71992109"
 GITLAB_TOKEN = os.environ.get("GITLAB_TOKEN", "")
 LEGACY_LATERAL_METHOD_API_PREFIX = "/api/" + "".join(("f", "t", "m"))
 VASM_CONFIGURATION_KEYS = {"VASMEnabled", "VASMConfidenceThreshold", "VASMSmoothSeconds", "VASMAnnotationConfig"}
+MODEL_SMOOTHING_KEYS = {"LatSmoothSeconds", "LongSmoothSeconds"}
 
 GALAXY_DEPS_PATH = "/data/galaxy_deps"
 LEGACY_GALAXY_DEPS_PATH = "/data/" + "".join(chr(code) for code in (112, 111, 110, 100)) + "_deps"
@@ -4402,6 +4403,16 @@ def setup(app):
         "drivingmodel": "DrivingModel",
         "drivingmodelversion": "DrivingModelVersion",
       }.get(key.lower(), key)
+      if key in MODEL_SMOOTHING_KEYS:
+        if not params.get_bool("DeveloperUI"):
+          return jsonify({"error": "Model smoothing is available only with Developer UI enabled."}), 403
+        try:
+          numeric = float(data["value"])
+        except (TypeError, ValueError):
+          return jsonify({"error": f"{key} must be numeric."}), 400
+        if not math.isfinite(numeric) or numeric < 0.005 or numeric > 2.0:
+          return jsonify({"error": f"{key} must be between 0.005 and 2.0 seconds."}), 400
+        data["value"] = round(numeric / 0.005) * 0.005
       val = data["value"]
       selected_label_input = str(data.get("label") or "").strip()
 
@@ -6123,6 +6134,8 @@ def setup(app):
       result = flm_workspace.revert_trial_profile()
     except FileNotFoundError:
       return jsonify({"error": "No active FLM trial snapshot was found."}), 404
+    except Exception as error:
+      return jsonify({"error": f"{type(error).__name__}: {error}"}), 500
 
     return jsonify(result), 200
 

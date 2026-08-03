@@ -678,7 +678,8 @@ def test_approach_light_force_stop_expires_without_rearming_at_standstill():
 
 
 def test_stop_sign_hold_persists_until_resume():
-  _, vcruise = make_vcruise(red_light=True, raw_model_stopped=True, forcing_stop=False)
+  planner, vcruise = make_vcruise(red_light=True, raw_model_stopped=True, forcing_stop=False)
+  planner.model_length = 20.0
   sm = make_sm(standstill=True)
   sm["starpilotCarState"].dashboardStopSign = 1
   toggles = make_toggles()

@@ -305,7 +305,10 @@ static bool hyundai_tx_hook(const CANPacket_t *msg) {
                                                             (((msg->data[5] << 3) | (msg->data[4] >> 5)) - 1023U);
 
     int aeb_decel_cmd = hyundai_can_canfd_blended ? 0 : msg->data[2];
-    bool aeb_req = hyundai_can_canfd_blended ? false : GET_BIT(msg, 54U);
+    bool aeb_req = false;
+    if (!hyundai_can_canfd_blended) {
+      aeb_req = GET_BIT(msg, 54U) != 0U;
+    }
 
     bool violation = false;
 
@@ -651,6 +654,7 @@ static safety_config hyundai_legacy_init(uint16_t param) {
 
   hyundai_common_init(param);
   hyundai_legacy = true;
+  hyundai_can_canfd_blended_hda2 = false;
   hyundai_camera_scc = false;
   hyundai_can_refresh_msgs = false;
   return hyundai_longitudinal ? BUILD_SAFETY_CFG(hyundai_legacy_rx_checks, HYUNDAI_LONG_TX_MSGS) :
