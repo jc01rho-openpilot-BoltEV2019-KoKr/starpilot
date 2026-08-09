@@ -2731,15 +2731,16 @@ def _active_trial_display_state(paths: dict[str, Path], snapshot: Any) -> dict[s
 def _current_car_identity(params: Params) -> dict[str, str]:
   cp_bytes = params.get("CarParamsPersistent")
   if not cp_bytes:
-    return {"carFingerprint": "", "brand": ""}
+    return {"carFingerprint": "", "brand": "", "carName": ""}
   try:
     with car.CarParams.from_bytes(cp_bytes) as car_params:
       return {
         "carFingerprint": str(getattr(car_params, "carFingerprint", "") or "").strip(),
         "brand": str(getattr(car_params, "brand", "") or "").strip(),
+        "carName": str(getattr(car_params, "carName", "") or "").strip(),
       }
   except Exception:
-    return {"carFingerprint": "", "brand": ""}
+    return {"carFingerprint": "", "brand": "", "carName": ""}
 
 
 def _normalize_saved_tune_name(name: str) -> str:
@@ -2749,6 +2750,22 @@ def _normalize_saved_tune_name(name: str) -> str:
   if len(normalized) > 64:
     raise ValueError("Saved tune names must be 64 characters or fewer.")
   return normalized
+
+
+def _normalize_discord_username(username: str) -> str:
+  normalized = " ".join(str(username or "").split())
+  if not normalized:
+    raise ValueError("A Discord username is required to submit a tune.")
+  if len(normalized) > 64:
+    raise ValueError("Discord usernames must be 64 characters or fewer.")
+  if any(ord(character) < 32 for character in normalized):
+    raise ValueError("Discord username contains an invalid control character.")
+  return normalized
+
+
+def _saved_tune_car_name(tune: dict[str, Any]) -> str:
+  raw_name = str(tune.get("carFingerprint", "") or tune.get("carName", "") or tune.get("brand", "") or "Unknown car")
+  return " ".join(raw_name.replace("_", " ").split()).title()
 
 
 def _load_saved_tune(tune_id: str, paths: dict[str, Path] | None = None) -> dict[str, Any]:
@@ -3153,6 +3170,7 @@ def save_active_trial_as_tune(name: str) -> dict[str, Any]:
   current_car = _current_car_identity(params)
   car_fingerprint = current_car["carFingerprint"] or str(report_car.get("carFingerprint", "") or "")
   brand = current_car["brand"] or str(report_car.get("brand", "") or "")
+  car_name = current_car.get("carName", "") or str(report_car.get("carName", "") or "")
   now = time.time()
   tune_id = f"tune-{time.time_ns()}"
   tune = {
@@ -3163,6 +3181,7 @@ def save_active_trial_as_tune(name: str) -> dict[str, Any]:
     "updatedAt": now,
     "carFingerprint": car_fingerprint,
     "brand": brand,
+    "carName": car_name,
     "sourceReportId": report_id,
     "sourceProfileId": str(display_state.get("profileId", "") or ""),
     "pathKey": str(display_state.get("pathKey", "") or ""),
@@ -3185,6 +3204,44 @@ def save_active_trial_as_tune(name: str) -> dict[str, Any]:
     "message": f"Saved {tune['name']}.",
     "tune": tune,
     "workspace": list_workspace(),
+  }
+
+
+def submit_saved_tune(tune_id: str, discord_username: str) -> dict[str, Any]:
+  _require_flm_offroad()
+  paths = ensure_flm_workspace()
+  tune = _load_saved_tune(tune_id, paths)
+  discord_username = _normalize_discord_username(discord_username)
+  car_name = _saved_tune_car_name(tune)
+
+  # Keep this payload deliberately separate from reports: tune review needs the
+  # applied values, not route names, log files, camera footage, or device state.
+  submitted_tune = {
+    "schemaVersion": tune.get("schemaVersion", 1),
+    "tuneId": str(tune.get("tuneId", tune_id) or tune_id),
+    "name": str(tune.get("name", "Saved Tune") or "Saved Tune"),
+    "carName": car_name,
+    "carFingerprint": str(tune.get("carFingerprint", "") or ""),
+    "brand": str(tune.get("brand", "") or ""),
+    "baselineParams": {
+      key: value for key, value in (tune.get("baselineParams", {}) or {}).items()
+      if key in TRIAL_PARAM_SPECS
+    },
+    "genericParams": {
+      key: value for key, value in (tune.get("genericParams", {}) or {}).items()
+      if key in FLM_ADVANCED_LATERAL_PARAM_KEYS
+    },
+    "flmOverrides": normalize_flm_overrides(tune.get("flmOverrides", {})),
+  }
+  Params(memory=True).put("FLMSubmittedTune", {
+    "discordUsername": discord_username,
+    "carName": car_name,
+    "tune": submitted_tune,
+  })
+  return {
+    "message": f"Submitted {tune.get('name', 'Saved Tune')} to Firestar for review.",
+    "tuneId": tune_id,
+    "carName": car_name,
   }
 
 

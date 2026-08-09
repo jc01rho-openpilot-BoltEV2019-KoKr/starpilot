@@ -313,16 +313,16 @@ class CAR(Platforms):
   )
   CHEVROLET_BOLT_ACC_2022_2023 = GMPlatformConfig(
     [
-      GMCarDocs("Chevrolet Bolt ACC 2022-23", "Premier or Premier Redline Trim without Super Cruise Package", video="https://youtu.be/xvwzGMUA210"),
+      GMCarDocs("Chevrolet Bolt EV & EUV ACC 2022-23", "Premier or Premier Redline Trim without Super Cruise Package", video="https://youtu.be/xvwzGMUA210"),
     ],
     GMCarSpecs(mass=1669, wheelbase=2.63779, steerRatio=16.8, centerToFrontRatio=0.4, tireStiffnessFactor=1.0),
   )
   CHEVROLET_BOLT_ACC_2022_2023_PEDAL = GMPlatformConfig(
-    [GMCarDocs("Chevrolet Bolt EV ACC w Pedal 2022-23")],
+    [GMCarDocs("Chevrolet Bolt EV & EUV ACC w Pedal 2022-23")],
     CHEVROLET_BOLT_ACC_2022_2023.specs,
   )
   CHEVROLET_BOLT_CC_2022_2023 = GMPlatformConfig(
-    [GMCarDocs("Chevrolet Bolt EV No-ACC 2022-23")],
+    [GMCarDocs("Chevrolet Bolt EV & EUV No-ACC 2022-23")],
     CHEVROLET_BOLT_ACC_2022_2023.specs,
   )
   CHEVROLET_BOLT_CC_2018_2021 = GMPlatformConfig(

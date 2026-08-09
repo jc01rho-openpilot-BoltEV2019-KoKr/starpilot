@@ -793,6 +793,14 @@ class TestHyundaiCanfdLKASteeringAltAngleLongEV(HyundaiLongitudinalBase, TestHyu
       with self.subTest(address=address):
         self.assertFalse(self._tx(common.make_msg(1 if address != 0x51 else 0, address, length)))
 
+  def test_ccnc_angle_fallback_allows_lfa_status_without_longitudinal_control(self):
+    fallback_param = (self.SAFETY_PARAM & ~HyundaiSafetyFlags.LONG) | HyundaiSafetyFlags.CCNC
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, fallback_param)
+    self.safety.init_tests()
+
+    self.assertTrue(self._tx(common.make_msg(1, 0x12A, 16)))
+    self.assertFalse(self._tx(common.make_msg(1, 0x1A0, 32)))
+
   def test_ccnc_angle_long_uses_second_mdps_angle(self):
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, self.SAFETY_PARAM | HyundaiSafetyFlags.CCNC)
     self.safety.init_tests()

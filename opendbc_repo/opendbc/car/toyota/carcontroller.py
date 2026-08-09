@@ -62,6 +62,12 @@ def is_ths_hybrid(CP) -> bool:
   return CP.carFingerprint == CAR.TOYOTA_PRIUS or is_camry_hybrid(CP)
 
 
+def should_bypass_toyota_long_pid(CP) -> bool:
+  return bool(CP.enableGasInterceptorDEPRECATED or (
+    CP.carFingerprint == CAR.TOYOTA_CAMRY and not is_camry_hybrid(CP)
+  ))
+
+
 def get_long_tune(CP, params):
   kiBP = [2., 5.]
   kiV = [0.5, 0.25]
@@ -448,7 +454,7 @@ class CarController(CarControllerBase):
         a_ego_future = a_ego_blended + j_ego * future_t
 
         if CC.longActive:
-          if self.CP.enableGasInterceptorDEPRECATED:
+          if should_bypass_toyota_long_pid(self.CP):
             # Pedal/SDSU Toyotas have shown better behavior when we trust the planner
             # target directly instead of letting the Toyota longitudinal PID swing it
             # around. Keep the shared rate limits above, but bypass the extra

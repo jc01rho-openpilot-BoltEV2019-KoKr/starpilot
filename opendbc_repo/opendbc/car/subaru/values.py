@@ -74,6 +74,7 @@ class SubaruSafetyFlags(IntFlag):
   PREGLOBAL_REVERSED_DRIVER_TORQUE = 4
   STOP_AND_GO = 8
   LKAS_ANGLE = 16
+  D_PLATFORM = 32
 
 
 class SubaruFlags(IntFlag):
@@ -90,6 +91,7 @@ class SubaruFlags(IntFlag):
   PREGLOBAL = 16
   HYBRID = 32
   LKAS_ANGLE = 64
+  D_PLATFORM = 128
 
 
 GLOBAL_ES_ADDR = 0x787
@@ -100,6 +102,19 @@ class CanBus:
   main = 0
   alt = 1
   camera = 2
+
+  @staticmethod
+  def main_for_cp(CP):
+    return CanBus.alt if CP.flags & SubaruFlags.D_PLATFORM else CanBus.main
+
+  @staticmethod
+  def alt_for_cp(CP):
+    return CanBus.alt
+
+  @staticmethod
+  def angle_for_cp(CP):
+    # D-platform angle LKAS is exchanged with the camera ECU on the camera bus.
+    return CanBus.camera if CP.flags & SubaruFlags.D_PLATFORM else CanBus.main
 
 
 class Footnote(Enum):
@@ -219,9 +234,14 @@ class CAR(Platforms):
     flags=SubaruFlags.LKAS_ANGLE,
   )
   SUBARU_OUTBACK_2023 = SubaruGen2PlatformConfig(
-    [SubaruCarDocs("Subaru Outback 2023", "All", car_parts=CarParts.common([CarHarness.subaru_d]))],
+    [SubaruCarDocs("Subaru Outback 2023-24", "All", car_parts=CarParts.common([CarHarness.subaru_d]))],
     SUBARU_OUTBACK.specs,
-    flags=SubaruFlags.LKAS_ANGLE,
+    flags=SubaruFlags.LKAS_ANGLE | SubaruFlags.D_PLATFORM,
+  )
+  SUBARU_LEGACY_2025 = SubaruGen2PlatformConfig(
+    [SubaruCarDocs("Subaru Legacy 2025", "All", car_parts=CarParts.common([CarHarness.subaru_d]))],
+    SUBARU_OUTBACK.specs,
+    flags=SubaruFlags.LKAS_ANGLE | SubaruFlags.D_PLATFORM,
   )
   SUBARU_ASCENT_2023 = SubaruGen2PlatformConfig(
     [SubaruCarDocs("Subaru Ascent 2023", "All", car_parts=CarParts.common([CarHarness.subaru_d]))],

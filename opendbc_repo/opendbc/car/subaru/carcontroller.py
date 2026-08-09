@@ -33,6 +33,9 @@ class CarController(CarControllerBase):
 
     self.p = CarControllerParams(CP)
     self.packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    self.main_bus = CanBus.main_for_cp(CP)
+    self.angle_bus = CanBus.angle_for_cp(CP)
+    self.status_bus = CanBus.camera if CP.flags & SubaruFlags.D_PLATFORM else CanBus.main
 
     if CP.flags & SubaruFlags.LKAS_ANGLE:
       self.VM = VehicleModel(get_safety_CP())
@@ -63,7 +66,7 @@ class CarController(CarControllerBase):
       apply_steer = CS.out.steeringAngleDeg
 
     self.apply_steer_last = apply_steer
-    return subarucan.create_steering_control_angle(self.packer, apply_steer, lat_active)
+    return subarucan.create_steering_control_angle(self.packer, apply_steer, lat_active, self.angle_bus)
 
   def lateral_torque(self, CC, CS):
     apply_torque = int(round(CC.actuators.torque * self.p.STEER_MAX))
@@ -154,14 +157,16 @@ class CarController(CarControllerBase):
     else:
       if self.frame % 10 == 0:
         can_sends.append(subarucan.create_es_dashstatus(self.packer, self.frame // 10, CS.es_dashstatus_msg, CC.enabled,
-                                                        self.CP.openpilotLongitudinalControl, CC.longActive, hud_control.leadVisible))
+                                                        self.CP.openpilotLongitudinalControl, CC.longActive, hud_control.leadVisible,
+                                                        self.status_bus))
 
         can_sends.append(subarucan.create_es_lkas_state(self.packer, self.frame // 10, CS.es_lkas_state_msg, CC.enabled, hud_control.visualAlert,
                                                         hud_control.leftLaneVisible, hud_control.rightLaneVisible,
-                                                        hud_control.leftLaneDepart, hud_control.rightLaneDepart))
+                                                        hud_control.leftLaneDepart, hud_control.rightLaneDepart, self.status_bus))
 
         if self.CP.flags & SubaruFlags.SEND_INFOTAINMENT:
-          can_sends.append(subarucan.create_es_infotainment(self.packer, self.frame // 10, CS.es_infotainment_msg, hud_control.visualAlert))
+          can_sends.append(subarucan.create_es_infotainment(self.packer, self.frame // 10, CS.es_infotainment_msg,
+                                                           hud_control.visualAlert, self.status_bus))
 
       if starpilot_toggles.subaru_sng:
         can_sends.append(subarucan.create_throttle(self.packer, CS.throttle_msg["COUNTER"] + 1, CS.throttle_msg,
@@ -183,7 +188,7 @@ class CarController(CarControllerBase):
       else:
         if pcm_cancel_cmd:
           if not (self.CP.flags & SubaruFlags.HYBRID):
-            bus = CanBus.alt if self.CP.flags & SubaruFlags.GLOBAL_GEN2 else CanBus.main
+            bus = CanBus.alt_for_cp(self.CP) if self.CP.flags & SubaruFlags.GLOBAL_GEN2 else self.main_bus
             can_sends.append(subarucan.create_es_distance(self.packer, CS.es_distance_msg["COUNTER"] + 1, CS.es_distance_msg, bus, pcm_cancel_cmd))
 
       if self.CP.flags & SubaruFlags.DISABLE_EYESIGHT:

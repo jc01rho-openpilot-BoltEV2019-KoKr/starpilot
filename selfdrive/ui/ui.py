@@ -72,7 +72,7 @@ def main():
       stall_monitor.progress("ui.loop_iteration")
       kick_watchdog()
       stall_monitor.progress("ui.after_watchdog")
-      ui_state.update()
+      ui_state.update(progress_hook=stall_monitor.progress)
       stall_monitor.progress("ui.after_state_update")
       now = time.monotonic()
       if now - context_update_time >= 1.0:

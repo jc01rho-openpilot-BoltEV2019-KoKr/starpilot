@@ -88,8 +88,55 @@ FRAME_FRAGMENT_SHADER_YUV = VERSION + """
   }
   """
 
+FRAME_FRAGMENT_SHADER_EXTERNAL_MICI = """
+  #version 300 es
+  #extension GL_OES_EGL_image_external_essl3 : enable
+  precision mediump float;
+  in vec2 fragTexCoord;
+  uniform samplerExternalOES texture0;
+  uniform int enhance_driver;
+  out vec4 fragColor;
+  void main() {
+    vec4 color = texture(texture0, fragTexCoord);
+    color.rgb = clamp((color.rgb - 0.5) * 1.2 + 0.5, 0.0, 1.0);
+    color.rgb = pow(color.rgb, vec3(1.0/1.28));
+    if (enhance_driver == 1) {
+      float brightness = 1.1;
+      color.rgb = color.rgb + 0.15;
+      color.rgb = clamp((color.rgb - 0.5) * (brightness * 0.8) + 0.5, 0.0, 1.0);
+      color.rgb = color.rgb * color.rgb * (3.0 - 2.0 * color.rgb);
+      color.rgb = pow(color.rgb, vec3(0.8));
+    }
+    fragColor = vec4(color.rgb, color.a);
+  }
+  """
+
+FRAME_FRAGMENT_SHADER_YUV_MICI = VERSION + """
+  in vec2 fragTexCoord;
+  uniform sampler2D texture0;
+  uniform sampler2D texture1;
+  uniform int enhance_driver;
+  out vec4 fragColor;
+  void main() {
+    float y = texture(texture0, fragTexCoord).r;
+    vec2 uv = texture(texture1, fragTexCoord).ra - 0.5;
+    vec3 rgb = vec3(y + 1.402*uv.y, y - 0.344*uv.x - 0.714*uv.y, y + 1.772*uv.x);
+    rgb = clamp((rgb - 0.5) * 1.2 + 0.5, 0.0, 1.0);
+    if (enhance_driver == 1) {
+      float brightness = 1.1;
+      rgb = rgb + 0.15;
+      rgb = clamp((rgb - 0.5) * (brightness * 0.8) + 0.5, 0.0, 1.0);
+      rgb = rgb * rgb * (3.0 - 2.0 * rgb);
+      rgb = pow(rgb, vec3(0.8));
+    }
+    fragColor = vec4(rgb, 1.0);
+  }
+  """
+
 
 class CameraView(Widget):
+  _use_upstream_engaged_color = False
+
   def __init__(self, name: str, stream_type: VisionStreamType):
     super().__init__()
     self._name = name
@@ -343,7 +390,10 @@ class CameraView(Widget):
       rl.draw_rectangle_rec(rect, self._placeholder_color)
 
   def _load_frame_shader(self) -> None:
-    frame_shader = FRAME_FRAGMENT_SHADER_EXTERNAL if self._use_egl else FRAME_FRAGMENT_SHADER_YUV
+    if self._use_upstream_engaged_color:
+      frame_shader = FRAME_FRAGMENT_SHADER_EXTERNAL_MICI if self._use_egl else FRAME_FRAGMENT_SHADER_YUV_MICI
+    else:
+      frame_shader = FRAME_FRAGMENT_SHADER_EXTERNAL if self._use_egl else FRAME_FRAGMENT_SHADER_YUV
     self.shader = rl.load_shader_from_memory(VERTEX_SHADER, frame_shader)
     self._texture1_loc = -1 if self._use_egl else rl.get_shader_location(self.shader, "texture1")
     self._enhance_driver_loc = rl.get_shader_location(self.shader, "enhance_driver")

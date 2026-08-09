@@ -19,6 +19,10 @@ BACKLIGHT_OFFROAD = 65 if HARDWARE.get_device_type() == "mici" else 50
 USBGPU_POLL_INTERVAL = 1.0
 
 
+def _noop_progress(_phase: str) -> None:
+  pass
+
+
 class UIStatus(Enum):
   DISENGAGED = "disengaged"
   ENGAGED = "engaged"
@@ -88,6 +92,7 @@ class UIState:
     self.usbgpu: bool = False
     self.usbgpu_compiled: bool = self.params.get_bool("UsbGpuCompiled")
     self.usbgpu_active: bool = self.params.get_bool("UsbGpuActive")
+    self.usbgpu_loading: bool = self.params.get_bool("UsbGpuLoading")
     self._usbgpu_update_time: float = 0.0
     self._usbgpu_poll_thread: threading.Thread | None = None
     self.started: bool = False
@@ -166,16 +171,27 @@ class UIState:
   def is_offroad(self) -> bool:
     return not self.started
 
-  def update(self) -> None:
+  def update(self, progress_hook: Callable[[str], None] | None = None) -> None:
+    mark_progress = progress_hook or _noop_progress
+
+    mark_progress("ui.update.before_prime_state")
     self.prime_state.start()  # start thread after manager forks ui
+    mark_progress("ui.update.before_submaster")
     self.sm.update(0)
-    self._update_state()
-    self._update_status()
+    mark_progress("ui.update.before_state")
+    self._update_state(mark_progress)
+    mark_progress("ui.update.before_status")
+    self._update_status(mark_progress)
+    mark_progress("ui.update.before_params")
     if time.monotonic() - self._param_update_time > 5.0:
       self.update_params()
+    mark_progress("ui.update.before_device")
     device.update()
+    mark_progress("ui.update.after_device")
 
-  def _update_state(self) -> None:
+  def _update_state(self, progress_hook: Callable[[str], None] | None = None) -> None:
+    mark_progress = progress_hook or _noop_progress
+
     # Handle panda states updates
     if self.sm.updated["pandaStates"]:
       panda_states = self.sm["pandaStates"]
@@ -197,6 +213,7 @@ class UIState:
       self.light_sensor = -1
 
     # Trust hardwared's filtered started state; raw ignition can flap on Toyota.
+    mark_progress("ui.update.before_state_params")
     params = self.ui_params
     force_onroad = params.get_bool("ForceOnroad")
     force_offroad = params.get_bool("ForceOffroad")
@@ -214,7 +231,10 @@ class UIState:
     self._schedule_usbgpu_poll(now)
     self.usbgpu_compiled = params.get_bool("UsbGpuCompiled")
     self.usbgpu_active = params.get_bool("UsbGpuActive")
+    self.usbgpu_loading = params.get_bool("UsbGpuLoading")
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled") if self.started else False
+    self.conditional_status = self.params_memory.get_int("CEStatus", default=0) if self.started else 0
+    mark_progress("ui.update.after_state_params")
     if self.sm.valid.get("starpilotCarState", False):
       starpilot_car_state = self.sm["starpilotCarState"]
       self.always_on_lateral_active = (not self.sm["selfdriveState"].enabled and
@@ -223,8 +243,6 @@ class UIState:
     else:
       self.always_on_lateral_active = False
       self.traffic_mode_enabled = False
-
-    self.conditional_status = self.params_memory.get_int("CEStatus", default=0) if self.started else 0
 
     if self.sm.updated["starpilotPlan"]:
       plan = self.sm["starpilotPlan"]
@@ -240,7 +258,9 @@ class UIState:
     self.starpilot_toggles["force_offroad"] = force_offroad
     self.starpilot_toggles["force_onroad"] = force_onroad
 
-  def _update_status(self) -> None:
+  def _update_status(self, progress_hook: Callable[[str], None] | None = None) -> None:
+    mark_progress = progress_hook or _noop_progress
+
     if self.started and self.sm.updated["selfdriveState"]:
       ss = self.sm["selfdriveState"]
       state = ss.state
@@ -253,7 +273,10 @@ class UIState:
     # Check for engagement state changes
     if self.engaged != self._engaged_prev:
       for callback in self._engaged_transition_callbacks:
+        callback_name = getattr(callback, "__name__", type(callback).__name__)
+        mark_progress(f"ui.update.before_engaged_callback.{callback_name}")
         callback()
+        mark_progress(f"ui.update.after_engaged_callback.{callback_name}")
       self._engaged_prev = self.engaged
 
     # Handle onroad/offroad transition
@@ -264,7 +287,10 @@ class UIState:
         self.started_time = time.monotonic()
 
       for callback in self._offroad_transition_callbacks:
+        callback_name = getattr(callback, "__name__", type(callback).__name__)
+        mark_progress(f"ui.update.before_offroad_callback.{callback_name}")
         callback()
+        mark_progress(f"ui.update.after_offroad_callback.{callback_name}")
 
       self._started_prev = self.started
 
@@ -380,7 +406,7 @@ class Device:
         callback()
     self._prev_timed_out = interaction_timeout
 
-    self._set_awake(ui_state.started or not interaction_timeout or PC)
+    self._set_awake(ui_state.ignition or not interaction_timeout or PC)
 
   def _set_awake(self, on: bool):
     if on != self._awake:

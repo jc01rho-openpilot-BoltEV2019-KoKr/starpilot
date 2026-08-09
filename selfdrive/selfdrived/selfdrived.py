@@ -64,8 +64,7 @@ def commanded_torque_at_max_for_saturation(CP, output: float) -> bool:
 
 
 def should_loud_blindspot_alert_without_lateral(CS, sm, starpilot_toggles, combined_left_bsm=None, combined_right_bsm=None) -> bool:
-  if not (getattr(starpilot_toggles, "loud_blindspot_alert", False) and
-          getattr(starpilot_toggles, "loud_blindspot_alert_when_disengaged", False)):
+  if not getattr(starpilot_toggles, "loud_blindspot_alert_when_disengaged", False):
     return False
 
   combined_left_bsm = CS.leftBlindspot if combined_left_bsm is None else combined_left_bsm

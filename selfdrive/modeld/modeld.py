@@ -48,8 +48,9 @@ from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 
-BUILTIN_MODEL_KEY = "sc2"
-BUILTIN_MODEL_ALIASES = {BUILTIN_MODEL_KEY, "sc"}
+BUILTIN_MODEL_KEY = "rdf"
+BUILTIN_MODEL_ALIASES = {BUILTIN_MODEL_KEY}
+MODEL_ID_ALIASES = {"sc": "sc2"}
 
 
 LAT_SMOOTH_SECONDS = 0.1
@@ -116,7 +117,9 @@ def _resolve_mirrored_param(params: Params, primary_key: str, secondary_key: str
 
 def _canonical_model_id(model_id: str) -> str:
   key = (model_id or "").strip().lower()
-  return BUILTIN_MODEL_KEY if key in BUILTIN_MODEL_ALIASES else key
+  if key in BUILTIN_MODEL_ALIASES:
+    return BUILTIN_MODEL_KEY
+  return MODEL_ID_ALIASES.get(key, key)
 
 
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
@@ -301,9 +304,9 @@ class ModelState:
           model_version = str(json.loads(versions_path.read_text()).get(model_id) or "")
         except Exception:
           pass
-    if loaded_builtin and not use_builtin:
-      model_version = str(artifact.get("behavior_version") or "v11")
-    self.policy_generation = model_version or ("v11" if loaded_builtin else "v8")
+    if loaded_builtin:
+      model_version = str(artifact.get("behavior_version") or "v15")
+    self.policy_generation = model_version or ("v15" if loaded_builtin else "v8")
     self.is_v9 = self.policy_generation == "v9"
     self.is_v14 = self.policy_generation == "v14"
     self.is_v15 = self.policy_generation == "v15"
@@ -417,6 +420,13 @@ class ModelState:
       )
     outputs = [output.numpy().flatten() for output in output_tensors]
 
+    # USB GPU failures can produce NaNs/Infs instead of raising. Never publish
+    # one of those frames; the next frame can recover without affecting the
+    # native GPU/CPU model paths.
+    if self.uses_external_gpu and any(not np.isfinite(output).all() for output in outputs):
+      cloudlog.error("external GPU produced non-finite model output, dropping frame")
+      return None
+
     if self.model_type == "supercombo":
       model_output = outputs[0]
       parsed = self.parser.parse_outputs(self.slice_outputs(model_output, self.output_slices))
@@ -456,6 +466,7 @@ def main(demo=False):
   params.put_bool("UsbGpuPresent", usbgpu_present_now)
   params.put_bool("UsbGpuCompiled", external_artifact_ready)
   params.put_bool("UsbGpuActive", False)
+  params.put_bool("UsbGpuLoading", external_gpu_requested)
   if external_gpu_requested:
     from tinygrad.helpers import DEV
     device_config = tinygrad_dev_config(True, TICI)
@@ -502,6 +513,7 @@ def main(demo=False):
   external_gpu_active = model.uses_external_gpu
   params.put_bool("UsbGpuCompiled", external_model_selected and file_chunked_exists(external_artifact))
   params.put_bool("UsbGpuActive", external_gpu_active)
+  params.put_bool("UsbGpuLoading", False)
   cloudlog.warning(f"model loaded in {time.monotonic() - start_time:.1f}s, modeld starting")
 
   # messaging

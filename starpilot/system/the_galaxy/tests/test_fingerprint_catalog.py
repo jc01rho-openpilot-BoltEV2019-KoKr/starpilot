@@ -18,6 +18,6 @@ def test_galaxy_lists_tesla_hardware_specific_docs_for_manual_fingerprinting():
   tesla_models = the_galaxy._extract_fingerprint_models_for_make("tesla")
 
   assert {"value": "TESLA_MODEL_3", "label": "Tesla Model 3 (with HW3) 2019-23"} in tesla_models
-  assert {"value": "TESLA_MODEL_3", "label": "Tesla Model 3 (with HW4) 2024-25"} in tesla_models
+  assert {"value": "TESLA_MODEL_3", "label": "Tesla Model 3 (with HW4) 2024-26"} in tesla_models
   assert {"value": "TESLA_MODEL_Y", "label": "Tesla Model Y (with HW3) 2020-23"} in tesla_models
   assert {"value": "TESLA_MODEL_X", "label": "Tesla Model X (with HW4) 2024"} in tesla_models

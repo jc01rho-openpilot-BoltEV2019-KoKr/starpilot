@@ -512,6 +512,35 @@ async function deleteSavedTune(tune) {
   }
 }
 
+async function submitSavedTune(tune) {
+  if (!tune?.tuneId || state.runningAction) return
+  const approved = window.confirm(
+    "Think this FLM tune is genuinely good and worth sharing? Send it to Firestar for review and possible inclusion in future tuning. Only the tune values, car identity, and your Discord username are sent; routes and driving logs are not included."
+  )
+  if (!approved) return
+
+  const discordUsername = window.prompt("Enter your Discord username so Firestar can credit you.", "")
+  if (discordUsername === null || !discordUsername.trim()) return
+
+  state.runningAction = true
+  try {
+    const response = await fetch(`/api/flm/saved-tunes/${encodeURIComponent(tune.tuneId)}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ discordUsername: discordUsername.trim() }),
+    })
+    const payload = await response.json()
+    if (!response.ok) throw new Error(payload.error || "Failed to submit saved tune.")
+    state.error = ""
+    showSnackbar(payload.message || "Tune submitted to Firestar for review.")
+  } catch (error) {
+    state.error = error?.message || "Failed to submit saved tune."
+    showSnackbar(state.error, "error")
+  } finally {
+    state.runningAction = false
+  }
+}
+
 async function selectPath(pathKey) {
   if (!state.report?.reportId || !pathKey || state.runningAction) return
   if (pathKey === (state.report.selectedPathKey || state.report.primaryPathKey)) return
@@ -1263,6 +1292,9 @@ export function Tuning() {
             <p class="longManeuverMuted">
               Save a working FLM trial, switch between vehicle or trailer setups, then use Revert Trial to return to the exact manual settings from before FLM.
             </p>
+            <p class="longManeuverMuted">
+              Think a tune is genuinely excellent? Send it to Firestar for review and possible community sharing. Submission includes only tune values, car identity, and your Discord username, not routes or driving logs.
+            </p>
             <div class="flmWorkspaceList">
               ${() => (state.workspace?.savedTunes || []).length
                 ? state.workspace.savedTunes.map((tune) => html`
@@ -1293,6 +1325,12 @@ export function Tuning() {
                         disabled="${() => state.runningAction || tune.active}"
                         @click="${() => deleteSavedTune(tune)}">
                         Delete
+                      </button>
+                      <button
+                        class="longManeuverButton"
+                        disabled="${() => state.runningAction}"
+                        @click="${() => submitSavedTune(tune)}">
+                        Send to Firestar
                       </button>
                     </div>
                   </div>

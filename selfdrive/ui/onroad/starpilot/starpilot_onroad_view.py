@@ -13,6 +13,7 @@ from openpilot.selfdrive.ui.onroad.starpilot.widgets import (
 )
 from openpilot.selfdrive.ui.onroad.starpilot.stopping_point import render_stopping_point
 from openpilot.selfdrive.ui.onroad.starpilot.pause_indicators import render_lateral_paused, render_longitudinal_paused
+from openpilot.selfdrive.ui.onroad.starpilot.pip_sidecam import PipSideCamera
 from openpilot.selfdrive.ui.onroad.starpilot.weather_icon import render_weather_icon
 from openpilot.selfdrive.ui.lib.starpilot_status import (
   get_screen_edge_color,
@@ -36,6 +37,8 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._min_fps = 99.9
     self._max_fps = 0.0
     self._avg_fps = 0.0
+
+    self._pip_sidecam = PipSideCamera()
 
     self.layout_manager = WidgetLayoutManager(self._content_rect)
 
@@ -94,6 +97,9 @@ class StarPilotOnroadView(AugmentedRoadView):
       self._render_overlays()
       self._render_road_name()
 
+    # PiP renders last so it always sits on top of every other on-road overlay.
+    self._pip_sidecam.render(self._content_rect)
+
   def _draw_border(self, rect: rl.Rectangle):
     border_width = self._get_border_width()
     rl.draw_rectangle_rounded_lines_ex(rect, 0.12, 10, border_width, rl.BLACK)
@@ -130,11 +136,9 @@ class StarPilotOnroadView(AugmentedRoadView):
     """Draw the curved torque-utilization indicator at the bottom of the screen."""
     if not self._params.get_bool("EnableTorqueBarWidget", default=True):
       return
-    if ui_state.sm['controlsState'].lateralControlState.which() == 'angleState':
-      return
     rl.begin_scissor_mode(
-      int(self._content_rect.x), int(self._content_rect.y),
-      int(self._content_rect.width), int(self._content_rect.height),
+      int(round(self._content_rect.x)), int(round(self._content_rect.y)),
+      int(round(self._content_rect.width)), int(round(self._content_rect.height)),
     )
     self._torque_bar.render(self._content_rect)
     rl.end_scissor_mode()
@@ -146,6 +150,11 @@ class StarPilotOnroadView(AugmentedRoadView):
     # Only render if we have path data
     if not mr._path.projected_points.size:
       return
+
+    rl.begin_scissor_mode(
+      int(round(rect.x)), int(round(rect.y)),
+      int(round(rect.width)), int(round(rect.height)),
+    )
 
     # Path edges (always rendered if track_edge_vertices exist)
     if mr._track_edge_vertices.size >= 4:
@@ -344,4 +353,4 @@ class StarPilotOnroadView(AugmentedRoadView):
       round(cx - sz.x / 2),
       round(self._content_rect.y + self._content_rect.height - sz.y - 5),
     )
-    draw_text_with_shadow(font, road_name, text_pos, font_size, rl.Color(255, 255, 255, 180))
+    draw_text_with_shadow(font, road_name, text_pos, font_size, rl.WHITE)
