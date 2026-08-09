@@ -69,6 +69,9 @@ TRUCK_LONG_SMOOTH_CARS = {
 TRUCK_FRICTION_BRAKE_ENGAGE = 40
 TRUCK_FRICTION_BRAKE_RELEASE = 8
 TRUCK_FRICTION_BRAKE_IMMEDIATE_ACCEL = -0.85
+TRUCK_FOLLOW_MICRO_ACCEL_MAX = 0.55
+TRUCK_FOLLOW_MICRO_ACCEL_MIN = -0.10
+TRUCK_FOLLOW_MICRO_ACCEL_SLEW = 1.5
 ACC_DASHBOARD_ZERO_RESERVED_CARS = {
   CAR.CHEVROLET_BLAZER,
   CAR.CHEVROLET_EQUINOX,
@@ -215,11 +218,11 @@ def shape_truck_positive_accel(accel: float, v_ego: float, enabled: bool,
   if not enabled or accel <= 0.0 or v_ego < 12.0:
     return accel
 
-  low_scale = float(np.interp(v_ego, [12.0, 18.0, 25.0, 35.0], [0.93, 0.84, 0.76, 0.70]))
-  mid_scale = float(np.interp(v_ego, [12.0, 18.0, 25.0, 35.0], [0.97, 0.91, 0.85, 0.79]))
+  low_scale = float(np.interp(v_ego, [12.0, 18.0, 25.0, 35.0], [0.93, 0.84, 0.76, 0.76]))
+  mid_scale = float(np.interp(v_ego, [12.0, 18.0, 25.0, 35.0], [0.97, 0.91, 0.85, 0.85]))
 
   if lead_visible and set_speed_error > 0.0:
-    follow_relief = float(np.interp(set_speed_error, [0.0, 1.0, 2.5, 4.0, 6.0], [0.0, 0.04, 0.10, 0.18, 0.30]))
+    follow_relief = float(np.interp(set_speed_error, [0.0, 1.0, 2.5, 4.0, 6.0], [0.0, 0.04, 0.10, 0.24, 0.42]))
     low_scale += (1.0 - low_scale) * follow_relief
     mid_scale += (1.0 - mid_scale) * follow_relief
 
@@ -230,6 +233,19 @@ def shape_truck_positive_accel(accel: float, v_ego: float, enabled: bool,
   if accel <= 0.65:
     return float(np.interp(accel, [0.35, 0.65], [0.35 * mid_scale, 0.65]))
   return accel
+
+
+def smooth_truck_follow_accel(accel: float, previous_accel: float, v_ego: float,
+                              enabled: bool, lead_visible: bool, stopping: bool) -> float:
+  if (
+    not enabled or not lead_visible or stopping or v_ego < 25.0 or
+    accel > TRUCK_FOLLOW_MICRO_ACCEL_MAX or accel < TRUCK_FOLLOW_MICRO_ACCEL_MIN or
+    previous_accel > TRUCK_FOLLOW_MICRO_ACCEL_MAX or previous_accel < TRUCK_FOLLOW_MICRO_ACCEL_MIN
+  ):
+    return accel
+
+  max_delta = TRUCK_FOLLOW_MICRO_ACCEL_SLEW * DT_CTRL * 4
+  return previous_accel + float(np.clip(accel - previous_accel, -max_delta, max_delta))
 
 
 def shape_truck_pitch_accel(pitch_accel: float, v_ego: float, enabled: bool) -> float:
@@ -557,6 +573,7 @@ class CarController(CarControllerBase):
     self.bolt_acc_pedal_friction_release_frames = 0
     self.bolt_acc_pedal_friction_low_speed_active = False
     self.truck_friction_brake_active = False
+    self.truck_follow_accel = 0.0
 
   def _reset_volt_one_pedal(self):
     self.volt_one_pedal_pid.reset()
@@ -978,10 +995,12 @@ class CarController(CarControllerBase):
           self.regen_release_counter = 0
           self.regen_min_on_frames = 0
           self.regen_min_off_frames = 0
+          self.truck_follow_accel = 0.0
         elif should_use_fixed_stopping_brake(self.CP, near_stop, stopping, CC.cruiseControl.resume):
           stop_accel = getattr(starpilot_toggles, "stopAccel", self.CP.stopAccel)
           self.apply_gas = self.params.INACTIVE_REGEN
           self.apply_brake = int(min(-100 * stop_accel, self.params.MAX_BRAKE))
+          self.truck_follow_accel = 0.0
         else:
           long_pitch_enabled = bool(getattr(starpilot_toggles, "long_pitch", True))
           pedal_long_path = bool(self.CP.enableGasInterceptorDEPRECATED and (self.CP.flags & GMFlags.PEDAL_LONG.value))
@@ -1040,6 +1059,16 @@ class CarController(CarControllerBase):
               )
 
             accel_cmd = float(np.clip(accel_input, self.params.ACCEL_MIN, accel_max))
+            if truck_long_smoothing:
+              accel_cmd = smooth_truck_follow_accel(
+                accel_cmd,
+                self.truck_follow_accel,
+                CS.out.vEgo,
+                True,
+                CC.hudControl.leadVisible,
+                stopping,
+              )
+            self.truck_follow_accel = accel_cmd
             torque = self.tireRadius * ((self.mass * accel_cmd) + (0.5 * self.coeffDrag * self.frontalArea * self.airDensity * CS.out.vEgo ** 2))
             scaled_torque = torque + self.params.ZERO_GAS
             apply_gas_torque = np.clip(scaled_torque, self.params.MAX_ACC_REGEN, gas_max)

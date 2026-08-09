@@ -26,7 +26,9 @@ def _camera_view():
 
 
 def test_mici_uses_shared_camera_view():
-  assert mici_cameraview.CameraView is big_cameraview.CameraView
+  assert issubclass(mici_cameraview.CameraView, big_cameraview.CameraView)
+  assert mici_cameraview.CameraView._use_upstream_engaged_color
+  assert not big_cameraview.CameraView._use_upstream_engaged_color
 
 
 def test_pending_switch_is_cancelled_when_requested_stream_is_current():

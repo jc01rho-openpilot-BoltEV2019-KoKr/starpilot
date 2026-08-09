@@ -205,7 +205,7 @@ class StarPilotLateralLayout(_SettingsPage):
         "LaneChangeCloseGapSeconds", "value", tr_noop("Temporary Follow Distance"),
         subtitle=tr_noop("Follow distance to hold while changing lanes. Only applied when shorter than your normal gap."),
         get_value=self._get_lane_change_close_gap_display,
-        on_click=lambda: self._show_slider("LaneChangeCloseGapSeconds", 0.5, 3.0, step=0.05, unit="s", value_type="float"),
+        on_click=lambda: self._show_slider("LaneChangeCloseGapSeconds", 0.25, 1.0, step=0.05, unit="s", value_type="float"),
         visible=close_gap_on,
       ),
     ]

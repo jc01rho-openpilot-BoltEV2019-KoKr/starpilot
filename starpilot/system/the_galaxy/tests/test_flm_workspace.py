@@ -1230,6 +1230,48 @@ def test_saved_tune_rename_delete_and_vehicle_guard(tmp_path, monkeypatch):
   assert not tune_path.exists()
 
 
+def test_submit_saved_tune_queues_credit_and_tune_only(tmp_path):
+  module, fake_params_cls = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  tune_id = "tune-submit"
+  (workspace["savedTunes"] / f"{tune_id}.json").write_text(json.dumps({
+    "schemaVersion": 1,
+    "tuneId": tune_id,
+    "name": "Good Curve Tune",
+    "createdAt": 1.0,
+    "updatedAt": 1.0,
+    "carFingerprint": "HYUNDAI_IONIQ_6",
+    "brand": "hyundai",
+    "sourceReportId": "report-private",
+    "pathLabel": "Cleanup Pass",
+    "baselineParams": {"SteerLatAccel": 2.1},
+    "genericParams": {"SteerLatAccel": 2.3},
+    "flmOverrides": {"vehicleKnobs": {"turn_in_boost": 0.1}},
+    "routeNames": ["must-not-be-submitted"],
+  }), encoding="utf-8")
+  fake_params_cls._store = {"IsOnroad": False}
+  fake_params_cls._memory_store = {}
+
+  result = module.submit_saved_tune(tune_id, "@tuner")
+  submission = fake_params_cls._memory_store["FLMSubmittedTune"]
+
+  assert result["carName"] == "Hyundai Ioniq 6"
+  assert submission["discordUsername"] == "@tuner"
+  assert submission["carName"] == "Hyundai Ioniq 6"
+  assert submission["tune"]["genericParams"] == {"SteerLatAccel": 2.3}
+  assert "routeNames" not in submission["tune"]
+  assert "routes" not in submission["tune"]
+  assert "sourceReportId" not in submission["tune"]
+  assert "pathLabel" not in submission["tune"]
+
+  with pytest.raises(ValueError, match="Discord username"):
+    module.submit_saved_tune(tune_id, "")
+
+  fake_params_cls._store["IsOnroad"] = True
+  with pytest.raises(module.FLMAnalysisCancelled, match="went onroad"):
+    module.submit_saved_tune(tune_id, "@tuner")
+
+
 def test_saved_tune_car_switch_uses_the_destination_car_baseline(tmp_path, monkeypatch):
   module, fake_params_cls = _load_flm_workspace_module(tmp_path)
   workspace = module.ensure_flm_workspace()

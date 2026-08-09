@@ -240,6 +240,39 @@ class TestManager:
     assert params.get("CEModelStopTime") == "3.5"
     assert params_cache.get_bool("NNFF")
 
+  def test_migrate_starpilot_default_model(self, tmp_path, monkeypatch):
+    monkeypatch.setattr(manager, "STARPILOT_DEFAULT_MODEL_MIGRATION_FLAG", tmp_path / "starpilot_default_model_rdf_v1")
+
+    params = FileBackedFakeParams(tmp_path / "params", {
+      "Model": "sc2",
+      "DrivingModel": "sc2",
+      "DrivingModelName": "South Carolina",
+      "ModelVersion": "v11",
+      "DrivingModelVersion": "v11",
+    })
+    params_cache = FileBackedFakeParams(tmp_path / "cache")
+
+    manager.migrate_starpilot_default_model(params, params_cache)
+
+    assert params.get("Model") == "rdf"
+    assert params.get("DrivingModel") == "rdf"
+    assert params.get("DrivingModelName") == "Regret Driven Framework"
+    assert params.get("ModelVersion") == "v15"
+    assert params_cache.get("DrivingModel") == "rdf"
+    assert manager.STARPILOT_DEFAULT_MODEL_MIGRATION_FLAG.exists()
+
+  def test_migrate_starpilot_ce_model_stop_time(self, tmp_path, monkeypatch):
+    monkeypatch.setattr(manager, "STARPILOT_CE_MODEL_STOP_TIME_MIGRATION_FLAG", tmp_path / "starpilot_ce_model_stop_time_v1")
+
+    params = FileBackedFakeParams(tmp_path / "params", {"CEModelStopTime": 7.0})
+    params_cache = FileBackedFakeParams(tmp_path / "cache")
+
+    manager.migrate_starpilot_ce_model_stop_time(params, params_cache)
+
+    assert params.get("CEModelStopTime") == "9.0"
+    assert params_cache.get("CEModelStopTime") == "9.0"
+    assert manager.STARPILOT_CE_MODEL_STOP_TIME_MIGRATION_FLAG.exists()
+
   def test_migrate_disable_humanlike_defaults(self, tmp_path, monkeypatch):
     monkeypatch.setattr(manager, "STARPILOT_HUMANLIKE_DISABLE_MIGRATION_FLAG", tmp_path / "starpilot_humanlike_disable_v1")
 

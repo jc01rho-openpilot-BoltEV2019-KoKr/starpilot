@@ -264,8 +264,8 @@
         "description": "Follow distance to hold while changing lanes. Only applied when shorter than your normal gap.",
         "data_type": "float",
         "ui_type": "numeric",
-        "min": 0.5,
-        "max": 3.0,
+        "min": 0.25,
+        "max": 1.0,
         "step": 0.05,
         "parent_key": "LaneChanges",
         "settings_tier": "simple"
@@ -290,8 +290,17 @@
       },
       {
         "key": "NavDesiresAllowed",
-        "label": "Use Route Desires",
-        "description": "Allow an active navigation route to request keep-left, keep-right, and low-speed turn desires.",
+        "label": "Use Route Desires for Turns",
+        "description": "Allow an active navigation route to request low-speed turn desires.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NavLanePositioningAllowed",
+        "label": "Use Route Desires for Lane Positioning",
+        "description": "Allow route lane bias only after steering torque confirms the requested direction. It never initiates a lane change by itself.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LateralTune",
@@ -1359,15 +1368,6 @@
         "settings_tier": "simple"
       },
       {
-        "key": "RedneckCruise",
-        "label": "Redneck Cruise",
-        "description": "On supported Hyundai stock-long cars, use RES/SET button presses to match the cluster set speed to StarPilot's target.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "QOLLongitudinal",
-        "settings_tier": "simple"
-      },
-      {
         "key": "WeatherPresets",
         "label": "Weather Condition Offsets",
         "description": "Automatically adjust driving behavior based on real-time weather. Helps maintain comfort and safety in low visibility, rain, or snow.",
@@ -2061,15 +2061,6 @@
         "settings_tier": "simple"
       },
       {
-        "key": "HideSpeedLimit",
-        "label": "Hide Speed Limits",
-        "description": "Hide posted speed limits from the driving screen.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedCustomUI",
-        "settings_tier": "simple"
-      },
-      {
         "key": "HideSteeringWheel",
         "label": "Hide Steering Wheel",
         "description": "Hide the steering-wheel button from the top-right of the driving screen.",
@@ -2148,6 +2139,36 @@
         "ui_type": "toggle",
         "parent_key": "CustomUI",
         "settings_tier": "simple"
+      },
+      {
+        "key": "PIPPreviewEnabled",
+        "label": "Enable PiP Side Preview",
+        "description": "Show a temporary Picture-in-Picture bubble of the side window while the turn signal is on or a blind spot is detected.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "CustomUI",
+        "is_parent_toggle": true,
+        "requires_nonempty_key": "PIPPreviewMask",
+        "disabled_reason": "Configure the PiP window mask first in Galaxy > PiP Side Camera",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "PIPPreviewShowOnBlinker",
+        "label": "Show on Turn Signal",
+        "description": "Display the side preview bubble while the corresponding turn signal is engaged.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "PIPPreviewEnabled",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "PIPPreviewShowOnBSM",
+        "label": "Show on Blind Spot Detection",
+        "description": "Display the side preview bubble when a vehicle is detected in the blind spot, whether from factory BSM, V-ASM, or both.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "PIPPreviewEnabled",
+        "settings_tier": "advanced"
       },
       {
         "key": "Compass",
@@ -2350,7 +2371,7 @@
       {
         "key": "ShowSpeedLimits",
         "label": "Show Speed Limits",
-        "description": "Show speed limits in the top-left corner of the driving screen. Uses data from the car's dashboard (if supported) and \"OpenStreetMap (OSM)\".",
+        "description": "Show the current speed limit on the driving screen. The position depends on the device UI. Uses data from the car's dashboard (if supported) and \"OpenStreetMap (OSM)\".",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "NavigationUI",
@@ -2481,6 +2502,14 @@
         "ui_type": "toggle",
         "parent_key": "AdvancedCustomUI",
         "settings_tier": "simple"
+      },
+      {
+        "key": "DisableWideRoad",
+        "label": "Disable Wide Road Camera",
+        "description": "Only enable this if the wide camera is broken or for development!\n\nDisabling the wide camera may degrade driving performance and cause instability.\n\nRequires a reboot to take effect.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "settings_tier": "advanced"
       }
     ]
   },
@@ -2606,21 +2635,11 @@
         "settings_tier": "simple"
       },
       {
-        "key": "CustomAlerts",
-        "label": "StarPilot Alerts",
-        "description": "Optional StarPilot alerts that highlight driving events in a more noticeable way.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "is_parent_toggle": true,
-        "settings_tier": "simple"
-      },
-      {
         "key": "GoatScream",
         "label": "Goat Scream",
         "description": "Play the infamous \"Goat Scream\" when the steering controller reaches its limit. Based on the \"Turn Exceeds Steering Limit\" event.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "CustomAlerts",
         "settings_tier": "simple"
       },
       {
@@ -2629,7 +2648,6 @@
         "description": "Play the infamous \"Goat Scream\" for full-screen critical alerts that require immediate takeover.\n\nExamples include: \"TAKE CONTROL IMMEDIATELY\" and \"Stock AEB: Risk of Collision\".",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "CustomAlerts",
         "settings_tier": "simple"
       },
       {
@@ -2638,7 +2656,6 @@
         "description": "Play an alert when the model predicts a red light has turned green.\n\nDisclaimer: openpilot does not explicitly detect traffic lights. This alert is based on end-to-end model predictions from camera input and may trigger even when the light has not changed.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "CustomAlerts",
         "settings_tier": "simple"
       },
       {
@@ -2647,7 +2664,6 @@
         "description": "Play an alert when the lead vehicle departs from a stop.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "CustomAlerts",
         "settings_tier": "simple"
       },
       {
@@ -2656,7 +2672,6 @@
         "description": "Play a louder alert if a vehicle is in the blind spot when attempting to change lanes. Based on the \"Car Detected in Blindspot\" event.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "CustomAlerts",
         "settings_tier": "simple"
       },
       {
@@ -2665,7 +2680,6 @@
         "description": "Play the loud blind spot alert while lateral control is off or paused. Useful when steering pauses on turn signal, since the lane-change state machine is inactive then.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "CustomAlerts",
         "settings_tier": "simple"
       },
       {
@@ -2674,7 +2688,6 @@
         "description": "Play an alert when the posted speed limit changes.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "CustomAlerts",
         "settings_tier": "simple"
       }
     ]
@@ -4076,6 +4089,15 @@
         "settings_tier": "simple"
       },
       {
+        "key": "RedneckCruise",
+        "label": "Redneck Cruise",
+        "description": "On supported Hyundai stock-cruise cars, use RES/SET button presses to match the cluster set speed to StarPilot's target.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "GalaxyDeveloperMode",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "UseOldUI",
         "label": "Use Old UI",
         "description": "Use the old Qt UI instead of the default raylib UI on tici/tizi devices. This setting has no effect on C4/mici devices.",
@@ -4118,17 +4140,49 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "LaneCenteringPauseOnSignal",
+        "label": "Pause Lane Centering On Turn Signal",
+        "description": "Fade lane-centering correction out when a turn signal is active so it does not fight a lane change or turn.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LaneCentering",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "LaneCenteringE2EAuthority",
         "label": "E2E Override Strength",
-        "description": "How strongly a confident end-to-end path can override lane centering when it deliberately departs the lane target. 1.0 gives the model full authority; 0.0 disables break-in.",
+        "description": "Choose how strongly the vision model may override lane centering when it sees a hazard.",
         "data_type": "float",
         "ui_type": "numeric",
+        "control": "slider",
         "min": 0.0,
         "max": 1.0,
         "step": 0.05,
         "precision": 2,
         "parent_key": "LaneCentering",
-        "settings_tier": "advanced"
+        "settings_tier": "advanced",
+        "description_steps": [
+          {
+            "max": 0.2,
+            "description": "Vehicle rigidly tries to center itself rather than avoiding hazards, potholes, or road debris."
+          },
+          {
+            "max": 0.4,
+            "description": "Vehicle tries to center itself and slowly adjusts away from hazards, but may react too slowly."
+          },
+          {
+            "max": 0.6,
+            "description": "Vehicle provides additional space around hazards like cyclists and vehicles crossing into the lane."
+          },
+          {
+            "max": 0.8,
+            "description": "Vehicle smooths out hazard avoidance, making less rapid adjustments."
+          },
+          {
+            "max": 1.0,
+            "description": "Vehicle reacts to hazards recognized by the vision model as quickly as possible."
+          }
+        ]
       },
       {
         "key": "HondaLateralPidKpScale",

@@ -30,9 +30,9 @@ def _sm(lane_change_state=LaneChangeState.off, lane_change_direction=LaneChangeD
   }
 
 
-def _toggles(enabled=True):
+def _toggles(enabled=True, loud_enabled=True):
   return SimpleNamespace(
-    loud_blindspot_alert=True,
+    loud_blindspot_alert=loud_enabled,
     loud_blindspot_alert_when_disengaged=enabled,
   )
 
@@ -51,6 +51,12 @@ def test_loud_blindspot_alert_accepts_combined_vision_state():
   assert should_loud_blindspot_alert_without_lateral(
     CS, _sm(lat_active=False), _toggles(), combined_left_bsm=True,
   )
+
+
+def test_loud_blindspot_alert_without_lateral_is_independent_of_active_loud_alert():
+  CS = _car_state(left_blinker=True, left_blindspot=True)
+
+  assert should_loud_blindspot_alert_without_lateral(CS, _sm(), _toggles(loud_enabled=False))
 
 
 def test_loud_blindspot_alert_without_lateral_ignores_active_lateral():

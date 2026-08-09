@@ -55,6 +55,12 @@
 #define SUBARU_COMMON_TX_MSGS(alt_bus) \
   {MSG_SUBARU_ES_Distance, alt_bus, 8, .check_relay = false}, \
 
+#define SUBARU_D_PLATFORM_ANGLE_TX_MSGS() \
+  {MSG_SUBARU_ES_LKAS_ANGLE,   SUBARU_CAM_BUS, 8, .check_relay = true}, \
+  {MSG_SUBARU_ES_DashStatus,   SUBARU_CAM_BUS, 8, .check_relay = true}, \
+  {MSG_SUBARU_ES_LKAS_State,   SUBARU_CAM_BUS, 8, .check_relay = true}, \
+  {MSG_SUBARU_ES_Infotainment, SUBARU_CAM_BUS, 8, .check_relay = true}, \
+
 #define SUBARU_COMMON_LONG_TX_MSGS(alt_bus) \
   {MSG_SUBARU_ES_Distance,       alt_bus,         8, .check_relay = true}, \
   {MSG_SUBARU_ES_Brake,          alt_bus,         8, .check_relay = true}, \
@@ -85,10 +91,21 @@
   {.msg = {{MSG_SUBARU_Brake_Status,    alt_bus,         8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
   {.msg = {{MSG_SUBARU_ES_Status,       status_bus,      8, 20U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
 
+#define SUBARU_D_PLATFORM_ANGLE_RX_CHECKS() \
+  {.msg = {{MSG_SUBARU_Throttle,        SUBARU_ALT_BUS, 8, 100U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_Steering_Torque, SUBARU_CAM_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_Steering_2,      SUBARU_CAM_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_Wheel_Speeds,    SUBARU_ALT_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_Brake_Status,    SUBARU_ALT_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_ES_Brake,        SUBARU_ALT_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_ES_Status,       SUBARU_ALT_BUS, 8, 20U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_ES_DashStatus,   SUBARU_CAM_BUS, 8, 10U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+
 static bool subaru_gen2 = false;
 static bool subaru_longitudinal = false;
 static bool subaru_stop_and_go = false;
 static bool subaru_lkas_angle = false;
+static bool subaru_d_platform = false;
 
 static uint32_t subaru_get_checksum(const CANPacket_t *msg) {
   return (uint8_t)msg->data[0];
@@ -110,15 +127,17 @@ static uint32_t subaru_compute_checksum(const CANPacket_t *msg) {
 static void subaru_rx_hook(const CANPacket_t *msg) {
   const unsigned int alt_main_bus = subaru_gen2 ? SUBARU_ALT_BUS : SUBARU_MAIN_BUS;
   const unsigned int status_bus = subaru_gen2 ? SUBARU_ALT_BUS : SUBARU_CAM_BUS;
+  const unsigned int steering_bus = subaru_d_platform ? SUBARU_CAM_BUS : SUBARU_MAIN_BUS;
+  const unsigned int main_bus = subaru_d_platform ? SUBARU_ALT_BUS : SUBARU_MAIN_BUS;
 
-  if ((msg->addr == MSG_SUBARU_Steering_Torque) && (msg->bus == SUBARU_MAIN_BUS)) {
+  if ((msg->addr == MSG_SUBARU_Steering_Torque) && (msg->bus == steering_bus)) {
     int torque_driver_new;
     torque_driver_new = ((GET_BYTES(msg, 0, 4) >> 16) & 0x7FFU);
     torque_driver_new = -1 * to_signed(torque_driver_new, 11);
     update_sample(&torque_driver, torque_driver_new);
   }
 
-  if (subaru_lkas_angle && (msg->addr == MSG_SUBARU_Steering_2) && (msg->bus == SUBARU_MAIN_BUS)) {
+  if (subaru_lkas_angle && (msg->addr == MSG_SUBARU_Steering_2) && (msg->bus == steering_bus)) {
     int angle_meas_new = GET_BYTES(msg, 3, 3) & 0x1FFFFU;
     angle_meas_new = -1 * to_signed(angle_meas_new, 17);
     update_sample(&angle_meas, angle_meas_new);
@@ -152,7 +171,7 @@ static void subaru_rx_hook(const CANPacket_t *msg) {
     brake_pressed = (msg->data[7] >> 6) & 1U;
   }
 
-  if ((msg->addr == MSG_SUBARU_Throttle) && (msg->bus == SUBARU_MAIN_BUS)) {
+  if ((msg->addr == MSG_SUBARU_Throttle) && (msg->bus == main_bus)) {
     gas_pressed = msg->data[4] != 0U;
   }
 }
@@ -286,6 +305,11 @@ static safety_config subaru_init(uint16_t param) {
     SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
   };
 
+  static const CanMsg SUBARU_D_PLATFORM_ANGLE_TX_MSGS[] = {
+    SUBARU_D_PLATFORM_ANGLE_TX_MSGS()
+    SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
+  };
+
   static RxCheck subaru_rx_checks[] = {
     SUBARU_COMMON_RX_CHECKS(SUBARU_MAIN_BUS)
   };
@@ -302,6 +326,10 @@ static safety_config subaru_init(uint16_t param) {
     SUBARU_LKAS_ANGLE_RX_CHECKS(SUBARU_ALT_BUS, SUBARU_ALT_BUS)
   };
 
+  static RxCheck subaru_d_platform_angle_rx_checks[] = {
+    SUBARU_D_PLATFORM_ANGLE_RX_CHECKS()
+  };
+
   const uint16_t SUBARU_PARAM_GEN2 = 1;
 
   subaru_gen2 = GET_FLAG(param, SUBARU_PARAM_GEN2);
@@ -312,6 +340,9 @@ static safety_config subaru_init(uint16_t param) {
   const uint16_t SUBARU_PARAM_LKAS_ANGLE = 16;
   subaru_lkas_angle = GET_FLAG(param, SUBARU_PARAM_LKAS_ANGLE);
 
+  const uint16_t SUBARU_PARAM_D_PLATFORM = 32;
+  subaru_d_platform = GET_FLAG(param, SUBARU_PARAM_D_PLATFORM);
+
 #ifdef ALLOW_DEBUG
   const uint16_t SUBARU_PARAM_LONGITUDINAL = 2;
   subaru_longitudinal = GET_FLAG(param, SUBARU_PARAM_LONGITUDINAL);
@@ -319,7 +350,8 @@ static safety_config subaru_init(uint16_t param) {
 
   safety_config ret;
   if (subaru_lkas_angle) {
-    ret = subaru_gen2 ? BUILD_SAFETY_CFG(subaru_gen2_lkas_angle_rx_checks, SUBARU_GEN2_LKAS_ANGLE_TX_MSGS) : \
+    ret = subaru_d_platform ? BUILD_SAFETY_CFG(subaru_d_platform_angle_rx_checks, SUBARU_D_PLATFORM_ANGLE_TX_MSGS) : \
+          subaru_gen2 ? BUILD_SAFETY_CFG(subaru_gen2_lkas_angle_rx_checks, SUBARU_GEN2_LKAS_ANGLE_TX_MSGS) : \
                         BUILD_SAFETY_CFG(subaru_lkas_angle_rx_checks, SUBARU_LKAS_ANGLE_TX_MSGS);
   } else if (subaru_gen2) {
     ret = subaru_longitudinal ? BUILD_SAFETY_CFG(subaru_gen2_rx_checks, SUBARU_GEN2_LONG_TX_MSGS) : \

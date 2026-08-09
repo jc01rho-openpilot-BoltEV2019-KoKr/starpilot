@@ -12,7 +12,7 @@ from opendbc.car.toyota.carcontroller import CarController, get_camry_hybrid_fee
                                              get_prius_positive_feedforward_scale, \
                                              limit_interceptor_pcm_accel, \
                                              limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
-                                             limit_prius_stopping_accel, update_permit_braking
+                                             limit_prius_stopping_accel, should_bypass_toyota_long_pid, update_permit_braking
 from opendbc.car.toyota.carstate import CarState, LKAS_BUTTON_CAR, calculate_interceptor_gas_pressed, create_lkas_button_events
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
 from opendbc.car.toyota.interface import CarInterface
@@ -320,6 +320,22 @@ class TestToyotaInterfaces:
     controller.speed = 0.0
     assert controller.k_i == pytest.approx(3.6)
     assert controller.k_f == pytest.approx(1.0)
+    assert should_bypass_toyota_long_pid(car_params)
+
+  def test_camry_hybrid_keeps_toyota_longitudinal_pid(self):
+    fingerprint = {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)}
+    hybrid_fw = [CarParams.CarFw(ecu=Ecu.hybrid, address=0x7D2, fwVersion=b"test")]
+    car_params = CarInterface.get_params(
+      CAR.TOYOTA_CAMRY,
+      fingerprint,
+      hybrid_fw,
+      alpha_long=True,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+
+    assert not should_bypass_toyota_long_pid(car_params)
 
   def test_camry_continental_radar_converts_absolute_target_speed(self):
     radar_interface = RadarInterface.__new__(RadarInterface)
@@ -450,7 +466,6 @@ class TestToyotaFingerprint:
             codes |= result
 
           # Toyota places the ECU part number in their FW versions, assert all parsable
-          # Note that there is only one unique part number per ECU across the fleet, so this
           # is not important for identification, just a sanity check.
           assert all(code.count(b"-") > 1 for code in codes), f"FW does not have part number: {fw} {codes}"
 

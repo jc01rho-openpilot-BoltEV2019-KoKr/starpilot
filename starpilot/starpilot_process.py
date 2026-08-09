@@ -12,7 +12,7 @@ from openpilot.common.api import Api, api_get
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL, Priority, Ratekeeper, config_realtime_process
 from openpilot.common.time_helpers import system_time_valid
-from openpilot.system.sentry import capture_report
+from openpilot.system.sentry import capture_flm_tune_submission, capture_report
 from openpilot.system.athena.registration import UNREGISTERED_DONGLE_ID
 from openpilot.system.hardware.hw import Paths
 
@@ -118,6 +118,11 @@ def check_assets(now, model_manager, theme_manager, thread_manager, params, para
   if report_data:
     capture_report(report_data["DiscordUser"], report_data["Issue"], vars(starpilot_toggles))
     params_memory.remove("IssueReported")
+
+  flm_submission = params_memory.get("FLMSubmittedTune")
+  if flm_submission:
+    capture_flm_tune_submission(flm_submission)
+    params_memory.remove("FLMSubmittedTune")
 
   if params_memory.get_bool("DownloadMaps"):
     thread_manager.run_with_lock(update_maps, (now, params, params_memory, True))
@@ -250,7 +255,7 @@ def starpilot_thread():
   config_realtime_process(5, Priority.CTRL_LOW)
 
   pm = messaging.PubMaster(["starpilotPlan"])
-  sm = messaging.SubMaster(["carControl", "carState", "controlsState", "deviceState", "driverMonitoringState",
+  sm = messaging.SubMaster(["carControl", "carParams", "carState", "controlsState", "deviceState", "driverMonitoringState",
                             "gpsLocation", "gpsLocationExternal", "liveParameters", "managerState", "modelV2",
                             "naviData", "onroadEvents", "pandaStates", "radarState", "selfdriveState", "starpilotCarState",
                             "starpilotSelfdriveState", "starpilotModelV2", "starpilotOnroadEvents", "mapdOut", "peripheralState"],

@@ -340,6 +340,37 @@ class TestSubaruGen2AngleStockLongitudinalSafety(TestSubaruStockLongitudinalSafe
   TX_MSGS = lkas_tx_msgs(SUBARU_ALT_BUS, SubaruMsg.ES_LKAS_ANGLE)
 
 
+class TestSubaruDPlatformAngleSafety(TestSubaruStockLongitudinalSafetyBase, TestSubaruAngleSafetyBase):
+  FLAGS = SubaruSafetyFlags.GEN2 | SubaruSafetyFlags.LKAS_ANGLE | SubaruSafetyFlags.D_PLATFORM
+  ALT_MAIN_BUS = SUBARU_ALT_BUS
+  TX_MSGS = [[SubaruMsg.ES_LKAS_ANGLE, SUBARU_CAM_BUS],
+             [SubaruMsg.ES_DashStatus, SUBARU_CAM_BUS],
+             [SubaruMsg.ES_LKAS_State, SUBARU_CAM_BUS],
+             [SubaruMsg.ES_Infotainment, SUBARU_CAM_BUS],
+             [SubaruMsg.ES_Distance, SUBARU_ALT_BUS]]
+  RELAY_MALFUNCTION_ADDRS = {SUBARU_CAM_BUS: (SubaruMsg.ES_LKAS_ANGLE, SubaruMsg.ES_DashStatus,
+                                               SubaruMsg.ES_LKAS_State, SubaruMsg.ES_Infotainment)}
+  FWD_BLACKLISTED_ADDRS = {
+    SUBARU_MAIN_BUS: [SubaruMsg.ES_LKAS_ANGLE, SubaruMsg.ES_DashStatus, SubaruMsg.ES_LKAS_State, SubaruMsg.ES_Infotainment],
+  }
+
+  def _torque_driver_msg(self, torque):
+    return self.packer.make_can_msg_safety("Steering_Torque", SUBARU_MAIN_BUS, {"Steer_Torque_Sensor": torque})
+
+  def _user_gas_msg(self, gas):
+    return self.packer.make_can_msg_safety("Throttle", SUBARU_ALT_BUS, {"Throttle_Pedal": gas})
+
+  def _angle_cmd_msg(self, angle, enabled, increment_timer=True):
+    if increment_timer:
+      self.safety.set_timer(self.angle_cmd_cnt * int(1e6 / self.LATERAL_FREQUENCY))
+      self.angle_cmd_cnt += 1
+    values = {"LKAS_Output": angle, "LKAS_Request": enabled, "SET_3": 3}
+    return self.packer.make_can_msg_safety("ES_LKAS_ANGLE", SUBARU_CAM_BUS, values)
+
+  def _angle_meas_msg(self, angle):
+    return self.packer.make_can_msg_safety("Steering_2", SUBARU_CAM_BUS, {"Steering_Angle": angle})
+
+
 class TestSubaruGen2LongitudinalSafety(TestSubaruLongitudinalSafetyBase, TestSubaruGen2TorqueSafetyBase):
   FLAGS = SubaruSafetyFlags.LONG | SubaruSafetyFlags.GEN2
   TX_MSGS = lkas_tx_msgs(SUBARU_ALT_BUS) + long_tx_msgs(SUBARU_ALT_BUS) + gen2_long_additional_tx_msgs()

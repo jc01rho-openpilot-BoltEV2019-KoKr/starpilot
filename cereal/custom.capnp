@@ -292,7 +292,15 @@ struct StarPilotLateralManeuverPlanDEPRECATED @0xcb9fd56c7057593a {
   desiredCurvature @0 :Float32;  # 1/m
 }
 
-struct CustomReserved11 @0xc2243c65e0340384 {
+struct StarPilotLateralState @0xc2243c65e0340384 {
+  active @0 :Bool;
+  frictionThreshold @1 :Float32;
+  frictionScale @2 :Float32;
+  feedforward @3 :Float32;
+  frictionJerk @4 :Float32;
+  frictionJerkDeadzone @5 :Float32;
+  lowSpeedFactor @6 :Float32;
+  unwindDetected @7 :Bool;
 }
 
 struct CustomReserved12 @0x9ccdc8676701b412 {

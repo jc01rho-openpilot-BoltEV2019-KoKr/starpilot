@@ -6,6 +6,7 @@ from cereal import car
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app, FontWeight, FONT_SCALE
 from openpilot.system.ui.lib.text_measure import measure_text_cached
+from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import draw_text_fit_common, wrap_text
 
 SIDEBAR_WIDTH = 300
 METRIC_HEIGHT = 126
@@ -169,24 +170,21 @@ class DeveloperSidebar:
 
     rl.draw_rectangle_rounded_lines_ex(metric_rect, 0.3, 10, 2, _WHITE_DIM)
 
-    if label_second == "":
-      text_size = measure_text_cached(self._font_bold, label_first, FONT_SIZE)
-      text_pos = rl.Vector2(
-        metric_rect.x + (metric_rect.width - 22 - text_size.x) / 2,
-        metric_rect.y + (metric_rect.height - text_size.y) / 2
-      )
-      rl.draw_text_ex(self._font_bold, label_first, text_pos, FONT_SIZE, 0, rl.WHITE)
+    max_w = metric_rect.width - 22
+    labels = wrap_text(self._font_bold, label_first, max_w, FONT_SIZE, max_lines=2) if label_second == "" else [label_first, label_second]
+    
+    if len(labels) == 1:
+      text = labels[0]
+      text_size = measure_text_cached(self._font_bold, text, FONT_SIZE)
+      pos = rl.Vector2(metric_rect.x, metric_rect.y + (metric_rect.height - text_size.y) / 2)
+      draw_text_fit_common(self._font_bold, text, pos, max_w, FONT_SIZE, align_center=True, color=rl.WHITE)
     else:
-      labels = [label_first, label_second]
       text_y = metric_rect.y + (metric_rect.height / 2 - len(labels) * FONT_SIZE * FONT_SCALE)
       for text in labels:
         text_size = measure_text_cached(self._font_bold, text, FONT_SIZE)
         text_y += text_size.y
-        text_pos = rl.Vector2(
-          metric_rect.x + (metric_rect.width - 22 - text_size.x) / 2,
-          text_y
-        )
-        rl.draw_text_ex(self._font_bold, text, text_pos, FONT_SIZE, 0, rl.WHITE)
+        pos = rl.Vector2(metric_rect.x, text_y)
+        draw_text_fit_common(self._font_bold, text, pos, max_w, FONT_SIZE, align_center=True, color=rl.WHITE)
 
   def update(self):
     self._refresh_cache()

@@ -24,13 +24,13 @@ from openpilot.starpilot.common.starpilot_utilities import delete_file
 from openpilot.starpilot.common.starpilot_variables import MODELS_PATH
 
 MANIFEST_CANDIDATES = ("v22",)
-DEFAULT_MODEL_KEY = "sc2"
+DEFAULT_MODEL_KEY = "rdf"
 LOCAL_MODEL_PREFIX = "local-"
 LOCAL_MODEL_SERIES = "Local Series"
 ARTIFACT_URLS_CACHE = ".model_artifact_urls.json"
 ARTIFACT_METADATA_CACHE = ".model_artifacts.json"
 MODEL_KEY_CANONICAL_MAP = {
-  "sc": DEFAULT_MODEL_KEY,
+  "sc": "sc2",
 }
 
 CANCEL_DOWNLOAD_PARAM = "CancelModelDownload"
@@ -181,7 +181,7 @@ class ModelManager:
     selected_model = self._selected_model()
     current_version = self._resolve_mirrored_param("ModelVersion", "DrivingModelVersion")
     if not current_version:
-      current_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or "v11"
+      current_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or ("v15" if is_builtin_model_key(selected_model) else "v11")
 
     selected_name = self._param_text("DrivingModelName")
     if not selected_name and selected_model in self.available_models:
@@ -359,7 +359,7 @@ class ModelManager:
 
       model_version = version_map.get(model_key) or version_map.get(canonical_key) or ""
       if not model_version and is_builtin_model_key(canonical_key):
-        model_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or "v11"
+        model_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or "v15"
 
       artifact_format = artifact_format_map.get(model_key) or artifact_format_map.get(canonical_key) or ""
       if not self._is_model_downloaded(model_key, artifact_format):
@@ -415,7 +415,7 @@ class ModelManager:
 
     fallback_version = self._resolve_mirrored_param("ModelVersion", "DrivingModelVersion")
     if not fallback_version:
-      fallback_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or "v11"
+      fallback_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or ("v15" if is_builtin_model_key(selected) else "v11")
     self._set_model_param_keys(selected, name_map.get(selected, ""), fallback_version)
 
   @staticmethod
@@ -590,12 +590,12 @@ class ModelManager:
         default_name = (
           self.available_model_names[default_index]
           if default_index is not None and default_index < len(self.available_model_names)
-          else "South Carolina"
+          else "Regret Driven Framework"
         )
         default_version = (
           self.model_versions[default_index]
           if default_index is not None and default_index < len(self.model_versions)
-          else "v11"
+          else "v15"
         )
         self._set_model_param_keys(DEFAULT_MODEL_KEY, default_name, default_version)
         self.params_memory.put(DOWNLOAD_PROGRESS_PARAM, "Selected model unavailable; using built-in model.")

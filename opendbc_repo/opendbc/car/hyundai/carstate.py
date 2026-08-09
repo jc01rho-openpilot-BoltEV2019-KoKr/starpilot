@@ -117,6 +117,7 @@ class CarState(CarStateBase):
                                  "CRUISE_BUTTONS"
     self.is_metric = False
     self.buttons_counter = 0
+    self.main_cruise_on = False
 
     self.cruise_info = {}
     self.msg_161 = {}
@@ -138,7 +139,7 @@ class CarState(CarStateBase):
     self.blindspots_front_corner_1_ts = 0
     self.left_blindspot_from_radar = False
     self.right_blindspot_from_radar = False
-    if CP.carFingerprint == CAR.KIA_EV9:
+    if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR:
       self.hba_icon = 0
       self.main_cruise_on = False
       self.angle_steering_angle = 0.0
@@ -311,19 +312,19 @@ class CarState(CarStateBase):
 
     # cruise state
     no_scc = bool(self.CP.flags & HyundaiFlags.NON_SCC)
-    if self.CP.openpilotLongitudinalControl:
-      # These are not used for engage/disengage since openpilot keeps track of state using the buttons
-      ret.cruiseState.available = cp.vl["TCS13"]["ACCEnable"] == 0
-      ret.cruiseState.enabled = cp.vl["TCS13"]["ACC_REQ"] == 1
-      ret.cruiseState.standstill = False
-      ret.cruiseState.nonAdaptive = False
-    elif no_scc:
+    if no_scc:
       cruise_available_msg, cruise_available_sig, cruise_enabled_msg, cruise_enabled_sig, cruise_speed_msg, cruise_speed_sig = get_non_scc_cruise_signals(self.CP)
       ret.cruiseState.available = cp.vl[cruise_available_msg][cruise_available_sig] != 0
       ret.cruiseState.enabled = cp.vl[cruise_enabled_msg][cruise_enabled_sig] != 0
       ret.cruiseState.standstill = False
       ret.cruiseState.nonAdaptive = False
       ret.cruiseState.speed = cp.vl[cruise_speed_msg][cruise_speed_sig] * speed_conv
+    elif self.CP.openpilotLongitudinalControl:
+      # These are not used for engage/disengage since openpilot keeps track of state using the buttons
+      ret.cruiseState.available = cp.vl["TCS13"]["ACCEnable"] == 0
+      ret.cruiseState.enabled = cp.vl["TCS13"]["ACC_REQ"] == 1
+      ret.cruiseState.standstill = False
+      ret.cruiseState.nonAdaptive = False
     else:
       scc_msg = "SCC12" if self.CP.flags & HyundaiFlags.CAN_CANFD_BLENDED else "SCC11"
       ret.cruiseState.available = cp_cruise.vl[scc_msg]["MainMode_ACC"] == 1
@@ -415,6 +416,9 @@ class CarState(CarStateBase):
     ret.buttonEvents = [*self.create_cruise_button_events(self.cruise_buttons[-1], prev_cruise_buttons),
                         *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
                         *lkas_button_events]
+
+    if getattr(self.FPCP, "flags", 0) & HyundaiStarPilotFlags.MAIN_CRUISE_STATE_TRACKING:
+      ret.cruiseState.available = self.update_main_cruise(ret)
 
     ret.blockPcmEnable = not self.recent_button_interaction()
 
@@ -599,13 +603,15 @@ class CarState(CarStateBase):
     msgs = []
     cam_msgs = []
     if not (CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS):
-      # TODO: this can be removed once we add dynamic support to vl_all
+      # The EV9 can stop publishing this during the non-ECU-disabled startup
+      # state. Keep decoding it when present without making CAN invalid.
       msgs += [
-        # this message is 50Hz but the ECU frequently stops transmitting for ~0.5s
-        ("CRUISE_BUTTONS", 1)
+        ("CRUISE_BUTTONS", 0 if CP.carFingerprint == CAR.KIA_EV9 else 1)
       ]
     if CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
-      msgs.append(("FR_CMR_02_100ms", 10))
+      # EV9 camera status can disappear for an extended period when the
+      # documented ECU startup sequence is skipped.
+      msgs.append(("FR_CMR_02_100ms", 0 if CP.carFingerprint == CAR.KIA_EV9 else 10))
       msgs.append(("FR_CMR_03_50ms", 0))
       cam_msgs.append(("LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT else "LKAS", 0))
     else:
@@ -621,8 +627,7 @@ class CarState(CarStateBase):
       ("LFAHDA_CLUSTER", 0),  # optional: carries cluster icon state on some variants
       ("BLINKER_STALKS", 0),  # optional: some trims publish live stalk/light state on ECAN during turn camera events
     ]
-    if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR and CP.enableBsm:
-      # Keep the suppressed ADAS BSM output optional.
+    if CP.enableBsm:
       msgs.append(("BLINDSPOTS_REAR_CORNERS", 0))
     if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR:
       msgs.append(("BLINDSPOTS_FRONT_CORNER_2", 0))

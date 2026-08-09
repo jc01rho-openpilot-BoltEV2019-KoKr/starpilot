@@ -222,3 +222,9 @@ def test_set_speed_limit_available_on_redneck_helper_path():
 
 def test_set_speed_limit_unavailable_on_stock_pcm_without_helper():
   assert spv.set_speed_limit_available(openpilot_longitudinal=False, has_cc_long=False, pcm_cruise_speed=True) is False
+
+
+def test_speed_limit_controller_available_on_openpilot_longitudinal_or_redneck():
+  assert spv.speed_limit_controller_available(openpilot_longitudinal=True, redneck_cruise=False) is True
+  assert spv.speed_limit_controller_available(openpilot_longitudinal=False, redneck_cruise=True) is True
+  assert spv.speed_limit_controller_available(openpilot_longitudinal=False, redneck_cruise=False) is False

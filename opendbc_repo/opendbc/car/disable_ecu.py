@@ -23,9 +23,11 @@ def ecu_log(msg):
     pass
 
 
-def disable_ecu(can_recv, can_send, bus=0, addr=0x7d0, sub_addr=None, com_cont_req=b'\x28\x83\x01', timeout=0.1, retry=10, reset=False):
+def disable_ecu(can_recv, can_send, bus=0, addr=0x7d0, sub_addr=None, com_cont_req=b'\x28\x83\x01', timeout=0.1, retry=10, reset=False,
+                require_response=False, diag_request=EXT_DIAG_REQUEST, diag_response=EXT_DIAG_RESPONSE):
   """Silence an ECU by disabling sending and receiving messages using UDS 0x28.
   The ECU will stay silent as long as openpilot keeps sending Tester Present.
+  Set require_response for takeovers that must fail closed unless the ECU confirms communication control.
 
   This is used to disable the radar in some cars. Openpilot will emulate the radar.
   WARNING: THIS DISABLES AEB!"""
@@ -45,7 +47,7 @@ def disable_ecu(can_recv, can_send, bus=0, addr=0x7d0, sub_addr=None, com_cont_r
     try:
       # Enter extended diagnostic session
       ecu_log(f"attempt {i+1}/{retry}: diag session...")
-      query = IsoTpParallelQuery(can_send, can_recv, bus, [(addr, sub_addr)], [EXT_DIAG_REQUEST], [EXT_DIAG_RESPONSE])
+      query = IsoTpParallelQuery(can_send, can_recv, bus, [(addr, sub_addr)], [diag_request], [diag_response])
 
       for _, _ in query.get_data(timeout).items():
         ecu_log("diag session OK")
@@ -62,7 +64,7 @@ def disable_ecu(can_recv, can_send, bus=0, addr=0x7d0, sub_addr=None, com_cont_r
         cc_success = False
         cc_rejected = False
         cc_nrc = None
-        for (rx_addr, _), data in cc_response.items():
+        for (_rx_addr, _), data in cc_response.items():
           ecu_log(f"CC response: {data.hex() if data else 'empty'}")
           # Check for positive response (0x68 = 0x28 + 0x40)
           if len(data) >= 1 and data[0] == 0x68:
@@ -93,6 +95,9 @@ def disable_ecu(can_recv, can_send, bus=0, addr=0x7d0, sub_addr=None, com_cont_r
           # ECU explicitly rejected - don't retry, it won't work
           ecu_log("=== ECU DISABLE REJECTED ===")
           return False
+        elif require_response:
+          ecu_log("CC response required but none received; retrying...")
+          continue
         else:
           # No response - consider it sent (ECU might have stopped responding)
           ecu_log("=== ECU DISABLE SENT (no response) ===")

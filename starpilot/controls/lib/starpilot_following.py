@@ -19,7 +19,7 @@ LaneChangeDirection = log.LaneChangeDirection
 # hold a shorter follow distance so openpilot merges out smoothly and can accelerate
 # through the maneuver instead of braking behind a lead it is about to leave.
 # Ramps in gradually, snaps back to the normal gap when the safety gate trips.
-LANE_CHANGE_MIN_T_FOLLOW = 0.5             # hard floor on the reduced gap (s)
+LANE_CHANGE_MIN_T_FOLLOW = 0.25            # hard floor on the reduced gap (s)
 LANE_CHANGE_GAP_RAMP_IN_RATE = 0.6         # seconds of headway per second, toward the shorter gap
 LANE_CHANGE_GAP_RAMP_OUT_RATE = 4.0        # seconds of headway per second, back to the normal gap
 LANE_CHANGE_ABORT_LEAD_BRAKE = 0.8         # lead decel that aborts the reduction (m/s^2)
