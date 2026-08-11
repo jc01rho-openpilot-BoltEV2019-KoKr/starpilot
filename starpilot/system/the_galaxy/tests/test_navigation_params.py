@@ -150,6 +150,24 @@ def test_missing_api_route_returns_json_instead_of_spa_html(monkeypatch):
   assert response.get_json() == {"error": "API endpoint not found."}
 
 
+def test_successful_fast_update_reboots_to_load_new_server_code(monkeypatch):
+  progress_calls = []
+  state_calls = []
+  reboot_calls = []
+
+  monkeypatch.setattr(the_galaxy, "_set_fast_update_progress", lambda *args: progress_calls.append(args))
+  monkeypatch.setattr(the_galaxy, "_set_fast_update_state", lambda **kwargs: state_calls.append(kwargs))
+  monkeypatch.setattr(the_galaxy.time, "sleep", lambda _seconds: None)
+  monkeypatch.setattr(the_galaxy.HARDWARE, "reboot", lambda: reboot_calls.append(True))
+
+  the_galaxy._finish_update_and_reboot("Update successful.")
+
+  assert progress_calls[-1][1] == "Rebooting device"
+  assert state_calls[-1]["stage"] == "rebooting"
+  assert state_calls[-1]["running"] is False
+  assert reboot_calls == [True]
+
+
 def test_params_compat_accepts_json_strings_for_json_keys():
   backend = FakeParamsBackend(
     key_types={"FavoriteDestinations": ParamKeyType.JSON},
