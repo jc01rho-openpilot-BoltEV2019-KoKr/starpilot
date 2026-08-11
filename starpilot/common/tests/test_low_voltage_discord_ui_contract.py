@@ -23,6 +23,7 @@ def test_galaxy_has_masked_dedicated_secret_api_and_control():
   server = (REPO_ROOT / "starpilot/system/the_galaxy/the_galaxy.py").read_text()
   layout = (REPO_ROOT / "starpilot/system/the_galaxy/assets/components/tools/device_settings_layout.json").read_text()
   javascript = (REPO_ROOT / "starpilot/system/the_galaxy/assets/components/tools/device_settings.js").read_text()
+  snackbar = (REPO_ROOT / "starpilot/system/the_galaxy/assets/js/snackbar.js").read_text()
   assert '"LowVoltageDiscordWebhook",' in server and "GALAXY_PRIVATE_PARAM_KEYS" in server
   assert '@app.route("/api/low_voltage_discord"' in server
   assert '"ui_type": "discord_webhook"' in layout
@@ -30,7 +31,8 @@ def test_galaxy_has_masked_dedicated_secret_api_and_control():
   assert 'type="password"' in javascript
   assert 'Configured' in javascript
   assert "async function readJsonResponse(response)" in javascript
-  assert "The Galaxy API returned an invalid response." in javascript
+  assert "Galaxy API unavailable. Restart the device." in javascript
+  assert "snackbar.textContent = String(msg ?? \"\")" in snackbar
 
 
 def test_starpilot_process_tracks_peripheral_voltage_and_offroad_transition():

@@ -14,7 +14,7 @@ function showSnackbar(msg, level, timeout = 3500, options = {}) {
   }
 
   const setSnackbarContent = (snackbar) => {
-    snackbar.innerHTML = msg
+    snackbar.textContent = String(msg ?? "")
     snackbar.className = "snackbar show"
     if (level === "error") {
       snackbar.style.backgroundColor = "#f44336"

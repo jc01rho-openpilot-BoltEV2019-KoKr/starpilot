@@ -448,13 +448,13 @@ async function readJsonResponse(response) {
   if (!responseText) return {}
 
   if (!contentType.toLowerCase().includes("application/json")) {
-    throw new Error("The Galaxy API returned an invalid response. Restart Galaxy or update the device software.")
+    throw new Error("Galaxy API unavailable. Restart the device.")
   }
 
   try {
     return JSON.parse(responseText)
   } catch {
-    throw new Error("The Galaxy API returned an invalid response.")
+    throw new Error("Galaxy API unavailable. Restart the device.")
   }
 }
 
