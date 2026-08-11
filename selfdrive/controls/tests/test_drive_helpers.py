@@ -40,10 +40,19 @@ def test_get_lateral_active_allows_aol_while_disabled():
 #   => openpilot curvature positive -> steer right; negative -> steer left
 #   offset positive -> desire right of geometric center
 #
-# Gates (all must pass or model_curvature is returned unchanged):
+# Hard gates (model_curvature returned unchanged, filter state hard-reset):
 #   enabled, lat_active, model_valid, laneChangeState == off, v_ego >= 5 m/s,
-#   both probs >= 0.6, both stds <= 0.3 m, finite non-empty arrays,
-#   width in [2.6, 4.8] m.
+#   model_v2.position itself missing/malformed (no baseline to correct from at all).
+#
+# Laneline confidence (probability, std, width -- ramped smoothly, NOT a hard gate):
+#   blends the *target* between the laneline center and the model's own predicted path.
+#   With `offset == 0` this is numerically indistinguishable from the old hard-gate "noop"
+#   behavior (see the tests below), which is why the original RED tests still hold unchanged.
+#   The actual behavior change lives in the "laneline confidence blends, offset survives"
+#   section further down: with a nonzero `offset` and no/unreliable lane lines, the controller
+#   no longer drops the correction to zero -- it falls back to applying `offset` alone on top
+#   of the model's own path, e.g. on a center-stripe-only road with a curbed shoulder and no
+#   lane line to read on that side.
 # ---------------------------------------------------------------------------
 
 _V_EGO = 20.0
@@ -162,6 +171,70 @@ def test_lc_non_monotonic_model_path_x_is_noop():
   bad = _model_v2(left_y=-1.5, right_y=2.1)
   bad.position.x[10] = bad.position.x[9]
   assert _ctrl().update(0.01, bad, _V_EGO, True, 0.0, True, True) == 0.01
+
+
+# ===== laneline confidence blends, offset survives (the behavior this PR adds) =====
+#
+# The tests above all pass offset=0.0, so a confidence-degraded target (which collapses to
+# the model's own path) produces the same zero correction the old hard gate did -- that's why
+# they still pass unmodified. These tests set offset != 0 to show the actual change: the
+# correction no longer disappears when lane lines are missing/unreliable, because the target
+# falls back to (model's own path + offset) instead of just (model's own path).
+
+def test_lc_no_lanelines_offset_still_applies():
+  # Both lines undetected entirely (e.g. a center-stripe-only road with a curbed shoulder and
+  # no line to read there). Old behavior: hard-gated to zero, offset silently dropped. New
+  # behavior: falls back to applying offset alone, same magnitude as if lines were confident
+  # and already centered.
+  v2 = _model_v2(left_y=-1.8, right_y=1.8, left_prob=0.0, right_prob=0.0)
+  _, out = _converge(v2, offset=0.3)
+  assert out > 1e-6
+
+
+def test_lc_one_sided_laneline_offset_still_applies():
+  # Only the right line is confidently detected -- e.g. no line on the curb side. A single
+  # unreliable line is enough to drag the old hard gate's min(probL, probR) check below
+  # threshold; offset must still apply.
+  v2 = _model_v2(left_y=-1.8, right_y=1.8, left_prob=0.1, right_prob=0.9)
+  _, out = _converge(v2, offset=0.3)
+  assert out > 1e-6
+
+
+def test_lc_no_lanelines_zero_offset_still_noop():
+  # No lanelines AND no user offset: nothing to correct toward -- must not invent a pull from
+  # a laneline center it shouldn't trust.
+  v2 = _model_v2(left_y=-1.8, right_y=1.8, left_prob=0.0, right_prob=0.0)
+  _, out = _converge(v2, offset=0.0)
+  assert abs(out) < 1e-6
+
+
+def test_lc_implausible_width_offset_still_applies():
+  v2 = _model_v2(left_y=-4.0, right_y=4.0)  # width 8.0, well beyond _LC_MAX_WIDTH
+  _, out = _converge(v2, offset=0.3)
+  assert out > 1e-6
+
+
+def test_lc_confidence_fade_matches_no_lanelines_offset_magnitude():
+  # A fully-confident, already-centered lane line and a fully-unconfident one should converge
+  # to the *same* correction when offset is identical -- both reduce to "target = model's own
+  # path + offset". This is the blend's continuity property: confidence changes how much the
+  # laneline center pulls the target, not whether offset applies.
+  centered_confident = _model_v2(left_y=-1.8, right_y=1.8)  # center 0.0, matches model_y default
+  no_lanelines = _model_v2(left_y=-1.8, right_y=1.8, left_prob=0.0, right_prob=0.0)
+  _, out_confident = _converge(centered_confident, offset=0.3)
+  _, out_no_lines = _converge(no_lanelines, offset=0.3)
+  assert np.isclose(out_confident, out_no_lines, atol=1e-6)
+
+
+def test_lc_high_confidence_still_pulls_toward_laneline_center():
+  # Sanity check the blend didn't regress full-confidence centering: with zero offset and a
+  # laneline center that disagrees with the model's own path, high confidence should still
+  # pull toward the laneline center (this duplicates the intent of
+  # test_lc_center_right_steers_right but stated in blend terms for contrast with the tests
+  # above).
+  v2 = _model_v2(left_y=-1.5, right_y=2.1)  # center +0.3 m right, high confidence
+  _, out = _converge(v2, offset=0.0)
+  assert out > 1e-6
 
 
 # ===== correction signs (positive openpilot curvature = steer right) =====
