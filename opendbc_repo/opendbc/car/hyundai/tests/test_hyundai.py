@@ -17,7 +17,8 @@ from opendbc.car.hyundai.carcontroller import CarController, Ioniq6LongitudinalT
                                              should_reset_ev6_gt_line_longitudinal_tuning, reset_ev6_gt_line_longitudinal_tuning, \
                                              direct_angle_request_allowed, get_angle_smoothing_alpha, \
                                              should_use_ev6_gt_line_stop_direct_tracking
-from opendbc.car.hyundai.carstate import CarState, decode_canfd_camera_lead, decode_ioniq_6_blindspot_radar_state
+from opendbc.car.hyundai.carstate import CarState, decode_canfd_camera_lead, decode_ioniq_6_blindspot_radar_state, \
+                                             get_canfd_cruise_available
 from opendbc.car.hyundai.interface import CarInterface, KIA_EV9_ACCEL_MAX
 from opendbc.car.hyundai import hyundaican, hyundaicanfd
 from opendbc.car.hyundai.hyundaicanfd import CanBus
@@ -64,6 +65,10 @@ NO_DATES_PLATFORMS = {
   CAR.HYUNDAI_SONATA_LF,
   CAR.HYUNDAI_VELOSTER,
   CAR.HYUNDAI_KONA_2022,
+  CAR.HYUNDAI_BAYON_1ST_GEN_NON_SCC,
+  CAR.KIA_CEED_PHEV_2022_NON_SCC,
+  CAR.KIA_FORTE_2019_NON_SCC,
+  CAR.KIA_FORTE_2021_NON_SCC,
 }
 
 CANFD_EXPECTED_ECUS = {Ecu.fwdCamera, Ecu.fwdRadar}
@@ -480,12 +485,34 @@ class TestHyundaiFingerprint:
     CC = SimpleNamespace(enabled=True, cruiseControl=SimpleNamespace(cancel=False, resume=False))
     actuators = SimpleNamespace(longControlState=LongCtrlState.off)
 
-    msgs = controller.create_can_msgs(True, 100, False, 0.0, 0.0, False, hud_control, actuators, CS, CC, 2)
+    msgs = controller.create_can_msgs(True, 100, False, 0.0, 0.0, False, hud_control, actuators, CS, CC, 2, 2)
     msg_addrs_buses = {(addr, bus) for addr, _, bus in msgs}
 
     assert (0x50, 0) in msg_addrs_buses
     assert (0x2A4, 0) in msg_addrs_buses
     assert not ({0x340, 0x364} & {addr for addr, _, _ in msgs})
+
+  def test_g70_aol_uses_active_lkas_icon(self):
+    CP = CarInterface.get_params(CAR.GENESIS_G70_2020, gen_empty_fingerprint(), [], False, False, False, None)
+    controller = CarController(DBC[CP.carFingerprint], CP)
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LKAS11", 0)], 0)
+
+    hud_control = SimpleNamespace(
+      visualAlert=CarControl.HUDControl.VisualAlert.none,
+      leftLaneVisible=True,
+      rightLaneVisible=True,
+      leftLaneDepart=False,
+      rightLaneDepart=False,
+    )
+    CS = SimpleNamespace(lkas11=parser.vl["LKAS11"])
+    CC = SimpleNamespace(enabled=False, cruiseControl=SimpleNamespace(cancel=False, resume=False))
+    actuators = SimpleNamespace(longControlState=LongCtrlState.off)
+
+    msgs = controller.create_can_msgs(True, 100, False, 0.0, 0.0, False, hud_control, actuators, CS, CC, 2, 0)
+    lkas11 = next(msg for msg in msgs if msg[0] == 0x340)
+    parser.update([(1, [lkas11])])
+
+    assert parser.vl["LKAS11"]["CF_Lkas_FcwOpt_USM"] == 2
 
   @pytest.mark.parametrize("candidate", (CAR.HYUNDAI_ELANTRA_2024, CAR.HYUNDAI_ELANTRA_HEV_2024))
   def test_hyundai_can_refresh_platforms_use_refresh_dbc_and_safety_param(self, candidate):
@@ -505,9 +532,6 @@ class TestHyundaiFingerprint:
     fingerprint[0][0x50C] = 8
     forte_non_scc = CarInterface.get_params(CAR.KIA_FORTE_2021_NON_SCC, fingerprint, [], False, False, False, None)
     assert forte_non_scc.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON
-
-    g90 = CarInterface.get_params(CAR.GENESIS_G90, gen_empty_fingerprint(), [], False, False, False, None)
-    assert g90.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON
 
     sonata_without_lda = CarInterface.get_params(CAR.HYUNDAI_SONATA, gen_empty_fingerprint(), [], False, False, False, None)
     assert not (sonata_without_lda.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON)
@@ -728,6 +752,18 @@ class TestHyundaiFingerprint:
     ret.buttonEvents = [structs.CarState.ButtonEvent(pressed=True, type=ButtonType.mainCruise)]
     assert not CarState.update_main_cruise(car_state, ret)
 
+  def test_ev9_stock_fallback_uses_tcs_cruise_availability(self):
+    CP = SimpleNamespace(carFingerprint=CAR.KIA_EV9, openpilotLongitudinalControl=False)
+    cp = SimpleNamespace(vl={"TCS": {"ACCEnable": 0}})
+
+    assert get_canfd_cruise_available(CP, cp, False)
+
+    cp.vl["TCS"]["ACCEnable"] = 1
+    assert not get_canfd_cruise_available(CP, cp, True)
+
+    other_cp = SimpleNamespace(carFingerprint=CAR.HYUNDAI_IONIQ_6, openpilotLongitudinalControl=False)
+    assert not get_canfd_cruise_available(other_cp, cp, False)
+
   def test_palisade_2023_cancel_release_enables_from_standby(self):
     toggles = get_test_toggles()
     CP = CarInterface.get_params(CAR.HYUNDAI_PALISADE_2023, gen_empty_fingerprint(), [], True, False, False, toggles)
@@ -755,6 +791,34 @@ class TestHyundaiFingerprint:
     CarInterface.init(CP, None, None)
 
     assert called["reset"] is True
+    assert not CP.openpilotLongitudinalControl
+    assert CP.pcmCruise
+    assert not (CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG)
+
+  @pytest.mark.parametrize("candidate", (CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5_PE))
+  def test_angle_longitudinal_ready_state_skips_ecu_disable(self, candidate, monkeypatch):
+    toggles = get_test_toggles()
+    radar_config = get_radar_track_config(candidate)
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[CanBus(None, fingerprint).CAM][0x110] = 32
+    fingerprint[radar_config.bus][radar_config.start_addr] = radar_config.expected_length
+    car_fw = [CarParams.CarFw(ecu=Ecu.adas, fwVersion=b"", address=0x730, brand="hyundai")]
+    CP = CarInterface.get_params(candidate, fingerprint, car_fw, True, False, False, toggles)
+    bus = CanBus(CP).ECAN
+    disable_calls = []
+
+    def fake_disable_ecu(*args, **kwargs):
+      disable_calls.append(kwargs)
+      return True
+
+    def can_recv(*, wait_for_one=True):
+      ready_msg = SimpleNamespace(address=0x35, src=bus, dat=bytes([0, 0, 0, 0x40]))
+      return [[ready_msg]]
+
+    monkeypatch.setattr("opendbc.car.hyundai.interface.disable_ecu", fake_disable_ecu)
+    CarInterface.init(CP, can_recv, None)
+
+    assert not any(call.get("addr") in (0x730, 0x7D0) for call in disable_calls)
     assert not CP.openpilotLongitudinalControl
     assert CP.pcmCruise
     assert not (CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG)
@@ -2950,13 +3014,16 @@ class TestHyundaiFingerprint:
   def test_platform_code_ecus_available(self, subtests):
     # TODO: add queries for these non-CAN FD cars to get EPS
     no_eps_platforms = CANFD_CAR | {CAR.KIA_SORENTO, CAR.KIA_OPTIMA_G4, CAR.KIA_OPTIMA_G4_FL, CAR.KIA_OPTIMA_H,
-                                    CAR.KIA_OPTIMA_H_G4_FL, CAR.HYUNDAI_SONATA_LF, CAR.HYUNDAI_TUCSON, CAR.GENESIS_G90, CAR.GENESIS_G80, CAR.HYUNDAI_ELANTRA}
+                                    CAR.KIA_OPTIMA_H_G4_FL, CAR.HYUNDAI_SONATA_LF, CAR.HYUNDAI_TUCSON, CAR.GENESIS_G90, CAR.GENESIS_G80,
+                                    CAR.HYUNDAI_ELANTRA, CAR.HYUNDAI_BAYON_1ST_GEN_NON_SCC}
 
     # Asserts ECU keys essential for fuzzy fingerprinting are available on all platforms
     for car_model, ecus in FW_VERSIONS.items():
       with subtests.test(car_model=car_model.value):
         for platform_code_ecu in PLATFORM_CODE_ECUS:
           if platform_code_ecu in (Ecu.fwdRadar, Ecu.eps) and car_model == CAR.HYUNDAI_GENESIS:
+            continue
+          if platform_code_ecu == Ecu.fwdRadar and car_model in HYUNDAI_NON_SCC_FW_CARS:
             continue
           if platform_code_ecu == Ecu.eps and car_model in no_eps_platforms:
             continue
@@ -3028,6 +3095,7 @@ class TestHyundaiFingerprint:
     excluded_platforms = {
       CAR.GENESIS_G70,            # shared platform code, part number, and date
       CAR.GENESIS_G70_2020,
+      CAR.GENESIS_G70_2021_NON_SCC,
     }
     excluded_platforms |= CANFD_CAR - EV_CAR - CANFD_FUZZY_WHITELIST  # shared platform codes
     excluded_platforms |= NO_DATES_PLATFORMS - DATELESS_FUZZY_CARS

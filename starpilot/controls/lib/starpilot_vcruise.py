@@ -71,13 +71,17 @@ OFFSET_FT_MIN = -20
 OFFSET_FT_MAX = 20
 
 
-def get_active_slc_control_target(speed_limit_controller, set_speed_limit, slc_target, slc_offset, overridden_speed, v_ego_diff):
+def get_active_slc_control_target(speed_limit_controller, set_speed_limit, slc_target, slc_offset, overridden_speed,
+                                  v_ego_diff, allow_lower_override=False):
   # `SetSpeedLimit` only controls engage-time set-speed initialization. Ongoing
   # SLC speed matching must remain active whenever Speed Limit Controller is on.
   if not speed_limit_controller:
     return 0.0
 
-  base_target = max(float(overridden_speed), float(slc_target) + float(slc_offset))
+  if allow_lower_override and overridden_speed > 0:
+    base_target = float(overridden_speed)
+  else:
+    base_target = max(float(overridden_speed), float(slc_target) + float(slc_offset))
   if base_target <= 0.0:
     return 0.0
 
@@ -612,6 +616,8 @@ class StarPilotVCruise:
         self.slc_offset,
         self.slc.overridden_speed,
         v_ego_diff,
+        allow_lower_override=(getattr(starpilot_toggles, "redneck_cruise", False) and
+                              getattr(starpilot_toggles, "speed_limit_controller_override_set_speed", False)),
       )
       slc_control_target = get_slc_lead_drop_relaxed_target(
         slc_control_target,

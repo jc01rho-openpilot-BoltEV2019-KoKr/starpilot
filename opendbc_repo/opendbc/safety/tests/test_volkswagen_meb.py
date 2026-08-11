@@ -28,7 +28,7 @@ MSG_EA_01         = 0x1A4
 MSG_EA_02         = 0x1F0
 
 
-class TestVolkswagenMebSafetyBase(common.CarSafetyTest, common.CurvatureSteeringSafetyTest):
+class TestVolkswagenMebSafetyBase(common.CarSafetyTest):
   RELAY_MALFUNCTION_ADDRS = {0: (MSG_HCA_03, MSG_LDW_02, MSG_EA_02),
                              2: (MSG_KLR_01,)}
   

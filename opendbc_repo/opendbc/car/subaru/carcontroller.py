@@ -35,7 +35,7 @@ class CarController(CarControllerBase):
     self.packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
     self.main_bus = CanBus.main_for_cp(CP)
     self.angle_bus = CanBus.angle_for_cp(CP)
-    self.status_bus = CanBus.camera if CP.flags & SubaruFlags.D_PLATFORM else CanBus.main
+    self.status_bus = CanBus.camera if CP.flags & SubaruFlags.D_PLATFORM_CAMERA else CanBus.main
 
     if CP.flags & SubaruFlags.LKAS_ANGLE:
       self.VM = VehicleModel(get_safety_CP())

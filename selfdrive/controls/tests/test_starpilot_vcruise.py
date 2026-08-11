@@ -244,6 +244,20 @@ def test_active_slc_control_target_applies_offset_and_cluster_diff():
   assert target == pytest.approx((48.0 * CV.MPH_TO_MS) - 0.4)
 
 
+def test_active_slc_control_target_allows_lower_redneck_override():
+  target = get_active_slc_control_target(
+    speed_limit_controller=True,
+    set_speed_limit=False,
+    slc_target=65.0 * CV.MPH_TO_MS,
+    slc_offset=0.0,
+    overridden_speed=35.0 * CV.MPH_TO_MS,
+    v_ego_diff=0.4,
+    allow_lower_override=True,
+  )
+
+  assert target == pytest.approx((35.0 * CV.MPH_TO_MS) - 0.4)
+
+
 def test_slc_lead_drop_relaxed_target_softens_map_stepdown_for_harmless_lead():
   raw_target = 55.0 * CV.MPH_TO_MS
   previous_target = 65.0 * CV.MPH_TO_MS

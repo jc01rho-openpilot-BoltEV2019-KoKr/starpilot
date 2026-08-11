@@ -671,7 +671,7 @@ class CarController(CarControllerBase):
                                               stopping, hud_control, CS, CC, starpilot_toggles, lka_icon, lfa_icon))
     else:
       can_sends.extend(self.create_can_msgs(apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel,
-                                            stopping, hud_control, actuators, CS, CC, lfa_icon))
+                                            stopping, hud_control, actuators, CS, CC, lka_icon, lfa_icon))
 
     new_actuators = actuators.as_builder()
     if self.CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
@@ -686,7 +686,7 @@ class CarController(CarControllerBase):
     self.frame += 1
     return new_actuators, can_sends
 
-  def create_can_msgs(self, apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel, stopping, hud_control, actuators, CS, CC, lfa_icon):
+  def create_can_msgs(self, apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel, stopping, hud_control, actuators, CS, CC, lka_icon, lfa_icon):
     can_sends = []
     can_canfd_blended = bool(self.CP.flags & HyundaiFlags.CAN_CANFD_BLENDED)
 
@@ -711,7 +711,7 @@ class CarController(CarControllerBase):
       can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
                                                 torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
                                                 hud_control.leftLaneVisible, hud_control.rightLaneVisible,
-                                                left_lane_warning, right_lane_warning))
+                                                left_lane_warning, right_lane_warning, lka_icon))
 
     # Button messages
     if not self.long_active_ecu:

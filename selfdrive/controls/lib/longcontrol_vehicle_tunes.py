@@ -34,6 +34,11 @@ TOYOTA_SIENNA_COMFORT_FILTER_MIN_TTC = 4.5
 TOYOTA_SIENNA_COMFORT_FILTER_MAX_CLOSING_SPEED = 4.0
 TOYOTA_SIENNA_COMFORT_FILTER_MAX_LEAD_BRAKE = 2.5
 TOYOTA_SIENNA_COMFORT_FILTER_BRAKE_BYPASS = -2.5
+TOYOTA_COROLLA_TARGET_FILTER_MAX_SPEED = 3.0
+TOYOTA_COROLLA_TARGET_FILTER_UP_TAU = 0.30
+TOYOTA_COROLLA_TARGET_FILTER_DOWN_TAU = 0.18
+TOYOTA_COROLLA_TARGET_FILTER_BRAKE_BYPASS = -0.75
+TOYOTA_COROLLA_TARGET_FILTER_DROP_BYPASS = 0.45
 VOLT_CRUISE_INTEGRATOR_MIN_SPEED = 8.0
 VOLT_CRUISE_INTEGRATOR_TARGET_MAX = 0.12
 VOLT_CRUISE_INTEGRATOR_ERROR_MAX = 0.12
@@ -106,6 +111,10 @@ class LongControlVehicleTuning:
       CP.brand == "toyota" and
       getattr(CP, "carFingerprint", None) == TOYOTA_CAR.TOYOTA_SIENNA_4TH_GEN
     )
+    self.is_toyota_corolla_tss2 = bool(
+      CP.brand == "toyota" and
+      getattr(CP, "carFingerprint", None) == TOYOTA_CAR.TOYOTA_COROLLA_TSS2
+    )
     self.is_bolt_acc_pedal_friction_car = bool(
       CP.brand == "gm" and
       CP.enableGasInterceptorDEPRECATED and
@@ -121,6 +130,8 @@ class LongControlVehicleTuning:
     self.gm_truck_target_filter_initialized = False
     self.toyota_sienna_filtered_a_target = 0.0
     self.toyota_sienna_target_filter_initialized = False
+    self.toyota_corolla_filtered_a_target = 0.0
+    self.toyota_corolla_target_filter_initialized = False
     self.bolt_start_handoff_frames = 0
 
   def apply_bolt_start_handoff_floor(self, output_accel, last_output_accel, a_target, v_ego,
@@ -225,6 +236,31 @@ class LongControlVehicleTuning:
     alpha = DT_CTRL / (tau + DT_CTRL)
     self.toyota_sienna_filtered_a_target += alpha * (float(a_target) - self.toyota_sienna_filtered_a_target)
     return self.toyota_sienna_filtered_a_target
+
+  def shape_toyota_corolla_accel_target(self, a_target, v_ego, should_stop, last_output_accel):
+    """Smooth low-speed Corolla TSS2 stop releases without delaying hard braking."""
+    if not self.is_toyota_corolla_tss2 or should_stop or v_ego >= TOYOTA_COROLLA_TARGET_FILTER_MAX_SPEED:
+      self.toyota_corolla_target_filter_initialized = False
+      return a_target
+
+    if not self.toyota_corolla_target_filter_initialized:
+      self.toyota_corolla_filtered_a_target = float(last_output_accel)
+      self.toyota_corolla_target_filter_initialized = True
+
+    bypass_filter = (
+      a_target <= TOYOTA_COROLLA_TARGET_FILTER_BRAKE_BYPASS or
+      a_target < self.toyota_corolla_filtered_a_target - TOYOTA_COROLLA_TARGET_FILTER_DROP_BYPASS
+    )
+    if bypass_filter:
+      self.toyota_corolla_filtered_a_target = float(a_target)
+      return float(a_target)
+
+    tau = (TOYOTA_COROLLA_TARGET_FILTER_DOWN_TAU
+           if a_target < self.toyota_corolla_filtered_a_target
+           else TOYOTA_COROLLA_TARGET_FILTER_UP_TAU)
+    alpha = DT_CTRL / (tau + DT_CTRL)
+    self.toyota_corolla_filtered_a_target += alpha * (float(a_target) - self.toyota_corolla_filtered_a_target)
+    return self.toyota_corolla_filtered_a_target
 
   def get_integrator_freeze(self, last_output_accel, a_target, error, v_ego, accel_limits):
     volt_test_tune_handoff = self.is_volt and testing_ground.use_2

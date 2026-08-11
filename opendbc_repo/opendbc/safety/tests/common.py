@@ -970,6 +970,10 @@ class SafetyTest(SafetyTestBase):
             if 'TestSubaruDPlatformAngleSafety' in {attr, current_test} and \
                 'Angle' in attr and 'Angle' in current_test:
               continue
+            if 'TestSubaruDPlatformAngleSafety' in {attr, current_test}:
+              # D-platform uses the same main-bus HUD messages as the other
+              # Subaru modes, so those modes cannot be distinguished by ID.
+              tx = list(filter(lambda m: not (m[1] == 0 and m[0] in [0x321, 0x322, 0x323]), tx))
             if attr.startswith('TestSubaruPreglobal') and current_test.startswith('TestSubaruPreglobal'):
               continue
             if {attr, current_test}.issubset({'TestVolkswagenPqSafety', 'TestVolkswagenPqStockSafety', 'TestVolkswagenPqLongSafety'}):
@@ -1029,7 +1033,7 @@ class SafetyTest(SafetyTestBase):
             if attr.startswith('TestHyundaiCanfdCCNC') and current_test.startswith('TestSubaruPreglobal'):
               tx = list(filter(lambda m: m[0] not in [0x161], tx))
 
-            if current_test == 'TestSubaruDPlatformAngleSafety' and attr.startswith('TestRivian'):
+            if current_test.startswith('TestSubaruDPlatform') and attr.startswith('TestRivian'):
               tx = list(filter(lambda m: not (m[1] == 2 and m[0] in [0x321, 0x322, 0x323]), tx))
 
             if attr.startswith('TestHyundaiLongitudinal') or attr in ('TestHyundaiSafetyFCEVLong',

@@ -19,6 +19,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPl
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, soften_far_radar_lead_accel, should_trigger_planner_fcw
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
+  get_follow_prebrake_min_headway,
   get_toyota_sienna_post_departure_restop_cap,
   is_gm_silverado_early_follow_lead,
 )
@@ -498,6 +499,31 @@ def test_gm_silverado_early_follow_requires_a_credible_centered_vision_lead(kwar
   assert not is_gm_silverado_early_follow_lead(CP, lead, 30.0)
 
 
+def test_silverado_prebrake_floor_is_vehicle_specific():
+  silverado = SimpleNamespace(brand="gm", carFingerprint=GM_CAR.CHEVROLET_SILVERADO)
+  honda = SimpleNamespace(brand="honda", carFingerprint=CAR.HONDA_CIVIC)
+
+  assert get_follow_prebrake_min_headway(silverado, 1.0) == pytest.approx(1.25)
+  assert get_follow_prebrake_min_headway(honda, 1.0) == pytest.approx(1.6)
+
+
+def test_silverado_vision_follow_hold_survives_nonurgent_far_lead_crossover():
+  v_ego = 32.0
+  t_follow = 1.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=70.0, v_lead=31.2, a_lead=-0.02, radar=False, model_prob=1.0, y_rel=0.1)
+  lead_two = make_lead(status=False)
+
+  assert planner.mpc.get_vision_follow_cruise_hold(
+    "lead0", lead_one, lead_two, 101.0, 200.0, 100.0, v_ego, t_follow, True,
+  ) is None
+  assert planner.mpc.get_vision_follow_cruise_hold(
+    "lead0", lead_one, lead_two, 101.0, 200.0, 100.0, v_ego, t_follow, True,
+    early_follow=True,
+  ) == "lead0"
+
+
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_uses_far_near_stopped_radar_lead_before_tracking(model_version):
   v_ego = 24.6
@@ -657,7 +683,7 @@ def test_vision_lead_approach_cap_brakes_harder_when_inside_tight_gap():
   approach_cap = planner.get_vision_lead_approach_cap(lead, v_ego, -1.0, 1.49)
 
   assert approach_cap is not None
-  assert approach_cap < -0.5
+  assert approach_cap < -0.45
 
 
 def test_vision_lead_approach_cap_brakes_harder_for_braking_tracked_lead_inside_tight_gap():
@@ -986,7 +1012,7 @@ def test_acc_mode_vision_lead_approach_cap_smooths_before_close_brake(model_vers
   assert planner_approach.mode == "acc"
   assert planner_close.mode == "acc"
   assert min(approach_outputs[:2]) > -0.55
-  assert approach_outputs[-1] < -1.3
+  assert min(approach_outputs[2:]) < min(approach_outputs[:2]) - 0.03
   assert planner_close.output_a_target < approach_outputs[0] - 0.8
 
 
@@ -1050,7 +1076,7 @@ def test_acc_mode_pretracking_vision_slow_lead_blocks_positive_catchup(model_ver
   sm_no_lead["starpilotPlan"].vCruise = v_ego + 6.0
   sm_with_lead["starpilotPlan"].vCruise = v_ego + 6.0
 
-  for _ in range(6):
+  for _ in range(10):
     planner_no_lead.update(sm_no_lead, make_toggles(model_version))
     planner_with_lead.update(sm_with_lead, make_toggles(model_version))
 

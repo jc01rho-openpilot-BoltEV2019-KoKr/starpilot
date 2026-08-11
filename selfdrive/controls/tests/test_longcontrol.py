@@ -555,6 +555,63 @@ def test_update_releases_stopping_on_small_sustained_positive_target():
   assert lc.long_control_state == LongCtrlState.starting
 
 
+def test_corolla_tss2_stop_release_ramps_positive_target():
+  CP = make_longcontrol_cp(
+    brand="toyota",
+    carFingerprint=TOYOTA_CAR.TOYOTA_COROLLA_TSS2,
+  )
+  tuning = vehicle_tunes.LongControlVehicleTuning(CP)
+  tuning.reset()
+
+  first_target = tuning.shape_toyota_corolla_accel_target(1.5, 0.0, False, -0.15)
+  assert first_target < 0.0
+  assert first_target < 1.5
+
+  target = first_target
+  for _ in range(100):
+    target = tuning.shape_toyota_corolla_accel_target(1.5, 0.0, False, target)
+  assert target > 1.4
+
+  for _ in range(100):
+    target = tuning.shape_toyota_corolla_accel_target(1.5, 0.0, False, target)
+  assert target == pytest.approx(1.5, abs=0.01)
+
+
+def test_corolla_tss2_target_filter_does_not_delay_hard_braking():
+  CP = make_longcontrol_cp(
+    brand="toyota",
+    carFingerprint=TOYOTA_CAR.TOYOTA_COROLLA_TSS2,
+  )
+  tuning = vehicle_tunes.LongControlVehicleTuning(CP)
+  tuning.shape_toyota_corolla_accel_target(1.0, 1.0, False, 0.0)
+
+  assert tuning.shape_toyota_corolla_accel_target(-1.0, 1.0, False, 0.5) == -1.0
+
+
+def test_corolla_tss2_longcontrol_release_does_not_step_to_full_accel():
+  CP = make_longcontrol_cp(
+    brand="toyota",
+    carFingerprint=TOYOTA_CAR.TOYOTA_COROLLA_TSS2,
+  )
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.stopping
+  lc.last_output_accel = -0.15
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=1.5,
+    should_stop=False,
+    accel_limits=(-3.0, 2.0),
+    starpilot_toggles=make_toggles(vEgoStarting=0.1),
+  )
+
+  assert lc.long_control_state == LongCtrlState.pid
+  assert output_accel < 0.0
+
+
 def test_update_releases_stopping_immediately_after_confirmed_lead_departure():
   CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
   CP.longitudinalTuning.kpBP = [0.0]

@@ -20,6 +20,7 @@ from openpilot.selfdrive.controls.lib.lead_follow_policy import apply as apply_f
 from openpilot.selfdrive.controls.lib.lead_follow_policy import is_nonurgent_duplicate_vision_follow
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_far_follow_output_slew_rates,
+  get_follow_prebrake_min_headway,
   is_gm_silverado_early_follow_lead,
   get_toyota_sienna_post_departure_restop_cap,
   get_untracked_slow_lead_decel_scale,
@@ -2183,7 +2184,8 @@ class LongitudinalPlanner:
                     personality=personality, tracking_lead=lead_control_active,
                     optional_far_lead_comfort=True,
                     smooth_duplicate_vision=nonurgent_duplicate_vision_follow and not panic_bypass,
-                    stop_x=force_stop_x)
+                    stop_x=force_stop_x,
+                    silverado_early_follow=early_truck_follow)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
@@ -2212,7 +2214,7 @@ class LongitudinalPlanner:
     if lead_one_active:
       rel_v = max(0.0, v_ego - self.lead_one.vLead)
       # dynamic time headway adds a small buffer when uncertainty is elevated
-      base_th = max(1.6, effective_t_follow)
+      base_th = get_follow_prebrake_min_headway(self.CP, effective_t_follow)
       th = base_th + 0.6 * max(0.0, uncertainty - 0.42)
       desired_gap = th * v_ego
       if (self.lead_dist_f is not None and self.lead_dist_f < desired_gap and rel_v > 0.5):

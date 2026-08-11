@@ -21,7 +21,7 @@ class CarState(CarStateBase):
     cp_cam = can_parsers[Bus.cam]
     cp_alt = can_parsers[Bus.alt]
     cp_main = can_parsers[Bus.main] if self.CP.flags & SubaruFlags.D_PLATFORM else cp
-    cp_angle = cp_cam if self.CP.flags & SubaruFlags.D_PLATFORM else cp
+    cp_angle = cp_main if self.CP.flags & SubaruFlags.D_PLATFORM else cp
     ret = structs.CarState()
 
     throttle_msg = cp.vl["Throttle"] if not (self.CP.flags & SubaruFlags.HYBRID) else cp_alt.vl["Throttle_Hybrid"]

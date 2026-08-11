@@ -1,5 +1,4 @@
 import io
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -25,31 +24,27 @@ def test_out_of_band_artifact_round_trip():
 
 
 def test_external_gpu_probe_retries_until_pcie_is_ready(monkeypatch):
-  results = [SimpleNamespace(returncode=1, stdout="", stderr="LTSSM=0x00"),
-             SimpleNamespace(returncode=0, stdout="", stderr="")]
   calls = []
+  probe_count = 0
+  def probe():
+    nonlocal probe_count
+    probe_count += 1
+    calls.append("probe")
+    return (False, "LTSSM=0x00") if probe_count < 3 else (True, "LTSSM=0x78")
   monkeypatch.setattr(
-    model_compiler.subprocess,
-    "run",
-    lambda *args, **kwargs: calls.append((args, kwargs)) or results.pop(0),
+    model_compiler,
+    "_probe_external_gpu_link_once",
+    probe,
   )
   monkeypatch.setattr(model_compiler.time, "sleep", lambda seconds: calls.append(("sleep", seconds)))
 
   model_compiler.wait_for_external_gpu({"PYTHONPATH": "/tmp/openpilot"})
 
-  assert len(calls) == 3
-  assert calls[0][1]["env"]["DEV"] == "USB+AMD"
-  assert calls[1] == ("sleep", 1)
+  assert calls == ["probe", ("sleep", 1), "probe", ("sleep", 1), "probe"]
 
 
 def test_external_gpu_probe_reports_failure(monkeypatch):
-  result = SimpleNamespace(returncode=1, stdout="", stderr="link unavailable")
-  monkeypatch.setattr(model_compiler.subprocess, "run", lambda *args, **kwargs: result)
+  monkeypatch.setattr(model_compiler, "_probe_external_gpu_link_once", lambda: (False, "link unavailable"))
   monkeypatch.setattr(model_compiler.time, "sleep", lambda _: None)
 
-  try:
-    model_compiler.wait_for_external_gpu({})
-  except RuntimeError as error:
-    assert "link unavailable" in str(error)
-  else:
-    raise AssertionError("external GPU probe unexpectedly succeeded")
+  assert model_compiler.wait_for_external_gpu({}) is False
