@@ -76,6 +76,7 @@ HIDDEN_KEYS = {
     "HideLeadMarker",
     "HideSpeedLimit",
     "LockDoorsTimer",
+    "LowVoltageDiscordReport",
     "NewLongAPI",
     "ToyotaDoors",
     "ReverseCruise",

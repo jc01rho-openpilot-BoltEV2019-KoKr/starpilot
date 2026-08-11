@@ -26,8 +26,11 @@ def test_galaxy_has_masked_dedicated_secret_api_and_control():
   assert '"LowVoltageDiscordWebhook",' in server and "GALAXY_PRIVATE_PARAM_KEYS" in server
   assert '@app.route("/api/low_voltage_discord"' in server
   assert '"ui_type": "discord_webhook"' in layout
+  assert layout.count('"label": "Drive-End Battery Discord Report"') == 1
   assert 'type="password"' in javascript
   assert 'Configured' in javascript
+  assert "async function readJsonResponse(response)" in javascript
+  assert "The Galaxy API returned an invalid response." in javascript
 
 
 def test_starpilot_process_tracks_peripheral_voltage_and_offroad_transition():

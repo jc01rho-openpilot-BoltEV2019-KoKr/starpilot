@@ -435,9 +435,26 @@ async function fetchLayoutAndParams() {
 async function fetchLowVoltageDiscordStatus() {
   try {
     const response = await fetch("/api/low_voltage_discord", { cache: "no-store" })
-    if (response.ok) state.lowVoltageDiscord = await response.json()
+    const data = await readJsonResponse(response)
+    if (response.ok) state.lowVoltageDiscord = data
   } catch (error) {
     console.warn("Failed to load low-voltage Discord status:", error)
+  }
+}
+
+async function readJsonResponse(response) {
+  const contentType = response.headers.get("content-type") || ""
+  const responseText = await response.text()
+  if (!responseText) return {}
+
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new Error("The Galaxy API returned an invalid response. Restart Galaxy or update the device software.")
+  }
+
+  try {
+    return JSON.parse(responseText)
+  } catch {
+    throw new Error("The Galaxy API returned an invalid response.")
   }
 }
 
@@ -456,7 +473,7 @@ async function saveLowVoltageDiscord() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ webhook: webhook || undefined, enabled: !!enabledInput?.checked }),
     })
-    const data = await response.json()
+    const data = await readJsonResponse(response)
     if (!response.ok) throw new Error(data.error || "Failed to update Discord reporting.")
     state.lowVoltageDiscord = data
     if (webhookInput) webhookInput.value = ""
@@ -473,7 +490,7 @@ async function removeLowVoltageDiscord() {
   state.lowVoltageDiscordUpdating = true
   try {
     const response = await fetch("/api/low_voltage_discord", { method: "DELETE" })
-    const data = await response.json()
+    const data = await readJsonResponse(response)
     if (!response.ok) throw new Error(data.error || "Failed to remove Discord webhook.")
     state.lowVoltageDiscord = data
     showParamSnackbar("Discord webhook removed.")

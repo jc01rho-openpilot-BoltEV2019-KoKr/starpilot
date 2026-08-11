@@ -142,6 +142,14 @@ def test_low_voltage_discord_configures_and_removes_secret(monkeypatch):
   assert params.values["LowVoltageDiscordReport"] is False
 
 
+def test_missing_api_route_returns_json_instead_of_spa_html(monkeypatch):
+  client, _ = _low_voltage_client(monkeypatch, {})
+  response = client.put("/api/missing", json={})
+  assert response.status_code == 404
+  assert response.is_json
+  assert response.get_json() == {"error": "API endpoint not found."}
+
+
 def test_params_compat_accepts_json_strings_for_json_keys():
   backend = FakeParamsBackend(
     key_types={"FavoriteDestinations": ParamKeyType.JSON},

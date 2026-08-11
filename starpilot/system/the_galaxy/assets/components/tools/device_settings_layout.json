@@ -4007,15 +4007,6 @@
         "ui_type": "toggle",
         "parent_key": "ScreenManagement",
         "settings_tier": "simple"
-      },
-      {
-        "key": "LowVoltageDiscordReport",
-        "label": "Drive-End Battery Discord Report",
-        "description": "Send the Panda/comma 12 V supply voltage after each drive. Available only for GitHub SSH-key account jc01rho.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "DeviceManagement",
-        "settings_tier": "simple"
       }
     ]
   },
