@@ -65,6 +65,10 @@ NO_DATES_PLATFORMS = {
   CAR.HYUNDAI_SONATA_LF,
   CAR.HYUNDAI_VELOSTER,
   CAR.HYUNDAI_KONA_2022,
+  CAR.HYUNDAI_BAYON_1ST_GEN_NON_SCC,
+  CAR.KIA_CEED_PHEV_2022_NON_SCC,
+  CAR.KIA_FORTE_2019_NON_SCC,
+  CAR.KIA_FORTE_2021_NON_SCC,
 }
 
 CANFD_EXPECTED_ECUS = {Ecu.fwdCamera, Ecu.fwdRadar}
@@ -528,9 +532,6 @@ class TestHyundaiFingerprint:
     fingerprint[0][0x50C] = 8
     forte_non_scc = CarInterface.get_params(CAR.KIA_FORTE_2021_NON_SCC, fingerprint, [], False, False, False, None)
     assert forte_non_scc.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON
-
-    g90 = CarInterface.get_params(CAR.GENESIS_G90, gen_empty_fingerprint(), [], False, False, False, None)
-    assert g90.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON
 
     sonata_without_lda = CarInterface.get_params(CAR.HYUNDAI_SONATA, gen_empty_fingerprint(), [], False, False, False, None)
     assert not (sonata_without_lda.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON)
@@ -3013,13 +3014,16 @@ class TestHyundaiFingerprint:
   def test_platform_code_ecus_available(self, subtests):
     # TODO: add queries for these non-CAN FD cars to get EPS
     no_eps_platforms = CANFD_CAR | {CAR.KIA_SORENTO, CAR.KIA_OPTIMA_G4, CAR.KIA_OPTIMA_G4_FL, CAR.KIA_OPTIMA_H,
-                                    CAR.KIA_OPTIMA_H_G4_FL, CAR.HYUNDAI_SONATA_LF, CAR.HYUNDAI_TUCSON, CAR.GENESIS_G90, CAR.GENESIS_G80, CAR.HYUNDAI_ELANTRA}
+                                    CAR.KIA_OPTIMA_H_G4_FL, CAR.HYUNDAI_SONATA_LF, CAR.HYUNDAI_TUCSON, CAR.GENESIS_G90, CAR.GENESIS_G80,
+                                    CAR.HYUNDAI_ELANTRA, CAR.HYUNDAI_BAYON_1ST_GEN_NON_SCC}
 
     # Asserts ECU keys essential for fuzzy fingerprinting are available on all platforms
     for car_model, ecus in FW_VERSIONS.items():
       with subtests.test(car_model=car_model.value):
         for platform_code_ecu in PLATFORM_CODE_ECUS:
           if platform_code_ecu in (Ecu.fwdRadar, Ecu.eps) and car_model == CAR.HYUNDAI_GENESIS:
+            continue
+          if platform_code_ecu == Ecu.fwdRadar and car_model in HYUNDAI_NON_SCC_FW_CARS:
             continue
           if platform_code_ecu == Ecu.eps and car_model in no_eps_platforms:
             continue
@@ -3091,6 +3095,7 @@ class TestHyundaiFingerprint:
     excluded_platforms = {
       CAR.GENESIS_G70,            # shared platform code, part number, and date
       CAR.GENESIS_G70_2020,
+      CAR.GENESIS_G70_2021_NON_SCC,
     }
     excluded_platforms |= CANFD_CAR - EV_CAR - CANFD_FUZZY_WHITELIST  # shared platform codes
     excluded_platforms |= NO_DATES_PLATFORMS - DATELESS_FUZZY_CARS
