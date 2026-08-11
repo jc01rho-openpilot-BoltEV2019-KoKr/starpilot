@@ -49,6 +49,15 @@ def calculate_canfd_speed_limit(CP, FPCP, cp, cp_cam, speed_factor):
     return 0.0
 
 
+def get_canfd_cruise_available(CP, cp, scc_available: bool) -> bool:
+  # The EV9 fallback keeps stock ACC active when ECU disable is skipped. Its
+  # SCC status remains inactive in that mode, while TCS still reports whether
+  # ACC is fault-free and available.
+  if CP.carFingerprint == CAR.KIA_EV9 and not CP.openpilotLongitudinalControl:
+    return cp.vl["TCS"]["ACCEnable"] == 0
+  return scc_available
+
+
 def decode_ioniq_6_blindspot_radar_state(state: int) -> tuple[bool, bool]:
   state_int = int(state)
   return bool(state_int & IONIQ_6_BLINDSPOT_LEFT_MASK), bool(state_int & IONIQ_6_BLINDSPOT_RIGHT_MASK)
@@ -522,7 +531,8 @@ class CarState(CarStateBase):
       ret.cruiseState.standstill = False
     else:
       cp_cruise_info = cp_cam if self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC else cp
-      ret.cruiseState.available = cp_cruise_info.vl["SCC_CONTROL"]["MainMode_ACC"] == 1
+      ret.cruiseState.available = get_canfd_cruise_available(
+        self.CP, cp, cp_cruise_info.vl["SCC_CONTROL"]["MainMode_ACC"] == 1)
       ret.cruiseState.enabled = cp_cruise_info.vl["SCC_CONTROL"]["ACCMode"] in (1, 2)
       ret.cruiseState.standstill = cp_cruise_info.vl["SCC_CONTROL"]["CRUISE_STANDSTILL"] == 1
       ret.cruiseState.speed = cp_cruise_info.vl["SCC_CONTROL"]["VSetDis"] * speed_factor

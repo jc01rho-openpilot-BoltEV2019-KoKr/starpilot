@@ -8,6 +8,7 @@ GM_SILVERADO_EARLY_FOLLOW_MIN_EGO_SPEED = 18.0
 GM_SILVERADO_EARLY_FOLLOW_MAX_DISTANCE = 130.0
 GM_SILVERADO_EARLY_FOLLOW_MIN_MODEL_PROB = 0.85
 GM_SILVERADO_EARLY_FOLLOW_MAX_LATERAL_OFFSET = 1.2
+GM_SILVERADO_FOLLOW_PREBRAKE_MIN_HEADWAY = 1.25
 TOYOTA_SIENNA_POST_DEPARTURE_RESTOP_MAX_EGO_SPEED = 2.0
 TOYOTA_SIENNA_POST_DEPARTURE_RESTOP_MAX_LEAD_SPEED = 0.45
 TOYOTA_SIENNA_POST_DEPARTURE_RESTOP_MAX_LEAD_DELTA = 0.35
@@ -45,6 +46,13 @@ def is_gm_silverado_early_follow_lead(CP, lead, v_ego):
   ):
     return False
   return True
+
+
+def get_follow_prebrake_min_headway(CP, t_follow):
+  """Return the comfort pre-brake floor without changing lead safety distance."""
+  if CP.brand == "gm" and str(CP.carFingerprint) in ("CHEVROLET_SILVERADO", "CHEVROLET_SILVERADO_CC"):
+    return max(float(t_follow), GM_SILVERADO_FOLLOW_PREBRAKE_MIN_HEADWAY)
+  return max(float(t_follow), 1.6)
 
 
 def get_toyota_sienna_post_departure_restop_cap(CP, lead, v_ego, accel_min,

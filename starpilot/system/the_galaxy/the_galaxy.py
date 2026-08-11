@@ -953,6 +953,7 @@ _TROUBLESHOOT_CEM_KEYS = [
   "CELead",
   "CESlowerLead",
   "CEStoppedLead",
+  "CEOpenRoad",
   "CEModelStopTime",
   "CESignalSpeed",
   "ShowCEMStatus",

@@ -19,6 +19,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPl
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, soften_far_radar_lead_accel, should_trigger_planner_fcw
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
+  get_follow_prebrake_min_headway,
   get_toyota_sienna_post_departure_restop_cap,
   is_gm_silverado_early_follow_lead,
 )
@@ -496,6 +497,31 @@ def test_gm_silverado_early_follow_requires_a_credible_centered_vision_lead(kwar
   lead = make_lead(status=True, **lead_kwargs)
 
   assert not is_gm_silverado_early_follow_lead(CP, lead, 30.0)
+
+
+def test_silverado_prebrake_floor_is_vehicle_specific():
+  silverado = SimpleNamespace(brand="gm", carFingerprint=GM_CAR.CHEVROLET_SILVERADO)
+  honda = SimpleNamespace(brand="honda", carFingerprint=CAR.HONDA_CIVIC)
+
+  assert get_follow_prebrake_min_headway(silverado, 1.0) == pytest.approx(1.25)
+  assert get_follow_prebrake_min_headway(honda, 1.0) == pytest.approx(1.6)
+
+
+def test_silverado_vision_follow_hold_survives_nonurgent_far_lead_crossover():
+  v_ego = 32.0
+  t_follow = 1.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=70.0, v_lead=31.2, a_lead=-0.02, radar=False, model_prob=1.0, y_rel=0.1)
+  lead_two = make_lead(status=False)
+
+  assert planner.mpc.get_vision_follow_cruise_hold(
+    "lead0", lead_one, lead_two, 101.0, 200.0, 100.0, v_ego, t_follow, True,
+  ) is None
+  assert planner.mpc.get_vision_follow_cruise_hold(
+    "lead0", lead_one, lead_two, 101.0, 200.0, 100.0, v_ego, t_follow, True,
+    early_follow=True,
+  ) == "lead0"
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])

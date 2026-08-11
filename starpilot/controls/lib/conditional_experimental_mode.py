@@ -5,6 +5,7 @@ import numpy as np
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.common.constants import CV
+from openpilot.selfdrive.car.cruise import V_CRUISE_UNSET
 
 from openpilot.starpilot.common.experimental_state import (
   CEStatus,
@@ -63,6 +64,9 @@ class ConditionalExperimentalMode:
   POST_STOP_LAUNCH_TRIGGER_SUPPRESS_TIME = 2.0
   TURN_STOP_LIGHT_VETO_MAX_SPEED = 15 * CV.MPH_TO_MS
   TURN_STOP_LIGHT_VETO_STEERING_ANGLE = 45.0
+  # Keep EXP available near the set speed on an empty road, where it can
+  # anticipate braking sooner. Stay at or below the set speed for safety.
+  OPEN_ROAD_SET_SPEED_MARGIN = 3.0 * CV.MPH_TO_MS
 
   STOP_LIGHT_FILTER_TIME_OVERRIDES = {
     "HYUNDAI_ELANTRA_2021": 0.25,
@@ -118,7 +122,7 @@ class ConditionalExperimentalMode:
     self.standstill_stop_release_pending = False
     self.post_stop_launch_trigger_suppress_until = 0.0
 
-  def update(self, v_ego, sm, starpilot_toggles):
+  def update(self, v_ego, sm, starpilot_toggles, v_cruise=None):
     now = time.monotonic()
     standstill = bool(sm["carState"].standstill)
     current_standstill_stop_hold = False
@@ -141,7 +145,7 @@ class ConditionalExperimentalMode:
     if not is_manual_ce_status(self.status_value) and not standstill:
       self.update_conditions(v_ego, sm, starpilot_toggles)
 
-      triggered = self.check_conditions(v_ego, sm, starpilot_toggles)
+      triggered = self.check_conditions(v_ego, sm, starpilot_toggles, v_cruise)
       if triggered:
         self.mode_hold_until = now + self.CEM_TRANSITION_GUARD_TIME
         self.mode_false_since = 0.0
@@ -252,11 +256,34 @@ class ConditionalExperimentalMode:
 
     return bool(self.stop_light_detected or force_stop_active or model_stopped)
 
-  def check_conditions(self, v_ego, sm, starpilot_toggles):
+  def check_conditions(self, v_ego, sm, starpilot_toggles, v_cruise=None):
     launch_trigger_suppressed = time.monotonic() < self.post_stop_launch_trigger_suppress_until
     below_speed = not launch_trigger_suppressed and starpilot_toggles.conditional_limit > v_ego >= 1 and not self.starpilot_planner.starpilot_following.following_lead
     below_speed_with_lead = not launch_trigger_suppressed and starpilot_toggles.conditional_limit_lead > v_ego >= 1 and self.starpilot_planner.starpilot_following.following_lead
     if below_speed or below_speed_with_lead:
+      self.status_value = CEStatus["SPEED"]
+      return True
+
+    lead = self.starpilot_planner.lead_one
+    cruise_speed = getattr(sm["carState"], "vCruise", None)
+    cruise_speed_available = cruise_speed is None or cruise_speed != V_CRUISE_UNSET
+    no_lead = bool(
+      not getattr(lead, "status", False) and
+      not getattr(self.starpilot_planner, "tracking_lead", False) and
+      not self.starpilot_planner.starpilot_following.following_lead
+    )
+    set_speed_error = float(v_cruise) - float(v_ego) if v_cruise is not None else -1.0
+    open_road = bool(
+      not launch_trigger_suppressed and
+      getattr(starpilot_toggles, "conditional_open_road", False) and
+      v_cruise is not None and
+      cruise_speed_available and
+      float(v_cruise) > 0.0 and
+      1.0 <= v_ego <= float(v_cruise) and
+      set_speed_error <= self.OPEN_ROAD_SET_SPEED_MARGIN and
+      no_lead
+    )
+    if open_road:
       self.status_value = CEStatus["SPEED"]
       return True
 

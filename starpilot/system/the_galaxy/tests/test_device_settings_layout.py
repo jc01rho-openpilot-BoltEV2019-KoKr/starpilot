@@ -133,6 +133,7 @@ def test_requested_simple_and_advanced_settings_tiers():
     "QOLLongitudinal",
   ):
     assert longitudinal[key]["settings_tier"] == "simple"
+  assert sections["Longitudinal (Speed & Following)"]["CEOpenRoad"]["settings_tier"] == "simple"
   for key in (
     "AdvancedLongitudinalTune",
     "CustomPersonalities",
@@ -156,6 +157,7 @@ def test_hidden_feature_defaults_remain_enabled():
   assert _declared_default("NavDesiresAllowed") == "1"
   assert _declared_default("NavLanePositioningAllowed") == "0"
   assert _declared_default("NavLongitudinalAllowed") == "1"
+  assert _declared_default("CEOpenRoad") == "0"
 
   for key in (
     "TrafficPersonalityProfile",

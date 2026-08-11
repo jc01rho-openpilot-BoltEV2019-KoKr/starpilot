@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
 import codecs
+import ctypes
+import glob
 import hashlib
 import json
 import os
@@ -42,72 +44,102 @@ MODEL_RUN_FREQ = 20
 MODEL_CONTEXT_FREQ = 5
 REPOSITORY_FILE_LIMIT = 100 * 1024 * 1024
 DEFAULT_MULTIPART_SIZE = 95 * 1024 * 1024
-USBGPU_PROBE_ATTEMPTS = 3
-USBGPU_PROBE_TIMEOUT = 10
+USBGPU_PROBE_ATTEMPTS = 10
+USBGPU_PROBE_TIMEOUT = 2
+USBDEVFS_CONTROL = 0xC0185500
+USBGPU_VID_PIDS = (("add1", "0001"), ("3801", "0001"))
 
 
-def build_compile_env() -> dict[str, str]:
+class _UsbdevfsControl(ctypes.Structure):
+  _fields_ = [("request_type", ctypes.c_uint8), ("request", ctypes.c_uint8),
+              ("value", ctypes.c_uint16), ("index", ctypes.c_uint16),
+              ("length", ctypes.c_uint16), ("timeout", ctypes.c_uint32),
+              ("data", ctypes.c_void_p)]
+
+
+def build_compile_env(*, supercombo: bool = False) -> dict[str, str]:
   env = os.environ.copy()
-  pythonpath = env.get("PYTHONPATH", "")
-  env["PYTHONPATH"] = f"{REPO_ROOT}:{pythonpath}" if pythonpath else str(REPO_ROOT)
-  for key, default in {
+  existing_pythonpath = env.get("PYTHONPATH", "")
+  env["PYTHONPATH"] = f"{REPO_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(REPO_ROOT)
+  defaults = {} if supercombo else {
     "DEBUG": "0",
     "FLOAT16": "1",
     "IMAGE": "2",
     "JIT_BATCH_SIZE": "0",
     "NOLOCALS": "1",
     "OPENPILOT_HACKS": "1",
-  }.items():
+  }
+  for key, default in defaults.items():
     try:
       int(str(env.get(key)), 0)
     except (TypeError, ValueError):
       env[key] = default
+  if supercombo:
+    # Unified supercombo artifacts must use upstream compile defaults. The
+    # legacy QCOM tuning causes a reproducible HCQ timeline failure here.
+    env.pop("QCOM_PRIORITY", None)
   return env
+
+
+def _probe_external_gpu_link_once() -> tuple[bool, str]:
+  """Probe the bridge without initializing tinygrad or resetting the USB device."""
+  import fcntl
+
+  diagnostics: list[str] = []
+  for path in glob.glob("/sys/bus/usb/devices/*"):
+    try:
+      vendor = Path(path, "idVendor").read_text().strip().lower()
+      product = Path(path, "idProduct").read_text().strip().lower()
+      if (vendor, product) not in USBGPU_VID_PIDS:
+        continue
+      bus = int(Path(path, "busnum").read_text())
+      device = int(Path(path, "devnum").read_text())
+      location = f"usb:{bus}-{device}"
+      fd = os.open(f"/dev/bus/usb/{bus:03d}/{device:03d}", os.O_RDWR)
+    except (OSError, ValueError) as exc:
+      diagnostics.append(f"{path}: open failed ({exc})")
+      continue
+
+    try:
+      fcntl.ioctl(fd, USBDEVFS_CONTROL, _UsbdevfsControl(0x40, 0xF3, 1, 0, 0, USBGPU_PROBE_TIMEOUT * 1000, None))
+      state = (ctypes.c_ubyte * 1)()
+      fcntl.ioctl(fd, USBDEVFS_CONTROL, _UsbdevfsControl(0xC0, 0xE4, 0xB450, 0, 1, 1000, ctypes.cast(state, ctypes.c_void_p)))
+      if state[0] == 0x78:
+        return True, f"{location}: LTSSM=0x78"
+      diagnostics.append(f"{location}: LTSSM=0x{state[0]:02X}")
+    except OSError as exc:
+      diagnostics.append(f"{location}: control probe failed ({exc})")
+    finally:
+      os.close(fd)
+  return False, diagnostics[-1] if diagnostics else "no ASM2464PD device found"
 
 
 def wait_for_external_gpu(compile_env: dict[str, str]) -> bool:
   """Wait for the USB GPU's PCIe link before starting the large model build.
 
   The dock can enumerate on USB before its PCIe link has finished training.
-  OpenPilot probes the tinygrad device in a short-lived process and retries;
-  doing the same here avoids making the model compiler lose its one chance at
-  initialization while keeping all non-GPU builds unchanged.
+  Probe the bridge's control endpoint directly, like upstream openpilot.  Do
+  not instantiate tinygrad here: opening the GPU resets/claims the USB
+  interface, and doing that in a probe process can leave the bridge in a state
+  where the authoritative compiler cannot train the link.
   """
-  probe = [sys.executable, "-c", "from tinygrad.device import Device; Device[Device.DEFAULT]; import os; os._exit(0)"]
-  probe_env = {**compile_env, "DEV": "USB+AMD"}
+  del compile_env  # retained in the public helper signature for callers/tests
   diagnostics: list[str] = []
 
   for attempt in range(USBGPU_PROBE_ATTEMPTS):
     if attempt:
       time.sleep(1)
     try:
-      result = subprocess.run(
-        probe,
-        cwd=REPO_ROOT,
-        env=probe_env,
-        capture_output=True,
-        text=True,
-        timeout=USBGPU_PROBE_TIMEOUT,
-        check=False,
-      )
-    except subprocess.TimeoutExpired as exc:
-      partial = exc.stderr or exc.stdout or ""
-      if isinstance(partial, bytes):
-        partial = partial.decode(errors="replace")
-      partial = partial.strip()
-      diagnostics.append(
-        f"probe timed out after {USBGPU_PROBE_TIMEOUT}s" + (f": {partial[-2000:]}" if partial else "")
-      )
-      continue
-
-    if result.returncode == 0:
+      ready, detail = _probe_external_gpu_link_once()
+    except Exception as exc:  # probe is advisory; compile_modeld remains authoritative
+      ready, detail = False, str(exc)
+    if ready:
       return True
-    detail = (result.stderr or result.stdout).strip()
-    diagnostics.append((detail[-2000:] if detail else f"probe exited with status {result.returncode}"))
+    diagnostics.append(detail)
 
   detail = diagnostics[-1] if diagnostics else "unknown error"
   print(
-    f"Warning: external GPU probe did not become ready after {USBGPU_PROBE_ATTEMPTS} probes: {detail}\n"
+    f"Warning: external GPU link did not become ready after {USBGPU_PROBE_ATTEMPTS} probes: {detail}\n"
     "  Continuing; compile_modeld will perform the authoritative link wait and initialization."
   )
   return False
@@ -549,7 +581,7 @@ def compile_driving(
   ]
   if version:
     command += ["--behavior-version", version]
-  compile_env = build_compile_env()
+  compile_env = build_compile_env(supercombo=input_format == "supercombo")
   if external_gpu:
     for qcom_only_flag in ("IMAGE", "NOLOCALS", "OPENPILOT_HACKS"):
       compile_env.pop(qcom_only_flag, None)

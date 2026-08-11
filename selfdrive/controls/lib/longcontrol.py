@@ -332,6 +332,9 @@ class LongControl:
 
     else:  # LongCtrlState.pid
       a_target = self.vehicle_tuning.shape_gm_truck_accel_target(a_target, CS.vEgo, should_stop)
+      a_target = self.vehicle_tuning.shape_toyota_corolla_accel_target(
+        a_target, CS.vEgo, should_stop, self.last_output_accel,
+      )
       a_target = self.vehicle_tuning.shape_toyota_sienna_accel_target(
         a_target, CS.vEgo, should_stop, leads=leads,
       )

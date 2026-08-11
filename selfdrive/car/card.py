@@ -434,10 +434,13 @@ class Car:
       starpilot_plan = self.sm['starpilotPlan']
       starpilot_target_speed = float(starpilot_plan.vCruise)
       if self.starpilot_toggles.speed_limit_controller:
-        slc_target_speed = max(
-          float(starpilot_plan.slcOverriddenSpeed),
-          float(starpilot_plan.slcSpeedLimit) + float(starpilot_plan.slcSpeedLimitOffset),
+        overridden_speed = float(starpilot_plan.slcOverriddenSpeed)
+        slc_limit = float(starpilot_plan.slcSpeedLimit) + float(starpilot_plan.slcSpeedLimitOffset)
+        allow_lower_override = (
+          getattr(self.starpilot_toggles, "redneck_cruise", False) and
+          getattr(self.starpilot_toggles, "speed_limit_controller_override_set_speed", False)
         )
+        slc_target_speed = overridden_speed if allow_lower_override and overridden_speed > 0 else max(overridden_speed, slc_limit)
 
     # Use acceleration projection only when SLC has no resolved target.
     if self.CP.openpilotLongitudinalControl and slc_target_speed <= 0.0:

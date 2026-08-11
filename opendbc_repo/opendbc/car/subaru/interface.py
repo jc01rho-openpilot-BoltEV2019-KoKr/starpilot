@@ -38,6 +38,8 @@ class CarInterface(CarInterfaceBase):
         ret.safetyConfigs[0].safetyParam |= SubaruSafetyFlags.LKAS_ANGLE.value
       if ret.flags & SubaruFlags.D_PLATFORM:
         ret.safetyConfigs[0].safetyParam |= SubaruSafetyFlags.D_PLATFORM.value
+      if ret.flags & SubaruFlags.D_PLATFORM_CAMERA:
+        ret.safetyConfigs[0].safetyParam |= SubaruSafetyFlags.D_PLATFORM_CAMERA.value
 
     ret.steerLimitTimer = 0.4
     ret.steerActuatorDelay = 0.1

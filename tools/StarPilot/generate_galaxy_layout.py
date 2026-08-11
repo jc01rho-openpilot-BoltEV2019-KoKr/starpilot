@@ -25,6 +25,16 @@ DROPDOWN_MAPPING = {
 # Custom controls implemented outside the tuple vectors in Qt settings panels.
 # Inject these so regenerated galaxy layouts retain equivalent functionality.
 INJECTED_SECTION_PARAMS = {
+    "Longitudinal (Speed & Following)": [
+        {
+            "key": "CEOpenRoad",
+            "label": "Open Road",
+            "description": "Keep Experimental Mode active on an open road when driving within 3 mph below the set speed and no lead vehicle is detected. This can help the model anticipate braking sooner.",
+            "data_type": "bool",
+            "ui_type": "toggle",
+            "parent_key": "ConditionalExperimental",
+        },
+    ],
     "Vehicle": [
         {
             "key": "CarMake",

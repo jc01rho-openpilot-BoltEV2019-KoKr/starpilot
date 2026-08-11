@@ -68,7 +68,7 @@ STARPILOT_PARAM_CANONICALIZATION_MIGRATION_FLAG = Path("/data") / "starpilot_par
 STARPILOT_PC_ROOT_MIGRATION_FLAG = Path("/data") / "starpilot_pc_root_v1"
 STARPILOT_PARAMS_CACHE_MIGRATION_FLAG = Path("/data") / "starpilot_params_cache_v1"
 STARPILOT_DEFAULT_MODEL_MIGRATION_FLAG = Path("/data") / "starpilot_default_model_rdf_v1"
-STARPILOT_CE_MODEL_STOP_TIME_MIGRATION_FLAG = Path("/data") / "starpilot_ce_model_stop_time_v1"
+STARPILOT_CE_MODEL_STOP_TIME_MIGRATION_FLAG = Path("/data") / "starpilot_ce_model_stop_time_v2"
 STARPILOT_LEGACY_CACHE_MARKER_KEYS = ("RemapCancelToDistance",)
 STARPILOT_REMOVED_PARAM_KEYS = ("CoastUpToLeads", "HumanAcceleration", "HumanFollowing", "PrioritizeSmoothFollowing")
 LEGACY_CARMODEL_MIGRATIONS = {
@@ -561,8 +561,8 @@ def migrate_starpilot_default_parity(params: Params, params_cache: Params) -> No
     seeded_keys.append(key)
 
   if not _has_persisted_param_file(params, "CEModelStopTime") and not _has_persisted_param_file(params_cache, "CEModelStopTime"):
-    params.put_float("CEModelStopTime", 9.0)
-    params_cache.put_float("CEModelStopTime", 9.0)
+    params.put_float("CEModelStopTime", 7.7)
+    params_cache.put_float("CEModelStopTime", 7.7)
     seeded_keys.append("CEModelStopTime")
 
   # Rebase default regression fix:
@@ -628,7 +628,7 @@ def migrate_starpilot_default_model(params: Params, params_cache: Params) -> Non
 
 
 def migrate_starpilot_ce_model_stop_time(params: Params, params_cache: Params) -> None:
-  """Move the old persisted 7-second stop prediction default to 9 seconds once."""
+  """Move persisted users of the old 9-second stop prediction threshold to 7.7 once."""
   if STARPILOT_CE_MODEL_STOP_TIME_MIGRATION_FLAG.exists():
     return
 
@@ -643,14 +643,14 @@ def migrate_starpilot_ce_model_stop_time(params: Params, params_cache: Params) -
     except Exception:
       continue
 
-    if abs(parsed_value - 7.0) < 1e-6:
+    if abs(parsed_value - 9.0) < 1e-6:
       legacy_default_detected = True
       break
 
   if legacy_default_detected:
-    params.put_float("CEModelStopTime", 9.0)
-    params_cache.put_float("CEModelStopTime", 9.0)
-    cloudlog.warning("Migrated CEModelStopTime from 7 seconds to 9 seconds")
+    params.put_float("CEModelStopTime", 7.7)
+    params_cache.put_float("CEModelStopTime", 7.7)
+    cloudlog.warning("Migrated CEModelStopTime from 9 seconds to 7.7 seconds")
 
   try:
     STARPILOT_CE_MODEL_STOP_TIME_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
