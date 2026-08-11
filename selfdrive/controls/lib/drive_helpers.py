@@ -88,10 +88,13 @@ def get_curvature_from_plan(yaws, yaw_rates, t_idxs, vego, action_t):
 
 
 _LC_MIN_V_EGO = 5.0
-_LC_MIN_PROB = 0.6
-_LC_MAX_STD = 0.3
-_LC_MIN_WIDTH = 2.6
-_LC_MAX_WIDTH = 4.8
+_LC_MIN_PROB = 0.6      # laneline confidence 0 at/below this probability
+_LC_FULL_PROB = 0.8     # laneline confidence 1 at/above this probability
+_LC_STD_GOOD = 0.15     # laneline confidence 1 at/below this std
+_LC_MAX_STD = 0.3       # laneline confidence 0 at/above this std
+_LC_MIN_WIDTH = 2.6     # laneline confidence 0 at/below this lane width (m)
+_LC_MAX_WIDTH = 4.8     # laneline confidence 0 at/above this lane width (m)
+_LC_WIDTH_MARGIN = 0.4  # laneline confidence ramps to 1 this far inside [MIN_WIDTH, MAX_WIDTH]
 _LC_MAX_CORR = 0.004
 _LC_MAX_GAIN = 0.30
 _LC_SMOOTH_TAU = 0.4
@@ -141,18 +144,47 @@ class LaneCenteringController:
     return model_curvature + self._correction
 
   def _raw_correction(self, model_v2, v_ego, offset) -> tuple[bool, float]:
+    """The only hard failure left here is model_v2.position itself being missing/malformed --
+    once we have a model path to correct from, we always return a correction. Laneline quality
+    (probability/std/width) blends the *target* between the laneline center and the model's own
+    predicted path instead of gating the whole correction to zero (see _laneline_confidence):
+    with unreliable or missing lane lines -- no line on a curbed shoulder, a center-stripe-only
+    road -- the target collapses to the model's own path, so `offset` still applies on its own
+    rather than silently dropping out exactly when it's needed most."""
+    try:
+      pos_x = np.asarray(model_v2.position.x, dtype=float)
+      pos_y = np.asarray(model_v2.position.y, dtype=float)
+      if pos_x.size < 2 or pos_x.size != pos_y.size:
+        return False, 0.0
+      if not (np.isfinite(pos_x).all() and np.isfinite(pos_y).all() and np.all(np.diff(pos_x) > 0)):
+        return False, 0.0
+
+      lookahead = float(np.clip(v_ego * 1.0, 8.0, 35.0))
+      model_y = float(np.interp(lookahead, pos_x, pos_y))
+    except (AttributeError, IndexError, TypeError, ValueError):
+      return False, 0.0
+
+    confidence, center_y = self._laneline_confidence(model_v2, lookahead)
+    target_y = model_y * (1.0 - confidence) + center_y * confidence
+
+    error = (target_y + offset) - model_y
+    raw = 2.0 * error / (lookahead ** 2)
+    return True, float(raw)
+
+  def _laneline_confidence(self, model_v2, lookahead) -> tuple[float, float]:
+    """Returns (confidence 0-1, laneline_center_y). confidence is 0 (center_y unused/meaningless,
+    since it's weighted out by confidence in the caller's blend) whenever lines are missing,
+    low-probability, high-std, or an implausible width -- ramped smoothly rather than a hard
+    cutoff, so the target eases toward the model's own path as detection quality degrades
+    instead of snapping the correction off."""
     try:
       lane_lines = model_v2.laneLines
       probs = model_v2.laneLineProbs
       stds = model_v2.laneLineStds
       if len(lane_lines) < 3 or len(probs) < 3 or len(stds) < 3:
-        return False, 0.0
+        return 0.0, 0.0
       if int(model_v2.meta.laneChangeState) != 0:
-        return False, 0.0
-      if probs[1] < _LC_MIN_PROB or probs[2] < _LC_MIN_PROB:
-        return False, 0.0
-      if stds[1] > _LC_MAX_STD or stds[2] > _LC_MAX_STD:
-        return False, 0.0
+        return 0.0, 0.0
 
       left_x = np.asarray(lane_lines[1].x, dtype=float)
       left_y = np.asarray(lane_lines[1].y, dtype=float)
@@ -160,31 +192,24 @@ class LaneCenteringController:
       right_y = np.asarray(lane_lines[2].y, dtype=float)
       if (left_x.size < 2 or left_x.size != left_y.size or
           right_x.size < 2 or right_x.size != right_y.size):
-        return False, 0.0
+        return 0.0, 0.0
       if not (np.isfinite(left_x).all() and np.isfinite(left_y).all() and
               np.isfinite(right_x).all() and np.isfinite(right_y).all()):
-        return False, 0.0
+        return 0.0, 0.0
       if not (np.all(np.diff(left_x) > 0) and np.all(np.diff(right_x) > 0)):
-        return False, 0.0
+        return 0.0, 0.0
 
-      lookahead = float(np.clip(v_ego * 1.0, 8.0, 35.0))
       left = float(np.interp(lookahead, left_x, left_y))
       right = float(np.interp(lookahead, right_x, right_y))
       width = right - left
-      if width < _LC_MIN_WIDTH or width > _LC_MAX_WIDTH:
-        return False, 0.0
+
+      prob_conf = float(np.interp(min(probs[1], probs[2]), [_LC_MIN_PROB, _LC_FULL_PROB], [0.0, 1.0]))
+      std_conf = float(np.interp(max(stds[1], stds[2]), [_LC_STD_GOOD, _LC_MAX_STD], [1.0, 0.0]))
+      width_conf_lo = float(np.interp(width, [_LC_MIN_WIDTH, _LC_MIN_WIDTH + _LC_WIDTH_MARGIN], [0.0, 1.0]))
+      width_conf_hi = float(np.interp(width, [_LC_MAX_WIDTH - _LC_WIDTH_MARGIN, _LC_MAX_WIDTH], [1.0, 0.0]))
+      confidence = float(np.clip(min(prob_conf, std_conf, width_conf_lo, width_conf_hi), 0.0, 1.0))
 
       center_y = 0.5 * (left + right)
-
-      pos_x = np.asarray(model_v2.position.x, dtype=float)
-      pos_y = np.asarray(model_v2.position.y, dtype=float)
-      if pos_x.size < 2 or pos_x.size != pos_y.size:
-        return False, 0.0
-      if not (np.isfinite(pos_x).all() and np.isfinite(pos_y).all() and np.all(np.diff(pos_x) > 0)):
-        return False, 0.0
-      model_y = float(np.interp(lookahead, pos_x, pos_y))
-      error = (center_y + offset) - model_y
-      raw = 2.0 * error / (lookahead ** 2)
-      return True, float(raw)
+      return confidence, center_y
     except (AttributeError, IndexError, TypeError, ValueError):
-      return False, 0.0
+      return 0.0, 0.0
