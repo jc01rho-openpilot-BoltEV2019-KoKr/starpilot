@@ -30,7 +30,8 @@ def test_galaxy_has_masked_dedicated_secret_api_and_control():
   assert layout.count('"label": "Drive-End Battery Discord Report"') == 1
   assert 'type="password"' in javascript
   assert 'Configured' in javascript
-  assert "async function readJsonResponse(response)" in javascript
+  assert "export async function readJsonResponse(response)" in javascript
+  assert 'response.headers.get("content-type")' not in javascript
   assert "Galaxy API unavailable. Restart the device." in javascript
   assert "snackbar.textContent = String(msg ?? \"\")" in snackbar
 

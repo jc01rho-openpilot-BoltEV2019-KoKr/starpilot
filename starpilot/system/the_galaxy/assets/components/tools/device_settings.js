@@ -442,14 +442,9 @@ async function fetchLowVoltageDiscordStatus() {
   }
 }
 
-async function readJsonResponse(response) {
-  const contentType = response.headers.get("content-type") || ""
+export async function readJsonResponse(response) {
   const responseText = await response.text()
   if (!responseText) return {}
-
-  if (!contentType.toLowerCase().includes("application/json")) {
-    throw new Error("Galaxy API unavailable. Restart the device.")
-  }
 
   try {
     return JSON.parse(responseText)
