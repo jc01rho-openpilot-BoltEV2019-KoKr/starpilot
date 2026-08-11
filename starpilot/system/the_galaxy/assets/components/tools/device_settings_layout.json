@@ -103,7 +103,8 @@
         "data_type": "bool",
         "ui_type": "toggle",
         "is_parent_toggle": true,
-        "parent_key": "AdvancedLateralTune"
+        "parent_key": "AdvancedLateralTune",
+        "settings_tier": "advanced"
       },
       {
         "key": "LaneCenterOffset",
@@ -115,7 +116,8 @@
         "max": 0.5,
         "step": 0.01,
         "precision": 2,
-        "parent_key": "LaneCentering"
+        "parent_key": "LaneCentering",
+        "settings_tier": "advanced"
       },
       {
         "key": "ForceAutoTune",
@@ -402,6 +404,18 @@
         "precision": 1,
         "parent_key": "VASMEnabled",
         "settings_tier": "advanced"
+      },
+      {
+        "key": "SteerOffset",
+        "label": "Steer Offset",
+        "description": "Offsets steering torque to help compensate for alignment or tire issues. More negative pulls the car right; more positive pulls it left. Most users should not need to touch this.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": -0.2,
+        "max": 0.2,
+        "step": 0.005,
+        "parent_key": "AdvancedLateralTune",
+        "settings_tier": "advanced"
       }
     ]
   },
@@ -442,9 +456,9 @@
         "description": "Add trailer weight to vehicle mass for tow-aware gas, brake, and conservative lateral assist. Enter the loaded trailer weight in pounds.",
         "data_type": "int",
         "ui_type": "numeric",
-        "min": 0,
-        "max": 15000,
-        "step": 500,
+        "min": 0.0,
+        "max": 15000.0,
+        "step": 500.0,
         "parent_key": "AdvancedLongitudinalTune",
         "settings_tier": "advanced"
       },
@@ -3992,6 +4006,15 @@
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "ScreenManagement",
+        "settings_tier": "simple"
+      },
+      {
+        "key": "LowVoltageDiscordReport",
+        "label": "Drive-End Battery Discord Report",
+        "description": "Send the Panda/comma 12 V supply voltage after each drive. Available only for GitHub SSH-key account jc01rho.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeviceManagement",
         "settings_tier": "simple"
       }
     ]
