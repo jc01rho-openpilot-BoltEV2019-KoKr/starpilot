@@ -4057,6 +4057,9 @@ def setup(app):
 
   @app.errorhandler(404)
   def not_found(_):
+    if request.path.startswith("/api/"):
+      return jsonify({"error": "API endpoint not found."}), 404
+
     response = make_response(render_template("index.html"))
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
