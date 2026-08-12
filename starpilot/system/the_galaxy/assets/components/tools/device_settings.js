@@ -434,7 +434,7 @@ async function fetchLayoutAndParams() {
 
 async function fetchLowVoltageDiscordStatus() {
   try {
-    const response = await fetch("/api/low_voltage_discord", { cache: "no-store" })
+    const response = await fetch("/api/params?key=LowVoltageDiscordSettings", { cache: "no-store" })
     const data = await readJsonResponse(response)
     if (response.ok) state.lowVoltageDiscord = data
   } catch (error) {
@@ -463,14 +463,21 @@ async function saveLowVoltageDiscord() {
   }
   state.lowVoltageDiscordUpdating = true
   try {
-    const response = await fetch("/api/low_voltage_discord", {
+    const response = await fetch("/api/params", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ webhook: webhook || undefined, enabled: !!enabledInput?.checked }),
+      body: JSON.stringify({
+        key: "LowVoltageDiscordSettings",
+        value: {
+          action: "save",
+          webhook: webhook || undefined,
+          enabled: !!enabledInput?.checked,
+        },
+      }),
     })
     const data = await readJsonResponse(response)
     if (!response.ok) throw new Error(data.error || "Failed to update Discord reporting.")
-    state.lowVoltageDiscord = data
+    state.lowVoltageDiscord = data.discord || state.lowVoltageDiscord
     if (webhookInput) webhookInput.value = ""
     showParamSnackbar("Low-voltage Discord reporting updated.")
     scheduleSyncInputs()
@@ -484,10 +491,17 @@ async function saveLowVoltageDiscord() {
 async function removeLowVoltageDiscord() {
   state.lowVoltageDiscordUpdating = true
   try {
-    const response = await fetch("/api/low_voltage_discord", { method: "DELETE" })
+    const response = await fetch("/api/params", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        key: "LowVoltageDiscordSettings",
+        value: { action: "remove" },
+      }),
+    })
     const data = await readJsonResponse(response)
     if (!response.ok) throw new Error(data.error || "Failed to remove Discord webhook.")
-    state.lowVoltageDiscord = data
+    state.lowVoltageDiscord = data.discord || state.lowVoltageDiscord
     showParamSnackbar("Discord webhook removed.")
     scheduleSyncInputs()
   } catch (error) {

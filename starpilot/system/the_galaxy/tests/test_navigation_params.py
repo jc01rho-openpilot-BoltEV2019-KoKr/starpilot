@@ -153,6 +153,31 @@ def test_low_voltage_discord_configures_and_removes_secret(monkeypatch):
   assert params.values["LowVoltageDiscordReport"] is False
 
 
+def test_low_voltage_discord_works_through_existing_params_endpoint(monkeypatch):
+  client, params = _low_voltage_client(monkeypatch, {"GithubUsername": "jc01rho", "GithubSshKeys": "ssh-key"})
+  secret = "https://discord.com/api/webhooks/123/token"
+
+  response = client.get("/api/params?key=LowVoltageDiscordSettings")
+  assert response.status_code == 200
+  assert response.get_json() == {"owner": True, "configured": False, "enabled": False}
+
+  response = client.put("/api/params", json={
+    "key": "LowVoltageDiscordSettings",
+    "value": {"action": "save", "webhook": secret, "enabled": True},
+  })
+  assert response.status_code == 200
+  assert response.get_json()["discord"] == {"owner": True, "configured": True, "enabled": True}
+  assert params.values["LowVoltageDiscordWebhook"] == secret
+
+  response = client.put("/api/params", json={
+    "key": "LowVoltageDiscordSettings",
+    "value": {"action": "remove"},
+  })
+  assert response.status_code == 200
+  assert response.get_json()["discord"] == {"owner": True, "configured": False, "enabled": False}
+  assert "LowVoltageDiscordWebhook" not in params.values
+
+
 def test_missing_api_route_returns_json_instead_of_spa_html(monkeypatch):
   client, _ = _low_voltage_client(monkeypatch, {})
   response = client.put("/api/missing", json={})
