@@ -120,6 +120,17 @@ def test_low_voltage_discord_status_never_returns_webhook(monkeypatch):
   assert secret.encode() not in response.data
 
 
+def test_low_voltage_discord_route_accepts_trailing_slash(monkeypatch):
+  client, _ = _low_voltage_client(monkeypatch, {
+    "GithubUsername": "jc01rho",
+    "GithubSshKeys": "ssh-key",
+  })
+  response = client.get("/api/low_voltage_discord/")
+  assert response.status_code == 200
+  assert response.is_json
+  assert response.get_json()["configured"] is False
+
+
 def test_low_voltage_discord_rejects_non_owner_updates(monkeypatch):
   client, params = _low_voltage_client(monkeypatch, {"GithubUsername": "someone", "GithubSshKeys": "ssh-key"})
   response = client.put("/api/low_voltage_discord", json={"webhook": "https://discord.com/api/webhooks/123/token", "enabled": True})

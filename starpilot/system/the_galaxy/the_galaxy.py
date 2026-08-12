@@ -4874,7 +4874,7 @@ def setup(app):
 
     return jsonify(_sanitize_json_value(result)), 200
 
-  @app.route("/api/low_voltage_discord", methods=["GET", "PUT", "DELETE"])
+  @app.route("/api/low_voltage_discord", methods=["GET", "PUT", "DELETE"], strict_slashes=False)
   def low_voltage_discord_settings():
     if request.method == "GET":
       return jsonify(webhook_status(params)), 200
