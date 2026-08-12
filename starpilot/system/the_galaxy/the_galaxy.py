@@ -4037,19 +4037,7 @@ def setup(app):
 
   @app.after_request
   def disable_device_settings_asset_cache(response):
-    if request.path in {
-      "/assets/components/router.js",
-      "/assets/components/home/home.js",
-      "/assets/components/home/home.css",
-      "/assets/components/tools/device_settings.js",
-      "/assets/components/tools/device_settings.css",
-      "/assets/components/tools/device_settings_layout.json",
-      "/assets/components/tools/v_asm.js",
-      "/assets/components/tools/v_asm.css",
-      "/assets/components/tools/pip_sidecam.js",
-      "/assets/components/tools/pip_sidecam.css",
-      "/assets/components/tools/toggles.js",
-    }:
+    if request.path == "/" or request.path.startswith("/assets/"):
       response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
       response.headers["Pragma"] = "no-cache"
       response.headers["Expires"] = "0"

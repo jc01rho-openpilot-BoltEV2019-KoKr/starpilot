@@ -21,6 +21,8 @@ def test_python_and_qt_device_settings_are_owner_gated():
 
 def test_galaxy_has_masked_dedicated_secret_api_and_control():
   server = (REPO_ROOT / "starpilot/system/the_galaxy/the_galaxy.py").read_text()
+  index = (REPO_ROOT / "starpilot/system/the_galaxy/templates/index.html").read_text()
+  router = (REPO_ROOT / "starpilot/system/the_galaxy/assets/components/router.js").read_text()
   layout = (REPO_ROOT / "starpilot/system/the_galaxy/assets/components/tools/device_settings_layout.json").read_text()
   javascript = (REPO_ROOT / "starpilot/system/the_galaxy/assets/components/tools/device_settings.js").read_text()
   snackbar = (REPO_ROOT / "starpilot/system/the_galaxy/assets/js/snackbar.js").read_text()
@@ -33,6 +35,10 @@ def test_galaxy_has_masked_dedicated_secret_api_and_control():
   assert 'fetch("/api/params?key=LowVoltageDiscordSettings"' in javascript
   assert 'key: "LowVoltageDiscordSettings"' in javascript
   assert 'fetch("/api/low_voltage_discord"' not in javascript
+  assert "window.__GALAXY_ASSET_VERSION__ = galaxyAssetVersion" in index
+  assert "router.js?v=${encodeURIComponent(galaxyAssetVersion)}" in index
+  assert "device_settings.js?v=${galaxyAssetVersion}" in router
+  assert 'request.path.startswith("/assets/")' in server
   assert "export async function readJsonResponse(response)" in javascript
   assert 'response.headers.get("content-type")' not in javascript
   assert "Galaxy API unavailable. Restart the device." in javascript
