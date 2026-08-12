@@ -4429,6 +4429,35 @@ def setup(app):
         return jsonify({"error": "Missing 'key' or 'value' in request body."}), 400
 
       key = str(data["key"]).strip()
+      if key == "LowVoltageDiscordSettings":
+        if not owner_is_allowed(params):
+          return jsonify({"error": "This setting is restricted to the configured owner."}), 403
+
+        value = data["value"]
+        if not isinstance(value, dict):
+          return jsonify({"error": "Discord settings must be an object."}), 400
+
+        action = str(value.get("action") or "save").strip().lower()
+        if action == "remove":
+          remove_webhook(params)
+          return jsonify({
+            "message": "Low-voltage Discord webhook removed.",
+            "discord": webhook_status(params),
+          }), 200
+
+        webhook = value.get("webhook")
+        if webhook not in (None, "") and not configure_webhook(params, str(webhook)):
+          return jsonify({"error": "Enter a valid Discord webhook URL."}), 400
+
+        enabled = bool(value.get("enabled", False))
+        if enabled and not webhook_status(params)["configured"]:
+          return jsonify({"error": "Configure the Discord webhook before enabling reports."}), 400
+        params.put_bool("LowVoltageDiscordReport", enabled)
+        return jsonify({
+          "message": "Low-voltage Discord reporting updated.",
+          "discord": webhook_status(params),
+        }), 200
+
       if key.lower() == FAVORITE_SLOTS_PARAM.lower():
         key = FAVORITE_SLOTS_PARAM
         raw_slots = data["value"]
@@ -4819,6 +4848,8 @@ def setup(app):
       return jsonify(response), 200
 
     request_key = request.args.get("key")
+    if request_key == "LowVoltageDiscordSettings":
+      return jsonify(webhook_status(params)), 200
     if request_key in CUSTOM_ACCEL_PROFILE_PARAM_KEYS and not _get_custom_accel_profile_initialized():
       defaults_lookup = _get_default_param_values()
       return _serialize_param_write_value(defaults_lookup.get(request_key)), 200
