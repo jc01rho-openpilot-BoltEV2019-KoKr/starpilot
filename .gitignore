@@ -54,9 +54,6 @@ cereal/gen
 selfdrive/ui/translations/tmp
 selfdrive/car/tests/cars_dump
 system/camerad/test/ae_gray_test
-selfdrive/ui/ui.macos
-selfdrive/ui/ui.larch64
-
 .coverage*
 coverage.xml
 htmlcov

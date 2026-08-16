@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import codecs
-import ctypes
-import glob
 import hashlib
 import json
 import os
+import platform
 import pickle
 import shutil
 import subprocess
@@ -42,33 +41,26 @@ MEDMODEL_INPUT_SIZE = (512, 256)
 DM_INPUT_SIZE = (1440, 960)
 MODEL_RUN_FREQ = 20
 MODEL_CONTEXT_FREQ = 5
-REPOSITORY_FILE_LIMIT = 100 * 1024 * 1024
+# GitHub/GitLab advertise a 100 MB per-file limit. Use the decimal limit so
+# artifacts such as a 104.4 MB PKL are split before they reach the remote.
+REPOSITORY_FILE_LIMIT = 100_000_000
 DEFAULT_MULTIPART_SIZE = 95 * 1024 * 1024
 USBGPU_PROBE_ATTEMPTS = 10
-USBGPU_PROBE_TIMEOUT = 2
-USBDEVFS_CONTROL = 0xC0185500
-USBGPU_VID_PIDS = (("add1", "0001"), ("3801", "0001"))
-
-
-class _UsbdevfsControl(ctypes.Structure):
-  _fields_ = [("request_type", ctypes.c_uint8), ("request", ctypes.c_uint8),
-              ("value", ctypes.c_uint16), ("index", ctypes.c_uint16),
-              ("length", ctypes.c_uint16), ("timeout", ctypes.c_uint32),
-              ("data", ctypes.c_void_p)]
 
 
 def build_compile_env(*, supercombo: bool = False) -> dict[str, str]:
   env = os.environ.copy()
   existing_pythonpath = env.get("PYTHONPATH", "")
   env["PYTHONPATH"] = f"{REPO_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(REPO_ROOT)
-  defaults = {} if supercombo else {
-    "DEBUG": "0",
+  defaults = {
     "FLOAT16": "1",
-    "IMAGE": "2",
+    "IMAGE": "1" if supercombo else "2",
     "JIT_BATCH_SIZE": "0",
     "NOLOCALS": "1",
     "OPENPILOT_HACKS": "1",
-  }
+  } | ({} if supercombo else {
+    "DEBUG": "0",
+  })
   for key, default in defaults.items():
     try:
       int(str(env.get(key)), 0)
@@ -81,68 +73,22 @@ def build_compile_env(*, supercombo: bool = False) -> dict[str, str]:
   return env
 
 
-def _probe_external_gpu_link_once() -> tuple[bool, str]:
-  """Probe the bridge without initializing tinygrad or resetting the USB device."""
-  import fcntl
+def wait_for_external_gpu() -> None:
+  """Use openpilot's Chestnut link probe before starting a USB-GPU build."""
+  from openpilot.system.hardware.chestnut.flash import link_up
 
-  diagnostics: list[str] = []
-  for path in glob.glob("/sys/bus/usb/devices/*"):
-    try:
-      vendor = Path(path, "idVendor").read_text().strip().lower()
-      product = Path(path, "idProduct").read_text().strip().lower()
-      if (vendor, product) not in USBGPU_VID_PIDS:
-        continue
-      bus = int(Path(path, "busnum").read_text())
-      device = int(Path(path, "devnum").read_text())
-      location = f"usb:{bus}-{device}"
-      fd = os.open(f"/dev/bus/usb/{bus:03d}/{device:03d}", os.O_RDWR)
-    except (OSError, ValueError) as exc:
-      diagnostics.append(f"{path}: open failed ({exc})")
-      continue
-
-    try:
-      fcntl.ioctl(fd, USBDEVFS_CONTROL, _UsbdevfsControl(0x40, 0xF3, 1, 0, 0, USBGPU_PROBE_TIMEOUT * 1000, None))
-      state = (ctypes.c_ubyte * 1)()
-      fcntl.ioctl(fd, USBDEVFS_CONTROL, _UsbdevfsControl(0xC0, 0xE4, 0xB450, 0, 1, 1000, ctypes.cast(state, ctypes.c_void_p)))
-      if state[0] == 0x78:
-        return True, f"{location}: LTSSM=0x78"
-      diagnostics.append(f"{location}: LTSSM=0x{state[0]:02X}")
-    except OSError as exc:
-      diagnostics.append(f"{location}: control probe failed ({exc})")
-    finally:
-      os.close(fd)
-  return False, diagnostics[-1] if diagnostics else "no ASM2464PD device found"
+  for _ in range(USBGPU_PROBE_ATTEMPTS):
+    if link_up():
+      return
+    time.sleep(1)
+  raise RuntimeError("Chestnut not ready; external GPU PCIe link did not come up")
 
 
-def wait_for_external_gpu(compile_env: dict[str, str]) -> bool:
-  """Wait for the USB GPU's PCIe link before starting the large model build.
-
-  The dock can enumerate on USB before its PCIe link has finished training.
-  Probe the bridge's control endpoint directly, like upstream openpilot.  Do
-  not instantiate tinygrad here: opening the GPU resets/claims the USB
-  interface, and doing that in a probe process can leave the bridge in a state
-  where the authoritative compiler cannot train the link.
-  """
-  del compile_env  # retained in the public helper signature for callers/tests
-  diagnostics: list[str] = []
-
-  for attempt in range(USBGPU_PROBE_ATTEMPTS):
-    if attempt:
-      time.sleep(1)
-    try:
-      ready, detail = _probe_external_gpu_link_once()
-    except Exception as exc:  # probe is advisory; compile_modeld remains authoritative
-      ready, detail = False, str(exc)
-    if ready:
-      return True
-    diagnostics.append(detail)
-
-  detail = diagnostics[-1] if diagnostics else "unknown error"
-  print(
-    f"Warning: external GPU link did not become ready after {USBGPU_PROBE_ATTEMPTS} probes: {detail}\n"
-    "  Continuing; compile_modeld will perform the authoritative link wait and initialization."
-  )
-  return False
+def external_gpu_compile_command(command: list[str]) -> list[str]:
+  """Pin USB-GPU compilation to AGNOS' isolated CPU without changing host builds."""
+  if sys.platform == "linux" and platform.machine() == "aarch64":
+    return ["taskset", "-c", "7", *command]
+  return command
 
 
 def parse_args() -> argparse.Namespace:
@@ -549,14 +495,16 @@ def compile_driving(
 ) -> Path:
   model_type, source_args = driving_compile_args(files, input_format)
   output_path = output_dir / f"{model_key}_driving_tinygrad.pkl"
+  # A rebuild queue may compile several models into the same directory. Only
+  # replace the selected model; deleting every driving artifact here loses
+  # models that were successfully compiled earlier in the queue.
   removed = remove_paths(sorted({
     output_path,
     *multipart_output_paths(output_path, output_dir),
-    *output_dir.glob("*_driving_tinygrad.pkl"),
-    *output_dir.glob("*_driving_tinygrad.pkl.p[0-9][0-9]"),
-    *output_dir.glob("*_driving_tinygrad.pkl.sha256"),
-    *output_dir.glob("*_driving_*_tinygrad.pkl"),
-    *output_dir.glob("*_driving_*_metadata.pkl"),
+    *output_dir.glob(f"{model_key}_driving_*_tinygrad.pkl"),
+    *output_dir.glob(f"{model_key}_driving_*_tinygrad.pkl.p[0-9][0-9]"),
+    *output_dir.glob(f"{model_key}_driving_*_tinygrad.pkl.sha256"),
+    *output_dir.glob(f"{model_key}_driving_*_metadata.pkl"),
   }))
   if removed:
     print(f"  cleared {removed} existing driving output entries")
@@ -595,7 +543,8 @@ def compile_driving(
       "TC_OPT": "2",
     })
     command.append("--out-of-band")
-    wait_for_external_gpu(compile_env)
+    wait_for_external_gpu()
+    command = external_gpu_compile_command(command)
   subprocess.run(command, cwd=REPO_ROOT, env=compile_env, check=True)
   return output_path
 
@@ -720,7 +669,7 @@ def main() -> int:
   else:
     multipart_outputs = split_oversized_artifact(output)
     if multipart_outputs:
-      print("  artifact exceeds 100 MiB; created repository-safe multipart files:")
+      print("  artifact exceeds 100 MB; created repository-safe multipart files:")
       for multipart_output in multipart_outputs:
         print(f"    {multipart_output.name} ({multipart_output.stat().st_size} bytes)")
       output.unlink()

@@ -13,6 +13,15 @@ def test_offline_cpu_placeholders_do_not_hide_sustained_load(monkeypatch):
   assert cpu_throttle._compute_throttle_factor(average, 0) == pytest.approx(1.75)
 
 
+def test_idle_reserved_cores_do_not_hide_affinity_core_saturation(monkeypatch):
+  monkeypatch.setattr(cpu_throttle, "_online_cpu_count", lambda: 8)
+
+  usage = cpu_throttle._online_cpu_usage([74, 82, 100, 85, 92, 98, 0, 47], cores=[2])
+
+  assert usage == [100.0]
+  assert cpu_throttle._compute_throttle_factor(sum(usage) / len(usage), 1) == 4.0
+
+
 @pytest.mark.parametrize(("online_spec", "expected"), (
   ("0-3", 4),
   ("0-3,6-7", 6),

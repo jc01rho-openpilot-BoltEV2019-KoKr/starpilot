@@ -89,13 +89,13 @@ def make_update_toggles():
   )
 
 
-def test_open_road_triggers_near_set_speed_without_a_lead():
+def test_open_road_triggers_at_set_speed_without_a_lead():
   cem = make_cem(model_length=80.0)
   toggles = make_update_toggles()
   toggles.conditional_open_road = True
 
   triggered = cem.check_conditions(
-    55 * CV.MPH_TO_MS,
+    57 * CV.MPH_TO_MS,
     make_sm(),
     toggles,
     v_cruise=57 * CV.MPH_TO_MS,
@@ -105,7 +105,7 @@ def test_open_road_triggers_near_set_speed_without_a_lead():
   assert cem.status_value == conditional_experimental_mode_module.CEStatus["SPEED"]
 
 
-def test_open_road_requires_at_or_below_set_speed_within_margin():
+def test_open_road_does_not_trigger_below_or_far_above_set_speed():
   toggles = make_update_toggles()
   toggles.conditional_open_road = True
 
@@ -113,10 +113,10 @@ def test_open_road_requires_at_or_below_set_speed_within_margin():
   above_set_speed = make_cem(model_length=80.0)
 
   assert not too_far_below.check_conditions(
-    50 * CV.MPH_TO_MS, make_sm(), toggles, v_cruise=57 * CV.MPH_TO_MS,
+    56 * CV.MPH_TO_MS, make_sm(), toggles, v_cruise=57 * CV.MPH_TO_MS,
   )
   assert not above_set_speed.check_conditions(
-    58 * CV.MPH_TO_MS, make_sm(), toggles, v_cruise=57 * CV.MPH_TO_MS,
+    59 * CV.MPH_TO_MS, make_sm(), toggles, v_cruise=57 * CV.MPH_TO_MS,
   )
 
 
@@ -136,6 +136,54 @@ def test_open_road_requires_no_lead_vehicle():
   assert not cem.check_conditions(
     55 * CV.MPH_TO_MS, make_sm(), toggles, v_cruise=57 * CV.MPH_TO_MS,
   )
+
+
+def test_open_road_holds_exp_briefly_for_safe_lead_handoff(monkeypatch):
+  cem = make_cem(model_length=80.0)
+  toggles = make_update_toggles()
+  toggles.conditional_open_road = True
+  sm = make_update_sm(standstill=False)
+  monkeypatch.setattr(cem, "update_conditions", lambda *args: None)
+
+  now = [100.0]
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", lambda: now[0])
+
+  cem.update(57 * CV.MPH_TO_MS, sm, toggles, v_cruise=57 * CV.MPH_TO_MS)
+  assert cem.experimental_mode
+
+  cem.starpilot_planner.lead_one.status = True
+  cem.starpilot_planner.lead_one.dRel = 60.0
+  cem.starpilot_planner.lead_one.vLead = 55 * CV.MPH_TO_MS
+  now[0] = 100.6
+  cem.update(55 * CV.MPH_TO_MS, sm, toggles, v_cruise=57 * CV.MPH_TO_MS)
+  assert cem.experimental_mode
+  assert cem.status_value == conditional_experimental_mode_module.CEStatus["SPEED"]
+
+  now[0] = 101.4
+  cem.update(55 * CV.MPH_TO_MS, sm, toggles, v_cruise=57 * CV.MPH_TO_MS)
+  assert not cem.experimental_mode
+
+
+def test_open_road_does_not_delay_urgent_lead_handoff(monkeypatch):
+  cem = make_cem(model_length=80.0)
+  toggles = make_update_toggles()
+  toggles.conditional_open_road = True
+  sm = make_update_sm(standstill=False)
+  monkeypatch.setattr(cem, "update_conditions", lambda *args: None)
+
+  now = [100.0]
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", lambda: now[0])
+
+  cem.update(57 * CV.MPH_TO_MS, sm, toggles, v_cruise=57 * CV.MPH_TO_MS)
+  cem.starpilot_planner.lead_one.status = True
+  cem.starpilot_planner.lead_one.dRel = 20.0
+  cem.starpilot_planner.lead_one.vLead = 0.0
+  now[0] = 101.6
+  cem.update(55 * CV.MPH_TO_MS, sm, toggles, v_cruise=57 * CV.MPH_TO_MS)
+  now[0] = 101.9
+  cem.update(55 * CV.MPH_TO_MS, sm, toggles, v_cruise=57 * CV.MPH_TO_MS)
+
+  assert not cem.experimental_mode
 
 
 def test_low_speed_cruise_does_not_trigger_stop_light_from_model_stopped():

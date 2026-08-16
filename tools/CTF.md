@@ -15,6 +15,6 @@ getting started
 cd tools/replay
 ./replay '0c7f0c7f0c7f0c7f|2021-10-13--13-00-00' --dcam --ecam
 
-# start the UI in another terminal
-selfdrive/ui/ui
+# start the C3 UI in another terminal
+./c3
 ```

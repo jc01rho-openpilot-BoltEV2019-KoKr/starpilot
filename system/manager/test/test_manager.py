@@ -4,13 +4,12 @@ import signal
 import time
 from pathlib import Path
 import json
-from types import SimpleNamespace
 
 from cereal import car
 from openpilot.common.params import Params
 import openpilot.system.manager.manager as manager
 from openpilot.system.manager.process import ensure_running
-from openpilot.system.manager.process_config import BigDeviceUIProcess, managed_processes, procs
+from openpilot.system.manager.process_config import big_device_ui_process, managed_processes, procs
 from openpilot.system.hardware import HARDWARE
 
 os.environ['FAKEUPLOAD'] = "1"
@@ -71,39 +70,139 @@ class FileBackedFakeParams:
   def put_float(self, key, value):
     self.put(key, float(value))
 
+  def remove(self, key):
+    Path(self.get_param_path(key)).unlink(missing_ok=True)
 
-class FakeManagedProcess:
-  def __init__(self):
-    self.proc = None
-    self.shutting_down = False
-    self.starts = 0
-    self.stops = 0
 
-  def prepare(self):
-    pass
+def test_navigation_selected_while_already_offroad_is_not_tracked_for_cleanup(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params", {
+    "ClearNavOnOffroad": True,
+    "ClearNavOnOffroadTimeoutMinutes": 0,
+  })
 
-  def start(self):
-    if self.proc is not None:
-      return
+  state = manager.update_nav_offroad_clear_state(
+    params, False, None, None, 10.0, offroad_transition=False
+  )
+  assert state == (None, None)
 
-    self.starts += 1
-    self.shutting_down = False
-    self.proc = SimpleNamespace(exitcode=None, pid=self.starts, is_alive=lambda: True)
+  destination = {"name": "Home", "latitude": 1.0, "longitude": 2.0}
+  params.put("NavDestination", destination)
+  state = manager.update_nav_offroad_clear_state(
+    params, False, *state, 20.0, offroad_transition=False
+  )
 
-  def stop(self, retry=True, block=True, sig=None):
-    if self.proc is None:
-      return None
+  assert state == (None, None)
+  assert json.loads(params.get("NavDestination")) == destination
 
-    self.stops += 1
-    self.shutting_down = False
-    self.proc = None
-    return 0
+  state = manager.update_nav_offroad_clear_state(
+    params, True, *state, 30.0, offroad_transition=False
+  )
+  assert state == (None, None)
+  assert json.loads(params.get("NavDestination")) == destination
 
-  def check_watchdog(self, started):
-    pass
+  state = manager.update_nav_offroad_clear_state(
+    params, False, *state, 40.0, offroad_transition=True
+  )
+  assert state == (None, None)
+  assert params.get("NavDestination") is None
 
-  def get_process_state_msg(self):
-    return SimpleNamespace(name="ui")
+
+def test_replacement_destination_disarms_delayed_cleanup(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params", {
+    "ClearNavOnOffroad": True,
+    "ClearNavOnOffroadTimeoutMinutes": 15,
+    "NavDestination": {"name": "Old", "latitude": 1.0, "longitude": 2.0},
+  })
+
+  tracked = manager.update_nav_offroad_clear_state(
+    params, False, None, None, 10.0, offroad_transition=True
+  )
+  replacement = {"name": "New", "latitude": 3.0, "longitude": 4.0}
+  params.put("NavDestination", replacement)
+
+  state = manager.update_nav_offroad_clear_state(
+    params, False, *tracked, 20.0, offroad_transition=False
+  )
+
+  assert state == (None, None)
+  assert json.loads(params.get("NavDestination")) == replacement
+
+
+def test_active_navigation_clears_on_offroad_transition(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params", {
+    "ClearNavOnOffroad": True,
+    "ClearNavOnOffroadTimeoutMinutes": 0,
+    "NavDestination": {"name": "Home", "latitude": 1.0, "longitude": 2.0},
+  })
+
+  state = manager.update_nav_offroad_clear_state(
+    params, False, None, None, 10.0, offroad_transition=True
+  )
+
+  assert state == (None, None)
+  assert params.get("NavDestination") is None
+
+
+def test_active_navigation_clears_after_offroad_timeout(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params", {
+    "ClearNavOnOffroad": True,
+    "ClearNavOnOffroadTimeoutMinutes": 15,
+    "NavDestination": {"name": "Home", "latitude": 1.0, "longitude": 2.0},
+  })
+
+  tracked = manager.update_nav_offroad_clear_state(
+    params, False, None, None, 10.0, offroad_transition=True
+  )
+  tracked = manager.update_nav_offroad_clear_state(
+    params, False, *tracked, 909.0, offroad_transition=False
+  )
+  assert params.get("NavDestination") is not None
+
+  state = manager.update_nav_offroad_clear_state(
+    params, False, *tracked, 910.0, offroad_transition=False
+  )
+
+  assert state == (None, None)
+  assert params.get("NavDestination") is None
+
+
+def test_offroad_cleanup_does_not_remove_destination_replaced_after_snapshot(tmp_path):
+  old_destination = json.dumps({"name": "Old", "latitude": 1.0, "longitude": 2.0})
+  replacement_destination = {
+    "name": "Home",
+    "place_name": "Home",
+    "latitude": 3.0,
+    "longitude": 4.0,
+  }
+
+  class SnapshotRaceParams(FileBackedFakeParams):
+    def __init__(self, root, values):
+      self._first_nav_read = old_destination
+      self.removed = []
+      super().__init__(root, values)
+
+    def get(self, key):
+      if key == "NavDestination" and self._first_nav_read is not None:
+        value, self._first_nav_read = self._first_nav_read, None
+        return value
+      return super().get(key)
+
+    def remove(self, key):
+      self.removed.append(key)
+      super().remove(key)
+
+  params = SnapshotRaceParams(tmp_path / "params", {
+    "ClearNavOnOffroad": True,
+    "ClearNavOnOffroadTimeoutMinutes": 0,
+    "NavDestination": replacement_destination,
+  })
+
+  state = manager.update_nav_offroad_clear_state(
+    params, False, None, None, 10.0, offroad_transition=True
+  )
+
+  assert state == (None, None)
+  assert "NavDestination" not in params.removed
 
 
 def test_reboot_guard_only_defers_automatic_requests():
@@ -111,6 +210,14 @@ def test_reboot_guard_only_defers_automatic_requests():
   assert manager.should_defer_reboot("DoReboot", started=False, ignition=True)
   assert not manager.should_defer_reboot("DoReboot", started=False, ignition=False)
   assert not manager.should_defer_reboot("DoUserReboot", started=True, ignition=True)
+
+
+def test_big_device_ui_process_always_launches_c3_ui():
+  ui_process = big_device_ui_process()
+
+  assert ui_process.cwd == "."
+  assert ui_process.cmdline[0:2] == ["/usr/bin/env", "BIG=1"]
+  assert ui_process.cmdline[-2:] == ["-m", "openpilot.selfdrive.ui.ui"]
 
 
 class TestManager:
@@ -141,34 +248,6 @@ class TestManager:
 
     assert names.index("the_galaxy") < ui_idx
     assert names.index("galaxy") < ui_idx
-
-  def test_big_device_ui_process_swaps_offroad_only(self, tmp_path):
-    ui_process = BigDeviceUIProcess(lambda *args: True)
-    qt_process = FakeManagedProcess()
-    raylib_process = FakeManagedProcess()
-    ui_process._qt_process = qt_process
-    ui_process._raylib_process = raylib_process
-
-    params = FileBackedFakeParams(tmp_path / "params", {"UseOldUI": False})
-
-    assert ui_process.should_run(False, params, car.CarParams.new_message(), SimpleNamespace())
-    ui_process.start()
-    assert ui_process.proc is raylib_process.proc
-    assert qt_process.starts == 0
-    assert raylib_process.starts == 1
-
-    params.put_bool("UseOldUI", True)
-    assert ui_process.should_run(True, params, car.CarParams.new_message(), SimpleNamespace())
-    ui_process.start()
-    assert ui_process.proc is raylib_process.proc
-    assert qt_process.stops == 0
-    assert qt_process.starts == 0
-
-    assert ui_process.should_run(False, params, car.CarParams.new_message(), SimpleNamespace())
-    ui_process.start()
-    assert raylib_process.stops == 1
-    assert qt_process.starts == 1
-    assert ui_process.proc is qt_process.proc
 
   def test_blacklisted_procs(self):
     # TODO: ensure there are blacklisted procs until we have a dedicated test
@@ -252,7 +331,7 @@ class TestManager:
     assert params_cache.get("CEModelStopTime") == "7.7"
 
   def test_migrate_starpilot_default_model(self, tmp_path, monkeypatch):
-    monkeypatch.setattr(manager, "STARPILOT_DEFAULT_MODEL_MIGRATION_FLAG", tmp_path / "starpilot_default_model_rdf_v1")
+    monkeypatch.setattr(manager, "STARPILOT_DEFAULT_MODEL_MIGRATION_FLAG", tmp_path / "starpilot_default_model_rdf_v4")
 
     params = FileBackedFakeParams(tmp_path / "params", {
       "Model": "sc2",
@@ -265,11 +344,11 @@ class TestManager:
 
     manager.migrate_starpilot_default_model(params, params_cache)
 
-    assert params.get("Model") == "rdf"
-    assert params.get("DrivingModel") == "rdf"
-    assert params.get("DrivingModelName") == "Regret Driven Framework"
+    assert params.get("Model") == "rdf43"
+    assert params.get("DrivingModel") == "rdf43"
+    assert params.get("DrivingModelName") == "Regret Driven Framework V4"
     assert params.get("ModelVersion") == "v15"
-    assert params_cache.get("DrivingModel") == "rdf"
+    assert params_cache.get("DrivingModel") == "rdf43"
     assert manager.STARPILOT_DEFAULT_MODEL_MIGRATION_FLAG.exists()
 
   def test_migrate_starpilot_ce_model_stop_time(self, tmp_path, monkeypatch):

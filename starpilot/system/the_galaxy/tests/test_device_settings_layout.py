@@ -1,5 +1,4 @@
 import json
-import importlib.util
 import re
 from pathlib import Path
 
@@ -7,7 +6,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[4]
 LAYOUT_PATH = REPO_ROOT / "starpilot/system/the_galaxy/assets/components/tools/device_settings_layout.json"
 PARAM_KEYS_PATH = REPO_ROOT / "common/params_keys.h"
-GENERATOR_PATH = REPO_ROOT / "tools/StarPilot/generate_galaxy_layout.py"
 
 
 def _layout():
@@ -29,14 +27,6 @@ def _declared_default(key):
   )
   assert match is not None, f"Missing param declaration for {key}"
   return match.group(1)
-
-
-def _generator_module():
-  spec = importlib.util.spec_from_file_location("generate_galaxy_layout", GENERATOR_PATH)
-  assert spec is not None and spec.loader is not None
-  module = importlib.util.module_from_spec(spec)
-  spec.loader.exec_module(module)
-  return module
 
 
 def test_galaxy_layout_removes_obsolete_and_duplicate_controls():
@@ -68,7 +58,16 @@ def test_galaxy_layout_contains_basic_mode_controls():
   } <= sections["Longitudinal (Speed & Following)"].keys()
   assert "RedneckCruise" not in sections["Longitudinal (Speed & Following)"].keys()
   assert sections["Developer"]["RedneckCruise"]["parent_key"] == "GalaxyDeveloperMode"
-  assert {"GalaxyDeveloperMode", "UseOldUI"} <= sections["Developer"].keys()
+  assert {"AlphaLongitudinalEnabled", "ForceOffroad", "GalaxyDeveloperMode"} <= sections["Developer"].keys()
+
+
+def test_device_shutdown_uses_literal_hours():
+  device_shutdown = _params_by_section(_layout())["Device & Data"]["DeviceShutdown"]
+
+  assert _declared_default("DeviceShutdown") == "6"
+  assert device_shutdown["min"] == 1
+  assert device_shutdown["max"] == 30
+  assert device_shutdown["step"] == 1
 
 
 def test_curve_speed_controller_no_lead_toggle_is_nested_under_csc():
@@ -89,11 +88,6 @@ def test_every_galaxy_setting_has_a_shared_settings_tier():
 
   assert tiers <= {"simple", "advanced"}
   assert None not in tiers
-
-
-def test_galaxy_layout_generator_is_semantically_idempotent():
-  layout = _layout()
-  assert _generator_module().generate_layout(layout) == layout
 
 
 def test_requested_simple_and_advanced_settings_tiers():
@@ -146,7 +140,12 @@ def test_requested_simple_and_advanced_settings_tiers():
     assert longitudinal[key]["settings_tier"] == "advanced"
 
   assert developer["GalaxyDeveloperMode"]["settings_tier"] == "simple"
-  assert developer["UseOldUI"]["settings_tier"] == "simple"
+  assert developer["AlphaLongitudinalEnabled"]["parent_key"] == "GalaxyDeveloperMode"
+  assert developer["AlphaLongitudinalEnabled"]["requires_offroad"] is True
+  assert developer["AlphaLongitudinalEnabled"]["settings_tier"] == "advanced"
+  assert developer["ForceOffroad"]["parent_key"] == "GalaxyDeveloperMode"
+  assert developer["ForceOffroad"]["requires_parked"] is True
+  assert developer["ForceOffroad"]["settings_tier"] == "advanced"
   assert developer["DeveloperUI"]["settings_tier"] == "advanced"
   assert developer["RedneckCruise"]["settings_tier"] == "advanced"
   assert sections["Visual (Display & UI)"]["DisableWideRoad"]["settings_tier"] == "advanced"

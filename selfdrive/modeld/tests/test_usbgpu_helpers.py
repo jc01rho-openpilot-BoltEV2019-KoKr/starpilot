@@ -1,7 +1,9 @@
 import io
+from types import MethodType
 
 import numpy as np
 
+from openpilot.selfdrive.modeld import modeld
 from openpilot.selfdrive.modeld.helpers import dump_oob, load_oob, tinygrad_dev_config
 from scripts import model_compiler
 
@@ -23,28 +25,69 @@ def test_out_of_band_artifact_round_trip():
   np.testing.assert_array_equal(restored["weights"], artifact["weights"])
 
 
-def test_external_gpu_probe_retries_until_pcie_is_ready(monkeypatch):
+def test_external_gpu_probe_matches_upstream_retry_loop(monkeypatch):
+  from openpilot.system.hardware.chestnut import flash
+
   calls = []
-  probe_count = 0
-  def probe():
-    nonlocal probe_count
-    probe_count += 1
-    calls.append("probe")
-    return (False, "LTSSM=0x00") if probe_count < 3 else (True, "LTSSM=0x78")
-  monkeypatch.setattr(
-    model_compiler,
-    "_probe_external_gpu_link_once",
-    probe,
-  )
+  results = iter((False, False, True))
+  monkeypatch.setattr(flash, "link_up", lambda: calls.append("probe") or next(results))
   monkeypatch.setattr(model_compiler.time, "sleep", lambda seconds: calls.append(("sleep", seconds)))
 
-  model_compiler.wait_for_external_gpu({"PYTHONPATH": "/tmp/openpilot"})
+  model_compiler.wait_for_external_gpu()
 
   assert calls == ["probe", ("sleep", 1), "probe", ("sleep", 1), "probe"]
 
 
-def test_external_gpu_probe_reports_failure(monkeypatch):
-  monkeypatch.setattr(model_compiler, "_probe_external_gpu_link_once", lambda: (False, "link unavailable"))
-  monkeypatch.setattr(model_compiler.time, "sleep", lambda _: None)
+def test_external_gpu_warmup_runs_a_complete_frame_and_resets(monkeypatch):
+  class FakeTensor:
+    @staticmethod
+    def zeros(shape, **kwargs):
+      calls.append(("tensor", shape, kwargs))
+      return FakeTensor()
 
-  assert model_compiler.wait_for_external_gpu({}) is False
+    def realize(self):
+      return self
+
+  calls = []
+  state = modeld.ModelState.__new__(modeld.ModelState)
+  state.frame_buf_size = 32
+  state.vision_input_names = ["img", "big_img"]
+  state._blob_cache = {}
+  state._warp_dev = "QCOM"
+  state.desire_key = "desire"
+  state.prev_desired_curv_key = "prev_desired_curv"
+  state.numpy_inputs = {
+    "desire": np.zeros((1, 8), dtype=np.float32),
+    "traffic_convention": np.zeros((1, 2), dtype=np.float32),
+    "action_t": np.zeros((1, 2), dtype=np.float32),
+    "prev_desired_curv": np.zeros((1, 5, 1), dtype=np.float32),
+  }
+
+  def fake_run(self, bufs, transforms, inputs, prepare_only):
+    calls.append((
+      "run",
+      {key: value.shape for key, value in bufs.items()},
+      {key: value.shape for key, value in transforms.items()},
+      {key: value.shape for key, value in inputs.items()},
+      prepare_only,
+    ))
+    return {}
+
+  state.run = MethodType(fake_run, state)
+  state._reset_state = MethodType(lambda self: calls.append(("reset",)), state)
+  monkeypatch.setattr(modeld, "Tensor", FakeTensor)
+
+  state.warmup()
+
+  assert calls == [
+    ("tensor", (32,), {"dtype": "uint8", "device": "QCOM"}),
+    ("tensor", (32,), {"dtype": "uint8", "device": "QCOM"}),
+    (
+      "run",
+      {"img": (32,), "big_img": (32,)},
+      {"img": (3, 3), "big_img": (3, 3)},
+      {"desire": (8,), "traffic_convention": (2,), "action_t": (2,)},
+      False,
+    ),
+    ("reset",),
+  ]

@@ -103,10 +103,12 @@ class LatControlTorque(LatControl):
     self.is_bolt_2017 = CP.carFingerprint in BOLT_2017_CARS
     self.is_volt_standard = CP.carFingerprint in VOLT_STANDARD_CARS
     self.is_genesis_g90 = CP.carFingerprint in GENESIS_G90_CARS
+    self.is_genesis_g70 = CP.carFingerprint in GENESIS_G70_CARS
     self.is_genesis_gv70 = CP.carFingerprint in GENESIS_GV70_CARS
     self.is_palisade = CP.carFingerprint in PALISADE_CARS
     self.is_prius = CP.carFingerprint in PRIUS_CARS
     self.is_camry = CP.carFingerprint in CAMRY_CARS
+    self.is_rav4_tss2 = CP.carFingerprint in RAV4_TSS2_CARS
     self.is_rav4_prime = CP.carFingerprint in RAV4_PRIME_CARS
     self.is_sienna_4th_gen = CP.carFingerprint in SIENNA_4TH_GEN_CARS
     self.is_lexus_is = CP.carFingerprint in LEXUS_IS_CARS
@@ -127,6 +129,7 @@ class LatControlTorque(LatControl):
     self.is_tucson_4th_gen = CP.carFingerprint in TUCSON_4TH_GEN_CARS
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA_CAR.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_silverado = CP.carFingerprint in SILVERADO_CARS
+    self.is_gmc_yukon_cc = CP.carFingerprint in GMC_YUKON_CC_CARS
     self.is_ram_1500 = CP.carFingerprint in RAM_1500_CARS
     self.is_gm = CP.brand == "gm"
     self.is_hkg_canfd_torque = CP.brand == "hyundai" and bool(CP.flags & HyundaiFlags.CANFD)
@@ -271,6 +274,10 @@ class LatControlTorque(LatControl):
       current_kp = np.interp(CS.vEgo, self.pid._k_p[0], self.pid._k_p[1])
       error = setpoint - measurement
       error_with_lsf = error * (1 + low_speed_factor / max(current_kp, 1e-3))
+      if self.is_ioniq_6_2025:
+        error_with_lsf *= get_ioniq_6_2025_low_speed_center_error_scale(
+          setpoint, desired_lateral_jerk, CS.vEgo,
+        )
 
       # do error correction in lateral acceleration space, convert at end to handle non-linear torque responses correctly
       pid_log.error = float(error_with_lsf)
@@ -284,14 +291,18 @@ class LatControlTorque(LatControl):
       ff *= ff_scale
       if self.is_ram_1500:
         ff *= get_ram_1500_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+      if self.is_gmc_yukon_cc:
+        ff *= get_gmc_yukon_cc_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       trailer_load_kg = float(max(getattr(starpilot_toggles, "trailer_load_kg", 0.0) or 0.0, 0.0))
       bolt_2022_2023_tuned_path_active = self.is_bolt_2022_2023
       bolt_2018_2021_tuned_path_active = self.is_bolt_2018_2021
       volt_standard_test_active = self.is_volt_standard and volt_standard_lateral_testing_ground_active()
       genesis_g90_test_active = self.is_genesis_g90 and genesis_g90_lateral_testing_ground_active()
       palisade_active = self.is_palisade
+      genesis_g70_active = self.is_genesis_g70
       prius_active = self.is_prius
       camry_active = self.is_camry
+      rav4_tss2_active = self.is_rav4_tss2
       rav4_prime_active = self.is_rav4_prime
       sienna_4th_gen_active = self.is_sienna_4th_gen
       lexus_is_active = self.is_lexus_is
@@ -300,6 +311,7 @@ class LatControlTorque(LatControl):
       ioniq_6_active = self.is_ioniq_6
       sonata_active = self.is_sonata
       sonata_hybrid_active = self.is_sonata_hybrid
+      genesis_g70_center_output_taper = get_genesis_g70_center_output_scale(setpoint, CS.vEgo) if genesis_g70_active else 1.0
       elantra_non_scc_active = self.is_elantra_non_scc
       kia_xceed_active = self.is_kia_xceed
       kia_niro_phev_2022_active = self.is_kia_niro_phev_2022
@@ -317,6 +329,7 @@ class LatControlTorque(LatControl):
       ioniq_6_center_taper = get_ioniq_6_center_taper_scale(setpoint, CS.vEgo) if ioniq_6_active else 1.0
       sonata_center_taper = get_sonata_center_taper_scale(setpoint, CS.vEgo) if sonata_active else 1.0
       sonata_hybrid_center_taper = get_sonata_hybrid_center_taper_scale(setpoint, CS.vEgo) if sonata_hybrid_active else 1.0
+      sonata_hybrid_center_output_taper = get_sonata_hybrid_center_output_scale(setpoint, CS.vEgo) if sonata_hybrid_active else 1.0
       kia_xceed_center_taper = get_kia_xceed_center_taper_scale(setpoint, CS.vEgo) if kia_xceed_active else 1.0
       kia_niro_phev_2022_center_taper = get_kia_niro_phev_2022_center_taper_scale(setpoint, CS.vEgo) if kia_niro_phev_2022_active else 1.0
       kia_stinger_2022_center_taper = get_kia_stinger_2022_center_taper_scale(setpoint, CS.vEgo) if kia_stinger_2022_active else 1.0
@@ -336,7 +349,9 @@ class LatControlTorque(LatControl):
         friction_threshold = get_gm_base_friction_threshold(CS.vEgo)
       else:
         friction_threshold = get_standard_friction_threshold(CS.vEgo)
-      if self.is_genesis_gv70:
+      if self.is_genesis_g70:
+        friction_threshold = get_genesis_g70_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
+      elif self.is_genesis_gv70:
         friction_threshold = get_genesis_gv70_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
       friction_scale = 1.0
       if bolt_2022_2023_tuned_path_active:
@@ -368,6 +383,8 @@ class LatControlTorque(LatControl):
       elif camry_active:
         ff *= get_camry_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         friction_threshold = get_camry_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
+      elif rav4_tss2_active:
+        friction_threshold = get_rav4_tss2_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
       elif rav4_prime_active:
         ff *= get_rav4_prime_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         friction_threshold = get_rav4_prime_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
@@ -391,6 +408,8 @@ class LatControlTorque(LatControl):
           get_ioniq_6_directional_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo))
         ff *= get_ioniq_6_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo,
                                    directional_taper_scale=ioniq_6_directional_taper) * ioniq_6_center_taper
+        if not self.is_ioniq_6_2025:
+          ff *= get_ioniq_6_2023_unwind_ff_scale(setpoint, measurement, desired_lateral_jerk, CS.vEgo)
         friction_threshold = get_ioniq_6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk) / max(ioniq_6_center_taper, 1e-3)
         friction_scale = get_ioniq_6_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = 1.0 + ((friction_scale - 1.0) * ioniq_6_center_taper)
@@ -448,12 +467,26 @@ class LatControlTorque(LatControl):
       if trailer_load_kg > 0.0:
         ff *= get_trailer_lateral_ff_scale(trailer_load_kg, CS.vEgo, setpoint)
         friction_scale *= get_trailer_lateral_friction_scale(trailer_load_kg, CS.vEgo, setpoint)
+      if self.is_ioniq_6_2025:
+        friction_scale *= get_ioniq_6_2025_low_speed_center_friction_scale(
+          setpoint, desired_lateral_jerk, CS.vEgo,
+        )
+      if self.is_genesis_gv70:
+        ff *= get_genesis_gv70_unwind_ff_scale(
+          setpoint, measurement, desired_lateral_jerk, CS.vEgo,
+        )
+      if self.is_genesis_g70:
+        ff *= get_genesis_g70_unwind_ff_scale(
+          setpoint, measurement, desired_lateral_jerk, CS.vEgo,
+        )
       if ioniq_6_active:
         vehicle_friction_jerk_deadzone = (
           IONIQ_6_2025_FRICTION_JERK_DEADZONE if self.is_ioniq_6_2025 else IONIQ_6_FRICTION_JERK_DEADZONE
         )
       elif prius_active:
         vehicle_friction_jerk_deadzone = get_prius_friction_jerk_deadzone(CS.vEgo, setpoint)
+      elif genesis_g70_active:
+        vehicle_friction_jerk_deadzone = get_genesis_g70_friction_jerk_deadzone(CS.vEgo, setpoint)
       else:
         vehicle_friction_jerk_deadzone = 0.0
       friction_jerk_deadzone = get_center_chatter_friction_jerk_deadzone(
@@ -496,11 +529,29 @@ class LatControlTorque(LatControl):
         actual_angle_no_offset = CS.steeringAngleDeg - params.angleOffsetDeg
         output_torque = get_flm_full_surface_low_speed_angle_assist_torque(self.flm_surface_profile_key, desired_angle_no_offset,
                                                                            actual_angle_no_offset, output_torque, CS.vEgo)
+      elif self.is_genesis_g70 and not CS.steeringPressed and CS.vEgo < GENESIS_G70_LOW_SPEED_ANGLE_DAMPING_SPEED + 2.0:
+        desired_angle_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
+        actual_angle_no_offset = CS.steeringAngleDeg - params.angleOffsetDeg
+        output_torque = get_genesis_g70_low_speed_angle_damping(desired_angle_no_offset, actual_angle_no_offset,
+                                                                 output_torque, CS.vEgo)
       if ioniq_6_active:
         output_torque *= get_ioniq_6_highway_output_taper_scale(setpoint, CS.vEgo)
         output_torque *= get_ioniq_6_highway_transition_output_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         if self.is_ioniq_6_2025:
           output_torque *= get_ioniq_6_2025_center_output_scale(setpoint, CS.vEgo)
+          low_speed_output_limit = get_ioniq_6_2025_low_speed_output_limit(setpoint, desired_lateral_jerk, CS.vEgo)
+          output_torque = float(np.clip(
+            output_torque,
+            -low_speed_output_limit,
+            low_speed_output_limit,
+          ))
+      elif ioniq_5_active:
+        low_speed_output_limit = get_ioniq_5_low_speed_output_limit(setpoint, desired_lateral_jerk, CS.vEgo)
+        output_torque = float(np.clip(
+          output_torque,
+          -low_speed_output_limit,
+          low_speed_output_limit,
+        ))
       elif self.is_ram_1500 and output_torque * setpoint > 0.0:
         output_torque *= get_ram_1500_transition_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif self.is_kona_non_scc:
@@ -508,6 +559,8 @@ class LatControlTorque(LatControl):
         rapid_reversal = setpoint * desired_lateral_jerk < 0.0
         if output_torque * setpoint > 0.0 or rapid_reversal:
           output_torque *= get_kona_non_scc_highway_transition_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+      elif rav4_tss2_active:
+        output_torque *= get_rav4_tss2_center_output_scale(setpoint, CS.vEgo)
       elif rav4_prime_active:
         output_torque *= get_rav4_prime_output_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif sienna_4th_gen_active:
@@ -530,8 +583,21 @@ class LatControlTorque(LatControl):
         output_torque *= get_palisade_center_output_scale(setpoint, CS.vEgo)
       elif tucson_4th_gen_active:
         output_torque *= tucson_4th_gen_center_taper
+      elif genesis_g70_active:
+        output_torque *= genesis_g70_center_output_taper
+        output_torque *= get_genesis_g70_curve_unwind_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+        output_torque *= get_genesis_g70_high_speed_error_scale(
+          setpoint, measurement, desired_lateral_jerk, CS.vEgo,
+        )
+        low_speed_output_limit = get_genesis_g70_low_speed_output_limit(setpoint, CS.vEgo)
+        output_torque = float(np.clip(output_torque, -low_speed_output_limit, low_speed_output_limit))
+      elif self.is_genesis_gv70:
+        output_torque *= get_genesis_gv70_high_speed_error_scale(
+          setpoint, measurement, desired_lateral_jerk, CS.vEgo,
+        )
       elif sonata_hybrid_active:
         output_torque *= sonata_hybrid_center_taper
+        output_torque *= sonata_hybrid_center_output_taper
       elif self.is_silverado:
         output_torque *= silverado_center_taper
       elif kia_niro_phev_2022_active:

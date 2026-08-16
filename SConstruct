@@ -37,10 +37,6 @@ AddOption('--coverage',
           action='store_true',
           help='build with test coverage options')
 
-AddOption('--clazy',
-          action='store_true',
-          help='build with clazy')
-
 AddOption('--ccflags',
           action='store',
           type='string',
@@ -354,116 +350,7 @@ else:
 np_version = SCons.Script.Value(np.__version__)
 Export('envCython', 'np_version')
 
-# Qt build environment
-qt_env = env.Clone()
-qt_modules = ["Widgets", "Gui", "Core", "Network", "Concurrent", "DBus", "Xml"]
-
-qt_libs = []
-if arch == "Darwin":
-  qt_env['QTDIR'] = f"{brew_prefix}/opt/qt@5"
-  qt_dirs = [
-    os.path.join(qt_env['QTDIR'], "include"),
-  ]
-  qt_dirs += [f"{qt_env['QTDIR']}/include/Qt{m}" for m in qt_modules]
-  qt_env["LINKFLAGS"] += ["-F" + os.path.join(qt_env['QTDIR'], "lib")]
-  qt_env["FRAMEWORKS"] += [f"Qt{m}" for m in qt_modules] + ["OpenGL"]
-  qt_env.AppendENVPath('PATH', os.path.join(qt_env['QTDIR'], "bin"))
-else:
-  if arch == "larch64":
-    qt_env.PrependENVPath('PATH', Dir("#third_party/qt5/larch64/bin/").abspath)
-  # For laptop/device builds that mount an AGNOS sysroot, always prefer Qt
-  # headers from that sysroot to keep headers/libs ABI-matched (Qt 5.12.x).
-  if arch == "larch64" and os.environ.get("SP_TICI_SYSROOT"):
-    qt_install_prefix = tici_libpath("/usr")
-    qt_install_headers = tici_libpath("/usr/include/aarch64-linux-gnu/qt5")
-  else:
-    qmake = os.environ.get("SP_QMAKE", "qmake")
-    qt_install_prefix = subprocess.check_output([qmake, '-query', 'QT_INSTALL_PREFIX'], encoding='utf8').strip()
-    qt_install_headers = subprocess.check_output([qmake, '-query', 'QT_INSTALL_HEADERS'], encoding='utf8').strip()
-
-  qt_env['QTDIR'] = qt_install_prefix
-  qt_dirs = [
-    f"{qt_install_headers}",
-  ]
-
-  qt_gui_path = os.path.join(qt_install_headers, "QtGui")
-  qt_gui_dirs = [d for d in os.listdir(qt_gui_path) if os.path.isdir(os.path.join(qt_gui_path, d))]
-  qt_dirs += [f"{qt_install_headers}/QtGui/{qt_gui_dirs[0]}/QtGui", ] if qt_gui_dirs else []
-  qt_dirs += [f"{qt_install_headers}/Qt{m}" for m in qt_modules]
-
-  qt_libs = [f"Qt5{m}" for m in qt_modules]
-  if arch == "larch64":
-    qt_libs += ["GLESv2", "wayland-client"]
-  elif arch != "Darwin":
-    qt_libs += ["GL"]
-qt_env['QT3DIR'] = qt_env['QTDIR']
-qt_env.Tool('qt3')
-if arch == "larch64" and os.environ.get("SP_TICI_SYSROOT"):
-  qt_tool_bin = tici_libpath("/usr/lib/qt5/bin")
-  qt_tool_root = tici_libpath("/")
-  qt_arm_moc = os.path.join(qt_tool_bin, "moc")
-  qt_arm_uic = os.path.join(qt_tool_bin, "uic")
-  qt_arm_rcc = os.path.join(qt_tool_bin, "rcc")
-  qt_host_bin = os.environ.get("SP_QT_HOST_BIN", "/usr/lib/qt5/bin")
-  qt_host_moc = os.environ.get("SP_QT_HOST_MOC", os.path.join(qt_host_bin, "moc"))
-  qt_host_uic = os.environ.get("SP_QT_HOST_UIC", os.path.join(qt_host_bin, "uic"))
-  qt_host_rcc = os.environ.get("SP_QT_HOST_RCC", "rcc")
-  if platform.machine() in ("aarch64", "arm64"):
-    if "SP_QT_HOST_MOC" in os.environ:
-      qt_env['QT3_MOC'] = qt_host_moc
-    elif os.path.isfile(qt_arm_moc):
-      qt_env['QT3_MOC'] = qt_arm_moc
-    if "SP_QT_HOST_UIC" in os.environ:
-      qt_env['QT3_UIC'] = qt_host_uic
-    elif os.path.isfile(qt_arm_uic):
-      qt_env['QT3_UIC'] = qt_arm_uic
-    if "SP_QT_HOST_RCC" in os.environ:
-      qt_env['SP_QT_RCC'] = qt_host_rcc
-    elif os.path.isfile(qt_arm_rcc):
-      qt_env['SP_QT_RCC'] = qt_arm_rcc
-  else:
-    qt_qemu = shutil.which("qemu-aarch64-static") or shutil.which("qemu-aarch64")
-
-    if qt_qemu and os.path.isfile(qt_arm_moc):
-      qt_env['QT3_MOC'] = f"{qt_qemu} -L {qt_tool_root} {qt_arm_moc}"
-    else:
-      qt_env['QT3_MOC'] = qt_host_moc
-
-    if qt_qemu and os.path.isfile(qt_arm_uic):
-      qt_env['QT3_UIC'] = f"{qt_qemu} -L {qt_tool_root} {qt_arm_uic}"
-    else:
-      qt_env['QT3_UIC'] = qt_host_uic
-
-    if qt_qemu and os.path.isfile(qt_arm_rcc):
-      qt_env['SP_QT_RCC'] = f"{qt_qemu} -L {qt_tool_root} {qt_arm_rcc}"
-    else:
-      qt_env['SP_QT_RCC'] = qt_host_rcc
-
-qt_env['CPPPATH'] += qt_dirs + ["#third_party/qrcode"]
-qt_flags = [
-  "-D_REENTRANT",
-  "-DQT_NO_DEBUG",
-  "-DQT_WIDGETS_LIB",
-  "-DQT_GUI_LIB",
-  "-DQT_CORE_LIB",
-  "-DQT_MESSAGELOGCONTEXT",
-]
-qt_env['CXXFLAGS'] += qt_flags
-qt_env['LIBPATH'] += ['#selfdrive/ui', ]
-qt_env['LIBS'] = qt_libs
-
-if GetOption("clazy"):
-  checks = [
-    "level0",
-    "level1",
-    "no-range-loop",
-    "no-non-pod-global-static",
-  ]
-  qt_env['CXX'] = 'clazy'
-  qt_env['ENV']['CLAZY_IGNORE_DIRS'] = qt_dirs[0]
-  qt_env['ENV']['CLAZY_CHECKS'] = ','.join(checks)
-
-Export('env', 'qt_env', 'arch', 'real_arch')
+Export('env', 'arch', 'real_arch')
 
 # Build common module
 SConscript(['common/SConscript'])

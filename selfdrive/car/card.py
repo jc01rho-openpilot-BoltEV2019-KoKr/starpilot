@@ -367,10 +367,8 @@ class Car:
       was_openpilot_long = self.CP.openpilotLongitudinalControl
       self.CI.init(self.CP, *self.can_callbacks)
       # If ECU disable was skipped/failed, strip LONG safety flag from BOTH CarParams
-      # and StarPilotCarParams (pandad ORs both safetyParams together)
-      # Use the pre-init longitudinal state here, since Hyundai init() may already
-      # flip CP.openpilotLongitudinalControl to False as part of the fallback.
-      if was_openpilot_long and self.CP.brand in ("hyundai", "nissan") and self.params.get_bool("EcuDisableFailed"):
+      nissan_leaf_alpha_long = self.CP.brand == "nissan" and self.CP.carFingerprint == "NISSAN_LEAF"
+      if was_openpilot_long and (self.CP.brand == "hyundai" or nissan_leaf_alpha_long) and self.params.get_bool("EcuDisableFailed"):
         # ECU disable failed/rejected - switch to lateral-only mode with stock ACC
         # Keep this local to avoid importing every brand's values into card.py.
         LONG_FLAG = 4 if self.CP.brand == "hyundai" else 2 if self.CP.brand == "nissan" else 0
@@ -378,9 +376,6 @@ class Car:
           cfg.safetyParam &= ~LONG_FLAG
         for cfg in self.FPCP.safetyConfigs:
           cfg.safetyParam &= ~LONG_FLAG
-        # Let stock ACC manage cruise (prevents "controls mismatch" error)
-        # Clear openpilotLongitudinalControl so controlsd doesn't set
-        # cruiseControl.override=True (which fights stock ACC and causes engage flicker)
         self.CP.pcmCruise = True
         self.CP.openpilotLongitudinalControl = False
         self.params.put("CarParams", self.CP.to_bytes())

@@ -7,6 +7,7 @@ import math
 import numbers
 import os
 import sys
+import sysconfig
 import tarfile
 
 from io import BytesIO
@@ -39,6 +40,7 @@ from opendbc.car.toyota.values import ToyotaStarPilotFlags
 from openpilot.common.constants import CV
 from openpilot.common.params import ParamKeyFlag, ParamKeyType, Params
 from openpilot.common.realtime import DT_HW
+from openpilot.common.swaglog import cloudlog
 from openpilot.common.time_helpers import system_time_valid
 from openpilot.system.hardware import HARDWARE, PC
 from openpilot.system.hardware.hw import Paths
@@ -47,7 +49,13 @@ from openpilot.system.version import get_build_metadata
 from openpilot.tools.longitudinal_maneuvers.capabilities import get_longitudinal_maneuver_support
 from panda import Panda
 
-from openpilot.starpilot.assets.model_manager import canonical_model_key, is_builtin_model_key, model_key_aliases
+from openpilot.starpilot.assets.model_manager import (
+  canonical_model_key,
+  external_gpu_available,
+  is_builtin_model_key,
+  model_key_aliases,
+  model_uses_external_gpu,
+)
 from openpilot.starpilot.assets.theme_manager import HOLIDAY_THEME_PATH, THEME_COMPONENT_PARAMS
 from openpilot.starpilot.common.accel_profile import (
   CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY,
@@ -104,11 +112,30 @@ MODEL_SMOOTHING_KEYS = {"LatSmoothSeconds", "LongSmoothSeconds"}
 GALAXY_DEPS_PATH = "/data/galaxy_deps"
 LEGACY_GALAXY_DEPS_PATH = "/data/" + "".join(chr(code) for code in (112, 111, 110, 100)) + "_deps"
 GALAXY_DEPS_PATHS = (GALAXY_DEPS_PATH, LEGACY_GALAXY_DEPS_PATH)
-for deps_path in GALAXY_DEPS_PATHS:
+
+
+def _galaxy_runtime_dependency_paths() -> tuple[str, ...]:
+  """Return existing dependency locations used by Galaxy on-device and in builds."""
+  repo_root = REPO_THIRD_PARTY_PATH.parent.parent
+  candidates = [
+    sysconfig.get_paths().get("purelib", ""),
+    "/usr/local/venv/lib/python3.12/site-packages",
+  ]
+
+  for venv_name in (".venv", ".venv-linux-arm64"):
+    venv_path = repo_root / venv_name / "lib"
+    if venv_path.is_dir():
+      candidates.extend(str(path) for path in venv_path.glob("python*/site-packages"))
+
+  return tuple(dict.fromkeys(path for path in candidates if path and os.path.isdir(path)))
+
+
+REPO_THIRD_PARTY_PATH = Path(__file__).resolve().parents[2] / "third_party"
+GALAXY_RUNTIME_DEPENDENCY_PATHS = _galaxy_runtime_dependency_paths()
+for deps_path in GALAXY_DEPS_PATHS + GALAXY_RUNTIME_DEPENDENCY_PATHS:
   if os.path.isdir(deps_path) and deps_path not in sys.path:
     sys.path.insert(0, deps_path)
 
-REPO_THIRD_PARTY_PATH = Path(__file__).resolve().parents[2] / "third_party"
 if REPO_THIRD_PARTY_PATH.is_dir() and str(REPO_THIRD_PARTY_PATH) not in sys.path:
   sys.path.insert(0, str(REPO_THIRD_PARTY_PATH))
 
@@ -160,13 +187,6 @@ def _is_comma_device_runtime() -> bool:
     with open(model_path) as f:
       model = f.read().strip("\x00").lower()
     return "comma " in model
-  except Exception:
-    return False
-
-
-def _raylib_ui_toggle_affects_device() -> bool:
-  try:
-    return HARDWARE.get_device_type() in ("tici", "tizi")
   except Exception:
     return False
 
@@ -503,6 +523,278 @@ def _build_default_params():
 
 starpilot_default_params = _build_default_params()
 
+
+def _sentry_event_roots() -> tuple[Path, ...]:
+  roots = [Path("/data/media/0/sentryd")]
+  if PC:
+    roots.insert(0, Path(Paths.comma_home()) / "starpilot" / "data" / "sentryd")
+  return tuple(root.resolve() for root in roots)
+
+
+def _safe_sentry_image_paths(raw_paths) -> list[str]:
+  if not isinstance(raw_paths, list):
+    return []
+
+  roots = _sentry_event_roots()
+  safe_paths = []
+  for raw_path in raw_paths:
+    try:
+      path = Path(str(raw_path)).resolve()
+      if path.is_file() and any(path.is_relative_to(root) for root in roots):
+        safe_paths.append(str(path))
+    except (OSError, TypeError, ValueError):
+      continue
+  return safe_paths
+
+
+def _normalize_sentry_event(payload) -> dict | None:
+  if not isinstance(payload, dict):
+    return None
+
+  event_id = str(payload.get("eventId") or "").strip()
+  kind = str(payload.get("kind") or "").strip().lower()
+  if not event_id or kind not in {"warning", "alarm"}:
+    return None
+
+  return {
+    "eventId": event_id[:96],
+    "kind": kind,
+    "detectedAt": str(payload.get("detectedAt") or ""),
+    "message": str(payload.get("message") or "Movement detected while parked.")[:500],
+    "imagePaths": _safe_sentry_image_paths(payload.get("imagePaths")),
+  }
+
+
+def _sentry_image_path(event_id: str, filename: str) -> Path | None:
+  if not event_id or Path(event_id).name != event_id:
+    return None
+  if filename not in {"wide.jpg", "driver.jpg"} or Path(filename).name != filename:
+    return None
+
+  for root in _sentry_event_roots():
+    path = (root / event_id / filename).resolve()
+    if root in path.parents and path.is_file():
+      return path
+  return None
+
+
+def _public_sentry_event(event: dict) -> dict:
+  public_event = dict(event)
+  public_event.pop("imagePaths", None)
+  public_event["imageUrls"] = []
+  event_id = str(public_event.get("eventId") or "")
+  for raw_path in event.get("imagePaths", []):
+    path = Path(str(raw_path)).resolve()
+    if path.parent.name != event_id:
+      continue
+    if _sentry_image_path(event_id, path.name) == path:
+      public_event["imageUrls"].append(
+        f"/api/sentry/images/{quote(event_id, safe='')}/{quote(path.name, safe='')}"
+      )
+  return public_event
+
+
+def _capture_sentry_test_images(event_id: str) -> list[str]:
+  from openpilot.system.camerad.snapshot import jpeg_write, snapshot
+
+  params.put_bool("SentryModeCapture", True)
+  try:
+    rear, front = snapshot(allow_existing=True)
+  except Exception:
+    cloudlog.exception("Galaxy: sentry test snapshot failed")
+    return []
+  finally:
+    params.put_bool("SentryModeCapture", False)
+
+  if rear is None and front is None:
+    return []
+
+  directory = _sentry_event_roots()[0] / event_id
+  directory.mkdir(parents=True, exist_ok=True)
+  paths = []
+  if rear is not None:
+    path = directory / "wide.jpg"
+    jpeg_write(str(path), rear)
+    paths.append(str(path))
+  if front is not None:
+    path = directory / "driver.jpg"
+    jpeg_write(str(path), front)
+    paths.append(str(path))
+  return paths
+
+
+_SENTRY_PUSH_LOCK = threading.Lock()
+_SENTRY_PUSH_PRIVATE_KEY_NAME = "sentry_vapid_private.pem"
+_SENTRY_PUSH_SUBSCRIPTIONS_NAME = "sentry_push_subscriptions.json"
+_SENTRY_PUSH_SUBJECT = os.getenv("STARPILOT_VAPID_SUBJECT", "mailto:galaxy@firestar.link")
+
+
+def _sentry_push_paths() -> tuple[Path, Path]:
+  galaxy_dir = _get_galaxy_dir()
+  return galaxy_dir / _SENTRY_PUSH_PRIVATE_KEY_NAME, galaxy_dir / _SENTRY_PUSH_SUBSCRIPTIONS_NAME
+
+
+def _load_sentry_push_subscriptions() -> list[dict]:
+  _, subscriptions_path = _sentry_push_paths()
+  try:
+    payload = json.loads(subscriptions_path.read_text())
+  except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    return []
+
+  if not isinstance(payload, list):
+    return []
+  return [subscription for subscription in payload if isinstance(subscription, dict)]
+
+
+def _save_sentry_push_subscriptions(subscriptions: list[dict]) -> None:
+  _, subscriptions_path = _sentry_push_paths()
+  subscriptions_path.parent.mkdir(parents=True, exist_ok=True)
+  temporary_path = subscriptions_path.with_suffix(".tmp")
+  temporary_path.write_text(json.dumps(subscriptions, separators=(",", ":")))
+  temporary_path.chmod(0o600)
+  temporary_path.replace(subscriptions_path)
+
+
+def _normalize_sentry_push_subscription(payload) -> dict | None:
+  if not isinstance(payload, dict):
+    return None
+
+  subscription = payload.get("subscription", payload)
+  if not isinstance(subscription, dict):
+    return None
+
+  endpoint = str(subscription.get("endpoint") or "").strip()
+  keys = subscription.get("keys")
+  if not endpoint.startswith("https://") or len(endpoint) > 4096 or not isinstance(keys, dict):
+    return None
+
+  p256dh = str(keys.get("p256dh") or "").strip()
+  auth = str(keys.get("auth") or "").strip()
+  if not p256dh or not auth or len(p256dh) > 512 or len(auth) > 512:
+    return None
+
+  return {
+    "endpoint": endpoint,
+    "expirationTime": subscription.get("expirationTime"),
+    "keys": {"p256dh": p256dh, "auth": auth},
+  }
+
+
+def _get_sentry_vapid():
+  try:
+    from py_vapid import Vapid
+  except ModuleNotFoundError as error:
+    raise RuntimeError("pywebpush is not installed") from error
+
+  private_key_path, _ = _sentry_push_paths()
+  private_key_path.parent.mkdir(parents=True, exist_ok=True)
+  if private_key_path.is_file():
+    return Vapid.from_file(str(private_key_path))
+
+  vapid = Vapid()
+  vapid.generate_keys()
+  vapid.save_key(str(private_key_path))
+  private_key_path.chmod(0o600)
+  return vapid
+
+
+def _sentry_vapid_public_key(vapid) -> str:
+  from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+  raw_key = vapid.public_key.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+  return base64.urlsafe_b64encode(raw_key).rstrip(b"=").decode("ascii")
+
+
+def _sentry_push_subscription_count() -> int:
+  with _SENTRY_PUSH_LOCK:
+    return len(_load_sentry_push_subscriptions())
+
+
+def _dispatch_sentry_push(event: dict) -> None:
+  try:
+    from openpilot.starpilot.system.the_galaxy.web_push import webpush
+
+    vapid = _get_sentry_vapid()
+  except Exception:
+    cloudlog.exception("Galaxy: Sentry Web Push is unavailable")
+    return
+
+  event_id = str(event.get("eventId") or "")
+  payload = {
+    "title": "StarPilot Sentry Mode",
+    "body": str(event.get("message") or "Movement detected while parked."),
+    "eventId": event_id,
+    "url": f"/sentry?event={quote(event_id, safe='')}",
+  }
+
+  with _SENTRY_PUSH_LOCK:
+    subscriptions = _load_sentry_push_subscriptions()
+
+  expired_endpoints = set()
+  for subscription in subscriptions:
+    endpoint = subscription.get("endpoint")
+    try:
+      webpush(
+        subscription_info=subscription,
+        data=json.dumps(payload, separators=(",", ":")),
+        vapid_private_key=vapid,
+        vapid_claims={"sub": _SENTRY_PUSH_SUBJECT},
+        ttl=300,
+        timeout=10,
+      )
+    except Exception as error:
+      response = getattr(error, "response", None)
+      if getattr(response, "status_code", None) in {404, 410}:
+        expired_endpoints.add(endpoint)
+      cloudlog.warning("Galaxy: Sentry Web Push delivery failed: %s", error)
+
+  if expired_endpoints:
+    with _SENTRY_PUSH_LOCK:
+      current = _load_sentry_push_subscriptions()
+      _save_sentry_push_subscriptions([
+        subscription for subscription in current
+        if subscription.get("endpoint") not in expired_endpoints
+      ])
+
+
+def _dispatch_sentry_event(event: dict) -> None:
+  _dispatch_sentry_push(event)
+  message = f"🚨 StarPilot Sentry Mode: {event['message']}"
+  webhook = (params.get("SentryModeWebhook", encoding="utf-8") or "").strip()
+  if webhook:
+    files = []
+    handles = []
+    try:
+      for image_path in event.get("imagePaths", []):
+        handle = open(image_path, "rb")
+        handles.append(handle)
+        files.append(("file", (Path(image_path).name, handle, "image/jpeg")))
+
+      body = {"content": message, "event": json.dumps(event, separators=(",", ":"))}
+      response = requests.post(webhook, data=body, files=files or None, timeout=10)
+      response.raise_for_status()
+    except Exception:
+      cloudlog.exception("Galaxy: sentry webhook notification failed")
+    finally:
+      for handle in handles:
+        try:
+          handle.close()
+        except OSError:
+          pass
+
+  ntfy_url = (params.get("SentryModeNtfyUrl", encoding="utf-8") or "").strip()
+  if ntfy_url:
+    try:
+      response = requests.post(
+        ntfy_url,
+        data=message.encode("utf-8"),
+        headers={"Title": "StarPilot Sentry Mode", "Priority": "urgent", "Tags": "warning,car"},
+        timeout=10,
+      )
+      response.raise_for_status()
+    except Exception:
+      cloudlog.exception("Galaxy: ntfy notification failed")
+
 TOGGLE_BACKUP_FORMAT = "starpilot-toggle-backup"
 TOGGLE_BACKUP_VERSION = 1
 TOGGLE_BACKUP_MAX_ENCODED_BYTES = 2_000_000
@@ -639,6 +931,7 @@ MODEL_DOWNLOAD_ALL_PARAM = "DownloadAllModels"
 MODEL_DOWNLOAD_PROGRESS_PARAM = "ModelDownloadProgress"
 MODEL_CANCEL_DOWNLOAD_PARAM = "CancelModelDownload"
 MODEL_SORT_MODE_PARAM = "ModelSortMode"
+DEFAULT_MODEL_SORT_MODE = "release_date"
 MODEL_USER_FAVORITES_PARAM = "UserFavorites"
 MAPS_DOWNLOAD_PARAM = "DownloadMaps"
 MAPS_CANCEL_DOWNLOAD_PARAM = "CancelDownloadMaps"
@@ -860,6 +1153,7 @@ _fast_update_state = {
   "progressLabel": "Idle",
   "progressDetail": "",
 }
+_ROUTE_DELETE_LOCK = threading.Lock()
 
 _FACTORY_RESET_WIPE_PATHS = [
   "/data/params",
@@ -2420,6 +2714,8 @@ def _get_favorite_slot_options():
           continue
         if param_data.get("ui_type") != "toggle" or param_data.get("data_type") != "bool":
           continue
+        if key == "AlphaLongitudinalEnabled" and not _get_alpha_longitudinal_available():
+          continue
 
         seen.add(key)
         options.append({
@@ -2679,18 +2975,6 @@ def _is_blank_param_raw(raw_value):
     return len(raw_value.strip()) == 0
   return False
 
-def _get_use_old_ui_enabled():
-  if not _raylib_ui_toggle_affects_device():
-    return False
-
-  raw_value = _safe_params_get_live_raw("UseOldUI")
-  if _is_blank_param_raw(raw_value):
-    legacy_raw_value = _safe_params_get_live_raw("TryRaylibUI")
-    if not _is_blank_param_raw(legacy_raw_value):
-      return not _coerce_param_value(legacy_raw_value, bool)
-
-  return _coerce_param_value(raw_value, bool)
-
 def _has_runtime_default_value(key, raw_value):
   if _is_blank_param_raw(raw_value):
     return False
@@ -2769,11 +3053,6 @@ def _get_runtime_default_param_overrides():
   return overrides
 
 def _get_current_param_value(key, value_type, defaults_lookup=None):
-  if key == "UseOldUI":
-    return _get_use_old_ui_enabled()
-  if key == "TryRaylibUI":
-    return _raylib_ui_toggle_affects_device() and not _get_use_old_ui_enabled()
-
   if key == CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY:
     return _get_custom_accel_profile_initialized()
 
@@ -3218,6 +3497,30 @@ def _get_has_radar():
   try:
     with car.CarParams.from_bytes(cp_bytes) as cp:
       return not bool(getattr(cp, "radarUnavailable", False))
+  except Exception:
+    return False
+
+def _get_vehicle_parked():
+  try:
+    sm = messaging.SubMaster(["carState"], poll="carState")
+    sm.update(100)
+    if not sm.seen["carState"] or not sm.alive["carState"] or not sm.valid["carState"]:
+      return False
+
+    gear_shifter = getattr(getattr(car, "CarState", None), "GearShifter", None)
+    park_value = getattr(gear_shifter, "park", None)
+    return park_value is not None and getattr(sm["carState"], "gearShifter", None) == park_value
+  except Exception:
+    return False
+
+def _get_alpha_longitudinal_available():
+  cp_bytes = _safe_params_get_live_raw("CarParamsPersistent")
+  if not cp_bytes:
+    return False
+
+  try:
+    with car.CarParams.from_bytes(cp_bytes) as cp:
+      return bool(getattr(cp, "alphaLongitudinalAvailable", False))
   except Exception:
     return False
 
@@ -4499,24 +4802,32 @@ def setup(app):
       if key not in allowed_keys:
         return jsonify({"error": f"Parameter '{key}' is not editable."}), 403
 
-      if key in {"UseOldUI", "TryRaylibUI"}:
-        enabled = str_val.strip() in ("1", "true", "True")
-        use_old_ui = enabled if key == "UseOldUI" else not enabled
-        updated = {"UseOldUI": use_old_ui, "TryRaylibUI": not use_old_ui}
-        if not _raylib_ui_toggle_affects_device():
-          return jsonify({
-            "message": "Use Old UI is only available on tici/tizi devices.",
-            "updated": {"UseOldUI": False, "TryRaylibUI": False},
-          }), 200
-
+      if key == "AlphaLongitudinalEnabled":
+        if not _get_alpha_longitudinal_available():
+          return jsonify({"error": "Alpha Longitudinal is not available for the detected vehicle."}), 403
         if params.get_bool("IsOnroad"):
-          return jsonify({"error": "Cannot change Use Old UI while driving."}), 403
+          return jsonify({"error": "Cannot change Alpha Longitudinal while driving."}), 403
 
-        params.put_bool("UseOldUI", use_old_ui)
-        params.put_bool("TryRaylibUI", not use_old_ui)
+        enabled = str_val.strip() in ("1", "true", "True")
+        params.put_bool(key, enabled)
+        params.put_bool("OnroadCycleRequested", True)
+        update_starpilot_toggles()
         return jsonify({
-          "message": f"{'Old' if use_old_ui else 'Raylib'} UI selected. UI will restart shortly.",
-          "updated": updated,
+          "message": f"Parameter '{key}' updated successfully. The driving stack will restart shortly.",
+          "updated": {key: enabled},
+        }), 200
+
+      if key == "ForceOffroad":
+        if not _get_vehicle_parked():
+          return jsonify({"error": "Force Offroad is only available while the vehicle is in Park."}), 403
+
+        enabled = str_val.strip() in ("1", "true", "True")
+        params.put_bool("ForceOffroad", enabled)
+        params.put_bool("ForceOnroad", False)
+        update_starpilot_toggles()
+        return jsonify({
+          "message": f"Force Offroad {'enabled' if enabled else 'disabled'}.",
+          "updated": {"ForceOffroad": enabled, "ForceOnroad": False},
         }), 200
 
       # 1. Prevent changing the model or reboot-required toggles while the car is actively driving
@@ -4745,6 +5056,8 @@ def setup(app):
         selected_model = canonical_model_key(str_val.strip())
         if not selected_model:
           return jsonify({"error": "Driving model cannot be empty."}), 400
+        if model_uses_external_gpu(selected_model) and not external_gpu_available():
+          return jsonify({"error": "This model requires a detected external GPU."}), 409
 
         params.put("Model", selected_model)
         params.put("DrivingModel", selected_model)
@@ -4845,10 +5158,6 @@ def setup(app):
       return _serialize_param_write_value(_get_custom_accel_profile_initialized()), 200
     if request_key == "LeadIndicator":
       return _serialize_param_write_value(_get_lead_indicator_enabled()), 200
-    if request_key == "UseOldUI":
-      return ("1" if _get_use_old_ui_enabled() else "0"), 200
-    if request_key == "TryRaylibUI":
-      return ("1" if _raylib_ui_toggle_affects_device() and not _get_use_old_ui_enabled() else "0"), 200
     if request_key == "IsRHD" and not params.get_bool("IsRHDOverride"):
       return ("1" if params.get_bool("IsRhdDetected") else "0"), 200
     value = params.get(request_key) or ""
@@ -4890,6 +5199,8 @@ def setup(app):
         result[key] = None
 
     result["HasRadar"] = _get_has_radar()
+    result["VehicleParked"] = _get_vehicle_parked()
+    result["AlphaLongitudinalAvailable"] = _get_alpha_longitudinal_available()
 
     return jsonify(_sanitize_json_value(result)), 200
 
@@ -4927,11 +5238,7 @@ def setup(app):
       default_val = defaults_lookup.get(key)
 
       try:
-        if key == "UseOldUI":
-          result[key] = False
-        elif key == "TryRaylibUI":
-          result[key] = _raylib_ui_toggle_affects_device()
-        elif t == bool:
+        if t == bool:
           if isinstance(default_val, bytes):
             default_str = default_val.decode("utf-8", errors="replace")
           else:
@@ -5011,7 +5318,7 @@ def setup(app):
   def get_or_set_models_preferences():
     if request.method == "GET":
       return jsonify({
-        "sortMode": read_legacy_param_file(MODEL_SORT_MODE_PARAM, "alphabetical"),
+        "sortMode": read_legacy_param_file(MODEL_SORT_MODE_PARAM, DEFAULT_MODEL_SORT_MODE),
         "userFavorites": [entry for entry in (params.get(MODEL_USER_FAVORITES_PARAM, encoding="utf-8") or "").split(",") if entry],
       }), 200
 
@@ -5019,7 +5326,7 @@ def setup(app):
     changed = []
 
     if "sortMode" in data:
-      sort_mode = str(data.get("sortMode") or "alphabetical").strip() or "alphabetical"
+      sort_mode = str(data.get("sortMode") or DEFAULT_MODEL_SORT_MODE).strip() or DEFAULT_MODEL_SORT_MODE
       write_legacy_param_file(MODEL_SORT_MODE_PARAM, sort_mode)
       changed.append("sort mode")
 
@@ -5047,7 +5354,7 @@ def setup(app):
 
     downloading = bool(model_to_download) or download_all
     current_model = _current_model_key()
-    sort_mode = read_legacy_param_file(MODEL_SORT_MODE_PARAM, "alphabetical")
+    sort_mode = read_legacy_param_file(MODEL_SORT_MODE_PARAM, DEFAULT_MODEL_SORT_MODE)
     terminal = progress in ("Downloaded!", "All models downloaded!") or bool(re.search(r"cancelled|exists|failed|offline|invalid|error", progress, re.IGNORECASE))
     summary = {
       "installed": sum(1 for model in models if model["installed"]),
@@ -5144,6 +5451,8 @@ def setup(app):
 
     if model["installed"]:
       return jsonify({"message": f"\"{model['label']}\" is already installed."}), 200
+    if model["requiresGpu"] and not model["gpuAvailable"]:
+      return jsonify({"error": "This model requires a detected external GPU."}), 409
 
     params_memory.remove(MODEL_CANCEL_DOWNLOAD_PARAM)
     params_memory.remove(MODEL_DOWNLOAD_ALL_PARAM)
@@ -5160,7 +5469,7 @@ def setup(app):
     if params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM) or (params_memory.get(MODEL_DOWNLOAD_PARAM, encoding="utf-8") or ""):
       return jsonify({"error": "A model download is already in progress."}), 409
 
-    missing_models = [model for model in get_model_catalog() if not model["installed"]]
+    missing_models = [model for model in get_model_catalog() if not model["installed"] and (not model["requiresGpu"] or model["gpuAvailable"])]
     if not missing_models:
       return jsonify({"message": "All models are already installed."}), 200
 
@@ -5416,10 +5725,10 @@ def setup(app):
 
   def _default_model_key():
     default_key = _param_text(params.get_default_value("Model") or params.get_default_value("DrivingModel"))
-    return canonical_model_key(default_key) or "rdf"
+    return canonical_model_key(default_key) or "rdf43"
 
   def _default_model_name():
-    return _param_text(params.get_default_value("DrivingModelName")) or "Regret Driven Framework"
+    return _param_text(params.get_default_value("DrivingModelName")) or "Regret Driven Framework V4"
 
   def _default_model_version():
     default_version = _param_text(params.get_default_value("ModelVersion") or params.get_default_value("DrivingModelVersion"))
@@ -5452,6 +5761,7 @@ def setup(app):
     except Exception:
       on_disk_files = set()
 
+    external_gpu_present = external_gpu_available()
     models_by_key = {}
     for i, key in enumerate(available):
       canonical_key = canonical_model_key(key)
@@ -5463,6 +5773,8 @@ def setup(app):
       artifact_format = artifact_formats[i] if i < len(artifact_formats) else ""
       model_series = series[i] if i < len(series) and series[i] else "Custom Series"
       released = released_dates[i] if i < len(released_dates) else ""
+      requires_external_gpu = model_uses_external_gpu(canonical_key)
+      gpu_available = not requires_external_gpu or external_gpu_present
 
       existing = models_by_key.get(canonical_key)
       if existing is None:
@@ -5472,6 +5784,8 @@ def setup(app):
           "series": model_series,
           "version": model_version,
           "artifactFormat": artifact_format,
+          "requiresGpu": requires_external_gpu,
+          "gpuAvailable": gpu_available,
           "released": released,
           "builtin": is_builtin_model_key(canonical_key),
           "communityFavorite": canonical_key in community_favorites,
@@ -5492,6 +5806,8 @@ def setup(app):
       existing["builtin"] = existing["builtin"] or is_builtin_model_key(canonical_key)
       existing["communityFavorite"] = existing["communityFavorite"] or canonical_key in community_favorites
       existing["userFavorite"] = existing["userFavorite"] or canonical_key in user_favorites
+      existing["requiresGpu"] = existing["requiresGpu"] or requires_external_gpu
+      existing["gpuAvailable"] = not existing["requiresGpu"] or external_gpu_present
 
     default_key = _default_model_key()
     default_entry = models_by_key.setdefault(default_key, {
@@ -5500,6 +5816,8 @@ def setup(app):
       "series": "Custom Series",
       "version": _default_model_version(),
       "artifactFormat": "tinygrad_single_v1",
+      "requiresGpu": False,
+      "gpuAvailable": True,
       "released": "",
       "builtin": True,
       "communityFavorite": default_key in community_favorites,
@@ -5559,22 +5877,43 @@ def setup(app):
           delete_file(os.path.join(footage_path, segment))
     return {"message": "Route deleted!"}, 200
 
-  @app.route("/api/routes/delete_all", methods=["DELETE"])
+  @app.route("/api/routes/delete_all", methods=["DELETE", "POST"])
   def delete_all_routes():
-    route_names = set()
-    for footage_path in FOOTAGE_PATHS:
-      if os.path.exists(footage_path):
-        for segment in os.listdir(footage_path):
-          route_names.add(segment.split("--")[0])
+    if _safe_params_get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot delete driving routes while driving."}), 409
 
-    for route_name in sorted(list(route_names)):
+    if not _ROUTE_DELETE_LOCK.acquire(blocking=False):
+      return jsonify({"error": "Route deletion is already in progress."}), 409
+
+    try:
+      utilities.stop_dashboard_background_analysis()
+
+      route_paths = []
+      seen_paths = set()
       for footage_path in FOOTAGE_PATHS:
-        if os.path.exists(footage_path):
-          for segment in os.listdir(footage_path):
-            if segment.startswith(route_name):
-              delete_file(os.path.join(footage_path, segment))
+        path = str(footage_path).rstrip("/")
+        if path and path not in seen_paths:
+          seen_paths.add(path)
+          route_paths.append(path)
 
-    return {"message": "All routes deleted!"}, 200
+      for route_path in route_paths:
+        _run_factory_reset_delete(route_path)
+
+      persisted_route_count = utilities.clear_dashboard_route_history(params)
+      _STATS_RESPONSE_CACHE.update({
+        "updated_at": 0.0,
+        "payload": None,
+      })
+      return jsonify({
+        "success": True,
+        "message": "All local driving routes deleted. Saved personal records were kept.",
+        "deletedPaths": len(route_paths),
+        "clearedDashboardRoutes": persisted_route_count,
+      }), 200
+    except Exception as exception:
+      return jsonify({"error": f"Failed to delete driving routes: {exception}"}), 500
+    finally:
+      _ROUTE_DELETE_LOCK.release()
 
   @app.route("/api/routes/<name>/preserve", methods=["POST"])
   def preserve_route(name):
@@ -6588,6 +6927,140 @@ def setup(app):
       "message": "Factory reset started. Device will reboot when complete.",
       "warning": "This wipes local params, backups, themes, models, maps, and route data.",
     }), 202
+
+  @app.route("/service-worker.js", methods=["GET"])
+  def sentry_service_worker():
+    response = send_from_directory(app.static_folder, "service-worker.js", mimetype="application/javascript")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+  @app.route("/api/sentry/push/config", methods=["GET"])
+  def sentry_push_config():
+    try:
+      public_key = _sentry_vapid_public_key(_get_sentry_vapid())
+    except Exception:
+      return jsonify({"enabled": False, "error": "Web Push dependencies are unavailable."}), 503
+
+    return jsonify({
+      "enabled": True,
+      "publicKey": public_key,
+      "subscriptionCount": _sentry_push_subscription_count(),
+    })
+
+  @app.route("/api/sentry/push/subscribe", methods=["POST"])
+  def sentry_push_subscribe():
+    subscription = _normalize_sentry_push_subscription(request.get_json(silent=True))
+    if subscription is None:
+      return jsonify({"error": "Invalid browser push subscription."}), 400
+
+    try:
+      _get_sentry_vapid()
+    except Exception:
+      return jsonify({"error": "Web Push dependencies are unavailable."}), 503
+
+    with _SENTRY_PUSH_LOCK:
+      subscriptions = _load_sentry_push_subscriptions()
+      subscriptions = [
+        existing for existing in subscriptions
+        if existing.get("endpoint") != subscription["endpoint"]
+      ]
+      subscriptions.append(subscription)
+      _save_sentry_push_subscriptions(subscriptions)
+
+    return jsonify({"subscribed": True, "subscriptionCount": len(subscriptions)})
+
+  @app.route("/api/sentry/push/unsubscribe", methods=["POST"])
+  def sentry_push_unsubscribe():
+    payload = request.get_json(silent=True) or {}
+    endpoint = str(payload.get("endpoint") or "").strip()
+    if not endpoint:
+      return jsonify({"error": "Missing browser push endpoint."}), 400
+
+    with _SENTRY_PUSH_LOCK:
+      subscriptions = [
+        subscription for subscription in _load_sentry_push_subscriptions()
+        if subscription.get("endpoint") != endpoint
+      ]
+      _save_sentry_push_subscriptions(subscriptions)
+
+    return jsonify({"unsubscribed": True, "subscriptionCount": len(subscriptions)})
+
+  @app.route("/api/sentry/push/test", methods=["POST"])
+  def sentry_push_test():
+    if _sentry_push_subscription_count() == 0:
+      return jsonify({"error": "Enable Chrome notifications first."}), 409
+
+    event = {
+      "eventId": f"push-test-{int(time.time())}-{secrets.token_hex(4)}",
+      "kind": "warning",
+      "detectedAt": datetime.now(timezone.utc).isoformat(),
+      "message": "This is a test StarPilot Sentry push notification.",
+    }
+    threading.Thread(target=_dispatch_sentry_push, args=(event,), name="galaxy-sentry-push-test", daemon=True).start()
+    return jsonify({"accepted": True, "eventId": event["eventId"]}), 202
+
+  @app.route("/api/sentry/status", methods=["GET"])
+  def sentry_status():
+    raw_event = params.get("SentryModeLastEvent", encoding="utf-8") or "{}"
+    raw_status = params.get("SentryModeStatus", encoding="utf-8") or "{}"
+    try:
+      last_event = json.loads(raw_event)
+    except (TypeError, ValueError, json.JSONDecodeError):
+      last_event = {}
+    try:
+      status = json.loads(raw_status)
+    except (TypeError, ValueError, json.JSONDecodeError):
+      status = {}
+
+    return jsonify({
+      "enabled": params.get_bool("SentryModeEnabled"),
+      "status": status if isinstance(status, dict) else {},
+      "lastEvent": _public_sentry_event(last_event) if isinstance(last_event, dict) else {},
+    })
+
+  @app.route("/api/sentry/images/<event_id>/<filename>", methods=["GET"])
+  def sentry_image(event_id, filename):
+    image_path = _sentry_image_path(event_id, filename)
+    if image_path is None:
+      return jsonify({"error": "Sentry image not found."}), 404
+    return send_file(image_path, mimetype="image/jpeg", max_age=0)
+
+  @app.route("/api/sentry/test", methods=["POST"])
+  def sentry_test():
+    if request.remote_addr not in {None, "127.0.0.1", "::1"}:
+      return jsonify({"error": "Sentry tests must originate on the device."}), 403
+    if not params.get_bool("IsOffroad"):
+      return jsonify({"error": "Sentry tests are only available while parked."}), 409
+
+    event_id = f"test-{int(time.time())}-{secrets.token_hex(4)}"
+    event = {
+      "eventId": event_id,
+      "kind": "alarm",
+      "detectedAt": datetime.now(timezone.utc).isoformat(),
+      "imagePaths": [],
+      "message": "Test sentry event.",
+    }
+
+    def capture_and_publish():
+      event["imagePaths"] = _capture_sentry_test_images(event_id)
+      params.put("SentryModeLastEvent", json.dumps(event, separators=(",", ":")))
+      threading.Thread(target=_dispatch_sentry_event, args=(event,), name="galaxy-sentry-test-notify", daemon=True).start()
+
+    threading.Thread(target=capture_and_publish, name="galaxy-sentry-test-capture", daemon=True).start()
+    return jsonify({"accepted": True, "eventId": event_id}), 202
+
+  @app.route("/api/sentry/events", methods=["POST"])
+  def sentry_event():
+    if request.remote_addr not in {None, "127.0.0.1", "::1"}:
+      return jsonify({"error": "Sentry events must originate on the device."}), 403
+
+    event = _normalize_sentry_event(request.get_json(silent=True))
+    if event is None:
+      return jsonify({"error": "Invalid sentry event."}), 400
+
+    params.put("SentryModeLastEvent", json.dumps(event, separators=(",", ":")))
+    threading.Thread(target=_dispatch_sentry_event, args=(event,), name="galaxy-sentry-notify", daemon=True).start()
+    return jsonify({"accepted": True, "eventId": event["eventId"]}), 202
 
   # ── Galaxy pairing (mirrors settings.cc L262-282) ──────────────────
   GALAXY_DIR = _get_galaxy_dir()

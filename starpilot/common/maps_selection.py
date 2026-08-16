@@ -5,7 +5,7 @@ COUNTRY_PREFIX = "nation."
 STATE_PREFIX = "us_state."
 
 # Legacy C3 map selection stored bare region codes instead of the prefixed
-# keys consumed by mapd and the Qt settings path.
+# Keys consumed by mapd and the settings UIs.
 US_STATE_CODES = frozenset({
   "AK", "AL", "AR", "AS", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA",
   "GU", "HI", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME",

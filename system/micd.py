@@ -97,9 +97,6 @@ class Mic:
 
   @retry(attempts=10, delay=3)
   def get_stream(self, sd, device=None):
-    # reload sounddevice to reinitialize portaudio
-    sd._terminate()
-    sd._initialize()
     kwargs = {
       "channels": 1,
       "samplerate": SAMPLE_RATE,

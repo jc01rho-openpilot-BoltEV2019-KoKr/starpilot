@@ -145,7 +145,7 @@ class TestNissanLeafSafety(TestNissanSafety):
 
 class TestNissanLeafLongSafety(TestNissanLeafSafety):
 
-  TX_MSGS = [*TestNissanLeafSafety.TX_MSGS, [0x2B0, 1], [0x1C3, 1], [0x707, 1]]
+  TX_MSGS = [*TestNissanLeafSafety.TX_MSGS, [0x2B0, 1], [0x1C3, 1], [0x707, 0]]
   RELAY_MALFUNCTION_ADDRS = {0: (0x169, 0x2B1, 0x4CC), 1: (0x2B0, 0x1C3), 2: (0x280,)}
   FWD_BLACKLISTED_ADDRS = {0: [0x280], 2: [0x169, 0x2B1, 0x4CC]}
 
@@ -261,13 +261,13 @@ class TestNissanLeafLongSafety(TestNissanLeafSafety):
     self.assertTrue(self._tx(self._brake_msg(0, active=False, brake_mode=False)))
 
   def test_tester_present(self):
-    tester_present = make_tester_present_msg(0x707, 1, suppress_response=True)
+    tester_present = make_tester_present_msg(0x707, 0, suppress_response=True)
     self.assertTrue(self._tx(self._make_msg(tester_present)))
 
     for index in range(8):
       dat = bytearray(tester_present.dat)
       dat[index] ^= 0x1
-      self.assertFalse(self._tx(common.make_msg(1, 0x707, 8, dat)), index)
+      self.assertFalse(self._tx(common.make_msg(0, 0x707, 8, dat)), index)
 
 
 if __name__ == "__main__":

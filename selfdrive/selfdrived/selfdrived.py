@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import os
 import threading
 import time
@@ -10,6 +11,8 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType
 
 from opendbc.car.chrysler.values import pacifica_hybrid_aol_stock_acc_mode
 from opendbc.car.gm.values import GMFlags
+from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR
+from opendbc.car.nissan.values import CAR as NISSAN_CAR
 
 from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper, DT_CTRL
@@ -60,7 +63,8 @@ IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 def commanded_torque_at_max_for_saturation(CP, output: float) -> bool:
   torque_controller = (CP.steerControlType == car.CarParams.SteerControlType.torque and
                        CP.lateralTuning.which() == "torque")
-  return torque_controller and abs(output) > 0.99
+  has_controller_grace = CP.carFingerprint == HYUNDAI_CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN
+  return torque_controller and not has_controller_grace and abs(output) > 0.99
 
 
 def should_loud_blindspot_alert_without_lateral(CS, sm, starpilot_toggles, combined_left_bsm=None, combined_right_bsm=None) -> bool:
@@ -94,6 +98,11 @@ def should_loud_blindspot_alert_without_lateral(CS, sm, starpilot_toggles, combi
 def get_starpilot_alert_filters(current_alert_types: list[str], clear_event_types: set[str], starpilot_events: Events) -> tuple[list[str], set[str]]:
   starpilot_alert_types = list(current_alert_types)
   starpilot_clear_event_types = set(clear_event_types)
+
+  if int(StarPilotEventName.lkasEnable) in starpilot_events.names:
+    if ET.WARNING not in starpilot_alert_types:
+      starpilot_alert_types.append(ET.WARNING)
+    starpilot_clear_event_types.discard(ET.WARNING)
 
   # This alert is explicitly allowed while lateral is paused/off. The state
   # machine only exposes WARNING while active/AOL, so let this warning through.
@@ -157,6 +166,9 @@ class SelfdriveD:
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
     self.excessive_actuation_check = ExcessiveActuationCheck()
+    self.allow_impossible_acceleration = self.params.get_bool("AllowImpossibleAcceleration")
+    if self.allow_impossible_acceleration:
+      self.clear_longitudinal_excessive_actuation_alert()
     self.excessive_actuation = self.params.get("Offroad_ExcessiveActuation") is not None
 
     # Setup sockets
@@ -213,7 +225,16 @@ class SelfdriveD:
     self.events_prev = []
     self.logged_comm_issue = None
     self.not_running_prev = None
+    self.big_model_loading = False
+    self.big_model_attempted = False
+    self.big_model_active = False
+    self.big_model_failed = False
+    self.big_model_ready_t = 0.
     self.experimental_mode = False
+    self.ecu_disable_failed = False
+    self.ecu_disable_failed_checked = not (
+      self.CP.openpilotLongitudinalControl and self.CP.carFingerprint == NISSAN_CAR.NISSAN_LEAF
+    )
     self.safe_mode = self.params.get_bool("SafeMode")
     self.personality = log.LongitudinalPersonality.relaxed if self.safe_mode else self.params.get("LongitudinalPersonality", return_default=True)
     self.recalibrating_seen = False
@@ -313,9 +334,53 @@ class SelfdriveD:
         self.events.add(EventName.ndaCameraWarn)
         self.last_nda_camera_warn_time = current_time
 
+  def update_ecu_disable_failed(self):
+    if self.ecu_disable_failed_checked:
+      return
+    if self.CP.carFingerprint != NISSAN_CAR.NISSAN_LEAF:
+      self.ecu_disable_failed_checked = True
+      return
+
+    if self.params.get_bool("ControlsReady"):
+      self.ecu_disable_failed = self.params.get_bool("EcuDisableFailed")
+      self.ecu_disable_failed_checked = True
+      if self.ecu_disable_failed:
+        fallback_cp = messaging.log_from_bytes(self.params.get("CarParams"), car.CarParams)
+        fallback_fpcp = messaging.log_from_bytes(self.params.get("StarPilotCarParams"), custom.StarPilotCarParams)
+        self.CP.openpilotLongitudinalControl = fallback_cp.openpilotLongitudinalControl
+        self.CP.pcmCruise = fallback_cp.pcmCruise
+        self.FPCP = fallback_fpcp
+
+  def clear_longitudinal_excessive_actuation_alert(self):
+    alert = self.params.get("Offroad_ExcessiveActuation")
+    if not alert:
+      return
+
+    if isinstance(alert, bytes):
+      try:
+        alert = json.loads(alert.decode("utf-8", errors="replace"))
+      except json.JSONDecodeError:
+        return
+    elif isinstance(alert, str):
+      try:
+        alert = json.loads(alert)
+      except json.JSONDecodeError:
+        return
+
+    if not isinstance(alert, dict):
+      return
+
+    extra = alert.get("extra", "")
+    if isinstance(extra, bytes):
+      extra = extra.decode("utf-8", errors="replace")
+
+    if str(extra).strip().lower() == "longitudinal":
+      self.params.remove("Offroad_ExcessiveActuation")
+
   def update_events(self, CS):
     """Compute onroadEvents from carState"""
 
+    self.update_ecu_disable_failed()
     self.events.clear()
     self.starpilot_events.clear()
 
@@ -334,6 +399,27 @@ class SelfdriveD:
     if self.sm['controlsState'].lateralControlState.which() == 'debugState':
       self.events.add(EventName.joystickDebug)
       self.startup_event = None
+
+    loading = self.params.get_bool("UsbGpuLoading")
+    if loading:
+      self.big_model_attempted = True
+    if self.big_model_loading and not loading:
+      self.big_model_ready_t = time.monotonic()
+    self.big_model_loading = loading
+    if loading:
+      self.events.add(EventName.bigModelLoading)
+
+    big_active = self.params.get("UsbGpuActive")
+    model_unavailable = self.big_model_active and self.sm.seen['modelV2'] and not self.sm.alive['modelV2']
+    big_failed = self.big_model_attempted and not loading and (big_active is False or model_unavailable)
+    if big_failed and not self.big_model_failed:
+      self.events.add(EventName.bigModelFailed)
+    self.big_model_failed = big_failed
+
+    if big_active:
+      self.big_model_active = True
+    if not self.enabled and not model_unavailable:
+      self.big_model_active = False
 
     if self.sm.recv_frame['lateralManeuverPlan'] > 0:
       self.starpilot_events.add(StarPilotEventName.lateralManeuver)
@@ -415,7 +501,7 @@ class SelfdriveD:
       if self.below_steer_showing and not under_min:
         self.below_steer_showing = False
 
-      # Strip brand emissions so the disabled local warning cannot be reintroduced upstream.
+      # Fully own the event — strip brand emissions, inject our own while active.
       car_events = [e for e in car_events if e.name.raw != EventName.belowSteerSpeed]
       show_alert = self.below_steer_showing and under_min
 
@@ -428,8 +514,7 @@ class SelfdriveD:
           self.last_below_steer_speed_alert_time = now
 
       if show_alert:
-        # self.events.add(EventName.belowSteerSpeed)  # Disable the low-speed steering warning.
-        pass
+        self.events.add(EventName.belowSteerSpeed)
 
       self.events.add_from_msg(car_events)
 
@@ -512,7 +597,9 @@ class SelfdriveD:
       self.calibrated_pose = self.pose_calibrator.build_calibrated_pose(device_pose)
 
     if self.calibrated_pose is not None:
-      excessive_actuation = self.excessive_actuation_check.update(self.sm, CS, self.calibrated_pose)
+      excessive_actuation = self.excessive_actuation_check.update(
+        self.sm, CS, self.calibrated_pose, self.allow_impossible_acceleration
+      )
       if not self.excessive_actuation and excessive_actuation is not None:
         set_offroad_alert("Offroad_ExcessiveActuation", True, extra_text=str(excessive_actuation))
         self.excessive_actuation = True
@@ -577,6 +664,9 @@ class SelfdriveD:
     # All events here should at least have NO_ENTRY and SOFT_DISABLE.
     num_events = len(self.events)
 
+    if self.big_model_active and big_failed:
+      self.events.add(EventName.bigModelFailed)
+
     not_running = {p.name for p in self.sm['managerState'].processes if not p.running and p.shouldBeRunning}
     if self.sm.recv_frame['managerState'] and len(not_running):
       if not_running != self.not_running_prev:
@@ -612,7 +702,8 @@ class SelfdriveD:
                          (contains_event_type(self.events, self.starpilot_events, ET.SOFT_DISABLE) or
                           contains_event_type(self.events, self.starpilot_events, ET.IMMEDIATE_DISABLE))
     no_system_errors = (not has_disable_events) or (len(self.events) == num_events)
-    if not self.sm.all_checks() and no_system_errors:
+    big_model_settling = self.big_model_loading or time.monotonic() < self.big_model_ready_t + 5.
+    if not self.sm.all_checks() and no_system_errors and not big_model_settling:
       if not self.sm.all_alive():
         if self.should_add_frequency_limited_event(self.comm_issue_timestamps, self.comm_issue_threshold, self.comm_issue_window):
           self.events.add(EventName.commIssue)
@@ -634,7 +725,7 @@ class SelfdriveD:
     else:
       self.logged_comm_issue = None
 
-    if not self.CP.notCar:
+    if not self.CP.notCar and not big_model_settling:
       if not self.sm['livePose'].posenetOK:
         self.events.add(EventName.posenetInvalid)
       if not self.sm['livePose'].inputsOK:
@@ -760,7 +851,7 @@ class SelfdriveD:
 
     self.starpilot_events.add_from_msg(self.sm['starpilotPlan'].starpilotEvents)
 
-    if self.starpilot_toggles.conditional_experimental_mode:
+    if self.starpilot_toggles.conditional_experimental_mode or getattr(self.starpilot_toggles, "conditional_chill_mode", False):
       self.experimental_mode = self.sm['starpilotPlan'].experimentalMode
     else:
       self.experimental_mode |= self.sm['starpilotPlan'].experimentalMode

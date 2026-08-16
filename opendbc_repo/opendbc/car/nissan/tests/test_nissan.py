@@ -4,16 +4,21 @@ import pytest
 
 from opendbc.car import Bus, ButtonType, gen_empty_fingerprint, structs, uds
 from opendbc.car.nissan.carstate import CarState
-from opendbc.car.nissan.interface import CarInterface
+from opendbc.car.nissan.interface import CarInterface, LEAF_2025_SV_PLUS_CAMERA_FW
 from opendbc.car.nissan.values import CAR, CarControllerParams, NissanSafetyFlags
 
 
 TEST_TOGGLES = SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False, trailer_load_kg=0)
+SUPPORTED_LEAF_FW = [structs.CarParams.CarFw(
+  ecu=structs.CarParams.Ecu.fwdCamera,
+  fwVersion=LEAF_2025_SV_PLUS_CAMERA_FW,
+  address=0x707,
+)]
 
 
 def run_controller(alpha_long, accel=0.0, long_active=True, long_state=structs.CarControl.Actuators.LongControlState.pid):
-  CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), [], alpha_long, False, False, TEST_TOGGLES)
-  FPCP = CarInterface.get_starpilot_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), [], CP, TEST_TOGGLES)
+  CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, alpha_long, False, False, TEST_TOGGLES)
+  FPCP = CarInterface.get_starpilot_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, CP, TEST_TOGGLES)
   CI = CarInterface(CP, FPCP)
   CI.update([], TEST_TOGGLES)
 
@@ -26,10 +31,9 @@ def run_controller(alpha_long, accel=0.0, long_active=True, long_state=structs.C
   return {msg[0]: msg for msg in can_sends}
 
 
-@pytest.mark.parametrize("candidate", [CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC])
-def test_leaf_alpha_long_params(candidate):
-  stock = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], False, False, False, None)
-  alpha_long = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], True, False, False, None)
+def test_leaf_2025_sv_plus_alpha_long_params():
+  stock = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, False, False, False, None)
+  alpha_long = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, True, False, False, None)
 
   assert stock.alphaLongitudinalAvailable
   assert not stock.openpilotLongitudinalControl
@@ -42,6 +46,20 @@ def test_leaf_alpha_long_params(candidate):
   assert alpha_long.autoResumeSng
   assert alpha_long.safetyConfigs[-1].safetyParam & NissanSafetyFlags.LONG_CONTROL
   assert CarInterface.get_pid_accel_limits(alpha_long, 0, 0) == (CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
+
+
+@pytest.mark.parametrize(("candidate", "car_fw"), [
+  (CAR.NISSAN_LEAF, []),
+  (CAR.NISSAN_LEAF, [structs.CarParams.CarFw(address=0x707, fwVersion=b"different firmware")]),
+  (CAR.NISSAN_LEAF_IC, SUPPORTED_LEAF_FW),
+])
+def test_other_leaf_variants_do_not_offer_alpha_long(candidate, car_fw):
+  CP = CarInterface.get_params(candidate, gen_empty_fingerprint(), car_fw, True, False, False, None)
+
+  assert not CP.alphaLongitudinalAvailable
+  assert not CP.openpilotLongitudinalControl
+  assert CP.pcmCruise
+  assert not (CP.safetyConfigs[-1].safetyParam & NissanSafetyFlags.LONG_CONTROL)
 
 
 def test_non_leaf_does_not_offer_alpha_long():
@@ -65,7 +83,8 @@ def test_alpha_long_controller_sends_stock_shaped_commands_and_keepalive():
   assert can_sends[0x2B0][1].hex() == "ff6090ac5b000e03"
   assert can_sends[0x1C3][1].hex() == "000000006400ff27"
   assert can_sends[0x707][1].hex() == "023e800000000000"
-  assert all(can_sends[addr][2] == 1 for addr in (0x2B0, 0x1C3, 0x707))
+  assert all(can_sends[addr][2] == 1 for addr in (0x2B0, 0x1C3))
+  assert can_sends[0x707][2] == 0
 
 
 def test_alpha_long_controller_clamps_to_panda_accel_limit():
@@ -93,8 +112,8 @@ def test_alpha_long_controller_sends_inactive_commands_when_disengaged():
 @pytest.mark.parametrize(("signal", "button_type"), [("SET_BUTTON", ButtonType.decelCruise),
                                                         ("RES_BUTTON", ButtonType.accelCruise)])
 def test_leaf_set_resume_release_enables_alpha_long(signal, button_type):
-  CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), [], True, False, False, TEST_TOGGLES)
-  FPCP = CarInterface.get_starpilot_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), [], CP, TEST_TOGGLES)
+  CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, True, False, False, TEST_TOGGLES)
+  FPCP = CarInterface.get_starpilot_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, CP, TEST_TOGGLES)
   CS = CarState(CP, FPCP)
   parsers = CS.get_can_parsers(CP)
 
@@ -110,7 +129,7 @@ def test_leaf_set_resume_release_enables_alpha_long(signal, button_type):
 
 @pytest.mark.parametrize("ecu_disabled", [False, True])
 def test_leaf_ecu_disable_is_strict_and_falls_back(monkeypatch, ecu_disabled):
-  CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), [], True, False, False, None)
+  CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, True, False, False, None)
   calls = []
 
   def fake_disable_ecu(*args, **kwargs):
@@ -123,7 +142,8 @@ def test_leaf_ecu_disable_is_strict_and_falls_back(monkeypatch, ecu_disabled):
 
   assert len(calls) == (1 if ecu_disabled else 2)
   assert calls[0]["addr"] == 0x707
-  assert calls[0]["bus"] == 1
+  assert calls[0]["bus"] == 0
+  assert calls[0]["response_offset"] == 0x20
   assert calls[0]["require_response"] is True
   assert calls[0]["com_cont_req"] == bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL,
                                              uds.CONTROL_TYPE.ENABLE_RX_DISABLE_TX,
@@ -137,7 +157,7 @@ def test_leaf_ecu_disable_is_strict_and_falls_back(monkeypatch, ecu_disabled):
 
 
 def test_leaf_kwp_session_can_confirm_ecu_disable(monkeypatch):
-  CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), [], True, False, False, None)
+  CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, True, False, False, None)
   results = iter((False, True))
 
   monkeypatch.setattr("opendbc.car.nissan.interface.disable_ecu", lambda *args, **kwargs: next(results))

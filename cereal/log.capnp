@@ -130,17 +130,17 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     userBookmark @95;
     excessiveActuation @96;
     audioFeedback @97;
-    lateralManeuver @98;
-    pedalCruiseEnabled @99;
-    pedalCruiseDisabled @100;
-    pedalMaxRegen @101;
-    teslaCCEngaged @102;
-    teslaCCDisengaged @103;
-    teslaCCNotArmed @104;
-    pedalNotCalibrated @105;
+    bigModelLoading @100;
+    bigModelFailed @102;
     ndaCameraWarn @106;
 
     soundsUnavailableDEPRECATED @47;
+    stockLkasDEPRECATED @98;
+    lateralManeuverDEPRECATED @99;
+    bigModelReadyDEPRECATED @101;
+    teslaCCDisengagedDEPRECATED @103;
+    teslaCCNotArmedDEPRECATED @104;
+    pedalNotCalibratedDEPRECATED @105;
   }
 }
 

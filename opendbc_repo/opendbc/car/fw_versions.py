@@ -181,6 +181,9 @@ def get_present_ecus(can_recv: CanRecvCallable, can_send: CanSendCallable, set_o
       continue
 
     for ecu_type, addr, sub_addr in config.get_all_ecus(VERSIONS[brand]):
+      if ecu_type in config.non_tester_present_ecus:
+        continue
+
       # Only query ecus in whitelist if whitelist is not empty
       if len(r.whitelist_ecus) == 0 or ecu_type in r.whitelist_ecus:
         a = (addr, sub_addr, r.bus)
@@ -216,6 +219,9 @@ def get_brand_ecu_matches(ecu_rx_addrs: set[EcuAddrBusType]) -> dict[str, list[b
   # Since we can't know what request an ecu responded to, add matches for all possible rx offsets
   for brand, config, r in REQUESTS:
     for ecu in config.get_all_ecus(VERSIONS[brand]):
+      if ecu[0] in config.non_tester_present_ecus:
+        continue
+
       if len(r.whitelist_ecus) == 0 or ecu[0] in r.whitelist_ecus:
         brand_rx_addrs[brand].add((uds.get_rx_addr_for_tx_addr(ecu[1], r.rx_offset), ecu[2]))
 

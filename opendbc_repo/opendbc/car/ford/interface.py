@@ -31,12 +31,13 @@ class CarInterface(CarInterfaceBase):
 
     ret.radarUnavailable = Bus.radar not in DBC[candidate]
     ret.steerControlType = structs.CarParams.SteerControlType.angle
-    ret.steerActuatorDelay = 0.05 if ret.flags & FordFlags.LKA_STEERING else 0.2
+    ret.steerActuatorDelay = 0.05 if ret.flags & FordFlags.LKA_STEERING else 0.22
     ret.steerLimitTimer = 1.0
     ret.steerAtStandstill = True
 
     ret.longitudinalTuning.kiBP = [0.]
     ret.longitudinalTuning.kiV = [0.5]
+    ret.longitudinalTuning.kpV = [0.]
 
     if not ret.radarUnavailable and DBC[candidate][Bus.radar] == RADAR.DELPHI_MRR:
       # average of 33.3 Hz radar timestep / 4 scan modes = 60 ms
@@ -44,6 +45,10 @@ class CarInterface(CarInterfaceBase):
       ret.radarDelay = 0.06
 
     CAN = CanBus(fingerprint=fingerprint)
+    if 0x365 in fingerprint[CAN.main]:
+      ret.flags |= int(FordFlags.HEV_CLUSTER_DATA)
+    if all(address in fingerprint[CAN.main] for address in (0x07A, 0x24B, 0x24C)):
+      ret.flags |= int(FordFlags.HEV_BATTERY_DATA)
     cfgs = [get_safety_config(structs.CarParams.SafetyModel.ford)]
     if CAN.main >= 4:
       cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))

@@ -83,14 +83,14 @@ def test_stopped_timer_visibility_waits_for_onroad_grace_period(monkeypatch):
   assert widget.is_visible
 
 
-def test_stopped_timer_uses_qt_text_contract(monkeypatch):
+def test_stopped_timer_uses_text_contract(monkeypatch):
   stopped_timer = _load_stopped_timer(monkeypatch)
 
   assert stopped_timer.StoppedTimerWidget._format_duration_text(61) == ("1 minute", "1 second")
   assert stopped_timer.StoppedTimerWidget._format_duration_text(121) == ("2 minutes", "1 second")
 
 
-def test_stopped_timer_draws_qt_positions_and_opaque_seconds(monkeypatch):
+def test_stopped_timer_draws_positions_and_opaque_seconds(monkeypatch):
   stopped_timer = _load_stopped_timer(monkeypatch)
   widget = stopped_timer.StoppedTimerWidget()
   widget._duration = 61

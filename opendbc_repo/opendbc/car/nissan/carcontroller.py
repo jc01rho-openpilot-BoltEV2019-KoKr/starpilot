@@ -29,7 +29,7 @@ class CarController(CarControllerBase):
 
     can_sends = []
 
-    if self.CP.openpilotLongitudinalControl and self.car_fingerprint in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC):
+    if self.CP.openpilotLongitudinalControl and self.car_fingerprint == CAR.NISSAN_LEAF:
       accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
       stopping = actuators.longControlState == LongCtrlState.stopping
       brake_mode = CC.longActive and (accel < CarControllerParams.PROPILOT_ACCEL_MIN or stopping)
@@ -55,7 +55,7 @@ class CarController(CarControllerBase):
                                                       CC.longActive and brake_pressure > 0, brake_mode))
 
       if self.frame % 100 == 0:
-        can_sends.append(make_tester_present_msg(0x707, 1, suppress_response=True))
+        can_sends.append(make_tester_present_msg(0x707, 0, suppress_response=True))
 
     ### STEER ###
     steer_hud_alert = 1 if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw) else 0

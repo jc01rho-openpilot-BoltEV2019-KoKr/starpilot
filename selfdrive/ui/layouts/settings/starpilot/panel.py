@@ -355,7 +355,7 @@ class _SettingsPage(StarPilotPanel):
   def _show_labeled_select(self, title, key, options, current_value):
     """Integer-based multi-option selector with label/value pairs (puts int).
 
-    Mirrors Qt's ButtonParamControl: resolve by index so no KeyError is possible.
+    Resolve by index so no KeyError is possible.
     """
     option_labels = [tr(label) for _, label in options]
     option_values = [value for value, _ in options]

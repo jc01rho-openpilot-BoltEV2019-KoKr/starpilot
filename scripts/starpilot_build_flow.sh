@@ -9,14 +9,14 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/starpilot_build_flow.sh verify
-  scripts/starpilot_build_flow.sh mac [jobs]
+  scripts/starpilot_build_flow.sh mac
   scripts/starpilot_build_flow.sh device [jobs]
   scripts/starpilot_build_flow.sh laptop-setup [device-host]
   scripts/starpilot_build_flow.sh laptop-device [jobs]
 
 Modes:
   verify  Check critical StarPilot parity build guards in-tree.
-  mac     Run macOS developer validation build (Qt UI + Python compile checks).
+  mac     Run macOS developer Python validation checks.
   device  Run full on-device build (comma hardware only) and set prebuilt flag.
   laptop-setup Prepare laptop device-build environment (venv + image + sysroot).
   laptop-device Run full device-target build in Linux/aarch64 container on laptop.
@@ -61,20 +61,6 @@ verify_tree() {
     echo "OK: timed.py guards timezonefinder usage."
   fi
 
-  if ! rg -q "if os.path.isfile\\(\"/TICI\"\\)" common/spinner.py; then
-    echo "FAIL: common/spinner.py missing device-only legacy spinner path."
-    failed=1
-  else
-    echo "OK: spinner uses device-only legacy fallback."
-  fi
-
-  if ! rg -q "if os.path.isfile\\(\"/TICI\"\\)" common/text_window.py; then
-    echo "FAIL: common/text_window.py missing device-only legacy text path."
-    failed=1
-  else
-    echo "OK: text window uses device-only legacy fallback."
-  fi
-
   if ! source .venv/bin/activate >/dev/null 2>&1; then
     echo "FAIL: .venv is required for loggerd import checks."
     failed=1
@@ -107,7 +93,6 @@ PY
 }
 
 build_mac() {
-  local jobs="${1:-8}"
   require_venv
   source .venv/bin/activate
 
@@ -128,8 +113,6 @@ build_mac() {
     system/ui \
     starpilot/system/the_galaxy \
     starpilot/system/galaxy
-
-  SP_DISABLE_AUTO_DEVICE_SCONS=1 scons -j"${jobs}" selfdrive/ui/ui
 
   echo "mac build validation complete."
 }
@@ -166,7 +149,7 @@ main() {
       verify_tree
       ;;
     mac)
-      build_mac "${1:-8}"
+      build_mac
       ;;
     device)
       build_device "${1:-$(nproc)}"

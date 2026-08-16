@@ -410,6 +410,38 @@ class TestFordCANFDStockSafety(TestFordSafetyBase):
     self.safety.set_safety_hooks(CarParams.SafetyModel.ford, FordSafetyFlags.CANFD)
     self.safety.init_tests()
 
+  def _extended_lka_msg(self, angle_mode=False, shadow_curvature=0.0):
+    msg = self._lkas_command_msg(0)
+    raw_shadow = int(round(shadow_curvature / 1e-6)) & 0xFFFF
+    msg[0].data[4] |= 0x2 | int(angle_mode)
+    msg[0].data[5] = raw_shadow >> 8
+    msg[0].data[6] = raw_shadow & 0xFF
+    return msg
+
+  def test_extended_curvature_signals(self):
+    speed = 15.0
+    self.safety.set_controls_allowed(True)
+    self._reset_curvature_measurement(0.0, speed)
+    self.assertTrue(self._tx(self._extended_lka_msg()))
+    self.assertTrue(self._tx(self._lat_ctl_msg(True, 0.0, 0.0, 0.001, 0.0005)))
+
+    self.assertTrue(self._tx(self._extended_lka_msg()))
+    self.assertFalse(self._tx(self._lat_ctl_msg(True, 0.1, 0.0, 0.001, 0.0005)))
+
+  def test_extended_angle_signals(self):
+    speed = 15.0
+    curvature = 0.005
+    self.safety.set_controls_allowed(True)
+    self._reset_curvature_measurement(curvature, speed)
+    self.assertTrue(self._tx(self._extended_lka_msg(angle_mode=True, shadow_curvature=curvature)))
+    self.assertTrue(self._tx(self._lat_ctl_msg(True, 0.0, 0.02, 0.0, 0.0)))
+
+    self.assertTrue(self._tx(self._extended_lka_msg(angle_mode=True, shadow_curvature=curvature)))
+    self.assertFalse(self._tx(self._lat_ctl_msg(True, 0.0, 0.2, 0.0, 0.0)))
+
+    self.assertTrue(self._tx(self._extended_lka_msg(angle_mode=True, shadow_curvature=-curvature)))
+    self.assertFalse(self._tx(self._lat_ctl_msg(True, 0.0, 0.01, 0.0, 0.0)))
+
 
 class TestFordLongitudinalSafetyBase(TestFordSafetyBase):
   MAX_ACCEL = 2.0  # accel is used for brakes, but openpilot can set positive values

@@ -99,6 +99,21 @@ def test_loud_blindspot_alert_survives_disabled_warning_filter():
   assert alert_manager.current_alert.alert_type == "laneChangeBlockedLoud/warning"
 
 
+def test_lkas_enable_sound_survives_disabled_warning_filter():
+  events = Events(starpilot=True)
+  events.add(StarPilotEventName.lkasEnable)
+
+  alert_types, clear_event_types = get_starpilot_alert_filters([ET.PERMANENT], {ET.WARNING}, events)
+
+  alerts = events.create_alerts(alert_types)
+  alert_manager = AlertManager()
+  alert_manager.add_many(0, alerts)
+  alert_manager.process_alerts(0, clear_event_types)
+
+  assert alert_manager.current_alert.alert_type == "lkasEnable/warning"
+  assert alert_manager.current_alert.audible_alert == log.SelfdriveState.AudibleAlert.engage
+
+
 def test_disabled_starpilot_warnings_stay_filtered_without_blindspot_event():
   events = Events(starpilot=True)
   events.add(StarPilotEventName.noLaneAvailable)
