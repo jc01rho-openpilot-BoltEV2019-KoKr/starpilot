@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import queue
@@ -26,11 +25,21 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   with_alpha,
 )
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import FrameCachedParams, _SettingsPage
+from openpilot.starpilot.navigation import destination_store as _destination_store
 from openpilot.starpilot.navigation.destination_store import (
-  load_recent_destinations,
+  NavigationDestinationStore,
+  add_favorite_destination,
+  favorite_destination_id,
+  favorite_matches_target,
+  favorite_payload_for_galaxy,
+  load_favorite_destinations,
   normalize_destination_payload,
-  parse_destination_json,
-  update_recent_destinations,
+  normalize_favorite_destination,
+  ordered_favorite_destinations,
+  remove_favorite_destination,
+  routing_configured,
+  same_destination,
+  update_favorite_destination,
 )
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.multilang import tr
@@ -39,231 +48,21 @@ from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
 from openpilot.system.ui.widgets.keyboard import Keyboard
 
 
-NAVIGATION_DESTINATION_KEY = "NavDestination"
-RECENT_DESTINATIONS_KEY = "ApiCache_NavDestinations"
-FAVORITE_DESTINATIONS_KEY = "FavoriteDestinations"
-NAV_INSTRUCTION_STATE_KEY = "NavInstructionState"
-NAV_INSTRUCTION_COLLAPSED_KEY = "NavInstructionCollapsed"
+FAVORITE_DESTINATIONS_KEY = _destination_store.FAVORITE_DESTINATIONS_KEY
+NAVIGATION_DESTINATION_KEY = _destination_store.NAVIGATION_DESTINATION_KEY
+NAV_INSTRUCTION_COLLAPSED_KEY = _destination_store.NAV_INSTRUCTION_COLLAPSED_KEY
+NAV_INSTRUCTION_STATE_KEY = _destination_store.NAV_INSTRUCTION_STATE_KEY
+RECENT_DESTINATIONS_KEY = _destination_store.RECENT_DESTINATIONS_KEY
 
-
-def _coerce_float(value: Any) -> float | None:
-  try:
-    return float(value)
-  except (TypeError, ValueError):
-    return None
-
-
-def _json_value(raw_value: Any, default: Any) -> Any:
-  if isinstance(raw_value, (list, dict)):
-    return raw_value
-  if isinstance(raw_value, bytes):
-    raw_value = raw_value.decode("utf-8", errors="replace")
-  if not raw_value:
-    return default
-  try:
-    return json.loads(raw_value)
-  except (TypeError, ValueError, json.JSONDecodeError):
-    return default
-
-
-def _favorite_destination_id(payload: dict[str, Any]) -> str:
-  """Keep the exact favorite ID formula used by Galaxy's existing backend."""
-  raw = f"{payload.get('longitude')},{payload.get('latitude')}|{payload.get('routeId') or ''}|{payload.get('name') or ''}"
-  return hashlib.sha1(raw.encode()).hexdigest()
-
-
-def _favorite_payload_for_galaxy(destination: dict[str, Any]) -> dict[str, Any]:
-  favorite = dict(destination)
-  favorite.setdefault("routeId", "main")
-  return favorite
-
-
-def _normalize_favorite_payload(payload: Any) -> dict[str, Any] | None:
-  if not isinstance(payload, dict):
-    return None
-
-  name = str(payload.get("name") or payload.get("place_name") or "").strip()
-  latitude = _coerce_float(payload.get("latitude"))
-  longitude = _coerce_float(payload.get("longitude"))
-  if not name or latitude is None or longitude is None:
-    return None
-
-  normalized = dict(payload)
-  normalized.update({"name": name, "latitude": latitude, "longitude": longitude})
-  normalized["id"] = str(payload.get("id") or _favorite_destination_id(payload))
-  return normalized
-
-
-def _load_favorite_destinations(raw_value: Any) -> list[dict[str, Any]]:
-  payload = _json_value(raw_value, [])
-  if not isinstance(payload, list):
-    return []
-  return [
-    normalized
-    for entry in payload
-    if (normalized := _normalize_favorite_payload(entry)) is not None
-  ]
-
-
-def _favorite_matches_target(
-  favorite: dict[str, Any],
-  target: dict[str, Any],
-  *,
-  allow_route_id_only: bool = False,
-) -> bool:
-  target_id = target.get("id")
-  if target_id:
-    return favorite.get("id") == target_id
-  if allow_route_id_only and target.get("routeId"):
-    return favorite.get("routeId") == target.get("routeId")
-  return (
-    favorite.get("routeId") == target.get("routeId") and
-    favorite.get("latitude") == target.get("latitude") and
-    favorite.get("longitude") == target.get("longitude") and
-    favorite.get("name") == target.get("name")
-  )
-
-
-def _add_favorite_destination(raw_value: Any, favorite: dict[str, Any]) -> list[dict[str, Any]]:
-  favorites = _load_favorite_destinations(raw_value)
-  normalized = _normalize_favorite_payload(favorite)
-  if normalized is not None and not any(item.get("id") == normalized["id"] for item in favorites):
-    favorites.append(normalized)
-  return favorites
-
-
-def _remove_favorite_destination(raw_value: Any, target: dict[str, Any]) -> list[dict[str, Any]]:
-  favorites = _load_favorite_destinations(raw_value)
-  return [favorite for favorite in favorites if not _favorite_matches_target(favorite, target)]
-
-
-def _update_favorite_destination(
-  raw_value: Any,
-  target: dict[str, Any],
-  *,
-  name: str | None = None,
-  is_home: bool | None = None,
-  is_work: bool | None = None,
-) -> list[dict[str, Any]] | None:
-  favorites = _load_favorite_destinations(raw_value)
-  target_index = next(
-    (
-      index for index, favorite in enumerate(favorites)
-      if _favorite_matches_target(favorite, target, allow_route_id_only=True)
-    ),
-    None,
-  )
-  if target_index is None:
-    return None
-
-  if is_home:
-    for favorite in favorites:
-      favorite.pop("is_home", None)
-  if is_work:
-    for favorite in favorites:
-      favorite.pop("is_work", None)
-
-  favorite = favorites[target_index]
-  if name is not None:
-    normalized_name = str(name).strip()
-    if normalized_name:
-      favorite["name"] = normalized_name
-  if is_home is not None:
-    if is_home:
-      favorite["is_home"] = True
-      favorite.pop("is_work", None)
-    else:
-      favorite.pop("is_home", None)
-  if is_work is not None:
-    if is_work:
-      favorite["is_work"] = True
-      favorite.pop("is_home", None)
-    else:
-      favorite.pop("is_work", None)
-  return favorites
-
-
-class _NavigationParams:
-  """Deep Params interface for this panel, matching Galaxy's existing storage."""
-
-  def __init__(self, params, params_memory=None):
-    self.params = params
-    self.params_memory = params_memory or params
-
-  @staticmethod
-  def _get(params, key: str, default: Any = "") -> Any:
-    try:
-      return params.get(key, encoding="utf-8", default=default)
-    except TypeError:
-      return params.get(key)
-
-  def active_destination(self) -> dict[str, Any] | None:
-    return parse_destination_json(self._get(self.params, NAVIGATION_DESTINATION_KEY))
-
-  def recent_destinations(self) -> list[dict[str, Any]]:
-    raw_value = self._get(self.params, RECENT_DESTINATIONS_KEY, "[]")
-    if isinstance(raw_value, (list, dict)):
-      raw_value = json.dumps(raw_value)
-    return load_recent_destinations(raw_value)
-
-  def favorite_destinations(self) -> list[dict[str, Any]]:
-    raw_value = self._get(self.params, FAVORITE_DESTINATIONS_KEY, "[]")
-    favorites = _load_favorite_destinations(raw_value)
-    raw_payload = _json_value(raw_value, [])
-    if isinstance(raw_payload, list) and any(
-      isinstance(entry, dict) and not entry.get("id") for entry in raw_payload
-    ):
-      self.params.put(FAVORITE_DESTINATIONS_KEY, favorites)
-    return favorites
-
-  def set_destination(self, payload: Any) -> dict[str, Any] | None:
-    destination = normalize_destination_payload(payload)
-    if destination is None:
-      return None
-    raw_recent_destinations = self._get(self.params, RECENT_DESTINATIONS_KEY, "[]")
-    if isinstance(raw_recent_destinations, (list, dict)):
-      raw_recent_destinations = json.dumps(raw_recent_destinations)
-    recent_destinations = update_recent_destinations(
-      raw_recent_destinations,
-      destination,
-    )
-    self.params.put(NAVIGATION_DESTINATION_KEY, json.dumps(destination))
-    self.params.put(RECENT_DESTINATIONS_KEY, recent_destinations)
-    return destination
-
-  def clear_navigation(self) -> bool:
-    collapsed_supported = True
-    for params, key in (
-      (self.params, NAVIGATION_DESTINATION_KEY),
-      (self.params_memory, NAV_INSTRUCTION_STATE_KEY),
-      (self.params_memory, NAV_INSTRUCTION_COLLAPSED_KEY),
-    ):
-      try:
-        params.remove(key)
-      except Exception:
-        if key == NAV_INSTRUCTION_COLLAPSED_KEY:
-          collapsed_supported = False
-    return collapsed_supported
-
-  def add_favorite(self, favorite: dict[str, Any]) -> list[dict[str, Any]]:
-    updated = _add_favorite_destination(self._get(self.params, FAVORITE_DESTINATIONS_KEY, "[]"), favorite)
-    self.params.put(FAVORITE_DESTINATIONS_KEY, updated)
-    return updated
-
-  def remove_favorite(self, favorite: dict[str, Any]) -> list[dict[str, Any]]:
-    updated = _remove_favorite_destination(self._get(self.params, FAVORITE_DESTINATIONS_KEY, "[]"), favorite)
-    self.params.put(FAVORITE_DESTINATIONS_KEY, updated)
-    return updated
-
-  def update_favorite(self, favorite: dict[str, Any], **changes: Any) -> list[dict[str, Any]] | None:
-    updated = _update_favorite_destination(
-      self._get(self.params, FAVORITE_DESTINATIONS_KEY, "[]"),
-      favorite,
-      **changes,
-    )
-    if updated is not None:
-      self.params.put(FAVORITE_DESTINATIONS_KEY, updated)
-    return updated
+_NavigationParams = NavigationDestinationStore
+_add_favorite_destination = add_favorite_destination
+_favorite_destination_id = favorite_destination_id
+_favorite_matches_target = favorite_matches_target
+_favorite_payload_for_galaxy = favorite_payload_for_galaxy
+_load_favorite_destinations = load_favorite_destinations
+_normalize_favorite_payload = normalize_favorite_destination
+_remove_favorite_destination = remove_favorite_destination
+_update_favorite_destination = update_favorite_destination
 
 
 class MapboxSearchError(RuntimeError):
@@ -548,7 +347,7 @@ class StarPilotNavigationLayout(_SettingsPage):
     return str(self._params.get("MapboxPublicKey", encoding="utf-8") or "").strip()
 
   def _routing_available(self) -> bool:
-    return bool(str(self._params.get("MapboxSecretKey", encoding="utf-8") or "").strip())
+    return routing_configured(self._params)
 
   def _language_code(self) -> str:
     language = str(self._params.get("LanguageSetting", encoding="utf-8") or "").strip()
@@ -650,15 +449,7 @@ class StarPilotNavigationLayout(_SettingsPage):
 
   @staticmethod
   def _same_destination(left: dict[str, Any] | None, right: dict[str, Any] | None) -> bool:
-    if not left or not right:
-      return False
-    try:
-      return (
-        abs(float(left.get("latitude")) - float(right.get("latitude"))) <= 1e-6 and
-        abs(float(left.get("longitude")) - float(right.get("longitude"))) <= 1e-6
-      )
-    except (TypeError, ValueError):
-      return False
+    return same_destination(left, right)
 
   def _favorite_for_destination(self, destination: dict[str, Any] | None) -> dict[str, Any] | None:
     return next((favorite for favorite in self._favorites if self._same_destination(favorite, destination)), None)
@@ -988,14 +779,7 @@ class StarPilotNavigationLayout(_SettingsPage):
         style=PANEL_STYLE,
       )
       y += NAV_SECTION_HEIGHT
-      ordered_favorites = sorted(
-        self._favorites,
-        key=lambda item: (
-          not bool(item.get("is_home")),
-          not bool(item.get("is_work")),
-          str(item.get("name") or "").casefold(),
-        ),
-      )
+      ordered_favorites = ordered_favorite_destinations(self._favorites)
       for index, favorite in enumerate(ordered_favorites):
         row_rect = rl.Rectangle(x, y, width, NAV_ROW_HEIGHT)
         target_id = f"favorite:{favorite.get('id') or index}"

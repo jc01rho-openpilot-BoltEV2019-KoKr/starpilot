@@ -20,8 +20,8 @@ from openpilot.common.utils import managed_proc
 from openpilot.tools.lib.route import Route
 from openpilot.tools.lib.logreader import LogReader
 
-# cereal.messaging, common.params and common.prefix load native extensions that the raybig path
-# builds at runtime (prepare_raybig_runtime), so they're imported at point of use instead - at
+# cereal.messaging, common.params and common.prefix load native extensions that the c3 path
+# builds at runtime (prepare_c3_runtime), so they're imported at point of use instead - at
 # module scope they'd fail before that build ever runs.
 
 DEFAULT_OUTPUT = 'output.mp4'
@@ -32,18 +32,15 @@ FRAMERATE = 20
 PIXEL_DEPTH = '24'
 RESOLUTION = '2160x1080'
 SECONDS_TO_WARM = 2
-PROC_WAIT_SECONDS = 30*10
-RECORD_TAIL_MARGIN = 5  # extra seconds recorded past the requested end, see record_raybig
+RECORD_TAIL_MARGIN = 5  # extra seconds recorded past the requested end, see record_c3
 MAX_CACHED_SEGMENTS = 5  # replay's own default, see tools/replay/main.cc
-MAX_PLAYBACK = 10  # upper bound for --playback, see record_raybig
+MAX_PLAYBACK = 10  # upper bound for --playback, see record_c3
 PROGRESS_INTERVAL = 30  # seconds between progress lines while recording
 STALL_WARN_SECONDS = 60  # warn if the output file stops growing for this long
 
-OPENPILOT_FONT = str(Path(BASEDIR, 'selfdrive/assets/fonts/Inter-Regular.ttf').resolve())
 REPLAY = str(Path(BASEDIR, 'tools/replay/replay').resolve())
-UI = str(Path(BASEDIR, 'selfdrive/ui/ui').resolve())
-RAYBIG_UI = str(Path(BASEDIR, 'selfdrive/ui/ui.py').resolve())
-RAYBIG_PREPARE_SCRIPT = str(Path(BASEDIR, 'scripts/launch_ui_raybig_desktop.sh').resolve())
+C3_UI = str(Path(BASEDIR, 'selfdrive/ui/ui.py').resolve())
+C3_PREPARE_SCRIPT = str(Path(BASEDIR, 'scripts/launch_ui_c3_desktop.sh').resolve())
 WSLG_X11_DIR = '/mnt/wslg/.X11-unix'
 
 logger = logging.getLogger('clip.py')
@@ -78,32 +75,8 @@ def check_for_failure(procs: list[Popen]):
       raise ChildProcessError(msg)
 
 
-def escape_ffmpeg_text(value: str):
-  special_chars = {',': '\\,', ':': '\\:', '=': '\\=', '[': '\\[', ']': '\\]'}
-  value = value.replace('\\', '\\\\\\\\\\\\\\\\')
-  for char, escaped in special_chars.items():
-    value = value.replace(char, escaped)
-  return value
-
-
 def get_logreader(route: Route):
   return LogReader(route.qlog_paths()[0] if len(route.qlog_paths()) else route.name.canonical_name)
-
-
-def get_meta_text(lr: LogReader, route: Route):
-  init_data = lr.first('initData')
-  car_params = lr.first('carParams')
-  origin_parts = init_data.gitRemote.split('/')
-  origin = origin_parts[3] if len(origin_parts) > 3 else 'unknown'
-  return ', '.join([
-    f"openpilot v{init_data.version}",
-    f"route: {route.name.canonical_name}",
-    f"car: {car_params.carFingerprint}",
-    f"origin: {origin}",
-    f"branch: {init_data.gitBranch}",
-    f"commit: {init_data.gitCommit[:7]}",
-    f"modified: {str(init_data.dirty).lower()}",
-  ])
 
 
 def parse_args(parser: ArgumentParser):
@@ -169,17 +142,15 @@ def wslg_available() -> bool:
   return os.path.isdir(WSLG_X11_DIR)
 
 
-def validate_env(parser: ArgumentParser, ui: Literal['c3', 'raybig']):
+def validate_env(parser: ArgumentParser, ui: Literal['c3']):
   if platform.system() not in ['Linux']:
     parser.exit(1, f'clip.py: error: {platform.system()} is not a supported operating system\n')
 
-  use_wslg = ui == 'raybig' and wslg_available()
+  use_wslg = wslg_available()
 
-  required_bins = ['ffmpeg']
-  if ui == 'raybig':
-    required_bins.append('ffprobe')  # used to retime the export, see retime_to_wall_clock
+  required_bins = ['ffmpeg', 'ffprobe']
   if not use_wslg:
-    # Under WSLg, raybig renders against the existing live :0 display instead of a virtual Xvfb one.
+    # Under WSLg, c3 renders against the existing live :0 display instead of a virtual Xvfb one.
     required_bins.append('Xvfb')
   for proc in required_bins:
     if shutil.which(proc) is None:
@@ -187,14 +158,10 @@ def validate_env(parser: ArgumentParser, ui: Literal['c3', 'raybig']):
 
   # REPLAY is not checked here; prepare_replay() builds it on demand
 
-  if ui == 'c3':
-    if shutil.which(UI) is None:
-      parser.exit(1, f'clip.py: error: missing {UI} command, did you build openpilot yet?\n')
-  elif ui == 'raybig':
-    if not os.path.isfile(RAYBIG_UI):
-      parser.exit(1, f'clip.py: error: missing {RAYBIG_UI}\n')
-    if not os.access(RAYBIG_PREPARE_SCRIPT, os.X_OK):
-      parser.exit(1, f'clip.py: error: missing or non-executable {RAYBIG_PREPARE_SCRIPT}\n')
+  if not os.path.isfile(C3_UI):
+    parser.exit(1, f'clip.py: error: missing {C3_UI}\n')
+  if not os.access(C3_PREPARE_SCRIPT, os.X_OK):
+    parser.exit(1, f'clip.py: error: missing or non-executable {C3_PREPARE_SCRIPT}\n')
 
 
 def validate_output_file(output_file: str):
@@ -207,12 +174,6 @@ def validate_route(route: str):
   if route.count('/') not in (1, 3):
     raise ArgumentTypeError(f'route must include or exclude timing, example: {DEMO_ROUTE}')
   return route
-
-
-def validate_title(title: str):
-  if len(title) > 80:
-    raise ArgumentTypeError('title must be no longer than 80 chars')
-  return title
 
 
 def validate_scale(scale: str):
@@ -266,58 +227,15 @@ def prepare_replay(jobs: int | None = None):
     raise ChildProcessError('failed to build replay, see output above')
 
 
-def prepare_raybig_runtime():
-  logger.info('preparing raybig host runtime (this can take a while the first time)...')
+def prepare_c3_runtime():
+  logger.info('preparing c3 host runtime (this can take a while the first time)...')
   env = os.environ.copy()
-  env['SP_RAYBIG_COMPILE_ONLY'] = '1'
+  env['SP_C3_COMPILE_ONLY'] = '1'
   # Without this, the script's own cleanup trap restores/deletes the .so files it just built.
   env['SP_KEEP_DESKTOP_RUNTIME_ARTIFACTS'] = '1'
-  result = Popen([RAYBIG_PREPARE_SCRIPT], env=env)
+  result = Popen([C3_PREPARE_SCRIPT], env=env)
   if result.wait() != 0:
-    raise ChildProcessError('failed to prepare raybig host runtime, see output above')
-
-
-def make_ffmpeg_cmd(display: str, out: str, duration: int, bit_rate_kbps: int, overlays: list[str]):
-  return [
-    'ffmpeg', '-y',
-    '-video_size', RESOLUTION,
-    '-framerate', str(FRAMERATE),
-    '-f', 'x11grab',
-    '-rtbufsize', '100M',
-    '-draw_mouse', '0',
-    '-i', display,
-    '-c:v', 'libx264',
-    '-maxrate', f'{bit_rate_kbps}k',
-    '-bufsize', f'{bit_rate_kbps*2}k',
-    '-crf', '23',
-    '-filter:v', ','.join(overlays),
-    '-preset', 'ultrafast',
-    '-tune', 'zerolatency',
-    '-pix_fmt', 'yuv420p',
-    '-movflags', '+faststart',
-    '-f', 'mp4',
-    '-t', str(duration),
-    out,
-  ]
-
-
-def record(procs: list[Popen], env: dict[str, str], display: str, out: str, duration: int,
-           bit_rate_kbps: int, overlays: list[str]):
-  # c3 has no frame export of its own, so screen capture its Xvfb display. raybig uses
-  # record_raybig instead.
-  logger.info('waiting for replay to begin (loading segments, may take a while)...')
-  wait_for_frames(procs)
-  logger.debug(f'letting UI warm up ({SECONDS_TO_WARM}s)...')
-  time.sleep(SECONDS_TO_WARM)
-  check_for_failure(procs)
-
-  ffmpeg_cmd = make_ffmpeg_cmd(display, out, duration, bit_rate_kbps, overlays)
-  with managed_proc(ffmpeg_cmd, env) as ffmpeg_proc:
-    all_procs = procs + [ffmpeg_proc]
-    logger.info(f'recording in progress ({duration}s)...')
-    ffmpeg_proc.wait(duration + PROC_WAIT_SECONDS)
-    check_for_failure(all_procs)
-    logger.info(f'recording complete: {Path(out).resolve()}')
+    raise ChildProcessError('failed to prepare c3 host runtime, see output above')
 
 
 def probe_video(path: str) -> tuple[float, float]:
@@ -367,7 +285,7 @@ def retime_to_wall_clock(out: str, recorded_seconds: float, tolerance: float = 0
     retimed.unlink(missing_ok=True)
 
 
-def record_raybig(ui_proc: Popen, replay_proc: Popen, duration: int, out: str, playback: float = 1.0):
+def record_c3(ui_proc: Popen, replay_proc: Popen, duration: int, out: str, playback: float = 1.0):
   # the UI records from the moment its window opens, so the export leads with some offroad
   # frames. tail margin covers replay not being exactly at `start` on the first onroad frame.
   # at playback > 1 the route advances faster than the clock, so we wait proportionally less.
@@ -441,8 +359,7 @@ def clip(
   end: int,
   speed: int,
   target_mb: int,
-  title: str | None,
-  ui: Literal['c3', 'raybig'],
+  ui: Literal['c3'],
   scale: float | None,
   playback: float,
 ):
@@ -454,9 +371,9 @@ def clip(
   duration = end - start
   bit_rate_kbps = int(round(target_mb * 8 * 1024 * 1024 / duration / 1000))
 
-  # raybig exports its own frames (RECORD, below) rather than being screen captured, so under
+  # c3 exports its own frames (RECORD, below) rather than being screen captured, so under
   # WSLg it can just render against the live desktop instead of needing its own Xvfb.
-  use_wslg = ui == 'raybig' and wslg_available()
+  use_wslg = wslg_available()
   if use_wslg:
     display = os.environ.get('DISPLAY', ':0')
   else:
@@ -464,23 +381,6 @@ def clip(
     display_num = randint(99, 999)
     display = f':{display_num}'
     xvfb_cmd = ['Xvfb', display, '-terminate', '-screen', '0', f'{RESOLUTION}x{PIXEL_DEPTH}']
-
-  box_style = 'box=1:boxcolor=black@0.33:boxborderw=7'
-  meta_text = get_meta_text(lr, route)
-  overlays = [
-    # metadata overlay
-    f"drawtext=text='{escape_ffmpeg_text(meta_text)}':fontfile={OPENPILOT_FONT}:fontcolor=white:fontsize=15:{box_style}:x=(w-text_w)/2:y=5.5:enable='between(t,1,5)'",
-    # route time overlay
-    f"drawtext=text='%{{eif\\:floor(({start}+t)/60)\\:d\\:2}}\\:%{{eif\\:mod({start}+t\\,60)\\:d\\:2}}':fontfile={OPENPILOT_FONT}:fontcolor=white:fontsize=24:{box_style}:x=w-text_w-38:y=38"
-  ]
-  if title:
-    overlays.append(f"drawtext=text='{escape_ffmpeg_text(title)}':fontfile={OPENPILOT_FONT}:fontcolor=white:fontsize=32:{box_style}:x=(w-text_w)/2:y=53")
-
-  if speed > 1:
-    overlays += [
-      f"setpts=PTS/{speed}",
-      "fps=60",
-    ]
 
   # read far enough ahead that replay doesn't run dry partway through and loop back on itself,
   # repeating earlier footage. capped because each cached ~60s segment holds its logs and camera
@@ -497,61 +397,44 @@ def clip(
 
   prepare_replay()
 
-  if ui == 'raybig':
-    prepare_raybig_runtime()
-    ui_cmd = [sys.executable, RAYBIG_UI]
-  else:
-    ui_cmd = [UI, '-platform', 'xcb']
+  prepare_c3_runtime()
+  ui_cmd = [sys.executable, C3_UI]
 
-  # imported here, after prepare_raybig_runtime() has built the native extensions it needs
+  # imported here, after prepare_c3_runtime() has built the native extensions it needs
   from openpilot.common.prefix import OpenpilotPrefix
 
   with OpenpilotPrefix(prefix, shared_download_cache=True):
     populate_car_params(lr)
     env = os.environ.copy()
     env['DISPLAY'] = display
-    if ui == 'raybig':
-      env['BIG'] = '1'
-      env.setdefault('PRIME_TYPE', '0')
-      # use the real replayed drive stats instead of raybig's desktop fake-data demo
-      env['SP_RAYBIG_FAKE_DRIVE_STATS'] = '0'
-      pythonpath_extra = f"{BASEDIR}{os.pathsep}{Path(BASEDIR, 'starpilot/third_party')}"
-      env['PYTHONPATH'] = f"{pythonpath_extra}{os.pathsep}{env['PYTHONPATH']}" if env.get('PYTHONPATH') else pythonpath_extra
-      # the raylib UI pipes its own frames to ffmpeg (system/ui/lib/application.py). no drawtext
-      # overlays on this path, unlike c3.
-      env['RECORD'] = '1'
-      env['RECORD_OUTPUT'] = out
-      env['RECORD_BITRATE'] = f'{bit_rate_kbps}k'
-      if speed > 1:
-        env['RECORD_SPEED'] = str(speed)
-      # the UI defaults to 60fps and tags the export as such, but the per-frame GPU readback
-      # can't sustain that and the clip plays fast. ask for a rate it can actually hit. at
-      # playback > 1 it has to render proportionally faster to still cover FRAMERATE frames
-      # per second of route.
-      env['FPS'] = str(int(round(FRAMERATE * playback)))
-      # sets the render texture size, which is what gets piped to ffmpeg. left unset, the UI
-      # picks a scale that fits the screen.
-      if scale is not None:
-        env['SCALE'] = str(scale)
+    env['BIG'] = '1'
+    env.setdefault('PRIME_TYPE', '0')
+    env['SP_C3_FAKE_DRIVE_STATS'] = '0'
+    pythonpath_extra = f"{BASEDIR}{os.pathsep}{Path(BASEDIR, 'starpilot/third_party')}"
+    env['PYTHONPATH'] = f"{pythonpath_extra}{os.pathsep}{env['PYTHONPATH']}" if env.get('PYTHONPATH') else pythonpath_extra
+    env['RECORD'] = '1'
+    env['RECORD_OUTPUT'] = out
+    env['RECORD_BITRATE'] = f'{bit_rate_kbps}k'
+    if speed > 1:
+      env['RECORD_SPEED'] = str(speed)
+    env['FPS'] = str(int(round(FRAMERATE * playback)))
+    if scale is not None:
+      env['SCALE'] = str(scale)
 
-      if use_wslg:
-        logger.info('WSLg detected: rendering against the live desktop display.')
-        with managed_proc(ui_cmd, env) as ui_proc, managed_proc(replay_cmd, env) as replay_proc:
-          record_raybig(ui_proc, replay_proc, duration, out, playback)
-      else:
-        with managed_proc(xvfb_cmd, env) as xvfb_proc:
-          wait_for_xvfb(display_num, xvfb_proc)
-          with managed_proc(ui_cmd, env) as ui_proc, managed_proc(replay_cmd, env) as replay_proc:
-            record_raybig(ui_proc, replay_proc, duration, out, playback)
+    if use_wslg:
+      logger.info('WSLg detected: rendering against the live desktop display.')
+      with managed_proc(ui_cmd, env) as ui_proc, managed_proc(replay_cmd, env) as replay_proc:
+        record_c3(ui_proc, replay_proc, duration, out, playback)
     else:
       with managed_proc(xvfb_cmd, env) as xvfb_proc:
         wait_for_xvfb(display_num, xvfb_proc)
         with managed_proc(ui_cmd, env) as ui_proc, managed_proc(replay_cmd, env) as replay_proc:
-          record([xvfb_proc, ui_proc, replay_proc], env, display, out, duration, bit_rate_kbps, overlays)
+          record_c3(ui_proc, replay_proc, duration, out, playback)
 
 
 def main():
   p = ArgumentParser(prog='clip.py', description='clip your openpilot route.', epilog='comma.ai')
+  playback_help = "Replay faster than real time; the clip stays at normal speed but drops frames if the UI cannot keep up."
   route_group = p.add_mutually_exclusive_group(required=True)
   route_group.add_argument('route', nargs='?', type=validate_route, help=f'The route (e.g. {DEMO_ROUTE} or {DEMO_ROUTE}/{DEMO_START}/{DEMO_END})')
   route_group.add_argument('--demo', help='use the demo route', action='store_true')
@@ -563,14 +446,10 @@ def main():
   p.add_argument('-q', '--quality', help='quality of camera (low = qcam, high = hevc)', choices=['low', 'high'], default='high')
   p.add_argument('-x', '--speed', help='record the clip at this speed multiple', type=int, default=1)
   p.add_argument('-s', '--start', help='start clipping at <start> seconds', type=int)
-  p.add_argument('-t', '--title', help='overlay this title on the video (e.g. "Chill driving across the Golden Gate Bridge")', type=validate_title)
-  p.add_argument('-u', '--ui', help='desktop UI to record. raybig exports its own frames, so it also works where screen capture '
-                                    'cannot see the window (e.g. WSLg), but gets no title/metadata overlays',
-                 choices=['c3', 'raybig'], default='c3')
-  p.add_argument('--scale', help='scale the recorded resolution, e.g. 0.5 for half size (raybig only, default is to fit the screen)',
+  p.add_argument('-u', '--ui', help='desktop UI to record', choices=['c3'], default='c3')
+  p.add_argument('--scale', help='scale the recorded resolution, e.g. 0.5 for half size (default is to fit the screen)',
                  type=validate_scale)
-  p.add_argument('--playback', help='replay faster than real time to finish sooner, e.g. 2 for twice as fast (raybig only). '
-                                    'the clip still plays at normal speed, but drops frames if the UI cannot keep up',
+  p.add_argument('--playback', help=playback_help,
                  type=validate_playback, default=1.0)
   args = parse_args(p)
   validate_env(p, args.ui)
@@ -586,7 +465,6 @@ def main():
       end=args.end,
       speed=args.speed,
       target_mb=args.file_size,
-      title=args.title,
       ui=args.ui,
       scale=args.scale,
       playback=args.playback,

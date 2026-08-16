@@ -179,7 +179,7 @@
       {
         "key": "NudgelessLaneChange",
         "label": "Automatic Lane Changes",
-        "description": "When the turn signal is on, openpilot will automatically change lanes. No steering-wheel nudge required!",
+        "description": "When the turn signal is on, openpilot will automatically change lanes. If a vehicle is detected in the blind spot, the lane change waits until it is clear. No steering-wheel nudge required!",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LaneChanges",
@@ -726,7 +726,7 @@
       {
         "key": "CEOpenRoad",
         "label": "Open Road",
-        "description": "Keep Experimental Mode active on an open road when driving within 3 mph below the set speed and no lead vehicle is detected. This can help the model anticipate braking sooner.",
+        "description": "Keep Experimental Mode active on an open road after reaching the set speed when no lead vehicle is detected. This can help the model anticipate braking sooner.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "ConditionalExperimental",
@@ -3835,12 +3835,13 @@
       },
       {
         "key": "DeviceShutdown",
-        "label": "Device Shutdown Timer",
-        "description": "Keep the device on for the set amount of time after a drive before it shuts down automatically.",
+        "label": "Device Shutdown Timer (Hours)",
+        "description": "How many hours the device stays on after a drive before it shuts down automatically.",
         "data_type": "int",
         "ui_type": "numeric",
-        "min": 0.0,
-        "max": 33.0,
+        "min": 1.0,
+        "max": 30.0,
+        "step": 1.0,
         "parent_key": "DeviceManagement",
         "settings_tier": "simple"
       },
@@ -4113,6 +4114,28 @@
         "settings_tier": "simple"
       },
       {
+        "key": "AlphaLongitudinalEnabled",
+        "label": "openpilot Longitudinal Control (Alpha)",
+        "description": "Enable openpilot longitudinal control for vehicles that support it. This replaces the vehicle's stock ACC and may disable automatic emergency braking. Changing this setting restarts the driving stack.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "GalaxyDeveloperMode",
+        "requires_offroad": true,
+        "confirm_message": "Enable openpilot Longitudinal Control? This is an alpha feature, replaces the vehicle's stock ACC, and may disable automatic emergency braking.",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "ForceOffroad",
+        "label": "Force Offroad",
+        "description": "Temporarily switch the device to the offroad state for remote updates when the vehicle is parked. This control is only available while the vehicle reports Park.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "GalaxyDeveloperMode",
+        "requires_parked": true,
+        "confirm_message": "Force the device offroad? Only use this while the vehicle is in Park.",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "RedneckCruise",
         "label": "Redneck Cruise",
         "description": "On supported Hyundai stock-cruise cars, use RES/SET button presses to match the cluster set speed to StarPilot's target.",
@@ -4120,14 +4143,6 @@
         "ui_type": "toggle",
         "parent_key": "GalaxyDeveloperMode",
         "settings_tier": "advanced"
-      },
-      {
-        "key": "UseOldUI",
-        "label": "Use Old UI",
-        "description": "Use the old Qt UI instead of the default raylib UI on tici/tizi devices. This setting has no effect on C4/mici devices.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "settings_tier": "simple"
       },
       {
         "key": "CameraOffset",

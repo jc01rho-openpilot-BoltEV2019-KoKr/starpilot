@@ -12,14 +12,6 @@
       ]
     },
     {
-      "id": "cpp_process",
-      "type": "pickString",
-      "description": "Select the process to debug",
-      "options": [
-        "selfdrive/ui/ui"
-      ]
-    },
-    {
       "id": "args",
       "description": "Arguments to pass to the process",
       "type": "promptString"
@@ -39,13 +31,6 @@
       "console": "integratedTerminal",
       "justMyCode": true,
       "args": "${input:args}"
-    },
-    {
-      "name": "C++: openpilot Process",
-      "type": "cppdbg",
-      "request": "launch",
-      "program": "${workspaceFolder}/${input:cpp_process}",
-      "cwd": "${workspaceFolder}"
     },
     {
       "name": "Attach LLDB to Replay drive",

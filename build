@@ -46,9 +46,6 @@ while [[ $# -gt 0 ]]; do
       shortcut_includes_panda=1
       add_panda_targets
       ;;
-    --ui|-ui)
-      shortcut_targets+=("selfdrive/ui/ui")
-      ;;
     --cereal|-cereal)
       shortcut_targets+=(
         "cereal/libcereal.a"

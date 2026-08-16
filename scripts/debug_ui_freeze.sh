@@ -21,7 +21,7 @@ mkdir -p "${OUT_DIR}"
   echo
 
   echo "=== Process Snapshot ==="
-  ps -eo pid,ppid,stat,ni,etime,comm,args | grep -E "(manager.py|selfdrive.ui.ui|/selfdrive/ui/ui|weston|loggerd|encoderd|modeld|dmonitoringmodeld)" || true
+  ps -eo pid,ppid,stat,ni,etime,comm,args | grep -E "(manager.py|selfdrive.ui.ui|/selfdrive/ui/ui.py|weston|loggerd|encoderd|modeld|dmonitoringmodeld)" || true
   echo
 
   echo "=== Manager State (tmux service output) ==="
@@ -35,7 +35,7 @@ mkdir -p "${OUT_DIR}"
   echo
 
   echo "=== UI PID + Watchdog Timestamp Delta ==="
-  for ui_pid in $(pgrep -f "selfdrive.ui.ui|/selfdrive/ui/ui" 2>/dev/null || true); do
+  for ui_pid in $(pgrep -f "selfdrive.ui.ui|/selfdrive/ui/ui.py" 2>/dev/null || true); do
     echo "ui_pid=${ui_pid}"
     wd_file="/dev/shm/wd_${ui_pid}"
     if [[ -f "${wd_file}" ]]; then
@@ -74,7 +74,7 @@ PY
   echo
 
   echo "=== open files for UI process(es) ==="
-  for ui_pid in $(pgrep -f "selfdrive.ui.ui|/selfdrive/ui/ui" 2>/dev/null || true); do
+  for ui_pid in $(pgrep -f "selfdrive.ui.ui|/selfdrive/ui/ui.py" 2>/dev/null || true); do
     echo "--- lsof for pid ${ui_pid} ---"
     lsof -p "${ui_pid}" 2>/dev/null | tail -n 200 || true
   done

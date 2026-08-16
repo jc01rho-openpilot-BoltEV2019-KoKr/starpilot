@@ -4,6 +4,7 @@ from openpilot.system.hardware import TICI
 os.environ['GMMU'] = '0'
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
 from tinygrad.tensor import Tensor
+import threading
 import time
 import pickle
 import numpy as np
@@ -48,8 +49,8 @@ from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 
-BUILTIN_MODEL_KEY = "rdf"
-BUILTIN_MODEL_ALIASES = {BUILTIN_MODEL_KEY}
+BUILTIN_MODEL_KEY = "rdf43"
+BUILTIN_MODEL_ALIASES = {BUILTIN_MODEL_KEY, "rdf"}
 MODEL_ID_ALIASES = {"sc": "sc2"}
 
 
@@ -63,6 +64,7 @@ def _model_smooth_seconds(params, key, default):
   value = params.get_float(key, return_default=True, default=default)
   return round(min(max(value, SMOOTH_SECONDS_STEP), 2.0) / SMOOTH_SECONDS_STEP) * SMOOTH_SECONDS_STEP
 MIN_LAT_CONTROL_SPEED = 0.3
+BIG_MODEL_TIMEOUT = 60
 
 
 def _get_param_str(params: Params, key: str, default: str = "") -> str:
@@ -120,6 +122,12 @@ def _canonical_model_id(model_id: str) -> str:
   if key in BUILTIN_MODEL_ALIASES:
     return BUILTIN_MODEL_KEY
   return MODEL_ID_ALIASES.get(key, key)
+
+
+def _select_builtin_model(params: Params) -> None:
+  params.put("Model", BUILTIN_MODEL_KEY)
+  params.put("DrivingModel", BUILTIN_MODEL_KEY)
+  params.put("DrivingModelName", "Regret Driven Framework V4")
 
 
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
@@ -288,6 +296,7 @@ class ModelState:
     self.off_policy_enabled = "off_policy" in self.policy_order
     self.off_policy_numpy_inputs = dict(self.numpy_inputs) if self.off_policy_enabled else {}
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
+    self.nonfinite_count = 0
     self.parser = Parser()
     self.aux_parser = Parser(ignore_missing=True)
     self.frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
@@ -371,6 +380,46 @@ class ModelState:
     parsed.update(policy_results[primary_key])
     return parsed
 
+  def _reset_state(self) -> None:
+    if self.model_type == "supercombo":
+      self.input_queues, self.npy = make_supercombo_input_queues(
+        self.policy_input_shapes, self.frame_skip, self.QUEUE_DEV,
+      )
+    else:
+      vision_shapes = self.metadata["vision"]["input_shapes"]
+      self.input_queues, self.npy = make_split_input_queues(
+        vision_shapes, self.policy_input_shapes, self.frame_skip, self.QUEUE_DEV,
+      )
+
+    for value in self.numpy_inputs.values():
+      value.fill(0)
+    self.prev_desire.fill(0)
+    if self.prev_desired_curv_key is not None:
+      self.full_prev_desired_curv.fill(0)
+    self._blob_cache.clear()
+
+  def warmup(self) -> None:
+    dummy_frames = {
+      key: np.zeros(self.frame_buf_size, dtype=np.uint8)
+      for key in self.vision_input_names
+    }
+    # A host pointer is not a valid camera buffer for every warp backend. Match
+    # upstream and substitute realized device buffers for warmup only.
+    self._blob_cache.update({
+      (key, value.ctypes.data): Tensor.zeros(value.shape, dtype="uint8", device=self.WARP_DEV).realize()
+      for key, value in dummy_frames.items()
+    })
+    eye = np.eye(3, dtype=np.float32)
+    inputs = {self.desire_key: np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)}
+    for name, value in self.numpy_inputs.items():
+      if name in (self.desire_key, self.prev_desired_curv_key):
+        continue
+      shape = value.shape[1:] if value.ndim > 1 and value.shape[0] == 1 else value.shape
+      inputs[name] = np.zeros(shape, dtype=value.dtype)
+
+    self.run(dummy_frames, dict.fromkeys(self.vision_input_names, eye), inputs, False)
+    self._reset_state()
+
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
           inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
     frames: dict[str, Tensor] = {}
@@ -420,12 +469,16 @@ class ModelState:
       )
     outputs = [output.numpy().flatten() for output in output_tensors]
 
-    # USB GPU failures can produce NaNs/Infs instead of raising. Never publish
-    # one of those frames; the next frame can recover without affecting the
-    # native GPU/CPU model paths.
+    # A corrupted inference poisons recurrent state. Reset and retry a few
+    # times, then raise so modeld can fall back to the already-loaded CPU model.
     if self.uses_external_gpu and any(not np.isfinite(output).all() for output in outputs):
-      cloudlog.error("external GPU produced non-finite model output, dropping frame")
+      self.nonfinite_count += 1
+      cloudlog.error(f"external GPU produced non-finite model output, resetting state ({self.nonfinite_count})")
+      self._reset_state()
+      if self.nonfinite_count >= 5:
+        raise RuntimeError("external GPU produced non-finite output after state reset")
       return None
+    self.nonfinite_count = 0
 
     if self.model_type == "supercombo":
       model_output = outputs[0]
@@ -448,6 +501,24 @@ class ModelState:
     return parsed
 
 
+def _load_model_state(cam_w: int, cam_h: int, selected_model: str, external_gpu_requested: bool,
+                      params: Params) -> ModelState:
+  try:
+    return ModelState(cam_w, cam_h, external_gpu_requested)
+  except Exception:
+    if selected_model == BUILTIN_MODEL_KEY:
+      raise
+
+    cloudlog.exception(f"Failed to load model {selected_model}; falling back to {BUILTIN_MODEL_KEY}")
+    _select_builtin_model(params)
+    if external_gpu_requested:
+      from tinygrad.helpers import DEV
+      device_config = tinygrad_dev_config(False, TICI)
+      DEV.value = device_config
+      os.environ["DEV"] = device_config
+    return ModelState(cam_w, cam_h, False)
+
+
 def main(demo=False):
   cloudlog.warning("modeld init")
 
@@ -468,6 +539,7 @@ def main(demo=False):
   params.put_bool("UsbGpuActive", False)
   params.put_bool("UsbGpuLoading", external_gpu_requested)
   if external_gpu_requested:
+    os.environ["HCQDEV_WAIT_TIMEOUT_MS"] = "3000"
     from tinygrad.helpers import DEV
     device_config = tinygrad_dev_config(True, TICI)
     DEV.value = device_config
@@ -498,18 +570,40 @@ def main(demo=False):
 
   start_time = time.monotonic()
   cloudlog.warning("loading model")
+  model = None
+  small_model = None
   if external_gpu_requested:
-    wait_usbgpu_link()
-  try:
-    model = ModelState(vipc_client_main.width, vipc_client_main.height, external_gpu_requested)
-  except Exception:
-    if not external_gpu_requested:
-      raise
-    cloudlog.exception(f"Failed to load external-GPU model {selected_model}; falling back to {BUILTIN_MODEL_KEY}")
-    device_config = tinygrad_dev_config(False, TICI)
-    DEV.value = device_config
-    os.environ["DEV"] = device_config
-    model = ModelState(vipc_client_main.width, vipc_client_main.height, False)
+    big_model = None
+
+    def load_big_model() -> None:
+      nonlocal big_model
+      try:
+        wait_usbgpu_link()
+        candidate = ModelState(vipc_client_main.width, vipc_client_main.height, True)
+        if not candidate.uses_external_gpu:
+          raise RuntimeError("external GPU model resolved to the builtin model")
+        candidate.warmup()
+        big_model = candidate
+      except Exception:
+        cloudlog.exception("external GPU model load or warmup failed")
+
+    loader = threading.Thread(target=load_big_model, name="big_model_loader", daemon=True)
+    loader.start()
+    loader.join(BIG_MODEL_TIMEOUT)
+    if loader.is_alive():
+      cloudlog.error(f"external GPU model load timed out after {BIG_MODEL_TIMEOUT}s")
+    model = big_model
+
+    # Keep the native model ready so a GPU error never takes modeld down.
+    small_model = ModelState(vipc_client_main.width, vipc_client_main.height, False)
+    if model is None:
+      model = small_model
+    else:
+      params.put("ModelVersion", model.policy_generation)
+      params.put("DrivingModelVersion", model.policy_generation)
+  else:
+    model = _load_model_state(vipc_client_main.width, vipc_client_main.height, selected_model, False, params)
+
   external_gpu_active = model.uses_external_gpu
   params.put_bool("UsbGpuCompiled", external_model_selected and file_chunked_exists(external_artifact))
   params.put_bool("UsbGpuActive", external_gpu_active)
@@ -664,7 +758,17 @@ def main(demo=False):
       inputs['lateral_control_params'] = lateral_control_params
 
     mt1 = time.perf_counter()
-    model_output = model.run(bufs, transforms, inputs, prepare_only)
+    try:
+      model_output = model.run(bufs, transforms, inputs, prepare_only)
+    except Exception:
+      if not external_gpu_active or small_model is None:
+        raise
+      cloudlog.exception("external GPU model failed, falling back to builtin model")
+      params.put_bool("UsbGpuActive", False)
+      model = small_model
+      external_gpu_active = False
+      run_count = 0
+      model_output = None
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
 

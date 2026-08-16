@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-
 import pytest
 
 from openpilot.selfdrive.ui.mici.onroad import cameraview as mici_cameraview
@@ -29,6 +28,12 @@ def test_mici_uses_shared_camera_view():
   assert issubclass(mici_cameraview.CameraView, big_cameraview.CameraView)
   assert mici_cameraview.CameraView._use_upstream_engaged_color
   assert not big_cameraview.CameraView._use_upstream_engaged_color
+
+
+def test_c4_defaults_to_ui_owned_camera_textures():
+  assert big_cameraview._default_force_texture_camera("mici")
+  assert not big_cameraview._default_force_texture_camera("tici")
+  assert not big_cameraview._default_force_texture_camera("tizi")
 
 
 def test_pending_switch_is_cancelled_when_requested_stream_is_current():

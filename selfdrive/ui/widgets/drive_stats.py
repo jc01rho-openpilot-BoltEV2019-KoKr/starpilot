@@ -526,7 +526,7 @@ class DriveStatsDashboard:
     self.refresh()
 
   def refresh(self) -> None:
-    demo_enabled = os.getenv("SP_RAYBIG_FAKE_DRIVE_STATS", "0").lower() in ("1", "true", "yes", "on")
+    demo_enabled = os.getenv("SP_C3_FAKE_DRIVE_STATS", "0").lower() in ("1", "true", "yes", "on")
     self._data = demo_drive_stats_data(self._params.get_bool("IsMetric")) if demo_enabled else load_drive_stats_data(self._params)
 
   @staticmethod

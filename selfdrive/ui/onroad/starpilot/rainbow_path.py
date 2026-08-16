@@ -19,7 +19,7 @@ def _hsla_to_color(h: float, s: float, l: float, a: float) -> rl.Color:
 
 
 class RainbowPath:
-  """Rainbow path renderer ported from the FrogPilot/StarPilot Qt C++ UI implementation."""
+  """Rainbow path renderer for the StarPilot onroad UI."""
 
   def __init__(self) -> None:
     self._hue_offset: float = 0.0

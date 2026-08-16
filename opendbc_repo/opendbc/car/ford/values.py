@@ -8,6 +8,7 @@ from opendbc.car.lateral import AngleSteeringLimits
 from opendbc.car.structs import CarParams
 from opendbc.car.docs_definitions import CarFootnote, CarHarness, CarDocs, CarParts, Column
 from opendbc.car.fw_query_definitions import FwQueryConfig, LiveFwVersions, OfflineFwVersions, Request, StdQueries, p16
+from opendbc.car.vin import Vin, is_valid_vin
 
 Ecu = CarParams.Ecu
 
@@ -53,11 +54,15 @@ class FordFlags(IntFlag):
   # Static flags
   CANFD = 1
   LKA_STEERING = 2
+  ALT_STEER_ANGLE = 4
+  HEV_CLUSTER_DATA = 8
+  HEV_BATTERY_DATA = 16
 
 
 class RADAR:
   DELPHI_ESR = 'ford_fusion_2018_adas'
   DELPHI_MRR = 'FORD_CADS'
+  STEER_ASSIST_DATA = 'ford_lincoln_base_pt'
 
 
 class Footnote(Enum):
@@ -87,6 +92,10 @@ class FordCarDocs(CarDocs):
 
 @dataclass
 class FordPlatformConfig(PlatformConfig):
+  wmis: set[str] = field(default_factory=set)
+  vds_codes: set[str] = field(default_factory=set)
+  years: set[str] = field(default_factory=set)
+
   dbc_dict: DbcDict = field(default_factory=lambda: {
     Bus.pt: 'ford_lincoln_base_pt',
     Bus.radar: RADAR.DELPHI_MRR,
@@ -106,6 +115,7 @@ class FordPlatformConfig(PlatformConfig):
 class FordCANFDPlatformConfig(FordPlatformConfig):
   dbc_dict: DbcDict = field(default_factory=lambda: {
     Bus.pt: 'ford_lincoln_base_pt',
+    Bus.radar: RADAR.STEER_ASSIST_DATA,
   })
 
   def init(self):
@@ -129,10 +139,23 @@ class FordF150LightningPlatform(FordCANFDPlatformConfig):
     self.car_docs = []
 
 
+MY_2020, MY_2021, MY_2022, MY_2023, MY_2024, MY_2025 = 'L', 'M', 'N', 'P', 'R', 'S'
+F150_VDS_CODES = {'F1C', 'F1E', 'W1C', 'W1E', 'X1C', 'X1E', 'W1R', 'W1P', 'W1S', 'W1T'}
+F150_ELECTRIC_CODES = {'L', 'V'}
+MACH_E_VDS_CODES = {'K1R', 'K1S', 'K2S', 'K3R', 'K3S', 'K4S'}
+
+
 class CAR(Platforms):
   FORD_BRONCO_SPORT_MK1 = FordPlatformConfig(
     [FordCarDocs("Ford Bronco Sport 2021-24")],
     CarSpecs(mass=1625, wheelbase=2.67, steerRatio=17.7),
+    wmis={'3FM'}, vds_codes={'CR9'}, years={MY_2021, MY_2022, MY_2023, MY_2024},
+  )
+  FORD_EDGE_MK2 = FordPlatformConfig(
+    [FordCarDocs("Ford Edge 2022")],
+    CarSpecs(mass=1933, wheelbase=2.824, steerRatio=15.3),
+    flags=FordFlags.ALT_STEER_ANGLE,
+    wmis={'2FM'}, vds_codes={'PK4'}, years={MY_2022},
   )
   FORD_ESCAPE_MK4 = FordPlatformConfig(
     [
@@ -140,6 +163,7 @@ class CAR(Platforms):
       FordCarDocs("Ford Kuga 2020-23", "Adaptive Cruise Control with Lane Centering", hybrid=True, plug_in_hybrid=True),
     ],
     CarSpecs(mass=1750, wheelbase=2.71, steerRatio=16.7),
+    wmis={'1FM'}, vds_codes={'CU0', 'CU9'}, years={MY_2020, MY_2021, MY_2022},
   )
   FORD_ESCAPE_MK4_5 = FordCANFDPlatformConfig(
     [
@@ -148,6 +172,7 @@ class CAR(Platforms):
       FordCarDocs("Ford Kuga Plug-in Hybrid 2024", "All"),
     ],
     CarSpecs(mass=1750, wheelbase=2.71, steerRatio=16.7),
+    wmis={'1FM'}, vds_codes={'CU0', 'CU9'}, years={MY_2023, MY_2024},
   )
   FORD_EXPLORER_MK6 = FordPlatformConfig(
     [
@@ -155,22 +180,31 @@ class CAR(Platforms):
       FordCarDocs("Lincoln Aviator 2020-24", "Co-Pilot360 Plus", plug_in_hybrid=True),  # Hybrid: Grand Touring only
     ],
     CarSpecs(mass=2050, wheelbase=3.025, steerRatio=16.8),
+    wmis={'1FM', '5LM'}, vds_codes={'5K7', '5K8', '5J7'},
+    years={MY_2020, MY_2021, MY_2022, MY_2023, MY_2024},
   )
   FORD_EXPEDITION_MK4 = FordCANFDPlatformConfig(
     [FordCarDocs("Ford Expedition 2022-24", "Co-Pilot360 Assist 2.0", hybrid=False)],
     CarSpecs(mass=2000, wheelbase=3.69, steerRatio=17.0),
+    wmis={'1FM'}, vds_codes={'JU1', 'JU2', 'JK1'}, years={MY_2022, MY_2023, MY_2024},
   )
   FORD_F_150_MK14 = FordCANFDPlatformConfig(
     [FordCarDocs("Ford F-150 2021-23", "Co-Pilot360 Assist 2.0", hybrid=True)],
-    CarSpecs(mass=2000, wheelbase=3.69, steerRatio=17.0),
+    CarSpecs(mass=3334, wheelbase=3.99, steerRatio=17.0),
+    wmis={'1FT'}, vds_codes=F150_VDS_CODES, years={MY_2021, MY_2022, MY_2023},
   )
   FORD_F_150_LIGHTNING_MK1 = FordF150LightningPlatform(
-    [FordCarDocs("Ford F-150 Lightning 2022-23", "Co-Pilot360 Assist 2.0")],
+    [FordCarDocs("Ford F-150 Lightning 2022-25", "Co-Pilot360 Assist 2.0")],
     CarSpecs(mass=2948, wheelbase=3.70, steerRatio=16.9),
+    wmis={'1FT'}, vds_codes=F150_VDS_CODES, years={MY_2022, MY_2023, MY_2024, MY_2025},
   )
   FORD_FOCUS_MK4 = FordPlatformConfig(
-    [FordCarDocs("Ford Focus 2018", "Adaptive Cruise Control with Lane Centering", footnotes=[Footnote.FOCUS], hybrid=True)],  # mHEV only
+    [FordCarDocs("Ford Focus 2018-22", "Adaptive Cruise Control with Lane Centering", footnotes=[Footnote.FOCUS], hybrid=True)],  # mHEV only
     CarSpecs(mass=1350, wheelbase=2.7, steerRatio=15.0),
+  )
+  FORD_MONDEO_MK5 = FordCANFDPlatformConfig(
+    [FordCarDocs("Ford Mondeo 2014-22", "Adaptive Cruise Control with Lane Centering")],
+    CarSpecs(mass=1550, wheelbase=2.85, steerRatio=14.8),
   )
   FORD_MAVERICK_MK1 = FordPlatformConfig(
     [
@@ -178,14 +212,17 @@ class CAR(Platforms):
       FordCarDocs("Ford Maverick 2023-24", "Co-Pilot360 Assist", hybrid=True),
     ],
     CarSpecs(mass=1650, wheelbase=3.076, steerRatio=17.0),
+    wmis={'3FT'}, vds_codes={'TW8'}, years={MY_2022, MY_2023, MY_2024},
   )
   FORD_MUSTANG_MACH_E_MK1 = FordCANFDPlatformConfig(
     [FordCarDocs("Ford Mustang Mach-E 2021-24", "All", setup_video="https://www.youtube.com/watch?v=AR4_eTF3b_A")],
     CarSpecs(mass=2200, wheelbase=2.984, steerRatio=17.0),  # TODO: check steer ratio
+    wmis={'3FM'}, vds_codes=MACH_E_VDS_CODES, years={MY_2021, MY_2022, MY_2023, MY_2024},
   )
   FORD_RANGER_MK2 = FordCANFDPlatformConfig(
     [FordCarDocs("Ford Ranger 2024", "Adaptive Cruise Control with Lane Centering", setup_video="https://www.youtube.com/watch?v=2oJlXCKYOy0")],
     CarSpecs(mass=2000, wheelbase=3.27, steerRatio=17.0),
+    wmis={'1FT'}, vds_codes={'ER4'}, years={MY_2024},
   )
   FORD_TRANSIT_MK5 = FordLKASteeringPlatformConfig(
     [FordCarDocs("Ford Transit 2025", "Co-Pilot360 Assist+")],
@@ -257,7 +294,25 @@ def match_fw_to_car_fuzzy(live_fw_versions: LiveFwVersions, vin: str, offline_fw
     if valid_expected_ecus.issubset(valid_found_ecus):
       candidates.add(candidate)
 
-  return candidates
+  return candidates or match_vin_to_car(vin)
+
+
+def match_vin_to_car(vin: str) -> set[str]:
+  if not is_valid_vin(vin):
+    return set()
+
+  vin_obj = Vin(vin)
+  vds = vin[3:7]
+  model_year = vin[9]
+  candidates = {platform for platform in CAR if vin_obj.wmi in platform.config.wmis and
+                model_year in platform.config.years and
+                any(code in vds for code in platform.config.vds_codes)}
+
+  if {CAR.FORD_F_150_MK14, CAR.FORD_F_150_LIGHTNING_MK1} & candidates:
+    electric = vin[7] in F150_ELECTRIC_CODES
+    candidates.discard(CAR.FORD_F_150_MK14 if electric else CAR.FORD_F_150_LIGHTNING_MK1)
+
+  return {str(candidate) for candidate in candidates}
 
 
 # All of these ECUs must be present and are expected to have platform codes we can match
@@ -266,10 +321,10 @@ PLATFORM_CODE_ECUS = (Ecu.abs, Ecu.fwdCamera, Ecu.fwdRadar, Ecu.eps)
 DATA_IDENTIFIER_FORD_ASBUILT = 0xDE00
 
 ASBUILT_BLOCKS: list[tuple[int, list]] = [
-  (1, [Ecu.debug, Ecu.fwdCamera, Ecu.eps]),
-  (2, [Ecu.abs, Ecu.debug, Ecu.eps]),
-  (3, [Ecu.abs, Ecu.debug, Ecu.eps]),
-  (4, [Ecu.debug, Ecu.fwdCamera]),
+  (1, [Ecu.debug, Ecu.fwdCamera, Ecu.eps, Ecu.hud]),
+  (2, [Ecu.abs, Ecu.debug, Ecu.eps, Ecu.hud]),
+  (3, [Ecu.abs, Ecu.debug, Ecu.eps, Ecu.hud]),
+  (4, [Ecu.debug, Ecu.fwdCamera, Ecu.hud]),
   (5, [Ecu.debug]),
   (6, [Ecu.debug]),
   (7, [Ecu.debug]),
@@ -297,13 +352,13 @@ FW_QUERY_CONFIG = FwQueryConfig(
     Request(
       [StdQueries.TESTER_PRESENT_REQUEST, StdQueries.MANUFACTURER_SOFTWARE_VERSION_REQUEST],
       [StdQueries.TESTER_PRESENT_RESPONSE, StdQueries.MANUFACTURER_SOFTWARE_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.abs, Ecu.debug, Ecu.engine, Ecu.eps, Ecu.fwdCamera, Ecu.fwdRadar, Ecu.shiftByWire],
+      whitelist_ecus=[Ecu.abs, Ecu.debug, Ecu.engine, Ecu.eps, Ecu.fwdCamera, Ecu.fwdRadar, Ecu.shiftByWire, Ecu.hud],
       logging=True,
     ),
     Request(
       [StdQueries.TESTER_PRESENT_REQUEST, StdQueries.MANUFACTURER_SOFTWARE_VERSION_REQUEST],
       [StdQueries.TESTER_PRESENT_RESPONSE, StdQueries.MANUFACTURER_SOFTWARE_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.abs, Ecu.debug, Ecu.engine, Ecu.eps, Ecu.fwdCamera, Ecu.fwdRadar, Ecu.shiftByWire],
+      whitelist_ecus=[Ecu.abs, Ecu.debug, Ecu.engine, Ecu.eps, Ecu.fwdCamera, Ecu.fwdRadar, Ecu.shiftByWire, Ecu.hud],
       bus=0,
       auxiliary=True,
     ),
@@ -320,7 +375,9 @@ FW_QUERY_CONFIG = FwQueryConfig(
                                       # Note: We are unlikely to get a response from behind the gateway
     (Ecu.shiftByWire, 0x732, None),   # Gear Shift Module
     (Ecu.debug, 0x7d0, None),         # Accessory Protocol Interface Module
+    (Ecu.hud, 0x720, None),           # Instrument Cluster Module
   ],
+  non_essential_ecus={Ecu.eps: [CAR.FORD_F_150_LIGHTNING_MK1, CAR.FORD_EXPEDITION_MK4]},
   # Custom fuzzy fingerprinting function using platform and model year hints
   match_fw_to_car_fuzzy=match_fw_to_car_fuzzy,
 )

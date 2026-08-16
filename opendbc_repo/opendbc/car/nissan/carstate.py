@@ -134,7 +134,7 @@ class CarState(CarStateBase):
 
     buttonEvents = create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
 
-    if self.CP.carFingerprint in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC):
+    if self.CP.openpilotLongitudinalControl and self.CP.carFingerprint == CAR.NISSAN_LEAF:
       prev_set_button = self.set_button
       prev_res_button = self.res_button
       prev_cancel_button = self.cancel_button

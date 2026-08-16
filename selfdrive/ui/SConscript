@@ -1,128 +1,33 @@
-import json
-import os
-Import('env', 'qt_env', 'arch', 'common', 'messaging', 'visionipc', 'transformations')
+Import('env', 'arch', 'common')
 
-base_libs = [common, messaging, visionipc, transformations,
-             'm', 'OpenCL', 'ssl', 'crypto', 'pthread'] + qt_env["LIBS"]
+if GetOption('extras') and arch != "Darwin":
+  raylib_env = env.Clone()
+  raylib_env['LIBPATH'] += [f'#third_party/raylib/{arch}/']
+  raylib_env['LINKFLAGS'].append('-Wl,-strip-debug')
 
-base_libs += ['avcodec', 'avformat', 'avutil', 'swresample', 'yuv']
+  raylib_libs = common + ["raylib"]
+  if arch == "larch64":
+    raylib_libs += ["GLESv2", "wayland-client", "wayland-egl", "EGL"]
+  else:
+    raylib_libs += ["GL"]
 
-# OpenMAX is only available in the device-target runtime/sysroot. Host desktop
-# UI builds on Linux should not need or link it.
-if arch == 'larch64':
-  base_libs.append('OmxCore')
+  release = "release3"
+  installers = [
+    ("openpilot", release),
+    ("openpilot_test", f"{release}-staging"),
+    ("openpilot_nightly", "nightly"),
+    ("openpilot_internal", "nightly-dev"),
+  ]
 
-if arch == 'larch64':
-  base_libs.append('EGL')
+  cont = raylib_env.Command("installer/continue_openpilot.o", "installer/continue_openpilot.sh",
+                            "ld -r -b binary -o $TARGET $SOURCE")
+  inter = raylib_env.Command("installer/inter_ttf.o", "installer/inter-ascii.ttf",
+                             "ld -r -b binary -o $TARGET $SOURCE")
+  for name, branch in installers:
+    defines = {'BRANCH': f"'\"{branch}\"'"}
+    if "internal" in name:
+      defines['INTERNAL'] = "1"
 
-if arch == "Darwin":
-  del base_libs[base_libs.index('OpenCL')]
-  qt_env['FRAMEWORKS'] += ['OpenCL']
-
-# FIXME: remove this once we're on 5.15 (24.04)
-qt_env['CXXFLAGS'] += ["-Wno-deprecated-declarations"]
-
-qt_util = qt_env.Library("qt_util", ["#selfdrive/ui/qt/api.cc", "#selfdrive/ui/qt/util.cc"], LIBS=base_libs)
-widgets_src = ["qt/widgets/input.cc", "qt/prime_state.cc",
-               "qt/widgets/ssh_keys.cc", "qt/widgets/toggle.cc", "qt/widgets/controls.cc",
-               "qt/widgets/offroad_alerts.cc", "qt/widgets/prime.cc", "qt/widgets/keyboard.cc",
-               "qt/widgets/scrollview.cc", "qt/widgets/cameraview.cc", "#third_party/qrcode/QrCode.cc",
-               "qt/request_repeater.cc", "qt/qt_window.cc", "qt/network/networking.cc", "qt/network/wifi_manager.cc"]
-
-starpilot_widgets_src = ["../../starpilot/ui/qt/widgets/starpilot_controls.cc"]
-widgets_src += starpilot_widgets_src
-
-widgets = qt_env.Library("qt_widgets", widgets_src, LIBS=base_libs)
-Export('widgets')
-qt_libs = [widgets, qt_util] + base_libs
-
-qt_src = ["main.cc", "ui.cc", "qt/sidebar.cc", "qt/body.cc",
-          "qt/window.cc", "qt/home.cc", "qt/offroad/settings.cc",
-          "qt/offroad/software_settings.cc", "qt/offroad/developer_panel.cc", "qt/offroad/onboarding.cc",
-          "qt/offroad/driverview.cc", "qt/offroad/experimental_mode.cc",
-          "qt/onroad/onroad_home.cc", "qt/onroad/annotated_camera.cc", "qt/onroad/model.cc",
-          "qt/onroad/buttons.cc", "qt/onroad/alerts.cc", "qt/onroad/driver_monitoring.cc", "qt/onroad/hud.cc"]
-
-qt_env['CPPPATH'] += ["../../starpilot/ui/screenrecorder/openmax/include/"]
-
-starpilot_src = ["../../starpilot/ui/starpilot_ui.cc", "../../starpilot/ui/qt/offroad/data_settings.cc",
-                 "../../starpilot/ui/qt/offroad/device_settings.cc", "../../starpilot/ui/qt/offroad/starpilot_settings.cc",
-                 "../../starpilot/ui/qt/offroad/expandable_multi_option_dialog.cc",
-                 "../../starpilot/ui/qt/offroad/lateral_settings.cc", "../../starpilot/ui/qt/offroad/longitudinal_settings.cc",
-                 "../../starpilot/ui/qt/offroad/maps_settings.cc", "../../starpilot/ui/qt/offroad/model_settings.cc",
-                 "../../starpilot/ui/qt/offroad/navigation_settings.cc", "../../starpilot/ui/qt/offroad/sounds_settings.cc",
-                 "../../starpilot/ui/qt/offroad/theme_settings.cc", "../../starpilot/ui/qt/offroad/utilities.cc",
-                 "../../starpilot/ui/qt/offroad/vehicle_settings.cc", "../../starpilot/ui/qt/offroad/visual_settings.cc",
-                 "../../starpilot/ui/qt/offroad/wheel_settings.cc", "../../starpilot/ui/qt/onroad/starpilot_annotated_camera.cc",
-                 "../../starpilot/ui/qt/onroad/starpilot_buttons.cc", "../../starpilot/ui/qt/onroad/starpilot_onroad.cc",
-                 "../../starpilot/ui/qt/widgets/developer_sidebar.cc", "../../starpilot/ui/qt/widgets/drive_stats.cc",
-                 "../../starpilot/ui/qt/widgets/drive_summary.cc",
-                 "../../starpilot/ui/qt/widgets/navigation_functions.cc",
-                 "../../starpilot/ui/screenrecorder/omx_encoder.cc", "../../starpilot/ui/screenrecorder/screenrecorder.cc"]
-qt_src += starpilot_src
-
-# build translation files
-with open(File("translations/languages.json").abspath) as f:
-  languages = json.loads(f.read())
-translation_sources = [f"#selfdrive/ui/translations/{l}.ts" for l in languages.values()]
-translation_targets = [src.replace(".ts", ".qm") for src in translation_sources]
-lrelease_bin = os.environ.get("SP_QT_HOST_LRELEASE", "lrelease") if arch == 'larch64' else 'lrelease'
-
-lrelease = qt_env.Command(translation_targets, translation_sources, f"{lrelease_bin} $SOURCES")
-qt_env.NoClean(translation_sources)
-qt_env.Precious(translation_sources)
-
-# create qrc file for compiled translations to include with assets
-translations_assets_src = "#selfdrive/assets/translations_assets.qrc"
-with open(File(translations_assets_src).abspath, 'w') as f:
-  f.write('<!DOCTYPE RCC><RCC version="1.0">\n<qresource>\n')
-  f.write('\n'.join([f'<file alias="{l}">../ui/translations/{l}.qm</file>' for l in languages.values()]))
-  f.write('\n</qresource>\n</RCC>')
-
-# build assets
-assets = "#selfdrive/assets/assets.cc"
-assets_src = "#selfdrive/assets/assets.qrc"
-rcc_bin = qt_env.get("SP_QT_RCC", "rcc")
-qt_env.Command(assets, [assets_src, translations_assets_src], f"{rcc_bin} $SOURCES -o $TARGET")
-qt_env.Depends(assets, Glob('#selfdrive/assets/*', exclude=[assets, assets_src, translations_assets_src, "#selfdrive/assets/assets.o"]) + [lrelease])
-asset_obj = qt_env.Object("assets", assets)
-
-# build main UI
-qt_env.Program("ui", qt_src + [asset_obj], LIBS=qt_libs)
-if GetOption('extras'):
-  qt_src.remove("main.cc")  # replaced by test_runner
-  qt_env.Program('tests/test_translations', [asset_obj, 'tests/test_runner.cc', 'tests/test_translations.cc'] + qt_src, LIBS=qt_libs)
-
-  # build installers
-  if arch != "Darwin":
-    raylib_env = env.Clone()
-    raylib_env['LIBPATH'] += [f'#third_party/raylib/{arch}/']
-    raylib_env['LINKFLAGS'].append('-Wl,-strip-debug')
-
-    raylib_libs = common + ["raylib"]
-    if arch == "larch64":
-      raylib_libs += ["GLESv2", "wayland-client", "wayland-egl", "EGL"]
-    else:
-      raylib_libs += ["GL"]
-
-    release = "release3"
-    installers = [
-      ("openpilot", release),
-      ("openpilot_test", f"{release}-staging"),
-      ("openpilot_nightly", "nightly"),
-      ("openpilot_internal", "nightly-dev"),
-    ]
-
-    cont = raylib_env.Command("installer/continue_openpilot.o", "installer/continue_openpilot.sh",
-                              "ld -r -b binary -o $TARGET $SOURCE")
-    inter = raylib_env.Command("installer/inter_ttf.o", "installer/inter-ascii.ttf",
-                               "ld -r -b binary -o $TARGET $SOURCE")
-    for name, branch in installers:
-      d = {'BRANCH': f"'\"{branch}\"'"}
-      if "internal" in name:
-        d['INTERNAL'] = "1"
-
-      obj = raylib_env.Object(f"installer/installers/installer_{name}.o", ["installer/installer.cc"], CPPDEFINES=d)
-      f = raylib_env.Program(f"installer/installers/installer_{name}", [obj, cont, inter], LIBS=raylib_libs)
-      # keep installers small
-      assert f[0].get_size() < 1900*1e3, f[0].get_size()
+    obj = raylib_env.Object(f"installer/installers/installer_{name}.o", ["installer/installer.cc"], CPPDEFINES=defines)
+    installer = raylib_env.Program(f"installer/installers/installer_{name}", [obj, cont, inter], LIBS=raylib_libs)
+    assert installer[0].get_size() < 1900*1e3, installer[0].get_size()

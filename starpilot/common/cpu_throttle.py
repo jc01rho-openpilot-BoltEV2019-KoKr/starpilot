@@ -30,17 +30,20 @@ def _online_cpu_count() -> int | None:
     return None
 
 
-def _online_cpu_usage(cpu_usage) -> list[float]:
+def _online_cpu_usage(cpu_usage, cores=None) -> list[float]:
   usage = [float(value) for value in cpu_usage]
   online_count = _online_cpu_count()
   if online_count is not None and online_count < len(usage):
-    return usage[:online_count]
+    usage = usage[:online_count]
+
+  if cores is not None:
+    usage = [usage[core] for core in cores if 0 <= core < len(usage)]
   return usage
 
 
-def device_cpu_throttle_factor(cpu_usage, name="vision"):
+def device_cpu_throttle_factor(cpu_usage, name="vision", cores=None):
   """Return a process-local, low-pass-filtered CPU throttle factor."""
-  usage = _online_cpu_usage(cpu_usage)
+  usage = _online_cpu_usage(cpu_usage, cores=cores)
   if not usage:
     return 1.0
 

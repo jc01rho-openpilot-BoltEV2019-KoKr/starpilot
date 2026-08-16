@@ -9,6 +9,7 @@ from pathlib import Path
 
 from openpilot.common.file_chunker import get_chunk_name, get_manifest_path
 from openpilot.common.params import Params
+from openpilot.starpilot.assets.model_manager import external_gpu_available, model_uses_external_gpu
 from openpilot.selfdrive.ui.mici.widgets.button import BigButton
 from openpilot.selfdrive.ui.mici.widgets.dialog import BigDialog, BigDialogBase, BigMultiOptionDialog
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -62,6 +63,7 @@ class ModelEntry:
   version: str
   released: str
   community_favorite: bool
+  requires_external_gpu: bool = False
 
 
 def _clean_model_name(name: str) -> str:
@@ -515,6 +517,10 @@ class DrivingModelBigButton(BigButton):
     return entry_list
 
   def _start_model_download(self, model_key: str):
+    entry = next((item for item in self._load_model_entries() if item.key == model_key), None)
+    if entry is not None and entry.requires_external_gpu and not external_gpu_available():
+      self._show_message("GPU required", "This model requires a detected external GPU.", return_to_manager=True)
+      return
     if not self._start_worker("download", self._run_download_one, model_key):
       self._show_message("Model manager busy", "Please wait for the current task.", return_to_manager=True)
       return
@@ -544,6 +550,10 @@ class DrivingModelBigButton(BigButton):
 
     if entry is None:
       self._show_message("Model unavailable", "Refresh manifest and try again.", return_to_manager=True)
+      return
+
+    if entry.requires_external_gpu and not external_gpu_available():
+      self._show_message("GPU required", "This model requires a detected external GPU.", return_to_manager=True)
       return
 
     if not self._is_model_installed(entry.key, entry.version):
@@ -662,6 +672,7 @@ class DrivingModelBigButton(BigButton):
         version=version,
         released=released,
         community_favorite=(key in community_favs),
+        requires_external_gpu=model_uses_external_gpu(key),
       ))
 
     return entries
@@ -723,10 +734,12 @@ class DrivingModelBigButton(BigButton):
       default_key = default_key.decode("utf-8", errors="ignore")
     default_key = str(default_key or "").strip()
     if not default_key:
-      default_key = "rdf"
+      default_key = "rdf43"
 
     # Keep the built-in model selectable even when the manifest omits it.
     if key == default_key:
+      return True
+    if default_key == "rdf43" and key == "rdf":
       return True
     if default_key.endswith("2") and key == default_key[:-1]:
       return True

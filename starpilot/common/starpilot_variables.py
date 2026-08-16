@@ -22,7 +22,7 @@ from opendbc.car.interfaces import TORQUE_SUBSTITUTE_PATH, CarInterfaceBase, Gea
 from opendbc.car.mock.values import CAR as MOCK
 from opendbc.car.subaru.values import SubaruFlags
 from opendbc.car.tesla.values import CAR as TESLA_CAR
-from opendbc.car.toyota.values import CAR as TOYOTA_CAR, ToyotaStarPilotFlags
+from opendbc.car.toyota.values import CAR as TOYOTA_CAR, TSS2_CAR, ToyotaStarPilotFlags
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
@@ -204,42 +204,14 @@ DEVELOPER_SIDEBAR_METRICS = {
   "MODEL_NAME": 17,
 }
 
-DEVICE_SHUTDOWN_TIMES = {
-  0: 300,      # 5 mins
-  1: 900,      # 15 mins
-  2: 1800,     # 30 mins
-  3: 2700,     # 45 mins
-  4: 3600,     # 1 hour
-  5: 7200,     # 2 hours
-  6: 10800,    # 3 hours
-  7: 14400,    # 4 hours
-  8: 18000,    # 5 hours
-  9: 21600,    # 6 hours
-  10: 25200,   # 7 hours
-  11: 28800,   # 8 hours
-  12: 32400,   # 9 hours
-  13: 36000,   # 10 hours
-  14: 39600,   # 11 hours
-  15: 43200,   # 12 hours
-  16: 46800,   # 13 hours
-  17: 50400,   # 14 hours
-  18: 54000,   # 15 hours
-  19: 57600,   # 16 hours
-  20: 61200,   # 17 hours
-  21: 64800,   # 18 hours
-  22: 68400,   # 19 hours
-  23: 72000,   # 20 hours
-  24: 75600,   # 21 hours
-  25: 79200,   # 22 hours
-  26: 82800,   # 23 hours
-  27: 86400,   # 24 hours
-  28: 90000,   # 25 hours
-  29: 93600,   # 26 hours
-  30: 97200,   # 27 hours
-  31: 100800,  # 28 hours
-  32: 104400,  # 29 hours
-  33: 108000,  # 30 hours
-}
+DEVICE_SHUTDOWN_MIN_HOURS = 1
+DEVICE_SHUTDOWN_MAX_HOURS = 30
+DEVICE_SHUTDOWN_DEFAULT_HOURS = 6
+
+
+def device_shutdown_seconds(hours):
+  bounded_hours = max(DEVICE_SHUTDOWN_MIN_HOURS, min(DEVICE_SHUTDOWN_MAX_HOURS, int(hours)))
+  return bounded_hours * 60 * 60
 
 EXCLUDED_KEYS = {
   "AvailableModelSeries",
@@ -643,7 +615,8 @@ class StarPilotVariables:
     hyundai_can_use_lkas_for_aol = toggle.car_make == "hyundai" and (
       bool(CP.flags & HyundaiFlags.CANFD) or hyundai_has_lda_button
     )
-    toggle.lkas_allowed_for_aol = hyundai_can_use_lkas_for_aol or toggle.car_make == "honda"
+    toyota_can_use_lkas_for_aol = toggle.car_make == "toyota" and CP.carFingerprint in TSS2_CAR
+    toggle.lkas_allowed_for_aol = hyundai_can_use_lkas_for_aol or toggle.car_make == "honda" or toyota_can_use_lkas_for_aol
     longitudinalActuatorDelay = CP.longitudinalActuatorDelay
     toggle.openpilot_longitudinal = CP.openpilotLongitudinalControl and not toggle.disable_openpilot_long
     if not toggle.redneck_cruise_available or (toggle.openpilot_longitudinal and FPCP.pcmCruiseSpeed):
@@ -955,7 +928,12 @@ class StarPilotVariables:
     toggle.show_stopping_point_metrics = self.get_value("ShowStoppingPointMetrics", condition=toggle.show_stopping_point) or toggle.debug_mode
 
     device_management = self.get_value("DeviceManagement")
-    toggle.device_shutdown_time = DEVICE_SHUTDOWN_TIMES.get(self.get_value("DeviceShutdown", cast=int, condition=device_management))
+    device_shutdown_hours = self.get_value(
+      "DeviceShutdown", cast=int, condition=device_management,
+      default=DEVICE_SHUTDOWN_DEFAULT_HOURS,
+      min=DEVICE_SHUTDOWN_MIN_HOURS, max=DEVICE_SHUTDOWN_MAX_HOURS,
+    )
+    toggle.device_shutdown_time = device_shutdown_seconds(device_shutdown_hours)
     toggle.increase_thermal_limits = self.get_value("IncreaseThermalLimits", condition=device_management)
     toggle.low_voltage_shutdown = self.get_value("LowVoltageShutdown", cast=float, condition=device_management, min=VBATT_PAUSE_CHARGING, max=12.5)
     # Keep force-onroad desktop simulations from polluting logs, but never disable
@@ -1210,10 +1188,10 @@ class StarPilotVariables:
     toggle.recovery_power = self.get_value("RecoveryPower", cast=float, condition=longitudinal_tuning, default=1.0, min=0.5, max=2.0)
     toggle.taco_tune = self.get_value("TacoTune", condition=longitudinal_tuning)
 
-    toggle.model = self.get_value("Model", cast=None, default="rdf")
+    toggle.model = self.get_value("Model", cast=None, default="rdf43")
     if not toggle.model:
-      toggle.model = self.get_value("DrivingModel", cast=None, default="rdf")
-    toggle.model_name = self.get_value("DrivingModelName", cast=None, default="Regret Driven Framework")
+      toggle.model = self.get_value("DrivingModel", cast=None, default="rdf43")
+    toggle.model_name = self.get_value("DrivingModelName", cast=None, default="Regret Driven Framework V4")
     toggle.model_version = self.get_value("ModelVersion", cast=None, default="v15")
     if not toggle.model_version:
       toggle.model_version = self.get_value("DrivingModelVersion", cast=None, default="v15")

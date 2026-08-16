@@ -33,7 +33,7 @@ class AlertConstants:
   MARGIN = 50
   SPACING = 30
   FONT_SIZE = 48
-  BORDER_RADIUS = 30 * 2  # matches Qt's 30px
+  BORDER_RADIUS = 30 * 2
   ALERT_HEIGHT = 120
   ALERT_SPACING = 10
   ALERT_INSET = 60

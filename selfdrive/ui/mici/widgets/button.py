@@ -105,7 +105,7 @@ class BigButton(Widget):
   LABEL_HORIZONTAL_PADDING = 40
   LABEL_VERTICAL_PADDING = 23  # visually matches 30 in figma
 
-  """A lightweight stand-in for the Qt BigButton, drawn & updated each frame."""
+  """A lightweight large action button, drawn and updated each frame."""
 
   def __init__(self, text: str, value: str = "", icon: Union[rl.Texture, None] = None, scroll: bool = False):
     super().__init__()

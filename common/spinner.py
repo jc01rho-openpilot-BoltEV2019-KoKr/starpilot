@@ -7,19 +7,6 @@ class Spinner:
   def __init__(self):
     self.spinner_proc = None
 
-    # Prefer the legacy compiled spinner on device.
-    legacy_spinner = os.path.join(BASEDIR, "selfdrive", "ui", "spinner")
-    if os.path.isfile("/TICI") and os.path.isfile(legacy_spinner) and os.access(legacy_spinner, os.X_OK):
-      try:
-        self.spinner_proc = subprocess.Popen([legacy_spinner],
-                                             stdin=subprocess.PIPE,
-                                             cwd=os.path.join(BASEDIR, "selfdrive", "ui"),
-                                             close_fds=True)
-        return
-      except OSError:
-        self.spinner_proc = None
-
-    # Raylib spinner requires Python deps from the repo virtualenv.
     spinner_cwd = os.path.join(BASEDIR, "system", "ui")
     venv_python = os.path.join(BASEDIR, ".venv", "bin", "python")
     python_exec = venv_python if os.path.isfile(venv_python) else "python3"

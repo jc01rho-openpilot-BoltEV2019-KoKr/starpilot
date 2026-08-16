@@ -130,7 +130,6 @@ def render_adjacent_lanes(renderer) -> None:
 def render_path_edges(renderer) -> None:
   """Draw colored edge strips along the driving path.
 
-  Qt reference: paintPathEdges in starpilot_annotated_camera.cc:732-769
 
   Path edges are the area between track_edge_vertices (outer) and track_vertices (inner).
   Color selection on Python UIs:

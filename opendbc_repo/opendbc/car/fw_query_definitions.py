@@ -101,6 +101,7 @@ class Request:
 @dataclass
 class FwQueryConfig:
   requests: list[Request]
+  non_tester_present_ecus: list[Ecu] = field(default_factory=list)
   # TODO: make this automatic and remove hardcoded lists, or do fingerprinting with ecus
   # Overrides and removes from essential ecus for specific models and ecus (exact matching)
   non_essential_ecus: dict[Ecu, list[str]] = field(default_factory=dict)

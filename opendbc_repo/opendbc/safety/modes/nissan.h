@@ -173,7 +173,7 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
     }
   }
 
-  if (nissan_longitudinal && (msg->addr == 0x707U) && (msg->bus == 1U)) {
+  if (nissan_longitudinal && (msg->addr == 0x707U) && (msg->bus == 0U)) {
     violation |= (msg->data[0] != 0x02U) || (msg->data[1] != 0x3EU) || (msg->data[2] != 0x80U);
     for (int i = 3; i < 8; i++) {
       violation |= msg->data[i] != 0U;
@@ -207,7 +207,7 @@ static safety_config nissan_init(uint16_t param) {
     {0x280, 2, 8, .check_relay = true},   // CANCEL_MSG (Leaf)
     {0x2b0, 1, 8, .check_relay = true},   // Leaf propulsion/regen request
     {0x1c3, 1, 8, .check_relay = true},   // Leaf friction-brake request
-    {0x707, 1, 8, .check_relay = false},  // Leaf ADAS ECU tester present
+    {0x707, 0, 8, .check_relay = false},  // Leaf ADAS ECU tester present
   };
 
   // Signals duplicated below due to the fact that these messages can come in on either CAN bus, depending on car model.

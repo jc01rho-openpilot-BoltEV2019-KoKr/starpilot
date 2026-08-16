@@ -151,7 +151,8 @@ class VASMDaemon:
     in_followup = now < self.followup_until
     base = FOLLOWUP_INTERVAL if in_followup else BASE_INTERVAL
     cpu_usage = list(self.sm["deviceState"].cpuUsagePercent) if self.sm.valid.get("deviceState", False) else []
-    factor = device_cpu_throttle_factor(cpu_usage, name="VASM")
+    affinity_cores = V_ASM_AFFINITY_CORES if self._slv_enabled else V_ASM_SOLO_AFFINITY_CORES
+    factor = device_cpu_throttle_factor(cpu_usage, name="VASM", cores=affinity_cores)
     self._throttle_factor = factor
     interval = base * factor
     self._throttle_reason = f"cpu_{factor:.1f}x" if factor > 1.05 else ("followup" if in_followup else "steady")

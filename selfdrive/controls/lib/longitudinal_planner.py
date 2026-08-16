@@ -21,7 +21,10 @@ from openpilot.selfdrive.controls.lib.lead_follow_policy import is_nonurgent_dup
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_far_follow_output_slew_rates,
   get_follow_prebrake_min_headway,
+  get_force_stop_handoff_distance,
   is_gm_silverado_early_follow_lead,
+  is_toyota_rav4_tss2_post_departure_tune,
+  get_toyota_rav4_tss2_early_lead_cap,
   get_toyota_sienna_post_departure_restop_cap,
   get_untracked_slow_lead_decel_scale,
 )
@@ -2176,7 +2179,8 @@ class LongitudinalPlanner:
     # the line parks us short. Below that the existing v_cruise=0 path finishes the stop,
     # since forcingStopLength is decaying to zero and the obstacle would land behind us.
     force_stop_x = None
-    if sm['starpilotPlan'].forcingStop and sm['starpilotPlan'].forcingStopLength > STOP_DISTANCE:
+    force_stop_handoff_m = get_force_stop_handoff_distance(self.CP.carFingerprint)
+    if sm['starpilotPlan'].forcingStop and sm['starpilotPlan'].forcingStopLength > force_stop_handoff_m:
       force_stop_x = float(sm['starpilotPlan'].forcingStopLength) + STOP_DISTANCE
 
     self.mpc.update(sm['radarState'], v_cruise, x, v, a, j,
@@ -2318,11 +2322,17 @@ class LongitudinalPlanner:
       output_a_target = min(output_a_target, approach_lift_cap)
 
     close_lead_caps = []
+    rav4_early_lead_caps = []
     tracked_vision_approach_caps = []
     vision_low_speed_stop_active = False
     vision_brake_cap_active = False
     if lead_control_active:
       for lead in (self.lead_one, self.lead_two):
+        rav4_early_lead_cap = get_toyota_rav4_tss2_early_lead_cap(
+          self.CP, lead, v_ego, output_accel_min,
+        )
+        if rav4_early_lead_cap is not None:
+          rav4_early_lead_caps.append(rav4_early_lead_cap)
         cap = self.get_close_lead_brake_cap(lead, v_ego, output_accel_min)
         if cap is not None:
           close_lead_caps.append(cap)
@@ -2657,6 +2667,12 @@ class LongitudinalPlanner:
     post_departure_active = self.post_departure_follow_settle_active(
       policy_lead, scene_v_ego, effective_t_follow,
     )
+    # The RAV4's post-departure path used to bypass the ordinary follow cap for
+    # the entire settle latch. When a slow lead changed lanes, that let the
+    # cruise branch request full acceleration before the next lead was stable.
+    # Keep the normal catch-up cap on this car; urgent braking remains outside
+    # this comfort policy and is still allowed through unchanged.
+    post_departure_bypass = post_departure_active and not is_toyota_rav4_tss2_post_departure_tune(self.CP)
     follow_result = apply_follow_policy(
       self.lead_one,
       self.lead_two,
@@ -2667,7 +2683,7 @@ class LongitudinalPlanner:
       previous_target=prev_output_a_target,
       raw_target=output_a_target,
       tracking=tracking_lead,
-      post_departure=post_departure_active,
+      post_departure=post_departure_bypass,
       blocked=bool(output_should_stop or vision_low_speed_stop_active or close_lead_caps),
       panic_bypass=panic_bypass,
     )
@@ -2715,6 +2731,11 @@ class LongitudinalPlanner:
     if close_final_guard_cap is not None:
       self.a_desired = min(self.a_desired, close_final_guard_cap)
       output_a_target = min(output_a_target, close_final_guard_cap)
+
+    if rav4_early_lead_caps:
+      rav4_early_lead_cap = min(rav4_early_lead_caps)
+      self.a_desired = min(self.a_desired, rav4_early_lead_cap)
+      output_a_target = min(output_a_target, rav4_early_lead_cap)
 
     if close_release_hold_cap is not None:
       self.a_desired = min(self.a_desired, close_release_hold_cap)
@@ -2858,7 +2879,10 @@ class LongitudinalPlanner:
     longitudinalPlan.accels = self.a_desired_trajectory.tolist()
     longitudinalPlan.jerks = self.j_desired_trajectory.tolist()
 
-    longitudinalPlan.hasLead = sm['radarState'].leadOne.status
+    # LongControl needs to know about whichever lead MPC is following. Using
+    # leadOne only leaves the stop-release guard blind when source=lead1.
+    selected_lead = sm['radarState'].leadTwo if self.mpc.source == "lead1" else sm['radarState'].leadOne
+    longitudinalPlan.hasLead = bool(selected_lead.status)
     longitudinalPlan.longitudinalPlanSource = self.mpc.source
     longitudinalPlan.fcw = self.fcw
 

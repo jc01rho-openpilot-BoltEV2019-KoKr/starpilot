@@ -1,0 +1,1 @@
+"""Vehicle-specific StarPilot extensions."""

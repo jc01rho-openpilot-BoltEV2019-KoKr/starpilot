@@ -19,7 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc-aarch64-linux-gnu \
     g++-aarch64-linux-gnu \
     cmake \
-    qtbase5-private-dev \
     python3-pip \
     xz-utils \
     git \

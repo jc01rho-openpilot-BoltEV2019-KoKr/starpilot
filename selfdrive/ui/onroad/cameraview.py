@@ -6,7 +6,7 @@ import pyray as rl
 
 from msgq.visionipc import VisionIpcClient, VisionStreamType, VisionBuf
 from openpilot.common.swaglog import cloudlog
-from openpilot.system.hardware import PC, TICI
+from openpilot.system.hardware import HARDWARE, PC, TICI
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.egl import (
   init_egl, is_egl_initialized, finish_gl, create_egl_image, destroy_egl_image,
@@ -16,7 +16,18 @@ from openpilot.system.ui.widgets import Widget
 from openpilot.selfdrive.ui.ui_state import ui_state
 
 CONNECTION_RETRY_INTERVAL = 0.2  # seconds between connection attempts
-MICI_FORCE_TEXTURE_CAMERA = os.getenv("MICI_FORCE_TEXTURE_CAMERA", "0") == "1"
+STREAM_DISCOVERY_REFRESH_INTERVAL = 0.5  # seconds between nonblocking stream advertisements
+
+
+def _default_force_texture_camera(device_type: str) -> bool:
+  return device_type == "mici"
+
+
+DEVICE_TYPE = HARDWARE.get_device_type()
+MICI_FORCE_TEXTURE_CAMERA = os.getenv(
+  "MICI_FORCE_TEXTURE_CAMERA",
+  "1" if _default_force_texture_camera(DEVICE_TYPE) else "0",
+) == "1"
 # One stale frame can be normal ring-buffer reuse; repeated consecutive regressions demote EGL.
 EGL_REGRESSIVE_FRAME_FALLBACK_THRESHOLD = 3
 
@@ -152,6 +163,8 @@ class CameraView(Widget):
 
     self._texture_needs_update = True
     self.last_connection_attempt: float = 0.0
+    self._last_stream_discovery: float = -float("inf")
+    self._last_switch_request: float = -float("inf")
     self._use_egl = TICI and not MICI_FORCE_TEXTURE_CAMERA and init_egl()
     if TICI and MICI_FORCE_TEXTURE_CAMERA:
       cloudlog.warning("CameraView EGL disabled by MICI_FORCE_TEXTURE_CAMERA, using texture rendering")
@@ -216,6 +229,8 @@ class CameraView(Widget):
     self.available_streams.clear()
     self._texture_needs_update = True
     self.last_connection_attempt = 0.0
+    self._last_stream_discovery = -float("inf")
+    self._last_switch_request = -float("inf")
     self._onroad_reentry_pending = ui_state.is_onroad()
     self._reentry_stream_selected = False
 
@@ -224,6 +239,11 @@ class CameraView(Widget):
     self._placeholder_color = color
 
   def _refresh_available_streams(self) -> None:
+    current_time = rl.get_time()
+    if current_time - getattr(self, "_last_stream_discovery", -float("inf")) < STREAM_DISCOVERY_REFRESH_INTERVAL:
+      return
+    self._last_stream_discovery = current_time
+
     streams = VisionIpcClient.available_streams(self._name, block=False)
     if streams:
       self.available_streams = list(streams)
@@ -236,12 +256,21 @@ class CameraView(Widget):
       self._select_reentry_stream(stream_type)
       return
 
+    current_time = rl.get_time()
     if self._switching:
       if self._target_stream_type == stream_type:
+        return
+      if self._stream_type == stream_type:
+        self._cancel_pending_switch()
+        return
+      if current_time - getattr(self, "_last_switch_request", -float("inf")) < CONNECTION_RETRY_INTERVAL:
         return
       self._cancel_pending_switch()
 
     if self._stream_type == stream_type:
+      return
+
+    if current_time - getattr(self, "_last_switch_request", -float("inf")) < CONNECTION_RETRY_INTERVAL:
       return
 
     cloudlog.debug(f'Preparing switch from {self._stream_type} to {stream_type}')
@@ -252,6 +281,7 @@ class CameraView(Widget):
     self._target_stream_type = stream_type
     self._target_client = VisionIpcClient(self._name, stream_type, conflate=True)
     self._switching = True
+    self._last_switch_request = current_time
 
   def _cancel_pending_switch(self) -> None:
     if self._target_client is not None:
@@ -603,7 +633,7 @@ class CameraView(Widget):
     self._initialize_textures()
     available_streams = getattr(self.client, "available_streams", None)
     if available_streams is not None:
-      self.available_streams = available_streams(self._name, block=False)
+      self.available_streams = list(available_streams(self._name, block=False))
 
   def _initialize_textures(self):
     self._clear_textures()

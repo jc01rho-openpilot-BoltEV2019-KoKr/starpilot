@@ -48,7 +48,7 @@ Use `./dev` for host-native tools. It creates and reuses an isolated environment
 ./dev shell
 ```
 
-For desktop UI work, use `./c3`, `./c4`, or `./raybig`. These commands use the same isolated host environment.
+For desktop UI work, use `./c3` or `./c4`. These commands use the same isolated host environment.
 
 Use `./build` when you need comma-compatible device artifacts. This is the expected validation for changes that affect compiled device code or runtime behavior:
 

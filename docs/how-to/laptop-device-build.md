@@ -2,7 +2,7 @@
 
 This flow builds **device-target (`larch64`) binaries on your laptop** using a Linux/aarch64 container and a synced comma sysroot.
 
-For the full StarPilot branch workflow, including host-native shorthand tools such as `./dev`, `./c3`, `./c4`, and `./raybig`, see the [StarPilot development guide](https://github.com/firestar5683/StarPilot/blob/Dom/tools/STARPILOT_DEVELOPMENT.md).
+For the full StarPilot branch workflow, including host-native shorthand tools such as `./dev`, `./c3`, and `./c4`, see the [StarPilot development guide](https://github.com/firestar5683/StarPilot/blob/Dom/tools/STARPILOT_DEVELOPMENT.md).
 
 ## Prerequisites
 
@@ -71,10 +71,10 @@ This runs:
   - `SP_TICI_SYSROOT=/opt/tici-sysroot`
 - `touch prebuilt`
 
-To run `scons` targets explicitly in the same device-compatible environment:
+To run SCons targets explicitly in the same device-compatible environment:
 
 ```bash
-scripts/laptop_device_build.sh scons selfdrive/ui/ui
+scripts/laptop_device_build.sh scons common/params_pyx.so
 ```
 
 On macOS, once `.comma_sysroot` is present, plain `scons ...` auto-routes to this containerized device build.
@@ -112,7 +112,6 @@ Preferred host-side shorthand commands on this branch:
 ```bash
 ./c3
 ./c4
-./raybig
 ./dev replay
 ./dev cabana
 ./dev plotjuggler
@@ -120,10 +119,9 @@ Preferred host-side shorthand commands on this branch:
 
 These commands use the isolated `.host_runtime` cache so host-native artifacts do not churn the main tree.
 
-Legacy direct script entrypoints still exist if needed:
+Direct script entrypoints are also available:
 
 ```bash
-scripts/launch_ui_desktop.sh
+scripts/launch_ui_c3_desktop.sh
 scripts/launch_ui_c4_desktop.sh
-scripts/launch_ui_raybig_desktop.sh
 ```

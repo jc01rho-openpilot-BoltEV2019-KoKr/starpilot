@@ -23,11 +23,6 @@ on:
         type: boolean
         default: true
         required: false
-      build_ui:
-        description: "Build UI (selfdrive/ui)"
-        type: boolean
-        default: true
-        required: false
       build_params:
         description: "Build params Python extension"
         type: boolean
@@ -88,7 +83,7 @@ jobs:
           fi
 
       - name: Checkout target branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ env.BUILD_BRANCH }}
           fetch-depth: 0
@@ -156,7 +151,6 @@ jobs:
           fi
 
           TARGETS=()
-          [[ "${{ inputs.build_ui }}" == "true" ]] && TARGETS+=("selfdrive/ui/ui")
           [[ "${{ inputs.build_params }}" == "true" ]] && TARGETS+=("common/params_pyx.so")
           [[ "${{ inputs.build_cereal }}" == "true" ]] && TARGETS+=("cereal/messaging/bridge")
           if [[ "${{ inputs.build_panda }}" == "true" ]]; then
@@ -184,8 +178,8 @@ jobs:
           fi
 
           if [[ ${#TARGETS[@]} -eq 0 ]]; then
-            echo "No partial targets selected; defaulting to UI + panda"
-            TARGETS=("selfdrive/ui/ui" "panda/board/obj/panda.bin.signed")
+            echo "No partial targets selected; defaulting to panda"
+            TARGETS=("panda/board/obj/panda.bin.signed")
           fi
 
           echo "Running partial build for targets: ${TARGETS[*]}"

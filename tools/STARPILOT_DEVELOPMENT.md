@@ -3,7 +3,7 @@
 This branch uses a split development flow:
 
 - `./build` keeps producing device-target (`larch64`) artifacts for comma runtime compatibility.
-- `./dev`, `./tool`, `./tools/host`, `./c3`, `./c4`, and `./raybig` use an isolated host cache under `.host_runtime/` for native macOS/Linux tooling.
+- `./dev`, `./tool`, `./tools/host`, `./c3`, and `./c4` use an isolated host cache under `.host_runtime/` for native macOS/Linux tooling.
 
 The goal is simple: keep the device build intact, keep host tools consistent with runtime behavior, and stop polluting the repo with host-only `.so`, `.o`, and desktop UI artifacts.
 
@@ -14,7 +14,6 @@ The goal is simple: keep the device build intact, keep host tools consistent wit
 - Run `tools/install_python_dependencies.sh`
 - Have `uv` available in your shell
 - For device-target builds, install Docker Desktop or Podman with Linux/aarch64 support
-- For macOS Qt UI (`./c3`), install the Qt 5/Homebrew dependencies already expected by the repo
 
 ## One-time device build setup
 
@@ -75,7 +74,7 @@ All three entrypoints do the same thing. `./dev` is the shortest general-purpose
 ### Available host commands
 
 - `./dev replay [args...]`
-- `./onroad [jobs] (--c3 | --c4 | --raybig | --all | --replay-only) <route-or-replay-args...>`
+- `./onroad [jobs] (--c3 | --c4 | --all | --replay-only) <route-or-replay-args...>`
 - `./dev cabana [args...]`
 - `./dev plotjuggler [args...]`
 - `./dev juggle [args...]`
@@ -89,7 +88,6 @@ watching it in real time, use `tools/clip/run.py` (see [tools/clip/README.md](cl
 
 - `./c3 [jobs] [args...]`
 - `./c4 [jobs] [args...]`
-- `./raybig [jobs] [args...]`
 
 These are wrappers around the same isolated host runner used by `./dev`.
 
@@ -104,7 +102,6 @@ Examples:
 ./dev cabana
 ./c3 8
 ./c4 8
-./raybig 8
 ./dev shell
 ```
 
@@ -149,7 +146,7 @@ That means:
 
 Current bucket split:
 
-- shared bucket: `./c3`, `./c4`, `./raybig`, `./dev replay`, `./dev plotjuggler`, `./dev juggle`, `./dev shell`
+- shared bucket: `./c3`, `./c4`, `./dev replay`, `./dev plotjuggler`, `./dev juggle`, `./dev shell`
 - cabana bucket: `./dev cabana`
 
 This prevents one command from syncing or rebuilding over another live host session while still allowing the common Cabana + PlotJuggler pairing.
@@ -174,7 +171,7 @@ Use `./onroad ...` when:
 - you need replay and UI to share the same isolated host runtime and messaging prefix
 - you want the default side-by-side desktop UI launch without running separate replay/UI commands
 
-Use `./c3`, `./c4`, or `./raybig` when:
+Use `./c3` or `./c4` when:
 
 - you want the desktop UI variants
 - you want them to build/run from the isolated host cache instead of touching tracked files
@@ -217,5 +214,5 @@ To refresh one bucket only:
 
 1. Use `./build` when you need the real device-target build.
 2. Use `./dev replay`, `./dev cabana`, or `./dev plotjuggler` for host-side tooling.
-3. Use `./c3`, `./c4`, or `./raybig` for desktop UI work.
+3. Use `./c3` or `./c4` for desktop UI work.
 4. Let `.host_runtime` keep host artifacts out of the repo.

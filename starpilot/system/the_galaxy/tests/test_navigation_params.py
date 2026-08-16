@@ -85,7 +85,13 @@ def _params_client(monkeypatch, values, device_type):
   monkeypatch.setattr(
     the_galaxy,
     "_get_param_type_info",
-    lambda: ({"UseOldUI", "TryRaylibUI"}, {"UseOldUI": bool, "TryRaylibUI": bool}),
+    lambda: (
+      {"AlphaLongitudinalEnabled", "ForceOffroad"},
+      {
+        "AlphaLongitudinalEnabled": bool,
+        "ForceOffroad": bool,
+      },
+    ),
   )
   monkeypatch.setattr(the_galaxy.HARDWARE, "get_device_type", lambda: device_type)
   monkeypatch.setattr(the_galaxy.Paths, "comma_home", lambda: "/tmp/dashboard-test-home", raising=False)
@@ -326,18 +332,18 @@ def test_configured_favorite_slot_values_only_reads_selected_keys(monkeypatch):
 
 
 def test_favorite_values_endpoint_returns_current_selected_value(monkeypatch):
-  client, _ = _params_client(monkeypatch, {"UseOldUI": False}, "tici")
-  monkeypatch.setattr(the_galaxy, "_get_favorite_slot_options", lambda: [{"key": "UseOldUI"}])
+  client, _ = _params_client(monkeypatch, {"ForceOffroad": False}, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_favorite_slot_options", lambda: [{"key": "ForceOffroad"}])
   monkeypatch.setattr(
     the_galaxy,
     "normalize_favorite_slots",
-    lambda *args, **kwargs: [{"enabled": True, "key": "UseOldUI"}],
+    lambda *args, **kwargs: [{"enabled": True, "key": "ForceOffroad"}],
   )
 
   response = client.get("/api/favorites/values")
 
   assert response.status_code == 200
-  assert response.get_json() == {"values": {"UseOldUI": False}}
+  assert response.get_json() == {"values": {"ForceOffroad": False}}
 
 
 def test_favorite_slot_options_include_virtual_cruise_actions(monkeypatch):
@@ -362,54 +368,80 @@ def test_favorite_action_endpoint_increments_virtual_button_counter(monkeypatch)
   assert fake_memory.get_int("FavoriteVirtualAccelCruiseCounter") == 1
 
 
-def test_use_old_ui_is_noop_on_c4_mici(monkeypatch):
-  client, fake_params = _params_client(monkeypatch, {"UseOldUI": False, "IsOnroad": False}, "mici")
+def test_alpha_longitudinal_toggle_writes_and_requests_offroad_cycle(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "AlphaLongitudinalEnabled": False,
+    "IsOnroad": False,
+  }, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_alpha_longitudinal_available", lambda: True)
 
-  response = client.put("/api/params", json={"key": "UseOldUI", "value": True})
-  payload = response.get_json()
-
-  assert response.status_code == 200
-  assert payload["updated"] == {"UseOldUI": False, "TryRaylibUI": False}
-  assert fake_params.values["UseOldUI"] is False
-  assert fake_params.writes == []
-
-
-def test_use_old_ui_writes_on_big_device_offroad(monkeypatch):
-  client, fake_params = _params_client(monkeypatch, {"UseOldUI": False, "TryRaylibUI": True, "IsOnroad": False}, "tici")
-
-  response = client.put("/api/params", json={"key": "UseOldUI", "value": True})
-  payload = response.get_json()
+  response = client.put("/api/params", json={"key": "AlphaLongitudinalEnabled", "value": True})
 
   assert response.status_code == 200
-  assert payload["updated"] == {"UseOldUI": True, "TryRaylibUI": False}
-  assert fake_params.values["UseOldUI"] is True
-  assert fake_params.values["TryRaylibUI"] is False
-  assert fake_params.writes == [("UseOldUI", True), ("TryRaylibUI", False)]
+  assert fake_params.values["AlphaLongitudinalEnabled"] is True
+  assert fake_params.values["OnroadCycleRequested"] is True
+  assert fake_params.writes == [
+    ("AlphaLongitudinalEnabled", True),
+    ("OnroadCycleRequested", True),
+  ]
 
 
-def test_use_old_ui_rejects_big_device_onroad_change(monkeypatch):
-  client, fake_params = _params_client(monkeypatch, {"UseOldUI": False, "TryRaylibUI": True, "IsOnroad": True}, "tici")
+def test_alpha_longitudinal_toggle_rejects_onroad(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "AlphaLongitudinalEnabled": False,
+    "IsOnroad": True,
+  }, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_alpha_longitudinal_available", lambda: True)
 
-  response = client.put("/api/params", json={"key": "UseOldUI", "value": True})
+  response = client.put("/api/params", json={"key": "AlphaLongitudinalEnabled", "value": True})
 
   assert response.status_code == 403
-  assert response.get_json()["error"] == "Cannot change Use Old UI while driving."
-  assert fake_params.values["UseOldUI"] is False
-  assert fake_params.values["TryRaylibUI"] is True
+  assert response.get_json()["error"] == "Cannot change Alpha Longitudinal while driving."
   assert fake_params.writes == []
 
 
-def test_legacy_try_raylib_ui_payload_updates_use_old_ui(monkeypatch):
-  client, fake_params = _params_client(monkeypatch, {"UseOldUI": True, "TryRaylibUI": False, "IsOnroad": False}, "tici")
+def test_alpha_longitudinal_toggle_rejects_unsupported_vehicle(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "AlphaLongitudinalEnabled": False,
+    "IsOnroad": False,
+  }, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_alpha_longitudinal_available", lambda: False)
 
-  response = client.put("/api/params", json={"key": "TryRaylibUI", "value": True})
-  payload = response.get_json()
+  response = client.put("/api/params", json={"key": "AlphaLongitudinalEnabled", "value": True})
+
+  assert response.status_code == 403
+  assert response.get_json()["error"] == "Alpha Longitudinal is not available for the detected vehicle."
+  assert fake_params.writes == []
+
+
+def test_force_offroad_toggle_requires_live_park(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "ForceOffroad": False,
+    "ForceOnroad": False,
+    "IsOnroad": True,
+  }, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_vehicle_parked", lambda: True)
+
+  response = client.put("/api/params", json={"key": "ForceOffroad", "value": True})
 
   assert response.status_code == 200
-  assert payload["updated"] == {"UseOldUI": False, "TryRaylibUI": True}
-  assert fake_params.values["UseOldUI"] is False
-  assert fake_params.values["TryRaylibUI"] is True
-  assert fake_params.writes == [("UseOldUI", False), ("TryRaylibUI", True)]
+  assert response.get_json()["updated"] == {"ForceOffroad": True, "ForceOnroad": False}
+  assert fake_params.values["ForceOffroad"] is True
+  assert fake_params.values["ForceOnroad"] is False
+
+
+def test_force_offroad_toggle_rejects_when_not_parked(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "ForceOffroad": False,
+    "IsOnroad": True,
+  }, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_vehicle_parked", lambda: False)
+
+  response = client.put("/api/params", json={"key": "ForceOffroad", "value": True})
+
+  assert response.status_code == 403
+  assert response.get_json()["error"] == "Force Offroad is only available while the vehicle is in Park."
+  assert fake_params.writes == []
 
 
 def test_curve_speed_controller_reset_clears_learned_data_offroad(monkeypatch):

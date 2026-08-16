@@ -19,6 +19,12 @@ class CarControllerParams:
     MAX_LATERAL_JERK=3.0 + (ACCELERATION_DUE_TO_GRAVITY * 0.06),
     MAX_ANGLE_RATE=1,
   )
+  FIXED_ANGLE_LIMITS: AngleSteeringLimits = AngleSteeringLimits(
+    545,
+    ([0., 5., 35.], [5., .8, .15]),
+    ([0., 5., 35.], [5., .8, .15]),
+  )
+  LEGACY_2025_ANGLE_LIMITS = FIXED_ANGLE_LIMITS
 
   def __init__(self, CP):
     self.STEER_STEP = 2                # how often we update the steer cmd
@@ -76,6 +82,8 @@ class SubaruSafetyFlags(IntFlag):
   LKAS_ANGLE = 16
   D_PLATFORM = 32
   D_PLATFORM_CAMERA = 64
+  FIXED_ANGLE_LIMITS = 128
+  LEGACY_2025_ANGLE_LIMITS = FIXED_ANGLE_LIMITS
 
 
 class SubaruFlags(IntFlag):
@@ -115,7 +123,6 @@ class CanBus:
 
   @staticmethod
   def angle_for_cp(CP):
-    # This Ascent variant receives angle commands through EyeSight's camera bus.
     return CanBus.camera if CP.flags & SubaruFlags.D_PLATFORM_CAMERA else CanBus.main
 
 
@@ -243,12 +250,12 @@ class CAR(Platforms):
   SUBARU_LEGACY_2025 = SubaruGen2PlatformConfig(
     [SubaruCarDocs("Subaru Legacy 2025", "All", car_parts=CarParts.common([CarHarness.subaru_d]))],
     SUBARU_OUTBACK.specs,
-    flags=SubaruFlags.LKAS_ANGLE | SubaruFlags.D_PLATFORM | SubaruFlags.D_PLATFORM_CAMERA,
+    flags=SubaruFlags.LKAS_ANGLE,
   )
   SUBARU_ASCENT_2023 = SubaruGen2PlatformConfig(
     [SubaruCarDocs("Subaru Ascent 2023-25", "All", car_parts=CarParts.common([CarHarness.subaru_d]))],
     SUBARU_ASCENT.specs,
-    flags=SubaruFlags.LKAS_ANGLE | SubaruFlags.D_PLATFORM | SubaruFlags.D_PLATFORM_CAMERA,
+    flags=SubaruFlags.LKAS_ANGLE,
   )
   SUBARU_CROSSTREK_2025 = SubaruGen2PlatformConfig(
     [SubaruCarDocs("Subaru Crosstrek 2025", "All", car_parts=CarParts.common([CarHarness.subaru_d]))],
@@ -274,12 +281,10 @@ FW_QUERY_CONFIG = FwQueryConfig(
     Request(
       [StdQueries.TESTER_PRESENT_REQUEST, SUBARU_VERSION_REQUEST],
       [StdQueries.TESTER_PRESENT_RESPONSE, SUBARU_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.fwdCamera, Ecu.engine, Ecu.transmission],
+      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.engine, Ecu.transmission],
       logging=True,
     ),
     # Non-OBD requests
-    # Some Eyesight modules fail on TESTER_PRESENT_REQUEST
-    # TODO: check if this resolves the fingerprinting issue for the 2023 Ascent and other new Subaru cars
     Request(
       [SUBARU_VERSION_REQUEST],
       [SUBARU_VERSION_RESPONSE],
@@ -294,30 +299,26 @@ FW_QUERY_CONFIG = FwQueryConfig(
       logging=True,
     ),
     Request(
-      [StdQueries.DEFAULT_DIAGNOSTIC_REQUEST, StdQueries.TESTER_PRESENT_REQUEST, SUBARU_VERSION_REQUEST],
-      [StdQueries.DEFAULT_DIAGNOSTIC_RESPONSE, StdQueries.TESTER_PRESENT_RESPONSE, SUBARU_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.fwdCamera],
-      bus=0,
-      logging=True,
-    ),
-    Request(
       [StdQueries.TESTER_PRESENT_REQUEST, SUBARU_VERSION_REQUEST],
       [StdQueries.TESTER_PRESENT_RESPONSE, SUBARU_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.fwdCamera, Ecu.engine, Ecu.transmission],
+      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.engine, Ecu.transmission],
       bus=0,
     ),
     # GEN2 powertrain bus query
     Request(
       [StdQueries.TESTER_PRESENT_REQUEST, SUBARU_VERSION_REQUEST],
       [StdQueries.TESTER_PRESENT_RESPONSE, SUBARU_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.fwdCamera, Ecu.engine, Ecu.transmission],
+      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.engine, Ecu.transmission],
       bus=1,
       obd_multiplexing=False,
     ),
   ],
+  non_tester_present_ecus=[Ecu.fwdCamera],
   # We don't get the EPS from non-OBD queries on GEN2 cars. Note that we still attempt to match when it exists
   non_essential_ecus={
     Ecu.eps: list(CAR.with_flags(SubaruFlags.GLOBAL_GEN2)),
+    # Some 2023+ Ascent firmware queries return the engine only from a logging request.
+    Ecu.engine: [CAR.SUBARU_ASCENT_2023],
   }
 )
 
