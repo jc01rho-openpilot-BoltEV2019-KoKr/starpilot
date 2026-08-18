@@ -3,6 +3,7 @@ import pyray as rl
 import numpy as np
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos, MouseEvent
 from openpilot.system.ui.lib.text_measure import measure_text_cached
+from openpilot.system.ui.lib.utils import draw_circle_gradient_compat
 from openpilot.system.ui.widgets import Widget
 from openpilot.common.filter_simple import BounceFilter, FirstOrderFilter
 
@@ -353,8 +354,8 @@ class MiciKeyboard(Widget):
 
           # draw black circle behind selected key
           circle_alpha = int(self._selected_key_filter.x * 225)
-          rl.draw_circle_gradient(int(key_x + key.rect.width / 2), int(key_y + key.rect.height / 2),
-                                  SELECTED_CHAR_FONT_SIZE, rl.Color(0, 0, 0, circle_alpha), rl.BLANK)
+          draw_circle_gradient_compat(key_x + key.rect.width / 2, key_y + key.rect.height / 2,
+                                      SELECTED_CHAR_FONT_SIZE, rl.Color(0, 0, 0, circle_alpha), rl.BLANK)
         else:
           # move other keys away from selected key a bit
           dx = key.original_position.x - self._closest_key[0].original_position.x

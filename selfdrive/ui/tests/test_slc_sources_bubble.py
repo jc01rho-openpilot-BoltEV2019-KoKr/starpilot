@@ -59,22 +59,26 @@ def test_visible_source_rows_honor_active_only_and_source_order():
   ]
   values = {"dashboard": 45.0, "map": 0.0, "vision": 50.0, "mapbox": 30.0, "next": 20.0}
 
+  # Map Data has value 0.0, so it is omitted; Dashboard (45.0) is active
   assert visible_source_rows(
-    source_defs, values, "Dashboard", ("Dashboard", "Map Data"), False,
-  ) == [
-    ("Dashboard", "dashboard", 45.0, True),
-    ("Map Data", "map", 0.0, False),
-  ]
-  assert visible_source_rows(
-    source_defs, values, "Dashboard", ("Dashboard", "Map Data"), True,
+    source_defs, values, "Dashboard", ("Dashboard", "Map Data"),
   ) == [
     ("Dashboard", "dashboard", 45.0, True),
   ]
+  # When Map Data is the active target but has 0.0 reading, Dashboard is inactive (available standby)
   assert visible_source_rows(
-    source_defs, values, "Map Data", ("Dashboard", "Map Data"), True,
+    source_defs, values, "Map Data", ("Dashboard", "Map Data"),
   ) == [
     ("Dashboard", "dashboard", 45.0, False),
   ]
+  # Multiple available sources with readings appear in canonical order
   assert visible_source_rows(
-    source_defs, {key: 0.0 for key in values}, "Map Data", ("Map Data",), True,
+    source_defs, values, "Vision", ("Dashboard", "Map Data", "Vision"),
+  ) == [
+    ("Dashboard", "dashboard", 45.0, False),
+    ("Vision", "camera", 50.0, True),
+  ]
+  # When no sources have a valid speed reading (> 0), returns empty list (triggers empty state)
+  assert visible_source_rows(
+    source_defs, {key: 0.0 for key in values}, "Map Data", ("Map Data",),
   ) == []

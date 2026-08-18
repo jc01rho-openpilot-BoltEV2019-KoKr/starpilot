@@ -63,6 +63,8 @@ def make_toggles(**overrides):
     "speed_limit_priority_highest": False,
     "speed_limit_priority_lowest": False,
     "vision_speed_limit_detection": False,
+    "vision_speed_limit_low_limit_filter": False,
+    "vision_speed_limit_low_limit_threshold": mph(25),
   }
   defaults.update(overrides)
   return SimpleNamespace(**defaults)
@@ -94,6 +96,107 @@ def make_controller(**toggle_overrides):
 
 def mph(value):
   return value * CV.MPH_TO_MS
+
+
+@pytest.mark.parametrize("limit_mph", [15, 25])
+def test_low_vision_limit_filter_blocks_configured_boundary(limit_mph):
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    vision_speed_limit_detection=True,
+    vision_speed_limit_low_limit_filter=True,
+    vision_speed_limit_low_limit_threshold=mph(25),
+  )
+  try:
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(limit_mph))
+    sm = make_sm(gas_pressed=False, v_cruise_kph=25 * CV.MPH_TO_KPH)
+
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(25), mph(20), sm)
+
+    assert controller.vision_limit == pytest.approx(mph(limit_mph))
+    assert controller.target == 0
+    assert controller.source == "None"
+  finally:
+    controller.shutdown()
+
+
+def test_low_vision_limit_filter_allows_limit_above_threshold():
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    vision_speed_limit_detection=True,
+    vision_speed_limit_low_limit_filter=True,
+    vision_speed_limit_low_limit_threshold=mph(25),
+  )
+  try:
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(30))
+    sm = make_sm(gas_pressed=False, v_cruise_kph=30 * CV.MPH_TO_KPH)
+
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(30), mph(25), sm)
+
+    assert controller.target == pytest.approx(mph(30))
+    assert controller.source == "Vision"
+  finally:
+    controller.shutdown()
+
+
+def test_low_vision_limit_filter_is_action_only_for_display():
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    vision_speed_limit_detection=True,
+    vision_speed_limit_low_limit_filter=True,
+    vision_speed_limit_low_limit_threshold=mph(25),
+  )
+  try:
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(15))
+    sm = make_sm(gas_pressed=False, v_cruise_kph=20 * CV.MPH_TO_KPH)
+
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(20), mph(15), sm, display_only=True)
+
+    assert controller.target == pytest.approx(mph(15))
+    assert controller.source == "Vision"
+  finally:
+    controller.shutdown()
+
+
+def test_low_vision_limit_filter_does_not_filter_dashboard_source():
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    speed_limit_priority2="Dashboard",
+    vision_speed_limit_detection=True,
+    vision_speed_limit_low_limit_filter=True,
+    vision_speed_limit_low_limit_threshold=mph(25),
+  )
+  try:
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(15))
+    sm = make_sm(gas_pressed=False, v_cruise_kph=20 * CV.MPH_TO_KPH)
+
+    controller.update_limits(mph(15), datetime.now(timezone.utc), False, mph(20), mph(15), sm)
+
+    assert controller.target == pytest.approx(mph(15))
+    assert controller.source == "Dashboard"
+  finally:
+    controller.shutdown()
+
+
+def test_low_vision_limit_filter_does_not_restore_filtered_vision_fallback():
+  controller = make_controller(
+    speed_limit_priority1="Vision",
+    slc_fallback_previous_speed_limit=True,
+    vision_speed_limit_detection=True,
+    vision_speed_limit_low_limit_filter=True,
+    vision_speed_limit_low_limit_threshold=mph(25),
+  )
+  try:
+    controller.previous_source = "Vision"
+    controller.previous_target = mph(15)
+    controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(15))
+    sm = make_sm(gas_pressed=False, v_cruise_kph=20 * CV.MPH_TO_KPH)
+
+    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(20), mph(15), sm)
+
+    assert controller.target == 0
+    assert controller.source == "None"
+  finally:
+    controller.shutdown()
 
 
 def test_large_vision_delta_requires_three_detector_frames():

@@ -11,7 +11,8 @@ from openpilot.system.hardware import HARDWARE, PC, TICI
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 
 WEBCAM = os.getenv("USE_WEBCAM") is not None
-UI_WATCHDOG_MAX_DT = int(os.getenv("UI_WATCHDOG_MAX_DT", "5"))
+UI_WATCHDOG_MAX_DT = int(os.getenv("UI_WATCHDOG_MAX_DT", "10"))
+CAMERAD_WATCHDOG_MAX_DT = int(os.getenv("CAMERAD_WATCHDOG_MAX_DT", "5"))
 
 def driverview(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return started or params.get_bool("IsDriverViewEnabled")
@@ -69,7 +70,7 @@ def sensord_run(started: bool, params: Params, CP: car.CarParams, starpilot_togg
   return started or params.get_bool("SentryModeEnabled")
 
 def camera_run(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
-  return driverview(started, params, CP, starpilot_toggles) or params.get_bool("SentryModeCapture")
+  return driverview(started, params, CP, starpilot_toggles) or (not started and params.get_bool("SentryModeCapture"))
 
 def livestream(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return params.get_bool("IsLiveStreaming")
@@ -123,7 +124,8 @@ procs = [
   NativeProcess("stream_encoderd", "system/loggerd", ["./encoderd", "--stream"], or_(and_(livestream, not_(iscar)), notcar)),
   PythonProcess("logmessaged", "system.logmessaged", always_run),
 
-  NativeProcess("camerad", "system/camerad", ["./camerad"], or_(camera_run, livestream), enabled=not WEBCAM),
+  NativeProcess("camerad", "system/camerad", ["./camerad"], or_(camera_run, livestream), enabled=not WEBCAM,
+                watchdog_max_dt=CAMERAD_WATCHDOG_MAX_DT),
   PythonProcess("webcamerad", "tools.webcam.camerad", driverview, enabled=WEBCAM),
   PythonProcess("proclogd", "system.proclogd", and_(allow_logging, only_onroad), enabled=platform.system() != "Darwin"),
   PythonProcess("journald", "system.journald", and_(allow_logging, only_onroad), platform.system() != "Darwin"),

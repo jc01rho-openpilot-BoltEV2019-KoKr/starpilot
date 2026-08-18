@@ -357,6 +357,23 @@ def test_favorite_slot_options_include_virtual_cruise_actions(monkeypatch):
   assert "__starpilot_favorite_action__:distance_increase" in option_keys
 
 
+def test_rivian_angle_favorite_requires_detected_extreme_harness(monkeypatch):
+  options = [
+    {"key": "RivianAngleControl", "requiresCapability": "HasRivianAngleHarness"},
+    {"key": "NonGatedFavorite", "requiresCapability": ""},
+  ]
+  monkeypatch.setattr(the_galaxy, "_get_favorite_slot_options", lambda: options)
+
+  monkeypatch.setattr(the_galaxy, "_get_has_rivian_angle_harness", lambda: False)
+  assert [option["key"] for option in the_galaxy._get_available_favorite_slot_options()] == ["NonGatedFavorite"]
+
+  monkeypatch.setattr(the_galaxy, "_get_has_rivian_angle_harness", lambda: True)
+  assert [option["key"] for option in the_galaxy._get_available_favorite_slot_options()] == [
+    "RivianAngleControl",
+    "NonGatedFavorite",
+  ]
+
+
 def test_favorite_action_endpoint_increments_virtual_button_counter(monkeypatch):
   client, _ = _params_client(monkeypatch, {}, "tici")
   fake_memory = WritableFakeParams()

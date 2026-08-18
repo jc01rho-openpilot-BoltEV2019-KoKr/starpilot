@@ -9,7 +9,10 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.starpilot.common.starpilot_variables import CITY_SPEED_LIMIT, CRUISING_SPEED
 from openpilot.starpilot.controls.lib.curve_speed_controller import CurveSpeedController, is_manual_speed_control
 from openpilot.starpilot.controls.lib.speed_limit_controller import SpeedLimitController
-from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import get_force_stop_handoff_distance
+from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
+  get_force_stop_distance_bias,
+  get_force_stop_handoff_distance,
+)
 
 CSC_MIN_SPEED = CITY_SPEED_LIMIT * CV.MPH_TO_MS
 CSC_CURVE_RELEASE_HOLD_TIME = 0.75
@@ -327,6 +330,9 @@ class StarPilotVCruise:
     force_stop_handoff_m = get_force_stop_handoff_distance(
       getattr(starpilot_toggles, "car_model", "")
     )
+    force_stop_distance_bias_m = get_force_stop_distance_bias(
+      getattr(starpilot_toggles, "car_model", "")
+    )
 
     raw_stop_seen = bool(
       self.starpilot_planner.starpilot_cem.stop_light_detected
@@ -488,7 +494,6 @@ class StarPilotVCruise:
       self.force_stop_from_light and
       not sm["carState"].standstill and
       not stop_light_detected and
-      not raw_model_stopped and
       not dash_active
     )
     if light_stop_cleared:
@@ -637,7 +642,7 @@ class StarPilotVCruise:
 
         # Kinematic profile with user offset. Positive offset shifts the perceived
         # line further down the road -> car rolls further before commanding 0.
-        effective_d = self.tracked_model_length + offset_m
+        effective_d = self.tracked_model_length + offset_m + force_stop_distance_bias_m
         if effective_d <= force_stop_handoff_m:
           v_target = 0.0
         else:
@@ -698,7 +703,7 @@ class StarPilotVCruise:
         adjacent_stop_d = self._get_adjacent_stop_distance(sm)
         if adjacent_stop_d is not None:
           approach_d = min(approach_d, adjacent_stop_d)
-        approach_d += offset_m
+        approach_d += offset_m + force_stop_distance_bias_m
         if approach_d > force_stop_handoff_m:
           targets.append(math.sqrt(2.0 * FORCE_STOP_APPROACH_DECEL * (approach_d - force_stop_handoff_m)))
 

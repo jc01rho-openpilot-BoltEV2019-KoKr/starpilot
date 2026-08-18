@@ -148,7 +148,8 @@ class CarInterface(CarInterfaceBase):
           ret.flags |= HyundaiFlags.CANFD_LKA_STEERING_ALT.value
         # This HDA II Carnival uses the alternate 0x1AA cruise-button frame even
         # though other LKA-steering platforms use 0x1CF.
-        if candidate == CAR.KIA_CARNIVAL_2025 and 0x1aa in fingerprint[CAN.ECAN] and 0x1cf not in fingerprint[CAN.ECAN]:
+        if candidate in (CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN) and \
+            0x1aa in fingerprint[CAN.ECAN] and 0x1cf not in fingerprint[CAN.ECAN]:
           ret.flags |= HyundaiFlags.CANFD_ALT_BUTTONS.value
       else:
         # no LKA steering

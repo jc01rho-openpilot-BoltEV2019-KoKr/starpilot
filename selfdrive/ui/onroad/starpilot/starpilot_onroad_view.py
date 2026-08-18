@@ -5,6 +5,7 @@ from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import render_behi
 from openpilot.selfdrive.ui.onroad.starpilot.path import render_adjacent_lanes, render_path_edges
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.onroad.starpilot.torque_bar import TorqueBar
+from openpilot.selfdrive.ui.onroad.starpilot.rivian_lateral_mode import rivian_lateral_mode
 from openpilot.selfdrive.ui.onroad.starpilot.widget_layout_manager import WidgetLayoutManager
 from openpilot.selfdrive.ui.onroad.starpilot.widgets import (
   SetSpeedWidget, SpeedLimitWidget, PedalIconsWidget,
@@ -75,6 +76,10 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._child(self._personality_button_widget)
     self._child(self._driver_monitor_widget)
     self._child(self._stopped_timer_widget)
+
+  def _update_state(self) -> None:
+    rivian_lateral_mode.update()
+    self._hud_renderer._exp_button.wheel_tint = rivian_lateral_mode.wheel_tint
 
   def _render(self, rect: rl.Rectangle):
     border_width = self._get_border_width()

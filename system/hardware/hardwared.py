@@ -8,8 +8,10 @@ import sys
 import threading
 import time
 from collections import OrderedDict, namedtuple
+from datetime import datetime, timezone
 
 import psutil
+import requests
 
 import cereal.messaging as messaging
 from cereal import log
@@ -47,6 +49,38 @@ TEMP_TAU = 5.   # 5s time constant
 DISCONNECT_TIMEOUT = 5.  # wait 5 seconds before going offroad after disconnect so you get an alert
 PANDA_STATES_TIMEOUT = round(1000 / SERVICE_LIST['pandaStates'].frequency * 1.5)  # 1.5x the expected pandaState frequency
 ONROAD_CYCLE_TIME = 1  # seconds to wait offroad after requesting an onroad cycle
+
+SENTRY_POWER_OFF_MESSAGES = {
+  "offroad_timeout": "Sentry Mode is stopping because the off-road power timeout was reached.",
+  "low_voltage": "Sentry Mode is stopping because vehicle voltage is too low.",
+  "battery_capacity_exhausted": "Sentry Mode is stopping because the estimated battery capacity is exhausted.",
+  "forced_power_down": "Sentry Mode is stopping because a power-down was requested.",
+}
+
+
+def notify_sentry_power_off(reason: str, power_monitor: PowerMonitoring) -> bool:
+  port = os.environ.get("SP_GALAXY_PORT", "8083" if PC else "8082")
+  event = {
+    "eventId": f"power-off-{time.time_ns()}",
+    "kind": "power_off",
+    "detectedAt": datetime.now(timezone.utc).isoformat(),
+    "reason": reason,
+    "message": SENTRY_POWER_OFF_MESSAGES.get(reason, "Sentry Mode is stopping because device power is being removed."),
+    "voltage": round(power_monitor.car_voltage_mV / 1000, 3),
+    "instantVoltage": round(power_monitor.car_voltage_instant_mV / 1000, 3),
+    "batteryCapacityUwh": power_monitor.get_car_battery_capacity(),
+  }
+  try:
+    response = requests.post(
+      f"http://127.0.0.1:{port}/api/sentry/events?blocking=1",
+      json=event,
+      timeout=4,
+    )
+    response.raise_for_status()
+    return True
+  except requests.RequestException as error:
+    cloudlog.warning(f"Sentry power-off notification unavailable: {error}")
+    return False
 
 
 class Chestnut:
@@ -262,6 +296,7 @@ def hardware_thread(end_event, hw_queue) -> None:
   engaged_prev = False
   pwrsave = False
   offroad_cycle_count = 0
+  sentry_power_off_notified = False
 
   params = Params()
   power_monitor = PowerMonitoring()
@@ -477,9 +512,17 @@ def hardware_thread(end_event, hw_queue) -> None:
     msg.deviceState.somPowerDrawW = som_power_draw
 
     # Check if we need to shut down
-    if power_monitor.should_shutdown(onroad_conditions["ignition"], in_car, off_ts, started_seen, starpilot_toggles):
-      cloudlog.warning(f"shutting device down, offroad since {off_ts}")
+    shutdown_reason = power_monitor.shutdown_reason(
+      onroad_conditions["ignition"], in_car, off_ts, started_seen, starpilot_toggles,
+    )
+    if shutdown_reason is not None:
+      cloudlog.warning(f"shutting device down, reason={shutdown_reason}, offroad since {off_ts}")
+      if params.get_bool("SentryModeEnabled") and not sentry_power_off_notified:
+        sentry_power_off_notified = True
+        notify_sentry_power_off(shutdown_reason, power_monitor)
       params.put_bool("DoShutdown", True)
+    else:
+      sentry_power_off_notified = False
 
     msg.deviceState.started = started_ts is not None
     msg.deviceState.startedMonoTime = int(1e9*(started_ts or 0))

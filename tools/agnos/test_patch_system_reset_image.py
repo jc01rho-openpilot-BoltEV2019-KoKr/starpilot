@@ -10,6 +10,7 @@ from tools.agnos.patch_system_reset_image import (
   find_default_reference_manifest,
   format_debugfs_mode,
   patch_comma_sh_display_wait,
+  patch_setup_branding_script,
   sha256_zstd_payload,
 )
 
@@ -48,6 +49,22 @@ def test_patch_comma_sh_display_wait_uses_available_display_service():
 def test_patch_comma_sh_display_wait_rejects_unknown_layout():
   with pytest.raises(RuntimeError, match="display readiness wait"):
     patch_comma_sh_display_wait(b"#!/usr/bin/env bash\nexec /data/continue.sh\n")
+
+
+@pytest.mark.parametrize("slider_text", ["slide to use", "slide to install"])
+def test_patch_mici_setup_branding_handles_old_and_new_labels(slider_text):
+  original = f'''OPENPILOT_URL = "https://openpilot.comma.ai"
+self._openpilot_slider = LargerSlider("{slider_text}\\nopenpilot", callback)
+self._continue_button = BigPillButton("install openpilot", green=True)
+self._continue_button.set_text("install openpilot" if not custom_software else "choose software")
+'''.encode()
+
+  patched = patch_setup_branding_script(original, "openpilot/system/ui/mici_setup.py")
+
+  assert b"installer.comma.ai/firestar5683/StarPilot" in patched
+  assert f"{slider_text}\\nstarpilot".encode() in patched
+  assert b"install StarPilot" in patched
+  assert b"install openpilot" not in patched
 
 
 @pytest.mark.parametrize(("mode", "expected"), [

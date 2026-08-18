@@ -22,11 +22,10 @@ def render_stopping_point(renderer, font):
   if not plan or not plan.redLight:
     return
 
-  model = ui_state.sm["modelV2"] if ui_state.sm.valid.get("modelV2", False) else None
-  if not model or not len(model.position.x):
-    return
-
-  stopping_distance = model.position.x[min(32, len(model.position.x) - 1)]
+  # Get calibrated stopping distance from controls planner (aligned with Aethergauge)
+  stopping_distance = getattr(plan, "forcingStopLength", 0.0)
+  if ui_state.sm.valid.get("carState", False) and ui_state.sm["carState"].standstill:
+    stopping_distance = 0.0
 
   # Get the end of the projected path on the screen
   projected = renderer._path.projected_points

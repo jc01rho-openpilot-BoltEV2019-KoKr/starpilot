@@ -87,15 +87,15 @@ async function readJsonResponse(response) {
 
 export async function enableSentryPush() {
   if (typeof Notification === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
-    return { ok: false, message: "This browser does not support Chrome Web Push." }
+    return { ok: false, message: "This browser does not support Web Push notifications." }
   }
   if (!window.isSecureContext) {
-    return { ok: false, message: "Chrome notifications require Galaxy over HTTPS." }
+    return { ok: false, message: "Browser notifications require Galaxy over HTTPS." }
   }
 
   const permission = await requestSentryNotificationPermission()
   if (permission !== "granted") {
-    return { ok: false, message: "Chrome notification permission was not granted." }
+    return { ok: false, message: "Browser notification permission was not granted." }
   }
 
   const configResponse = await fetch(galaxyPath("/api/sentry/push/config"), { cache: "no-store" })
@@ -123,13 +123,13 @@ export async function enableSentryPush() {
   })
   const payload = await readJsonResponse(response)
   if (!response.ok) return { ok: false, message: payload.error || "Galaxy could not save this browser." }
-  return { ok: true, message: "Chrome notifications enabled for this browser." }
+  return { ok: true, message: "Browser notifications enabled for this device." }
 }
 
-export async function sendSentryTestPush() {
-  const response = await fetch(galaxyPath("/api/sentry/push/test"), { method: "POST" })
+export async function sendSentryTestNotification() {
+  const response = await fetch(galaxyPath("/api/sentry/test-notification"), { method: "POST" })
   const payload = await readJsonResponse(response)
-  if (!response.ok) throw new Error(payload.error || "Galaxy could not send the test push.")
+  if (!response.ok) throw new Error(payload.error || "Galaxy could not send the test notification.")
   return payload
 }
 

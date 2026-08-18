@@ -98,6 +98,7 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   teslaCCNotArmed @27 :Bool;  # lateral engaged but DI_cruiseState != STANDBY/ENABLED
   accelHardCruise @28 :Bool;  # current/releasing accel cruise button came from GM hard-press signal
   decelHardCruise @29 :Bool;  # current/releasing decel cruise button came from GM hard-press signal
+  pulseAndGlide @30 :Bool;  # developer-only wheel-button pulse-and-glide mode is enabled
 }
 
 struct StarPilotDeviceState @0xda96579883444c35 {

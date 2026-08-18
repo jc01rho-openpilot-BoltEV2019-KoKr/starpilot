@@ -12,6 +12,7 @@ static std::map<std::string, service> services = {
   { "temperatureSensor", {"temperatureSensor", true, 2.000000, 200, 256000}},
   { "gpsNMEA", {"gpsNMEA", true, 9.000000, -1, 256000}},
   { "deviceState", {"deviceState", true, 2.000000, 1, 256000}},
+  { "chestnutState", {"chestnutState", true, 10.000000, 10, 256000}},
   { "touch", {"touch", true, 20.000000, 1, 256000}},
   { "can", {"can", true, 100.000000, 2053, 10485760}},
   { "controlsState", {"controlsState", true, 100.000000, 10, 2097152}},

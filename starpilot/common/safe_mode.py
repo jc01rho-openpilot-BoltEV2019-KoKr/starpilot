@@ -154,6 +154,8 @@ SAFE_MODE_MANAGED_KEYS = (
   "Offset7",
   "SpeedLimitFiller",
   "VisionSpeedLimitDetection",
+  "VisionSpeedLimitLowLimitFilter",
+  "VisionSpeedLimitLowLimitThreshold",
   "VASMEnabled",
   "CustomPersonalities",
   "TrafficPersonalityProfile",

@@ -28,6 +28,8 @@ _ASCENT_REENGAGE_MAX_STEER_RATE = 2.0
 _ASCENT_REENGAGE_MAX_ANGLE_DELTA = 1.0
 _ASCENT_RECLAIM_FRAMES = 36
 _ASCENT_RECLAIM_EXPONENT = 2.5
+_ASCENT_MADS_MIN_SPEED = 0.44704
+_ASCENT_MADS_MAX_STEER_ANGLE = 120.0
 
 
 def get_safety_CP():
@@ -223,8 +225,14 @@ class CarController(CarControllerBase):
       return subarucan.create_steering_control_angle(self.packer, apply_steer, lkas_active, self.angle_bus)
 
     if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023:
-      manual_handoff = self._ascent_manual_handoff(CS, CC.latActive)
-      lkas_active = CC.latActive and not manual_handoff
+      mads_only = CC.latActive and not CC.enabled
+      mads_only_ok = CS.out.vEgoRaw > _ASCENT_MADS_MIN_SPEED and \
+        abs(CS.out.steeringAngleDeg) < _ASCENT_MADS_MAX_STEER_ANGLE
+      lkas_available = CC.latActive and (not mads_only or mads_only_ok) and \
+        CS.out.gearShifter == structs.CarState.GearShifter.drive and not CS.out.standstill
+
+      manual_handoff = self._ascent_manual_handoff(CS, lkas_available)
+      lkas_active = lkas_available and not manual_handoff
 
       if lkas_active and not self.ascent_lkas_active:
         self.apply_steer_last = CS.out.steeringAngleDeg

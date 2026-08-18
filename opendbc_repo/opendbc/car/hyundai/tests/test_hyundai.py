@@ -507,13 +507,14 @@ class TestHyundaiFingerprint:
     assert CP.flags & HyundaiFlags.HYBRID
     assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.HYBRID_GAS
 
-  def test_carnival_2025_hda2_detects_alternate_buttons(self):
+  @pytest.mark.parametrize("candidate", (CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN))
+  def test_carnival_hda2_detects_alternate_buttons(self, candidate):
     fingerprint = gen_empty_fingerprint()
     CAN = CanBus(None, fingerprint)
     fingerprint[CAN.CAM] = {0x110: 32}
     fingerprint[1] = {0x1aa: 16}
 
-    carnival_cp = CarInterface.get_params(CAR.KIA_CARNIVAL_2025, fingerprint, [], False, False, False, None)
+    carnival_cp = CarInterface.get_params(candidate, fingerprint, [], False, False, False, None)
     assert carnival_cp.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT
     assert carnival_cp.flags & HyundaiFlags.CANFD_ALT_BUTTONS
     assert carnival_cp.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_ALT_BUTTONS
@@ -676,20 +677,14 @@ class TestHyundaiFingerprint:
     )
     assert not (minimal_fpcp.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_SYNC)
 
-  def test_classic_hyundai_long_tracks_main_cruise_state(self):
+  @pytest.mark.parametrize("candidate", (CAR.HYUNDAI_ELANTRA_2021, CAR.HYUNDAI_SONATA_HYBRID))
+  def test_legacy_hyundai_long_does_not_gate_availability_on_main_cruise(self, candidate):
     toggles = get_test_toggles()
-    classic_cp = CarInterface.get_params(CAR.HYUNDAI_ELANTRA_2021, gen_empty_fingerprint(), [], True, False, False, toggles)
-    classic_fpcp = CarInterface.get_starpilot_params(
-      CAR.HYUNDAI_ELANTRA_2021, gen_empty_fingerprint(), [], classic_cp, toggles,
+    CP = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], True, False, False, toggles)
+    FPCP = CarInterface.get_starpilot_params(
+      candidate, gen_empty_fingerprint(), [], CP, toggles,
     )
-    assert classic_fpcp.flags & HyundaiStarPilotFlags.MAIN_CRUISE_STATE_TRACKING
-
-    car_state = CarState(classic_cp, classic_fpcp)
-    ret = SimpleNamespace(
-      cruiseState=SimpleNamespace(available=True),
-      buttonEvents=[structs.CarState.ButtonEvent(pressed=True, type=ButtonType.mainCruise)],
-    )
-    assert car_state.update_main_cruise(ret)
+    assert not (FPCP.flags & HyundaiStarPilotFlags.MAIN_CRUISE_STATE_TRACKING)
 
     ioniq_cp = CarInterface.get_params(CAR.HYUNDAI_IONIQ_6, gen_empty_fingerprint(), [], True, False, False, toggles)
     ioniq_fpcp = CarInterface.get_starpilot_params(
@@ -1486,7 +1481,7 @@ class TestHyundaiFingerprint:
 
     assert Bus.alt not in can_parsers
 
-  def test_sonata_alt_bus_clu13_swl_stat_lkas_button_event(self):
+  def test_sonata_uses_main_bus_bcm_lkas_button_event(self):
     toggles = get_test_toggles()
     fingerprint = gen_empty_fingerprint()
     fingerprint[0][0x391] = 8
@@ -1498,16 +1493,26 @@ class TestHyundaiFingerprint:
     can_parsers = car_state.get_can_parsers(CP)
     packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
 
+    assert Bus.alt not in can_parsers
+
     def update(lkas_button: int, frame: int):
-      msg = packer.make_can_msg("CLU13", 1, {
-        "CF_Clu_SWL_Stat": lkas_button,
-      })
-      can_parsers[Bus.alt].update([(frame, [msg])])
+      msgs = [
+        packer.make_can_msg("CLU13", 0, {
+          "CF_Clu_LdwsLkasSW": 0,
+          "CF_Clu_SWL_Stat": 4,
+        }),
+        packer.make_can_msg("BCM_PO_11", 0, {
+          "LDA_BTN": lkas_button,
+        }),
+      ]
+      can_parsers[Bus.pt].update([(frame, msgs)])
       return car_state.update(can_parsers, toggles)[0]
 
     update(0, 1)
-    ret = update(4, 2)
+    ret = update(1, 2)
     assert any(be.type == ButtonType.lkas and be.pressed for be in ret.buttonEvents)
+
+    ret = update(0, 3)
     assert any(be.type == ButtonType.lkas and not be.pressed for be in ret.buttonEvents)
 
   def test_genesis_g90_does_not_use_alt_bus_lkas_parser(self):

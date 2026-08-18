@@ -15,6 +15,7 @@ const HIDDEN_SETTING_KEYS = new Set(["HumanAcceleration", "ReverseCruise"])
 const GM_MAKES = ["Buick", "Cadillac", "Chevrolet", "GMC", "Holden"]
 const HKG_MAKES = ["Genesis", "Hyundai", "Kia"]
 const VEHICLE_SETTING_MAKES = {
+  RivianAngleControl: ["Rivian"],
   TeslaCoopSteering: ["Tesla"],
   NAPRadarEnabled: ["Tesla"],
   NAPRadarBehindNosecone: ["Tesla"],
@@ -108,6 +109,7 @@ function isSettingVisible(section, param) {
   // This policy controls Galaxy rendering only; hidden params retain their stored values.
   if (HIDDEN_SETTING_KEYS.has(param.key) || !isVehicleSettingVisible(section, param)) return false
   if (param.ui_type === "discord_webhook" && !state.lowVoltageDiscord.owner) return false
+  if (param.requires_capability && !state.values[param.requires_capability]) return false
   if (RADAR_REQUIRED_KEYS.has(param.key) && !state.values.HasRadar) return false
   if (param.key === "AlphaLongitudinalEnabled" && !state.values.AlphaLongitudinalAvailable) return false
   if (state.values[GALAXY_DEVELOPER_MODE_KEY]) return true
@@ -202,6 +204,7 @@ function scheduleSyncInputs() {
 function applySelectOptions(el, options) {
   el.innerHTML = ""
   for (const opt of options || []) {
+    if (opt?.developer_only && !state.values[GALAXY_DEVELOPER_MODE_KEY]) continue
     const o = document.createElement("option")
     o.value = String(opt.value)
     o.textContent = opt.label

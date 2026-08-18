@@ -58,7 +58,7 @@ def test_galaxy_layout_contains_basic_mode_controls():
   } <= sections["Longitudinal (Speed & Following)"].keys()
   assert "RedneckCruise" not in sections["Longitudinal (Speed & Following)"].keys()
   assert sections["Developer"]["RedneckCruise"]["parent_key"] == "GalaxyDeveloperMode"
-  assert {"AlphaLongitudinalEnabled", "ForceOffroad", "GalaxyDeveloperMode"} <= sections["Developer"].keys()
+  assert {"AlphaLongitudinalEnabled", "ForceOffroad", "GalaxyDeveloperMode", "TestModelLeadTrajectory"} <= sections["Developer"].keys()
 
 
 def test_device_shutdown_uses_literal_hours():
@@ -140,6 +140,9 @@ def test_requested_simple_and_advanced_settings_tiers():
     assert longitudinal[key]["settings_tier"] == "advanced"
 
   assert developer["GalaxyDeveloperMode"]["settings_tier"] == "simple"
+  assert developer["TestModelLeadTrajectory"]["parent_key"] == "GalaxyDeveloperMode"
+  assert developer["TestModelLeadTrajectory"]["requires_offroad"] is True
+  assert developer["TestModelLeadTrajectory"]["settings_tier"] == "advanced"
   assert developer["AlphaLongitudinalEnabled"]["parent_key"] == "GalaxyDeveloperMode"
   assert developer["AlphaLongitudinalEnabled"]["requires_offroad"] is True
   assert developer["AlphaLongitudinalEnabled"]["settings_tier"] == "advanced"
@@ -153,6 +156,7 @@ def test_requested_simple_and_advanced_settings_tiers():
 
 def test_hidden_feature_defaults_remain_enabled():
   assert _declared_default("GalaxyDeveloperMode") == "0"
+  assert _declared_default("TestModelLeadTrajectory") == "0"
   assert _declared_default("NavDesiresAllowed") == "1"
   assert _declared_default("NavLanePositioningAllowed") == "0"
   assert _declared_default("NavLongitudinalAllowed") == "1"
@@ -172,6 +176,17 @@ def test_human_acceleration_param_is_removed():
   assert '{"HumanAcceleration",' not in params_source
 
 
+def test_rivian_angle_control_is_live_favorite_and_harness_gated():
+  sections = _params_by_section(_layout())
+  setting = sections["Vehicle"]["RivianAngleControl"]
+
+  assert setting["ui_type"] == "toggle"
+  assert setting["favorite_eligible"] is True
+  assert setting["requires_capability"] == "HasRivianAngleHarness"
+  assert "reboot" not in setting["description"].lower()
+  assert _declared_default("RivianAngleControl") == "0"
+
+
 def test_vasm_is_default_off_and_configured_only_in_galaxy():
   sections = _params_by_section(_layout())
   lateral = sections["Lateral (Steering)"]
@@ -184,6 +199,27 @@ def test_vasm_is_default_off_and_configured_only_in_galaxy():
     REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/lateral.py",
   )
   assert all("VASM" not in path.read_text(encoding="utf-8") for path in physical_settings)
+
+
+def test_low_vision_limit_filter_is_default_off_and_configured_only_in_galaxy():
+  sections = _params_by_section(_layout())
+  longitudinal = sections["Longitudinal (Speed & Following)"]
+  toggle = longitudinal["VisionSpeedLimitLowLimitFilter"]
+  threshold = longitudinal["VisionSpeedLimitLowLimitThreshold"]
+
+  assert toggle["parent_key"] == "VisionSpeedLimitDetection"
+  assert threshold["parent_key"] == "VisionSpeedLimitLowLimitFilter"
+  assert threshold["min"] == 5
+  assert threshold["max"] == 80
+  assert threshold["step"] == 5
+  assert _declared_default("VisionSpeedLimitLowLimitFilter") == "0"
+  assert _declared_default("VisionSpeedLimitLowLimitThreshold") == "25"
+
+  physical_settings = (
+    REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/longitudinal.py",
+    REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/aethergrid.py",
+  )
+  assert all("VisionSpeedLimitLowLimit" not in path.read_text(encoding="utf-8") for path in physical_settings)
 
 
 def test_pip_preview_is_under_driving_screen_widgets_and_configured_only_in_galaxy():

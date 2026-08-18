@@ -345,11 +345,9 @@ class SelfdriveD:
       self.ecu_disable_failed = self.params.get_bool("EcuDisableFailed")
       self.ecu_disable_failed_checked = True
       if self.ecu_disable_failed:
-        fallback_cp = messaging.log_from_bytes(self.params.get("CarParams"), car.CarParams)
-        fallback_fpcp = messaging.log_from_bytes(self.params.get("StarPilotCarParams"), custom.StarPilotCarParams)
-        self.CP.openpilotLongitudinalControl = fallback_cp.openpilotLongitudinalControl
-        self.CP.pcmCruise = fallback_cp.pcmCruise
-        self.FPCP = fallback_fpcp
+        self.CP = messaging.log_from_bytes(self.params.get("CarParams"), car.CarParams)
+        self.FPCP = messaging.log_from_bytes(self.params.get("StarPilotCarParams"), custom.StarPilotCarParams)
+        self.car_events = CarSpecificEvents(self.CP)
 
   def clear_longitudinal_excessive_actuation_alert(self):
     alert = self.params.get("Offroad_ExcessiveActuation")

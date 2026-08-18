@@ -73,7 +73,6 @@ void PandaSafety::setSafetyMode(const std::string &params_string) {
 
   auto starpilot_safety_configs = starpilot_car_params.getSafetyConfigs();
   alternative_experience |= starpilot_car_params.getAlternativeExperience();
-
   for (int i = 0; i < pandas_.size(); ++i) {
     // Default to SILENT safety model if not specified
     cereal::CarParams::SafetyModel safety_model = cereal::CarParams::SafetyModel::SILENT;

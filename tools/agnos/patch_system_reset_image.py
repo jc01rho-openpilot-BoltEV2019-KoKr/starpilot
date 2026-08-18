@@ -263,6 +263,9 @@ def patch_setup_branding_script(original: bytes, entry_name: str) -> bytes:
 
   if entry_name == MICI_SETUP_ENTRY_IN_SETUP_ZIPAPP:
     text = text.replace('LargerSlider("slide to use\\nopenpilot"', 'LargerSlider("slide to use\\nstarpilot"')
+    text = text.replace('LargerSlider("slide to install\\nopenpilot"', 'LargerSlider("slide to install\\nstarpilot"')
+    text = text.replace('BigPillButton("install openpilot"', 'BigPillButton("install StarPilot"')
+    text = text.replace('set_text("install openpilot"', 'set_text("install StarPilot"')
   elif entry_name == TICI_SETUP_ENTRY_IN_SETUP_ZIPAPP:
     text = text.replace('ButtonRadio("openpilot"', 'ButtonRadio("StarPilot"')
 
@@ -810,6 +813,9 @@ def setup_zipapp_has_expected_content(data: bytes) -> bool:
           return False
         if b"installer.comma.ai/firestar5683/StarPilot" not in setup_script:
           return False
+      mici_setup = z.read(MICI_SETUP_ENTRY_IN_SETUP_ZIPAPP)
+      if b"install openpilot" in mici_setup or b"slide to install\\nopenpilot" in mici_setup:
+        return False
     except KeyError:
       return False
   return True

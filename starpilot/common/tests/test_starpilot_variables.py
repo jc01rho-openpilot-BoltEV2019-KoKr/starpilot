@@ -12,6 +12,15 @@ def test_legacy_volt_stock_acc_models_share_sng_and_auto_hold_scope():
   }
 
 
+def test_tss2_toyota_keeps_main_aol_button_path():
+  assert spv._lkas_allowed_for_aol("toyota", 0, []) is False
+
+
+def test_hyundai_and_honda_keep_lkas_aol_button_path():
+  assert spv._lkas_allowed_for_aol("honda", 0, []) is True
+  assert spv._lkas_allowed_for_aol("hyundai", spv.HyundaiFlags.CANFD, []) is True
+
+
 def test_jeep_brake_hold_scope_is_grand_cherokee_only():
   assert {str(car) for car in spv.CHRYSLER_JEEPS} == {
     "JEEP_GRAND_CHEROKEE",
@@ -62,6 +71,19 @@ def test_get_starpilot_toggles_realtime_path_does_not_read_persisted_force_param
   assert toggles.force_offroad is False
   assert toggles.force_onroad is True
   assert toggles.force_torque_controller is False
+
+
+def test_get_starpilot_toggles_uses_live_rivian_angle_request(monkeypatch):
+  params = SimpleNamespace(get_bool=lambda key: key == "RivianAngleControl")
+  monkeypatch.setattr(spv.get_starpilot_toggles, "_params", params, raising=False)
+
+  payload = '{"rivian_angle_control": false}'
+  toggles = spv.get_starpilot_toggles(
+    {"starpilotPlan": SimpleNamespace(starpilotToggles=payload)},
+    read_persisted_force_params=True,
+  )
+
+  assert toggles.rivian_angle_control is True
 
 
 class _FakeParams:
@@ -196,6 +218,36 @@ def test_missing_bounded_value_uses_explicit_default():
   value = variables.get_value("LaneChangeCloseGapSeconds", cast=float, default=1.0, min=0.5, max=3.0)
 
   assert value == 1.0
+
+
+def test_disabled_conditional_experimental_toggles_are_off(monkeypatch, tmp_path):
+  params_cls = spv.Params
+
+  def isolated_params(_path=None, memory=False, return_defaults=False):
+    return params_cls(str(tmp_path / ("memory" if memory else "params")), return_defaults=return_defaults)
+
+  monkeypatch.setattr(spv, "Params", isolated_params)
+  params = isolated_params()
+  params.put_bool("ConditionalExperimental", True)
+  params.put_bool("CEStopLights", False)
+  params.put_float("CEModelStopTime", 0.0)
+
+  variables = spv.StarPilotVariables()
+  toggles = variables.starpilot_toggles
+
+  assert variables.params_raw.get_float("CEModelStopTime") == 0.0
+  assert toggles.conditional_experimental_mode is False
+  assert toggles.conditional_curves is False
+  assert toggles.conditional_curves_lead is False
+  assert toggles.conditional_lead is False
+  assert toggles.conditional_open_road is False
+  assert toggles.conditional_slower_lead is False
+  assert toggles.conditional_stopped_lead is False
+  assert toggles.conditional_limit == 0.0
+  assert toggles.conditional_limit_lead == 0.0
+  assert toggles.conditional_model_stop_time == 0.0
+  assert toggles.conditional_signal == 0.0
+  assert toggles.conditional_signal_lane_detection is False
 
 
 def test_device_shutdown_hours_convert_directly_to_seconds():

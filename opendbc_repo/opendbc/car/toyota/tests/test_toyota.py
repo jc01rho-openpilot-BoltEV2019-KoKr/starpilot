@@ -90,6 +90,53 @@ class TestToyotaInterfaces:
     assert params.lateralTuning.torque.latAccelFactor == pytest.approx(1.7)
     assert params.lateralTuning.torque.friction == pytest.approx(0.14)
 
+  def test_sienna_4th_gen_parses_distance_button(self):
+    params = CarInterface.get_params(
+      CAR.TOYOTA_SIENNA_4TH_GEN,
+      {bus: {} for bus in range(8)},
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
+    )
+    parser = CarState.get_can_parsers(params)[Bus.pt]
+
+    assert "PCM_CRUISE_4" in parser.vl
+
+    other_params = CarInterface.get_params(
+      CAR.TOYOTA_RAV4_PRIME,
+      {bus: {} for bus in range(8)},
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
+    )
+    assert "PCM_CRUISE_4" not in CarState.get_can_parsers(other_params)[Bus.pt].vl
+
+  def test_sienna_distance_button_rate_does_not_invalidate_can(self):
+    params = CarInterface.get_params(
+      CAR.TOYOTA_SIENNA_4TH_GEN,
+      {bus: {} for bus in range(8)},
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
+    )
+    parser = CarState.get_can_parsers(params)[Bus.pt]
+    packer = CANPacker(DBC[CAR.TOYOTA_SIENNA_4TH_GEN][Bus.pt])
+
+    for frame in range(1, 4):
+      msg = packer.make_can_msg("PCM_CRUISE_4", 0, {"COUNTER": frame, "DISTANCE": frame % 2})
+      parser.update([(frame * 1_000_000_000, [msg])])
+      assert parser.can_valid
+
+      # The 1 Hz message must not make the whole car state invalid between frames.
+      parser.update([(frame * 1_000_000_000 + 500_000_000, [])])
+      assert parser.can_valid
+
   def test_tss2_dbc(self):
     # We make some assumptions about TSS2 platforms,
     # like looking up certain signals only in this DBC
@@ -727,21 +774,21 @@ class TestToyotaCarController:
     assert parser.vl["LKAS_HUD"]["LEFT_LINE"] == 0
     assert parser.vl["LKAS_HUD"]["RIGHT_LINE"] == 0
 
-  def test_acc_control_can_suppress_long_press_behavior_while_gap_button_is_held(self):
+  def test_acc_control_uses_valid_long_press_modes(self):
     packer = CANPacker(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt])
     parser = CANParser(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt], [("ACC_CONTROL", 0)], 0)
 
-    default_msg = toyotacan.create_accel_command(
+    normal_msg = toyotacan.create_accel_command(
       packer, 0.0, False, True, False, False, 1, False, 0, False,
     )
-    parser.update([(1, [default_msg])])
+    parser.update([(1, [normal_msg])])
     assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 1
 
-    suppressed_msg = toyotacan.create_accel_command(
-      packer, 0.0, False, True, False, False, 1, False, 0, False, allow_long_press=0,
+    reverse_msg = toyotacan.create_accel_command(
+      packer, 0.0, False, True, False, False, 1, False, 0, True,
     )
-    parser.update([(1, [suppressed_msg])])
-    assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 0
+    parser.update([(1, [reverse_msg])])
+    assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 2
 
   def test_auto_brake_hold_sends_modified_pre_collision_after_timer(self):
     controller = self._make_controller()

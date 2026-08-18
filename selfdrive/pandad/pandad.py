@@ -11,6 +11,7 @@ from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.system.hardware import HARDWARE
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.pandad.rivian_long_flasher import prepare_rivian_bridge
 
 
 def get_selected_firmware_name(app_fn: str, remote_start: bool, hkg_remote_start: bool, ignore_ignition_line: bool) -> str:
@@ -158,6 +159,13 @@ def main() -> None:
         continue
 
       cloudlog.info(f"{len(panda_serials)} panda(s) found, connecting - {panda_serials}")
+
+      # Update and reserve the Rivian harness bridge before managing internal Pandas.
+      bridge_serials = prepare_rivian_bridge(panda_serials)
+      panda_serials = [serial for serial in panda_serials if serial not in bridge_serials]
+      if len(panda_serials) == 0:
+        no_internal_panda_count += 1
+        continue
 
       # Flash pandas
       pandas: list[Panda] = []
