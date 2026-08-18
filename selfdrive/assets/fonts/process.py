@@ -2,8 +2,6 @@
 from pathlib import Path
 import json
 
-import pyray as rl
-
 FONT_DIR = Path(__file__).resolve().parent
 SELFDRIVE_DIR = FONT_DIR.parents[1]
 TRANSLATIONS_DIR = SELFDRIVE_DIR / "ui" / "translations"
@@ -12,6 +10,10 @@ LANGUAGES_FILE = TRANSLATIONS_DIR / "languages.json"
 GLYPH_PADDING = 6
 EXTRA_CHARS = "–‑✓×°§•X⚙✕◀▶✔⌫⇧␣○●↳çêüñ–‑✓×°§•€£¥²⚠ⓘ"
 UNIFONT_LANGUAGES = {"ar", "th", "zh-CHT", "zh-CHS", "ko", "ja"}
+
+
+def _language_code(code: str) -> str:
+  return code.removeprefix("main_")
 
 
 def _languages():
@@ -32,7 +34,7 @@ def _char_sets():
       chars = set(po_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
       continue
-    (unifont if code in UNIFONT_LANGUAGES else base).update(chars)
+    (unifont if _language_code(code) in UNIFONT_LANGUAGES else base).update(chars)
 
   return tuple(sorted(ord(c) for c in base)), tuple(sorted(ord(c) for c in unifont))
 
@@ -91,6 +93,8 @@ def _write_bmfont(path: Path, font_size: int, face: str, atlas_name: str, line_h
 
 
 def _process_font(font_path: Path, codepoints: tuple[int, ...]):
+  import pyray as rl
+
   print(f"Processing {font_path.name}...")
 
   font_size = {
