@@ -281,7 +281,7 @@ class StarPilotSoundsLayout(_SettingsPage):
   ]
 
   COOLDOWN_INFO = {
-    "title": tr_noop("Switchback Mode Cooldown"),
+    "title": tr_noop("Switchback Cooldown"),
     "subtitle": "",
     "min": 0,
     "max": 30,

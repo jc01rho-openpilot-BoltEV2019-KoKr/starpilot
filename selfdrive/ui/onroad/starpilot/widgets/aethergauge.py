@@ -16,7 +16,7 @@ class AetherGaugeWidget(LayoutWidget):
 
   @property
   def is_visible(self) -> bool:
-    return self._aethergauge.has_active_source()
+    return self._aethergauge.has_active_source() or self._alpha_filter.x > 0.01
 
   def get_size(self) -> tuple[float, float]:
     # Match the left control width; height covers the road visual and text cradle.

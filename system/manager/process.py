@@ -522,6 +522,14 @@ class ManagerProcess(ABC):
     if dt > self.watchdog_max_dt and ENABLE_WATCHDOG:
       self.capture_watchdog_debug_dump_async(f"watchdog_timeout started={started}", dt)
       cloudlog.error(f"Watchdog timeout for {self.name} (exitcode {self.proc.exitcode}) restarting ({started=})")
+      if isinstance(self, NativeProcess):
+        sentry.capture_message(
+          f"Native process watchdog timeout: {self.name}",
+          level="fatal",
+          tags={"process": self.name, "process_kind": "native", "failure": "watchdog"},
+          extras={"pid": self.proc.pid, "watchdog_dt": dt, "started": started},
+          flush_timeout=0.5,
+        )
       self.restart()
 
   def stop(self, retry: bool = True, block: bool = True, sig: signal.Signals = None) -> int | None:
@@ -715,7 +723,16 @@ def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params=None
   for p in procs:
     # Reap crashed processes so they can be cleanly restarted below.
     if p.proc is not None and p.proc.exitcode is not None and not p.shutting_down:
-      cloudlog.error(f"Process {p.name} crashed with exitcode {p.proc.exitcode}, restarting")
+      exitcode = p.proc.exitcode
+      cloudlog.error(f"Process {p.name} crashed with exitcode {exitcode}, restarting")
+      if isinstance(p, NativeProcess):
+        sentry.capture_message(
+          f"Native process crashed: {p.name}",
+          level="fatal",
+          tags={"process": p.name, "process_kind": "native"},
+          extras={"exitcode": exitcode, "started": started},
+          flush_timeout=0.5,
+        )
       p.stop(retry=False)
 
     if p.enabled and p.name not in not_run and p.should_run(started, params, CP, starpilot_toggles):

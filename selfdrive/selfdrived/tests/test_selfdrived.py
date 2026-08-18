@@ -1,4 +1,6 @@
-from cereal import car, custom
+import cereal.messaging as messaging
+
+from cereal import car, custom, log
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR
 from opendbc.car.nissan.values import CAR as NISSAN_CAR
 
@@ -63,8 +65,9 @@ def test_ecu_disable_fallback_synchronizes_behavior_and_safety_params():
   fallback_fpcp.safetyConfigs = [custom.StarPilotCarParams.SafetyConfig.new_message(safetyParam=0)]
 
   selfdrived = SelfdriveD.__new__(SelfdriveD)
-  selfdrived.CP = initial_cp
-  selfdrived.FPCP = initial_fpcp
+  initial_cp_reader = messaging.log_from_bytes(initial_cp.to_bytes(), car.CarParams)
+  selfdrived.CP = initial_cp_reader
+  selfdrived.FPCP = messaging.log_from_bytes(initial_fpcp.to_bytes(), custom.StarPilotCarParams)
   selfdrived.params = FakeFallbackParams(True, True, fallback_cp, fallback_fpcp)
   selfdrived.ecu_disable_failed = False
   selfdrived.ecu_disable_failed_checked = False
@@ -76,6 +79,16 @@ def test_ecu_disable_fallback_synchronizes_behavior_and_safety_params():
   assert not selfdrived.CP.openpilotLongitudinalControl
   assert selfdrived.CP.pcmCruise
   assert selfdrived.FPCP.safetyConfigs[0].safetyParam == 0
+  assert initial_cp_reader.openpilotLongitudinalControl
+  assert not initial_cp_reader.pcmCruise
+
+  CS = car.CarState.new_message()
+  CS.gearShifter = car.CarState.GearShifter.drive
+  CS.cruiseState.available = True
+  CS.cruiseState.enabled = True
+  CS_prev = car.CarState.new_message()
+  events = selfdrived.car_events.update(CS, CS_prev, car.CarControl.new_message())
+  assert log.OnroadEvent.EventName.pcmEnable in events.names
 
 
 def test_ecu_disable_fallback_does_not_change_other_cars():
@@ -93,8 +106,10 @@ def test_ecu_disable_fallback_does_not_change_other_cars():
   fallback_fpcp.safetyConfigs = [custom.StarPilotCarParams.SafetyConfig.new_message(safetyParam=0)]
 
   selfdrived = SelfdriveD.__new__(SelfdriveD)
-  selfdrived.CP = initial_cp
-  selfdrived.FPCP = initial_fpcp
+  initial_cp_reader = messaging.log_from_bytes(initial_cp.to_bytes(), car.CarParams)
+  initial_fpcp_reader = messaging.log_from_bytes(initial_fpcp.to_bytes(), custom.StarPilotCarParams)
+  selfdrived.CP = initial_cp_reader
+  selfdrived.FPCP = initial_fpcp_reader
   selfdrived.params = FakeFallbackParams(True, True, fallback_cp, fallback_fpcp)
   selfdrived.ecu_disable_failed = False
   selfdrived.ecu_disable_failed_checked = False
@@ -105,3 +120,5 @@ def test_ecu_disable_fallback_does_not_change_other_cars():
   assert selfdrived.CP.openpilotLongitudinalControl
   assert not selfdrived.CP.pcmCruise
   assert selfdrived.FPCP.safetyConfigs[0].safetyParam == 4
+  assert selfdrived.CP is initial_cp_reader
+  assert selfdrived.FPCP is initial_fpcp_reader

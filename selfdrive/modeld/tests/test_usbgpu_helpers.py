@@ -1,5 +1,6 @@
 import io
 from types import MethodType
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -12,6 +13,125 @@ def test_external_gpu_keeps_the_native_device_available():
   assert tinygrad_dev_config(True, tici=True) == "QCOM;USB+AMD:LLVM"
   assert tinygrad_dev_config(False, tici=True) == "QCOM"
   assert tinygrad_dev_config(True, tici=False) == "CPU:LLVM;USB+AMD:LLVM"
+
+
+def test_external_gpu_selects_amd_without_probing_other_backends(monkeypatch, tmp_path):
+  from openpilot.selfdrive.modeld import helpers
+
+  monkeypatch.setattr(helpers, "TG_INPUT_DEVICES_PATH", tmp_path / "missing.json")
+  monkeypatch.setattr(helpers, "_default_tinygrad_backend", lambda: "QCOM")
+  monkeypatch.setattr(
+    helpers.Device,
+    "get_available_devices",
+    lambda: (_ for _ in ()).throw(AssertionError("must not probe every tinygrad backend")),
+  )
+
+  assert helpers.get_tg_input_devices("selfdrive.modeld.modeld", usbgpu=True) == {
+    "WARP_DEV": "QCOM",
+    "QUEUE_DEV": "AMD",
+  }
+
+
+def test_external_gpu_uses_a_longer_load_watchdog():
+  assert modeld.BIG_MODEL_LOAD_WAIT_TIMEOUT_MS == 30000
+  assert modeld.BIG_MODEL_RUN_WAIT_TIMEOUT_MS == 3000
+
+
+def test_external_gpu_power_must_be_stable_after_vehicle_start():
+  panda_type = modeld.log.PandaState.PandaType.tres
+
+  def panda_state(voltage):
+    return SimpleNamespace(pandaType=panda_type, voltage=voltage)
+
+  ready, stable_since, voltage = modeld._external_gpu_power_ready([panda_state(12800)], 10.0, None)
+  assert not ready
+  assert stable_since is None
+  assert voltage == 12800
+
+  ready, stable_since, voltage = modeld._external_gpu_power_ready([panda_state(14100)], 11.0, stable_since)
+  assert not ready
+  assert stable_since == 11.0
+  assert voltage == 14100
+
+  ready, stable_since, _ = modeld._external_gpu_power_ready([panda_state(14100)], 13.9, stable_since)
+  assert not ready
+  assert stable_since == 11.0
+
+  ready, stable_since, _ = modeld._external_gpu_power_ready([panda_state(11900)], 14.0, stable_since)
+  assert not ready
+  assert stable_since is None
+
+  ready, stable_since, _ = modeld._external_gpu_power_ready([panda_state(14100)], 15.0, stable_since)
+  assert not ready
+  ready, stable_since, _ = modeld._external_gpu_power_ready([panda_state(14100)], 18.0, stable_since)
+  assert ready
+  assert stable_since == 15.0
+
+
+def test_external_gpu_power_ignores_unknown_pandas():
+  panda_states = [
+    SimpleNamespace(pandaType=modeld.log.PandaState.PandaType.unknown, voltage=15000),
+    SimpleNamespace(pandaType=modeld.log.PandaState.PandaType.tres, voltage=0),
+  ]
+
+  assert modeld._external_gpu_power_ready(panda_states, 10.0, None) == (False, None, None)
+
+
+def test_external_gpu_wait_timeout_updates_tinygrad_cache(monkeypatch):
+  from tinygrad.helpers import getenv
+
+  try:
+    monkeypatch.setenv("HCQDEV_WAIT_TIMEOUT_MS", "30000")
+    getenv.cache_clear()
+    assert getenv("HCQDEV_WAIT_TIMEOUT_MS", 0) == 30000
+
+    modeld._set_hcq_wait_timeout(3000)
+    assert getenv("HCQDEV_WAIT_TIMEOUT_MS", 0) == 3000
+  finally:
+    getenv.cache_clear()
+
+
+def test_chestnut_telemetry_is_bounded_when_amd_is_unavailable(monkeypatch):
+  from cereal.services import SERVICE_LIST
+
+  class FakePubMaster:
+    def __init__(self):
+      self.sent = []
+
+    def send(self, service, message):
+      self.sent.append((service, message))
+
+  publisher = FakePubMaster()
+  monkeypatch.setattr(modeld, "Device", SimpleNamespace(_opened_devices=set()))
+
+  telemetry = modeld.ChestnutState(publisher, big=True)
+  telemetry.send()
+
+  assert SERVICE_LIST["chestnutState"].frequency == 10.0
+  assert len(publisher.sent) == 1
+  service, message = publisher.sent[0]
+  assert service == "chestnutState"
+  assert message.which() == "chestnutState"
+  assert not message.valid
+
+
+def test_tinygrad_disk_cache_connection_is_closed_before_thread_handoff(monkeypatch):
+  import tinygrad.helpers as tinygrad_helpers
+
+  class FakeConnection:
+    def __init__(self):
+      self.closed = False
+
+    def close(self):
+      self.closed = True
+
+  connection = FakeConnection()
+  monkeypatch.setattr(tinygrad_helpers, "_db_connection", connection)
+
+  modeld._close_tinygrad_disk_cache_connection()
+
+  assert connection.closed
+  assert tinygrad_helpers._db_connection is None
 
 
 def test_out_of_band_artifact_round_trip():

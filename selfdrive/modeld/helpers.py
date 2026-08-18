@@ -44,15 +44,11 @@ def _fallback_tg_devices(process_name: str, usbgpu: bool) -> dict[str, str]:
   if process_name == "selfdrive.modeld.dmonitoringmodeld":
     return {"DEV": backend}
 
-  queue_dev = backend
-  if usbgpu:
-    try:
-      available = {name.split(":", 1)[0] for name in Device.get_available_devices()}
-    except Exception:
-      available = set()
-    if "AMD" in available:
-      queue_dev = "AMD"
-  return {"WARP_DEV": backend, "QUEUE_DEV": queue_dev}
+  # The external-GPU profile is only selected after Chestnut has been
+  # recognized. Match upstream's generated device map and select AMD directly;
+  # probing every tinygrad backend opens CL/DSP/CPU devices inside modeld and
+  # can interfere with the on-road QCOM + AMD process.
+  return {"WARP_DEV": backend, "QUEUE_DEV": "AMD" if usbgpu else backend}
 
 
 def get_tg_input_devices(process_name: str, usbgpu: bool) -> dict[str, str]:

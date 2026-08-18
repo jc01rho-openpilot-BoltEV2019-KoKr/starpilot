@@ -24,6 +24,8 @@
 #include "common/clutil.h"
 #include "common/params.h"
 #include "common/swaglog.h"
+#include "common/timing.h"
+#include "common/watchdog.h"
 
 
 ExitHandler do_exit;
@@ -285,6 +287,7 @@ void camerad_thread() {
   // poll events
   LOG("-- Dequeueing Video events");
   while (!do_exit) {
+    watchdog_kick(nanos_since_boot());
     struct pollfd fds[1] = {{.fd = m.video0_fd, .events = POLLPRI}};
     int ret = poll(fds, std::size(fds), 1000);
     if (ret < 0) {

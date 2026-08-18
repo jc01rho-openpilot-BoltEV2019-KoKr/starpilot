@@ -21,6 +21,10 @@ def copy(src, dest):
     shutil.copy2(src, dest, follow_symlinks=True)
 
 
+def ignore_broken_symlinks(src, names):
+  return [name for name in names if Path(src, name).is_symlink() and not Path(src, name).exists()]
+
+
 if __name__ == '__main__':
   parser = ArgumentParser(prog='pack.py', description="package script into a portable executable", epilog='comma.ai')
   parser.add_argument('-e', '--entrypoint', help="function to call in module, default is 'main'", default='main')
@@ -43,7 +47,8 @@ if __name__ == '__main__':
 
   with tempfile.TemporaryDirectory() as tmp:
     for directory in DIRS:
-      shutil.copytree(BASEDIR + '/' + directory, tmp + '/' + directory, symlinks=False, dirs_exist_ok=True, copy_function=copy)
+      shutil.copytree(BASEDIR + '/' + directory, tmp + '/' + directory, symlinks=False, ignore=ignore_broken_symlinks,
+                      dirs_exist_ok=True, copy_function=copy)
     entry = f'{args.module}:{args.entrypoint}'
     zipapp.create_archive(tmp, target=args.output, interpreter=INTERPRETER, main=entry)
 

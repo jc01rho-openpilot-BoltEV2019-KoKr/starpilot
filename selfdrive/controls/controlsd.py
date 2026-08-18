@@ -12,6 +12,7 @@ from openpilot.common.swaglog import cloudlog
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.chrysler.values import pacifica_hybrid_aol_stock_acc_mode
 from opendbc.car.gm.values import CAR as GM_CAR
+from opendbc.car.honda.values import CAR as HONDA_CAR
 from opendbc.car.nissan.values import CAR as NISSAN_CAR
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.selfdrive.controls.lib.drive_helpers import MAX_LATERAL_JERK, clip_curvature, get_lateral_active
@@ -23,10 +24,11 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   BOLT_2018_2021_STEER_RATIO_TEST_SCALE,
   LatControlTorque,
   get_bolt_2017_steer_ratio_scale,
+  get_honda_accord_steer_ratio_scale,
 )
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
 from openpilot.selfdrive.car.cruise_state import should_cancel_stock_cruise
-from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS
+from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS, get_car_lateral_smooth_seconds
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
@@ -35,6 +37,7 @@ from openpilot.starpilot.controls.lib.neural_network_feedforward import LatContr
 State = log.SelfdriveState.OpenpilotState
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
+LateralControlMode = car.CarControl.Actuators.LateralControlMode
 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
 
@@ -216,6 +219,19 @@ def get_plan_reach(model_v2) -> float:
   return xs[-1] if len(xs) else 0.0
 
 
+def get_control_lateral_smooth_seconds(brand: str, v_ego: float, vehicle_smooth_seconds: float) -> float:
+  if brand != "rivian":
+    return LAT_SMOOTH_SECONDS
+  return get_car_lateral_smooth_seconds(brand, v_ego, vehicle_smooth_seconds)
+
+
+def turn_lead_allowed(brand: str, lateral_control_mode: car.CarControl.Actuators.LateralControlMode) -> bool:
+  # Torque steering mechanically damps the turn-lead fade. A direct angle
+  # controller follows the resulting lead/catch-up cycle literally, which can
+  # reverse the wheel command several times during one turn initiation.
+  return brand != "rivian" or lateral_control_mode != LateralControlMode.angle
+
+
 # Turn-initiation lead. The model's action and the fixed 4/7 m probes are anchored in
 # METERS, so the seconds of warning they give shrinks with speed — at 12 mph a corner
 # enters the 7 m window only ~1.3 s out, too late to wind the wheel, which is why every
@@ -370,8 +386,8 @@ class Controls:
       self.ecu_disable_failed = self.params.get_bool("EcuDisableFailed")
       self.ecu_disable_failed_checked = True
       if self.ecu_disable_failed and self.CP.carFingerprint == NISSAN_CAR.NISSAN_LEAF:
-        self.CP.openpilotLongitudinalControl = False
-        self.CP.pcmCruise = True
+        self.CP = messaging.log_from_bytes(self.params.get("CarParams"), car.CarParams)
+        self.FPCP = messaging.log_from_bytes(self.params.get("StarPilotCarParams"), custom.StarPilotCarParams)
 
   def state_control(self):
     CS = self.sm['carState']
@@ -380,10 +396,15 @@ class Controls:
     lp = self.sm['liveParameters']
     x = max(lp.stiffnessFactor, 0.1)
     sr = max(lp.steerRatio, 0.1)
+    custom_accord_ratio = getattr(self.starpilot_toggles, "steerRatio", self.CP.steerRatio)
+    accord_ratio_is_explicit = getattr(self.starpilot_toggles, "use_custom_steerRatio", False) and \
+      abs(custom_accord_ratio - self.CP.steerRatio) > 0.01
     if self.CP.carFingerprint == GM_CAR.CHEVROLET_BOLT_CC_2017:
       sr *= get_bolt_2017_steer_ratio_scale(CS.vEgo)
     elif self.CP.carFingerprint == GM_CAR.CHEVROLET_BOLT_CC_2018_2021:
       sr *= BOLT_2018_2021_STEER_RATIO_TEST_SCALE
+    elif self.CP.carFingerprint == HONDA_CAR.HONDA_ACCORD and not accord_ratio_is_explicit:
+      sr *= get_honda_accord_steer_ratio_scale(CS.vEgo)
     self.VM.update_params(x, sr)
 
     steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
@@ -577,7 +598,9 @@ class Controls:
     # bend is not a turn. The model-oppose veto is defense-in-depth for the fade-in
     # edge: a model actively steering against the blinker is correcting something the
     # lead must not fight (see the constants comment for the 2026-07-19 failures).
-    if (CC.latActive and blinker_dir != 0.0 and
+    lateral_control_mode = self.sm['carOutput'].actuatorsOutput.lateralControlMode
+    if (turn_lead_allowed(self.CP.brand, lateral_control_mode) and
+        CC.latActive and blinker_dir != 0.0 and
         model_v2.meta.laneChangeState == LaneChangeState.off and
         TURN_LEAD_MIN_SPEED <= CS.vEgo < TURN_LEAD_MAX_SPEED and
         new_desired_curvature * blinker_dir > -TURN_LEAD_MODEL_OPPOSE):
@@ -653,7 +676,8 @@ class Controls:
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
                                                                jerk_factor)
-    lat_delay = self.sm["liveDelay"].lateralDelay + LAT_SMOOTH_SECONDS
+    lat_smooth_seconds = get_control_lateral_smooth_seconds(self.CP.brand, CS.vEgo, self.CP.lateralSmoothSeconds)
+    lat_delay = self.sm["liveDelay"].lateralDelay + lat_smooth_seconds
 
     actuators.curvature = self.desired_curvature
     steer, steeringAngleDeg, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,

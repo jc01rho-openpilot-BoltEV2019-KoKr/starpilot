@@ -59,22 +59,23 @@ def visible_source_rows(
   values: Mapping[str, float],
   active_source: str,
   enabled_sources: Iterable[str],
-  active_only: bool,
+  active_only: bool = True,
 ) -> list[tuple[str, str, float, bool]]:
-  """Return enabled source rows, optionally excluding empty readings."""
+  """Return enabled source rows that possess a valid positive speed reading."""
   enabled = set(enabled_sources)
   rows = []
   for title, _abbrev, value_key, panel_label, icon_key in source_defs:
     if title not in enabled:
       continue
     value = values[value_key]
-    if active_only and (not math.isfinite(value) or value <= 0):
+    has_reading = math.isfinite(value) and value > 0 and round(value) > 0
+    if not has_reading:
       continue
     rows.append((
       panel_label,
       icon_key,
       value,
-      active_source == title and math.isfinite(value) and value > 0,
+      active_source == title,
     ))
   return rows
 

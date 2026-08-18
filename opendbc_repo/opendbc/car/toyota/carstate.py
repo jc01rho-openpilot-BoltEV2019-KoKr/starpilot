@@ -24,6 +24,7 @@ TEMP_STEER_FAULTS = (0, 9, 11, 21, 25)
 # - prolonged high driver torque: 17 (permanent)
 PERM_STEER_FAULTS = (3, 17)
 LKAS_BUTTON_CAR = TSS2_CAR | {CAR.TOYOTA_PRIUS}
+DISTANCE_BUTTON_CAR = {CAR.TOYOTA_SIENNA_4TH_GEN}
 
 
 # Traffic signals for Speed Limit Controller - Credit goes to the DragonPilot team!
@@ -244,6 +245,11 @@ class CarState(CarStateBase):
 
         buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
 
+    if self.CP.carFingerprint in DISTANCE_BUTTON_CAR:
+      prev_distance_button = self.distance_button
+      self.distance_button = cp.vl["PCM_CRUISE_4"]["DISTANCE"]
+      buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
+
     fp_ret = custom.StarPilotCarState.new_message()
 
     if self.has_SDSU and not self.has_can_filter:
@@ -291,6 +297,9 @@ class CarState(CarStateBase):
 
     if CP.enableGasInterceptorDEPRECATED:
       pt_messages.append(("GAS_SENSOR", 50))
+
+    if CP.carFingerprint in DISTANCE_BUTTON_CAR:
+      pt_messages.append(("PCM_CRUISE_4", 1))
 
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),

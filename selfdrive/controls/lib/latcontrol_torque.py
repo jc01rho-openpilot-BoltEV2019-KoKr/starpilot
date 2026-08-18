@@ -111,6 +111,7 @@ class LatControlTorque(LatControl):
     self.is_rav4_tss2 = CP.carFingerprint in RAV4_TSS2_CARS
     self.is_rav4_prime = CP.carFingerprint in RAV4_PRIME_CARS
     self.is_sienna_4th_gen = CP.carFingerprint in SIENNA_4TH_GEN_CARS
+    self.is_toyota_corolla_tss2 = CP.carFingerprint in TOYOTA_COROLLA_TSS2_CARS
     self.is_lexus_is = CP.carFingerprint in LEXUS_IS_CARS
     self.is_ioniq_5 = CP.carFingerprint in IONIQ_5_CARS
     self.is_ioniq_ev_old = CP.carFingerprint in IONIQ_EV_OLD_CARS
@@ -305,6 +306,7 @@ class LatControlTorque(LatControl):
       rav4_tss2_active = self.is_rav4_tss2
       rav4_prime_active = self.is_rav4_prime
       sienna_4th_gen_active = self.is_sienna_4th_gen
+      toyota_corolla_tss2_active = self.is_toyota_corolla_tss2
       lexus_is_active = self.is_lexus_is
       ioniq_5_active = self.is_ioniq_5
       ioniq_ev_old_active = self.is_ioniq_ev_old
@@ -392,6 +394,8 @@ class LatControlTorque(LatControl):
       elif sienna_4th_gen_active:
         ff *= get_sienna_4th_gen_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         friction_threshold = get_sienna_4th_gen_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
+      elif toyota_corolla_tss2_active:
+        ff *= get_toyota_corolla_tss2_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif lexus_is_active:
         ff *= get_lexus_is_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif ioniq_5_active:
@@ -479,14 +483,24 @@ class LatControlTorque(LatControl):
         ff *= get_genesis_g70_unwind_ff_scale(
           setpoint, measurement, desired_lateral_jerk, CS.vEgo,
         )
+      if kia_carnival_active:
+        ff *= get_kia_carnival_unwind_ff_scale(
+          setpoint, measurement, desired_lateral_jerk, CS.vEgo,
+        )
       if ioniq_6_active:
         vehicle_friction_jerk_deadzone = (
           IONIQ_6_2025_FRICTION_JERK_DEADZONE if self.is_ioniq_6_2025 else IONIQ_6_FRICTION_JERK_DEADZONE
         )
+      elif ioniq_5_active:
+        vehicle_friction_jerk_deadzone = get_ioniq_5_friction_jerk_deadzone(CS.vEgo, setpoint)
       elif prius_active:
         vehicle_friction_jerk_deadzone = get_prius_friction_jerk_deadzone(CS.vEgo, setpoint)
       elif genesis_g70_active:
         vehicle_friction_jerk_deadzone = get_genesis_g70_friction_jerk_deadzone(CS.vEgo, setpoint)
+      elif kia_carnival_active:
+        vehicle_friction_jerk_deadzone = get_kia_carnival_friction_jerk_deadzone(
+          CS.vEgo, setpoint, desired_lateral_jerk,
+        )
       else:
         vehicle_friction_jerk_deadzone = 0.0
       friction_jerk_deadzone = get_center_chatter_friction_jerk_deadzone(
@@ -566,6 +580,8 @@ class LatControlTorque(LatControl):
       elif sienna_4th_gen_active:
         output_torque *= get_sienna_4th_gen_center_taper_scale(setpoint, CS.vEgo)
         output_torque *= get_sienna_4th_gen_high_speed_output_taper_scale(CS.vEgo)
+      elif toyota_corolla_tss2_active:
+        output_torque *= get_toyota_corolla_tss2_center_output_scale(setpoint, CS.vEgo)
       elif prius_active:
         output_torque *= prius_center_taper
         output_torque *= get_prius_high_speed_output_taper_scale(setpoint, CS.vEgo)

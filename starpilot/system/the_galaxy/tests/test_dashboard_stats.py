@@ -584,6 +584,67 @@ def test_route_listing_uses_all_segment_times_when_segment_zero_was_touched(tmp_
   assert end == "2026-07-18T07:22:00"
 
 
+def test_route_listing_does_not_parse_logs_when_filesystem_time_is_valid(tmp_path, monkeypatch):
+  route_start = utilities.datetime(2026, 7, 18, 7, 19, 0)
+  route_name = "000011e3--6e01289631"
+  segment = tmp_path / f"{route_name}--0"
+  segment.mkdir()
+  (segment / "qlog.zst").write_bytes(b"placeholder")
+  segment_end = route_start.timestamp() + 60
+  os.utime(segment, (segment_end, segment_end))
+
+  def fail_if_read(_path):
+    raise AssertionError("valid filesystem timestamps must not decompress route logs")
+
+  monkeypatch.setattr(utilities, "_route_logged_start_time", fail_if_read)
+
+  routes = utilities._list_dashboard_routes([tmp_path])
+
+  assert routes[0]["startedAt"] == route_start
+  assert routes[0]["timeSource"] == utilities.DASHBOARD_TIME_SOURCE_FILESYSTEM
+
+
+def test_route_listing_applies_limit_before_parsing_old_logs(tmp_path, monkeypatch):
+  old_segment = tmp_path / "00000001--abcdef1234--0"
+  old_segment.mkdir()
+  (old_segment / "qlog.zst").write_bytes(b"placeholder")
+  stale_time = utilities.datetime(2025, 7, 18, 7, 20, 0).timestamp()
+  os.utime(old_segment, (stale_time, stale_time))
+
+  current_segment = tmp_path / "00000002--abcdef1234--0"
+  current_segment.mkdir()
+  current_time = utilities.datetime(2026, 7, 18, 7, 20, 0).timestamp()
+  os.utime(current_segment, (current_time, current_time))
+
+  def fail_if_read(_path):
+    raise AssertionError("routes outside the scan limit must not be parsed")
+
+  monkeypatch.setattr(utilities, "_route_logged_start_time", fail_if_read)
+
+  routes = utilities._list_dashboard_routes([tmp_path], limit=1)
+
+  assert [route["name"] for route in routes] == ["00000002--abcdef1234"]
+
+
+def test_route_listing_defers_offline_clock_repair_to_background_analysis(tmp_path, monkeypatch):
+  route_name = "000011e3--6e01289631"
+  segment = tmp_path / f"{route_name}--0"
+  segment.mkdir()
+  (segment / "qlog.zst").write_bytes(b"placeholder")
+
+  stale_time = utilities.datetime(2025, 7, 18, 7, 20, 0).timestamp()
+  os.utime(segment, (stale_time, stale_time))
+  def fail_if_read(_path):
+    raise AssertionError("dashboard route listing must not decompress logs")
+
+  monkeypatch.setattr(utilities, "_route_logged_start_time", fail_if_read)
+
+  routes = utilities._list_dashboard_routes([tmp_path])
+
+  assert routes[0]["startedAt"] is None
+  assert routes[0]["timeSource"] == ""
+
+
 def test_top_models_are_ranked_from_persisted_usage_not_favorites():
   params = FakeParams({
     "AvailableModels": "orion,vega,atlas,nova",

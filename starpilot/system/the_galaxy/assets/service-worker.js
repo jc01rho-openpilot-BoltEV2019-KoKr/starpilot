@@ -28,6 +28,7 @@ self.addEventListener("push", (event) => {
     badge: scopedUrl("/assets/images/favicon-32x32.png"),
     requireInteraction: true,
   }
+  if (data.image) options.image = scopedUrl(data.image)
 
   event.waitUntil(self.registration.showNotification(title, options))
 })

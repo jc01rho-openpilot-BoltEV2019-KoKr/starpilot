@@ -428,8 +428,8 @@ _SOURCE_PANEL_BG = rl.Color(0, 0, 0, 175)
 _SOURCE_PANEL_BORDER = rl.Color(196, 205, 208, 80)
 _SOURCE_DIVIDER = rl.Color(196, 205, 208, 100)
 _SOURCE_ACTIVE_BAR = rl.Color(CONTROL_BORDER.r, CONTROL_BORDER.g, CONTROL_BORDER.b, 230)
-_SOURCE_ICON_MUTED = rl.Color(196, 205, 208, 220)
-_SOURCE_LABEL = rl.Color(255, 255, 255, 235)
+_SOURCE_ICON_MUTED = rl.Color(160, 170, 175, 200)
+_SOURCE_LABEL_MUTED = rl.Color(166, 166, 166, 255)
 _SOURCE_ACTIVE_BAR_WIDTH = 6.0
 _SOURCE_ACTIVE_BAR_HEIGHT = 36.0
 _SOURCE_ACTIVE_BAR_X = 2.0
@@ -541,6 +541,23 @@ def _draw_source_icon(icon_key: str, x: float, y: float, size: float, color: rl.
     rl.draw_circle_v(pivot, max(2.0, size * 0.06 * dashboard_scale), color)
 
 
+def _draw_sources_bubble_empty_state(panel_rect: rl.Rectangle) -> None:
+  """Draw the 3-line centered empty state when no sources are available."""
+  font = _get_semi_bold()
+  font_size = 30
+  line_gap = 6.0
+  lines = (tr("NO"), tr("SOURCES"), tr("AVAILABLE"))
+
+  line_sizes = [measure_text_cached(font, line, font_size) for line in lines]
+  total_h = sum(sz.y for sz in line_sizes) + line_gap * (len(lines) - 1)
+  curr_y = round(panel_rect.y + (panel_rect.height - total_h) / 2)
+
+  for line, sz in zip(lines, line_sizes):
+    pos_x = round(panel_rect.x + (panel_rect.width - sz.x) / 2)
+    rl.draw_text_ex(font, line, rl.Vector2(pos_x, curr_y), font_size, 0, _WHITE)
+    curr_y += round(sz.y + line_gap)
+
+
 def _draw_sources_bubble(state: dict, sign_rect: rl.Rectangle):
   """Draw the expanded source list attached to the SLC card."""
   font_semi = _get_semi_bold()
@@ -549,6 +566,17 @@ def _draw_sources_bubble(state: dict, sign_rect: rl.Rectangle):
   enabled_sources = state.get('slc_enabled_sources', ())
   active_only = state.get('slc_active_sources_only', False)
   abbreviated = state.get('slc_abbreviated_sources', False)
+
+  panel_rect = rl.Rectangle(
+    sign_rect.x + sign_rect.width + _SOURCE_PANEL_GAP,
+    sign_rect.y,
+    _SOURCE_PANEL_WIDTH,
+    sign_rect.height,
+  )
+  rl.draw_rectangle_rounded(panel_rect, CONTROL_ROUNDNESS, CONTROL_SEGMENTS, _SOURCE_PANEL_BG)
+  rl.draw_rectangle_rounded_lines_ex(
+    panel_rect, CONTROL_ROUNDNESS, CONTROL_SEGMENTS, 1, _SOURCE_PANEL_BORDER,
+  )
 
   rows = [
     (
@@ -564,18 +592,8 @@ def _draw_sources_bubble(state: dict, sign_rect: rl.Rectangle):
   ]
 
   if not rows:
+    _draw_sources_bubble_empty_state(panel_rect)
     return
-
-  panel_rect = rl.Rectangle(
-    sign_rect.x + sign_rect.width + _SOURCE_PANEL_GAP,
-    sign_rect.y,
-    _SOURCE_PANEL_WIDTH,
-    sign_rect.height,
-  )
-  rl.draw_rectangle_rounded(panel_rect, CONTROL_ROUNDNESS, CONTROL_SEGMENTS, _SOURCE_PANEL_BG)
-  rl.draw_rectangle_rounded_lines_ex(
-    panel_rect, CONTROL_ROUNDNESS, CONTROL_SEGMENTS, 1, _SOURCE_PANEL_BORDER,
-  )
 
   row_h = (panel_rect.height - 2 * _SOURCE_PANEL_PAD_Y) / len(rows)
   content_left = panel_rect.x + _SOURCE_PANEL_PAD_X
@@ -589,7 +607,7 @@ def _draw_sources_bubble(state: dict, sign_rect: rl.Rectangle):
   for index, (panel_label, compact_label, icon_key, value, is_active) in enumerate(rows):
     row_y = panel_rect.y + _SOURCE_PANEL_PAD_Y + index * row_h
     if index:
-      divider_y = row_y
+      divider_y = round(row_y)
       rl.draw_line_ex(
         rl.Vector2(content_left, divider_y),
         rl.Vector2(content_right, divider_y),
@@ -604,13 +622,15 @@ def _draw_sources_bubble(state: dict, sign_rect: rl.Rectangle):
       )
       active_bar_rect = rl.Rectangle(
         panel_rect.x + _SOURCE_ACTIVE_BAR_X,
-        row_y + (row_h - active_bar_height) / 2,
+        round(row_y + (row_h - active_bar_height) / 2),
         _SOURCE_ACTIVE_BAR_WIDTH,
         active_bar_height,
       )
       rl.draw_rectangle_rounded(active_bar_rect, 0.5, 4, _SOURCE_ACTIVE_BAR)
 
     value_text = source_value_text(value)
+    text_color = _WHITE if is_active else _SOURCE_LABEL_MUTED
+
     if abbreviated:
       text_font = font_bold if is_active else font_semi
       label_text = fit_source_label(
@@ -620,19 +640,19 @@ def _draw_sources_bubble(state: dict, sign_rect: rl.Rectangle):
         lambda text: measure_text_cached(text_font, text, font_size).x,
       )
       label_size = measure_text_cached(text_font, label_text, font_size)
-      baseline_y = row_y + (row_h - label_size.y) / 2
+      text_y = round(row_y + (row_h - label_size.y) / 2)
       rl.draw_text_ex(
         text_font,
         label_text,
-        rl.Vector2(label_left, baseline_y),
+        rl.Vector2(label_left, text_y),
         font_size,
         0,
-        _WHITE if is_active else _SOURCE_LABEL,
+        text_color,
       )
       continue
 
     compact_label = tr(compact_label)
-    full_label = compact_label
+    full_label = tr(panel_label)
     value_size = measure_text_cached(font_bold, value_text, font_size)
     max_label_width = max(
       0.0,
@@ -646,18 +666,16 @@ def _draw_sources_bubble(state: dict, sign_rect: rl.Rectangle):
     )
     label_size = measure_text_cached(font_semi, label_text, font_size)
     text_height = max(label_size.y, value_size.y)
-    baseline_y = row_y + (row_h - text_height) / 2
-    icon_y = row_y + (row_h - icon_size) / 2
+    text_y = round(row_y + (row_h - text_height) / 2)
+    icon_y = round(row_y + (row_h - icon_size) / 2)
 
     icon_color = _WHITE if is_active else _SOURCE_ICON_MUTED
     _draw_source_icon(icon_key, content_left, icon_y, icon_size, icon_color)
 
-    label_pos = rl.Vector2(label_left, baseline_y)
-    value_pos = rl.Vector2(content_right - value_size.x, baseline_y)
-    label_color = _WHITE if is_active else _SOURCE_LABEL
-    value_color = _WHITE if is_active else _SOURCE_LABEL
-    rl.draw_text_ex(font_semi, label_text, label_pos, font_size, 0, label_color)
-    rl.draw_text_ex(font_bold, value_text, value_pos, font_size, 0, value_color)
+    label_pos = rl.Vector2(label_left, text_y)
+    value_pos = rl.Vector2(round(content_right - value_size.x), text_y)
+    rl.draw_text_ex(font_semi, label_text, label_pos, font_size, 0, text_color)
+    rl.draw_text_ex(font_bold, value_text, value_pos, font_size, 0, text_color)
 
 
 # ── Public API ────────────────────────────────────────────────────────
@@ -675,8 +693,7 @@ def render_speed_limit_at(state: dict, rect: rl.Rectangle, expanded: bool = Fals
   use_vienna = state['use_vienna']
   visual_rect = rl.Rectangle(rect.x, rect.y, EU_SIGN_SIZE, EU_SIGN_SIZE) if use_vienna else rect
 
-  source = state.get('speed_limit_source')
-  if expanded and source and source != "None" and source != "":
+  if expanded:
     _draw_sources_bubble(state, visual_rect)
 
   return visual_rect

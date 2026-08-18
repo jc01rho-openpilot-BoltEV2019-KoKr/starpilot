@@ -27,7 +27,18 @@ TOYOTA_RAV4_TSS2_EARLY_LEAD_MIN_CLOSING_SPEED = 4.0
 TOYOTA_RAV4_TSS2_EARLY_LEAD_MIN_BRAKE = 0.8
 TOYOTA_RAV4_TSS2_EARLY_LEAD_MAX_BRAKE = 2.0
 TOYOTA_RAV4_TSS2_EARLY_LEAD_MAX_DECEL = 0.5
+TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MIN_SPEED = 5.0
+TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MIN_CLOSING_SPEED = 0.75
+TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MIN_DISTANCE = 70.0
+TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MAX_DISTANCE = 100.0
+TOYOTA_RAV4_TSS2_RADAR_FOLLOW_DISTANCE_TIME = 4.5
+TOYOTA_RAV4_TSS2_RADAR_FOLLOW_DISTANCE_OFFSET = 32.0
+TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MAX_LATERAL_OFFSET = 1.75
 TOYOTA_CAMRY_TSS2_FORCE_STOP_HANDOFF_M = 4.5
+# The Camry's force-stop path otherwise consumes the model endpoint before the
+# normal MPC stop-distance margin can be applied. Keep it within the forward
+# offset range exposed by the Force Stop setting.
+TOYOTA_CAMRY_TSS2_FORCE_STOP_DISTANCE_BIAS_M = 6.0
 DEFAULT_FORCE_STOP_HANDOFF_M = 6.0
 
 
@@ -80,6 +91,39 @@ def get_toyota_rav4_tss2_early_lead_cap(CP, lead, v_ego, accel_min):
   decel = 0.10 + 0.20 * distance_factor + 0.10 * closing_factor + 0.10 * brake_factor
   decel *= 0.75 + 0.25 * confidence_factor
   return max(float(accel_min), -min(TOYOTA_RAV4_TSS2_EARLY_LEAD_MAX_DECEL, decel))
+
+
+def is_toyota_rav4_tss2_radar_follow_lead(CP, lead, v_ego):
+  """Keep a credible RAV4 radar lead active through model-horizon dropouts."""
+  if (
+    not is_toyota_rav4_tss2_post_departure_tune(CP) or
+    lead is None or not bool(getattr(lead, "status", False)) or
+    not bool(getattr(lead, "radar", False)) or
+    float(v_ego) < TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MIN_SPEED or
+    abs(float(getattr(lead, "yRel", 0.0))) > TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MAX_LATERAL_OFFSET
+  ):
+    return False
+
+  lead_speed = max(float(getattr(lead, "vLead", 0.0)), 0.0)
+  closing_speed = float(v_ego) - lead_speed
+  distance_limit = float(np.clip(
+    TOYOTA_RAV4_TSS2_RADAR_FOLLOW_DISTANCE_OFFSET +
+    TOYOTA_RAV4_TSS2_RADAR_FOLLOW_DISTANCE_TIME * float(v_ego),
+    TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MIN_DISTANCE,
+    TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MAX_DISTANCE,
+  ))
+  return (
+    float(getattr(lead, "dRel", float("inf"))) <= distance_limit and
+    closing_speed >= TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MIN_CLOSING_SPEED
+  )
+
+
+def allow_radar_standstill_gap_settle(CP):
+  """Keep the generic stopped-lead gap nudge out of the early RAV4 TSS2 path."""
+  return not (
+    getattr(CP, "brand", "") == "toyota" and
+    str(getattr(CP, "carFingerprint", "")) == "TOYOTA_RAV4_TSS2"
+  )
 
 
 def get_far_follow_output_slew_rates(CP):
@@ -170,3 +214,9 @@ def get_force_stop_handoff_distance(car_fingerprint):
   if str(car_fingerprint) == "TOYOTA_CAMRY_TSS2":
     return TOYOTA_CAMRY_TSS2_FORCE_STOP_HANDOFF_M
   return DEFAULT_FORCE_STOP_HANDOFF_M
+
+
+def get_force_stop_distance_bias(car_fingerprint):
+  if str(car_fingerprint) == "TOYOTA_CAMRY_TSS2":
+    return TOYOTA_CAMRY_TSS2_FORCE_STOP_DISTANCE_BIAS_M
+  return 0.0

@@ -310,10 +310,11 @@ class ConditionalDriveModeView(AdjustorTogglesPanelView):
       "CCMSpeed": {"title": tr("Above Speed"), "min": 0, "max": max_speed, "unit": speed_unit, "labels": {}, "presets": [0, 35, 55, 65, 80]},
       "CCMSpeedLead": {"title": tr("Speed w/ Lead"), "min": 0, "max": max_speed, "unit": speed_unit, "labels": {}, "presets": [0, 35, 55, 65, 80]},
       "CCMSetSpeedMargin": {"title": tr("Set Speed Margin"), "min": 0, "max": 30.0 if is_metric else 15.0, "unit": speed_unit, "labels": {}, "presets": [0, 5, 10, 15]},
+      "PulseGlideSpeedDelta": {"title": tr("Pulse and Glide Delta"), "min": 0.5, "max": 30.0 if is_metric else 15.0, "unit": speed_unit, "labels": {}, "presets": [1, 3, 5, 10]},
     }
     
     spec = specs[key]
-    is_float = key == "CEModelStopTime"
+    is_float = key in ("CEModelStopTime", "PulseGlideSpeedDelta")
     original_val = float(self._controller._params.get_float(key) if is_float else self._controller._params.get_int(key))
 
     def on_close(res, val):
@@ -325,7 +326,7 @@ class ConditionalDriveModeView(AdjustorTogglesPanelView):
 
     gui_app.push_widget(AetherSliderDialog(
       title=spec["title"],
-      min_val=float(spec["min"]), max_val=float(spec["max"]), step=0.1 if is_float else 1.0,
+      min_val=float(spec["min"]), max_val=float(spec["max"]), step=0.1 if key == "CEModelStopTime" else (0.5 if key == "PulseGlideSpeedDelta" else 1.0),
       current_val=original_val,
       on_close=on_close, presets=[float(p) for p in spec["presets"]],
       unit=spec["unit"], labels=spec["labels"], color=PANEL_STYLE.accent
@@ -759,6 +760,11 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  on_click=lambda: self._show_slider("SetSpeedOffset", 0, 150 if self._is_metric() else 99,
                                                     unit=self._speed_unit()),
                  visible=lambda: self._params.get_bool("QOLLongitudinal")),
+      SettingRow("PulseGlideSpeedDelta", "value", tr_noop("Pulse and Glide Delta"),
+                 subtitle=tr_noop("Coast this far below the current cruise target before accelerating back up."),
+                 get_value=lambda: f"{self._params.get_float('PulseGlideSpeedDelta'):.1f}{self._speed_unit()}",
+                 on_click=lambda: self._show_slider("PulseGlideSpeedDelta"),
+                 visible=lambda: self._developer_feature_access()),
       SettingRow("MapGears", "toggle", tr_noop("Map Gears"),
                  subtitle="",
                  get_state=lambda: self._params.get_bool("MapGears"),
@@ -1018,6 +1024,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     "CESpeed", "CESpeedLead", "CESignalSpeed",
     "CCMSpeed", "CCMSpeedLead", "CCMSetSpeedMargin",
   )
+  _SPEED_RESCALE_FLOAT_KEYS = ("PulseGlideSpeedDelta",)
 
   # Distance-typed int params stored in the current unit (ft or m); rescaled
   # when IsMetric flips so the numeric value stays correct in the new unit.
@@ -1050,6 +1057,8 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     speed_factor = CV.MPH_TO_KPH if current else CV.KPH_TO_MPH
     for key in self._SPEED_RESCALE_KEYS:
       self._params.put_int(key, int(round(self._params.get_int(key) * speed_factor)))
+    for key in self._SPEED_RESCALE_FLOAT_KEYS:
+      self._params.put_float(key, self._params.get_float(key) * speed_factor)
     distance_factor = CV.FOOT_TO_METER if current else CV.METER_TO_FOOT
     for key in self._DISTANCE_RESCALE_KEYS:
       self._params.put_int(key, int(round(self._params.get_int(key) * distance_factor)))
@@ -1061,6 +1070,12 @@ class StarPilotLongitudinalLayout(_SettingsPage):
   def _sources_visible(self) -> bool:
     """Abbreviated/Active-Only sub-toggles only make sense when sources are shown."""
     return self._params.get_bool("SpeedLimitSources")
+
+  def _developer_feature_access(self) -> bool:
+    return (
+      starpilot_state.car_state.hasOpenpilotLongitudinal and
+      (self._params.get_bool("DeveloperUI") or self._params.get_bool("GalaxyDeveloperMode"))
+    )
 
   def _speed_unit(self) -> str:
     self._maybe_rescale_on_metric_change()

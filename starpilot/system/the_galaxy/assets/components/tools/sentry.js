@@ -2,7 +2,7 @@ import { html, reactive } from "/assets/vendor/arrow-core.js"
 import { galaxyPath, isGalaxyTunnel } from "/assets/js/utils.js"
 import {
   enableSentryPush,
-  sendSentryTestPush,
+  sendSentryTestNotification,
 } from "/assets/components/sentry_notifications.js"
 
 const state = reactive({
@@ -11,7 +11,10 @@ const state = reactive({
   params: {},
   status: {},
   event: {},
+  liveCapture: {},
   testBusy: false,
+  liveBusy: false,
+  deleteBusy: false,
   pushBusy: false,
 })
 
@@ -45,6 +48,11 @@ function startPolling() {
   fetchParams()
   fetchStatus()
   pollTimer = window.setInterval(fetchStatus, 5000)
+}
+
+function numericParam(key, fallback) {
+  const value = Number(state.params[key])
+  return Number.isFinite(value) ? value : fallback
 }
 
 async function saveParam(key, value) {
@@ -87,6 +95,36 @@ async function sendTestEvent() {
   }
 }
 
+async function readJsonResponse(response) {
+  const body = await response.text()
+  if (!body) return {}
+
+  try {
+    return JSON.parse(body)
+  } catch {
+    throw new Error(`Galaxy returned an unexpected ${response.status} response. Check the device connection or Galaxy tunnel.`)
+  }
+}
+
+async function viewLive() {
+  if (state.liveBusy) return
+  state.liveBusy = true
+  try {
+    const response = await fetch(galaxyPath("/api/sentry/live"), { cache: "no-store" })
+    const payload = await readJsonResponse(response)
+    if (!response.ok) {
+      showSnackbar(payload.error || "Live camera capture failed.")
+      return
+    }
+    state.liveCapture = payload
+    showSnackbar("Live camera snapshot captured.")
+  } catch (error) {
+    showSnackbar(error.message || "Network error — is the device reachable?")
+  } finally {
+    state.liveBusy = false
+  }
+}
+
 async function enablePush() {
   if (state.pushBusy) return
   state.pushBusy = true
@@ -94,22 +132,49 @@ async function enablePush() {
     const result = await enableSentryPush()
     showSnackbar(result.message)
   } catch (error) {
-    showSnackbar(error.message || "Could not enable Chrome notifications.")
+    showSnackbar(error.message || "Could not enable browser notifications.")
   } finally {
     state.pushBusy = false
   }
 }
 
-async function sendTestPush() {
+async function sendTestNotification() {
   if (state.pushBusy) return
   state.pushBusy = true
   try {
-    await sendSentryTestPush()
-    showSnackbar("Test push sent. Check your Chrome notifications.")
+    const payload = await sendSentryTestNotification()
+    const channels = Object.entries(payload.channels || {})
+      .filter(([, configured]) => configured)
+      .map(([channel]) => channel === "webPush" ? "browser" : channel)
+    showSnackbar(`Test notification sent through ${channels.join(", ")}.`)
   } catch (error) {
-    showSnackbar(error.message || "Could not send the test push.")
+    showSnackbar(error.message || "Could not send the test notification.")
   } finally {
     state.pushBusy = false
+  }
+}
+
+async function deleteEvent() {
+  const eventId = String(state.event?.eventId || "")
+  if (!eventId || state.deleteBusy) return
+  if (!window.confirm("Delete this Sentry event and its camera images? This cannot be undone.")) return
+
+  state.deleteBusy = true
+  try {
+    const response = await fetch(galaxyPath(`/api/sentry/events/${encodeURIComponent(eventId)}`), {
+      method: "DELETE",
+    })
+    const payload = await readJsonResponse(response)
+    if (!response.ok) {
+      showSnackbar(payload.error || "Sentry event deletion failed.")
+      return
+    }
+    state.event = {}
+    showSnackbar("Sentry event deleted.")
+  } catch (error) {
+    showSnackbar(error.message || "Network error — is the device reachable?")
+  } finally {
+    state.deleteBusy = false
   }
 }
 
@@ -131,7 +196,27 @@ function renderEvent() {
           </a>
         `)}
       </div>
-    ` : html`<p class="sentry-empty">No camera images were available for this event.</p>`}
+    ` : event.kind === "power_off"
+      ? html`<p class="sentry-empty">Power-off alerts do not include camera captures because the device is shutting down.</p>`
+      : html`<p class="sentry-empty">No camera images were available for this event.</p>`}
+  `
+}
+
+function renderLiveCapture() {
+  const capture = state.liveCapture || {}
+  const imageUrls = Array.isArray(capture.imageUrls) ? capture.imageUrls : []
+  if (imageUrls.length === 0) return html`<p class="sentry-empty">No live snapshot captured yet.</p>`
+
+  const cacheKey = encodeURIComponent(capture.capturedAt || "")
+  return html`
+    <p class="sentry-muted">Captured ${capture.capturedAt || "just now"}.</p>
+    <div class="sentry-image-grid">
+      ${imageUrls.map((url, index) => html`
+        <a href="${galaxyPath(`${url}?t=${cacheKey}`)}" target="_blank" rel="noopener">
+          <img src="${galaxyPath(`${url}?t=${cacheKey}`)}" alt="Live Sentry camera ${index + 1}" />
+        </a>
+      `)}
+    </div>
   `
 }
 
@@ -151,7 +236,7 @@ export function SentryMode() {
 
       <section class="sentry-card">
         <h3>Configuration</h3>
-        <p class="sentry-muted">Galaxy is the built-in notification and image viewer. Webhook and ntfy delivery are optional.</p>
+        <p class="sentry-muted">Galaxy is the built-in notification and image viewer. Sentry detects accelerometer movement. Webhook and ntfy delivery are optional.</p>
 
         ${() => state.loading ? html`<div class="sentry-loading">Loading Sentry settings…</div>` : html`
           <label class="sentry-setting-row">
@@ -189,16 +274,83 @@ export function SentryMode() {
               @change="${(event) => saveParam("SentryModeNtfyUrl", event.currentTarget.value.trim())}" />
           </label>
 
+          <label class="sentry-field sentry-range-field">
+            <span><strong>Motion sensitivity</strong><small>Lower values detect smaller acceleration changes. Default: 0.04.</small></span>
+            <div class="sentry-range-control">
+              <input
+                class="sentry-range"
+                type="range"
+                min="0.005"
+                max="1"
+                step="0.001"
+                value="${() => numericParam("SentryModeSensitivity", 0.04)}"
+                disabled="${() => state.savingKey === "SentryModeSensitivity"}"
+                aria-label="Motion sensitivity"
+                @change="${(event) => saveParam("SentryModeSensitivity", Number(event.currentTarget.value))}" />
+              <input
+                class="sentry-number-input"
+                type="number"
+                min="0.005"
+                max="1"
+                step="0.001"
+                value="${() => numericParam("SentryModeSensitivity", 0.04)}"
+                disabled="${() => state.savingKey === "SentryModeSensitivity"}"
+                aria-label="Exact motion sensitivity"
+                @change="${(event) => saveParam("SentryModeSensitivity", Number(event.currentTarget.value))}" />
+            </div>
+          </label>
+
+          <label class="sentry-field sentry-range-field">
+            <span><strong>Warning persistence</strong><small>How long movement must continue before the first alert. Default: 1 second.</small></span>
+            <div class="sentry-range-control">
+              <input
+                class="sentry-range"
+                type="range"
+                min="0.1"
+                max="10"
+                step="0.1"
+                value="${() => numericParam("SentryModeWarningTime", 1)}"
+                disabled="${() => state.savingKey === "SentryModeWarningTime"}"
+                aria-label="Warning persistence"
+                @change="${(event) => saveParam("SentryModeWarningTime", Number(event.currentTarget.value))}" />
+              <input
+                class="sentry-number-input"
+                type="number"
+                min="0.1"
+                max="10"
+                step="0.1"
+                value="${() => numericParam("SentryModeWarningTime", 1)}"
+                disabled="${() => state.savingKey === "SentryModeWarningTime"}"
+                aria-label="Exact warning persistence"
+                @change="${(event) => saveParam("SentryModeWarningTime", Number(event.currentTarget.value))}" />
+              <span class="sentry-range-unit">seconds</span>
+            </div>
+          </label>
+
           <div class="sentry-action-row">
             <button class="sentry-button" @click="${enablePush}" disabled="${() => state.pushBusy}">
-              ${() => state.pushBusy ? "Enabling…" : "Enable Chrome notifications"}
+              ${() => state.pushBusy ? "Enabling…" : "Enable browser notifications"}
             </button>
-            <button class="sentry-button sentry-button-secondary" @click="${sendTestPush}" disabled="${() => state.pushBusy}">
-              ${() => state.pushBusy ? "Sending…" : "Send test push"}
+            <button class="sentry-button sentry-button-secondary" @click="${sendTestNotification}" disabled="${() => state.pushBusy}">
+              ${() => state.pushBusy ? "Sending…" : "Send test notification"}
             </button>
           </div>
-          <p class="sentry-muted">Enable notifications once, then use the test push to verify Galaxy can reach this browser even when the page is not active.</p>
+          <p class="sentry-muted">The test notification uses every configured channel: browser Web Push, ntfy, and webhook.</p>
+          <p class="sentry-muted">iPhone users: add Galaxy to your Home Screen as a web app before enabling notifications. iOS web push requires the Home Screen web app.</p>
         `}
+      </section>
+
+      <section class="sentry-card">
+        <div class="sentry-card-heading">
+          <div>
+            <h3>Live view</h3>
+            <p class="sentry-muted">Capture one still from both cameras while parked.</p>
+          </div>
+          <button class="sentry-button sentry-button-secondary" @click="${viewLive}" disabled="${() => state.liveBusy}">
+            ${() => state.liveBusy ? "Capturing…" : "View live"}
+          </button>
+        </div>
+        ${() => renderLiveCapture()}
       </section>
 
       <section class="sentry-card">
@@ -207,11 +359,18 @@ export function SentryMode() {
             <h3>Latest Event</h3>
             <p class="sentry-muted">Events refresh automatically every five seconds.</p>
           </div>
-          ${remote ? "" : html`
-            <button class="sentry-button sentry-button-secondary" @click="${sendTestEvent}" disabled="${() => state.testBusy}">
-              ${() => state.testBusy ? "Capturing…" : "Send test capture"}
-            </button>
-          `}
+          <div class="sentry-action-row">
+            ${remote ? "" : html`
+              <button class="sentry-button sentry-button-secondary" @click="${sendTestEvent}" disabled="${() => state.testBusy}">
+                ${() => state.testBusy ? "Capturing…" : "Send test capture"}
+              </button>
+            `}
+            ${() => state.event?.eventId ? html`
+              <button class="sentry-button sentry-button-danger" @click="${deleteEvent}" disabled="${() => state.deleteBusy}">
+                ${() => state.deleteBusy ? "Deleting…" : "Delete event"}
+              </button>
+            ` : ""}
+          </div>
         </div>
         ${() => renderEvent()}
       </section>

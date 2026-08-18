@@ -17,7 +17,7 @@ from opendbc.car.hyundai.values import CAR as HYUNDAI
 from opendbc.car.subaru.values import CAR as SUBARU
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.common.realtime import DT_CTRL
-from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle
+from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, _ascent_angle_tracking_target
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   LatControlPID,
   get_civic_bosch_modified_pid_output_alpha,
@@ -84,6 +84,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_genesis_gv70_high_speed_error_scale,
   get_genesis_gv70_unwind_ff_scale,
   get_elantra_non_scc_ff_scale,
+  get_honda_accord_steer_ratio_scale,
   get_palisade_ff_scale,
   get_palisade_center_output_scale,
   get_palisade_center_taper_scale,
@@ -105,12 +106,15 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_sienna_4th_gen_ff_scale,
   get_sienna_4th_gen_friction_threshold,
   get_sienna_4th_gen_high_speed_output_taper_scale,
+  get_toyota_corolla_tss2_center_output_scale,
+  get_toyota_corolla_tss2_ff_scale,
   get_lexus_is_ff_scale,
   get_camry_ff_scale,
   get_ioniq_5_ff_scale,
   get_ioniq_5_friction_scale,
   get_ioniq_5_friction_threshold,
   get_ioniq_5_center_taper_scale,
+  get_ioniq_5_friction_jerk_deadzone,
   get_ioniq_5_low_speed_output_limit,
   get_ioniq_ev_old_center_taper_scale,
   get_ioniq_ev_old_ff_scale,
@@ -130,8 +134,10 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_kia_forte_ff_scale,
   get_kia_carnival_center_taper_scale,
   get_kia_carnival_friction_center_fade_scale,
+  get_kia_carnival_friction_jerk_deadzone,
   get_kia_carnival_friction_threshold,
   get_kia_carnival_highway_transition_output_scale,
+  get_kia_carnival_unwind_ff_scale,
   get_kia_stinger_2022_center_taper_scale,
   get_kia_stinger_2022_friction_threshold,
   get_tucson_4th_gen_center_taper_scale,
@@ -168,6 +174,12 @@ class TestLatControl:
 
   def test_center_chatter_friction_jerk_deadzone_preserves_vehicle_override(self):
     assert get_center_chatter_friction_jerk_deadzone(25.0, 0.6, 0.30) == pytest.approx(0.30)
+
+  def test_ascent_angle_tracking_correction_is_bounded_and_handoff_safe(self):
+    assert _ascent_angle_tracking_target(10.0, 0.0, 20.0, False) == pytest.approx(12.5)
+    assert _ascent_angle_tracking_target(40.0, 0.0, 20.0, False) == pytest.approx(48.0)
+    assert _ascent_angle_tracking_target(10.0, 0.0, 4.0, False) == pytest.approx(10.0)
+    assert _ascent_angle_tracking_target(10.0, 0.0, 20.0, True) == pytest.approx(10.0)
 
   def test_torque_log_exposes_friction_controller_state(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(GM.CHEVROLET_BOLT_ACC_2022_2023)
@@ -396,6 +408,22 @@ class TestLatControl:
     assert turn_in_right > steady_right
     assert unwind_left < steady_left
     assert unwind_right < steady_right
+
+  def test_toyota_corolla_tss2_ff_scale_is_transition_only(self):
+    assert get_toyota_corolla_tss2_ff_scale(0.0, 0.0, 10.0) == 1.0
+    steady = get_toyota_corolla_tss2_ff_scale(0.5, 0.0, 10.0)
+    turn_in = get_toyota_corolla_tss2_ff_scale(0.5, 0.8, 10.0)
+    unwind = get_toyota_corolla_tss2_ff_scale(0.5, -0.8, 10.0)
+    assert turn_in > steady
+    assert unwind < steady
+    assert get_toyota_corolla_tss2_ff_scale(0.5, 0.8, 40.0) < turn_in
+
+  def test_toyota_corolla_tss2_center_output_taper_is_low_speed_and_center_only(self):
+    crawl_center = get_toyota_corolla_tss2_center_output_scale(0.0, 1.0)
+    cruise_center = get_toyota_corolla_tss2_center_output_scale(0.0, 15.0)
+    crawl_curve = get_toyota_corolla_tss2_center_output_scale(0.6, 1.0)
+    assert 0.65 <= crawl_center < cruise_center <= 1.0
+    assert crawl_curve > crawl_center
 
   def test_flm_standard_friction_curve_override(self):
     base = get_standard_friction_threshold(10.0)
@@ -644,6 +672,30 @@ class TestLatControl:
     assert low_speed_abrupt > 0.99
     assert large_curve_abrupt > 0.96
 
+  def test_kia_carnival_unwind_friction_jerk_deadzone_is_mid_speed_and_center_gated(self):
+    low_speed = get_kia_carnival_friction_jerk_deadzone(8.5, 0.0, 1.5)
+    mid_speed_center = get_kia_carnival_friction_jerk_deadzone(18.0, 0.0, 1.5)
+    mid_speed_curve = get_kia_carnival_friction_jerk_deadzone(18.0, 0.8, 1.5)
+    high_speed = get_kia_carnival_friction_jerk_deadzone(30.0, 0.0, 1.5)
+    calm_transition = get_kia_carnival_friction_jerk_deadzone(18.0, 0.0, 0.2)
+
+    assert low_speed < 0.02
+    assert mid_speed_center > 0.18
+    assert mid_speed_curve < 0.05
+    assert high_speed < 0.05
+    assert calm_transition < 0.05
+
+  def test_kia_carnival_unwind_ff_scale_only_reduces_overshoot(self):
+    steady_turn = get_kia_carnival_unwind_ff_scale(0.80, 0.90, 0.60, 18.0)
+    clean_unwind = get_kia_carnival_unwind_ff_scale(0.20, 0.20, -1.5, 18.0)
+    overshooting_unwind = get_kia_carnival_unwind_ff_scale(0.20, 0.90, -1.5, 18.0)
+    highway_overshoot = get_kia_carnival_unwind_ff_scale(0.20, 0.90, -1.5, 30.0)
+
+    assert steady_turn == pytest.approx(1.0)
+    assert clean_unwind == pytest.approx(1.0)
+    assert overshooting_unwind < 0.70
+    assert highway_overshoot > overshooting_unwind
+
   def test_genesis_g90_ff_scale_curve(self):
     assert get_genesis_g90_ff_scale(0.0, 0.0, 20.0) == 1.0
     assert get_genesis_g90_ff_scale(0.5, 0.0, 20.0) > get_genesis_g90_ff_scale(-0.5, 0.0, 20.0)
@@ -879,6 +931,16 @@ class TestLatControl:
     assert unwind_left_scale < 1.0
     assert unwind_right_scale <= unwind_left_scale
     assert get_ioniq_5_friction_threshold(25.0, 0.0, 0.0) >= get_hkg_canfd_base_friction_threshold(25.0)
+
+  def test_ioniq_5_friction_jerk_deadzone_is_high_speed_curve_gated(self):
+    low_speed = get_ioniq_5_friction_jerk_deadzone(8.0, 0.9)
+    high_speed_center = get_ioniq_5_friction_jerk_deadzone(25.0, 0.0)
+    high_speed_curve = get_ioniq_5_friction_jerk_deadzone(25.0, 0.9)
+    high_lateral_accel = get_ioniq_5_friction_jerk_deadzone(25.0, 2.0)
+
+    assert low_speed < 0.02
+    assert high_speed_center > high_speed_curve > 0.0
+    assert high_lateral_accel < high_speed_curve
 
   def test_rav4_prime_phase_shaping(self):
     left_turn_in = get_rav4_prime_ff_scale(1.0, 0.8, 13.0)
@@ -1640,6 +1702,11 @@ class TestLatControl:
 
     assert controller.pid._k_p[1] == pytest.approx([value * 2.0 for value in base_kp_v])
     assert controller.pid._k_i[1] == pytest.approx([value * 1.25 for value in base_ki_v])
+
+  def test_honda_accord_steer_ratio_calibration(self):
+    expected_scale = 14.0 / 16.33
+    assert get_honda_accord_steer_ratio_scale(0.0) == pytest.approx(expected_scale)
+    assert get_honda_accord_steer_ratio_scale(20.0) == pytest.approx(expected_scale)
 
   def test_subaru_impreza_pid_output_scale_preserves_small_errors(self):
     assert get_subaru_impreza_pid_output_scale(0.0) == 1.0

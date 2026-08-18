@@ -53,8 +53,10 @@ class StarPilotCard:
     self.prev_cruise_enabled = False
     self.decel_pressed = False
     self.cancelPressed_previously = False
+    self.cancel_pulse_glide_suppressed = False
     self.distancePressed_previously = False
     self.force_coast = False
+    self.pulse_and_glide = False
     self.modePressed_previously = False
     self.mode_counter = 0
     self.customPressed_previously = False
@@ -85,6 +87,10 @@ class StarPilotCard:
       self.handle_bookmark()
     elif getattr(starpilot_toggles, f"force_coast_via_{key}"):
       self.force_coast = not self.force_coast
+    elif getattr(starpilot_toggles, f"pulse_and_glide_via_{key}"):
+      if getattr(sm["carControl"], "longActive", False):
+        self.pulse_and_glide = not self.pulse_and_glide
+        return True
     elif getattr(starpilot_toggles, f"pause_lateral_via_{key}"):
       self.pause_lateral = not self.pause_lateral
     elif getattr(starpilot_toggles, f"pause_longitudinal_via_{key}"):
@@ -132,6 +138,34 @@ class StarPilotCard:
   def update(self, carState, starpilotCarState, sm, starpilot_toggles):
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled")
     self._handle_favorite_traffic_mode_action(sm)
+
+    pulse_glide_cancel_override = bool(getattr(sm["carControl"], "longActive", False)) and any(
+      getattr(starpilot_toggles, f"pulse_and_glide_via_cancel{suffix}", False)
+      for suffix in ("", "_long", "_very_long")
+    )
+    cancel_pressed = bool(getattr(starpilotCarState, "cancelPressed", False))
+    if pulse_glide_cancel_override:
+      carState.buttonEvents = [
+        be for be in carState.buttonEvents
+        if not (
+          self._button_type_raw(be) == int(ButtonType.cancel) and
+          (be.pressed or self.cancel_pulse_glide_suppressed)
+        )
+      ]
+
+    lkas_pressed = any(
+      self._button_type_raw(be) == int(ButtonType.lkas) and be.pressed
+      for be in carState.buttonEvents
+    )
+    pulse_glide_lkas_override = bool(getattr(sm["carControl"], "longActive", False)) and getattr(
+      starpilot_toggles, "pulse_and_glide_via_lkas", False
+    )
+    if pulse_glide_lkas_override:
+      carState.buttonEvents = [
+        be for be in carState.buttonEvents
+        if self._button_type_raw(be) != int(ButtonType.lkas)
+      ]
+
     button_event_types = [self._button_type_raw(be) for be in carState.buttonEvents]
     button_aol_supported = self.CP.brand == "hyundai" or starpilot_toggles.lkas_allowed_for_aol
     button_managed_aol = starpilot_toggles.always_on_lateral_lkas or (button_aol_supported and starpilot_toggles.main_cruise_aol_toggle)
@@ -250,7 +284,6 @@ class StarPilotCard:
       self.handle_button_event("distance_long", sm, starpilot_toggles)
       self.handle_button_event("distance_very_long", sm, starpilot_toggles)
 
-    cancel_pressed = bool(getattr(starpilotCarState, "cancelPressed", False))
     if cancel_pressed:
       self.cancel_counter += 1
     elif not self.cancelPressed_previously:
@@ -258,15 +291,27 @@ class StarPilotCard:
 
     self.cancelPressed_previously = cancel_pressed
 
-    if not cancel_pressed and 1 <= self.cancel_counter < self.long_press_threshold:
-      self.handle_button_event("cancel", sm, starpilot_toggles)
+    pulse_glide_cancel_consumed = False
+    if not cancel_pressed and self.cancel_pulse_glide_suppressed:
+      pass
+    elif not cancel_pressed and 1 <= self.cancel_counter < self.long_press_threshold:
+      pulse_glide_cancel_consumed = self.handle_button_event("cancel", sm, starpilot_toggles) or False
     elif self.cancel_counter == self.long_press_threshold:
-      self.handle_button_event("cancel_long", sm, starpilot_toggles)
+      pulse_glide_cancel_consumed = self.handle_button_event("cancel_long", sm, starpilot_toggles) or False
     elif self.cancel_counter == self.very_long_press_threshold:
-      self.handle_button_event("cancel_long", sm, starpilot_toggles)
-      self.handle_button_event("cancel_very_long", sm, starpilot_toggles)
+      pulse_glide_cancel_consumed = self.handle_button_event("cancel_long", sm, starpilot_toggles) or False
+      pulse_glide_cancel_consumed |= self.handle_button_event("cancel_very_long", sm, starpilot_toggles) or False
 
-    if any(be.pressed and be_type == ButtonType.lkas for be, be_type in zip(carState.buttonEvents, button_event_types, strict=False)):
+    if pulse_glide_cancel_consumed:
+      self.cancel_pulse_glide_suppressed = True
+      carState.buttonEvents = [
+        be for be in carState.buttonEvents
+        if self._button_type_raw(be) != int(ButtonType.cancel)
+      ]
+    elif not cancel_pressed and self.cancel_pulse_glide_suppressed:
+      self.cancel_pulse_glide_suppressed = False
+
+    if lkas_pressed:
       self.handle_button_event("lkas", sm, starpilot_toggles)
 
     if getattr(starpilot_toggles, "has_canfd_media_buttons", False):
@@ -298,6 +343,10 @@ class StarPilotCard:
         self.handle_button_event("star_long", sm, starpilot_toggles)
         self.handle_button_event("star_very_long", sm, starpilot_toggles)
 
+    if not getattr(starpilot_toggles, "pulse_and_glide_available", False):
+      self.pulse_and_glide = False
+    self.pulse_and_glide &= bool(getattr(sm["carControl"], "longActive", False))
+    self.pulse_and_glide &= not (carState.brakePressed or carState.gasPressed)
     self.force_coast &= not (carState.brakePressed or carState.gasPressed)
 
     starpilotCarState.accelPressed = self.accel_pressed
@@ -309,6 +358,7 @@ class StarPilotCard:
     starpilotCarState.distanceLongPressed = self.very_long_press_threshold > self.gap_counter >= self.long_press_threshold
     starpilotCarState.distanceVeryLongPressed = self.gap_counter >= self.very_long_press_threshold
     starpilotCarState.forceCoast = self.force_coast
+    starpilotCarState.pulseAndGlide = self.pulse_and_glide
     starpilotCarState.isParked = carState.gearShifter == GearShifter.park
     starpilotCarState.pauseLateral = self.pause_lateral
     starpilotCarState.pauseLongitudinal = self.pause_longitudinal

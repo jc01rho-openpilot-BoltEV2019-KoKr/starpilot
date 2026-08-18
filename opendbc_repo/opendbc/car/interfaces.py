@@ -232,9 +232,6 @@ class CarInterfaceBase(ABC):
           fp_ret.flags |= int(HondaStarPilotFlags.HAS_CAMERA_MESSAGES)
 
       elif platform in HYUNDAI:
-        if CP.openpilotLongitudinalControl and not (CP.flags & HyundaiFlags.CANFD):
-          fp_ret.flags |= HyundaiStarPilotFlags.MAIN_CRUISE_STATE_TRACKING.value
-
         if candidate in CANFD_CAR:
           hda2 = Ecu.adas in [fw.ecu for fw in car_fw]
           CAN = CanBus(None, fingerprint, bool(CP.flags & HyundaiFlags.CANFD_LKA_STEERING))

@@ -513,13 +513,8 @@ class CarController(CarControllerBase):
         pcm_accel_cmd = float(np.clip(pcm_accel_cmd, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
 
         main_accel_cmd = 0. if self.CP.flags & ToyotaFlags.SECOC.value else pcm_accel_cmd
-        # Toyota's physical distance-button hold can collide with StarPilot's wheel-button
-        # actions and trip a temporary EPS fault. Suppress native long-press handling while
-        # the physical gap button is held so ACC only sees the hold as a plain button press.
-        allow_long_press = 0 if bool(getattr(CS, "distance_button", False)) else None
         can_sends.append(toyotacan.create_accel_command(self.packer, main_accel_cmd, pcm_cancel_cmd, self.permit_braking, self.standstill_req, lead,
-                                                        CS.acc_type, fcw_alert, self.distance_button, starpilot_toggles.reverse_cruise_increase,
-                                                        allow_long_press))
+                                                        CS.acc_type, fcw_alert, self.distance_button, starpilot_toggles.reverse_cruise_increase))
         if self.CP.flags & ToyotaFlags.SECOC.value:
           acc_cmd_2 = toyotacan.create_accel_command_2(self.packer, pcm_accel_cmd)
           acc_cmd_2 = add_mac(self.secoc_key,
@@ -538,9 +533,8 @@ class CarController(CarControllerBase):
         if self.CP.carFingerprint in UNSUPPORTED_DSU_CAR:
           can_sends.append(toyotacan.create_acc_cancel_command(self.packer))
         else:
-          allow_long_press = 0 if bool(getattr(CS, "distance_button", False)) else None
           can_sends.append(toyotacan.create_accel_command(self.packer, 0, pcm_cancel_cmd, True, False, lead, CS.acc_type, False,
-                                                          self.distance_button, starpilot_toggles.reverse_cruise_increase, allow_long_press))
+                                                          self.distance_button, starpilot_toggles.reverse_cruise_increase))
 
     # *** hud ui ***
     if self.CP.carFingerprint != CAR.TOYOTA_PRIUS_V:

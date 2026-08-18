@@ -52,6 +52,7 @@ ACTION_OPTIONS = [
   {"id": 0, "name": tr_noop("No Action")},
   {"id": 1, "name": tr_noop("Change Personality"), "requires_longitudinal": True},
   {"id": 2, "name": tr_noop("Force Coast"), "requires_longitudinal": True},
+  {"id": 14, "name": tr_noop("Pulse and Glide"), "requires_longitudinal": True, "requires_developer": True},
   {"id": 3, "name": tr_noop("Pause Steering")},
   {"id": 4, "name": tr_noop("Pause Accel/Brake"), "requires_longitudinal": True},
   {"id": 5, "name": tr_noop("Toggle Experimental"), "requires_longitudinal": True},
@@ -811,11 +812,14 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
       allowed_ids = {0, 9, 10, 11, 12, 13}
       options = [o for o in ACTION_OPTIONS if o["id"] in allowed_ids]
     else:
-      allowed_ids = set(range(9)) | {11, 12, 13}
+      allowed_ids = set(range(9)) | {11, 12, 13, 14}
       if key == "LKASButtonControl":
         allowed_ids.add(9)
+      developer_access = self._params.get_bool("DeveloperUI") or self._params.get_bool("GalaxyDeveloperMode")
       options = [o for o in ACTION_OPTIONS
-                 if o["id"] in allowed_ids and (cs.hasOpenpilotLongitudinal or not o.get("requires_longitudinal", False))]
+                 if o["id"] in allowed_ids and
+                 (cs.hasOpenpilotLongitudinal or not o.get("requires_longitudinal", False)) and
+                 (developer_access or not o.get("requires_developer", False))]
 
     option_labels = [tr(o["name"]) for o in options]
     option_ids = [o["id"] for o in options]

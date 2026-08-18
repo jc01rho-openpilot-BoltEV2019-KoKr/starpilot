@@ -41,10 +41,9 @@ def create_lta_steer_command_2(packer, frame):
 
 
 def create_accel_command(packer, accel, pcm_cancel, permit_braking, standstill_req, lead, acc_type, fcw_alert,
-                         distance, reverse_cruise_active, allow_long_press=None):
+                         distance, reverse_cruise_active):
   # TODO: find the exact canceling bit that does not create a chime
-  if allow_long_press is None:
-    allow_long_press = 2 if reverse_cruise_active else 1
+  allow_long_press = 2 if reverse_cruise_active else 1
 
   values = {
     "ACCEL_CMD": accel,

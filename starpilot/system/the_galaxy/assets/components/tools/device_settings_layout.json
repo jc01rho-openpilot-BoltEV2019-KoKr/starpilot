@@ -1643,6 +1643,27 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "VisionSpeedLimitLowLimitFilter",
+        "label": "Ignore Low Vision Speed Limits",
+        "description": "Prevent SLC from acting on vision-detected speed limits at or below the configured threshold. Detection, display, debugging, and training collection remain active.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "VisionSpeedLimitDetection",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "VisionSpeedLimitLowLimitThreshold",
+        "label": "Ignore At or Below",
+        "description": "Vision-detected limits at or below this value will not control speed. The value uses your selected mph or km/h unit.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 5,
+        "max": 80,
+        "step": 5,
+        "parent_key": "VisionSpeedLimitLowLimitFilter",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "VisionSpeedLimitAutoBookmark",
         "label": "Auto-Bookmark Vision Signs",
         "description": "Automatically save confirmed vision-detected speed limit signs into the speed-limit debug session so they can be imported into the training set later.",
@@ -2739,6 +2760,16 @@
         "settings_tier": "simple"
       },
       {
+        "key": "RivianAngleControl",
+        "label": "Rivian Angle Steering",
+        "description": "Use the Extreme harness angle channel with cooperative torque fallback.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "favorite_eligible": true,
+        "requires_capability": "HasRivianAngleHarness",
+        "settings_tier": "simple"
+      },
+      {
         "key": "ForceFingerprint",
         "label": "Disable Automatic Fingerprint Detection",
         "description": "Force the selected fingerprint and prevent it from changing automatically.",
@@ -3080,6 +3111,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3138,6 +3174,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3196,6 +3237,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3254,6 +3300,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3312,6 +3363,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3370,6 +3426,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3432,6 +3493,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3524,6 +3590,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3582,6 +3653,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3640,6 +3716,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3698,6 +3779,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3756,6 +3842,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -3814,6 +3905,11 @@
           {
             "value": 13,
             "label": "Favorite #3"
+          },
+          {
+            "value": 14,
+            "label": "Pulse and Glide",
+            "developer_only": true
           }
         ],
         "settings_tier": "simple"
@@ -4114,6 +4210,16 @@
         "settings_tier": "simple"
       },
       {
+        "key": "TestModelLeadTrajectory",
+        "label": "Test Model-Predicted Lead Trajectory",
+        "description": "Experimental: use the model's predicted lead path as the MPC lead trajectory. Raw lead safety and stop logic remain active.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "GalaxyDeveloperMode",
+        "requires_offroad": true,
+        "settings_tier": "advanced"
+      },
+      {
         "key": "AlphaLongitudinalEnabled",
         "label": "openpilot Longitudinal Control (Alpha)",
         "description": "Enable openpilot longitudinal control for vehicles that support it. This replaces the vehicle's stock ACC and may disable automatic emergency braking. Changing this setting restarts the driving stack.",
@@ -4141,6 +4247,19 @@
         "description": "On supported Hyundai stock-cruise cars, use RES/SET button presses to match the cluster set speed to StarPilot's target.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "parent_key": "GalaxyDeveloperMode",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "PulseGlideSpeedDelta",
+        "label": "Pulse and Glide Speed Delta",
+        "description": "When Pulse and Glide is assigned to a wheel button, coast this far below the current cruise target before accelerating back up.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 30.0,
+        "step": 0.5,
+        "precision": 1,
         "parent_key": "GalaxyDeveloperMode",
         "settings_tier": "advanced"
       },

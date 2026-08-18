@@ -233,7 +233,9 @@ class CarState(CarStateBase):
     return button_events
 
   def create_lkas_button_events(self, cp: CANParser, prev_lda_button: int) -> list[structs.CarState.ButtonEvent]:
-    if self.CP.carFingerprint == CAR.HYUNDAI_SONATA_HYBRID:
+    if self.CP.carFingerprint == CAR.HYUNDAI_SONATA:
+      self.lda_button = int(cp.vl["BCM_PO_11"]["LDA_BTN"]) if cp.ts_nanos["BCM_PO_11"]["LDA_BTN"] > 0 else 0
+    elif self.CP.carFingerprint == CAR.HYUNDAI_SONATA_HYBRID:
       self.lda_button = self.get_sonata_hybrid_lkas_button_state(cp)
     else:
       source_states = (
@@ -424,9 +426,6 @@ class CarState(CarStateBase):
     ret.buttonEvents = [*self.create_cruise_button_events(self.cruise_buttons[-1], prev_cruise_buttons),
                         *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
                         *lkas_button_events]
-
-    if getattr(self.FPCP, "flags", 0) & HyundaiStarPilotFlags.MAIN_CRUISE_STATE_TRACKING:
-      ret.cruiseState.available = self.update_main_cruise(ret)
 
     ret.blockPcmEnable = not self.recent_button_interaction()
 

@@ -374,12 +374,20 @@ struct CarControl {
     brake @1: Float32; # [0.0, 1.0]
     torqueOutputCan @8: Float32;   # value sent over can to the car
     speed @6: Float32;  # m/s
+    lateralControlMode @9: LateralControlMode;
 
     enum LongControlState @0xe40f3a917d908282{
       off @0;
       pid @1;
       stopping @2;
       starting @3;
+    }
+
+    enum LateralControlMode {
+      inactive @0;
+      torque @1;
+      angle @2;
+      torqueRecovering @3;
     }
   }
 
@@ -511,6 +519,7 @@ struct CarParams {
   startingState @70 :Bool; # Does this car make use of special starting state
 
   steerActuatorDelay @36 :Float32; # Steering wheel actuator delay in seconds
+  lateralSmoothSeconds @78 :Float32; # Speed-scheduled curvature smoothing used by select angle-control platforms
   longitudinalActuatorDelay @58 :Float32; # Gas/Brake actuator delay in seconds
   openpilotLongitudinalControl @37 :Bool; # is openpilot doing the longitudinal control?
   carVin @38 :Text; # VIN number queried during fingerprinting

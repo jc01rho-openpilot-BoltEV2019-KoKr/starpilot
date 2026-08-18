@@ -4,6 +4,7 @@ from opendbc.car import DT_CTRL, structs
 from opendbc.car.chrysler.values import RAM_DT
 from opendbc.car.gm.values import CAR as GM_CAR, GMFlags, SDGM_CAR
 from opendbc.car.interfaces import MAX_CTRL_SPEED
+from opendbc.car.rivian.values import RivianFlags
 
 from openpilot.selfdrive.selfdrived.events import Events
 
@@ -65,6 +66,21 @@ class CarSpecificEvents:
     self.gm_low_speed_alert_shown = False
     self.no_steer_warning = False
     self.silent_steer_warning = True
+    self.rivian = self.CP.brand == "rivian"
+    self.rivian_angle_harness = self.rivian and bool(self.CP.flags & RivianFlags.ANGLE_HARNESS)
+    self.rivian_status_frame = 0
+    self.rivian_angle_saturated = False
+    self.rivian_toi_recovery_failed = False
+    self.rivian_status_params = None
+    self.rivian_angle_params = None
+    if self.rivian:
+      try:
+        from openpilot.common.params import Params
+        self.rivian_status_params = Params(memory=True)
+        if self.rivian_angle_harness:
+          self.rivian_angle_params = self.rivian_status_params
+      except Exception:
+        pass
 
   def update(self, CS: car.CarState, CS_prev: car.CarState, CC: car.CarControl):
     extra_gears = BRAND_EXTRA_GEARS.get(self.CP.brand, None)
@@ -185,6 +201,18 @@ class CarSpecificEvents:
 
     else:
       events = self.create_common_events(CS, CS_prev, extra_gears=extra_gears)
+
+    if self.rivian:
+      self.rivian_status_frame += 1
+      if self.rivian_status_params is not None and self.rivian_status_frame % 5 == 0:
+        self.rivian_toi_recovery_failed = self.rivian_status_params.get_bool("RivianToiRecoveryFailed")
+        if self.rivian_angle_harness:
+          self.rivian_angle_saturated = self.rivian_status_params.get_bool("RivianAngleSaturated")
+      if self.rivian_toi_recovery_failed:
+        events.add(EventName.steerTempUnavailable)
+    if self.rivian_angle_harness:
+      if self.rivian_angle_saturated:
+        events.add(EventName.steerSaturated)
 
     return events
 

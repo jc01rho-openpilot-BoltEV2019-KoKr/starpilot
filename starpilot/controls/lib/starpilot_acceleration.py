@@ -76,6 +76,9 @@ SLC_COAST_MIN_SPEED = 4.0
 SLC_TARGET_EPS = 0.15
 RELEVANT_LEAD_MIN_CLOSING_SPEED = 0.5
 RELEVANT_LEAD_MIN_BRAKE = -0.4
+PULSE_GLIDE_MIN_TARGET_SPEED = 5.0
+PULSE_GLIDE_MIN_LOWER_SPEED = 3.0
+PULSE_GLIDE_HYSTERESIS = 0.25
 
 # Drive mode -> profile mapping used by the map_acceleration / map_deceleration toggles.
 GEAR_STATE_PROFILES = {
@@ -148,6 +151,61 @@ class StarPilotAcceleration:
     self.min_accel = 0
 
     self.last_gear_state = "init"
+    self.pulse_glide_coasting = False
+
+  def _update_pulse_glide(self, v_ego, sm, starpilot_toggles):
+    pulse_glide_enabled = bool(getattr(sm["starpilotCarState"], "pulseAndGlide", False))
+    if not pulse_glide_enabled:
+      self.pulse_glide_coasting = False
+      return False
+
+    raw_v_cruise_kph = 0.0 if sm["carState"].vCruise == V_CRUISE_UNSET else min(sm["carState"].vCruise, V_CRUISE_MAX)
+    if 0 < raw_v_cruise_kph < V_CRUISE_UNSET and getattr(starpilot_toggles, "set_speed_offset", 0) > 0:
+      raw_v_cruise_kph += starpilot_toggles.set_speed_offset
+    raw_v_cruise = raw_v_cruise_kph * CV.KPH_TO_MS
+    if raw_v_cruise <= 0.0:
+      self.pulse_glide_coasting = False
+      return False
+
+    effective_slc_target = get_active_slc_control_target(
+      getattr(starpilot_toggles, "speed_limit_controller", False),
+      getattr(starpilot_toggles, "set_speed_limit", False),
+      getattr(self.starpilot_planner.starpilot_vcruise, "slc_target", 0.0),
+      getattr(self.starpilot_planner.starpilot_vcruise, "slc_offset", 0.0),
+      getattr(getattr(self.starpilot_planner.starpilot_vcruise, "slc", None), "overridden_speed", 0.0),
+      max(float(getattr(sm["carState"], "vEgoCluster", v_ego) or v_ego), v_ego) - v_ego,
+      allow_lower_override=(getattr(starpilot_toggles, "redneck_cruise", False) and
+                            getattr(starpilot_toggles, "speed_limit_controller_override_set_speed", False)),
+    )
+    v_target = float(self.starpilot_planner.v_cruise or raw_v_cruise)
+    if effective_slc_target > 0.0:
+      v_target = min(v_target, effective_slc_target)
+
+    delta = max(0.0, float(getattr(starpilot_toggles, "pulse_glide_speed_delta", 0.0)))
+    lower_target = v_target - delta
+    if v_target <= PULSE_GLIDE_MIN_TARGET_SPEED or lower_target < PULSE_GLIDE_MIN_LOWER_SPEED:
+      self.pulse_glide_coasting = False
+      return False
+
+    has_relevant_lead = any(lead_is_braking_relevant(lead, v_ego) for lead in (sm["radarState"].leadOne, sm["radarState"].leadTwo))
+    stop_context = (
+      sm["carState"].standstill or
+      getattr(sm["controlsState"], "forceDecel", False) or
+      getattr(self.starpilot_planner.starpilot_cem, "stop_light_detected", False) or
+      getattr(self.starpilot_planner.starpilot_vcruise, "forcing_stop", False) or
+      getattr(self.starpilot_planner.starpilot_following, "disable_throttle", False)
+    )
+    if has_relevant_lead or stop_context:
+      self.pulse_glide_coasting = False
+      return False
+
+    if self.pulse_glide_coasting:
+      if v_ego <= lower_target + PULSE_GLIDE_HYSTERESIS:
+        self.pulse_glide_coasting = False
+    elif v_ego >= v_target - PULSE_GLIDE_HYSTERESIS:
+      self.pulse_glide_coasting = True
+
+    return self.pulse_glide_coasting
 
   def update(self, v_ego, sm, starpilot_toggles):
     eco_gear = sm["starpilotCarState"].ecoGear
@@ -188,7 +246,8 @@ class StarPilotAcceleration:
     if self.starpilot_planner.starpilot_weather.weather_id != 0:
       self.max_accel -= self.max_accel * self.starpilot_planner.starpilot_weather.reduce_acceleration
 
-    if sm["starpilotCarState"].forceCoast:
+    pulse_glide_coasting = self._update_pulse_glide(v_ego, sm, starpilot_toggles)
+    if sm["starpilotCarState"].forceCoast or pulse_glide_coasting:
       self.min_accel = A_CRUISE_MIN_ECO
     elif sm["starpilotCarState"].trafficModeEnabled:
       self.min_accel = A_CRUISE_MIN_TRAFFIC

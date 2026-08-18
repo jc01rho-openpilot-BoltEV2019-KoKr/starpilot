@@ -86,6 +86,44 @@
   outline: none;
 }
 
+.sentry-range-control {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  min-width: min(100%, 28rem);
+}
+
+.sentry-range {
+  accent-color: var(--main-fg);
+  cursor: pointer;
+  flex: 1;
+  min-width: 12rem;
+}
+
+.sentry-range:disabled {
+  cursor: not-allowed;
+}
+
+.sentry-number-input {
+  background: var(--sidebar-bg);
+  border: var(--border-style-main);
+  border-radius: var(--border-radius-sm);
+  box-sizing: border-box;
+  color: var(--text-color);
+  padding: 0.55rem 0.45rem;
+  width: 5.5rem;
+}
+
+.sentry-number-input:focus {
+  border-color: var(--main-fg);
+  outline: none;
+}
+
+.sentry-range-unit {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .sentry-toggle {
   accent-color: var(--main-fg);
   cursor: pointer;
@@ -115,6 +153,17 @@
 
 .sentry-button-secondary {
   white-space: nowrap;
+}
+
+.sentry-button-danger {
+  border-color: var(--danger-bg);
+  color: var(--danger-fg);
+  white-space: nowrap;
+}
+
+.sentry-button-danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+  color: var(--color-white);
 }
 
 .sentry-action-row {
@@ -178,5 +227,14 @@
   .sentry-input {
     min-width: 0;
     width: 100%;
+  }
+
+  .sentry-range-control {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .sentry-range {
+    min-width: 0;
   }
 }

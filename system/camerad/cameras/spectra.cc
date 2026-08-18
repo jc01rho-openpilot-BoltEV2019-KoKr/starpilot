@@ -276,7 +276,9 @@ int SpectraCamera::clear_req_queue() {
       .flush_type = CAM_FLUSH_TYPE_ALL,
     };
     int err = do_cam_control(m->icp_fd, CAM_FLUSH_REQ, &cmd, sizeof(cmd));
-    assert(err == 0);
+    if (err != 0) {
+      LOGE("failed to flush BPS requests: %d", err);
+    }
     LOGD("flushed bps: %d", err);
   }
 
@@ -1012,7 +1014,7 @@ void SpectraCamera::enqueue_frame(uint64_t request_id) {
   }
 
   if (icp_dev_handle > 0) {
-    ret = do_cam_control(m->cam_sync_fd, CAM_SYNC_CREATE, &sync_create, sizeof(sync_create));
+    ret = do_sync_control(m->cam_sync_fd, CAM_SYNC_CREATE, &sync_create, sizeof(sync_create));
     if (ret != 0) {
       LOGE("failed to create fence: %d %d", ret, sync_create.sync_obj);
     } else {

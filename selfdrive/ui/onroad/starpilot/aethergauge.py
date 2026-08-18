@@ -221,10 +221,6 @@ def _is_stop_light() -> bool:
 
 def _stop_light_data() -> AetherGaugeData:
   dist_m = _get_val("starpilotPlan", "forcingStopLength", 0.0)
-  if dist_m == 0.0 and _sm_valid("modelV2"):
-    model = ui_state.sm["modelV2"]
-    if len(model.position.x) > 0:
-      dist_m = model.position.x[min(32, len(model.position.x) - 1)]
   display_dist, unit = _to_display_distance(dist_m)
   return AetherGaugeData(
     text=str(display_dist), unit=unit, color=COLOR_FORCE_STOP,
@@ -282,14 +278,17 @@ def _is_lead() -> bool:
           and _sm_valid("radarState")
           and ui_state.sm["radarState"].leadOne.status)
 
+_lead_is_stopped = False
+
 def _lead_data() -> AetherGaugeData:
+  global _lead_is_stopped
   lead = ui_state.sm["radarState"].leadOne
-  is_stopped = lead.vLead < LEAD_STOPPED_SPEED_THRESHOLD
+  _lead_is_stopped = lead.vLead < (1.2 if _lead_is_stopped else 0.8)
   return AetherGaugeData(
-    text="STOPPED" if is_stopped else "SLOW",
-    color=COLOR_LEAD_STOPPED if is_stopped else COLOR_LEAD_SLOWER,
+    text="STOPPED" if _lead_is_stopped else "SLOW",
+    color=COLOR_LEAD_STOPPED if _lead_is_stopped else COLOR_LEAD_SLOWER,
     indicator_type=IndicatorType.LEAD, indicator_value=lead.dRel,
-    indicator_extra="stopped" if is_stopped else "slower",
+    indicator_extra="stopped" if _lead_is_stopped else "slower",
   )
 
 
@@ -422,6 +421,8 @@ class AetherGauge:
     self._cooldown = 0.5
     self._road_h_filter = FirstOrderFilter(ROAD_HEIGHT, 0.06, 1 / gui_app.target_fps)
     self._current_road_h = ROAD_HEIGHT
+    self._dist_filter = FirstOrderFilter(0.0, 0.12, 1 / gui_app.target_fps)
+    self._last_indicator_type = IndicatorType.NONE
 
   def has_active_source(self) -> bool:
     """Lightweight visibility check — no side effects, no data construction."""
@@ -443,10 +444,13 @@ class AetherGauge:
 
     # Treat None as a priority 999 state: switch immediately if higher/equal priority,
     # or wait for cooldown to downgrade/hide.
-    if best_priority <= self._active_priority or (now - self._last_active_time > self._cooldown):
+    if new_data is not None:
       self._cached_data = new_data
       self._active_priority = best_priority
-      self._last_active_time = now if new_data is not None else 0.0
+      self._last_active_time = now
+    elif now - self._last_active_time > self._cooldown:
+      self._cached_data = None
+      self._active_priority = 999
 
     return self._cached_data
 
@@ -466,6 +470,31 @@ class AetherGauge:
     else:
       icx = cx
       icy = bottom - ROAD_HALF_SIZE
+
+    if data.indicator_type != self._last_indicator_type:
+      self._dist_filter.x = data.indicator_value
+      self._last_indicator_type = data.indicator_type
+
+    if data.indicator_type in (IndicatorType.FORCE_STOP, IndicatorType.STOP_LIGHT):
+      v_ego = _get_val("carState", "vEgo", 0.0)
+      raw_dist = data.indicator_value
+
+      # Moving forward at ANY speed (even a 0.1 mph creep): distance can ONLY count down
+      if v_ego > 0.05 and self._dist_filter.x > 0.0 and (raw_dist - self._dist_filter.x) < 20.0:
+        target_dist = min(self._dist_filter.x, raw_dist)
+      else:
+        target_dist = raw_dist
+
+      smoothed_dist = self._dist_filter.update(target_dist)
+
+      # Clean zero-lock at standstill or within final 1 foot (< 0.3m)
+      if _get_val("carState", "standstill", False) or smoothed_dist < 0.3:
+        smoothed_dist = 0.0
+        self._dist_filter.x = 0.0
+
+      display_dist, unit = _to_display_distance(smoothed_dist)
+      data.text = str(display_dist)
+      data.unit = unit
 
     if data.indicator_type in (IndicatorType.ROAD_CURVE, IndicatorType.FORCE_STOP, IndicatorType.LEAD, IndicatorType.STOP_LIGHT):
       self._render_unified_road(rect, icx, icy, data, font_bold, font_medium, alpha)

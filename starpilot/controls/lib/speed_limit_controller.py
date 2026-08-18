@@ -142,6 +142,12 @@ class SpeedLimitController:
       (gas_pressed and v_ego > target_with_offset)
     )
 
+  def low_vision_limit_filtered(self, limit):
+    return (
+      getattr(self.starpilot_toggles, "vision_speed_limit_low_limit_filter", False) and
+      0 < limit <= max(getattr(self.starpilot_toggles, "vision_speed_limit_low_limit_threshold", 0), 0)
+    )
+
   def clear_override_for_source_limit(self, desired_source, desired_target, had_override):
     if desired_source == "None" or desired_target <= 0:
       return
@@ -350,6 +356,8 @@ class SpeedLimitController:
     vision_enabled = getattr(self.starpilot_toggles, "vision_speed_limit_detection", False)
     self.vision_limit = self.starpilot_planner.params_memory.get_float("VisionSpeedLimit") if vision_enabled else 0
     usable_vision_limit = self.vision_limit
+    if not display_only and self.low_vision_limit_filtered(usable_vision_limit):
+      usable_vision_limit = 0
     # The planner clamps V_CRUISE_UNSET to V_CRUISE_MAX, so plausibility must use the raw selected speed.
     raw_set_speed_kph = float(sm["carState"].vCruise)
     selected_set_speed = raw_set_speed_kph * CV.KPH_TO_MS if 0 < raw_set_speed_kph < V_CRUISE_UNSET else 0
@@ -409,7 +417,8 @@ class SpeedLimitController:
           desired_target = self.mapbox_limit
 
       if not display_only and desired_target == 0:
-        if self.previous_target > 0 and self.starpilot_toggles.slc_fallback_previous_speed_limit:
+        previous_vision_limit_filtered = self.previous_source == "Vision" and self.low_vision_limit_filtered(self.previous_target)
+        if self.previous_target > 0 and self.starpilot_toggles.slc_fallback_previous_speed_limit and not previous_vision_limit_filtered:
           desired_source = self.previous_source
           desired_target = self.previous_target
 

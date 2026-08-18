@@ -994,17 +994,28 @@ def _select_dashboard_segment_candidate(candidates):
   return next((candidate for candidate in candidates if _segment_has_dashboard_log(candidate)), candidates[0])
 
 
-def _estimate_route_started_at(segments):
-  estimates = []
+def _estimate_route_start_details(segments):
+  # Reading a compressed qlog materializes the complete log in memory. Route
+  # log analysis happens in the bounded background worker; the synchronous
+  # dashboard path must only use filesystem metadata.
+  filesystem_estimates = []
   for segment in segments:
     segment_num = max(0, _safe_int(segment.get("num", 0), 0))
     # Segment directory mtimes normally land at the end of their one-minute segment.
     estimate = _segment_mtime(segment.get("path")) - (segment_num + 1) * 60
-    parsed = _timestamp_to_dashboard_time(estimate, require_recent=True)
+    parsed = _timestamp_to_dashboard_time(estimate)
     if parsed is not None:
-      estimates.append(parsed.timestamp())
+      filesystem_estimates.append(parsed.timestamp())
+
   # Dashboard analysis can touch a segment directory later, but cannot make it older.
-  return datetime.fromtimestamp(min(estimates)) if estimates else None
+  if filesystem_estimates:
+    return datetime.fromtimestamp(min(filesystem_estimates)), DASHBOARD_TIME_SOURCE_FILESYSTEM
+
+  return None, ""
+
+
+def _estimate_route_started_at(segments):
+  return _estimate_route_start_details(segments)[0]
 
 
 def _list_dashboard_routes(footage_paths, limit=DASHBOARD_ROUTE_SCAN_LIMIT):
@@ -1038,8 +1049,25 @@ def _list_dashboard_routes(footage_paths, limit=DASHBOARD_ROUTE_SCAN_LIMIT):
       route["segments_by_num"].setdefault(segment_num, []).append(entry)
       route["modified_at"] = max(route["modified_at"], _segment_mtime(entry))
 
+  # Route IDs are monotonically increasing on-device and remain reliable when
+  # the wall clock is wrong. Bound the candidate set before inspecting segment
+  # contents so old route history cannot make every homepage request unbounded.
+  def route_sequence(route):
+    try:
+      return int(str(route["name"]).split("--", 1)[0], 16)
+    except (KeyError, TypeError, ValueError):
+      return -1
+
+  candidates = sorted(
+    routes.values(),
+    key=lambda route: (route_sequence(route), route["modified_at"], route["name"]),
+    reverse=True,
+  )
+  if limit is not None:
+    candidates = candidates[:max(0, limit)]
+
   route_infos = []
-  for route in routes.values():
+  for route in candidates:
     segments = []
     for segment_num, candidates in sorted(route["segments_by_num"].items()):
       selected = _select_dashboard_segment_candidate(candidates)
@@ -1049,7 +1077,7 @@ def _list_dashboard_routes(footage_paths, limit=DASHBOARD_ROUTE_SCAN_LIMIT):
     if not segments:
       continue
 
-    started_at = _estimate_route_started_at(segments)
+    started_at, time_source = _estimate_route_start_details(segments)
 
     route_infos.append({
       "name": route["name"],
@@ -1057,7 +1085,7 @@ def _list_dashboard_routes(footage_paths, limit=DASHBOARD_ROUTE_SCAN_LIMIT):
       "segmentCount": len(segments),
       "startedAt": started_at,
       "modifiedAt": route["modified_at"],
-      "timeSource": DASHBOARD_TIME_SOURCE_FILESYSTEM if started_at is not None else "",
+      "timeSource": time_source,
     })
 
   route_infos.sort(key=lambda route: (
@@ -2901,6 +2929,37 @@ def get_route_log_path(path):
   return None
 
 
+def _route_logged_start_time(log_path, reader=None):
+  """Recover a route's wall-clock start when filesystem time was reset at boot."""
+  try:
+    if reader is None:
+      from openpilot.tools.lib.logreader import _LogFileReader
+      reader = _LogFileReader(str(log_path))
+
+    first_mono_time = None
+    for message in reader:
+      mono_time = _safe_float(getattr(message, "logMonoTime", 0), 0.0) / 1e9
+      if mono_time <= 0.0:
+        continue
+      first_mono_time = mono_time if first_mono_time is None else min(first_mono_time, mono_time)
+
+      message_type = _message_type(message)
+      payload = _message_payload(message, message_type)
+      wall_time = _wall_time_seconds_from_payload(payload)
+      if wall_time is None:
+        wall_time = _wall_time_seconds_from_payload(message)
+      if wall_time is None:
+        continue
+
+      start_seconds = wall_time - (mono_time - first_mono_time)
+      start_time = datetime.fromtimestamp(start_seconds)
+      if _dashboard_time_is_valid(start_time):
+        return start_time
+  except Exception:
+    return None
+  return None
+
+
 def get_route_start_time(path):
   log_path = get_route_log_path(path)
   if log_path is None:
@@ -2916,6 +2975,16 @@ def get_route_start_time(path):
 
   if modified_time <= 0:
     return None
+
+  filesystem_time = _timestamp_to_dashboard_time(modified_time)
+  if filesystem_time is not None:
+    return filesystem_time
+
+  # Recover dates from logs only for files created while the system clock was
+  # genuinely invalid. Normal route browsing stays metadata-only.
+  logged_time = _route_logged_start_time(log_path)
+  if logged_time is not None:
+    return logged_time
 
   return datetime.fromtimestamp(modified_time)
 

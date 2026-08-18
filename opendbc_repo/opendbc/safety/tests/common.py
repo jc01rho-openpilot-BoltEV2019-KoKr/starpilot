@@ -987,6 +987,8 @@ class SafetyTest(SafetyTestBase):
               continue
             if attr.startswith('TestHyundaiCanfd') and current_test.startswith('TestHyundaiCanfd'):
               continue
+            if attr.startswith('TestRivian') and current_test.startswith('TestRivian'):
+              continue
             if attr.startswith('TestHyundaiCanCanfdBlended') and current_test.startswith('TestHyundaiCanCanfdBlended'):
               continue
             if {attr, current_test}.issubset({'TestHyundaiLongitudinalSafety', 'TestHyundaiLongitudinalSafetyCameraSCC',
@@ -1002,6 +1004,13 @@ class SafetyTest(SafetyTestBase):
             # overlapping TX addrs, but they're not actuating messages for either car
             if attr == 'TestHyundaiCanfdLKASteeringLongEV' and current_test.startswith('TestToyota'):
               tx = list(filter(lambda m: m[0] not in [0x160, ], tx))
+
+            # Rivian and Hyundai angle-control safety modes intentionally share these CAN address/bus pairs.
+            rivian_angle_tests = {'TestRivianAngleSafety', 'TestRivianAngleLongitudinalSafety'}
+            hyundai_alt_angle_test = 'TestHyundaiCanfdLKASteeringAltAngleLongEV'
+            if ((current_test in rivian_angle_tests and attr == hyundai_alt_angle_test) or
+                (attr in rivian_angle_tests and current_test == hyundai_alt_angle_test)):
+              tx = list(filter(lambda m: [m[0], m[1]] not in ([0x100, 0], [0x110, 0]), tx))
 
             # Volkswagen MQB longitudinal actuating message overlaps with the Subaru lateral actuating message
             if attr == 'TestVolkswagenMqbLongSafety' and current_test.startswith('TestSubaru'):
