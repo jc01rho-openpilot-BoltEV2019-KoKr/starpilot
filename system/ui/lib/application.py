@@ -162,11 +162,29 @@ class FontWeight(StrEnum):
   DISPLAY = "Inter-Bold.fnt"
 
 
-def font_fallback(font: rl.Font) -> rl.Font:
-  """Fall back to unifont for languages that require it."""
-  if multilang.requires_unifont():
-    return gui_app.font(FontWeight.UNIFONT)
-  return font
+_font_codepoint_cache: dict[int, frozenset[int]] = {}
+
+
+def _font_supports_text(font: rl.Font, text: str) -> bool:
+  if not text:
+    return True
+
+  texture_id = font.texture.id
+  if texture_id not in _font_codepoint_cache:
+    _font_codepoint_cache[texture_id] = frozenset(
+      font.glyphs[index].value for index in range(font.glyphCount)
+    )
+
+  codepoints = _font_codepoint_cache[texture_id]
+  return all(ord(character) in codepoints for character in text if character not in "\r\n")
+
+
+def font_fallback(font: rl.Font, text: str = "") -> rl.Font:
+  """Use a font that contains every glyph in the requested text."""
+  candidate = gui_app.font(FontWeight.UNIFONT) if multilang.requires_unifont() else font
+  if _font_supports_text(candidate, text):
+    return candidate
+  return gui_app.font_for_text(text)
 
 
 class MousePos(NamedTuple):
@@ -481,6 +499,7 @@ class GuiApplication:
     self._set_log_callback()
 
     self._fonts: dict[FontWeight, rl.Font] = {}
+    self._text_fonts: dict[tuple[int, ...], rl.Font] = {}
     self._width = width if width is not None else GuiApplication._default_width()
     self._height = height if height is not None else GuiApplication._default_height()
 
@@ -989,6 +1008,10 @@ class GuiApplication:
     for font in self._fonts.values():
       rl.unload_font(font)
     self._fonts = {}
+    for font in self._text_fonts.values():
+      rl.unload_font(font)
+    self._text_fonts = {}
+    _font_codepoint_cache.clear()
 
     if self._render_texture is not None:
       rl.unload_render_texture(self._render_texture)
@@ -1172,6 +1195,17 @@ class GuiApplication:
   def font(self, font_weight: FontWeight = FontWeight.NORMAL) -> rl.Font:
     return self._fonts[font_weight]
 
+  def font_for_text(self, text: str) -> rl.Font:
+    codepoints = tuple(sorted({ord(character) for character in text if character not in "\r\n"}))
+    if not codepoints:
+      return self.font(FontWeight.UNIFONT)
+    if codepoints not in self._text_fonts:
+      with as_file(FONT_DIR.joinpath("unifont.otf")) as fspath:
+        self._text_fonts[codepoints] = rl.load_font_ex(
+          fspath.as_posix(), 16, list(codepoints), len(codepoints)
+        )
+    return self._text_fonts[codepoints]
+
   @property
   def width(self):
     return self._width
@@ -1204,7 +1238,7 @@ class GuiApplication:
       rl._orig_draw_text_ex = rl.draw_text_ex
 
     def _draw_text_ex_scaled(font, text, position, font_size, spacing, tint):
-      font = font_fallback(font)
+      font = font_fallback(font, text)
       return rl._orig_draw_text_ex(font, text, position, font_size * FONT_SCALE, spacing, tint)
 
     rl.draw_text_ex = _draw_text_ex_scaled
