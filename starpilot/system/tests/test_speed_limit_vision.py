@@ -12,17 +12,22 @@ from starpilot.system.speed_limit_vision import DetectorProposal, HistoryEntry, 
 class MemoryParams:
   def __init__(self):
     self.values = {}
+    self.write_count = 0
 
   def put_float(self, key, value):
+    self.write_count += 1
     self.values[key] = value
 
   def put_int(self, key, value):
+    self.write_count += 1
     self.values[key] = value
 
   def put(self, key, value):
+    self.write_count += 1
     self.values[key] = value
 
   def remove(self, key):
+    self.write_count += 1
     self.values.pop(key, None)
 
 
@@ -129,6 +134,11 @@ def test_inference_interval_backs_off_after_expensive_inference():
   assert daemon.last_inference_interval_reason == "processing_cost"
 
 
+def test_runtime_loop_represents_exact_normal_cadences():
+  assert slv.RUNTIME_LOOP_HZ * slv.INFERENCE_INTERVAL == pytest.approx(5.0)
+  assert slv.RUNTIME_LOOP_HZ * slv.FOLLOWUP_INFERENCE_INTERVAL == pytest.approx(3.0)
+
+
 def test_disconnect_camera_releases_client_state():
   daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
   daemon.client = object()
@@ -226,6 +236,30 @@ def test_receive_frame_does_not_retain_vision_buffer(monkeypatch):
 
   assert frame.shape == (3, 2)
   assert buffer_refs[0]() is None
+
+
+def test_publish_status_only_writes_changed_values():
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.params_memory = MemoryParams()
+  daemon.stream_name = "road camera"
+  daemon.last_logged_status = ""
+  daemon.last_published_stream = None
+  daemon._write_debug_event = lambda *_args, **_kwargs: None
+
+  daemon._publish_status("Scanning road camera")
+  assert daemon.params_memory.write_count == 2
+
+  daemon._publish_status("Scanning road camera")
+  assert daemon.params_memory.write_count == 2
+
+  daemon.stream_name = "wide camera"
+  daemon._publish_status("Scanning road camera")
+  assert daemon.params_memory.write_count == 3
+  assert daemon.params_memory.values["VisionSpeedLimitStream"] == "wide camera"
+
+  daemon._publish_status("Holding 45 mph")
+  assert daemon.params_memory.write_count == 4
+  assert daemon.params_memory.values["VisionSpeedLimitStatus"] == "Holding 45 mph"
 
 
 def test_published_sign_value_uses_configured_units():

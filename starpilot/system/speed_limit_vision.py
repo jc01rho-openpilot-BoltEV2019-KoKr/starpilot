@@ -19,8 +19,9 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.starpilot.common.cpu_throttle import device_cpu_throttle_factor
 from openpilot.system.hardware import PC
 
-RUNTIME_LOOP_HZ = 20
-INFERENCE_INTERVAL = 0.15
+RUNTIME_LOOP_HZ = 30
+# Cap steady detector work at 6 Hz while retaining the faster confirmation cadence.
+INFERENCE_INTERVAL = 1.0 / 6.0
 FOLLOWUP_INFERENCE_INTERVAL = 0.10
 FOLLOWUP_WINDOW_SECONDS = 2.0
 TEMPORAL_TRACKING_ENABLED = False
@@ -408,6 +409,7 @@ class SpeedLimitVisionDaemon:
     self.debug_session_started_at = 0.0
     self.debug_session_unavailable = False
     self.last_logged_status = ""
+    self.last_published_stream = None
     self.last_logged_candidate = None
     self.last_runtime_telemetry_at = 0.0
     self.last_debug_heartbeat_at = 0.0
@@ -2450,13 +2452,20 @@ class SpeedLimitVisionDaemon:
       self._clear_detection()
     if self.params_memory is None:
       return
-    self.params_memory.put("VisionSpeedLimitStatus", status)
-    if self.stream_name:
-      self.params_memory.put("VisionSpeedLimitStream", self.stream_name)
-    else:
-      self.params_memory.remove("VisionSpeedLimitStream")
-    if status != self.last_logged_status:
+
+    status_changed = status != self.last_logged_status
+    if status_changed:
+      self.params_memory.put("VisionSpeedLimitStatus", status)
       self.last_logged_status = status
+
+    if self.stream_name != self.last_published_stream:
+      if self.stream_name:
+        self.params_memory.put("VisionSpeedLimitStream", self.stream_name)
+      else:
+        self.params_memory.remove("VisionSpeedLimitStream")
+      self.last_published_stream = self.stream_name
+
+    if status_changed:
       self._write_debug_event("status", statusText=status)
 
   def _publish_runtime_telemetry(self, now, phase, force=False, **fields):

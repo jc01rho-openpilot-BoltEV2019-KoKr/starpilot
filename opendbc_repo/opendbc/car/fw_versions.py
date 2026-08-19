@@ -111,7 +111,8 @@ def match_fw_to_car_exact(live_fw_versions: LiveFwVersions, match_brand: str = N
 
   invalid = set()
   candidates = {c: f for c, f in FW_VERSIONS.items() if
-                is_brand(MODEL_TO_BRAND[c], match_brand)}
+                is_brand(MODEL_TO_BRAND[c], match_brand) and
+                c not in FW_QUERY_CONFIGS[MODEL_TO_BRAND[c]].fuzzy_only_platforms}
 
   for candidate, fws in candidates.items():
     config = FW_QUERY_CONFIGS[MODEL_TO_BRAND[candidate]]

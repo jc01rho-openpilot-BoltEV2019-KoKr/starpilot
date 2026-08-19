@@ -454,6 +454,36 @@ class TestRedneckCruise(unittest.TestCase):
     )
     self.assertAlmostEqual(79.0 * CV.MPH_TO_MS, target_speed)
 
+  def test_target_speed_does_not_step_down_on_stale_opening_lead_plan(self):
+    target_speed = select_redneck_target_speed(
+      128.0,
+      79.0 * CV.MPH_TO_MS,
+      0.0,
+      [77.8 * CV.MPH_TO_MS, 77.7 * CV.MPH_TO_MS, 77.6 * CV.MPH_TO_MS, 77.5 * CV.MPH_TO_MS],
+      10,
+      allow_plan_decrease=True,
+      lead_present=True,
+      lead_distance_m=63.0,
+      lead_rel_speed_ms=2.0 * CV.MPH_TO_MS,
+    )
+
+    self.assertAlmostEqual(79.0 * CV.MPH_TO_MS, target_speed)
+
+  def test_target_speed_still_slows_for_large_opening_lead_plan_decrease(self):
+    target_speed = select_redneck_target_speed(
+      128.0,
+      79.0 * CV.MPH_TO_MS,
+      0.0,
+      [76.0 * CV.MPH_TO_MS, 75.5 * CV.MPH_TO_MS, 75.0 * CV.MPH_TO_MS],
+      10,
+      allow_plan_decrease=True,
+      lead_present=True,
+      lead_distance_m=63.0,
+      lead_rel_speed_ms=2.0 * CV.MPH_TO_MS,
+    )
+
+    self.assertLess(target_speed, 79.0 * CV.MPH_TO_MS)
+
   def test_target_speed_does_not_use_recovery_branch_when_cluster_is_above_internal_max(self):
     target_speed = select_redneck_target_speed(
       45.0,

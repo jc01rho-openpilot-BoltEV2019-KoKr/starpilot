@@ -110,8 +110,13 @@ class FwQueryConfig:
   # Function a brand can implement to provide better fuzzy matching. Takes in FW versions and VIN,
   # returns set of candidates. Only will match if one candidate is returned
   match_fw_to_car_fuzzy: Callable[[LiveFwVersions, str, OfflineFwVersions], set[str]] | None = None
+  # Platforms whose shared firmware must be disambiguated by the brand fuzzy matcher.
+  fuzzy_only_platforms: set[str] = field(default_factory=set)
 
   def __post_init__(self):
+    assert not self.fuzzy_only_platforms or self.match_fw_to_car_fuzzy is not None, \
+      "Fuzzy-only platforms require a brand fuzzy matcher"
+
     # Asserts that a request exists if extra ecus are used
     if len(self.extra_ecus):
       assert len(self.requests), "Must define a request with extra ecus"

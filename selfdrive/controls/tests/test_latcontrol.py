@@ -36,9 +36,12 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_sonata_hybrid_center_output_scale,
   get_prius_center_taper_scale,
   KIA_FORTE_BASE_LAT_ACCEL_FACTOR_MULT,
+  HONDA_ACCORD_TORQUE_KI,
+  HONDA_ACCORD_TORQUE_KP,
   RAM_1500_BASE_LAT_ACCEL_FACTOR_MULT,
   RAM_1500_MAX_LAT_JERK_UP,
   get_gmc_yukon_cc_ff_scale,
+  get_ram_1500_center_output_scale,
   get_ram_1500_transition_output_scale,
   get_ram_1500_ff_scale,
   get_rav4_tss2_pid_output,
@@ -1033,6 +1036,17 @@ class TestLatControl:
     assert 0.6 < center_transition < medium_transition < 1.0
     assert get_ram_1500_transition_output_scale(1.85, 2.5, 17.0) == pytest.approx(1.0)
 
+  def test_ram_1500_center_output_taper_is_speed_and_lat_gated(self):
+    center = get_ram_1500_center_output_scale(0.0, 10.0)
+    near_turn = get_ram_1500_center_output_scale(0.6, 10.0)
+    highway = get_ram_1500_center_output_scale(0.0, 25.0)
+    crawl = get_ram_1500_center_output_scale(0.0, 2.0)
+    assert center < 1.0
+    assert near_turn > center
+    assert highway > center
+    assert crawl > center
+    assert center > 0.85
+
   def test_ram_1500_phase_feedforward_curve(self):
     assert get_ram_1500_ff_scale(0.0, 1.0, 15.0) == pytest.approx(1.0)
     assert get_ram_1500_ff_scale(1.2, 1.1, 17.0) > 1.0
@@ -1702,6 +1716,13 @@ class TestLatControl:
 
     assert controller.pid._k_p[1] == pytest.approx([value * 2.0 for value in base_kp_v])
     assert controller.pid._k_i[1] == pytest.approx([value * 1.25 for value in base_ki_v])
+
+  def test_honda_accord_torque_tune_uses_quick_curve_unwind(self):
+    controller, _, _, _, _ = self._build_torque_controller(HONDA.HONDA_ACCORD, force_torque=True)
+
+    assert controller.is_honda_accord
+    assert controller.pid._k_p[1][-1] == pytest.approx(HONDA_ACCORD_TORQUE_KP)
+    assert controller.pid._k_i[1] == pytest.approx([HONDA_ACCORD_TORQUE_KI] * len(controller.pid._k_i[1]))
 
   def test_honda_accord_steer_ratio_calibration(self):
     expected_scale = 14.0 / 16.33

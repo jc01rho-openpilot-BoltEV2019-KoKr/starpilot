@@ -20,6 +20,7 @@ from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringControl
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
+from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   BOLT_2018_2021_STEER_RATIO_TEST_SCALE,
   LatControlTorque,
@@ -348,6 +349,8 @@ class Controls:
     self.LaC: LatControl
     if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
       self.LaC = LatControlAngle(self.CP, self.CI, DT_CTRL)
+    elif self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
+      self.LaC = LatControlCurvature(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'pid':
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'torque':
@@ -680,14 +683,17 @@ class Controls:
     lat_delay = self.sm["liveDelay"].lateralDelay + lat_smooth_seconds
 
     actuators.curvature = self.desired_curvature
-    steer, steeringAngleDeg, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
-                                                       self.steer_limited_by_safety, self.desired_curvature,
-                                                       curvature_limited, lat_delay,
-                                                       self.calibrated_pose,
-                                                       self.sm['modelV2'],
-                                                       self.starpilot_toggles)
+    steer, lateral_output, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
+                                                     self.steer_limited_by_safety, self.desired_curvature,
+                                                     curvature_limited, lat_delay,
+                                                     self.calibrated_pose,
+                                                     self.sm['modelV2'],
+                                                     self.starpilot_toggles)
     actuators.torque = float(steer)
-    actuators.steeringAngleDeg = float(steeringAngleDeg)
+    if self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
+      actuators.curvature = float(lateral_output)
+    else:
+      actuators.steeringAngleDeg = float(lateral_output)
 
     if len(long_plan.speeds):
       actuators.speed = long_plan.speeds[-1]
@@ -794,6 +800,8 @@ class Controls:
     lat_tuning = self.CP.lateralTuning.which()
     if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
       cs.lateralControlState.angleState = lac_log
+    elif self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
+      cs.lateralControlState.curvatureStateDEPRECATED = lac_log
     elif lat_tuning == 'pid':
       cs.lateralControlState.pidState = lac_log
     elif lat_tuning == 'torque':

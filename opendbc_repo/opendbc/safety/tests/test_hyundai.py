@@ -254,6 +254,10 @@ class TestHyundaiCanCanfdBlendedSafety(TestHyundaiSafety):
 
 class TestHyundaiCanCanfdBlendedHda2Safety(unittest.TestCase):
   TX_MSGS = [[0x50, 0], [0x4F1, 1], [0x2A4, 0]]
+  LONG_TX_MSGS = TX_MSGS + [
+    [0x51, 0], [0x730, 1], [0x340, 1], [0x485, 1], [0x420, 1], [0x421, 1], [0x389, 1], [0x38D, 1],
+    [0x363, 1], [0x398, 1], [0x399, 1], [0x39A, 1], [0x39B, 1], [0x39C, 1], [0x43A, 1],
+  ]
 
   def setUp(self):
     self.packer = CANPackerSafety("hyundai_palisade_2023_generated")
@@ -290,6 +294,52 @@ class TestHyundaiCanCanfdBlendedHda2Safety(unittest.TestCase):
     self.assertEqual(0, self.safety.safety_fwd_hook(2, 0x123))
     self.assertEqual(-1, self.safety.safety_fwd_hook(2, 0x50))
     self.assertEqual(-1, self.safety.safety_fwd_hook(2, 0x2A4))
+
+  def test_hda2_longitudinal_support_messages_require_long_flag(self):
+    flags = HyundaiSafetyFlags.CAN_CANFD_BLENDED | HyundaiSafetyFlags.CANFD_LKA_STEERING | HyundaiSafetyFlags.LONG
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, flags)
+    self.safety.init_tests()
+
+    for addr, bus in self.LONG_TX_MSGS:
+      if addr == 0x50:
+        msg = self._lkas_msg()
+      elif addr == 0x420:
+        msg = self.packer.make_can_msg_panda("SCC11", bus, {"aReqRaw": 0.0, "aReqValue": 0.0})
+      elif addr == 0x730:
+        msg = libsafety_py.make_CANPacket(addr, bus, b"\x02\x3E\x80\x00\x00\x00\x00\x00")
+      else:
+        length = 32 if addr == 0x51 else 24 if addr == 0x2A4 else 4 if addr == 0x4F1 else 8
+        msg = common.make_msg(bus, addr, length)
+      self.assertTrue(self.safety.safety_tx_hook(msg), hex(addr))
+
+    self.safety.set_safety_hooks(
+      CarParams.SafetyModel.hyundai,
+      HyundaiSafetyFlags.CAN_CANFD_BLENDED | HyundaiSafetyFlags.CANFD_LKA_STEERING,
+    )
+    self.safety.init_tests()
+    for addr, bus in self.LONG_TX_MSGS[len(self.TX_MSGS):]:
+      length = 32 if addr == 0x51 else 8
+      self.assertFalse(self.safety.safety_tx_hook(common.make_msg(bus, addr, length)), hex(addr))
+
+  def test_hda2_longitudinal_acceleration_and_diagnostics_are_checked(self):
+    flags = HyundaiSafetyFlags.CAN_CANFD_BLENDED | HyundaiSafetyFlags.CANFD_LKA_STEERING | HyundaiSafetyFlags.LONG
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, flags)
+    self.safety.init_tests()
+    self.safety.set_controls_allowed(True)
+
+    for accel, allowed in ((-3.5, True), (3.5, True), (-3.51, False), (3.51, False)):
+      msg = self.packer.make_can_msg_panda("SCC11", 1, {"aReqRaw": accel, "aReqValue": accel})
+      self.assertEqual(allowed, self.safety.safety_tx_hook(msg))
+
+    valid_tester = libsafety_py.make_CANPacket(0x730, 1, b"\x02\x3E\x80\x00\x00\x00\x00\x00")
+    invalid_tester = libsafety_py.make_CANPacket(0x730, 1, b"\x03\x28\x83\x01\x00\x00\x00\x00")
+    self.assertTrue(self.safety.safety_tx_hook(valid_tester))
+    self.assertFalse(self.safety.safety_tx_hook(invalid_tester))
+
+    fca_status = self.packer.make_can_msg_panda("FCA11", 1, {"cr_vsm_deccmd": 255, "cf_vsm_deccmdact": 0})
+    fca_request = self.packer.make_can_msg_panda("FCA11", 1, {"aeb_cmd_act": 1})
+    self.assertTrue(self.safety.safety_tx_hook(fca_status))
+    self.assertFalse(self.safety.safety_tx_hook(fca_request))
 
 
 class TestHyundaiSafetyFCEV(TestHyundaiSafety):

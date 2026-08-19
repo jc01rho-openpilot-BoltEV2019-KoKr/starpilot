@@ -20,7 +20,7 @@ from openpilot.starpilot.system.adj_spot_monitor_vision_inference import VASMInf
 V_ASM_AFFINITY_CORES = [2]
 V_ASM_SOLO_AFFINITY_CORES = [0, 1, 2]
 
-BASE_INTERVAL = 0.500
+BASE_INTERVAL = 0.750
 FOLLOWUP_INTERVAL = 0.200
 FOLLOWUP_WINDOW = 1.5
 

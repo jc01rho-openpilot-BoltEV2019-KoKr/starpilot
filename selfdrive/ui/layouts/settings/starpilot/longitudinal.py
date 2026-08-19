@@ -111,7 +111,7 @@ class AdaptiveSpeedView(CardHubManagerView):
 
 
 # ═══════════════════════════════════════════════════════════════
-# LongitudinalManagerView — 6-card category hub
+# LongitudinalManagerView — 7-card category hub
 # ═══════════════════════════════════════════════════════════════
 
 class LongitudinalManagerView(CardHubManagerView):
@@ -137,6 +137,12 @@ class LongitudinalManagerView(CardHubManagerView):
         "desc": tr("Manage auto speed matching, confirmation, offsets, and source priority."),
         "icon": "navigate",
         "on_click": lambda: self._controller._navigate_to("slc"),
+      },
+      {
+        "title": tr("Vision Speed Limits"),
+        "desc": tr("Detect and display speed-limit signs without enabling Speed Limit Controller."),
+        "icon": "road",
+        "on_click": lambda: self._controller._navigate_to("vision_speed_limits"),
       },
       {
         "title": tr("Adaptive Speed Controls"),
@@ -633,10 +639,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_state=lambda: self._params.get_bool("SLCMapboxFiller"),
                  set_state=lambda s: self._params.put_bool("SLCMapboxFiller", s),
                  visible=self._mapbox_available),
-      SettingRow("VisionSpeedLimit", "toggle", tr_noop("Vision Detection"),
-                 subtitle=tr_noop("Use the road camera to detect speed limit signs for SLC."),
-                 get_state=lambda: self._params.get_bool("VisionSpeedLimitDetection"),
-                 set_state=lambda s: self._params.put_bool("VisionSpeedLimitDetection", s)),
       SettingRow("ShowSLCOffset", "toggle", tr_noop("Show SLC Offset"),
                  subtitle="",
                  get_state=lambda: self._params.get_bool("ShowSLCOffset"),
@@ -661,6 +663,14 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  on_click=self._show_slc_offsets_category),
     ]
 
+    # ── 4. Vision Speed Limits Rows ──
+    self._vision_speed_limit_rows = [
+      SettingRow("VisionSpeedLimit", "toggle", tr_noop("Vision Detection"),
+                 subtitle=tr_noop("Use the road camera to detect and display speed-limit signs, with optional use by Speed Limit Controller."),
+                 get_state=lambda: self._params.get_bool("VisionSpeedLimitDetection"),
+                 set_state=lambda s: self._params.put_bool("VisionSpeedLimitDetection", s)),
+    ]
+
     # Initialize SLC Offsets rows
     self._slc_offset_rows = []
     for i in range(1, 8):
@@ -672,7 +682,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
         on_click=lambda k=key: self._show_slider(k, *self._speed_range(), unit=self._speed_unit()),
       ))
 
-    # ── 4. Adaptive Speed Controls Rows (CES + CSC + CCM) ──
+    # ── 5. Adaptive Speed Controls Rows (CES + CSC + CCM) ──
     self._curve_speed_controller_rows = [
       SettingRow("CalibratedLatAccel", "value", tr_noop("Calibrated Lateral Accel"),
                  subtitle=tr_noop("The learned lateral acceleration from collected driving data. Higher values allow faster cornering."),
@@ -692,7 +702,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  visible=csc_on),
     ]
 
-    # ── 5. Driving Personalities Rows ──
+    # ── 6. Driving Personalities Rows ──
     self._personality_rows = [
       SettingRow("Traffic", "value", tr_noop("Traffic"),
                  subtitle=tr_noop("Configure follow distance, smoothness, and response for traffic conditions."),
@@ -712,7 +722,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  on_click=lambda: self._show_personality_profile_category("Relaxed")),
     ]
 
-    # ── 6. Daily QOL & Weather Rows ──
+    # ── 7. Daily QOL & Weather Rows ──
     self._daily_rows = [
       SettingRow("CustomCruise", "value", tr_noop("Cruise Interval"),
                  subtitle="",
@@ -761,10 +771,10 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                                                     unit=self._speed_unit()),
                  visible=lambda: self._params.get_bool("QOLLongitudinal")),
       SettingRow("PulseGlideSpeedDelta", "value", tr_noop("Pulse and Glide Delta"),
-                 subtitle=tr_noop("Coast this far below the current cruise target before accelerating back up."),
+                 subtitle=tr_noop("Developer-only: coast this far below the current cruise target before accelerating back up."),
                  get_value=lambda: f"{self._params.get_float('PulseGlideSpeedDelta'):.1f}{self._speed_unit()}",
                  on_click=lambda: self._show_slider("PulseGlideSpeedDelta"),
-                 visible=lambda: self._developer_feature_access()),
+                 visible=lambda: self._params.get_bool("QOLLongitudinal") and self._developer_feature_access()),
       SettingRow("MapGears", "toggle", tr_noop("Map Gears"),
                  subtitle="",
                  get_state=lambda: self._params.get_bool("MapGears"),
@@ -827,6 +837,8 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     pt_daily = self._make_parent("QOLLongitudinal", "Quality of Life")
     pt_slc = self._make_parent("SpeedLimitController", "Speed Limit Controller",
       "Limit the car's maximum speed to the current speed limit.")
+    pt_vision_speed_limits = self._make_parent("VisionSpeedLimitDetection", "Vision Speed Limits",
+      "Detect and display speed-limit signs without enabling the Speed Limit Controller.")
     pt_csc = self._make_parent("CurveSpeedController", "Curve Speed Controller",
       "Configure speed control on curves and reset collected calibration data.")
 
@@ -867,6 +879,14 @@ class StarPilotLongitudinalLayout(_SettingsPage):
       header_title=tr_noop("Speed Limit Controller"),
       header_subtitle=tr_noop("Manage auto speed matching, confirmation, offsets, and source priority."),
       parent_toggle=pt_slc,
+      panel_style=PANEL_STYLE,
+    )
+    self._sub_panels["vision_speed_limits"] = AetherSettingsView(
+      self,
+      [SettingSection(title="", rows=self._vision_speed_limit_rows)],
+      header_title=tr_noop("Vision Speed Limits"),
+      header_subtitle=tr_noop("Detect and display speed-limit signs without enabling the Speed Limit Controller."),
+      parent_toggle=pt_vision_speed_limits,
       panel_style=PANEL_STYLE,
     )
     self._sub_panels["personality"] = AetherSettingsView(

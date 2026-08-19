@@ -32,6 +32,9 @@ class TestFwFingerprint:
                            [(b, c, e[c], n) for b, e in VERSIONS.items() for c in e for n in (True, False)])
   def test_exact_match(self, brand, car_model, ecus, test_non_essential):
     config = FW_QUERY_CONFIGS[brand]
+    if car_model in config.fuzzy_only_platforms:
+      pytest.skip("Platform requires VIN-aware fuzzy matching")
+
     CP = CarParams()
     for _ in range(20):
       fw = []

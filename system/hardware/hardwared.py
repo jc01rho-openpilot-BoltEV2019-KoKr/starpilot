@@ -29,12 +29,11 @@ from openpilot.system.hardware.power_monitoring import PowerMonitoring
 from openpilot.system.hardware.fan_controller import TiciFanController
 from openpilot.system.hardware.usb import (
   CHESTNUT_FW_VERSION,
-  CHESTNUT_PRODUCT_ID,
   CHESTNUT_ROM_USB_IDS,
-  CHESTNUT_VENDOR_IDS,
-  read_int,
-  read_text,
-  usb_devices,
+  CHESTNUT_USB_IDS,
+  get_usb_state,
+  get_usb_topology,
+  set_usb_state,
 )
 from openpilot.system.version import terms_version, training_version
 from openpilot.system.athena.registration import UNREGISTERED_DONGLE_ID
@@ -94,14 +93,10 @@ class Chestnut:
     self.last_attempt = 0.0
     self.flashed = False
 
-  def _firmware_mismatch(self) -> bool:
+  def _firmware_mismatch(self, usb_state: list[dict]) -> bool:
     expected = f"custom {CHESTNUT_FW_VERSION}-CLEAN"
-    ids = tuple((vendor, CHESTNUT_PRODUCT_ID) for vendor in CHESTNUT_VENDOR_IDS) + CHESTNUT_ROM_USB_IDS
-    for device in usb_devices():
-      usb_id = (read_int(device / "idVendor", 16), read_int(device / "idProduct", 16))
-      if usb_id in ids and read_text(device / "product") != expected:
-        return True
-    return False
+    ids = CHESTNUT_USB_IDS + CHESTNUT_ROM_USB_IDS
+    return any((device["vendorId"], device["productId"]) in ids and device["product"] != expected for device in usb_state)
 
   def _flash(self) -> None:
     script = os.path.join(os.path.dirname(__file__), "chestnut", "flash.py")
@@ -115,8 +110,8 @@ class Chestnut:
     cloudlog.event("chestnut flash done", returncode=result.returncode, output=result.stdout[-1000:], error=result.returncode != 0)
     self.flashed = result.returncode == 0
 
-  def update(self, offroad: bool) -> None:
-    if not self._firmware_mismatch():
+  def update(self, offroad: bool, usb_state: list[dict]) -> None:
+    if not self._firmware_mismatch(usb_state):
       self.flashed = False
       return
     if not offroad or self.flashed or self.attempts >= self.MAX_ATTEMPTS:
@@ -134,19 +129,25 @@ class Chestnut:
 
 ThermalBand = namedtuple("ThermalBand", ['min_temp', 'max_temp'])
 HardwareState = namedtuple("HardwareState", ['network_type', 'network_info', 'network_strength', 'network_stats',
-                                             'network_metered', 'modem_temps'])
+                                             'network_metered', 'modem_temps', 'usb_state'])
 
 # List of thermal bands. We will stay within this region as long as we are within the bounds.
 # When exiting the bounds, we'll jump to the lower or higher band. Bands are ordered in the dict.
-THERMAL_BANDS = OrderedDict({
-  ThermalStatus.green: ThermalBand(None, 80.0),
-  ThermalStatus.yellow: ThermalBand(75.0, 96.0),
-  ThermalStatus.red: ThermalBand(88.0, 107.),
-  ThermalStatus.danger: ThermalBand(94.0, None),
-})
+if HARDWARE.get_device_type() == "mici":
+  THERMAL_BANDS = OrderedDict({
+    ThermalStatus.ok: ThermalBand(None, 100.0),
+    ThermalStatus.overheated: ThermalBand(92.0, 107.),
+    ThermalStatus.critical: ThermalBand(98.0, None),
+  })
+else:
+  THERMAL_BANDS = OrderedDict({
+    ThermalStatus.ok: ThermalBand(None, 96.0),
+    ThermalStatus.overheated: ThermalBand(88.0, 107.),
+    ThermalStatus.critical: ThermalBand(94.0, None),
+  })
 
 # Override to highest thermal band when offroad and above this temp
-OFFROAD_DANGER_TEMP = 75
+OFFROAD_DANGER_TEMP = 85 if HARDWARE.get_device_type() == "mici" else 75
 
 prev_offroad_states: dict[str, tuple[bool, str | None]] = {}
 
@@ -197,6 +198,7 @@ def hw_state_thread(end_event, hw_queue):
   """Handles non critical hardware state, and sends over queue"""
   count = 0
   prev_hw_state = None
+  prev_usb_topology = set()
 
   modem_version = None
   modem_configured = False
@@ -204,8 +206,12 @@ def hw_state_thread(end_event, hw_queue):
   modem_restart_count = 0
 
   while not end_event.is_set():
-    # these are expensive calls. update every 10s
-    if (count % int(10. / DT_HW)) == 0:
+    usb_topology = get_usb_topology()
+    usb_changed = usb_topology != prev_usb_topology
+
+    # these are expensive calls. update every 10s or when USB devices change
+    if (count % int(10. / DT_HW)) == 0 or usb_changed:
+      prev_usb_topology = usb_topology
       try:
         network_type = HARDWARE.get_network_type()
         modem_temps = HARDWARE.get_modem_temperatures()
@@ -240,6 +246,7 @@ def hw_state_thread(end_event, hw_queue):
           network_stats={'wwanTx': tx, 'wwanRx': rx},
           network_metered=HARDWARE.get_network_metered(network_type),
           modem_temps=modem_temps,
+          usb_state=get_usb_state(),
         )
 
         try:
@@ -278,7 +285,7 @@ def hardware_thread(end_event, hw_queue) -> None:
   started_ts: float | None = None
   started_seen = False
   startup_blocked_ts: float | None = None
-  thermal_status = ThermalStatus.yellow
+  thermal_status = ThermalStatus.ok
 
   last_hw_state = HardwareState(
     network_type=NetworkType.none,
@@ -287,6 +294,7 @@ def hardware_thread(end_event, hw_queue) -> None:
     network_strength=NetworkStrength.unknown,
     network_stats={'wwanTx': -1, 'wwanRx': -1},
     modem_temps=[],
+    usb_state=[],
   )
 
   all_temp_filter = FirstOrderFilter(0., TEMP_TAU, DT_HW, initialized=False)
@@ -319,9 +327,6 @@ def hardware_thread(end_event, hw_queue) -> None:
 
   while not end_event.is_set():
     sm.update(PANDA_STATES_TIMEOUT)
-
-    if chestnut is not None:
-      chestnut.update(started_ts is None)
 
     pandaStates = sm['pandaStates']
     peripheralState = sm['peripheralState']
@@ -384,6 +389,10 @@ def hardware_thread(end_event, hw_queue) -> None:
 
     msg.deviceState.screenBrightnessPercent = HARDWARE.get_screen_brightness()
 
+    set_usb_state(msg.deviceState, last_hw_state.usb_state)
+    if chestnut is not None:
+      chestnut.update(started_ts is None, last_hw_state.usb_state)
+
     # this subset is only used for offroad
     temp_sources = [
       msg.deviceState.memoryTempC,
@@ -402,13 +411,13 @@ def hardware_thread(end_event, hw_queue) -> None:
 
     # StarPilot variables
     if starpilot_toggles.increase_thermal_limits:
-      all_comp_temp -= (THERMAL_BANDS[ThermalStatus.danger].min_temp - THERMAL_BANDS[ThermalStatus.red].min_temp)
+      all_comp_temp -= (THERMAL_BANDS[ThermalStatus.critical].min_temp - THERMAL_BANDS[ThermalStatus.overheated].min_temp)
 
     is_offroad_for_5_min = (started_ts is None) and ((not started_seen) or (off_ts is None) or (time.monotonic() - off_ts > 60 * 5))
     if is_offroad_for_5_min and offroad_comp_temp > OFFROAD_DANGER_TEMP:
       # if device is offroad and already hot without the extra onroad load,
       # we want to cool down first before increasing load
-      thermal_status = ThermalStatus.danger
+      thermal_status = ThermalStatus.critical
     else:
       current_band = THERMAL_BANDS[thermal_status]
       band_idx = list(THERMAL_BANDS.keys()).index(thermal_status)
@@ -431,16 +440,19 @@ def hardware_thread(end_event, hw_queue) -> None:
     startup_conditions["not_taking_snapshot"] = not params.get_bool("IsTakingSnapshot")
 
     # must be at an engageable thermal band to go onroad
-    startup_conditions["device_temp_engageable"] = thermal_status < ThermalStatus.red
+    startup_conditions["device_temp_engageable"] = thermal_status < ThermalStatus.overheated
 
     # ensure device is fully booted
     startup_conditions["device_booted"] = startup_conditions.get("device_booted", False) or HARDWARE.booted()
 
     # if the temperature enters the danger zone, go offroad to cool down
-    onroad_conditions["device_temp_good"] = thermal_status < ThermalStatus.danger
+    onroad_conditions["device_temp_good"] = thermal_status < ThermalStatus.critical
     extra_text = f"{offroad_comp_temp:.1f}C"
     show_alert = (not onroad_conditions["device_temp_good"] or not startup_conditions["device_temp_engageable"]) and onroad_conditions["ignition"]
     set_offroad_alert_if_changed("Offroad_TemperatureTooHigh", show_alert, extra_text=extra_text)
+
+    if show_alert:
+      msg.deviceState.fanSpeedPercentDesired = 100
 
     # *** registration check ***
     if not PC:
@@ -560,9 +572,10 @@ def hardware_thread(end_event, hw_queue) -> None:
     statlog.gauge("fan_speed_percent_desired", msg.deviceState.fanSpeedPercentDesired)
     statlog.gauge("screen_brightness_percent", msg.deviceState.screenBrightnessPercent)
 
-    # report to server once every 10 minutes
+    # report to server once every 10 minutes, or every 1s when thermally blocked
     rising_edge_started = should_start and not should_start_prev
-    if rising_edge_started or (count % int(600. / DT_HW)) == 0:
+    status_packet_interval = 1. if show_alert else 600.
+    if rising_edge_started or (count % int(status_packet_interval / DT_HW)) == 0:
       dat = {
         'count': count,
         'pandaStates': [strip_deprecated_keys(p.to_dict()) for p in pandaStates],

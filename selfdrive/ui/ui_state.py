@@ -11,12 +11,10 @@ from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
 from openpilot.selfdrive.ui.lib.ui_param_cache import shared_ui_params
-from openpilot.system.hardware.usb import chestnut_present
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
 
 BACKLIGHT_OFFROAD = 65 if HARDWARE.get_device_type() == "mici" else 50
-USBGPU_POLL_INTERVAL = 1.0
 
 
 def _noop_progress(_phase: str) -> None:
@@ -93,8 +91,6 @@ class UIState:
     self.usbgpu_compiled: bool = self.params.get_bool("UsbGpuCompiled")
     self.usbgpu_active: bool = self.params.get_bool("UsbGpuActive")
     self.usbgpu_loading: bool = self.params.get_bool("UsbGpuLoading")
-    self._usbgpu_update_time: float = 0.0
-    self._usbgpu_poll_thread: threading.Thread | None = None
     self.started: bool = False
     self.ignition: bool = False
     self.recording_audio: bool = False
@@ -129,25 +125,7 @@ class UIState:
     self._offroad_transition_callbacks: list[Callable[[], None]] = []
     self._engaged_transition_callbacks: list[Callable[[], None]] = []
 
-    self._schedule_usbgpu_poll(force=True)
     self.update_params()
-
-  def _poll_usbgpu_presence(self) -> None:
-    try:
-      self.usbgpu = chestnut_present()
-    except Exception:
-      cloudlog.exception("USB GPU presence poll failed")
-
-  def _schedule_usbgpu_poll(self, now: float | None = None, force: bool = False) -> None:
-    now = time.monotonic() if now is None else now
-    if not force and now - self._usbgpu_update_time < USBGPU_POLL_INTERVAL:
-      return
-    if self._usbgpu_poll_thread is not None and self._usbgpu_poll_thread.is_alive():
-      return
-
-    self._usbgpu_update_time = now
-    self._usbgpu_poll_thread = threading.Thread(target=self._poll_usbgpu_presence, name="ui_usbgpu_poll", daemon=True)
-    self._usbgpu_poll_thread.start()
 
   def add_offroad_transition_callback(self, callback: Callable[[], None]):
     self._offroad_transition_callbacks.append(callback)
@@ -160,6 +138,10 @@ class UIState:
 
   def add_engaged_transition_callback(self, callback: Callable[[], None]):
     self._engaged_transition_callbacks.append(callback)
+
+  def _update_usbgpu_presence(self, present: bool) -> None:
+    # Keep the eGPU UI active until the offroad transition if the dock drops out onroad.
+    self.usbgpu = present or (self.usbgpu and self.started)
 
   @property
   def engaged(self) -> bool:
@@ -221,14 +203,13 @@ class UIState:
     started |= force_onroad
     started &= not force_offroad
     self.started = started
+    self._update_usbgpu_presence(self.sm["deviceState"].chestnutPresent)
 
     # Update recording audio state
     self.recording_audio = params.get_bool("RecordAudio") and self.started
 
     self.is_metric = params.get_bool("IsMetric")
     self.always_on_dm = params.get_bool("AlwaysOnDM")
-    now = time.monotonic()
-    self._schedule_usbgpu_poll(now)
     self.usbgpu_compiled = params.get_bool("UsbGpuCompiled")
     self.usbgpu_active = params.get_bool("UsbGpuActive")
     self.usbgpu_loading = params.get_bool("UsbGpuLoading")

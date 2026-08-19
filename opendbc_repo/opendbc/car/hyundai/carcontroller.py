@@ -721,15 +721,25 @@ class CarController(CarControllerBase):
   def create_can_msgs(self, apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel, stopping, hud_control, actuators, CS, CC, lka_icon, lfa_icon):
     can_sends = []
     can_canfd_blended = bool(self.CP.flags & HyundaiFlags.CAN_CANFD_BLENDED)
+    blended_hda2 = can_canfd_blended and bool(self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING)
 
     # HUD messages
     sys_warning, sys_state, left_lane_warning, right_lane_warning = process_hud_alert(CC.enabled, self.car_fingerprint,
                                                                                       hud_control)
 
-    if can_canfd_blended and self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
+    if blended_hda2:
       can_sends.extend(hyundaicanfd.create_steering_messages(
         self.packer, self.CP, self.CAN, CC.enabled, apply_steer_req, apply_torque, 0.0,
       ))
+      if self.long_active_ecu:
+        can_sends.extend(hyundaican.create_lkas11_can_canfd_blended(
+          self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
+          torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
+          hud_control.leftLaneVisible, hud_control.rightLaneVisible,
+          left_lane_warning, right_lane_warning, CS.msg_364,
+          include_alerts=False,
+          counter_mod=0xF,
+        ))
       if self.frame % 5 == 0:
         can_sends.append(hyundaicanfd.create_suppress_lfa(
           self.packer, self.CAN, CS.lfa_block_msg, False,
@@ -760,13 +770,22 @@ class CarController(CarControllerBase):
         can_sends.extend(self._create_can_redneck_button_messages(CS))
 
     if self.long_active_ecu and can_canfd_blended:
-      can_sends.extend(hyundaican.create_radar_aux_messages(self.packer, self.CAN, self.frame))
+      if blended_hda2:
+        can_sends.extend(hyundaicanfd.create_adrv_messages(self.packer, self.CAN, self.frame, blended_hda2=True))
+      can_sends.extend(hyundaican.create_radar_aux_messages(self.packer, self.CAN, self.frame, hda2=blended_hda2))
 
     if self.frame % 2 == 0 and self.long_active_ecu:
       # TODO: unclear if this is needed
       jerk = 3.0 if actuators.longControlState == LongCtrlState.pid else 1.0
       use_fca = self.CP.flags & HyundaiFlags.USE_FCA.value
-      if can_canfd_blended:
+      if blended_hda2:
+        stopping = stopping and CS.out.vEgoRaw < 0.1
+        can_sends.extend(hyundaican.create_acc_commands_can_canfd_blended_hda2(
+          self.packer, CC.enabled, accel, self.accel_last, jerk, int(self.frame / 2), hud_control,
+          set_speed_in_units, stopping, CC.cruiseControl.override, use_fca, self.CP,
+        ))
+        self.accel_last = accel
+      elif can_canfd_blended:
         can_sends.extend(hyundaican.create_acc_commands_can_canfd_blended(self.packer, CC.enabled, accel, jerk,
                                                                           int(self.frame / 2), hud_control,
                                                                           set_speed_in_units, stopping,
@@ -777,7 +796,7 @@ class CarController(CarControllerBase):
                                                         CC.cruiseControl.override, use_fca, self.CP))
 
     # 20 Hz LFA MFA message
-    if self.frame % 5 == 0 and self.CP.flags & HyundaiFlags.SEND_LFA.value:
+    if self.frame % 5 == 0 and (self.CP.flags & HyundaiFlags.SEND_LFA.value or (self.long_active_ecu and blended_hda2)):
       can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled, self.frame, self.CP, lfa_icon))
 
     # 5 Hz ACC options

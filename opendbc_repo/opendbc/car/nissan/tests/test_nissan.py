@@ -2,9 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from opendbc.car import Bus, ButtonType, gen_empty_fingerprint, structs, uds
+from opendbc.car import Bus, ButtonType, gen_empty_fingerprint, structs
+from opendbc.car.can_definitions import CanData
 from opendbc.car.nissan.carstate import CarState
-from opendbc.car.nissan.interface import CarInterface, LEAF_2025_SV_PLUS_CAMERA_FW
+from opendbc.car.nissan.interface import CarInterface, LEAF_2025_SV_PLUS_CAMERA_FW, leaf_adas_commands_present, \
+                                          leaf_adas_commands_silent, restore_leaf_adas_tx
 from opendbc.car.nissan.values import CAR, CarControllerParams, NissanSafetyFlags
 
 
@@ -82,7 +84,7 @@ def test_alpha_long_controller_sends_stock_shaped_commands_and_keepalive():
 
   assert can_sends[0x2B0][1].hex() == "ff6090ac5b000e03"
   assert can_sends[0x1C3][1].hex() == "000000006400ff27"
-  assert can_sends[0x707][1].hex() == "023e800000000000"
+  assert can_sends[0x707][1].hex() == "023e010000000000"
   assert all(can_sends[addr][2] == 1 for addr in (0x2B0, 0x1C3))
   assert can_sends[0x707][2] == 0
 
@@ -137,33 +139,92 @@ def test_leaf_ecu_disable_is_strict_and_falls_back(monkeypatch, ecu_disabled):
     return ecu_disabled
 
   monkeypatch.setattr("opendbc.car.nissan.interface.disable_ecu", fake_disable_ecu)
+  monkeypatch.setattr("opendbc.car.nissan.interface.leaf_adas_commands_silent", lambda *_: ecu_disabled)
+  monkeypatch.setattr("opendbc.car.nissan.interface.restore_leaf_adas_tx", lambda *_: True)
   monkeypatch.setattr("opendbc.car.nissan.interface.ecu_log", lambda *_: None)
   CarInterface.init(CP, None, None)
 
-  assert len(calls) == (1 if ecu_disabled else 2)
+  assert len(calls) == 1
   assert calls[0]["addr"] == 0x707
   assert calls[0]["bus"] == 0
   assert calls[0]["response_offset"] == 0x20
   assert calls[0]["require_response"] is True
-  assert calls[0]["com_cont_req"] == bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL,
-                                             uds.CONTROL_TYPE.ENABLE_RX_DISABLE_TX,
-                                             uds.MESSAGE_TYPE.NORMAL])
-  if not ecu_disabled:
-    assert calls[1]["diag_request"] == b"\x10\x81"
-    assert calls[1]["diag_response"] == b"\x50\x81"
+  assert calls[0]["diag_request"] == b"\x10\xf0"
+  assert calls[0]["diag_response"] == b"\x50\xf0"
+  assert calls[0]["com_cont_req"] == b"\x28\x01"
+  assert calls[0]["retry"] == 1
   assert CP.openpilotLongitudinalControl is ecu_disabled
   assert CP.pcmCruise is not ecu_disabled
   assert bool(CP.safetyConfigs[-1].safetyParam & NissanSafetyFlags.LONG_CONTROL) is ecu_disabled
 
 
-def test_leaf_kwp_session_can_confirm_ecu_disable(monkeypatch):
+def test_leaf_kwp_data_monitor_session_can_confirm_ecu_disable(monkeypatch):
   CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, True, False, False, None)
-  results = iter((False, True))
 
-  monkeypatch.setattr("opendbc.car.nissan.interface.disable_ecu", lambda *args, **kwargs: next(results))
+  monkeypatch.setattr("opendbc.car.nissan.interface.disable_ecu", lambda *args, **kwargs: True)
+  monkeypatch.setattr("opendbc.car.nissan.interface.leaf_adas_commands_silent", lambda *_: True)
   monkeypatch.setattr("opendbc.car.nissan.interface.ecu_log", lambda *_: None)
   CarInterface.init(CP, None, None)
 
   assert CP.openpilotLongitudinalControl
   assert not CP.pcmCruise
   assert CP.safetyConfigs[-1].safetyParam & NissanSafetyFlags.LONG_CONTROL
+
+
+def test_leaf_positive_disable_response_without_command_silence_falls_back(monkeypatch):
+  CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, True, False, False, None)
+  restore_calls = []
+
+  monkeypatch.setattr("opendbc.car.nissan.interface.disable_ecu", lambda *args, **kwargs: True)
+  monkeypatch.setattr("opendbc.car.nissan.interface.leaf_adas_commands_silent", lambda *_: False)
+  monkeypatch.setattr("opendbc.car.nissan.interface.restore_leaf_adas_tx", lambda *args: restore_calls.append(args) or True)
+  monkeypatch.setattr("opendbc.car.nissan.interface.ecu_log", lambda *_: None)
+  CarInterface.init(CP, None, None)
+
+  assert len(restore_calls) == 1
+  assert not CP.openpilotLongitudinalControl
+  assert CP.pcmCruise
+  assert not (CP.safetyConfigs[-1].safetyParam & NissanSafetyFlags.LONG_CONTROL)
+
+
+def test_leaf_adas_command_silence_requires_live_bus_without_stock_commands(monkeypatch):
+  monkeypatch.setattr("opendbc.car.nissan.interface.ecu_log", lambda *_: None)
+
+  def unrelated_bus_traffic(wait_for_one=False):
+    return [] if not wait_for_one else [[CanData(0x123, b"\x00", 1)]]
+
+  assert leaf_adas_commands_silent(unrelated_bus_traffic, settle_time=0, observe_time=0.001)
+
+  def stock_command_traffic(wait_for_one=False):
+    return [] if not wait_for_one else [[CanData(0x2B0, b"\x00" * 8, 1)]]
+
+  assert not leaf_adas_commands_silent(stock_command_traffic, settle_time=0, observe_time=0.001)
+  assert not leaf_adas_commands_silent(lambda wait_for_one=False: [], settle_time=0, observe_time=0.001)
+
+
+def test_leaf_adas_command_recovery_requires_stock_command(monkeypatch):
+  monkeypatch.setattr("opendbc.car.nissan.interface.ecu_log", lambda *_: None)
+
+  def stock_command_traffic(wait_for_one=False):
+    return [] if not wait_for_one else [[CanData(0x1C3, b"\x00" * 8, 1)]]
+
+  assert leaf_adas_commands_present(stock_command_traffic, settle_time=0, observe_time=0.001)
+  assert not leaf_adas_commands_present(lambda wait_for_one=False: [], settle_time=0, observe_time=0.001)
+
+
+def test_leaf_adas_restore_returns_to_kwp_default_session(monkeypatch):
+  queries = []
+
+  class FakeQuery:
+    def __init__(self, can_send, can_recv, bus, addrs, request, response, response_offset):
+      queries.append((bus, addrs, request, response, response_offset))
+
+    def get_data(self, timeout):
+      return {(0x707, None): b""}
+
+  monkeypatch.setattr("opendbc.car.nissan.interface.IsoTpParallelQuery", FakeQuery)
+  monkeypatch.setattr("opendbc.car.nissan.interface.leaf_adas_commands_present", lambda *_: True)
+  monkeypatch.setattr("opendbc.car.nissan.interface.ecu_log", lambda *_: None)
+
+  assert restore_leaf_adas_tx(lambda **kwargs: [], lambda msgs: None)
+  assert queries == [(0, [0x707], [b"\x10\x81"], [b"\x50\x81"], 0x20)]

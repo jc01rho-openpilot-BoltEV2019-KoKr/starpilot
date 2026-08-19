@@ -106,7 +106,8 @@ def create_checksum_can_canfd_blended(packer, bus, addr, values):
 def create_lkas11_can_canfd_blended(packer, frame, CP, apply_steer, steer_req,
                                     torque_fault, lkas11, sys_warning, sys_state, enabled,
                                     left_lane, right_lane,
-                                    left_lane_depart, right_lane_depart, msg_364):
+                                    left_lane_depart, right_lane_depart, msg_364,
+                                    include_alerts=True, counter_mod=0x10):
   bus = CanBus(CP).ECAN
   values = {
     "CF_Lkas_LdwsActivemode": int(left_lane) + (int(right_lane) << 1),
@@ -116,7 +117,7 @@ def create_lkas11_can_canfd_blended(packer, frame, CP, apply_steer, steer_req,
     "CR_Lkas_StrToqReq": apply_steer,
     "CF_Lkas_ActToi": steer_req,
     "CF_Lkas_ToiFlt": torque_fault,
-    "CF_Lkas_MsgCount": frame % 0x10,
+    "CF_Lkas_MsgCount": frame % counter_mod,
     "NEW_SIGNAL_1": 0,
     "NEW_SIGNAL_5": 100,
   }
@@ -130,13 +131,13 @@ def create_lkas11_can_canfd_blended(packer, frame, CP, apply_steer, steer_req,
   alerts_364.setdefault("BYTE5", 0)
   alerts_364.setdefault("BYTE6", 0)
   alerts_364.setdefault("BYTE7", 0)
-  alerts_364["COUNTER"] = frame % 0x10
+  alerts_364["COUNTER"] = frame % counter_mod
   alerts_364["CHECKSUM"] = create_checksum_can_canfd_blended(packer, bus, "ALERTS_364", alerts_364)
 
-  return [
-    packer.make_can_msg("LKAS11", bus, values),
-    packer.make_can_msg("ALERTS_364", bus, alerts_364),
-  ]
+  ret = [packer.make_can_msg("LKAS11", bus, values)]
+  if include_alerts:
+    ret.append(packer.make_can_msg("ALERTS_364", bus, alerts_364))
+  return ret
 
 
 def create_clu11(packer, frame, clu11, button, CP):
@@ -233,6 +234,56 @@ def create_acc_commands_can_canfd_blended(packer, enabled, accel, upper_jerk, id
   return commands
 
 
+def create_acc_commands_can_canfd_blended_hda2(packer, enabled, accel, accel_last, upper_jerk, idx,
+                                               hud_control, set_speed, stopping, long_override, use_fca, CP):
+  commands = []
+  bus = CanBus(CP).ECAN
+  jerk = 5.0
+
+  if not enabled or long_override:
+    accel_raw, accel_value = 0.0, 0.0
+  else:
+    accel_raw = accel
+    accel_value = max(accel_last - jerk / 50.0, min(accel, accel_last + jerk / 50.0))
+
+  message_values = [
+    ("SCC11", {
+      "aReqRaw": accel_raw,
+      "aReqValue": accel_value,
+      "JerkUpperLimit": upper_jerk,
+      "JerkLowerLimit": jerk if enabled else 1.0,
+    }),
+    ("SCC12", {
+      "MainMode_ACC": 1,
+      "ACCMode_Inactive": 0 if enabled else 1,
+      "TauGapSet": hud_control.leadDistanceBars,
+      "VSetDis": set_speed,
+      "ACC_ObjDist": 1,
+      "ACCMode": 2 if enabled and long_override else 1 if enabled else 0,
+      "StopReq": 1 if stopping else 0,
+    }),
+    ("SCC14", {
+      "ACC_ObjRelSpd": 0,
+      "ObjValid": 0,
+      "ObjStatus": 2 if hud_control.leadVisible and enabled else 1 if hud_control.leadVisible else 0,
+    }),
+  ]
+
+  if use_fca and not (CP.flags & HyundaiFlags.CAMERA_SCC):
+    # These values reproduce the stock status bytes without requesting AEB/FCA actuation.
+    message_values.append(("FCA11", {
+      "cr_vsm_deccmd": 255,
+      "cf_vsm_deccmdact": 0,
+    }))
+
+  for name, values in message_values:
+    values["COUNTER"] = idx % 0xF
+    values["CHECKSUM"] = create_checksum_can_canfd_blended(packer, bus, name, values)
+    commands.append(packer.make_can_msg(name, bus, values))
+
+  return commands
+
+
 def create_acc_commands(packer, enabled, accel, upper_jerk, idx, hud_control, set_speed, stopping, long_override, use_fca, CP):
   commands = []
 
@@ -324,17 +375,27 @@ def create_frt_radar_opt(packer):
   return packer.make_can_msg("FRT_RADAR11", 0, frt_radar11_values)
 
 
-def create_radar_aux_messages(packer, CAN, frame):
+def create_radar_aux_messages(packer, CAN, frame, hda2=False):
   commands = []
 
-  for addr, freq, values in (
+  message_specs = (
+    ("RADAR_0x363", 2, {"FCA_ESA": 1}),
+    ("RADAR_0x398", 5, {"BYTE4": 0x80, "BYTE5": 0x5D}),
+    ("RADAR_0x399", 5, {"BYTE2": 0x02}),
+    ("RADAR_0x39a", 5, {"BYTE7": 0xFF}),
+    ("RADAR_0x39b", 5, {}),
+    ("RADAR_0x39c", 5, {"BYTE5": 0xE0, "BYTE6": 0x79}),
+    ("RADAR_0x43a", 20, {"BYTE2": 0x07}),
+  ) if hda2 else (
     ("RADAR_0x363", 2, {"FCA_ESA": 1}),
     ("RADAR_0x398", 5, {"BYTE4": 0x80, "BYTE5": 0x10}),
-  ):
+  )
+
+  for addr, freq, values in message_specs:
     if frame % freq != 0:
       continue
 
-    msg_values = values | {"COUNTER": frame % 0x10}
+    msg_values = values | {"COUNTER": frame % (0xF if hda2 else 0x10)}
     msg_values["CHECKSUM"] = create_checksum_can_canfd_blended(packer, CAN.ECAN, addr, msg_values)
     commands.append(packer.make_can_msg(addr, CAN.ECAN, msg_values))
 

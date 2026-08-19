@@ -1,13 +1,9 @@
-import math
-
 from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.interfaces import RadarInterfaceBase
-from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.volkswagen.values import DBC, VolkswagenFlags
+from opendbc.car.volkswagen.values import DBC, VolkswagenFlags, CanBus
 
-RADAR_ADDR = 0x24F
-NO_OBJECT = 0
+NO_OBJECT_ID = 0
 LANE_TYPES = ("Same_Lane", "Left_Lane", "Right_Lane")
 SIGNAL_SETS = tuple(
   (
@@ -22,91 +18,68 @@ SIGNAL_SETS = tuple(
 )
 
 
-def get_radar_can_parser(CP):
-  if CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO) and not (CP.flags & VolkswagenFlags.DISABLE_RADAR):
-    messages = [("Strukturen_01", 25)]
-  else:
-    return None
-
-  return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, 2)
-
-
 class RadarInterface(RadarInterfaceBase):
-  def __init__(self, CP, CP_SP):
-    super().__init__(CP, CP_SP)
+  def __init__(self, CP):
+    super().__init__(CP)
 
-    self.updated_messages: set[int] = set()
-    self.trigger_msg: int = RADAR_ADDR
-    self._track_id_counter: int = 0
-
-    self.radar_off_can: bool = CP.radarUnavailable
-    self.rcp: CANParser | None = get_radar_can_parser(CP)
-
-    self._pts = self.pts
+    # With the MEB gateway harness, we do not have access to the raw points from the radar.
+    # However, the camera publishes decent, albeit filtered, tracks. Two for each lane; left, center, and right.
+    self.rcp: CANParser | None = None
+    if CP.flags & VolkswagenFlags.MEB and not self.CP.radarUnavailable:
+      self.rcp = CANParser(DBC[CP.carFingerprint][Bus.radar], [("MEB_Distance_01", 25)], CanBus(CP).cam)
 
   def update(self, can_strings):
-    """Entry‑point called by the vehicle loop every CAN tick."""
-    if self.radar_off_can or self.rcp is None:
+    if self.rcp is None:
       return super().update(None)
 
-    vls = self.rcp.update(can_strings)
-    self.updated_messages.update(vls)
+    self.rcp.update(can_strings)
 
-    if self.trigger_msg not in self.updated_messages:
+    if len(self.rcp.vl_all["MEB_Distance_01"]["Distance_Status"]) == 0:
       return None
 
-    radar_data = self._process_radar_frame()
-    self.updated_messages.clear()
-    return radar_data
+    return self._update()
 
-  def _process_radar_frame(self):
+  def _update(self):
     ret = structs.RadarData()
-
-    if self.rcp is None:
-      return ret
 
     if not self.rcp.can_valid:
       ret.errors.canError = True
       return ret
 
-    msg = self.rcp.vl["Strukturen_01"]
-    get = msg.__getitem__
+    msg = self.rcp.vl["MEB_Distance_01"]
 
-    active_objects: dict[int, tuple[float, float, float]] = {}
+    # Can be 3 when radar sensor is obstructed
+    if msg["Distance_Status"] != 0:
+      ret.errors.radarUnavailableTemporary = True
+
+    seen_ids = set()
     for obj_id_sig, long_sig, lat_sig, vel_sig in SIGNAL_SETS:
-      obj_id = get(obj_id_sig)
-      if obj_id == NO_OBJECT:
+      obj_id = int(msg[obj_id_sig])
+      if obj_id == NO_OBJECT_ID:
         continue
 
-      if obj_id in active_objects:
-        ret.errors.canError = True
+      # We shouldn't see duplicate track ids
+      if obj_id in seen_ids:
+        ret.errors.radarFault = True
         return ret
 
-      active_objects[obj_id] = (
-        get(long_sig),  # dRel
-        get(lat_sig),   # yRel
-        get(vel_sig),   # vRel
-      )
+      seen_ids.add(obj_id)
 
-    for obj_id, (d_rel, y_rel, v_rel) in active_objects.items():
-      if obj_id not in self._pts:
+      if obj_id not in self.pts:
         pt = structs.RadarData.RadarPoint()
-        pt.trackId = self._track_id_counter
-        self._track_id_counter += 1
-        self._pts[obj_id] = pt
+        pt.trackId = self.track_id
+        self.track_id += 1
+        self.pts[obj_id] = pt
       else:
-        pt = self._pts[obj_id]
+        pt = self.pts[obj_id]
 
-      pt.measured = True
-      pt.dRel = d_rel
-      pt.yRel = y_rel
-      pt.vRel = v_rel
-      pt.aRel = math.nan
-      pt.yvRel = math.nan
+      pt.dRel = msg[long_sig]
+      pt.yRel = msg[lat_sig]
+      pt.vRel = msg[vel_sig]
 
-    inactive_ids = self._pts.keys() - active_objects.keys()
+    inactive_ids = self.pts.keys() - seen_ids
     for obj_id in inactive_ids:
-      self._pts.pop(obj_id, None)
+      self.pts.pop(obj_id, None)
 
-    ret.points = list(self._pts.values())
+    ret.points = list(self.pts.values())
     return ret

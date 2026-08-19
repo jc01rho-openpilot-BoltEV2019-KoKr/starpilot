@@ -6,6 +6,11 @@ from opendbc.car.nissan.values import CAR
 nissan_checksum = crcmod.mkCrcFun(0x11d, initCrc=0x00, rev=False, xorOut=0xff)
 
 
+def create_leaf_adas_tester_present():
+  """KWP2000 tester-present with a response requested, for the 2025 Leaf ADAS ECU."""
+  return CanData(0x707, b"\x02\x3E\x01\x00\x00\x00\x00\x00", 0)
+
+
 def create_accel_command(raw_command, frame, active):
   """Build the Leaf ADAS propulsion/regen request (0x2B0)."""
   raw_command = int(raw_command)

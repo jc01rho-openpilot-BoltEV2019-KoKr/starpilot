@@ -214,16 +214,12 @@ class GMPlatformConfig(PlatformConfig):
 
 @dataclass
 class GMASCMPlatformConfig(GMPlatformConfig):
-  def init(self):
-    # ASCM is supported, but due to a janky install and hardware configuration, we are not showing in the car docs
-    self.car_docs = []
+  pass
 
 
 @dataclass
 class GMSDGMPlatformConfig(GMPlatformConfig):
-  def init(self):
-    # Don't show in docs until the harness is sold. See https://github.com/commaai/openpilot/issues/32471
-    self.car_docs = []
+  pass
 
 
 class CAR(Platforms):

@@ -553,14 +553,17 @@ class TestHyundaiFingerprint:
 
     assert CP.flags & HyundaiFlags.CAN_CANFD_BLENDED
     assert CP.flags & HyundaiFlags.CANFD_LKA_STEERING
-    assert not CP.alphaLongitudinalAvailable
-    assert not CP.openpilotLongitudinalControl
+    assert CP.alphaLongitudinalAvailable
+    assert CP.openpilotLongitudinalControl
     assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CAN_CANFD_BLENDED
     assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_LKA_STEERING
+    assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG
     assert can_bus.ACAN == 0
     assert can_bus.ECAN == 1
     assert parsers[Bus.pt].bus == 1
     assert parsers[Bus.cam].bus == 2
+    scc12_state = next(state for state in parsers[Bus.pt].message_states.values() if state.name == "SCC12")
+    assert scc12_state.frequency == 0
     assert CarControllerParams(CP).STEER_MAX == 384
 
   def test_palisade_telluride_hda2_sends_lkas_and_camera_suppression(self):
@@ -591,6 +594,41 @@ class TestHyundaiFingerprint:
     assert (0x2A4, 0) in msg_addrs_buses
     assert not ({0x340, 0x364} & {addr for addr, _, _ in msgs})
 
+  def test_palisade_telluride_hda2_long_sends_complete_support_set(self):
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[2][0x50] = 16
+    fingerprint[1][0x38D] = 8
+    car_fw = [CarParams.CarFw(ecu=Ecu.adas, fwVersion=b"", address=0x730, brand="hyundai")]
+    CP = CarInterface.get_params(CAR.HYUNDAI_PALISADE_2023, fingerprint, car_fw, True, False, False, None)
+    controller = CarController(DBC[CP.carFingerprint], CP)
+    controller.frame = 0
+
+    hud_control = SimpleNamespace(
+      visualAlert=CarControl.HUDControl.VisualAlert.none,
+      leftLaneVisible=True,
+      rightLaneVisible=True,
+      leftLaneDepart=False,
+      rightLaneDepart=False,
+      leadDistanceBars=3,
+      leadVisible=True,
+    )
+    lfa_block_msg = {f"BYTE{i}": 0 for i in range(3, 24) if i != 7}
+    lfa_block_msg["COUNTER"] = 0
+    CS = SimpleNamespace(lfa_block_msg=lfa_block_msg, redneck_send_button=Buttons.NONE, lkas11={}, msg_364={},
+                         out=SimpleNamespace(vEgoRaw=5.0))
+    CC = SimpleNamespace(enabled=True, cruiseControl=SimpleNamespace(cancel=False, resume=False, override=False))
+    actuators = SimpleNamespace(longControlState=LongCtrlState.pid)
+
+    msgs = controller.create_can_msgs(True, 0, False, 42.0, 0.0, False, hud_control, actuators, CS, CC, 2, 2)
+    msg_addrs_buses = {(addr, bus) for addr, _, bus in msgs}
+
+    assert {
+      (0x50, 0), (0x2A4, 0), (0x51, 0),
+      (0x340, 1), (0x485, 1), (0x420, 1), (0x421, 1), (0x389, 1), (0x38D, 1),
+      (0x363, 1), (0x398, 1), (0x399, 1), (0x39A, 1), (0x39B, 1), (0x39C, 1), (0x43A, 1),
+    } <= msg_addrs_buses
+    assert (0x364, 1) not in msg_addrs_buses
+
   def test_g70_aol_uses_active_lkas_icon(self):
     CP = CarInterface.get_params(CAR.GENESIS_G70_2020, gen_empty_fingerprint(), [], False, False, False, None)
     controller = CarController(DBC[CP.carFingerprint], CP)
@@ -619,6 +657,22 @@ class TestHyundaiFingerprint:
 
     assert DBC[CP.carFingerprint][Bus.pt] == "hyundai_can_refresh_generated"
     assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CAN_REFRESH_MSGS
+
+  def test_elantra_refresh_decodes_classic_media_buttons(self):
+    toggles = get_test_toggles()
+    CP = CarInterface.get_params(CAR.HYUNDAI_ELANTRA_HEV_2024, gen_empty_fingerprint(), [], True, False, False, toggles)
+    FPCP = CarInterface.get_starpilot_params(CAR.HYUNDAI_ELANTRA_HEV_2024, gen_empty_fingerprint(), [], CP, toggles)
+
+    car_state = CarState(CP, FPCP)
+    can_parsers = car_state.get_can_parsers(CP)
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    media_msg = packer.make_can_msg("GW_SWRC_PE", 0, {"C_ModeSW": 1, "C_MTSSW": 1})
+
+    can_parsers[Bus.pt].update([(1_000_000_000, [media_msg])])
+    _, fp_ret = car_state.update(can_parsers, toggles)
+
+    assert fp_ret.modePressed
+    assert fp_ret.customPressed
 
   def test_hyundai_lkas_button_sets_starpilot_safety_flag(self):
     fingerprint = gen_empty_fingerprint()
@@ -2418,6 +2472,46 @@ class TestHyundaiFingerprint:
     assert parser.vl["SCC12"]["MainMode_ACC"] == 1
     assert parser.vl["SCC14"]["ObjStatus"] == 1
     assert parser.vl["RADAR_0x363"]["FCA_ESA"] == 1
+
+  def test_can_canfd_blended_hda2_acc_commands_use_hda2_layout(self):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.HYUNDAI_PALISADE_2023
+    CP.flags = int(HyundaiFlags.CAN_CANFD_BLENDED | HyundaiFlags.CANFD_LKA_STEERING | HyundaiFlags.USE_FCA)
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [
+      ("SCC11", 0),
+      ("SCC12", 0),
+      ("SCC14", 0),
+      ("FCA11", 0),
+    ], 1)
+
+    msgs = hyundaican.create_acc_commands_can_canfd_blended_hda2(
+      packer,
+      enabled=True,
+      accel=-1.0,
+      accel_last=0.0,
+      upper_jerk=2.5,
+      idx=15,
+      hud_control=SimpleNamespace(leadDistanceBars=3, leadVisible=True),
+      set_speed=42,
+      stopping=False,
+      long_override=False,
+      use_fca=True,
+      CP=CP,
+    )
+    parser.update([(1, msgs)])
+
+    assert parser.can_valid
+    assert parser.vl["SCC11"]["aReqRaw"] == pytest.approx(-1.0)
+    assert parser.vl["SCC11"]["aReqValue"] == pytest.approx(-0.1)
+    assert parser.vl["SCC11"]["COUNTER"] == 0
+    assert parser.vl["SCC12"]["VSetDis"] == 42
+    assert parser.vl["SCC14"]["ObjValid"] == 0
+    assert parser.vl["SCC14"]["ObjStatus"] == 2
+    assert parser.vl["FCA11"]["aeb_cmd_act"] == 0
+    assert parser.vl["FCA11"]["fca_cmd_act"] == 0
+    assert next(dat for addr, dat, _ in msgs if addr == 0x38D)[4:7] == b"\xC0\x3F\x7F"
 
   def test_can_acc_optional_messages_use_enabled_fca_usm(self):
     CP = CarParams.new_message()
