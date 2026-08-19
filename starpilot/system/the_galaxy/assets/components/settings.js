@@ -1,6 +1,14 @@
 import { html } from "/assets/vendor/arrow-core.js"
 import { upperFirst } from "/assets/js/utils.js"
-import { Navigate } from "/assets/components/router.js"
+
+function navigate(href) {
+  // Avoid importing router.js here: settings.js is loaded by router.js, and
+  // a cache-busted router URL would otherwise create a second router module.
+  if (typeof window.__theGalaxyNavigate === "function") {
+    return window.__theGalaxyNavigate(href)
+  }
+  window.location.assign(href)
+}
 
 export function SettingsView({ params }) {
   const state = {
@@ -15,7 +23,7 @@ export function SettingsView({ params }) {
       const setting = results.find((item) => item.key === state.selectedSubsection) ?? {}
 
       if (!setting.subsettings || Object.keys(setting.subsettings).length === 0) {
-        return Navigate(`/settings/${state.selectedSection}`)
+        return navigate(`/settings/${state.selectedSection}`)
       }
 
       state.heading = setting.key

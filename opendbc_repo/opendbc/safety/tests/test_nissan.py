@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import unittest
 
-from opendbc.car import make_tester_present_msg
 from opendbc.car.nissan import nissancan
 from opendbc.car.nissan.values import NissanSafetyFlags
 from opendbc.car.structs import CarParams
@@ -261,7 +260,7 @@ class TestNissanLeafLongSafety(TestNissanLeafSafety):
     self.assertTrue(self._tx(self._brake_msg(0, active=False, brake_mode=False)))
 
   def test_tester_present(self):
-    tester_present = make_tester_present_msg(0x707, 0, suppress_response=True)
+    tester_present = nissancan.create_leaf_adas_tester_present()
     self.assertTrue(self._tx(self._make_msg(tester_present)))
 
     for index in range(8):

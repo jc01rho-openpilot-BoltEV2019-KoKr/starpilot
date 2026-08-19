@@ -1392,6 +1392,19 @@
         "settings_tier": "simple"
       },
       {
+        "key": "PulseGlideSpeedDelta",
+        "label": "Pulse and Glide Speed Delta",
+        "description": "Developer-only: when Pulse and Glide is assigned to a wheel button, coast this far below the current cruise target before accelerating back up.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 30.0,
+        "step": 0.5,
+        "precision": 1,
+        "parent_key": "QOLLongitudinal",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "WeatherPresets",
         "label": "Weather Condition Offsets",
         "description": "Automatically adjust driving behavior based on real-time weather. Helps maintain comfort and safety in low visibility, rain, or snow.",
@@ -1627,67 +1640,10 @@
       {
         "key": "SpeedLimitController",
         "label": "Speed Limit Controller",
-        "description": "Limit openpilot's maximum driving speed to the current speed limit obtained from downloaded maps, Mapbox, the dashboard, or vision-detected signs.",
+        "description": "Limit openpilot's maximum driving speed to the current speed limit from configured map, dashboard, and optional vision sources.",
         "data_type": "bool",
         "ui_type": "toggle",
         "is_parent_toggle": true,
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "VisionSpeedLimitDetection",
-        "label": "Vision Speed Limit Detection",
-        "description": "Use the road camera to detect speed limit signs for SLC and speed limit filling.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "SpeedLimitController",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "VisionSpeedLimitLowLimitFilter",
-        "label": "Ignore Low Vision Speed Limits",
-        "description": "Prevent SLC from acting on vision-detected speed limits at or below the configured threshold. Detection, display, debugging, and training collection remain active.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "VisionSpeedLimitDetection",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "VisionSpeedLimitLowLimitThreshold",
-        "label": "Ignore At or Below",
-        "description": "Vision-detected limits at or below this value will not control speed. The value uses your selected mph or km/h unit.",
-        "data_type": "int",
-        "ui_type": "numeric",
-        "min": 5,
-        "max": 80,
-        "step": 5,
-        "parent_key": "VisionSpeedLimitLowLimitFilter",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "VisionSpeedLimitAutoBookmark",
-        "label": "Auto-Bookmark Vision Signs",
-        "description": "Automatically save confirmed vision-detected speed limit signs into the speed-limit debug session so they can be imported into the training set later.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "VisionSpeedLimitDetection",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "VisionSpeedLimitTrainingCollector",
-        "label": "Collect Extra Vision Training Samples",
-        "description": "Save lower-threshold vision sign candidates into the debug session for later training import without showing or applying them live. Leave this on if you want to help improve the model.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "VisionSpeedLimitDetection",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "VisionSpeedLimitAutoPreserveSegment",
-        "label": "Preserve Auto-Bookmarked Segments",
-        "description": "Also send a real bookmark for confirmed auto-bookmarks so loggerd preserves the route segment. Leave this off unless you specifically want the extra storage usage.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "VisionSpeedLimitAutoBookmark",
         "settings_tier": "advanced"
       },
       {
@@ -2053,6 +2009,71 @@
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "SpeedLimitController",
+        "settings_tier": "advanced"
+      }
+    ]
+  },
+  {
+    "name": "Vision Speed Limits",
+    "icon": "bi-camera",
+    "params": [
+      {
+        "key": "VisionSpeedLimitDetection",
+        "label": "Vision Speed Limit Detection",
+        "description": "Use the road camera to detect and display speed-limit signs, with optional use by Speed Limit Controller.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true,
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "VisionSpeedLimitLowLimitFilter",
+        "label": "Ignore Low Vision Speed Limits",
+        "description": "When SLC is enabled, prevent it from acting on vision-detected speed limits at or below the configured threshold. Detection, display, debugging, and training collection remain active.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true,
+        "parent_key": "VisionSpeedLimitDetection",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "VisionSpeedLimitLowLimitThreshold",
+        "label": "Ignore At or Below",
+        "description": "Vision-detected limits at or below this value will not control speed. The value uses your selected mph or km/h unit.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 5,
+        "max": 80,
+        "step": 5,
+        "parent_key": "VisionSpeedLimitLowLimitFilter",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "VisionSpeedLimitAutoBookmark",
+        "label": "Auto-Bookmark Vision Signs",
+        "description": "Automatically save confirmed vision-detected speed limit signs into the speed-limit debug session so they can be imported into the training set later.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true,
+        "parent_key": "VisionSpeedLimitDetection",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "VisionSpeedLimitTrainingCollector",
+        "label": "Collect Extra Vision Training Samples",
+        "description": "Save lower-threshold vision sign candidates into the debug session for later training import without showing or applying them live. Leave this on if you want to help improve the model.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "VisionSpeedLimitDetection",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "VisionSpeedLimitAutoPreserveSegment",
+        "label": "Preserve Auto-Bookmarked Segments",
+        "description": "Also send a real bookmark for confirmed auto-bookmarks so loggerd preserves the route segment. Leave this off unless you specifically want the extra storage usage.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "VisionSpeedLimitAutoBookmark",
         "settings_tier": "advanced"
       }
     ]
@@ -4247,19 +4268,6 @@
         "description": "On supported Hyundai stock-cruise cars, use RES/SET button presses to match the cluster set speed to StarPilot's target.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "GalaxyDeveloperMode",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "PulseGlideSpeedDelta",
-        "label": "Pulse and Glide Speed Delta",
-        "description": "When Pulse and Glide is assigned to a wheel button, coast this far below the current cruise target before accelerating back up.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 0.5,
-        "max": 30.0,
-        "step": 0.5,
-        "precision": 1,
         "parent_key": "GalaxyDeveloperMode",
         "settings_tier": "advanced"
       },

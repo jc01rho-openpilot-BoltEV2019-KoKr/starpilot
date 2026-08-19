@@ -115,7 +115,7 @@ def test_chestnut_telemetry_is_bounded_when_amd_is_unavailable(monkeypatch):
   assert not message.valid
 
 
-def test_tinygrad_disk_cache_connection_is_closed_before_thread_handoff(monkeypatch):
+def test_tinygrad_disk_cache_connection_is_closed_between_models(monkeypatch):
   import tinygrad.helpers as tinygrad_helpers
 
   class FakeConnection:
@@ -132,6 +132,98 @@ def test_tinygrad_disk_cache_connection_is_closed_before_thread_handoff(monkeypa
 
   assert connection.closed
   assert tinygrad_helpers._db_connection is None
+
+
+def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):
+  calls = []
+
+  class FakeModelState:
+    uses_external_gpu = True
+
+    def __init__(self, cam_w, cam_h, external_gpu_active, model_id_override, write_model_version):
+      calls.append(("model", cam_w, cam_h, external_gpu_active, model_id_override, write_model_version))
+
+    def warmup(self):
+      calls.append("warmup")
+
+  monkeypatch.setattr(modeld, "wait_for_external_gpu_power_ready", lambda: calls.append("power"))
+  monkeypatch.setattr(modeld, "wait_usbgpu_link", lambda: calls.append("link"))
+  monkeypatch.setattr(modeld, "_set_hcq_wait_timeout", lambda timeout: calls.append(("timeout", timeout)))
+  monkeypatch.setattr(modeld, "_close_tinygrad_disk_cache_connection", lambda: calls.append("close_cache"))
+  monkeypatch.setattr(modeld, "ModelState", FakeModelState)
+  monkeypatch.setattr(
+    modeld,
+    "tinygrad_dev_config",
+    lambda *_args: (_ for _ in ()).throw(AssertionError("runtime must not change tinygrad's process-global DEV")),
+  )
+
+  loaded = modeld._load_external_gpu_model(1928, 1208, "big-model")
+
+  assert isinstance(loaded, FakeModelState)
+  assert calls == [
+    "power",
+    ("timeout", modeld.BIG_MODEL_LOAD_WAIT_TIMEOUT_MS),
+    "link",
+    ("model", 1928, 1208, True, "big-model", False),
+    "warmup",
+    "close_cache",
+    ("timeout", modeld.BIG_MODEL_RUN_WAIT_TIMEOUT_MS),
+  ]
+
+
+def test_external_gpu_nonfinite_outputs_are_dropped_without_escalating(monkeypatch):
+  class FakeTensor:
+    @staticmethod
+    def from_blob(*_args, **_kwargs):
+      return FakeTensor()
+
+  class FakeOutput:
+    def numpy(self):
+      return np.array([np.nan], dtype=np.float32)
+
+  state = modeld.ModelState.__new__(modeld.ModelState)
+  state.uses_external_gpu = True
+  state.frame_buf_size = 4
+  state.vision_input_names = ["img", "big_img"]
+  state.road_key = "img"
+  state.wide_key = "big_img"
+  state._blob_cache = {}
+  state._warp_dev = "CPU"
+  state._queue_dev = "CPU"
+  state.desire_key = "desire_pulse"
+  state.prev_desired_curv_key = None
+  state.numpy_inputs = {"desire_pulse": np.zeros(8, dtype=np.float32)}
+  state.npy = {
+    "desire": np.zeros(8, dtype=np.float32),
+    "tfm": np.zeros((3, 3), dtype=np.float32),
+    "big_tfm": np.zeros((3, 3), dtype=np.float32),
+  }
+  state.prev_desire = np.zeros(8, dtype=np.float32)
+  state.warp_input_keys = ()
+  state.policy_input_keys = ()
+  state.input_queues = {}
+  state.image_history_pipeline = modeld.IMAGE_HISTORY_IN_POLICY
+  state.warp_enqueue = lambda **_kwargs: object()
+  state.run_policy = lambda **_kwargs: (FakeOutput(),)
+  state._reset_state = MethodType(
+    lambda self: (_ for _ in ()).throw(AssertionError("upstream does not reset or escalate transient non-finite output")),
+    state,
+  )
+
+  monkeypatch.setattr(modeld, "Tensor", FakeTensor)
+  monkeypatch.setattr(modeld.cloudlog, "error", lambda *_args, **_kwargs: None)
+  buffers = {
+    "img": SimpleNamespace(data=bytearray(4)),
+    "big_img": SimpleNamespace(data=bytearray(4)),
+  }
+  transforms = {
+    "img": np.eye(3, dtype=np.float32),
+    "big_img": np.eye(3, dtype=np.float32),
+  }
+  inputs = {"desire_pulse": np.zeros(8, dtype=np.float32)}
+
+  for _ in range(10):
+    assert state.run(buffers, transforms, inputs, False) is None
 
 
 def test_out_of_band_artifact_round_trip():

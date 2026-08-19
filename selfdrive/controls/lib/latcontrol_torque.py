@@ -129,6 +129,7 @@ class LatControlTorque(LatControl):
     self.is_kia_carnival = CP.carFingerprint in KIA_CARNIVAL_CARS
     self.is_tucson_4th_gen = CP.carFingerprint in TUCSON_4TH_GEN_CARS
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA_CAR.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
+    self.is_honda_accord = CP.carFingerprint == HONDA_CAR.HONDA_ACCORD
     self.is_silverado = CP.carFingerprint in SILVERADO_CARS
     self.is_gmc_yukon_cc = CP.carFingerprint in GMC_YUKON_CC_CARS
     self.is_ram_1500 = CP.carFingerprint in RAM_1500_CARS
@@ -143,6 +144,9 @@ class LatControlTorque(LatControl):
     self.torque_ff_scale_neg = 1.0
     self.torque_deadzone_boost = float(getattr(self.torque_params, "kfDEPRECATED", 0.0))
     self.torque_ki_mult = 1.0
+    if self.is_honda_accord:
+      self.pid._k_p = [self.pid._k_p[0], [*self.pid._k_p[1][:-1], HONDA_ACCORD_TORQUE_KP]]
+      self.pid._k_i = [self.pid._k_i[0], [HONDA_ACCORD_TORQUE_KI] * len(self.pid._k_i[1])]
     if self.is_palisade:
       self.torque_params.latAccelFactor *= PALISADE_BASE_LAT_ACCEL_FACTOR_MULT
     if self.is_ioniq_5:
@@ -566,8 +570,10 @@ class LatControlTorque(LatControl):
           -low_speed_output_limit,
           low_speed_output_limit,
         ))
-      elif self.is_ram_1500 and output_torque * setpoint > 0.0:
-        output_torque *= get_ram_1500_transition_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+      elif self.is_ram_1500:
+        output_torque *= get_ram_1500_center_output_scale(setpoint, CS.vEgo)
+        if output_torque * setpoint > 0.0:
+          output_torque *= get_ram_1500_transition_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif self.is_kona_non_scc:
         output_torque *= get_kona_non_scc_center_taper_scale(setpoint, CS.vEgo)
         rapid_reversal = setpoint * desired_lateral_jerk < 0.0

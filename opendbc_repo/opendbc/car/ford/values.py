@@ -132,11 +132,7 @@ class FordLKASteeringPlatformConfig(FordPlatformConfig):
 
 @dataclass
 class FordF150LightningPlatform(FordCANFDPlatformConfig):
-  def init(self):
-    super().init()
-
-    # Don't show in docs until this issue is resolved. See https://github.com/commaai/openpilot/issues/30302
-    self.car_docs = []
+  pass
 
 
 MY_2020, MY_2021, MY_2022, MY_2023, MY_2024, MY_2025 = 'L', 'M', 'N', 'P', 'R', 'S'

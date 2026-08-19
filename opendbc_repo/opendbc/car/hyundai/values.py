@@ -481,7 +481,7 @@ class CAR(Platforms):
     [
       HyundaiCarDocs("Hyundai Palisade (without HDA II) 2023-25", "Highway Driving Assist",
                      car_parts=CarParts.common([CarHarness.hyundai_a])),
-      HyundaiCarDocs("Hyundai Palisade (with HDA II) 2023-24", "Highway Driving Assist II",
+      HyundaiCarDocs("Hyundai Palisade (with HDA II) 2023-25", "Highway Driving Assist II",
                      car_parts=CarParts.common([CarHarness.hyundai_r])),
       HyundaiCarDocs("Kia Telluride (without HDA II) 2023-25", "Highway Driving Assist",
                      car_parts=CarParts.common([CarHarness.hyundai_l])),
@@ -965,6 +965,10 @@ class Buttons:
 
 
 CANCEL_BUTTON_ENABLE_CARS = frozenset({
+  CAR.HYUNDAI_PALISADE_2023,
+})
+
+CAN_CANFD_BLENDED_HDA2_LONGITUDINAL_CAR = frozenset({
   CAR.HYUNDAI_PALISADE_2023,
 })
 

@@ -92,13 +92,16 @@ static bool hyundai_legacy = false;
 static bool hyundai_can_canfd_blended_hda2 = false;
 static bool hyundai_acc_main_on_rx_prev = false;
 
-#define HYUNDAI_CAN_CANFD_BLENDED_HDA2_RX_CHECKS()                                                                                                             \
+#define HYUNDAI_CAN_CANFD_BLENDED_HDA2_COMMON_RX_CHECKS()                                                                                                      \
   {.msg = {{0x260, 1, 8, 100U, .max_counter = 3U, .ignore_quality_flag = true},                                                                                \
            {0x371, 1, 8, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }}},                                         \
   {.msg = {{0x386, 1, 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},                                                                \
   {.msg = {{0x394, 1, 8, 50U, .max_counter = 7U, .ignore_quality_flag = true}, { 0 }, { 0 }}},                                                                 \
   {.msg = {{0x251, 1, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},                                   \
-  {.msg = {{0x4F1, 1, 4, 50U, .ignore_checksum = true, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},                                       \
+  {.msg = {{0x4F1, 1, 4, 50U, .ignore_checksum = true, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+
+#define HYUNDAI_CAN_CANFD_BLENDED_HDA2_RX_CHECKS()                                                                                                             \
+  HYUNDAI_CAN_CANFD_BLENDED_HDA2_COMMON_RX_CHECKS()                                                                                                            \
   HYUNDAI_SCC11_ADDR_CHECK(1)                                                                                                                                \
   HYUNDAI_SCC12_ADDR_CHECK(1, true)
 
@@ -281,14 +284,21 @@ static bool hyundai_tx_hook(const CANPacket_t *msg) {
 
   bool tx = true;
 
-  // FCA11: Block any potential actuation
+  // FCA11: Block any potential actuation. The blended HDA II layout uses
+  // different static fields, but its explicit AEB/FCA request bits stay zero.
   if (msg->addr == 0x38DU) {
-    int CR_VSM_DecCmd = msg->data[1];
-    bool FCA_CmdAct = GET_BIT(msg, 20U);
-    bool CF_VSM_DecCmdAct = GET_BIT(msg, 31U);
+    if (hyundai_can_canfd_blended_hda2) {
+      if (GET_BIT(msg, 16U) || GET_BIT(msg, 19U)) {
+        tx = false;
+      }
+    } else {
+      int CR_VSM_DecCmd = msg->data[1];
+      bool FCA_CmdAct = GET_BIT(msg, 20U);
+      bool CF_VSM_DecCmdAct = GET_BIT(msg, 31U);
 
-    if ((CR_VSM_DecCmd != 0) || FCA_CmdAct || CF_VSM_DecCmdAct) {
-      tx = false;
+      if ((CR_VSM_DecCmd != 0) || FCA_CmdAct || CF_VSM_DecCmdAct) {
+        tx = false;
+      }
     }
   }
 
@@ -348,7 +358,7 @@ static bool hyundai_tx_hook(const CANPacket_t *msg) {
   }
 
   // UDS: Only tester present ("\x02\x3E\x80\x00\x00\x00\x00\x00") allowed on diagnostics address
-  if (msg->addr == 0x7D0U) {
+  if ((msg->addr == 0x7D0U) || (msg->addr == 0x730U)) {
     if ((GET_BYTES(msg, 0, 4) != 0x00803E02U) || (GET_BYTES(msg, 4, 4) != 0x0U)) {
       tx = false;
     }
@@ -397,6 +407,27 @@ static safety_config hyundai_init(uint16_t param) {
     {0x50, 0, 16, .check_relay = true},
     {0x4F1, 1, 4, .check_relay = false},
     {0x2A4, 0, 24, .check_relay = true},
+  };
+
+  static const CanMsg HYUNDAI_CAN_CANFD_BLENDED_HDA2_LONG_TX_MSGS[] = {
+    {0x50, 0, 16, .check_relay = true},
+    {0x4F1, 1, 4, .check_relay = false},
+    {0x2A4, 0, 24, .check_relay = true},
+    {0x51, 0, 32, .check_relay = false},
+    {0x730, 1, 8, .check_relay = false},
+    {0x340, 1, 8, .check_relay = true},
+    {0x485, 1, 8, .check_relay = true},
+    {0x420, 1, 8, .check_relay = true},
+    {0x421, 1, 8, .check_relay = true},
+    {0x389, 1, 8, .check_relay = true},
+    {0x38D, 1, 8, .check_relay = false},
+    {0x363, 1, 8, .check_relay = false},
+    {0x398, 1, 8, .check_relay = false},
+    {0x399, 1, 8, .check_relay = false},
+    {0x39A, 1, 8, .check_relay = false},
+    {0x39B, 1, 8, .check_relay = false},
+    {0x39C, 1, 8, .check_relay = false},
+    {0x43A, 1, 8, .check_relay = false},
   };
 
   static const CanMsg HYUNDAI_CAN_CANFD_BLENDED_LONG_TX_MSGS[] = {
@@ -462,10 +493,10 @@ static safety_config hyundai_init(uint16_t param) {
     }
     if (hyundai_can_canfd_blended_hda2) {
       static RxCheck hyundai_can_canfd_blended_hda2_long_rx_checks[] = {
-        HYUNDAI_CAN_CANFD_BLENDED_HDA2_RX_CHECKS()
+        HYUNDAI_CAN_CANFD_BLENDED_HDA2_COMMON_RX_CHECKS()
       };
       SET_RX_CHECKS(hyundai_can_canfd_blended_hda2_long_rx_checks, ret);
-      SET_TX_MSGS(HYUNDAI_CAN_CANFD_BLENDED_HDA2_TX_MSGS, ret);
+      SET_TX_MSGS(HYUNDAI_CAN_CANFD_BLENDED_HDA2_LONG_TX_MSGS, ret);
     } else if (hyundai_camera_scc) {
       if (hyundai_can_refresh_msgs) {
         SET_TX_MSGS(HYUNDAI_CAMERA_SCC_LONG_REFRESH_TX_MSGS, ret);

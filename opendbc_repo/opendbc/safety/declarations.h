@@ -57,6 +57,7 @@
   } while (0);
 
 #define UPDATE_VEHICLE_SPEED(val_ms) (update_sample(&vehicle_speed, ROUND((val_ms) * VEHICLE_SPEED_FACTOR)))
+#define UPDATE_VEHICLE_SPEED_2(val_ms) (update_sample(&vehicle_speed_2, ROUND((val_ms) * VEHICLE_SPEED_FACTOR)))
 
 uint32_t GET_BYTES(const CANPacket_t *msg, int start, int len);
 
@@ -137,6 +138,15 @@ typedef struct {
   const bool enforce_angle_error;        // enables max_angle_error check
   const bool inactive_angle_is_zero;     // if false, enforces angle near meas when disabled (default)
 } AngleSteeringLimits;
+
+typedef struct {
+  const int max_curvature;               // rad/m * curvature_to_can
+  const float curvature_to_can;          // CAN units per rad/m
+  const uint32_t frequency;              // Hz
+  const int max_curvature_error;         // max deviation from measured curvature (0 disables)
+  const float curvature_error_min_speed; // minimum speed for curvature error checks [m/s]
+  const int max_steer_power;             // max steering authority value (0 disables)
+} CurvatureSteeringLimits;
 
 // parameters for lateral accel/jerk angle limiting using a simple vehicle model
 typedef struct {
@@ -238,6 +248,7 @@ bool steer_torque_cmd_checks(int desired_torque, int steer_req, const TorqueStee
 bool steer_angle_cmd_checks(int desired_angle, bool steer_control_enabled, const AngleSteeringLimits limits);
 bool steer_angle_cmd_checks_vm(int desired_angle, bool steer_control_enabled, const AngleSteeringLimits limits,
                                const AngleSteeringParams params);
+bool steer_curvature_cmd_checks(int desired_curvature, int steer_power, bool steer_control_enabled, const CurvatureSteeringLimits limits);
 bool longitudinal_accel_checks(int desired_accel, const LongitudinalLimits limits);
 bool longitudinal_speed_checks(int desired_speed, const LongitudinalLimits limits);
 bool longitudinal_gas_checks(int desired_gas, const LongitudinalLimits limits);
@@ -263,6 +274,7 @@ extern bool steering_disengage;
 extern bool steering_disengage_prev;
 extern bool cruise_engaged_prev;
 extern struct sample_t vehicle_speed;
+extern struct sample_t vehicle_speed_2;
 extern bool vehicle_moving;
 extern bool acc_main_on; // referred to as "ACC off" in ISO 15622:2018
 extern int cruise_button_prev;
@@ -292,6 +304,16 @@ extern uint32_t rt_angle_msgs;
 extern uint32_t ts_angle_check_last;
 extern int desired_angle_last;
 extern struct sample_t angle_meas;         // last 6 steer angles/curvatures
+
+typedef struct {
+  int desired_last;
+  uint32_t rt_msgs;
+  uint32_t rt_msgs_prev;
+  uint32_t ts_check_last;
+  int steer_power_last;
+  struct sample_t meas;
+} CurvatureSteeringState;
+extern CurvatureSteeringState curvature_state;
 
 extern bool enable_gas_interceptor;
 extern int gas_interceptor_prev;

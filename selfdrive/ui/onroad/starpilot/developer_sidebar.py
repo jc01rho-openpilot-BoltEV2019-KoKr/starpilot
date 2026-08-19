@@ -159,20 +159,18 @@ class DeveloperSidebar:
     metric_rect = rl.Rectangle(card_x, y, METRIC_WIDTH, METRIC_HEIGHT)
 
     edge_rect = rl.Rectangle(metric_rect.x + METRIC_WIDTH - 4 - 100, metric_rect.y + 4, 100, 118)
-    rl.begin_scissor_mode(
-      int(metric_rect.x + METRIC_WIDTH - 4 - 18),
-      int(metric_rect.y),
-      18,
-      int(metric_rect.height)
-    )
     rl.draw_rectangle_rounded(edge_rect, 0.3, 10, color)
-    rl.end_scissor_mode()
+    accent_x = metric_rect.x + METRIC_WIDTH - 4 - 18
+    rl.draw_rectangle_rec(
+      rl.Rectangle(edge_rect.x, metric_rect.y, accent_x - edge_rect.x, metric_rect.height),
+      rl.BLACK,
+    )
 
     rl.draw_rectangle_rounded_lines_ex(metric_rect, 0.3, 10, 2, _WHITE_DIM)
 
     max_w = metric_rect.width - 22
     labels = wrap_text(self._font_bold, label_first, max_w, FONT_SIZE, max_lines=2) if label_second == "" else [label_first, label_second]
-    
+
     if len(labels) == 1:
       text = labels[0]
       text_size = measure_text_cached(self._font_bold, text, FONT_SIZE)

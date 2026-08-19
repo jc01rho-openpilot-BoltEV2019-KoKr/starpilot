@@ -174,7 +174,8 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
   }
 
   if (nissan_longitudinal && (msg->addr == 0x707U) && (msg->bus == 0U)) {
-    violation |= (msg->data[0] != 0x02U) || (msg->data[1] != 0x3EU) || (msg->data[2] != 0x80U);
+    // KWP2000 TesterPresent, response required. The Leaf camera rejects UDS 0x3E80.
+    violation |= (msg->data[0] != 0x02U) || (msg->data[1] != 0x3EU) || (msg->data[2] != 0x01U);
     for (int i = 3; i < 8; i++) {
       violation |= msg->data[i] != 0U;
     }

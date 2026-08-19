@@ -5,7 +5,18 @@ from opendbc.car.car_helpers import interfaces
 from opendbc.car.docs import get_all_car_docs
 from opendbc.car.docs_definitions import Cable, Column, PartType, Star, SupportType
 from opendbc.car.honda.values import CAR as HONDA
+from opendbc.car.mock.values import CAR as MOCK
 from opendbc.car.values import PLATFORMS
+
+
+# These platform IDs use different messages or DBCs, but are represented by the
+# same customer-facing model rows as their base platforms.
+DOCUMENTED_PLATFORM_ALIASES = {
+  HONDA.HONDA_CIVIC_BOSCH_DIESEL: HONDA.HONDA_CIVIC_BOSCH,
+  HONDA.HONDA_CRV_EU: HONDA.HONDA_CRV,
+  HONDA.HONDA_CRV_SA: HONDA.HONDA_CRV,
+  HONDA.HONDA_E_ADVANCE: HONDA.HONDA_E,
+}
 
 
 class TestCarDocs:
@@ -26,10 +37,17 @@ class TestCarDocs:
           make_model_years[make_model].append(year)
 
   def test_missing_car_docs(self, subtests):
-    all_car_docs_platforms = [name for name, config in PLATFORMS.items()]
+    documented_platforms = {car.car_fingerprint for car in self.all_cars}
     for platform in sorted(interfaces.keys()):
       with subtests.test(platform=platform):
-        assert platform in all_car_docs_platforms, f"Platform: {platform} doesn't have a CarDocs entry"
+        assert platform in PLATFORMS, f"Platform: {platform} isn't registered"
+        if platform in DOCUMENTED_PLATFORM_ALIASES:
+          assert DOCUMENTED_PLATFORM_ALIASES[platform] in documented_platforms, \
+            f"Platform: {platform} has no documented base platform"
+          continue
+        if platform == MOCK.MOCK:
+          continue
+        assert platform in documented_platforms, f"Platform: {platform} doesn't have a generated CarDocs entry"
 
   def test_naming_conventions(self, subtests):
     # Asserts market-standard car naming conventions by brand

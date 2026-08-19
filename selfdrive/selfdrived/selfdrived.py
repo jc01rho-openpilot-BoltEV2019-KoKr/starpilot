@@ -58,6 +58,18 @@ MonitoringPolicy = log.DriverMonitoringState.MonitoringPolicy
 StarPilotEventName = custom.StarPilotOnroadEvent.EventName
 
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
+VALID_ONLY_COMM_ISSUE_GRACE_FRAMES = max(1, round(0.5 / DT_CTRL))
+
+
+def evaluate_comm_issue(all_checks: bool, all_alive: bool, all_freq_ok: bool,
+                        valid_only_frames: int) -> tuple[bool, int]:
+  if all_checks:
+    return False, 0
+  if not all_alive or not all_freq_ok:
+    return True, 0
+
+  valid_only_frames += 1
+  return valid_only_frames >= VALID_ONLY_COMM_ISSUE_GRACE_FRAMES, valid_only_frames
 
 
 def commanded_torque_at_max_for_saturation(CP, output: float) -> bool:
@@ -224,6 +236,7 @@ class SelfdriveD:
     self.last_functional_fan_frame = 0
     self.events_prev = []
     self.logged_comm_issue = None
+    self.valid_only_comm_issue_frames = 0
     self.not_running_prev = None
     self.big_model_loading = False
     self.big_model_attempted = False
@@ -550,7 +563,7 @@ class SelfdriveD:
           self.events.add(EventName.pedalPressed)
 
     # Create events for temperature, disk space, and memory
-    if self.sm['deviceState'].thermalStatus >= ThermalStatus.red:
+    if self.sm['deviceState'].thermalStatus >= ThermalStatus.overheated:
       self.events.add(EventName.overheat)
     if self.sm['deviceState'].freeSpacePercent < 7 and not SIMULATION:
       self.events.add(EventName.outOfSpace)
@@ -701,11 +714,17 @@ class SelfdriveD:
                           contains_event_type(self.events, self.starpilot_events, ET.IMMEDIATE_DISABLE))
     no_system_errors = (not has_disable_events) or (len(self.events) == num_events)
     big_model_settling = self.big_model_loading or time.monotonic() < self.big_model_ready_t + 5.
-    if not self.sm.all_checks() and no_system_errors and not big_model_settling:
-      if not self.sm.all_alive():
+    all_checks = self.sm.all_checks()
+    all_alive = self.sm.all_alive() if not all_checks else True
+    all_freq_ok = self.sm.all_freq_ok() if not all_checks else True
+    report_comm_issue, self.valid_only_comm_issue_frames = evaluate_comm_issue(
+      all_checks, all_alive, all_freq_ok, self.valid_only_comm_issue_frames,
+    )
+    if not all_checks and report_comm_issue and no_system_errors and not big_model_settling:
+      if not all_alive:
         if self.should_add_frequency_limited_event(self.comm_issue_timestamps, self.comm_issue_threshold, self.comm_issue_window):
           self.events.add(EventName.commIssue)
-      elif not self.sm.all_freq_ok():
+      elif not all_freq_ok:
         if self.should_add_frequency_limited_event(self.comm_issue_avg_freq_timestamps, self.comm_issue_threshold, self.comm_issue_window):
           self.events.add(EventName.commIssueAvgFreq)
       else:
