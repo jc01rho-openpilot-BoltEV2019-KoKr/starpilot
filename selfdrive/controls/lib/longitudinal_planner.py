@@ -2208,8 +2208,7 @@ class LongitudinalPlanner:
                     smooth_duplicate_vision=nonurgent_duplicate_vision_follow and not panic_bypass,
                     stop_x=force_stop_x,
                     silverado_early_follow=early_truck_follow,
-                    modelV2=sm['modelV2'],
-                    use_model_lead_trajectory=bool(getattr(starpilot_toggles, "test_model_lead_trajectory", False)))
+                    modelV2=sm['modelV2'])
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)

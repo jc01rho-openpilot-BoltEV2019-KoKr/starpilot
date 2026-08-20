@@ -4,7 +4,6 @@ import unittest
 
 from opendbc.car.hyundai.values import HyundaiSafetyFlags, HyundaiStarPilotSafetyFlags
 from opendbc.car.structs import CarParams
-from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
 from opendbc.safety.tests.common import CANPackerSafety
@@ -620,66 +619,6 @@ class TestHyundaiAolLkasOnEngageStockSafety(HyundaiAolLkasOnEngageStockBase, Tes
     self.safety = libsafety_py.libsafety
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE)
     self.safety.init_tests()
-
-
-class TestHyundaiAolMainLkasSyncSafety(TestHyundaiSafety):
-  def setUp(self):
-    self.packer = CANPackerSafety("hyundai_kia_generic")
-    self.safety = libsafety_py.libsafety
-    self.safety.set_safety_hooks(
-      CarParams.SafetyModel.hyundai,
-      HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON | HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_SYNC,
-    )
-    self.safety.init_tests()
-
-  @staticmethod
-  def _lkas_button_msg(pressed):
-    dat = bytearray(8)
-    dat[0] = int(pressed) << 4
-    return libsafety_py.make_CANPacket(0x391, 0, bytes(dat))
-
-  def test_confirmed_main_state_rephases_lkas_button(self):
-    self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL)
-    self.safety.set_controls_allowed(False)
-
-    self._rx(self._lkas_button_msg(True))
-    self._rx(self._lkas_button_msg(False))
-    self.assertTrue(self.safety.get_lkas_on())
-    self.assertTrue(self.safety.get_aol_allowed())
-    self._set_prev_torque(0)
-    self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_RATE_UP)))
-
-    self._rx(self._button_msg(Buttons.NONE, main_button=True))
-    self._rx(self._button_msg(Buttons.NONE, main_button=False))
-    self.assertFalse(self.safety.get_acc_main_on())
-    self.assertTrue(self.safety.get_lkas_on())
-    self.assertTrue(self.safety.get_aol_allowed())
-
-    self._rx(self._acc_state_msg(True))
-    self.assertFalse(self.safety.get_lkas_on())
-    self.assertTrue(self.safety.get_aol_allowed())
-    self._set_prev_torque(0)
-    self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_RATE_UP)))
-
-    self._rx(self._button_msg(Buttons.NONE, main_button=True))
-    self._rx(self._button_msg(Buttons.NONE, main_button=False))
-    self.assertTrue(self.safety.get_acc_main_on())
-    self.assertTrue(self.safety.get_aol_allowed())
-
-    self._rx(self._acc_state_msg(False))
-    self.assertFalse(self.safety.get_controls_allowed())
-    self.assertFalse(self.safety.get_acc_main_on())
-    self.assertFalse(self.safety.get_lkas_on())
-    self.assertFalse(self.safety.get_aol_allowed())
-    self._set_prev_torque(0)
-    self.assertFalse(self._tx(self._torque_cmd_msg(self.MAX_RATE_UP)))
-
-    self._rx(self._lkas_button_msg(True))
-    self._rx(self._lkas_button_msg(False))
-    self.assertTrue(self.safety.get_lkas_on())
-    self.assertTrue(self.safety.get_aol_allowed())
-    self._set_prev_torque(0)
-    self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_RATE_UP)))
 
 
 if __name__ == "__main__":

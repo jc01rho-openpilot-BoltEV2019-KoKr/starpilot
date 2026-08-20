@@ -2163,6 +2163,18 @@ def _git_stdout(repo_path, args, timeout=15):
     raise RuntimeError(stderr)
   return (result.stdout or "").strip()
 
+def _clear_generated_build_state(repo_path):
+  """Drop ignored build metadata that is unsafe to carry across revisions."""
+  root = Path(repo_path)
+  for path in (root / ".sconsign.dblite", root / "cereal" / "gen"):
+    try:
+      if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+      else:
+        path.unlink(missing_ok=True)
+    except OSError as exception:
+      raise RuntimeError(f"Unable to clear stale build state at {path}: {exception}") from exception
+
 def _git_config_get(repo_path, key):
   try:
     return _git_stdout(repo_path, ["config", "--local", "--get", key], timeout=10)
@@ -2499,6 +2511,7 @@ def _fast_update_worker():
     reset = _run_git(repo_path, ["reset", "--hard", "FETCH_HEAD"], timeout=120)
     if reset.returncode != 0:
       raise RuntimeError((reset.stderr or reset.stdout or "git reset failed").strip())
+    _clear_generated_build_state(repo_path)
     _set_fast_update_progress(3, "Applying fetched commit", 100.0, "Repository reset complete.")
 
     _run_submodule_update_if_needed(repo_path, step=4)
@@ -2551,6 +2564,7 @@ def _branch_switch_worker(target_branch):
     reset = _run_git(repo_path, ["reset", "--hard", "FETCH_HEAD"], timeout=120)
     if reset.returncode != 0:
       raise RuntimeError((reset.stderr or reset.stdout or "git reset failed").strip())
+    _clear_generated_build_state(repo_path)
 
     _run_git(repo_path, ["branch", "--set-upstream-to", f"origin/{target_branch}", target_branch], timeout=30)
     _set_fast_update_progress(3, "Switching branch", 100.0, f"Now on '{target_branch}'.")
@@ -2619,6 +2633,7 @@ def _rollback_worker():
     reset = _run_git(repo_path, ["reset", "--hard", target_commit], timeout=120)
     if reset.returncode != 0:
       raise RuntimeError((reset.stderr or reset.stdout or "git reset failed").strip())
+    _clear_generated_build_state(repo_path)
 
     _run_git(repo_path, ["branch", "--set-upstream-to", f"origin/{target_branch}", target_branch], timeout=30)
     _set_fast_update_progress(3, "Applying rollback target", 100.0, f"Now on {target_branch} @ {short_commit}.")

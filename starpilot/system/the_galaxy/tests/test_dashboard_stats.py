@@ -42,6 +42,10 @@ sys.modules.setdefault("openpilot.system.loggerd.uploader", loggerd_uploader)
 
 model_manager = ModuleType("openpilot.starpilot.assets.model_manager")
 model_manager.canonical_model_key = lambda value: str(value or "").strip().lower().replace(" ", "-")
+model_manager.external_gpu_available = lambda: False
+model_manager.is_builtin_model_key = lambda key: False
+model_manager.model_key_aliases = lambda key: ()
+model_manager.model_uses_external_gpu = lambda key: False
 sys.modules.setdefault("openpilot.starpilot.assets.model_manager", model_manager)
 
 starpilot_variables = ModuleType("openpilot.starpilot.common.starpilot_variables")
@@ -220,6 +224,7 @@ def _install_server_import_stubs():
   )
   for name, value in {
     "ACTIVE_THEME_PATH": Path("/tmp/dashboard-test-active-theme"),
+    "BUTTON_FUNCTIONS": {},
     "ERROR_LOGS_PATH": "/tmp/dashboard-test-errors",
     "EXCLUDED_KEYS": set(),
     "LEGACY_STARPILOT_PARAM_RENAMES": {},
@@ -1611,6 +1616,24 @@ def _load_server_module():
   module = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(module)
   return module
+
+
+def test_clear_generated_build_state_preserves_prebuilts_and_user_data(tmp_path):
+  server = _load_server_module()
+  sconsign = tmp_path / ".sconsign.dblite"
+  generated = tmp_path / "cereal" / "gen" / "cpp" / "log.capnp.h"
+  prebuilt = tmp_path / "prebuilt"
+  user_model = tmp_path / "uncompiledmodels" / "custom.onnx"
+  for path in (sconsign, generated, prebuilt, user_model):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("test")
+
+  server._clear_generated_build_state(tmp_path)
+
+  assert not sconsign.exists()
+  assert not (tmp_path / "cereal" / "gen").exists()
+  assert prebuilt.read_text() == "test"
+  assert user_model.read_text() == "test"
 
 
 def test_troubleshoot_steer_delay_normalizes_vehicle_delay_for_display():

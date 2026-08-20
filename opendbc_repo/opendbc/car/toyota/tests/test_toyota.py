@@ -75,6 +75,22 @@ class TestToyotaInterfaces:
     assert default_params.lateralTuning.torque.steeringAngleDeadzoneDeg == pytest.approx(0.3)
     assert forced_params.lateralTuning.torque.steeringAngleDeadzoneDeg == pytest.approx(0.3)
 
+  def test_prius_tss2_eps_retrofit_uses_legacy_body_and_eps_scale(self):
+    params = CarInterface.get_params(
+      CAR.TOYOTA_PRIUS_RETROFIT,
+      {bus: {} for bus in range(8)},
+      [],
+      False,
+      False,
+      False,
+      SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
+    )
+
+    assert params.lateralTuning.which() == "torque"
+    assert params.safetyConfigs[0].safetyParam & 0xFF == 73
+    assert params.flags & ToyotaFlags.TSS2.value == 0
+    assert params.steerRatio == pytest.approx(15.74)
+
   def test_sienna_4th_gen_uses_torque_controller(self):
     params = CarInterface.get_params(
       CAR.TOYOTA_SIENNA_4TH_GEN,
@@ -284,6 +300,36 @@ class TestToyotaInterfaces:
     assert car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
     assert car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.ALT_CRUISE.value
 
+  def test_camry_ignores_startup_acc_bus_mirror(self):
+    fingerprint = {bus: {} for bus in range(8)}
+    fingerprint[0][0x343] = 8
+    fingerprint[2][0x343] = 8
+
+    car_params = CarInterface.get_params(
+      CAR.TOYOTA_CAMRY,
+      fingerprint,
+      [CarParams.CarFw(ecu=Ecu.hybrid, address=0x7D2, fwVersion=b"test")],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+
+    assert car_params.flags & ToyotaFlags.HYBRID.value
+    assert not car_params.flags & ToyotaFlags.DSU_BYPASS.value
+    assert not car_params.openpilotLongitudinalControl
+    assert car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+
+    starpilot_params = CarInterface.get_starpilot_params(
+      CAR.TOYOTA_CAMRY, fingerprint, [], car_params, SimpleNamespace(),
+    )
+    car_state = CarState(car_params, starpilot_params)
+    can_parsers = car_state.get_can_parsers(car_params)
+    car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
+    assert "PRE_COLLISION" in can_parsers[Bus.pt].vl
+    for message in ("ACC_CONTROL", "PRE_COLLISION"):
+      assert message not in can_parsers[Bus.cam].vl
+
   @pytest.mark.parametrize(("native_bus", "message"), [(1, 0x343), (0, 0x4CB)])
   def test_prius_dsu_bypass_allows_native_bus_message(self, native_bus, message):
     fingerprint = {bus: {} for bus in range(8)}
@@ -438,6 +484,15 @@ class TestToyotaInterfaces:
     )
 
     assert not should_bypass_toyota_long_pid(car_params)
+
+  def test_highlander_sdsu_bypasses_toyota_longitudinal_pid(self):
+    car_params = SimpleNamespace(
+      carFingerprint=CAR.TOYOTA_HIGHLANDER,
+      enableGasInterceptorDEPRECATED=False,
+    )
+
+    assert should_bypass_toyota_long_pid(car_params, SimpleNamespace(has_sdsu=True))
+    assert not should_bypass_toyota_long_pid(car_params, SimpleNamespace(has_sdsu=False))
 
   def test_camry_continental_radar_converts_absolute_target_speed(self):
     radar_interface = RadarInterface.__new__(RadarInterface)

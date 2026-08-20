@@ -329,20 +329,16 @@ def make_model_lead(*, prob: float = 0.99, x=None, v=None):
   return model, lead
 
 
-def test_model_lead_trajectory_is_opt_in_and_disabled_path_is_unchanged():
+def test_model_lead_trajectory_is_default_for_stable_lead():
   lead = make_lead(status=True, d_rel=42.0, v_lead=18.0, model_prob=0.99)
   _, model_lead = make_model_lead()
 
-  legacy_mpc = LongitudinalMpc()
-  disabled_mpc = LongitudinalMpc()
-  legacy_mpc.set_cur_state(20.0, 0.0)
-  disabled_mpc.set_cur_state(20.0, 0.0)
+  mpc = LongitudinalMpc()
+  mpc.set_cur_state(20.0, 0.0)
 
-  legacy = legacy_mpc.process_lead(lead)
-  disabled = disabled_mpc.process_lead(
-    lead, model_lead=model_lead, use_model_lead_trajectory=False,
-  )
-  np.testing.assert_allclose(disabled, legacy)
+  actual = mpc.process_lead(lead, model_lead=model_lead)
+  expected = build_model_lead_trajectory(model_lead, lead, 20.0)
+  np.testing.assert_allclose(actual, expected)
 
 
 def test_model_lead_trajectory_uses_raw_current_anchor_and_future_deltas():
@@ -374,6 +370,17 @@ def test_model_lead_trajectory_falls_back_without_raw_lead_or_valid_shape():
   raw_lead = make_lead(status=True, d_rel=42.0, v_lead=18.0)
   _, short_model_lead = make_model_lead(x=[0.0], v=[18.0])
   assert build_model_lead_trajectory(short_model_lead, raw_lead, 20.0) is None
+
+
+@pytest.mark.parametrize("d_rel,v_lead,a_lead", [
+  (42.0, 18.0, -0.6),
+  (8.0, 0.0, 0.0),
+])
+def test_model_lead_trajectory_falls_back_for_urgent_raw_lead(d_rel, v_lead, a_lead):
+  raw_lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=a_lead, model_prob=0.99)
+  _, model_lead = make_model_lead()
+
+  assert build_model_lead_trajectory(model_lead, raw_lead, 20.0) is None
 
 
 def set_model_launch_trajectory(model, *, wait_time: float = 0.6, accel: float = 1.0):

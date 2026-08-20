@@ -11,6 +11,16 @@ class FakeParams:
     self.values[key] = value
 
 
+@pytest.mark.parametrize(("model_output", "dropped_frames", "expected"), [
+  (object(), 0, True),
+  (object(), 1, False),
+  (object(), 2, False),
+  (None, 0, False),
+])
+def test_model_output_is_suppressed_after_vipc_drop(model_output, dropped_frames, expected):
+  assert modeld._should_publish_model_output(model_output, dropped_frames) is expected
+
+
 def test_incompatible_downloaded_model_falls_back_to_builtin(monkeypatch):
   calls = []
   builtin_model = object()

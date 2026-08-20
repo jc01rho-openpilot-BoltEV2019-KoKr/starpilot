@@ -38,8 +38,8 @@
 |Audi|A5 2016-24|All|[Not compatible](#flexray)|
 |Audi|Q2 2018|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Audi|Q3 2019-24|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
-|Audi|Q4 e-tron 2021-23|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
-|Audi|Q4 e-tron 2024-25|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
+|Audi|Q4 e-tron 2021-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
+|Audi|Q4 e-tron 2024-25|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Audi|Q5 2017-24|All|[Not compatible](#flexray)|
 |Audi|RS3 2018|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Audi|S3 2015-17|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
@@ -93,7 +93,7 @@
 |Chrysler|Pacifica Hybrid 2019-25|Adaptive Cruise Control (ACC)|[Upstream](#upstream)|
 |comma|body|All|[Upstream](#upstream)|
 |CUPRA|Ateca 2018-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
-|CUPRA|Born 2021-23|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
+|CUPRA|Born 2021-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Dodge|Durango 2020-21|Adaptive Cruise Control (ACC)|[Upstream](#upstream)|
 |Ford|Bronco Sport 2021-24|Co-Pilot360 Assist+|[Upstream](#upstream)|
 |Ford|Edge 2022|Co-Pilot360 Assist+|[Upstream](#upstream)|
@@ -401,8 +401,8 @@
 |Subaru|Solterra 2023-25|Any|[Not compatible](#can-bus-security)|
 |Subaru|XV 2018-19|EyeSight Driver Assistance|[Upstream](#upstream)|
 |Subaru|XV 2020-21|EyeSight Driver Assistance|[Upstream](#upstream)|
-|Škoda|Enyaq 2021-23|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
-|Škoda|Enyaq 2024-25|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
+|Škoda|Enyaq 2021-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
+|Škoda|Enyaq 2024-25|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Škoda|Fabia 2022-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Škoda|Kamiq 2021-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Škoda|Karoq 2019-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
@@ -498,11 +498,11 @@
 |Volkswagen|Golf R 2015-19|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Volkswagen|Golf SportsVan 2015-20|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Volkswagen|Grand California 2019-24|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
-|Volkswagen|ID.3 2020-23|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
-|Volkswagen|ID.3 2024-25|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
-|Volkswagen|ID.4 2021-23|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
-|Volkswagen|ID.4 2024-25|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
-|Volkswagen|ID.5 2022-23|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
+|Volkswagen|ID.3 2020-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
+|Volkswagen|ID.3 2024-25|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
+|Volkswagen|ID.4 2021-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
+|Volkswagen|ID.4 2024-25|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
+|Volkswagen|ID.5 2022-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Volkswagen|Jetta 2015-18|Adaptive Cruise Control (ACC) & Lane Assist|[Dashcam mode](#dashcam)|
 |Volkswagen|Jetta 2018-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Volkswagen|Jetta GLI 2021-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|

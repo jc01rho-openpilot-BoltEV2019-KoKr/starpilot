@@ -1022,6 +1022,8 @@ class StarPilotLongitudinalLayout(_SettingsPage):
         self._params.put_float("CalibratedLateralAcceleration", 2.00)
         self._params.remove("CalibrationProgress")
         self._params.remove("CurvatureData")
+        self._params_memory.put_float("CalibratedLateralAcceleration", 2.00)
+        self._params_memory.put_float("CalibrationProgress", 0.0)
 
     gui_app.push_widget(ConfirmDialog(tr_noop("Reset Curve Data?"), tr_noop("Confirm"), callback=on_close))
 

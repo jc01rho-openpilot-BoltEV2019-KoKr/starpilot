@@ -2,6 +2,7 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 
+from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
 from openpilot.starpilot.controls.starpilot_planner import StarPilotPlanner, get_force_stop_jerk_scale
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import get_lead_follow_jerk_scale
@@ -115,6 +116,25 @@ def test_standstill_without_turn_signal_keeps_lateral_allowed(monkeypatch):
     planner.update(0.0, False, make_sm(planner, frame=1, v_ego=0.0, left_blinker=False, standstill=True), toggles)
 
     assert planner.lateral_check is True
+  finally:
+    planner.shutdown()
+
+
+def test_pulse_glide_target_is_published_after_vcruise_update(monkeypatch):
+  planner = make_planner(monkeypatch)
+
+  try:
+    normal_target = 65.0 * CV.MPH_TO_MS
+    glide_target = 60.0 * CV.MPH_TO_MS
+    monkeypatch.setattr(planner.starpilot_vcruise, "update", lambda *args, **kwargs: normal_target)
+
+    def publish_glide_target(*args, **kwargs):
+      planner.starpilot_acceleration.pulse_glide_target = glide_target
+
+    monkeypatch.setattr(planner.starpilot_acceleration, "update", publish_glide_target)
+    planner.update(0.0, False, make_sm(planner, frame=1, v_ego=normal_target, left_blinker=False), make_toggles())
+
+    assert planner.v_cruise == glide_target
   finally:
     planner.shutdown()
 

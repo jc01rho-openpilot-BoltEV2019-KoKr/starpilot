@@ -62,7 +62,7 @@ class CarInterface(CarInterfaceBase):
       ret.lateralTuning.pid.kiV = [0., 0.12]
       ret.lateralTuning.pid.kf = 1.
 
-      if any(msg in fingerprint[1] for msg in (0x520, 0x86, 0xFD, 0x13D)):
+      if docs or any(msg in fingerprint[1] for msg in (0x520, 0x86, 0xFD, 0x13D)):
         ret.networkLocation = NetworkLocation.gateway
         ret.radarUnavailable = Bus.radar not in DBC[candidate]
       else:

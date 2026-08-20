@@ -27,7 +27,7 @@ class TestCanFingerprint:
       fingerprint_iter = iter([can])
       car_fingerprint, finger = can_fingerprint(lambda **kwargs: [next(fingerprint_iter, [])])  # noqa: B023
 
-      if car_model == TOYOTA.TOYOTA_MATRIX_RETROFIT:
+      if car_model in (TOYOTA.TOYOTA_MATRIX_RETROFIT, TOYOTA.TOYOTA_PRIUS_RETROFIT):
         assert fingerprint == {}
         assert car_fingerprint is None
       elif car_fingerprint is None and str(car_model).startswith(("BUICK_", "CADILLAC_", "CHEVROLET_", "GMC_", "HOLDEN_")):
