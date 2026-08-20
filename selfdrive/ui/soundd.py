@@ -258,6 +258,9 @@ class Soundd:
 
   @retry(attempts=10, delay=3)
   def get_stream(self, sd):
+    # reload sounddevice to reinitialize portaudio
+    sd._terminate()
+    sd._initialize()
     return sd.OutputStream(channels=1, samplerate=SAMPLE_RATE, callback=self.callback, blocksize=SAMPLE_BUFFER)
 
   def start_stream(self, sd):

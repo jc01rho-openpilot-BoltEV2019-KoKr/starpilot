@@ -261,9 +261,6 @@ class CarInterfaceBase(ABC):
         if params.get_bool("AlwaysOnLateral") and params.get_int("LKASButtonControl") == 9:
           fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
 
-        if candidate == HYUNDAI.HYUNDAI_SONATA_HYBRID and getattr(starpilot_toggles, "always_on_lateral_lkas", False) and \
-            getattr(starpilot_toggles, "main_cruise_aol_toggle", False):
-          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_SYNC.value
       elif platform in TOYOTA:
         fp_ret.canUsePedal = not CP.autoResumeSng
         fp_ret.canUseSDSU = candidate not in UNSUPPORTED_DSU_CAR and candidate not in TSS2_CAR
@@ -274,7 +271,7 @@ class CarInterfaceBase(ABC):
         if 0x2FF in fingerprint[0] or (0x2AA in fingerprint[0] and candidate in NO_DSU_CAR):
           fp_ret.flags |= ToyotaStarPilotFlags.SMART_DSU.value
 
-        if candidate == TOYOTA.TOYOTA_PRIUS:
+        if candidate in (TOYOTA.TOYOTA_PRIUS, TOYOTA.TOYOTA_PRIUS_RETROFIT):
           if 0x23 in fingerprint[0]:
             fp_ret.flags |= ToyotaStarPilotFlags.ZSS.value
 

@@ -250,6 +250,11 @@ class CAR(Platforms):
     CarSpecs(mass=3045. * CV.LB_TO_KG, wheelbase=2.7, steerRatio=15.74, tireStiffnessFactor=0.6371),
     dbc_dict('toyota_nodsu_pt_generated', 'toyota_adas'),
   )
+  TOYOTA_PRIUS_RETROFIT = PlatformConfig(
+    [ToyotaCommunityCarDocs("Toyota Prius 2016-20 with TSS2 EPS retrofit", package="Custom retrofit")],
+    TOYOTA_PRIUS.specs,
+    dbc_dict('toyota_nodsu_pt_generated', 'toyota_adas'),
+  )
   TOYOTA_PRIUS_V = PlatformConfig(
     [ToyotaCarDocs("Toyota Prius v 2017", "Toyota Safety Sense P", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=3340. * CV.LB_TO_KG, wheelbase=2.78, steerRatio=17.4, tireStiffnessFactor=0.5533),
@@ -599,8 +604,10 @@ STEER_THRESHOLD = 100
 
 # These cars have non-standard EPS torque scale factors. All others are 73
 EPS_SCALE = defaultdict(lambda: 73,
-                        {CAR.TOYOTA_PRIUS: 66, CAR.TOYOTA_COROLLA: 88, CAR.TOYOTA_MATRIX_RETROFIT: 88,
+                        {CAR.TOYOTA_PRIUS: 66, CAR.TOYOTA_PRIUS_RETROFIT: 73, CAR.TOYOTA_COROLLA: 88, CAR.TOYOTA_MATRIX_RETROFIT: 88,
                          CAR.LEXUS_IS: 77, CAR.LEXUS_RC: 77, CAR.LEXUS_CTH: 100, CAR.TOYOTA_PRIUS_V: 100})
+
+LEGACY_PRIUS_CAR = frozenset((CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT))
 
 # Toyota/Lexus Safety Sense 2.0 and 2.5
 TSS2_CAR = CAR.with_flags(ToyotaFlags.TSS2)

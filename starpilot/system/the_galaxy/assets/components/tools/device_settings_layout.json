@@ -1410,6 +1410,7 @@
         "description": "Automatically adjust driving behavior based on real-time weather. Helps maintain comfort and safety in low visibility, rain, or snow.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "is_parent_toggle": true,
         "parent_key": "QOLLongitudinal",
         "settings_tier": "simple"
       },
@@ -1652,6 +1653,7 @@
         "description": "Ask before changing to a new speed limit. To accept, tap the flashing on-screen widget or press the Cruise Increase button. To deny, press the Cruise Decrease button or ignore the prompt for 30 seconds.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "is_parent_toggle": true,
         "parent_key": "SpeedLimitController",
         "settings_tier": "advanced"
       },
@@ -2411,6 +2413,7 @@
         "description": "Clear the active navigation destination when the device goes offroad.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "is_parent_toggle": true,
         "settings_tier": "simple"
       },
       {
@@ -3977,6 +3980,7 @@
         "description": "WARNING: This will prevent your drives from being uploaded to comma connect which will impact debugging and official support from comma!\n\nPrevent the device from uploading driving data.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "is_parent_toggle": true,
         "parent_key": "DeviceManagement",
         "settings_tier": "simple"
       },
@@ -4228,17 +4232,8 @@
         "description": "Show advanced settings in Galaxy.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "is_parent_toggle": true,
         "settings_tier": "simple"
-      },
-      {
-        "key": "TestModelLeadTrajectory",
-        "label": "Test Model-Predicted Lead Trajectory",
-        "description": "Experimental: use the model's predicted lead path as the MPC lead trajectory. Raw lead safety and stop logic remain active.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "GalaxyDeveloperMode",
-        "requires_offroad": true,
-        "settings_tier": "advanced"
       },
       {
         "key": "AlphaLongitudinalEnabled",

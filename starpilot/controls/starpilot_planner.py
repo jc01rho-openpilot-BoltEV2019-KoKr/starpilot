@@ -124,12 +124,6 @@ class StarPilotPlanner:
     v_cruise = v_cruise_kph * CV.KPH_TO_MS
     v_ego = max(sm["carState"].vEgo, 0)
 
-    if controls_enabled:
-      self.starpilot_acceleration.update(v_ego, sm, starpilot_toggles)
-    else:
-      self.starpilot_acceleration.max_accel = 0
-      self.starpilot_acceleration.min_accel = 0
-
     gps_location = sm[self.gps_location_service]
     self.gps_position = {
       "latitude": gps_location.latitude,
@@ -240,6 +234,14 @@ class StarPilotPlanner:
       self.starpilot_cem.stop_sign_and_light(v_ego, sm, PLANNER_TIME - 2)
 
     self.v_cruise = self.starpilot_vcruise.update(controls_enabled, now, time_validated, v_cruise, v_ego, sm, starpilot_toggles)
+
+    if controls_enabled:
+      self.starpilot_acceleration.update(v_ego, sm, starpilot_toggles)
+      if self.starpilot_acceleration.pulse_glide_target is not None:
+        self.v_cruise = self.starpilot_acceleration.pulse_glide_target
+    else:
+      self.starpilot_acceleration.max_accel = 0
+      self.starpilot_acceleration.min_accel = 0
 
     self.starpilot_events.update(controls_enabled, v_cruise, sm, starpilot_toggles)
 

@@ -1,6 +1,6 @@
 FROM ghcr.io/commaai/openpilot-base-aarch64:latest
 
-ARG CAPNP_VERSION=1.3.0
+ARG CAPNP_VERSION=1.0.2
 
 ENV PYTHONUNBUFFERED=1
 ENV UV_LINK_MODE=copy

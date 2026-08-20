@@ -66,6 +66,12 @@ def _model_smooth_seconds(params, key, default):
     return default
   value = params.get_float(key, return_default=True, default=default)
   return round(min(max(value, SMOOTH_SECONDS_STEP), 2.0) / SMOOTH_SECONDS_STEP) * SMOOTH_SECONDS_STEP
+
+
+def _should_publish_model_output(model_output, vipc_dropped_frames: int) -> bool:
+  return model_output is not None and vipc_dropped_frames == 0
+
+
 MIN_LAT_CONTROL_SPEED = 0.3
 BIG_MODEL_LOAD_WAIT_TIMEOUT_MS = 30000
 BIG_MODEL_RUN_WAIT_TIMEOUT_MS = 3000
@@ -936,7 +942,7 @@ def main(demo=False):
     if model_output is not None and vipc_dropped_frames > 0:
       cloudlog.error(f"suppressing model output after dropping {vipc_dropped_frames} frames")
 
-    if model_output is not None and vipc_dropped_frames == 0:
+    if _should_publish_model_output(model_output, vipc_dropped_frames):
       modelv2_send = messaging.new_message('modelV2')
       starpilot_modelv2_send = messaging.new_message('starpilotModelV2')
       drivingdata_send = messaging.new_message('drivingModelData')

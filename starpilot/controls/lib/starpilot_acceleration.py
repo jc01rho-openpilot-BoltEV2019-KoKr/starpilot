@@ -152,8 +152,10 @@ class StarPilotAcceleration:
 
     self.last_gear_state = "init"
     self.pulse_glide_coasting = False
+    self.pulse_glide_target = None
 
   def _update_pulse_glide(self, v_ego, sm, starpilot_toggles):
+    self.pulse_glide_target = None
     pulse_glide_enabled = bool(getattr(sm["starpilotCarState"], "pulseAndGlide", False))
     if not pulse_glide_enabled:
       self.pulse_glide_coasting = False
@@ -183,7 +185,9 @@ class StarPilotAcceleration:
 
     delta = max(0.0, float(getattr(starpilot_toggles, "pulse_glide_speed_delta", 0.0)))
     lower_target = v_target - delta
-    if v_target <= PULSE_GLIDE_MIN_TARGET_SPEED or lower_target < PULSE_GLIDE_MIN_LOWER_SPEED:
+    if (delta <= 0.0 or
+        v_target <= PULSE_GLIDE_MIN_TARGET_SPEED or
+        lower_target < PULSE_GLIDE_MIN_LOWER_SPEED):
       self.pulse_glide_coasting = False
       return False
 
@@ -204,6 +208,9 @@ class StarPilotAcceleration:
         self.pulse_glide_coasting = False
     elif v_ego >= v_target - PULSE_GLIDE_HYSTERESIS:
       self.pulse_glide_coasting = True
+
+    if self.pulse_glide_coasting:
+      self.pulse_glide_target = lower_target
 
     return self.pulse_glide_coasting
 

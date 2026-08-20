@@ -60,9 +60,6 @@ bool hyundai_cancel_button_enable = false;
 extern bool hyundai_can_refresh_msgs;
 bool hyundai_can_refresh_msgs = false;
 
-extern bool hyundai_aol_main_lkas_sync;
-bool hyundai_aol_main_lkas_sync = false;
-
 static uint8_t hyundai_last_button_interaction;  // button messages since the user pressed an enable button
 static bool acc_main_on_prev;
 static bool acc_main_on_tx;
@@ -98,7 +95,6 @@ void hyundai_common_init(uint16_t param) {
   hyundai_non_scc = GET_FLAG(param, HYUNDAI_PARAM_NON_SCC);
   hyundai_cancel_button_enable = GET_FLAG(param, HYUNDAI_PARAM_CANCEL_BTN_ENABLE);
   hyundai_can_refresh_msgs = GET_FLAG(param, HYUNDAI_PARAM_CAN_REFRESH_MSGS);
-  hyundai_aol_main_lkas_sync = false;
 
   hyundai_last_button_interaction = HYUNDAI_PREV_BUTTON_SAMPLES;
   acc_main_on_prev = false;
@@ -164,9 +160,7 @@ void hyundai_common_cruise_buttons_check(const int cruise_button, const bool mai
   }
 
   if (main_button && !main_button_prev) {
-    if (!hyundai_aol_main_lkas_sync) {
-      acc_main_on = !acc_main_on;
-    }
+    acc_main_on = !acc_main_on;
   }
   main_button_prev = main_button;
 }

@@ -111,7 +111,6 @@ class HyundaiSafetyFlags(IntFlag):
 
 
 class HyundaiStarPilotSafetyFlags(IntFlag):
-  AOL_MAIN_LKAS_SYNC = 32
   HAS_LDA_BUTTON = 1024
   AOL_LKAS_ON_ENGAGE = 2048
 

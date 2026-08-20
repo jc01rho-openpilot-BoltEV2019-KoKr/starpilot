@@ -63,7 +63,7 @@ def test_galaxy_layout_contains_basic_mode_controls():
   assert sections["Longitudinal (Speed & Following)"]["PulseGlideSpeedDelta"]["parent_key"] == "QOLLongitudinal"
   assert sections["Longitudinal (Speed & Following)"]["PulseGlideSpeedDelta"]["settings_tier"] == "advanced"
   assert "PulseGlideSpeedDelta" not in sections["Developer"]
-  assert {"AlphaLongitudinalEnabled", "ForceOffroad", "GalaxyDeveloperMode", "TestModelLeadTrajectory"} <= sections["Developer"].keys()
+  assert {"AlphaLongitudinalEnabled", "ForceOffroad", "GalaxyDeveloperMode"} <= sections["Developer"].keys()
 
 
 def test_device_shutdown_uses_literal_hours():
@@ -93,6 +93,19 @@ def test_every_galaxy_setting_has_a_shared_settings_tier():
 
   assert tiers <= {"simple", "advanced"}
   assert None not in tiers
+
+
+def test_every_setting_parent_exposes_a_manage_control():
+  layout = _layout()
+
+  for section in layout:
+    params = section.get("params", [])
+    parent_keys = {param.get("parent_key") for param in params if param.get("parent_key")}
+    params_by_key = {param["key"]: param for param in params}
+    for parent_key in parent_keys:
+      assert params_by_key[parent_key].get("is_parent_toggle") is True, (
+        f"{section['name']} parent {parent_key} must expose its child settings"
+      )
 
 
 def test_requested_simple_and_advanced_settings_tiers():
@@ -151,9 +164,6 @@ def test_requested_simple_and_advanced_settings_tiers():
   assert vision["VisionSpeedLimitLowLimitThreshold"]["settings_tier"] == "advanced"
 
   assert developer["GalaxyDeveloperMode"]["settings_tier"] == "simple"
-  assert developer["TestModelLeadTrajectory"]["parent_key"] == "GalaxyDeveloperMode"
-  assert developer["TestModelLeadTrajectory"]["requires_offroad"] is True
-  assert developer["TestModelLeadTrajectory"]["settings_tier"] == "advanced"
   assert developer["AlphaLongitudinalEnabled"]["parent_key"] == "GalaxyDeveloperMode"
   assert developer["AlphaLongitudinalEnabled"]["requires_offroad"] is True
   assert developer["AlphaLongitudinalEnabled"]["settings_tier"] == "advanced"
@@ -167,7 +177,6 @@ def test_requested_simple_and_advanced_settings_tiers():
 
 def test_hidden_feature_defaults_remain_enabled():
   assert _declared_default("GalaxyDeveloperMode") == "0"
-  assert _declared_default("TestModelLeadTrajectory") == "0"
   assert _declared_default("NavDesiresAllowed") == "1"
   assert _declared_default("NavLanePositioningAllowed") == "0"
   assert _declared_default("NavLongitudinalAllowed") == "1"

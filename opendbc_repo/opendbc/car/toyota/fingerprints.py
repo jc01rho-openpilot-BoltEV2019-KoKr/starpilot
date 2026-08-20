@@ -6,6 +6,7 @@ Ecu = CarParams.Ecu
 
 FINGERPRINTS = {
   CAR.TOYOTA_MATRIX_RETROFIT: [{}],
+  CAR.TOYOTA_PRIUS_RETROFIT: [{}],
 }
 
 FW_VERSIONS = {

@@ -8,7 +8,7 @@ from opendbc.car.common.filter_simple import FirstOrderFilter
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.toyota.values import ToyotaFlags, ToyotaStarPilotFlags, CAR, DBC, STEER_THRESHOLD, NO_STOP_TIMER_CAR, \
                                                   TSS2_CAR, RADAR_ACC_CAR, EPS_SCALE, UNSUPPORTED_DSU_CAR, \
-                                                  SECOC_CAR
+                                                  SECOC_CAR, LEGACY_PRIUS_CAR
 
 ButtonType = structs.CarState.ButtonEvent.Type
 SteerControlType = structs.CarParams.SteerControlType
@@ -23,7 +23,7 @@ TEMP_STEER_FAULTS = (0, 9, 11, 21, 25)
 # - lka/lta msg drop out: 3 (recoverable)
 # - prolonged high driver torque: 17 (permanent)
 PERM_STEER_FAULTS = (3, 17)
-LKAS_BUTTON_CAR = TSS2_CAR | {CAR.TOYOTA_PRIUS}
+LKAS_BUTTON_CAR = TSS2_CAR | LEGACY_PRIUS_CAR
 DISTANCE_BUTTON_CAR = {CAR.TOYOTA_SIENNA_4TH_GEN}
 
 

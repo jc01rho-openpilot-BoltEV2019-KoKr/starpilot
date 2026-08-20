@@ -45,6 +45,14 @@ class TestVolkswagenPlatformConfigs:
     assert not cp.openpilotLongitudinalControl
     assert not (cp.safetyConfigs[-1].safetyParam & VolkswagenSafetyFlags.LONG_CONTROL)
 
+  def test_meb_docs_assume_required_gateway_harness(self):
+    fingerprint = {bus: {} for bus in range(8)}
+    cp = CarInterface.get_params(CAR.VOLKSWAGEN_ID4_MK1, fingerprint, [], True, False, True, None)
+
+    assert cp.networkLocation == CarParams.NetworkLocation.gateway
+    assert not cp.dashcamOnly
+    assert cp.alphaLongitudinalAvailable
+
   def test_meb_gateway_longitudinal(self):
     cp = self._get_meb_params(CAR.VOLKSWAGEN_ID4_MK1, gateway=True, alpha_long=True)
     assert cp.alphaLongitudinalAvailable

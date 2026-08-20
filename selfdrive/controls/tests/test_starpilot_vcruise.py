@@ -261,6 +261,21 @@ def test_curve_speed_controller_persists_data_after_leaving_curve():
   assert any(key == "CurvatureData" for key, _ in planner.params.writes)
 
 
+def test_curve_speed_controller_publishes_live_values_to_memory_params():
+  planner, vcruise = make_vcruise(road_curvature=0.02)
+  sm = make_sm(standstill=False)
+  sm["carControl"].longActive = False
+  planner.driving_in_curve = True
+  planner.lateral_acceleration = 2.4
+  vcruise.csc.training_timer = PLANNER_TIME
+
+  vcruise.csc.log_data(20.0, sm)
+
+  assert any(key == "CalibratedLateralAcceleration" for key, _ in planner.params_memory.writes)
+  assert any(key == "CalibrationProgress" for key, _ in planner.params_memory.writes)
+  assert planner.params_memory.values["CalibrationProgress"] > 0.0
+
+
 def test_curve_speed_controller_ramps_toward_curve_speed_at_bounded_rate():
   planner = SimpleNamespace(
     params=FakeParams(),
@@ -490,6 +505,31 @@ def test_force_stop_stays_committed_while_moving_even_if_scene_opens():
   assert result == pytest.approx(0.0)
   assert vcruise.force_stop_timer >= 0.5
   assert vcruise.forcing_stop
+
+
+def test_force_stop_reanchors_when_model_reopens_path_without_stop_action():
+  planner, vcruise = make_vcruise(red_light=False, raw_model_stopped=False, forcing_stop=True)
+  planner.model_length = 40.0
+  vcruise.tracked_model_length = 10.0
+  sm = make_sm(standstill=False)
+  sm["modelV2"] = SimpleNamespace(action=SimpleNamespace(shouldStop=False))
+
+  result = update_vcruise(vcruise, sm, make_toggles(), now=0.0, v_ego=1.5)
+
+  assert vcruise.tracked_model_length == pytest.approx(40.0)
+  assert result > 5.0
+
+
+def test_force_stop_does_not_reanchor_committed_model_stop():
+  planner, vcruise = make_vcruise(red_light=False, raw_model_stopped=False, forcing_stop=True)
+  planner.model_length = 40.0
+  vcruise.tracked_model_length = 10.0
+  sm = make_sm(standstill=False)
+  sm["modelV2"] = SimpleNamespace(action=SimpleNamespace(shouldStop=True))
+
+  update_vcruise(vcruise, sm, make_toggles(), now=0.0, v_ego=1.5)
+
+  assert vcruise.tracked_model_length < 10.0
 
 
 def test_force_stop_releases_after_cem_light_clears_while_moving():

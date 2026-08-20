@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLATFORM="$(uname -s)"
+export DEBUG=0
+export PYTHONHASHSEED=0
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./tests                    Run the normal full test suite
+  ./tests --root             Run openpilot/root tests
+  ./tests --opendbc          Run opendbc build, lint, and tests
+  ./tests --safety           Run safety tests and coverage checks
+  ./tests --panda            Run panda build, lint, and tests
+  ./tests --mutation         Run safety mutation tests (Linux only)
+  ./tests --resources        Run the on-road CPU, memory, and timing test (TICI only)
+  ./tests --all              Same as ./tests
+
+Selectors can be combined, for example:
+  ./tests --root --safety
+EOF
+}
+
+run_group() {
+  local name="$1"
+  shift
+  echo
+  echo "[$name]"
+  "$@"
+  local result=$?
+  if [ "$result" -eq 0 ]; then
+    echo "[$name] passed"
+  else
+    echo "[$name] failed (exit $result)"
+  fi
+  return "$result"
+}
+
+run_mutation() {
+  if [ "$PLATFORM" != "Linux" ]; then
+    echo "[mutation] skipped: mutation testing requires Linux"
+    return 0
+  fi
+  run_group mutation bash "$ROOT/opendbc_repo/opendbc/safety/tests/mutation.sh"
+}
+
+run_resources() {
+  run_group resources "$ROOT/dev" pytest selfdrive/test/test_onroad.py
+}
+
+declare -a groups=()
+explicit_mutation=0
+
+if [ "$#" -eq 0 ]; then
+  groups=(root opendbc safety panda mutation)
+fi
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --all)
+      groups=(root opendbc safety panda mutation)
+      ;;
+    --root|--openpilot)
+      groups+=(root)
+      ;;
+    --opendbc|--vehicles|--vehicle)
+      groups+=(opendbc)
+      ;;
+    --safety)
+      groups+=(safety)
+      ;;
+    --panda)
+      groups+=(panda)
+      ;;
+    --mutation)
+      groups+=(mutation)
+      explicit_mutation=1
+      ;;
+    --resources|--onroad)
+      groups+=(resources)
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [ "${#groups[@]}" -eq 0 ]; then
+  echo "No test groups selected" >&2
+  usage >&2
+  exit 2
+fi
+
+status=0
+for group in "${groups[@]}"; do
+  case "$group" in
+    root)
+      run_group root "$ROOT/dev" pytest || status=1
+      ;;
+    opendbc)
+      run_group opendbc bash "$ROOT/opendbc_repo/test.sh" || status=1
+      ;;
+    safety)
+      run_group safety bash "$ROOT/opendbc_repo/opendbc/safety/tests/test.sh" || status=1
+      ;;
+    panda)
+      run_group panda bash "$ROOT/panda/test.sh" || status=1
+      ;;
+    mutation)
+      if [ "$PLATFORM" != "Linux" ] && [ "$explicit_mutation" -eq 1 ]; then
+        echo "[mutation] unavailable on $PLATFORM; run it on Linux" >&2
+        status=1
+      else
+        run_mutation || status=1
+      fi
+      ;;
+    resources)
+      run_resources || status=1
+      ;;
+  esac
+done
+
+exit "$status"

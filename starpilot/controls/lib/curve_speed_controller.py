@@ -54,6 +54,7 @@ class CurveSpeedController:
     self.required_curvatures = [str(round(road_curvature, ROUNDING_PRECISION)) for road_curvature in np.arange(MIN_CURVATURE, MAX_CURVATURE + STEP, STEP)]
 
     self.update_lateral_acceleration()
+    self._publish_calibration_progress()
 
   @staticmethod
   def _bucket_curvature(road_curvature):
@@ -102,15 +103,27 @@ class CurveSpeedController:
     if not self.data_dirty:
       return
 
+    progress = self._calibration_progress()
+    self.starpilot_planner.params.put_nonblocking("CalibrationProgress", progress)
+    self.starpilot_planner.params.put_nonblocking("CurvatureData", self.curvature_data)
+    self._put_memory_param("CalibrationProgress", progress)
+    self.data_dirty = False
+    self.persistence_timer = 0.0
+
+  def _calibration_progress(self):
     progress = 0.0
     for key in self.required_curvatures:
       if key in self.curvature_data:
         progress += min(self.curvature_data[key]["count"] / CALIBRATION_PROGRESS_THRESHOLD, 1.0)
+    return (progress / len(self.required_curvatures)) * 100
 
-    self.starpilot_planner.params.put_nonblocking("CalibrationProgress", (progress / len(self.required_curvatures)) * 100)
-    self.starpilot_planner.params.put_nonblocking("CurvatureData", self.curvature_data)
-    self.data_dirty = False
-    self.persistence_timer = 0.0
+  def _publish_calibration_progress(self):
+    self._put_memory_param("CalibrationProgress", self._calibration_progress())
+
+  def _put_memory_param(self, key, value):
+    params_memory = getattr(self.starpilot_planner, "params_memory", None)
+    if params_memory is not None:
+      params_memory.put_nonblocking(key, value)
 
   def flush_data(self):
     self._persist_data()
@@ -158,6 +171,7 @@ class CurveSpeedController:
 
       self.data_dirty = True
       self.update_lateral_acceleration()
+      self._publish_calibration_progress()
       self.enable_training = True
 
       if self.persistence_timer >= PLANNER_TIME:
@@ -173,6 +187,7 @@ class CurveSpeedController:
       self.lateral_acceleration = DEFAULT_LATERAL_ACCELERATION
 
     self.starpilot_planner.params.put_nonblocking("CalibratedLateralAcceleration", self.lateral_acceleration)
+    self._put_memory_param("CalibratedLateralAcceleration", self.lateral_acceleration)
 
   def update_target(self, v_ego):
     lateral_acceleration = self.lateral_acceleration

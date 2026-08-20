@@ -1,3 +1,5 @@
+import subprocess
+
 Import('env', 'common', 'msgq')
 
 cereal_dir = Dir('.')
@@ -5,9 +7,15 @@ gen_dir = Dir('gen')
 
 # Build cereal
 schema_files = ['log.capnp', 'car.capnp', 'legacy.capnp', 'custom.capnp']
-env.Command([f'gen/cpp/{s}.c++' for s in schema_files] + [f'gen/cpp/{s}.h' for s in schema_files],
-            schema_files,
-            f"capnpc --src-prefix={cereal_dir.path} $SOURCES -o c++:{gen_dir.path}/cpp/")
+schema_outputs = env.Command([f'gen/cpp/{s}.c++' for s in schema_files] + [f'gen/cpp/{s}.h' for s in schema_files],
+                             schema_files,
+                             f"capnpc --src-prefix={cereal_dir.path} $SOURCES -o c++:{gen_dir.path}/cpp/")
+
+# capnpc embeds an exact compiler-version guard in every generated C++ header.
+# Include the tool version in the dependency signature so SCons cannot reuse
+# generated headers from a cache populated by another AGNOS/toolchain version.
+capnp_compiler_version = subprocess.check_output(['capnpc', '--version'], encoding='utf-8').strip()
+env.Depends(schema_outputs, env.Value(capnp_compiler_version))
 
 cereal = env.Library('cereal', [f'gen/cpp/{s}.c++' for s in schema_files])
 

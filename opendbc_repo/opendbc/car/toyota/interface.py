@@ -4,7 +4,7 @@ from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.radar_interface import RadarInterface
 from opendbc.car.toyota.values import Ecu, CAR, DBC, ToyotaFlags, CarControllerParams, TSS2_CAR, RADAR_ACC_CAR, SECOC_CAR, NO_DSU_CAR, \
                                                   MIN_ACC_SPEED, EPS_SCALE, NO_STOP_TIMER_CAR, ANGLE_CONTROL_CAR, \
-                                                  ToyotaSafetyFlags
+                                                  ToyotaSafetyFlags, LEGACY_PRIUS_CAR
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
@@ -67,11 +67,12 @@ class CarInterface(CarInterfaceBase):
     # These messages are normally absent there on pre-TSS2 platforms.
     camera_fingerprint = fingerprint.get(2, {})
     has_dsu_bypass = 0x343 in camera_fingerprint or 0x4CB in camera_fingerprint
-    late_prius_camera = candidate == CAR.TOYOTA_PRIUS and any(
+    late_prius_camera = candidate in LEGACY_PRIUS_CAR and any(
       fw.ecu == Ecu.fwdCamera and bytes(fw.fwVersion).startswith(b'8646F4705') for fw in car_fw
     )
-    if candidate == CAR.LEXUS_IS or late_prius_camera:
-      has_dsu_bypass = ((0x343 in camera_fingerprint and 0x343 not in fingerprint.get(1, {})) or
+    if candidate in (CAR.LEXUS_IS, CAR.TOYOTA_CAMRY) or late_prius_camera:
+      native_acc_fingerprints = (fingerprint.get(0, {}), fingerprint.get(1, {}))
+      has_dsu_bypass = ((0x343 in camera_fingerprint and not any(0x343 in native_bus for native_bus in native_acc_fingerprints)) or
                         (0x4CB in camera_fingerprint and 0x4CB not in fingerprint.get(0, {})))
     if not use_sdsu and candidate not in TSS2_CAR and has_dsu_bypass:
       ret.flags |= ToyotaFlags.DSU_BYPASS.value
@@ -82,7 +83,7 @@ class CarInterface(CarInterfaceBase):
     if Ecu.hybrid in found_ecus:
       ret.flags |= ToyotaFlags.HYBRID.value
 
-    if candidate == CAR.TOYOTA_PRIUS:
+    if candidate in LEGACY_PRIUS_CAR:
       stop_and_go = True
       ret.flags |= ToyotaFlags.HYBRID.value
       # Only give steer angle deadzone to for bad angle sensor prius
@@ -174,7 +175,7 @@ class CarInterface(CarInterfaceBase):
     # to a negative value, so it won't matter.
     ret.minEnableSpeed = -1. if (stop_and_go or ret.enableGasInterceptorDEPRECATED) else MIN_ACC_SPEED
 
-    prius_long_defaults = candidate == CAR.TOYOTA_PRIUS and ret.openpilotLongitudinalControl
+    prius_long_defaults = candidate in LEGACY_PRIUS_CAR and ret.openpilotLongitudinalControl
     camry_hybrid_long_defaults = (candidate == CAR.TOYOTA_CAMRY and ret.openpilotLongitudinalControl and
                                   bool(ret.flags & ToyotaFlags.HYBRID.value))
 

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+import fcntl
 import os
 import sys
 import signal
 import itertools
 import math
 import time
+from serial import Serial
 import requests
 import shutil
 import subprocess
@@ -90,9 +92,30 @@ measurementStatusGlonassFields = {
 def try_setup_logs(diag, logs):
   return setup_logs(diag, logs)
 
-@retry(attempts=3, delay=1.0)
-def at_cmd(cmd: str) -> str | None:
-  return subprocess.check_output(f"mmcli -m any --timeout 30 --command='{cmd}'", shell=True, encoding='utf8')
+AT_PORT = "/dev/modem_at0"
+AT_LOCK = "/dev/shm/modem.lock"  # shared with modem.py and LPA
+
+@retry(attempts=5, delay=1.0)
+def at_cmd(cmd: str) -> str:
+  if not os.path.exists(AT_PORT):
+    return subprocess.check_output(f"mmcli -m any --timeout 30 --command='{cmd}'", shell=True, encoding='utf8')
+
+  with os.fdopen(os.open(AT_LOCK, os.O_CREAT | os.O_RDWR, 0o666), "r+") as lock:
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    with Serial(AT_PORT, baudrate=115200, timeout=5) as ser:
+      ser.reset_input_buffer()
+      ser.write(f"{cmd}\r".encode())
+      lines = []
+      while True:
+        line = ser.readline()
+        if not line:
+          raise RuntimeError(f"AT command timeout: {cmd}")
+        line = line.decode('utf-8', errors='replace').strip()
+        if line in ("OK", "ERROR") or line.startswith("+CME ERROR"):
+          break
+        if line and line != cmd:
+          lines.append(line)
+  return '\n'.join(lines)
 
 def gps_enabled() -> bool:
   return "QGPS: 1" in at_cmd("AT+QGPS?")
@@ -211,13 +234,16 @@ def teardown_quectel(diag):
   try_setup_logs(diag, [])
 
 
-def wait_for_modem(cmd="AT+QGPS?"):
+def wait_for_modem():
   cloudlog.warning("waiting for modem to come up")
   while True:
-    ret = subprocess.call(f"mmcli -m any --timeout 10 --command=\"{cmd}\"", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-    if ret == 0:
-      return
-    time.sleep(0.1)
+    try:
+      resp = at_cmd("AT+QGPS?")
+      if "+QGPS:" in resp:
+        return
+    except Exception:
+      pass
+    time.sleep(0.5)
 
 
 def main() -> NoReturn:

@@ -21,6 +21,13 @@ def test_hyundai_and_honda_keep_lkas_aol_button_path():
   assert spv._lkas_allowed_for_aol("hyundai", spv.HyundaiFlags.CANFD, []) is True
 
 
+def test_explicit_main_cruise_aol_mapping_is_not_disabled_by_longitudinal_gate():
+  aol_button = spv.BUTTON_FUNCTIONS["AOL_TOGGLE"]
+
+  # An explicit Galaxy mapping remains valid on both longitudinal paths.
+  assert spv._main_cruise_aol_allowed(aol_button) is True
+
+
 def test_jeep_brake_hold_scope_is_grand_cherokee_only():
   assert {str(car) for car in spv.CHRYSLER_JEEPS} == {
     "JEEP_GRAND_CHEROKEE",

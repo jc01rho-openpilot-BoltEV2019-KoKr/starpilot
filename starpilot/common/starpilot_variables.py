@@ -76,6 +76,11 @@ def _lkas_allowed_for_aol(car_make, cp_flags, fpcp_safety_configs) -> bool:
   )
   return hyundai_can_use_lkas_for_aol or car_make == "honda"
 
+
+def _main_cruise_aol_allowed(button_control: float) -> bool:
+  return button_control == BUTTON_FUNCTIONS["AOL_TOGGLE"]
+
+
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
 }
@@ -105,6 +110,7 @@ PRIUS_CLUSTER_OFFSET_DEFAULT = 1.015
 PRIUS_CLUSTER_OFFSET_MIGRATION_KEY = "PriusClusterOffsetMigrated"
 PRIUS_CLUSTER_OFFSET_CARS = {
   str(TOYOTA_CAR.TOYOTA_PRIUS),
+  str(TOYOTA_CAR.TOYOTA_PRIUS_RETROFIT),
   str(TOYOTA_CAR.TOYOTA_PRIUS_V),
   str(TOYOTA_CAR.TOYOTA_PRIUS_TSS2),
 }
@@ -782,7 +788,7 @@ class StarPilotVariables:
     toggle.always_on_lateral_pause_speed = self.get_value("PauseAOLOnBrake", cast=float, condition=toggle.always_on_lateral)
 
     main_cruise_button_control = self.get_button_function("MainCruiseButtonControl")
-    toggle.main_cruise_aol_toggle = main_cruise_button_control == BUTTON_FUNCTIONS["AOL_TOGGLE"]
+    toggle.main_cruise_aol_toggle = _main_cruise_aol_allowed(main_cruise_button_control)
     toggle.main_cruise_slc_adopt = main_cruise_button_control == BUTTON_FUNCTIONS["SLC_ADOPT"]
 
     toggle.automatic_updates = self.get_value("AutomaticUpdates") and not BACKUP_PATH.is_file()
@@ -955,7 +961,6 @@ class StarPilotVariables:
     )
 
     developer_feature_access = self.params.get_bool("DeveloperUI") or self.params.get_bool("GalaxyDeveloperMode")
-    toggle.test_model_lead_trajectory = self.get_value("TestModelLeadTrajectory", condition=developer_feature_access)
     toggle.pulse_and_glide_available = toggle.openpilot_longitudinal and developer_feature_access
     toggle.pulse_glide_speed_delta = self.get_value(
       "PulseGlideSpeedDelta",

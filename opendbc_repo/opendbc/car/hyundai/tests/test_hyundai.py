@@ -707,30 +707,6 @@ class TestHyundaiFingerprint:
     assert combined_safety_param & HyundaiSafetyFlags.LONG
     assert combined_safety_param & HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE
 
-  def test_sonata_hybrid_aol_main_lkas_sync_is_scoped(self):
-    toggles = SimpleNamespace(always_on_lateral_lkas=True, main_cruise_aol_toggle=True)
-
-    sonata_hybrid_cp = CarInterface.get_params(CAR.HYUNDAI_SONATA_HYBRID, gen_empty_fingerprint(), [], False, False, False, None)
-    sonata_hybrid_fpcp = CarInterface.get_starpilot_params(
-      CAR.HYUNDAI_SONATA_HYBRID, gen_empty_fingerprint(), [], sonata_hybrid_cp, toggles,
-    )
-    assert sonata_hybrid_fpcp.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_SYNC
-
-    sonata_cp = CarInterface.get_params(CAR.HYUNDAI_SONATA, gen_empty_fingerprint(), [], False, False, False, None)
-    sonata_fpcp = CarInterface.get_starpilot_params(CAR.HYUNDAI_SONATA, gen_empty_fingerprint(), [], sonata_cp, toggles)
-    assert not (sonata_fpcp.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_SYNC)
-
-    disabled_toggles = SimpleNamespace(always_on_lateral_lkas=True, main_cruise_aol_toggle=False)
-    disabled_fpcp = CarInterface.get_starpilot_params(
-      CAR.HYUNDAI_SONATA_HYBRID, gen_empty_fingerprint(), [], sonata_hybrid_cp, disabled_toggles,
-    )
-    assert not (disabled_fpcp.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_SYNC)
-
-    minimal_fpcp = CarInterface.get_starpilot_params(
-      CAR.HYUNDAI_SONATA_HYBRID, gen_empty_fingerprint(), [], sonata_hybrid_cp, SimpleNamespace(),
-    )
-    assert not (minimal_fpcp.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_SYNC)
-
   @pytest.mark.parametrize("candidate", (CAR.HYUNDAI_ELANTRA_2021, CAR.HYUNDAI_SONATA_HYBRID))
   def test_legacy_hyundai_long_does_not_gate_availability_on_main_cruise(self, candidate):
     toggles = get_test_toggles()
