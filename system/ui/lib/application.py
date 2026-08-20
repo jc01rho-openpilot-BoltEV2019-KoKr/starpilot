@@ -144,6 +144,10 @@ DEFAULT_TEXT_COLOR = rl.Color(255, 255, 255, int(255 * 0.9))
 # Compensate for ascent/descent so migrated layouts keep their established alignment.
 # The real scales for the fonts below range from 1.212 to 1.266
 FONT_SCALE = 1.242 if BIG_UI else 1.16
+# Dynamically loaded fallback fonts (e.g. Korean road names) must be rasterized large
+# enough for the biggest on-screen text, otherwise upscaling blurs them.
+DYNAMIC_FONT_SIZE = 64
+MAX_DYNAMIC_FONTS = 64
 
 ASSETS_DIR = files("openpilot.selfdrive").joinpath("assets")
 FONT_DIR = ASSETS_DIR.joinpath("fonts")
@@ -1199,12 +1203,21 @@ class GuiApplication:
     codepoints = tuple(sorted({ord(character) for character in text if character not in "\r\n"}))
     if not codepoints:
       return self.font(FontWeight.UNIFONT)
-    if codepoints not in self._text_fonts:
+    font = self._text_fonts.get(codepoints)
+    if font is None:
       with as_file(FONT_DIR.joinpath("unifont.otf")) as fspath:
-        self._text_fonts[codepoints] = rl.load_font_ex(
-          fspath.as_posix(), 16, list(codepoints), len(codepoints)
-        )
-    return self._text_fonts[codepoints]
+        cp_buffer = rl.ffi.new("int[]", codepoints)
+        font = rl.load_font_ex(fspath.as_posix(), DYNAMIC_FONT_SIZE, rl.ffi.cast("int *", cp_buffer), len(codepoints))
+      rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+      self._text_fonts[codepoints] = font
+      while len(self._text_fonts) > MAX_DYNAMIC_FONTS:
+        evicted_key, evicted_font = next(iter(self._text_fonts.items()))
+        del self._text_fonts[evicted_key]
+        _font_codepoint_cache.pop(evicted_font.texture.id, None)
+        rl.unload_font(evicted_font)
+    else:
+      self._text_fonts[codepoints] = self._text_fonts.pop(codepoints)
+    return font
 
   @property
   def width(self):

@@ -29,7 +29,7 @@ def _char_sets():
 
   for language, code in _languages().items():
     unifont.update(language)
-    po_path = TRANSLATIONS_DIR / f"app_{code}.po"
+    po_path = TRANSLATIONS_DIR / f"app_{_language_code(code)}.po"
     try:
       chars = set(po_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
