@@ -221,9 +221,9 @@ def get_plan_reach(model_v2) -> float:
 
 
 def get_control_lateral_smooth_seconds(brand: str, v_ego: float, vehicle_smooth_seconds: float) -> float:
-  if brand != "rivian":
-    return LAT_SMOOTH_SECONDS
-  return get_car_lateral_smooth_seconds(brand, v_ego, vehicle_smooth_seconds)
+  if brand == "rivian" or (brand == "subaru" and vehicle_smooth_seconds > 0.0):
+    return get_car_lateral_smooth_seconds(brand, v_ego, vehicle_smooth_seconds)
+  return LAT_SMOOTH_SECONDS
 
 
 def turn_lead_allowed(brand: str, lateral_control_mode: car.CarControl.Actuators.LateralControlMode) -> bool:

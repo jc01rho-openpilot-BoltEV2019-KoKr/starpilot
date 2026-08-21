@@ -350,13 +350,13 @@ int PandaSpiHandle::spi_transfer(uint8_t endpoint, uint8_t *tx_data, uint16_t tx
     SPILOG(LOGE, "SPI: failed to send header");
     goto fail;
   }
-  wait_for_spi_turnaround(nanos_since_boot());
 
   // Wait for (N)ACK
   ret = wait_for_ack(SPI_HACK, 0x11, timeout, 1);
   if (ret < 0) {
     goto fail;
   }
+  wait_for_spi_turnaround(nanos_since_boot());
 
   // Send data
   if (tx_data != NULL) {

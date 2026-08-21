@@ -155,8 +155,9 @@ class FordLateralController:
   def _lane_change(self) -> tuple[bool, int]:
     if self.model is None:
       return False, 0
-    state = int(self.model.meta.laneChangeState)
-    return state in (1, 2, 3), int(self.model.meta.laneChangeDirection)
+    state = int(getattr(self.model.meta.laneChangeState, "raw", self.model.meta.laneChangeState))
+    direction = int(getattr(self.model.meta.laneChangeDirection, "raw", self.model.meta.laneChangeDirection))
+    return state in (1, 2, 3), direction
 
   @staticmethod
   def _current_curvature(CS) -> float:

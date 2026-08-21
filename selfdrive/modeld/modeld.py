@@ -68,8 +68,8 @@ def _model_smooth_seconds(params, key, default):
   return round(min(max(value, SMOOTH_SECONDS_STEP), 2.0) / SMOOTH_SECONDS_STEP) * SMOOTH_SECONDS_STEP
 
 
-def _should_publish_model_output(model_output, vipc_dropped_frames: int) -> bool:
-  return model_output is not None and vipc_dropped_frames == 0
+def _should_publish_model_output(model_output, vipc_dropped_frames: int, external_gpu_active: bool = False) -> bool:
+  return model_output is not None and (external_gpu_active or vipc_dropped_frames == 0)
 
 
 MIN_LAT_CONTROL_SPEED = 0.3
@@ -129,7 +129,7 @@ def get_lateral_smooth_seconds(v_ego: float, maximum: float = 0.0) -> float:
 
 
 def get_car_lateral_smooth_seconds(brand: str, v_ego: float, maximum: float) -> float:
-  if brand == "rivian":
+  if brand in ("rivian", "subaru"):
     return get_lateral_smooth_seconds(v_ego, maximum)
   return maximum
 
@@ -844,7 +844,7 @@ def main(demo=False):
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["roadCameraState"].frameId
     v_ego = max(sm["carState"].vEgo, 0.)
-    lat_smooth_default = CP.lateralSmoothSeconds if CP.brand == "rivian" else LAT_SMOOTH_SECONDS
+    lat_smooth_default = CP.lateralSmoothSeconds if (CP.brand == "rivian" or CP.lateralSmoothSeconds > 0.0) else LAT_SMOOTH_SECONDS
     lat_smooth_maximum = _model_smooth_seconds(params, "LatSmoothSeconds", lat_smooth_default)
     lat_smooth_seconds = get_car_lateral_smooth_seconds(CP.brand, v_ego, lat_smooth_maximum)
     lat_delay = sm["liveDelay"].lateralDelay + lat_smooth_seconds
@@ -939,10 +939,10 @@ def main(demo=False):
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
 
-    if model_output is not None and vipc_dropped_frames > 0:
+    if model_output is not None and vipc_dropped_frames > 0 and not external_gpu_active:
       cloudlog.error(f"suppressing model output after dropping {vipc_dropped_frames} frames")
 
-    if _should_publish_model_output(model_output, vipc_dropped_frames):
+    if _should_publish_model_output(model_output, vipc_dropped_frames, external_gpu_active):
       modelv2_send = messaging.new_message('modelV2')
       starpilot_modelv2_send = messaging.new_message('starpilotModelV2')
       drivingdata_send = messaging.new_message('drivingModelData')

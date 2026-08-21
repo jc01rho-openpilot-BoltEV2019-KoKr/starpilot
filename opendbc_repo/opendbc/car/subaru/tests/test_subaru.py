@@ -202,6 +202,7 @@ def test_outback_2023_uses_d_platform_bus_layout():
   assert parsers[Bus.main].bus == CanBus.main
   assert controller.angle_bus == CanBus.main
   assert controller.status_bus == CanBus.main
+  assert CP.lateralSmoothSeconds == pytest.approx(0.4)
 
 
 def test_legacy_2025_uses_gen2_angle_bus_layout():
@@ -458,8 +459,9 @@ def test_ascent_angle_controller_uses_fixed_angle_rate_limits():
   assert CS.out.steeringAngleDeg < parser.vl["ES_LKAS_ANGLE"]["LKAS_Output"] < -25.0
 
 
-def test_ascent_angle_controller_yields_until_manual_steering_settles():
-  CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
+@pytest.mark.parametrize("platform", (CAR.SUBARU_ASCENT_2023, CAR.SUBARU_OUTBACK_2023))
+def test_angle_controller_yields_until_manual_steering_settles(platform):
+  CP = CarInterface.get_non_essential_params(platform)
   controller = CarController({}, CP)
   CC = SimpleNamespace(enabled=True, latActive=True, actuators=SimpleNamespace(steeringAngleDeg=-10.0))
   CS = SimpleNamespace(out=SimpleNamespace(

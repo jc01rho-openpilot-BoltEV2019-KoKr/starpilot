@@ -109,6 +109,9 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_sienna_4th_gen_ff_scale,
   get_sienna_4th_gen_friction_threshold,
   get_sienna_4th_gen_high_speed_output_taper_scale,
+  get_toyota_highlander_tss2_ff_scale,
+  get_toyota_highlander_tss2_friction_scale,
+  get_toyota_highlander_tss2_friction_threshold,
   get_toyota_corolla_tss2_center_output_scale,
   get_toyota_corolla_tss2_ff_scale,
   get_lexus_is_ff_scale,
@@ -881,9 +884,10 @@ class TestLatControl:
     assert get_genesis_g70_low_speed_output_limit(0.0, 2.0) < 0.30
     assert get_genesis_g70_low_speed_angle_damping(0.0, -20.0, 0.0, 2.0) < 0.0
     assert get_genesis_g70_low_speed_angle_damping(0.0, 20.0, 0.0, 2.0) > 0.0
-    assert get_genesis_g70_curve_unwind_output_scale(0.7, -0.5, 25.0) > 1.0
+    assert get_genesis_g70_curve_unwind_output_scale(0.7, -0.5, 25.0) == pytest.approx(1.0)
     assert get_genesis_g70_curve_unwind_output_scale(0.7, 0.5, 25.0) == 1.0
-    assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, 0.5, 25.0) < 1.0
+    assert get_genesis_g70_friction_jerk_deadzone(25.0, 0.0) > 0.25
+    assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, 0.5, 25.0) < 0.90
     assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, -0.5, 25.0) == 1.0
     assert get_genesis_g70_unwind_ff_scale(-0.7, 0.2, 0.5, 25.0) == 1.0
 
@@ -1008,6 +1012,26 @@ class TestLatControl:
     assert fast > calm
     assert get_sienna_4th_gen_high_speed_output_taper_scale(10.0) == pytest.approx(1.0, abs=0.002)
     assert get_sienna_4th_gen_high_speed_output_taper_scale(22.0) < 1.0
+
+  def test_toyota_highlander_tss2_unwind_shaping_is_low_speed_only(self):
+    base = get_standard_friction_threshold(9.0)
+    steady = get_toyota_highlander_tss2_ff_scale(0.8, 0.0, 9.0)
+    unwind = get_toyota_highlander_tss2_ff_scale(0.8, -0.8, 9.0)
+    highway_unwind = get_toyota_highlander_tss2_ff_scale(0.8, -0.8, 28.0)
+
+    assert steady == pytest.approx(1.0)
+    assert 0.90 < unwind < 1.0
+    assert highway_unwind > unwind
+
+    unwind_threshold = get_toyota_highlander_tss2_friction_threshold(9.0, 0.8, -0.8)
+    turn_threshold = get_toyota_highlander_tss2_friction_threshold(9.0, 0.8, 0.8)
+    assert unwind_threshold > base
+    assert turn_threshold == pytest.approx(base, rel=0.01)
+
+    unwind_scale = get_toyota_highlander_tss2_friction_scale(9.0, 0.8, -0.8)
+    turn_scale = get_toyota_highlander_tss2_friction_scale(9.0, 0.8, 0.8)
+    assert 0.90 < unwind_scale < 1.0
+    assert turn_scale == pytest.approx(1.0)
 
   def test_rav4_prime_forced_torque_update_path(self, monkeypatch):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(TOYOTA.TOYOTA_RAV4_PRIME, force_torque=True)

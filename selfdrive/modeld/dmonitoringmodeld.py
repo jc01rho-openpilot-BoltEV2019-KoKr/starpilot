@@ -16,7 +16,8 @@ from cereal import messaging
 from cereal.messaging import PubMaster, SubMaster
 from msgq.visionipc import VisionBuf, VisionIpcClient, VisionStreamType
 from openpilot.common.file_chunker import read_file_chunked
-from openpilot.common.realtime import config_realtime_process
+from openpilot.common.params import Params
+from openpilot.common.realtime import config_realtime_process, set_core_affinity
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.transformations.camera import _ar_ox_fisheye, _os_fisheye
 from openpilot.common.transformations.model import dmonitoringmodel_intrinsics
@@ -29,6 +30,19 @@ SEND_RAW_PRED = os.getenv("SEND_RAW_PRED")
 MODELS_DIR = Path(__file__).parent / "models"
 MODEL_PKL_PATH = MODELS_DIR / "dmonitoring_model_tinygrad.pkl"
 METADATA_PATH = MODELS_DIR / "dmonitoring_model_metadata.pkl"
+AFFINITY_CHECK_INTERVAL_SECONDS = 0.5
+DEFAULT_AFFINITY_CORES = [7]
+EXTERNAL_GPU_AFFINITY_CORES = [6, 7]
+
+
+def update_external_gpu_affinity(params: Params, external_gpu_affinity: bool) -> bool:
+  """Let driver monitoring use the otherwise-idle camera core only while the big model is active."""
+  external_gpu_active = params.get_bool("UsbGpuActive")
+  if external_gpu_active != external_gpu_affinity:
+    cores = EXTERNAL_GPU_AFFINITY_CORES if external_gpu_active else DEFAULT_AFFINITY_CORES
+    set_core_affinity(cores)
+    cloudlog.warning(f"dmonitoringmodeld affinity set to {cores}; external GPU active: {external_gpu_active}")
+  return external_gpu_active
 
 
 class ModelState:
@@ -132,6 +146,9 @@ def get_driverstate_packet(model_output, frame_id: int, exec_time: float, gpu_ex
 
 def main():
   config_realtime_process(7, 5)
+  params = Params()
+  external_gpu_affinity = False
+  next_affinity_check = 0.0
   cloudlog.warning("connecting to driver stream")
   vipc_client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_DRIVER, True)
   while not vipc_client.connect(False):
@@ -156,6 +173,12 @@ def main():
     buf = vipc_client.recv()
     if buf is None:
       continue
+
+    now = time.monotonic()
+    if now >= next_affinity_check:
+      external_gpu_affinity = update_external_gpu_affinity(params, external_gpu_affinity)
+      next_affinity_check = now + AFFINITY_CHECK_INTERVAL_SECONDS
+
     if model_transform is None:
       camera = _os_fisheye if buf.width == _os_fisheye.width else _ar_ox_fisheye
       model_transform = np.linalg.inv(

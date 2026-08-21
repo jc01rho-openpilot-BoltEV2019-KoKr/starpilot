@@ -26,5 +26,14 @@ def test_non_rivian_control_smoothing_matches_starpilot(v_ego):
   (5.0, 0.2),
   (30.0, 0.0),
 ])
+def test_subaru_control_smoothing_uses_vehicle_schedule(v_ego, expected):
+  assert get_control_lateral_smooth_seconds("subaru", v_ego, 0.4) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(("v_ego", "expected"), [
+  (0.0, 0.4),
+  (5.0, 0.2),
+  (30.0, 0.0),
+])
 def test_rivian_control_smoothing_remains_speed_scheduled(v_ego, expected):
   assert get_control_lateral_smooth_seconds("rivian", v_ego, 0.4) == pytest.approx(expected)

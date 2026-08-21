@@ -11,14 +11,17 @@ class FakeParams:
     self.values[key] = value
 
 
-@pytest.mark.parametrize(("model_output", "dropped_frames", "expected"), [
-  (object(), 0, True),
-  (object(), 1, False),
-  (object(), 2, False),
-  (None, 0, False),
+@pytest.mark.parametrize(("model_output", "dropped_frames", "external_gpu_active", "expected"), [
+  (object(), 0, False, True),
+  (object(), 1, False, False),
+  (object(), 2, False, False),
+  (object(), 1, True, True),
+  (object(), 2, True, True),
+  (None, 0, False, False),
+  (None, 1, True, False),
 ])
-def test_model_output_is_suppressed_after_vipc_drop(model_output, dropped_frames, expected):
-  assert modeld._should_publish_model_output(model_output, dropped_frames) is expected
+def test_model_output_is_suppressed_after_vipc_drop(model_output, dropped_frames, external_gpu_active, expected):
+  assert modeld._should_publish_model_output(model_output, dropped_frames, external_gpu_active) is expected
 
 
 def test_incompatible_downloaded_model_falls_back_to_builtin(monkeypatch):
