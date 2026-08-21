@@ -17,3 +17,39 @@
 Upstream 동기화는 `.opencode/skills/starpilot-sync.md` 규칙을 따른다. `upstream/Dom`을 사용할 때도 `paddle5`에 먼저 병합·검증하고, 이후 위 순서로 `paddle5_215-55-17`에 전파한다.
 
 기존 stash와 다른 worktree의 변경은 명시적 요청 없이 수정하거나 삭제하지 않는다. 강제 push, commit amend, destructive reset은 사용하지 않는다.
+
+## Highway Rubber-Banding Fix (Vision-Only Lead Tracking)
+
+### Problem
+Speed oscillation (90→70→90 km/h) when following a slower lead vehicle at highway
+speeds with vision-only lead detection (no radar), especially at night when distance/speed
+estimates have higher noise.
+
+### Root Cause
+MPC Planner (`longitudinal_mpc_lib/long_mpc.py`) overreacts to noisy vision lead data:
+- Insufficient lead distance filtering at high speed
+- Low jerk/accel-change penalties allow rapid a_target swings
+- Vision lead approach cap adds extra deceleration on top of MPC
+
+### Tuning Parameters (long_mpc.py:46-70)
+Speed breakpoints: `[0, 35, 55, 70]` mph → 4 ranges: City/Urban/Rural/HighSpeed
+
+| Parameter | Index 3 (70+ mph) | Effect |
+|-----------|-------------------|--------|
+| `X_EGO_OBSTACLE_COSTS` | 1.5 (was 2.0) | Less aggressive distance response to vision noise |
+| `J_EGO_COSTS` | 6.5 (was 4.0) | Higher jerk penalty → smoother accel changes |
+| `A_CHANGE_COSTS` | 220 (was 170) | Higher accel change penalty → less oscillation |
+| `LEAD_FILTER_TIME_HIGH` | 1.8s (was 1.2s) | Stronger lead distance EMA smoothing |
+| `DIST_ADAPTS` | 0.08 (was 0.05) | Stronger distance-based penalty scaling |
+
+### Vision Lead Approach Cap (longitudinal_planner.py:41)
+- `VISION_LEAD_APPROACH_MAX_DECEL = 0.55` (was 0.80) — less aggressive vision cap
+
+### User-Adjustable Alternatives (No Code Change)
+- **Custom Personalities** → increase `StandardJerkAcceleration/Deceleration` to 1.3~1.5
+- **Custom Personalities** → increase `StandardFollow` to 1.60~1.75s
+- **Relaxed Personality** → `t_follow=1.75s`, jerk=1.0 (milder than custom tuning)
+
+### Key Insight
+PID (`longcontrol.py`) is NOT the cause — it only executes `a_target` from MPC.
+Fix must be in MPC cost weights and lead filtering.
