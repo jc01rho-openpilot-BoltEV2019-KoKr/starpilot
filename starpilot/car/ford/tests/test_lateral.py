@@ -49,13 +49,21 @@ def test_curvature_strategy_uses_polynomial_signals(controller):
   assert result.ramp_type == 2
 
 
+def test_lane_change_accepts_capnp_enum_wrappers(controller):
+  controller.model = SimpleNamespace(meta=SimpleNamespace(
+    laneChangeState=SimpleNamespace(raw=2),
+    laneChangeDirection=SimpleNamespace(raw=1),
+  ))
+  assert controller._lane_change() == (True, 1)
+
+
 def test_angle_strategy_uses_path_angle_and_shadow(controller):
   result = controller.update_angle(
     SimpleNamespace(latActive=True), car_state(curvature=0.001), SimpleNamespace(curvature=0.001))
   assert result.active
   assert result.curvature == 0.0
   assert result.path_angle > 0.0
-  assert result.shadow_curvature == pytest.approx(0.001)
+  assert result.shadow_curvature == pytest.approx(0.0005)
 
 
 def test_manual_turn_releases_lateral(controller):

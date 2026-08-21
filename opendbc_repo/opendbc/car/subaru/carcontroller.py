@@ -22,14 +22,14 @@ _LEGACY_2025_REENGAGE_MAX_STEER_RATE = 2.0
 _LEGACY_2025_REENGAGE_MAX_ANGLE_DELTA = 1.0
 _LEGACY_2025_RECLAIM_FRAMES = 36
 _LEGACY_2025_RECLAIM_EXPONENT = 2.5
-_ASCENT_OVERRIDE_HOLD_FRAMES = 10
-_ASCENT_REENGAGE_SETTLE_FRAMES = 8
-_ASCENT_REENGAGE_MAX_STEER_RATE = 2.0
-_ASCENT_REENGAGE_MAX_ANGLE_DELTA = 1.0
-_ASCENT_RECLAIM_FRAMES = 36
-_ASCENT_RECLAIM_EXPONENT = 2.5
-_ASCENT_MADS_MIN_SPEED = 0.44704
-_ASCENT_MADS_MAX_STEER_ANGLE = 120.0
+_ANGLE_OVERRIDE_HOLD_FRAMES = 10
+_ANGLE_REENGAGE_SETTLE_FRAMES = 8
+_ANGLE_REENGAGE_MAX_STEER_RATE = 2.0
+_ANGLE_REENGAGE_MAX_ANGLE_DELTA = 1.0
+_ANGLE_RECLAIM_FRAMES = 36
+_ANGLE_RECLAIM_EXPONENT = 2.5
+_ANGLE_MADS_MIN_SPEED = 0.44704
+_ANGLE_MADS_MAX_STEER_ANGLE = 120.0
 
 
 def get_safety_CP():
@@ -50,13 +50,13 @@ class CarController(CarControllerBase):
     self.legacy_2025_reengage_reference_angle = 0.0
     self.legacy_2025_reclaim_frames = 0
     self.legacy_2025_reclaim_start_angle = 0.0
-    self.ascent_lkas_active = False
-    self.ascent_handoff_active = False
-    self.ascent_override_hold_frames = 0
-    self.ascent_reengage_settle_frames = 0
-    self.ascent_reengage_reference_angle = 0.0
-    self.ascent_reclaim_frames = 0
-    self.ascent_reclaim_start_angle = 0.0
+    self.angle_lkas_active = False
+    self.angle_handoff_active = False
+    self.angle_override_hold_frames = 0
+    self.angle_reengage_settle_frames = 0
+    self.angle_reengage_reference_angle = 0.0
+    self.angle_reclaim_frames = 0
+    self.angle_reclaim_start_angle = 0.0
 
     self.cruise_button_prev = 0
     self.steer_rate_counter = 0
@@ -137,67 +137,67 @@ class CarController(CarControllerBase):
     self.legacy_2025_reclaim_frames -= 1
     return target_angle
 
-  def _reset_ascent_handoff(self):
-    self.ascent_handoff_active = False
-    self.ascent_override_hold_frames = 0
-    self.ascent_reengage_settle_frames = 0
-    self.ascent_reengage_reference_angle = 0.0
-    self.ascent_reclaim_frames = 0
-    self.ascent_reclaim_start_angle = 0.0
+  def _reset_angle_handoff(self):
+    self.angle_handoff_active = False
+    self.angle_override_hold_frames = 0
+    self.angle_reengage_settle_frames = 0
+    self.angle_reengage_reference_angle = 0.0
+    self.angle_reclaim_frames = 0
+    self.angle_reclaim_start_angle = 0.0
 
-  def _ascent_manual_handoff(self, CS, lat_active):
+  def _angle_manual_handoff(self, CS, lat_active):
     if not lat_active:
-      self._reset_ascent_handoff()
+      self._reset_angle_handoff()
       return False
 
     if CS.out.steeringPressed:
-      self.ascent_handoff_active = True
-      self.ascent_override_hold_frames = _ASCENT_OVERRIDE_HOLD_FRAMES
-      self.ascent_reengage_settle_frames = 0
-      self.ascent_reengage_reference_angle = CS.out.steeringAngleDeg
-      self.ascent_reclaim_frames = 0
+      self.angle_handoff_active = True
+      self.angle_override_hold_frames = _ANGLE_OVERRIDE_HOLD_FRAMES
+      self.angle_reengage_settle_frames = 0
+      self.angle_reengage_reference_angle = CS.out.steeringAngleDeg
+      self.angle_reclaim_frames = 0
       return True
 
-    if not self.ascent_handoff_active and not self.ascent_lkas_active and \
-       abs(CS.out.steeringRateDeg) > _ASCENT_REENGAGE_MAX_STEER_RATE:
-      self.ascent_handoff_active = True
-      self.ascent_reengage_reference_angle = CS.out.steeringAngleDeg
+    if not self.angle_handoff_active and not self.angle_lkas_active and \
+       abs(CS.out.steeringRateDeg) > _ANGLE_REENGAGE_MAX_STEER_RATE:
+      self.angle_handoff_active = True
+      self.angle_reengage_reference_angle = CS.out.steeringAngleDeg
 
-    if not self.ascent_handoff_active:
+    if not self.angle_handoff_active:
       return False
 
-    if self.ascent_override_hold_frames > 0:
-      self.ascent_override_hold_frames -= 1
-      if self.ascent_override_hold_frames == 0:
-        self.ascent_reengage_reference_angle = CS.out.steeringAngleDeg
+    if self.angle_override_hold_frames > 0:
+      self.angle_override_hold_frames -= 1
+      if self.angle_override_hold_frames == 0:
+        self.angle_reengage_reference_angle = CS.out.steeringAngleDeg
       return True
 
-    wheel_stable = abs(CS.out.steeringRateDeg) <= _ASCENT_REENGAGE_MAX_STEER_RATE and \
-      abs(CS.out.steeringAngleDeg - self.ascent_reengage_reference_angle) <= _ASCENT_REENGAGE_MAX_ANGLE_DELTA
+    wheel_stable = abs(CS.out.steeringRateDeg) <= _ANGLE_REENGAGE_MAX_STEER_RATE and \
+      abs(CS.out.steeringAngleDeg - self.angle_reengage_reference_angle) <= _ANGLE_REENGAGE_MAX_ANGLE_DELTA
     if wheel_stable:
-      self.ascent_reengage_settle_frames += 1
+      self.angle_reengage_settle_frames += 1
     else:
-      self.ascent_reengage_settle_frames = 0
-      self.ascent_reengage_reference_angle = CS.out.steeringAngleDeg
+      self.angle_reengage_settle_frames = 0
+      self.angle_reengage_reference_angle = CS.out.steeringAngleDeg
 
-    if self.ascent_reengage_settle_frames < _ASCENT_REENGAGE_SETTLE_FRAMES:
+    if self.angle_reengage_settle_frames < _ANGLE_REENGAGE_SETTLE_FRAMES:
       return True
 
-    self.ascent_handoff_active = False
-    self.ascent_reengage_settle_frames = 0
-    self.ascent_reclaim_frames = _ASCENT_RECLAIM_FRAMES
-    self.ascent_reclaim_start_angle = CS.out.steeringAngleDeg
+    self.angle_handoff_active = False
+    self.angle_reengage_settle_frames = 0
+    self.angle_reclaim_frames = _ANGLE_RECLAIM_FRAMES
+    self.angle_reclaim_start_angle = CS.out.steeringAngleDeg
     return True
 
-  def _ascent_reclaim_target(self, target_angle):
-    if self.ascent_reclaim_frames <= 0:
+  def _angle_reclaim_target(self, target_angle):
+    if self.angle_reclaim_frames <= 0:
       return target_angle
 
-    progress = (_ASCENT_RECLAIM_FRAMES - self.ascent_reclaim_frames + 1) / _ASCENT_RECLAIM_FRAMES
-    eased_progress = progress ** _ASCENT_RECLAIM_EXPONENT
-    target_angle = self.ascent_reclaim_start_angle + eased_progress * \
-      (target_angle - self.ascent_reclaim_start_angle)
-    self.ascent_reclaim_frames -= 1
+    progress = (_ANGLE_RECLAIM_FRAMES - self.angle_reclaim_frames + 1) / _ANGLE_RECLAIM_FRAMES
+    eased_progress = progress ** _ANGLE_RECLAIM_EXPONENT
+    target_angle = self.angle_reclaim_start_angle + eased_progress * \
+      (target_angle - self.angle_reclaim_start_angle)
+    self.angle_reclaim_frames -= 1
     return target_angle
 
   def lateral_angle(self, CC, CS):
@@ -224,30 +224,41 @@ class CarController(CarControllerBase):
       self.legacy_2025_lkas_active = lkas_active
       return subarucan.create_steering_control_angle(self.packer, apply_steer, lkas_active, self.angle_bus)
 
-    if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023:
+    if self.CP.carFingerprint in (CAR.SUBARU_ASCENT_2023, CAR.SUBARU_OUTBACK_2023):
       mads_only = CC.latActive and not CC.enabled
-      mads_only_ok = CS.out.vEgoRaw > _ASCENT_MADS_MIN_SPEED and \
-        abs(CS.out.steeringAngleDeg) < _ASCENT_MADS_MAX_STEER_ANGLE
+      mads_only_ok = CS.out.vEgoRaw > _ANGLE_MADS_MIN_SPEED and \
+        abs(CS.out.steeringAngleDeg) < _ANGLE_MADS_MAX_STEER_ANGLE
       lkas_available = CC.latActive and (not mads_only or mads_only_ok) and \
         CS.out.gearShifter == structs.CarState.GearShifter.drive and not CS.out.standstill
 
-      manual_handoff = self._ascent_manual_handoff(CS, lkas_available)
+      manual_handoff = self._angle_manual_handoff(CS, lkas_available)
       lkas_active = lkas_available and not manual_handoff
 
-      if lkas_active and not self.ascent_lkas_active:
+      if lkas_active and not self.angle_lkas_active:
         self.apply_steer_last = CS.out.steeringAngleDeg
 
-      steer_target = self._ascent_reclaim_target(CC.actuators.steeringAngleDeg) if lkas_active else CC.actuators.steeringAngleDeg
-      apply_steer = apply_std_steer_angle_limits(
-        steer_target,
-        self.apply_steer_last,
-        CS.out.vEgoRaw,
-        CS.out.steeringAngleDeg,
-        lkas_active,
-        self.p.FIXED_ANGLE_LIMITS,
-      )
+      steer_target = self._angle_reclaim_target(CC.actuators.steeringAngleDeg) if lkas_active else CC.actuators.steeringAngleDeg
+      if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023:
+        apply_steer = apply_std_steer_angle_limits(
+          steer_target,
+          self.apply_steer_last,
+          CS.out.vEgoRaw,
+          CS.out.steeringAngleDeg,
+          lkas_active,
+          self.p.FIXED_ANGLE_LIMITS,
+        )
+      else:
+        apply_steer = apply_steer_angle_limits_vm(
+          steer_target,
+          self.apply_steer_last,
+          CS.out.vEgoRaw,
+          CS.out.steeringAngleDeg,
+          lkas_active,
+          self.p,
+          self.VM,
+        )
       self.apply_steer_last = apply_steer
-      self.ascent_lkas_active = lkas_active
+      self.angle_lkas_active = lkas_active
       return subarucan.create_steering_control_angle(self.packer, apply_steer, lkas_active, self.angle_bus)
 
     abs_torque = abs(CS.out.steeringTorque)

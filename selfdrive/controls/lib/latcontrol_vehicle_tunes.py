@@ -184,6 +184,10 @@ SIENNA_4TH_GEN_CARS = (
   TOYOTA_CAR.TOYOTA_SIENNA_4TH_GEN,
 )
 
+TOYOTA_HIGHLANDER_TSS2_CARS = (
+  TOYOTA_CAR.TOYOTA_HIGHLANDER_TSS2,
+)
+
 TOYOTA_COROLLA_TSS2_CARS = (
   TOYOTA_CAR.TOYOTA_COROLLA_TSS2,
 )
@@ -235,7 +239,7 @@ GENESIS_G70_FRICTION_CENTER_LAT = 0.28
 GENESIS_G70_FRICTION_CENTER_LAT_WIDTH = 0.10
 GENESIS_G70_FRICTION_CALM_JERK = 0.35
 GENESIS_G70_FRICTION_CALM_JERK_WIDTH = 0.10
-GENESIS_G70_FRICTION_JERK_DEADZONE_MAX = 0.24
+GENESIS_G70_FRICTION_JERK_DEADZONE_MAX = 0.30
 GENESIS_G70_FRICTION_JERK_DEADZONE_LAT = 0.30
 GENESIS_G70_FRICTION_JERK_DEADZONE_LAT_WIDTH = 0.08
 GENESIS_G70_FRICTION_JERK_DEADZONE_SPEED = 12.0
@@ -263,14 +267,14 @@ GENESIS_G70_LOW_SPEED_OUTPUT_LIMIT_LAT = 0.14
 GENESIS_G70_LOW_SPEED_OUTPUT_LIMIT_LAT_WIDTH = 0.05
 GENESIS_G70_LOW_SPEED_OUTPUT_LIMIT_SPEED = 6.0
 GENESIS_G70_LOW_SPEED_OUTPUT_LIMIT_SPEED_WIDTH = 1.5
-GENESIS_G70_CURVE_UNWIND_OUTPUT_BOOST = 0.02
+GENESIS_G70_CURVE_UNWIND_OUTPUT_BOOST = 0.00
 GENESIS_G70_CURVE_UNWIND_SPEED = 18.0
 GENESIS_G70_CURVE_UNWIND_SPEED_WIDTH = 3.0
 GENESIS_G70_CURVE_UNWIND_LAT = 0.25
 GENESIS_G70_CURVE_UNWIND_LAT_WIDTH = 0.12
 GENESIS_G70_CURVE_UNWIND_JERK = 0.08
 GENESIS_G70_CURVE_UNWIND_JERK_WIDTH = 0.08
-GENESIS_G70_UNWIND_FF_REDUCTION_MAX = 0.20
+GENESIS_G70_UNWIND_FF_REDUCTION_MAX = 0.28
 GENESIS_G70_UNWIND_FF_OVERSHOOT = 0.12
 GENESIS_G70_UNWIND_FF_OVERSHOOT_WIDTH = 0.12
 GENESIS_G70_UNWIND_FF_JERK = 0.10
@@ -369,7 +373,7 @@ BOLT_2022_2023_LOW_SPEED_CENTER_OUTPUT_SPEED = 2.5
 BOLT_2022_2023_LOW_SPEED_CENTER_OUTPUT_SPEED_WIDTH = 0.7
 BOLT_2022_2023_LOW_SPEED_CENTER_OUTPUT_SPEED_MAX = 7.2
 BOLT_2022_2023_LOW_SPEED_CENTER_OUTPUT_SPEED_MAX_WIDTH = 0.5
-BOLT_2022_2023_CENTER_FRICTION_THRESHOLD_BUMP = 0.050
+BOLT_2022_2023_CENTER_FRICTION_THRESHOLD_BUMP = 0.080
 BOLT_2022_2023_CENTER_FRICTION_THRESHOLD_LAT = 0.18
 BOLT_2022_2023_CENTER_FRICTION_THRESHOLD_LAT_WIDTH = 0.06
 BOLT_2022_2023_CENTER_FRICTION_THRESHOLD_SPEED = 6.7
@@ -1108,6 +1112,17 @@ TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_LAT_WIDTH = 0.08
 TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_SPEED = 4.5
 TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_SPEED_WIDTH = 1.5
 
+TOYOTA_HIGHLANDER_TSS2_PHASE_SCALE = 0.12
+TOYOTA_HIGHLANDER_TSS2_UNWIND_FF_REDUCTION = 0.10
+TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_THRESHOLD_GAIN = 0.16
+TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_SCALE_REDUCTION = 0.10
+TOYOTA_HIGHLANDER_TSS2_UNWIND_LAT_ONSET = 0.20
+TOYOTA_HIGHLANDER_TSS2_UNWIND_LAT_WIDTH = 0.08
+TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_ONSET = 3.0
+TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_WIDTH = 1.5
+TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_MAX = 15.0
+TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_MAX_WIDTH = 2.0
+
 LEXUS_IS_PHASE_SCALE = 0.10
 LEXUS_IS_TURN_IN_FF_BOOST_LEFT = 0.06
 LEXUS_IS_TURN_IN_FF_BOOST_RIGHT = 0.06
@@ -1643,6 +1658,52 @@ def get_toyota_corolla_tss2_center_output_scale(desired_lateral_accel: float, v_
   reduction = _flm_vehicle_knob("toyota_corolla_tss2.center_output_taper_max",
                                 TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_MAX) * center_weight * low_speed_weight
   return max(1.0 - reduction, 0.65)
+
+
+def _toyota_highlander_tss2_unwind_weight(desired_lateral_accel: float,
+                                           desired_lateral_jerk: float,
+                                           v_ego: float) -> float:
+  phase = math.tanh((desired_lateral_accel * desired_lateral_jerk) /
+                    TOYOTA_HIGHLANDER_TSS2_PHASE_SCALE)
+  curve_weight = _sigmoid((abs(desired_lateral_accel) - TOYOTA_HIGHLANDER_TSS2_UNWIND_LAT_ONSET) /
+                          TOYOTA_HIGHLANDER_TSS2_UNWIND_LAT_WIDTH)
+  speed_weight = (_sigmoid((v_ego - TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_ONSET) /
+                           TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_WIDTH) *
+                  _sigmoid((TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_MAX - v_ego) /
+                           TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_MAX_WIDTH))
+  return max(-phase, 0.0) * curve_weight * speed_weight
+
+
+def get_toyota_highlander_tss2_ff_scale(desired_lateral_accel: float,
+                                         desired_lateral_jerk: float,
+                                         v_ego: float) -> float:
+  reduction = _flm_vehicle_knob("toyota_highlander_tss2.unwind_ff_reduction",
+                                TOYOTA_HIGHLANDER_TSS2_UNWIND_FF_REDUCTION)
+  return 1.0 - reduction * _toyota_highlander_tss2_unwind_weight(
+    desired_lateral_accel, desired_lateral_jerk, v_ego,
+  )
+
+
+def get_toyota_highlander_tss2_friction_threshold(v_ego: float,
+                                                  desired_lateral_accel: float = 0.0,
+                                                  desired_lateral_jerk: float = 0.0) -> float:
+  gain = _flm_vehicle_knob("toyota_highlander_tss2.unwind_friction_threshold_gain",
+                           TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_THRESHOLD_GAIN)
+  return get_standard_friction_threshold(v_ego) * (
+    1.0 + gain * _toyota_highlander_tss2_unwind_weight(
+      desired_lateral_accel, desired_lateral_jerk, v_ego,
+    )
+  )
+
+
+def get_toyota_highlander_tss2_friction_scale(v_ego: float,
+                                              desired_lateral_accel: float,
+                                              desired_lateral_jerk: float) -> float:
+  reduction = _flm_vehicle_knob("toyota_highlander_tss2.unwind_friction_scale_reduction",
+                                TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_SCALE_REDUCTION)
+  return 1.0 - reduction * _toyota_highlander_tss2_unwind_weight(
+    desired_lateral_accel, desired_lateral_jerk, v_ego,
+  )
 
 
 def get_lexus_is_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:

@@ -20,6 +20,8 @@ from openpilot.selfdrive.ui.mici.onroad.starpilot_status import (
   get_border_color,
 )
 from openpilot.selfdrive.ui.mici.onroad.cameraview import CameraView
+from openpilot.selfdrive.ui.onroad.starpilot.pip_sidecam import PipSideCamera
+from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import get_traffic_border_colors
 from openpilot.selfdrive.ui.lib.starpilot_visuals import get_border_width
 from openpilot.starpilot.common.favorite_slots import is_favorite_action_key, load_favorite_slots, toggle_favorite_slot
 from openpilot.system.ui.lib.application import FontWeight, gui_app, MousePos, MouseEvent
@@ -583,6 +585,10 @@ class AugmentedRoadView(CameraView):
 
     # debug
     self._pm = messaging.PubMaster(['uiDebug'])
+    # C4 sidecam: fills road preview as a curved rectangle. Only shown
+    # on the road camera screen, gated via widget visibility
+    self._pip_sidecam = self._child(PipSideCamera(shape="curved"))
+    self._pip_sidecam.set_visible(lambda: self.stream_type == ROAD_CAM)
 
   @staticmethod
   def _controls_ready() -> bool:
@@ -787,6 +793,17 @@ class AugmentedRoadView(CameraView):
       rl.draw_rectangle(int(self.rect.x), int(self.rect.y), int(self.rect.width), int(self.rect.height), rl.Color(0, 0, 0, 175))
       self._offroad_label.render(self._content_rect)
 
+    # C4 sidecam renders last (on top) and only when showing the road camera
+    # Inset by the border so the pill never covers the green/orange status border.
+    border = self._get_border_width()
+    preview_rect = rl.Rectangle(
+      self._content_rect.x + border,
+      self._content_rect.y + border,
+      max(1, self._content_rect.width - 2 * border),
+      max(1, self._content_rect.height - 2 * border),
+    )
+    self._pip_sidecam.render(preview_rect)
+
     # publish uiDebug
     msg = messaging.new_message('uiDebug')
     msg.uiDebug.drawTimeMillis = (time.monotonic() - start_draw) * 1000
@@ -809,6 +826,17 @@ class AugmentedRoadView(CameraView):
       int(self._content_rect.height),
     )
     rl.draw_rectangle_rounded_lines_ex(border_rect, 0.12, 16, border_size, get_border_color(ui_state))
+
+    if (colors := get_traffic_border_colors()) is not None:
+      for x, w, color in (
+        (border_rect.x, border_rect.width / 2, colors[0]),
+        (border_rect.x + border_rect.width / 2, border_rect.width - border_rect.width / 2, colors[1]),
+      ):
+        if color.a > 0:
+          rl.begin_scissor_mode(int(x), int(border_rect.y), int(w), int(border_rect.height))
+          rl.draw_rectangle_rounded_lines_ex(border_rect, 0.12, 16, border_size, color)
+          rl.end_scissor_mode()
+
     rl.end_scissor_mode()
 
   def _get_border_width(self) -> int:

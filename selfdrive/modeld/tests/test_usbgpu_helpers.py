@@ -37,6 +37,36 @@ def test_external_gpu_uses_a_longer_load_watchdog():
   assert modeld.BIG_MODEL_RUN_WAIT_TIMEOUT_MS == 3000
 
 
+def test_external_gpu_signal_wait_yields_cpu():
+  from tinygrad.runtime import ops_amd
+
+  sleeps = []
+  signal = ops_amd.AMDSignal.__new__(ops_amd.AMDSignal)
+  signal.should_return = False
+  signal.owner = SimpleNamespace(is_usb=lambda: True, iface=SimpleNamespace(sleep=sleeps.append))
+
+  signal._sleep(0)
+
+  assert sleeps == [1]
+
+
+def test_native_amd_signal_keeps_existing_short_wait_behavior():
+  from tinygrad.runtime import ops_amd
+
+  sleeps = []
+  signal = ops_amd.AMDSignal.__new__(ops_amd.AMDSignal)
+  signal.should_return = False
+  signal.owner = SimpleNamespace(is_usb=lambda: False, iface=SimpleNamespace(sleep=sleeps.append))
+
+  signal._sleep(199)
+
+  assert sleeps == []
+
+  signal._sleep(201)
+
+  assert sleeps == [200]
+
+
 def test_external_gpu_power_must_be_stable_after_vehicle_start():
   panda_type = modeld.log.PandaState.PandaType.tres
 
