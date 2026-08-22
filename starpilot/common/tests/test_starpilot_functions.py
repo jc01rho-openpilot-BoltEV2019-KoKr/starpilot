@@ -1,3 +1,8 @@
+import shutil
+
+import pytest
+from PIL import Image
+
 from openpilot.starpilot.common import connect_server as cs
 from openpilot.starpilot.common import starpilot_functions as sf
 
@@ -25,6 +30,157 @@ class FakeParams:
 class FakeThreadManager:
   def is_thread_alive(self, name):
     return False
+
+
+@pytest.mark.parametrize("extension,image_format", [("jpg", "JPEG"), ("png", "PNG")])
+def test_update_boot_logo_writes_agnos_jpeg_and_png(monkeypatch, tmp_path, extension, image_format):
+  themes_path = tmp_path / "themes"
+  custom_logo = themes_path / "bootlogos" / f"custom.{extension}"
+  custom_logo.parent.mkdir(parents=True)
+  Image.new("RGBA" if image_format == "PNG" else "RGB", (24, 12), (12, 34, 56, 255)).save(custom_logo, format=image_format)
+
+  jpeg_destination = tmp_path / "usr" / "comma" / "bg.jpg"
+  png_destination = tmp_path / "usr" / "comma" / "bg.png"
+  jpeg_destination.parent.mkdir(parents=True)
+  jpeg_destination.write_bytes(b"old jpeg")
+  png_destination.write_bytes(b"old png")
+
+  commands = []
+
+  def fake_run_cmd(command, *_args, **_kwargs):
+    commands.append(command)
+    if command[0] == "findmnt":
+      return "ro,relatime"
+    if command[:2] == ["sudo", "cp"]:
+      shutil.copy2(command[2], command[3])
+    return ""
+
+  monkeypatch.setattr(sf.HARDWARE, "get_device_type", lambda: "mici")
+  monkeypatch.setattr(sf, "THEME_SAVE_PATH", themes_path)
+  monkeypatch.setattr(sf, "BOOT_LOGO_JPEG_PATH", jpeg_destination)
+  monkeypatch.setattr(sf, "BOOT_LOGO_PNG_PATH", png_destination)
+  monkeypatch.setattr(sf, "BOOT_LOGO_MAGIC_PATH", tmp_path / "usr" / "comma" / "magic.py")
+  monkeypatch.setattr(sf, "run_cmd", fake_run_cmd)
+
+  sf.update_boot_logo(starpilot=True, selected_logo="custom")
+
+  with Image.open(jpeg_destination) as jpeg_logo:
+    assert jpeg_logo.format == "JPEG"
+    assert jpeg_logo.mode == "RGB"
+    assert jpeg_logo.size == (12, 24)
+  with Image.open(png_destination) as png_logo:
+    assert png_logo.format == "PNG"
+    assert png_logo.mode == "RGB"
+    assert png_logo.size == (24, 12)
+
+  assert [command for command in commands if command[:2] == ["sudo", "mount"]] == [
+    ["sudo", "mount", "-o", "remount,rw", "/"],
+    ["sudo", "mount", "-o", "remount,ro,relatime", "/"],
+  ]
+  assert len([command for command in commands if command[:2] == ["sudo", "cp"]]) == 2
+
+
+def test_update_boot_logo_does_not_create_png_on_legacy_agnos(monkeypatch, tmp_path):
+  themes_path = tmp_path / "themes"
+  custom_logo = themes_path / "bootlogos" / "custom.png"
+  custom_logo.parent.mkdir(parents=True)
+  Image.new("RGB", (24, 12), (12, 34, 56)).save(custom_logo, format="PNG")
+
+  jpeg_destination = tmp_path / "usr" / "comma" / "bg.jpg"
+  png_destination = tmp_path / "usr" / "comma" / "bg.png"
+  jpeg_destination.parent.mkdir(parents=True)
+  jpeg_destination.write_bytes(b"old jpeg")
+
+  def fake_run_cmd(command, *_args, **_kwargs):
+    if command[0] == "findmnt":
+      return "ro,relatime"
+    if command[:2] == ["sudo", "cp"]:
+      shutil.copy2(command[2], command[3])
+    return ""
+
+  monkeypatch.setattr(sf.HARDWARE, "get_device_type", lambda: "tici")
+  monkeypatch.setattr(sf, "THEME_SAVE_PATH", themes_path)
+  monkeypatch.setattr(sf, "BOOT_LOGO_JPEG_PATH", jpeg_destination)
+  monkeypatch.setattr(sf, "BOOT_LOGO_PNG_PATH", png_destination)
+  monkeypatch.setattr(sf, "BOOT_LOGO_MAGIC_PATH", tmp_path / "usr" / "comma" / "magic.py")
+  monkeypatch.setattr(sf, "run_cmd", fake_run_cmd)
+
+  sf.update_boot_logo(starpilot=True, selected_logo="custom")
+
+  with Image.open(jpeg_destination) as jpeg_logo:
+    assert jpeg_logo.format == "JPEG"
+    assert jpeg_logo.size == (12, 24)
+  assert not png_destination.exists()
+
+
+def test_update_boot_logo_rotates_legacy_stock_for_raylib(monkeypatch, tmp_path):
+  stock_logo = tmp_path / "starpilot" / "assets" / "other_images" / "stock_bg.jpg"
+  stock_logo.parent.mkdir(parents=True)
+  Image.new("RGB", (12, 24), (12, 34, 56)).save(stock_logo, format="JPEG")
+
+  comma_path = tmp_path / "usr" / "comma"
+  jpeg_destination = comma_path / "bg.jpg"
+  png_destination = comma_path / "bg.png"
+  comma_path.mkdir(parents=True)
+  jpeg_destination.write_bytes(b"old jpeg")
+  png_destination.write_bytes(b"old png")
+
+  def fake_run_cmd(command, *_args, **_kwargs):
+    if command[0] == "findmnt":
+      return "ro,relatime"
+    if command[:2] == ["sudo", "cp"]:
+      shutil.copy2(command[2], command[3])
+    return ""
+
+  monkeypatch.setattr(sf.HARDWARE, "get_device_type", lambda: "mici")
+  monkeypatch.setattr(sf, "BASEDIR", str(tmp_path))
+  monkeypatch.setattr(sf, "BOOT_LOGO_JPEG_PATH", jpeg_destination)
+  monkeypatch.setattr(sf, "BOOT_LOGO_PNG_PATH", png_destination)
+  monkeypatch.setattr(sf, "BOOT_LOGO_MAGIC_PATH", comma_path / "magic.py")
+  monkeypatch.setattr(sf, "run_cmd", fake_run_cmd)
+
+  sf.update_boot_logo(stock=True)
+
+  with Image.open(jpeg_destination) as jpeg_logo:
+    assert jpeg_logo.size == (12, 24)
+  with Image.open(png_destination) as png_logo:
+    assert png_logo.size == (24, 12)
+
+
+def test_update_boot_logo_uses_landscape_jpeg_for_current_magic(monkeypatch, tmp_path):
+  themes_path = tmp_path / "themes"
+  custom_logo = themes_path / "bootlogos" / "custom.png"
+  custom_logo.parent.mkdir(parents=True)
+  Image.new("RGB", (12, 24), (12, 34, 56)).save(custom_logo, format="PNG")
+
+  comma_path = tmp_path / "usr" / "comma"
+  jpeg_destination = comma_path / "bg.jpg"
+  png_destination = comma_path / "bg.png"
+  magic_path = comma_path / "magic.py"
+  comma_path.mkdir(parents=True)
+  jpeg_destination.write_bytes(b"old jpeg")
+  magic_path.write_text(f'BACKGROUND = "{jpeg_destination.as_posix()}"\n')
+
+  def fake_run_cmd(command, *_args, **_kwargs):
+    if command[0] == "findmnt":
+      return "ro,relatime"
+    if command[:2] == ["sudo", "cp"]:
+      shutil.copy2(command[2], command[3])
+    return ""
+
+  monkeypatch.setattr(sf.HARDWARE, "get_device_type", lambda: "mici")
+  monkeypatch.setattr(sf, "THEME_SAVE_PATH", themes_path)
+  monkeypatch.setattr(sf, "BOOT_LOGO_JPEG_PATH", jpeg_destination)
+  monkeypatch.setattr(sf, "BOOT_LOGO_PNG_PATH", png_destination)
+  monkeypatch.setattr(sf, "BOOT_LOGO_MAGIC_PATH", magic_path)
+  monkeypatch.setattr(sf, "run_cmd", fake_run_cmd)
+
+  sf.update_boot_logo(starpilot=True, selected_logo="custom")
+
+  with Image.open(jpeg_destination) as jpeg_logo:
+    assert jpeg_logo.format == "JPEG"
+    assert jpeg_logo.size == (24, 12)
+  assert not png_destination.exists()
 
 
 def test_automatic_update_requests_guarded_reboot(monkeypatch):

@@ -37,7 +37,7 @@ def test_external_gpu_uses_a_longer_load_watchdog():
   assert modeld.BIG_MODEL_RUN_WAIT_TIMEOUT_MS == 3000
 
 
-def test_external_gpu_signal_wait_yields_cpu():
+def test_external_gpu_signal_wait_matches_upstream_busy_poll():
   from tinygrad.runtime import ops_amd
 
   sleeps = []
@@ -47,7 +47,7 @@ def test_external_gpu_signal_wait_yields_cpu():
 
   signal._sleep(0)
 
-  assert sleeps == [1]
+  assert sleeps == []
 
 
 def test_native_amd_signal_keeps_existing_short_wait_behavior():

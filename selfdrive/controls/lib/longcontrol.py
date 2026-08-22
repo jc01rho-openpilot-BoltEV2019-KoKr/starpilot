@@ -341,6 +341,9 @@ class LongControl:
       a_target = self.vehicle_tuning.shape_toyota_sienna_accel_target(
         a_target, CS.vEgo, should_stop, leads=leads,
       )
+      a_target = self.vehicle_tuning.cap_toyota_sienna_lead_departure_accel(
+        a_target, CS.vEgo, leads=leads,
+      )
       a_target = self.vehicle_tuning.shape_hyundai_elantra_lead_target(
         a_target, CS.vEgo, should_stop, leads,
       )

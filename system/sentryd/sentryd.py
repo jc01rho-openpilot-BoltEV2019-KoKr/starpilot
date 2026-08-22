@@ -33,7 +33,6 @@ MAX_WARNING_TIME_SECONDS = 10.0
 ALARM_TRIGGER_COUNT = 25
 ALARM_TIME_SECONDS = 30.0
 RESET_TIME_SECONDS = 60.0
-MAX_EVENT_DIRECTORIES = 100
 
 
 def event_root() -> Path:
@@ -137,19 +136,6 @@ class SentryMode:
       paths.append(str(front_path))
     return paths
 
-  def _trim_old_events(self) -> None:
-    root = event_root()
-    if not root.exists():
-      return
-    try:
-      directories = sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.stat().st_mtime)
-      for directory in directories[:-MAX_EVENT_DIRECTORIES]:
-        for child in directory.iterdir():
-          child.unlink(missing_ok=True)
-        directory.rmdir()
-    except OSError:
-      cloudlog.exception("sentryd: failed to trim old events")
-
   def _publish_event(self, event: dict) -> None:
     self.params.put("SentryModeLastEvent", event)
     self._write_status(event["kind"], eventId=event["eventId"])
@@ -182,8 +168,6 @@ class SentryMode:
     }
     if kind in {"warning", "alarm"}:
       event["imagePaths"] = self._capture_images(event_id)
-      if kind == "alarm":
-        self._trim_old_events()
     self._publish_event(event)
 
   def update(self) -> None:

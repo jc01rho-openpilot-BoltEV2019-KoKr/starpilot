@@ -1400,6 +1400,33 @@ def test_toyota_sienna_target_filter_ramps_low_speed_acceleration():
   assert tuning.shape_toyota_sienna_accel_target(-1.5, 3.0, False) == pytest.approx(-1.5)
 
 
+def test_toyota_sienna_caps_acceleration_for_nearby_departing_lead():
+  CP = make_longcontrol_cp(brand="toyota", carFingerprint=TOYOTA_CAR.TOYOTA_SIENNA_4TH_GEN)
+  tuning = vehicle_tunes.LongControlVehicleTuning(CP)
+  lead = SimpleNamespace(status=True, yRel=0.0, dRel=9.0, vLead=3.0, aLeadK=0.0)
+
+  capped = tuning.cap_toyota_sienna_lead_departure_accel(1.9, 0.8, leads=(lead,))
+
+  assert capped == pytest.approx(1.12)
+
+
+def test_toyota_sienna_departure_cap_does_not_change_stopped_lead_or_braking():
+  CP = make_longcontrol_cp(brand="toyota", carFingerprint=TOYOTA_CAR.TOYOTA_SIENNA_4TH_GEN)
+  tuning = vehicle_tunes.LongControlVehicleTuning(CP)
+  stopped_lead = SimpleNamespace(status=True, yRel=0.0, dRel=9.0, vLead=0.0, aLeadK=-1.0)
+
+  assert tuning.cap_toyota_sienna_lead_departure_accel(1.9, 0.8, leads=(stopped_lead,)) == pytest.approx(1.9)
+  assert tuning.cap_toyota_sienna_lead_departure_accel(-2.0, 0.8, leads=(stopped_lead,)) == pytest.approx(-2.0)
+
+
+def test_toyota_sienna_departure_cap_does_not_change_other_vehicles():
+  CP = make_longcontrol_cp(brand="toyota", carFingerprint=TOYOTA_CAR.TOYOTA_CAMRY)
+  tuning = vehicle_tunes.LongControlVehicleTuning(CP)
+  lead = SimpleNamespace(status=True, yRel=0.0, dRel=9.0, vLead=3.0, aLeadK=0.0)
+
+  assert tuning.cap_toyota_sienna_lead_departure_accel(1.9, 0.8, leads=(lead,)) == pytest.approx(1.9)
+
+
 def test_toyota_sienna_target_filter_bypasses_stop_and_urgent_braking():
   CP = make_longcontrol_cp(brand="toyota", carFingerprint=TOYOTA_CAR.TOYOTA_SIENNA_4TH_GEN)
   tuning = vehicle_tunes.LongControlVehicleTuning(CP)

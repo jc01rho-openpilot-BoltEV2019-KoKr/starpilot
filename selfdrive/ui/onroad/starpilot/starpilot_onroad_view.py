@@ -14,10 +14,18 @@ from openpilot.selfdrive.ui.onroad.starpilot.widgets import (
 )
 from openpilot.selfdrive.ui.onroad.starpilot.stopping_point import render_stopping_point
 from openpilot.selfdrive.ui.onroad.starpilot.pause_indicators import render_lateral_paused, render_longitudinal_paused
+from openpilot.selfdrive.ui.onroad.starpilot.pulse_glide import render_pulse_glide
 from openpilot.selfdrive.ui.onroad.starpilot.pip_sidecam import PipSideCamera
+from openpilot.selfdrive.ui.onroad.starpilot.favorite_radial_menu import FavoriteRadialMenu
 from openpilot.selfdrive.ui.onroad.starpilot.weather_icon import render_weather_icon
 from openpilot.selfdrive.ui.lib.starpilot_status import (
   get_screen_edge_color,
+)
+from openpilot.starpilot.common.favorite_slots import (
+  build_favorite_slot_options,
+  filter_favorite_slot_options,
+  favorite_key_is_valid,
+  is_bool_param,
 )
 
 from openpilot.system.ui.lib.application import MousePos, gui_app, FontWeight
@@ -40,6 +48,12 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._avg_fps = 0.0
 
     self._pip_sidecam = self._child(PipSideCamera())
+    self._favorite_radial_menu = FavoriteRadialMenu(
+      ui_state.ui_params,
+      ui_state.params_memory,
+      self._favorite_slot_options,
+    )
+    self._favorite_input_consumed = False
 
     self.layout_manager = WidgetLayoutManager(self._content_rect)
 
@@ -87,23 +101,58 @@ class StarPilotOnroadView(AugmentedRoadView):
     rl.draw_rectangle_rounded(rect, 0.12, 10, border_color)
     render_background_effects(rect, border_width)
 
-    self._hud_renderer.draw_current_speed = (
-      ui_state.started and not self._stopped_timer_widget.replaces_current_speed
-    )
-    super()._render(rect)
+    # The favorite menu has first claim on the lower-left gesture. Filtering
+    # its events before the inherited HUD/widgets render prevents a corner tap
+    # from also activating a background on-road control.
+    original_events = list(gui_app.mouse_events)
+    self._favorite_input_consumed = False
+    if ui_state.started:
+      anticipated_content_rect = rl.Rectangle(
+        rect.x + border_width,
+        rect.y + border_width,
+        rect.width - 2 * border_width,
+        rect.height - 2 * border_width,
+      )
+      self._favorite_input_consumed = self._favorite_radial_menu.process_mouse_events(
+        original_events, anticipated_content_rect,
+      )
+      if self._favorite_input_consumed:
+        gui_app.mouse_events[:] = []
 
-    if not ui_state.started:
-      return
+    try:
+      self._hud_renderer.draw_current_speed = (
+        ui_state.started and not self._stopped_timer_widget.replaces_current_speed
+      )
+      super()._render(rect)
 
-    if self._draw_hud_controls:
-      dm = self.driver_state_renderer
-      self.layout_manager.update_layout(self._content_rect, is_rhd=dm.is_rhd if dm else False)
-      self._render_slc()
-      self._render_overlays()
-      self._render_road_name()
+      if not ui_state.started:
+        self._favorite_radial_menu.collapse()
+        return
 
-    # PiP renders last so it always sits on top of every other on-road overlay.
-    self._pip_sidecam.render(self._content_rect)
+      if self._draw_hud_controls:
+        dm = self.driver_state_renderer
+        self.layout_manager.update_layout(self._content_rect, is_rhd=dm.is_rhd if dm else False)
+        self._render_slc()
+        self._render_overlays()
+        self._render_road_name()
+
+      self._pip_sidecam.render(self._content_rect)
+
+      # The picker is an app-drawer modal, so it intentionally draws above
+      # PiP and other on-road overlays while active.
+      if self._draw_hud_controls and not self._full_alert_showing():
+        rl.begin_scissor_mode(
+          int(round(self._content_rect.x)), int(round(self._content_rect.y)),
+          int(round(self._content_rect.width)), int(round(self._content_rect.height)),
+        )
+        try:
+          self._favorite_radial_menu.render(self._content_rect)
+        finally:
+          rl.end_scissor_mode()
+      else:
+        self._favorite_radial_menu.collapse()
+    finally:
+      gui_app.mouse_events[:] = original_events
 
   def _draw_border(self, rect: rl.Rectangle):
     border_width = self._get_border_width()
@@ -170,12 +219,31 @@ class StarPilotOnroadView(AugmentedRoadView):
     return alert_showing is not None and alert_showing.size == AlertSize.full
 
   def _handle_mouse_press(self, mouse_pos: MousePos):
+    if self._favorite_input_consumed or self._favorite_radial_menu.blocks_pointer(mouse_pos):
+      return
+
     # Check if click maps to any of the layout widgets
     for zone in self.layout_manager.zones.values():
       for widget in zone:
         if widget.is_visible and rl.check_collision_point_rec(mouse_pos, widget.rect):
           return
     super()._handle_mouse_press(mouse_pos)
+
+  def _favorite_slot_options(self):
+    cp = ui_state.CP
+    return filter_favorite_slot_options(
+      build_favorite_slot_options(
+        lambda key: favorite_key_is_valid(self._params, key),
+        alpha_longitudinal_available=bool(getattr(cp, "alphaLongitudinalAvailable", False)),
+      ),
+      {
+        # This matches Galaxy's capability gate without importing its web
+        # server (or duplicating its option metadata) into the on-road UI.
+        "HasRivianAngleHarness": (
+          getattr(cp, "brand", "") == "rivian" and bool(int(getattr(cp, "flags", 0)) & (1 << 0))
+        ),
+      },
+    )
 
   def _render_developer_metrics(self):
     toggles = ui_state.starpilot_toggles
@@ -275,6 +343,7 @@ class StarPilotOnroadView(AugmentedRoadView):
 
     # Check pause/CEM states
     starpilot_car_state = ui_state.sm["starpilotCarState"] if ui_state.sm.valid.get("starpilotCarState", False) else None
+    plan = ui_state.sm["starpilotPlan"] if ui_state.sm.valid.get("starpilotPlan", False) else None
     lateral_paused = starpilot_car_state.pauseLateral if starpilot_car_state else False
     longitudinal_paused = (starpilot_car_state.pauseLongitudinal or starpilot_car_state.forceCoast) if starpilot_car_state else False
 
@@ -285,6 +354,8 @@ class StarPilotOnroadView(AugmentedRoadView):
       active_badges.append("lateral_paused")
     if longitudinal_paused:
       active_badges.append("longitudinal_paused")
+    if starpilot_car_state and starpilot_car_state.pulseAndGlide:
+      active_badges.append("pulse_glide")
 
     # Dimensions
     badge_w = 120
@@ -310,9 +381,11 @@ class StarPilotOnroadView(AugmentedRoadView):
         render_lateral_paused(badge_rect)
       elif badge == "longitudinal_paused":
         render_longitudinal_paused(badge_rect)
+      elif badge == "pulse_glide":
+        pulse_glide_coasting = bool(getattr(plan, "pulseGlideCoasting", False)) if plan else False
+        render_pulse_glide(badge_rect, pulse_glide_coasting)
 
     # 2. Render Weather (on the opposite side of DM icon)
-    plan = ui_state.sm["starpilotPlan"] if ui_state.sm.valid.get("starpilotPlan", False) else None
     if plan and plan.weatherId != 0:
       weather_w = 120
       weather_h = 120

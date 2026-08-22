@@ -23,7 +23,13 @@ from openpilot.selfdrive.ui.mici.onroad.cameraview import CameraView
 from openpilot.selfdrive.ui.onroad.starpilot.pip_sidecam import PipSideCamera
 from openpilot.selfdrive.ui.onroad.starpilot.starpilot_border import get_traffic_border_colors
 from openpilot.selfdrive.ui.lib.starpilot_visuals import get_border_width
-from openpilot.starpilot.common.favorite_slots import is_favorite_action_key, load_favorite_slots, toggle_favorite_slot
+from openpilot.starpilot.common.favorite_slots import (
+  get_favorite_enum_state,
+  is_enum_param,
+  is_favorite_action_key,
+  load_favorite_slots,
+  toggle_favorite_slot,
+)
 from openpilot.system.ui.lib.application import FontWeight, gui_app, MousePos, MouseEvent
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.lib.wrap_text import wrap_text
@@ -273,7 +279,15 @@ class FavoriteSlotsOverlay(Widget):
     rl.draw_rectangle_rounded_lines_ex(panel_rect, 0.16, 12, 3, accent)
 
     label = slot.get("label") or slot.get("key") or "Favorite"
-    state_text = "PRESS" if is_favorite_action_key(slot.get("key")) else ("ON" if self._feedback_value else "OFF")
+    key = slot.get("key")
+    if is_favorite_action_key(key):
+      state_text = "PRESS"
+    elif is_enum_param(key):
+      _curr, _idx, active_label, _opts = get_favorite_enum_state(key, ui_state.ui_params)
+      state_text = active_label.upper() if active_label else "CYCLE"
+    else:
+      state_text = "ON" if self._feedback_value else "OFF"
+
     lines, font_size = self._fit_label(label, panel_rect.width - 20, panel_rect.height - 46)
     line_height = font_size * 1.08
     label_height = len(lines) * line_height
@@ -321,7 +335,10 @@ class FavoriteSlotsOverlay(Widget):
       self._feedback_started_at = rl.get_time()
       slot = dict(self._visible_slots()).get(self._pressed_slot, {})
       key = slot.get("key")
-      self._feedback_value = None if is_favorite_action_key(key) else (not ui_state.ui_params.get_bool(key) if key else None)
+      if is_favorite_action_key(key) or is_enum_param(key):
+        self._feedback_value = None
+      else:
+        self._feedback_value = not ui_state.ui_params.get_bool(key) if key else None
       self._interacting = True
 
   def _handle_mouse_event(self, mouse_event: MouseEvent):

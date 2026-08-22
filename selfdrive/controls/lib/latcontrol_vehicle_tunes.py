@@ -1116,6 +1116,7 @@ TOYOTA_HIGHLANDER_TSS2_PHASE_SCALE = 0.12
 TOYOTA_HIGHLANDER_TSS2_UNWIND_FF_REDUCTION = 0.10
 TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_THRESHOLD_GAIN = 0.16
 TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_SCALE_REDUCTION = 0.10
+TOYOTA_HIGHLANDER_TSS2_UNWIND_OUTPUT_REDUCTION = 0.15
 TOYOTA_HIGHLANDER_TSS2_UNWIND_LAT_ONSET = 0.20
 TOYOTA_HIGHLANDER_TSS2_UNWIND_LAT_WIDTH = 0.08
 TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_ONSET = 3.0
@@ -1701,6 +1702,17 @@ def get_toyota_highlander_tss2_friction_scale(v_ego: float,
                                               desired_lateral_jerk: float) -> float:
   reduction = _flm_vehicle_knob("toyota_highlander_tss2.unwind_friction_scale_reduction",
                                 TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_SCALE_REDUCTION)
+  return 1.0 - reduction * _toyota_highlander_tss2_unwind_weight(
+    desired_lateral_accel, desired_lateral_jerk, v_ego,
+  )
+
+
+def get_toyota_highlander_tss2_output_taper_scale(desired_lateral_accel: float,
+                                                  desired_lateral_jerk: float,
+                                                  v_ego: float) -> float:
+  """Slow low-speed unwind reversals without reducing turn-in authority."""
+  reduction = _flm_vehicle_knob("toyota_highlander_tss2.unwind_output_reduction",
+                                TOYOTA_HIGHLANDER_TSS2_UNWIND_OUTPUT_REDUCTION)
   return 1.0 - reduction * _toyota_highlander_tss2_unwind_weight(
     desired_lateral_accel, desired_lateral_jerk, v_ego,
   )

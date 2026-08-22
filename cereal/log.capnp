@@ -2780,7 +2780,8 @@ struct Event {
     bookmarkButton @148 :UserBookmark;
     audioFeedback @149 :AudioFeedback;
     chestnutState @152 :ChestnutState;
-    naviData @153 :NaviData;
+    visionSpeedLimitBookmark @153 :UserBookmark;
+    naviData @154 :NaviData;
 
     lateralManeuverPlan @150 :LateralManeuverPlan;
     # *********** debug ***********

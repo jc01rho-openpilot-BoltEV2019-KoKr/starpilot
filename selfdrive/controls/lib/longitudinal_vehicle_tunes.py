@@ -34,6 +34,8 @@ TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MAX_DISTANCE = 100.0
 TOYOTA_RAV4_TSS2_RADAR_FOLLOW_DISTANCE_TIME = 4.5
 TOYOTA_RAV4_TSS2_RADAR_FOLLOW_DISTANCE_OFFSET = 32.0
 TOYOTA_RAV4_TSS2_RADAR_FOLLOW_MAX_LATERAL_OFFSET = 1.75
+TOYOTA_RAV4_TSS2_FAR_FOLLOW_BRAKE_SLEW_RATE = 2.5
+TOYOTA_RAV4_TSS2_FAR_FOLLOW_RELEASE_SLEW_RATE = 1.75
 TOYOTA_CAMRY_TSS2_FORCE_STOP_HANDOFF_M = 4.5
 # The Camry's force-stop path otherwise consumes the model endpoint before the
 # normal MPC stop-distance margin can be applied. Keep it within the forward
@@ -131,6 +133,11 @@ def get_far_follow_output_slew_rates(CP):
     return (
       HONDA_HRV_3G_FAR_FOLLOW_BRAKE_SLEW_RATE,
       HONDA_HRV_3G_FAR_FOLLOW_RELEASE_SLEW_RATE,
+    )
+  if is_toyota_rav4_tss2_post_departure_tune(CP):
+    return (
+      TOYOTA_RAV4_TSS2_FAR_FOLLOW_BRAKE_SLEW_RATE,
+      TOYOTA_RAV4_TSS2_FAR_FOLLOW_RELEASE_SLEW_RATE,
     )
   return 0.0, 0.0
 

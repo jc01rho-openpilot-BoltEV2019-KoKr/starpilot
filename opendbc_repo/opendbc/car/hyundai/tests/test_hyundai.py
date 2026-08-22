@@ -1044,6 +1044,24 @@ class TestHyundaiFingerprint:
     assert reset_state.accel_last == pytest.approx(0.0)
     assert reset_state.long_control_state_last == LongCtrlState.off
 
+  def test_kia_ev6_gt_line_testing_ground_longitudinal_params(self, monkeypatch):
+    toggles = get_test_toggles()
+    CP = CarInterface.get_params(CAR.KIA_EV6, gen_empty_fingerprint(), [], True, False, False, toggles)
+    CP.carVin = "00000000000000000"
+
+    monkeypatch.setattr(
+      "opendbc.car.hyundai.interface.testing_ground",
+      SimpleNamespace(use=lambda slot_id: slot_id == "5"),
+    )
+    CarInterface.apply_post_fingerprint_params(CP, CAR.KIA_EV6, gen_empty_fingerprint(), [])
+
+    assert CP.startAccel == pytest.approx(1.4)
+    assert CP.vEgoStarting == pytest.approx(0.5)
+    assert CP.longitudinalActuatorDelay == pytest.approx(0.35)
+
+    assert kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, CP.carVin, testing_ground_active=True)
+    assert not kia_ev6_gt_line_longitudinal_tuning(CAR.KIA_EV6_2025, CP.carVin, testing_ground_active=True)
+
   def test_kia_ev6_non_gt_line_keeps_family_longitudinal_params(self):
     toggles = get_test_toggles()
     CP = CarInterface.get_params(CAR.KIA_EV6, gen_empty_fingerprint(), [], True, False, False, toggles)

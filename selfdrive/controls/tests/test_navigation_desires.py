@@ -71,7 +71,7 @@ def test_nav_desires_turn_right_below_lane_change_speed():
   helper._nav_instruction_state = {"valid": True, "maneuverModifier": "right", "maneuverDistance": 10.0}
 
   helper.update(
-    make_car_state(vEgo=5.0),
+    make_car_state(vEgo=5.0, rightBlinker=True),
     True,
     0.0,
     make_plan(),
@@ -79,6 +79,24 @@ def test_nav_desires_turn_right_below_lane_change_speed():
   )
 
   assert helper.desire == log.Desire.turnRight
+
+
+def test_nav_desires_turn_requires_matching_blinker():
+  for modifier, opposite_blinker in (("left", "rightBlinker"), ("right", "leftBlinker")):
+    helper = DesireHelper()
+    helper.nav_desires_allowed = True
+    helper._update_nav_params = lambda: None
+    helper._nav_instruction_state = {"valid": True, "maneuverModifier": modifier, "maneuverDistance": 10.0}
+
+    helper.update(
+      make_car_state(vEgo=5.0, **{opposite_blinker: True}),
+      True,
+      0.0,
+      make_plan(),
+      make_toggles(minimum_lane_change_speed=10.0, nav_lane_positioning_allowed=False),
+    )
+
+    assert helper.desire == log.Desire.none
 
 
 def test_nav_desires_turn_right_waits_until_turn_is_close():

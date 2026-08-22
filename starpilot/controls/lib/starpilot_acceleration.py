@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import math
+
 import numpy as np
 
 from openpilot.common.constants import CV
@@ -79,6 +81,9 @@ RELEVANT_LEAD_MIN_BRAKE = -0.4
 PULSE_GLIDE_MIN_TARGET_SPEED = 5.0
 PULSE_GLIDE_MIN_LOWER_SPEED = 3.0
 PULSE_GLIDE_HYSTERESIS = 0.25
+PULSE_GLIDE_COAST_MIN_ACCEL = -0.03
+PULSE_GLIDE_HILL_ENTER_PITCH = math.radians(3.0)
+PULSE_GLIDE_HILL_EXIT_PITCH = math.radians(2.5)
 
 # Drive mode -> profile mapping used by the map_acceleration / map_deceleration toggles.
 GEAR_STATE_PROFILES = {
@@ -153,11 +158,37 @@ class StarPilotAcceleration:
     self.last_gear_state = "init"
     self.pulse_glide_coasting = False
     self.pulse_glide_target = None
+    self.pulse_glide_hill_paused = False
+
+  def _update_pulse_glide_hill_pause(self, sm):
+    try:
+      orientation_ned = sm["carControl"].orientationNED
+      if len(orientation_ned) < 2:
+        return self.pulse_glide_hill_paused
+      abs_pitch = abs(float(orientation_ned[1]))
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+      return self.pulse_glide_hill_paused
+
+    if not math.isfinite(abs_pitch):
+      return self.pulse_glide_hill_paused
+
+    if self.pulse_glide_hill_paused:
+      if abs_pitch <= PULSE_GLIDE_HILL_EXIT_PITCH:
+        self.pulse_glide_hill_paused = False
+    elif abs_pitch >= PULSE_GLIDE_HILL_ENTER_PITCH:
+      self.pulse_glide_hill_paused = True
+
+    return self.pulse_glide_hill_paused
 
   def _update_pulse_glide(self, v_ego, sm, starpilot_toggles):
     self.pulse_glide_target = None
     pulse_glide_enabled = bool(getattr(sm["starpilotCarState"], "pulseAndGlide", False))
     if not pulse_glide_enabled:
+      self.pulse_glide_coasting = False
+      self.pulse_glide_hill_paused = False
+      return False
+
+    if self._update_pulse_glide_hill_pause(sm):
       self.pulse_glide_coasting = False
       return False
 
@@ -254,8 +285,10 @@ class StarPilotAcceleration:
       self.max_accel -= self.max_accel * self.starpilot_planner.starpilot_weather.reduce_acceleration
 
     pulse_glide_coasting = self._update_pulse_glide(v_ego, sm, starpilot_toggles)
-    if sm["starpilotCarState"].forceCoast or pulse_glide_coasting:
+    if sm["starpilotCarState"].forceCoast:
       self.min_accel = A_CRUISE_MIN_ECO
+    elif pulse_glide_coasting:
+      self.min_accel = PULSE_GLIDE_COAST_MIN_ACCEL
     elif sm["starpilotCarState"].trafficModeEnabled:
       self.min_accel = A_CRUISE_MIN_TRAFFIC
     elif starpilot_toggles.map_deceleration and (eco_gear or sport_gear):

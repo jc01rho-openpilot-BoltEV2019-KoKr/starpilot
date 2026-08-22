@@ -12,13 +12,15 @@ from opendbc.car.hyundai.values import HyundaiFlags, CAR, CarControllerParams, \
                                                    CAN_CANFD_BLENDED_HDA2_LONGITUDINAL_CAR, \
                                                    HyundaiStarPilotSafetyFlags, \
                                                    hyundai_cancel_button_enables_cruise, \
-                                                   kia_ev6_gt_line_longitudinal_tuning
+                                                   kia_ev6_gt_line_longitudinal_tuning, \
+                                                   KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID
 from opendbc.car.hyundai.radar_interface import get_radar_track_config, radar_tracks_available
 from opendbc.car.interfaces import CarInterfaceBase, ACCEL_MIN
 from opendbc.car.disable_ecu import disable_ecu, ecu_log
 from opendbc.car.hyundai.carcontroller import CarController
 from opendbc.car.hyundai.carstate import CarState
 from opendbc.car.hyundai.radar_interface import RadarInterface
+from openpilot.starpilot.common.testing_grounds import testing_ground
 
 ButtonType = structs.CarState.ButtonEvent.Type
 Ecu = structs.CarParams.Ecu
@@ -106,7 +108,8 @@ class CarInterface(CarInterfaceBase):
 
   @staticmethod
   def apply_post_fingerprint_params(CP: structs.CarParams, candidate, fingerprint, car_fw) -> None:
-    if kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, CP.carVin):
+    gt_line_testing_ground = testing_ground.use(KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID)
+    if kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, CP.carVin, gt_line_testing_ground):
       apply_kia_ev6_gt_line_longitudinal_params(CP)
 
   @staticmethod

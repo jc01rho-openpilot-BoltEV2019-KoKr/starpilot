@@ -165,13 +165,18 @@ class TestCarInterfaces:
       "Center_Stack_2": {"LKAS_Button": 1},
     }, is_ram=True)
 
-  def test_chrysler_wd_mod_enables_steer_to_zero(self):
+  @pytest.mark.parametrize("candidate", (
+    CHRYSLER_CAR.CHRYSLER_PACIFICA_2020,
+    CHRYSLER_CAR.JEEP_GRAND_CHEROKEE,
+    CHRYSLER_CAR.JEEP_GRAND_CHEROKEE_2019,
+  ))
+  def test_chrysler_steer_to_zero_module(self, candidate):
     fingerprint = {bus: {} for bus in range(8)}
     fingerprint[0][0x4FF] = 8
     toggles = get_test_starpilot_toggles()
 
     car_params = ChryslerCarInterface.get_params(
-      CHRYSLER_CAR.CHRYSLER_PACIFICA_2020,
+      candidate,
       fingerprint,
       [],
       alpha_long=False,
@@ -182,7 +187,7 @@ class TestCarInterfaces:
     assert car_params.minSteerSpeed > 0.
 
     fp_car_params = ChryslerCarInterface.get_starpilot_params(
-      CHRYSLER_CAR.CHRYSLER_PACIFICA_2020,
+      candidate,
       fingerprint,
       [],
       car_params,
@@ -206,11 +211,14 @@ class TestCarInterfaces:
       button_message="CRUISE_BUTTONS",
       auto_high_beam=0,
     )
+    controller.update(CC, CS, 0, toggles)
+    controller.update(CC, CS, 0, toggles)
     _, can_sends = controller.update(CC, CS, 0, toggles)
 
     lkas_parser = CANParser(CHRYSLER_DBC[car_params.carFingerprint][Bus.pt], [("LKAS_COMMAND", 50)], 0)
     lkas_parser.update([0, can_sends])
     assert lkas_parser.vl["LKAS_COMMAND"]["LKAS_CONTROL_BIT"] == 1
+    assert lkas_parser.vl["LKAS_COMMAND"]["STEERING_TORQUE"] != 0
 
   @pytest.mark.parametrize("candidate", (CHRYSLER_CAR.JEEP_GRAND_CHEROKEE, CHRYSLER_CAR.JEEP_GRAND_CHEROKEE_2019))
   def test_jeep_brake_hold_safety_capability_is_provisioned(self, candidate):

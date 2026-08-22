@@ -2,6 +2,7 @@
 import dataclasses
 import json
 import requests
+import tempfile
 import threading
 import time
 
@@ -33,6 +34,10 @@ from openpilot.starpilot.common.starpilot_variables import (
   ERROR_LOGS_PATH, STARPILOT_API, FROGS_GO_MOO_PATH, HD_LOGS_PATH, KONIK_LOGS_PATH, MAPS_PATH, THEME_SAVE_PATH,
   StarPilotVariables, get_starpilot_toggles
 )
+
+BOOT_LOGO_JPEG_PATH = Path("/usr/comma/bg.jpg")
+BOOT_LOGO_PNG_PATH = Path("/usr/comma/bg.png")
+BOOT_LOGO_MAGIC_PATH = Path("/usr/comma/magic.py")
 
 
 def seed_desktop_theme_assets():
@@ -163,8 +168,6 @@ def update_boot_logo(starpilot=False, stock=False, selected_logo=None):
   if HARDWARE.get_device_type() == "pc":
     return
 
-  boot_logo_location = Path("/usr/comma/bg.jpg")
-
   if starpilot:
     target_logo = Path(BASEDIR) / "starpilot/assets/other_images/starpilot_boot_logo.jpg"
     if selected_logo:
@@ -184,30 +187,57 @@ def update_boot_logo(starpilot=False, stock=False, selected_logo=None):
     print(f"Error: Target logo file not found at {target_logo}")
     return
 
-  source_logo = target_logo
-  staged_logo = Path("/tmp/starpilot_boot_logo.jpg")
   try:
     from PIL import Image
 
-    with Image.open(target_logo) as img:
-      # weston.service always writes a JPEG copy of /usr/comma/bg.jpg; make sure
-      # the source image is already RGB JPEG to avoid startup failure on RGBA assets.
-      if img.format != "JPEG" or img.mode != "RGB":
-        img.convert("RGB").save(staged_logo, format="JPEG", quality=95)
-        source_logo = staged_logo
+    with tempfile.TemporaryDirectory(prefix="starpilot_boot_logo_") as staging_dir:
+      staging_path = Path(staging_dir)
+      staged_jpeg = staging_path / "bg.jpg"
+      staged_png = staging_path / "bg.png"
+
+      with Image.open(target_logo) as img:
+        normalized_logo = img.convert("RGB")
+        if normalized_logo.width >= normalized_logo.height:
+          landscape_logo = normalized_logo
+          weston_logo = normalized_logo.transpose(Image.Transpose.ROTATE_270)
+        else:
+          weston_logo = normalized_logo
+          landscape_logo = normalized_logo.transpose(Image.Transpose.ROTATE_90)
+
+        magic_uses_jpeg = False
+        try:
+          magic_uses_jpeg = BOOT_LOGO_JPEG_PATH.as_posix() in BOOT_LOGO_MAGIC_PATH.read_text()
+        except OSError:
+          pass
+
+        (landscape_logo if magic_uses_jpeg else weston_logo).save(staged_jpeg, format="JPEG", quality=95)
+        landscape_logo.save(staged_png, format="PNG")
+
+      logo_variants = [(staged_jpeg, BOOT_LOGO_JPEG_PATH)]
+      if BOOT_LOGO_PNG_PATH.is_file():
+        logo_variants.append((staged_png, BOOT_LOGO_PNG_PATH))
+
+      pending_updates = [
+        (source, destination)
+        for source, destination in logo_variants
+        if not destination.is_file() or destination.read_bytes() != source.read_bytes()
+      ]
+      if not pending_updates:
+        return
+
+      mount_options = run_cmd(["findmnt", "-n", "-o", "OPTIONS", "/"], "Successfully retrieved mount options", "Failed to retrieve mount options")
+      if mount_options is None:
+        return
+      if run_cmd(["sudo", "mount", "-o", "remount,rw", "/"], "Successfully remounted / as read-write", "Failed to remount /") is None:
+        return
+
+      try:
+        for source, destination in pending_updates:
+          run_cmd(["sudo", "cp", source, destination], f"Successfully replaced boot logo at {destination}", f"Failed to replace boot logo at {destination}")
+      finally:
+        run_cmd(["sudo", "mount", "-o", f"remount,{mount_options}", "/"], "Successfully restored / mount options", "Failed to restore / mount options")
   except Exception as error:
     print(f"Error normalizing boot logo {target_logo}: {error}")
-    if target_logo.suffix.lower() not in {".jpg", ".jpeg"}:
-      print("Skipping boot logo update to keep weston startup stable.")
-      return
-
-  current_logo = boot_logo_location.read_bytes() if boot_logo_location.is_file() else b""
-  desired_logo = source_logo.read_bytes()
-  if current_logo != desired_logo:
-    mount_options = run_cmd(["findmnt", "-n", "-o", "OPTIONS", "/"], "Successfully retrieved mount options", "Failed to retrieve mount options")
-    run_cmd(["sudo", "mount", "-o", "remount,rw", "/"], "Successfully remounted / as read-write", "Failed to remount /")
-    run_cmd(["sudo", "cp", source_logo, boot_logo_location], "Successfully replaced boot logo", "Failed to replace boot logo")
-    run_cmd(["sudo", "mount", "-o", f"remount,{mount_options}", "/"], "Successfully restored / mount options", "Failed to restore / mount options")
 
 
 MAPS_DOWNLOAD_PROGRESS_PARAM = "MapsDownloadProgress"

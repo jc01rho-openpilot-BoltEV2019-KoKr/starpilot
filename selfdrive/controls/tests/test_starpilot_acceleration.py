@@ -1,3 +1,4 @@
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ from openpilot.starpilot.common.accel_profile import A_CRUISE_MAX_BP_CUSTOM, ACC
 from openpilot.starpilot.controls.lib.starpilot_acceleration import (
   A_CRUISE_MIN_ECO,
   A_CRUISE_MIN_TRAFFIC,
+  PULSE_GLIDE_COAST_MIN_ACCEL,
   StarPilotAcceleration,
   get_max_accel_eco,
   get_max_accel_standard,
@@ -55,9 +57,11 @@ def make_lead(status=False, d_rel=150.0, v_lead=0.0, a_lead_k=0.0):
 
 
 def make_sm(*, set_speed_kph=100.0, lead_one=None, lead_two=None, standstill=False, force_decel=False,
-            eco_gear=False, sport_gear=False, force_coast=False, pulse_and_glide=False, traffic_mode=False, v_ego_cluster=0.0):
+            eco_gear=False, sport_gear=False, force_coast=False, pulse_and_glide=False, traffic_mode=False,
+            v_ego_cluster=0.0, pitch=0.0):
   return {
     "carState": SimpleNamespace(vCruise=set_speed_kph, standstill=standstill, vEgoCluster=v_ego_cluster),
+    "carControl": SimpleNamespace(orientationNED=[0.0, pitch, 0.0]),
     "controlsState": SimpleNamespace(forceDecel=force_decel),
     "radarState": SimpleNamespace(
       leadOne=lead_one or make_lead(),
@@ -222,7 +226,7 @@ def test_pulse_and_glide_coasts_at_set_speed_then_resumes_below_delta():
   accel.update(set_speed, make_sm(set_speed_kph=100.0, pulse_and_glide=True), toggles)
   assert accel.pulse_glide_coasting is True
   assert accel.pulse_glide_target == pytest.approx(set_speed - delta)
-  assert accel.min_accel == pytest.approx(A_CRUISE_MIN_ECO)
+  assert accel.min_accel == pytest.approx(PULSE_GLIDE_COAST_MIN_ACCEL)
 
   accel.update((90.0 * CV.KPH_TO_MS) - 0.05, make_sm(set_speed_kph=100.0, pulse_and_glide=True), toggles)
   assert accel.pulse_glide_coasting is False
@@ -232,7 +236,23 @@ def test_pulse_and_glide_coasts_at_set_speed_then_resumes_below_delta():
   accel.update(99.8 * CV.KPH_TO_MS, make_sm(set_speed_kph=100.0, pulse_and_glide=True), toggles)
   assert accel.pulse_glide_coasting is True
   assert accel.pulse_glide_target == pytest.approx(set_speed - delta)
-  assert accel.min_accel == pytest.approx(A_CRUISE_MIN_ECO)
+  assert accel.min_accel == pytest.approx(PULSE_GLIDE_COAST_MIN_ACCEL)
+
+
+def test_pulse_and_glide_pauses_on_steep_grade_then_resumes():
+  set_speed = 100.0 * CV.KPH_TO_MS
+  delta = 10.0 * CV.KPH_TO_MS
+  accel = StarPilotAcceleration(FakePlanner(v_cruise=set_speed))
+  toggles = make_toggles(pulse_glide_speed_delta=delta)
+
+  accel.update(set_speed, make_sm(set_speed_kph=100.0, pulse_and_glide=True, pitch=math.radians(4.0)), toggles)
+  assert accel.pulse_glide_coasting is False
+  assert accel.pulse_glide_hill_paused is True
+
+  accel.update(set_speed, make_sm(set_speed_kph=100.0, pulse_and_glide=True, pitch=math.radians(2.0)), toggles)
+  assert accel.pulse_glide_coasting is True
+  assert accel.pulse_glide_hill_paused is False
+  assert accel.min_accel == pytest.approx(PULSE_GLIDE_COAST_MIN_ACCEL)
 
 
 def test_pulse_and_glide_is_inert_when_disabled():

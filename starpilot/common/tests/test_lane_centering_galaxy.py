@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 
-_LAYOUT_PATH = Path(__file__).resolve().parents[2] / "system/the_galaxy/assets/components/tools/device_settings_layout.json"
+_LAYOUT_PATH = Path(__file__).resolve().parents[1] / "assets/device_settings_layout.json"
 
 
 def _sections():

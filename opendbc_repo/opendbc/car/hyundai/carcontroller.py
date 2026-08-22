@@ -9,10 +9,12 @@ from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CANFD_ANGLE_LONGITUDINAL_CAR, \
-                                        CANFD_RADAR_LIVE_LONGITUDINAL_CAR, kia_ev6_gt_line_longitudinal_tuning
+                                        CANFD_RADAR_LIVE_LONGITUDINAL_CAR, kia_ev6_gt_line_longitudinal_tuning, \
+                                        KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.common.params import Params
+from openpilot.starpilot.common.testing_grounds import testing_ground
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -79,7 +81,10 @@ BLINDSPOT_WARNING_SOUND_SAMPLES = 36
 
 def egmp_dynamic_longitudinal_tuning(CP) -> bool:
   return CP.carFingerprint in (CAR.HYUNDAI_IONIQ_6, CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5_PE) or \
-    kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, getattr(CP, "carVin", ""))
+    kia_ev6_gt_line_longitudinal_tuning(
+      CP.carFingerprint, getattr(CP, "carVin", ""),
+      testing_ground.use(KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID),
+    )
 
 
 def get_canfd_scc_decel_step(CP) -> float:
@@ -87,7 +92,10 @@ def get_canfd_scc_decel_step(CP) -> float:
 
 
 def should_reset_ev6_gt_line_longitudinal_tuning(CP, long_control_state: LongCtrlState) -> bool:
-  return kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, getattr(CP, "carVin", "")) and \
+  return kia_ev6_gt_line_longitudinal_tuning(
+    CP.carFingerprint, getattr(CP, "carVin", ""),
+    testing_ground.use(KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID),
+  ) and \
     long_control_state == LongCtrlState.off
 
 
@@ -631,7 +639,10 @@ class CarController(CarControllerBase):
 
     use_egmp_dynamic_long_tuning = egmp_dynamic_longitudinal_tuning(self.CP) and self.long_active_ecu and \
                                    actuators.longControlState in (LongCtrlState.starting, LongCtrlState.pid, LongCtrlState.stopping)
-    is_ev6_gt_line = kia_ev6_gt_line_longitudinal_tuning(self.CP.carFingerprint, getattr(self.CP, "carVin", ""))
+    is_ev6_gt_line = kia_ev6_gt_line_longitudinal_tuning(
+      self.CP.carFingerprint, getattr(self.CP, "carVin", ""),
+      testing_ground.use(KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID),
+    )
     is_ccnc_angle_long = self.CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR
     if is_ccnc_angle_long and (self._ev9_long_tuning.stop_request or not CC.enabled or CC.cruiseControl.override):
       self._ioniq_6_long_tuning = reset_egmp_longitudinal_tuning(self._ioniq_6_long_tuning)

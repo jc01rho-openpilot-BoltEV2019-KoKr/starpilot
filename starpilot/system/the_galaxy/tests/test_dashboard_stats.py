@@ -212,7 +212,42 @@ def _install_server_import_stubs():
       },
     ),
     FAVORITE_SLOTS_PARAM="FavoriteSlots",
+    SETTINGS_CATALOG_PATH=MODULE_DIR.parents[1] / "common/assets/device_settings_layout.json",
+    build_favorite_slot_options=lambda *args, **kwargs: [
+      {
+        "key": "__starpilot_favorite_action__:distance_decrease",
+        "label": "Distance - / SET",
+        "description": "Acts like a short press of the car's SET/- cruise button.",
+        "section": "Actions",
+        "action": "decelCruise",
+      },
+      {
+        "key": "__starpilot_favorite_action__:distance_increase",
+        "label": "Distance + / RES",
+        "description": "Acts like a short press of the car's RES/+ cruise button.",
+        "section": "Actions",
+        "action": "accelCruise",
+      },
+    ],
+    filter_favorite_slot_options=lambda options, capabilities=None: [
+      dict(option)
+      for option in options
+      if not option.get("requiresCapability") or (capabilities or {}).get(option["requiresCapability"], False)
+    ],
+    get_favorite_values=lambda items, params=None: {
+      (item if isinstance(item, str) else item.get("key")): (
+        bool(params.get_bool(item if isinstance(item, str) else item.get("key")))
+        if params is not None and hasattr(params, "get_bool")
+        else False
+      )
+      for item in items
+      if (item if isinstance(item, str) else (isinstance(item, dict) and item.get("key")))
+      and not str(item if isinstance(item, str) else item.get("key", "")).startswith("__starpilot_favorite_action__:")
+    },
     is_favorite_action_key=lambda key: str(key or "").startswith("__starpilot_favorite_action__:"),
+    load_settings_catalog=lambda layout_path=None: json.loads(
+      (Path(layout_path) if layout_path else MODULE_DIR.parents[1] / "common/assets/device_settings_layout.json").read_text()
+    ),
     normalize_favorite_slots=lambda *args, **kwargs: "",
     trigger_favorite_action=_trigger_stub_favorite_action,
   )

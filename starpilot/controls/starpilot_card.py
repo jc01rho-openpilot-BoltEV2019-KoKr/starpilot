@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from opendbc.car import structs
 from opendbc.car.chrysler.values import pacifica_hybrid_aol_requires_set_press
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, HyundaiFlags
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
@@ -168,6 +169,8 @@ class StarPilotCard:
 
     button_event_types = [self._button_type_raw(be) for be in carState.buttonEvents]
     button_aol_supported = self.CP.brand == "hyundai" or starpilot_toggles.lkas_allowed_for_aol
+    if getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.HYUNDAI_SONATA_HYBRID:
+      button_aol_supported = bool(starpilot_toggles.lkas_allowed_for_aol)
     button_managed_aol = starpilot_toggles.always_on_lateral_lkas or (button_aol_supported and starpilot_toggles.main_cruise_aol_toggle)
     g70_main_cruise_aol_managed = (
       getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.GENESIS_G70_2020
@@ -273,6 +276,18 @@ class StarPilotCard:
       self.gap_counter += 1
     elif not self.distancePressed_previously:
       self.gap_counter = 0
+
+    distance_released = not starpilotCarState.distancePressed and self.distancePressed_previously
+    has_distance_release = any(
+      self._button_type_raw(be) == int(ButtonType.gapAdjustCruise) and not be.pressed
+      for be in carState.buttonEvents
+    )
+    if getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.HYUNDAI_ELANTRA_HEV_2024 and \
+        distance_released and not has_distance_release:
+      carState.buttonEvents = [
+        *carState.buttonEvents,
+        structs.CarState.ButtonEvent(pressed=False, type=ButtonType.gapAdjustCruise),
+      ]
 
     self.distancePressed_previously = starpilotCarState.distancePressed
 
