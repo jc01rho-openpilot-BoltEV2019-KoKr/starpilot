@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-LAYOUT_PATH = REPO_ROOT / "starpilot/system/the_galaxy/assets/components/tools/device_settings_layout.json"
+LAYOUT_PATH = REPO_ROOT / "starpilot/common/assets/device_settings_layout.json"
 PARAM_KEYS_PATH = REPO_ROOT / "common/params_keys.h"
 
 
@@ -196,12 +196,12 @@ def test_human_acceleration_param_is_removed():
   assert '{"HumanAcceleration",' not in params_source
 
 
-def test_rivian_angle_control_is_live_favorite_and_harness_gated():
+def test_rivian_angle_control_is_harness_gated():
   sections = _params_by_section(_layout())
   setting = sections["Vehicle"]["RivianAngleControl"]
 
   assert setting["ui_type"] == "toggle"
-  assert setting["favorite_eligible"] is True
+  assert setting["data_type"] == "bool"
   assert setting["requires_capability"] == "HasRivianAngleHarness"
   assert "reboot" not in setting["description"].lower()
   assert _declared_default("RivianAngleControl") == "0"

@@ -27,6 +27,15 @@ MAX_LATERAL_ACCEL = ISO_LATERAL_ACCEL - ACCELERATION_DUE_TO_GRAVITY * 0.06
 PATH_ANGLE_MIN = -0.5
 PATH_ANGLE_MAX = 0.5235
 STEER_DT = CarControllerParams.STEER_STEP * DT_CTRL
+CURVATURE_LOOKAHEAD_MIN = 0.20
+CURVATURE_LOOKAHEAD_MAX = 0.40
+HANDOFF_PRESS_SECONDS = 0.5
+HANDOFF_PAUSE_FRAMES = 6
+HANDOFF_COOLDOWN_SECONDS = 2.0
+HANDOFF_MAX_PATH_ANGLE = 0.10
+STALL_GAP_MIN = 2.0 * CarControllerParams.CURVATURE_ERROR
+STALL_HOLD_SECONDS = 0.5
+STALL_MAX_RECOVERIES = 3
 
 CANFD_BODY_ON_FRAME = frozenset({
   CAR.FORD_F_150_MK14,
@@ -113,6 +122,12 @@ class FordLateralController:
     self.curvature_samples = deque(maxlen=max(2, round(0.3 / STEER_DT)))
     self.path_angle_last = 0.0
     self.curvature_last = 0.0
+    self.handoff_press_timer = 0.0
+    self.handoff_driver_override = False
+    self.angle_pause_frames = 0
+    self.angle_pause_cooldown = 0.0
+    self.angle_stall_timer = 0.0
+    self.angle_stall_recoveries = 0
     self._frame = 0
     self._update_params()
 
@@ -152,6 +167,14 @@ class FordLateralController:
     curvatures = np.asarray(self.model.orientationRate.z) / max(v_ego, 0.01)
     return float(np.interp(lookup_time, ModelConstants.T_IDXS, curvatures))
 
+  def _curvature_lookahead(self) -> float:
+    if self.sm is None:
+      return CURVATURE_LOOKAHEAD_MIN
+    live_delay = float(self.sm["liveDelay"].lateralDelay)
+    if not np.isfinite(live_delay):
+      return CURVATURE_LOOKAHEAD_MIN
+    return float(np.clip(live_delay, CURVATURE_LOOKAHEAD_MIN, CURVATURE_LOOKAHEAD_MAX))
+
   def _lane_change(self) -> tuple[bool, int]:
     if self.model is None:
       return False, 0
@@ -188,16 +211,57 @@ class FordLateralController:
     return self.human_turn.update(
       self.human_turn_enabled, CS.out.steeringPressed, CS.out.steeringAngleDeg)
 
+  def _reset_handoff(self):
+    self.handoff_press_timer = 0.0
+    self.handoff_driver_override = False
+    self.angle_pause_frames = 0
+    self.angle_pause_cooldown = 0.0
+    self.angle_stall_timer = 0.0
+    self.angle_stall_recoveries = 0
+
+  def _driver_handoff_active(self, CS) -> bool:
+    if not self.human_turn_enabled:
+      self._reset_handoff()
+      return False
+
+    if CS.out.steeringPressed:
+      self.handoff_press_timer += STEER_DT
+      self.handoff_driver_override |= self.handoff_press_timer + 1e-9 >= HANDOFF_PRESS_SECONDS
+    else:
+      if self.handoff_driver_override:
+        self.angle_pause_cooldown = HANDOFF_COOLDOWN_SECONDS
+      self.handoff_driver_override = False
+      self.handoff_press_timer = 0.0
+
+    return self.handoff_driver_override
+
+  def _inactive_angle_result(self, current_curvature: float) -> FordLateralResult:
+    self.path_angle_last = 0.0
+    return FordLateralResult(shadow_curvature=current_curvature)
+
   def update_curvature(self, CC, CS, actuators) -> FordLateralResult:
-    if not CC.latActive or self._manual_turn(CC, CS) or CS.out.vEgoRaw < 0.1:
+    current = self._current_curvature(CS)
+    if not CC.latActive:
+      self.human_turn.reset()
+      self._reset_handoff()
       self.curvature_samples.clear()
       self.curvature_last = 0.0
-      return FordLateralResult(shadow_curvature=self._current_curvature(CS))
+      return FordLateralResult(shadow_curvature=current)
+
+    if self._manual_turn(CC, CS):
+      self._reset_handoff()
+      self.curvature_samples.clear()
+      self.curvature_last = 0.0
+      return FordLateralResult(shadow_curvature=current)
+
+    if self._driver_handoff_active(CS) or CS.out.vEgoRaw < 0.1:
+      self.curvature_samples.clear()
+      self.curvature_last = 0.0
+      return FordLateralResult(shadow_curvature=current)
 
     v_ego = float(CS.out.vEgoRaw)
-    predicted = self._predicted_curvature(v_ego, 0.2)
+    predicted = self._predicted_curvature(v_ego, self._curvature_lookahead())
     requested, precision = self._blend_and_scale(float(actuators.curvature), predicted, v_ego, False)
-    current = self._current_curvature(CS)
 
     if v_ego > 9.0:
       requested = float(np.clip(requested, current - CarControllerParams.CURVATURE_ERROR,
@@ -237,9 +301,26 @@ class FordLateralController:
 
   def update_angle(self, CC, CS, actuators) -> FordLateralResult:
     current = self._current_curvature(CS)
-    if not CC.latActive or self._manual_turn(CC, CS):
-      self.path_angle_last = 0.0
-      return FordLateralResult(shadow_curvature=current)
+    if not CC.latActive:
+      self.human_turn.reset()
+      self._reset_handoff()
+      return self._inactive_angle_result(current)
+
+    if self._manual_turn(CC, CS):
+      self._reset_handoff()
+      return self._inactive_angle_result(current)
+
+    if self._driver_handoff_active(CS):
+      return self._inactive_angle_result(current)
+
+    if self.human_turn_enabled:
+      if self.angle_pause_frames > 0:
+        self.angle_pause_frames -= 1
+        if self.angle_pause_frames == 0:
+          self.angle_pause_cooldown = HANDOFF_COOLDOWN_SECONDS
+        return self._inactive_angle_result(current)
+
+    self.angle_pause_cooldown = max(0.0, self.angle_pause_cooldown - STEER_DT)
 
     v_ego = float(CS.out.vEgoRaw)
     live_delay = 0.12 if self.sm is None else float(np.clip(self.sm["liveDelay"].lateralDelay, 0.1, 0.15))
@@ -249,9 +330,11 @@ class FordLateralController:
     predicted = self._predicted_curvature(v_ego, lookup_time)
     requested, precision = self._blend_and_scale(float(actuators.curvature), predicted, v_ego, True)
 
+    requested_before_deviation_limit = requested
     if v_ego > 9.0:
       requested = float(np.clip(requested, current - CarControllerParams.CURVATURE_ERROR,
                                 current + CarControllerParams.CURVATURE_ERROR))
+    deviation_limited = abs(requested - requested_before_deviation_limit) > 1e-9
 
     low_gain_high_speed, high_gain_high_speed = self._platform_angle_gains()
     low_gain = float(np.interp(v_ego, [13.5, 26.82],
@@ -265,6 +348,25 @@ class FordLateralController:
     max_delta = float(np.interp(v_ego, [9.0, 10.0, 15.0, 25.0], [0.055, 0.055, 0.0425, 0.009]))
     path_angle = float(np.clip(path_angle, self.path_angle_last - max_delta, self.path_angle_last + max_delta))
     self.path_angle_last = path_angle
+
+    lane_change = self._lane_change()[0]
+    stall_gap = float(actuators.curvature) - current
+    stalled = (self.human_turn_enabled and not CS.out.steeringPressed and not lane_change and v_ego > 9.0
+               and abs(stall_gap) > STALL_GAP_MIN
+               and abs(float(actuators.curvature)) > abs(current))
+    if stalled:
+      if deviation_limited and self.angle_pause_cooldown <= 0.0:
+        self.angle_stall_timer += STEER_DT
+      if (self.angle_stall_timer + 1e-9 >= STALL_HOLD_SECONDS
+          and self.angle_stall_recoveries < STALL_MAX_RECOVERIES
+          and abs(self.path_angle_last) < HANDOFF_MAX_PATH_ANGLE):
+        self.angle_pause_frames = HANDOFF_PAUSE_FRAMES
+        self.angle_stall_timer = 0.0
+        self.angle_stall_recoveries += 1
+    else:
+      self.angle_stall_timer = 0.0
+      if CS.out.steeringPressed or abs(stall_gap) < 0.5 * STALL_GAP_MIN:
+        self.angle_stall_recoveries = 0
 
     shadow = current if CS.out.steeringPressed else requested
     return FordLateralResult(

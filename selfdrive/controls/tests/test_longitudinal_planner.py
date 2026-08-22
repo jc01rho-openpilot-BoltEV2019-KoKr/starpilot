@@ -25,6 +25,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import (
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   allow_radar_standstill_gap_settle,
+  get_far_follow_output_slew_rates,
   get_follow_prebrake_min_headway,
   get_toyota_rav4_tss2_early_lead_cap,
   get_toyota_sienna_post_departure_restop_cap,
@@ -237,6 +238,28 @@ def test_non_hrv_has_no_vehicle_far_follow_output_slew():
   )
 
   assert target == pytest.approx(-1.0)
+
+
+def test_rav4_far_follow_output_slew_damps_vision_lead_chatter():
+  v_ego = 24.0
+  CP = ToyotaCarInterface.get_non_essential_params(TOYOTA_CAR.TOYOTA_RAV4_TSS2_2023)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  planner.lead_one = make_lead(status=True, d_rel=58.0, v_lead=20.0, model_prob=0.99)
+  planner.lead_two = make_lead(status=False)
+
+  brake_rate, release_rate = get_far_follow_output_slew_rates(CP)
+  assert brake_rate > 0.0
+  assert release_rate > 0.0
+
+  initial = planner.get_vehicle_far_follow_slew_target(
+    v_ego, prev_target=0.0, target=-0.6, output_should_stop=False, panic_bypass=False,
+  )
+  smoothed = planner.get_vehicle_far_follow_slew_target(
+    v_ego, prev_target=initial, target=0.4, output_should_stop=False, panic_bypass=False,
+  )
+
+  assert initial == pytest.approx(-0.6)
+  assert smoothed == pytest.approx(initial + release_rate * planner.dt)
 
 
 def test_depart_release_hold_rejects_nearby_stopped_lead_conflict():

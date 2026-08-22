@@ -11,6 +11,9 @@ const state = reactive({
   params: {},
   status: {},
   event: {},
+  history: [],
+  historyVisible: false,
+  historyBusy: false,
   liveCapture: {},
   testBusy: false,
   liveBusy: false,
@@ -38,8 +41,26 @@ async function fetchStatus() {
     const payload = await response.json()
     state.status = payload.status || {}
     state.event = payload.lastEvent || {}
+    if (state.historyVisible && !state.historyBusy) fetchHistory()
   } catch (error) {
     console.error("Failed to fetch Sentry status:", error)
+  }
+}
+
+async function fetchHistory() {
+  state.historyBusy = true
+  try {
+    const response = await fetch(galaxyPath("/api/sentry/events"), { cache: "no-store" })
+    const payload = await readJsonResponse(response)
+    if (!response.ok) {
+      showSnackbar(payload.error || "Failed to load Sentry history.")
+      return
+    }
+    state.history = Array.isArray(payload.events) ? payload.events : []
+  } catch (error) {
+    showSnackbar(error.message || "Failed to load Sentry history.")
+  } finally {
+    state.historyBusy = false
   }
 }
 
@@ -48,6 +69,11 @@ function startPolling() {
   fetchParams()
   fetchStatus()
   pollTimer = window.setInterval(fetchStatus, 5000)
+}
+
+async function toggleHistory() {
+  state.historyVisible = !state.historyVisible
+  if (state.historyVisible) await fetchHistory()
 }
 
 function numericParam(key, fallback) {
@@ -154,8 +180,8 @@ async function sendTestNotification() {
   }
 }
 
-async function deleteEvent() {
-  const eventId = String(state.event?.eventId || "")
+async function deleteEvent(eventId) {
+  eventId = String(eventId || "")
   if (!eventId || state.deleteBusy) return
   if (!window.confirm("Delete this Sentry event and its camera images? This cannot be undone.")) return
 
@@ -169,7 +195,11 @@ async function deleteEvent() {
       showSnackbar(payload.error || "Sentry event deletion failed.")
       return
     }
-    state.event = {}
+    state.history = state.history.filter((event) => String(event.eventId || "") !== eventId)
+    if (String(state.event?.eventId || "") === eventId) {
+      state.event = {}
+      await fetchStatus()
+    }
     showSnackbar("Sentry event deleted.")
   } catch (error) {
     showSnackbar(error.message || "Network error — is the device reachable?")
@@ -178,8 +208,8 @@ async function deleteEvent() {
   }
 }
 
-function renderEvent() {
-  const event = state.event || {}
+function renderEvent(event = state.event) {
+  event = event || {}
   if (!event.eventId) return html`<p class="sentry-empty">No Sentry events recorded yet.</p>`
 
   return html`
@@ -199,6 +229,29 @@ function renderEvent() {
     ` : event.kind === "power_off"
       ? html`<p class="sentry-empty">Power-off alerts do not include camera captures because the device is shutting down.</p>`
       : html`<p class="sentry-empty">No camera images were available for this event.</p>`}
+  `
+}
+
+function renderHistory() {
+  if (!state.historyVisible) return ""
+  if (state.historyBusy) return html`<p class="sentry-loading">Loading Sentry history…</p>`
+  if (state.history.length === 0) return html`<p class="sentry-empty">No retained Sentry events.</p>`
+
+  return html`
+    <div class="sentry-history-list">
+      <p class="sentry-muted">${state.history.length} event${state.history.length === 1 ? "" : "s"} retained. Events stay here until you delete them.</p>
+      ${state.history.map((event) => html`
+        <article class="sentry-history-event">
+          <div class="sentry-history-heading">
+            <strong>${event.detectedAt || "Sentry event"}</strong>
+            <button class="sentry-button sentry-button-danger" @click="${() => deleteEvent(event.eventId)}" disabled="${() => state.deleteBusy}">
+              ${() => state.deleteBusy ? "Deleting…" : "Delete event"}
+            </button>
+          </div>
+          ${renderEvent(event)}
+        </article>
+      `)}
+    </div>
   `
 }
 
@@ -360,19 +413,23 @@ export function SentryMode() {
             <p class="sentry-muted">Events refresh automatically every five seconds.</p>
           </div>
           <div class="sentry-action-row">
+            <button class="sentry-button sentry-button-secondary" @click="${toggleHistory}" disabled="${() => state.historyBusy}">
+              ${() => state.historyBusy ? "Loading…" : state.historyVisible ? "Hide history" : "View history"}
+            </button>
             ${remote ? "" : html`
               <button class="sentry-button sentry-button-secondary" @click="${sendTestEvent}" disabled="${() => state.testBusy}">
                 ${() => state.testBusy ? "Capturing…" : "Send test capture"}
               </button>
             `}
             ${() => state.event?.eventId ? html`
-              <button class="sentry-button sentry-button-danger" @click="${deleteEvent}" disabled="${() => state.deleteBusy}">
+              <button class="sentry-button sentry-button-danger" @click="${() => deleteEvent(state.event.eventId)}" disabled="${() => state.deleteBusy}">
                 ${() => state.deleteBusy ? "Deleting…" : "Delete event"}
               </button>
             ` : ""}
           </div>
         </div>
         ${() => renderEvent()}
+        ${() => renderHistory()}
       </section>
     </div>
   `

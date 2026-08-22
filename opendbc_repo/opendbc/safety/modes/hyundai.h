@@ -90,6 +90,7 @@ static const CanMsg HYUNDAI_LONG_REFRESH_TX_MSGS[] = {
 
 static bool hyundai_legacy = false;
 static bool hyundai_can_canfd_blended_hda2 = false;
+static bool hyundai_acc_main_on_rx_prev = false;
 
 #define HYUNDAI_CAN_CANFD_BLENDED_HDA2_COMMON_RX_CHECKS()                                                                                                      \
   {.msg = {{0x260, 1, 8, 100U, .max_counter = 3U, .ignore_quality_flag = true},                                                                                \
@@ -193,7 +194,12 @@ static void hyundai_rx_hook(const CANPacket_t *msg) {
   if (msg->addr == 0x420U) {
     if (msg->bus == scc_bus) {
       if (!hyundai_longitudinal) {
-        acc_main_on = GET_BIT(msg, hyundai_can_canfd_blended ? 27U : 0U);
+        const bool acc_main_on_rx = GET_BIT(msg, hyundai_can_canfd_blended ? 27U : 0U);
+        if (hyundai_aol_main_lkas_sync && (acc_main_on_rx != hyundai_acc_main_on_rx_prev)) {
+          lkas_on = false;
+        }
+        acc_main_on = acc_main_on_rx;
+        hyundai_acc_main_on_rx_prev = acc_main_on_rx;
       }
     }
   }
@@ -442,6 +448,8 @@ static safety_config hyundai_init(uint16_t param) {
   hyundai_common_init(param);
   hyundai_legacy = false;
   hyundai_can_canfd_blended_hda2 = hyundai_can_canfd_blended && hyundai_canfd_lka_steering;
+  hyundai_aol_main_lkas_sync = GET_FLAG(param, 32U);
+  hyundai_acc_main_on_rx_prev = false;
 
   if (hyundai_can_canfd_blended) {
     gen_crc_lookup_table_16(0x1021, hyundai_canfd_crc_lut);

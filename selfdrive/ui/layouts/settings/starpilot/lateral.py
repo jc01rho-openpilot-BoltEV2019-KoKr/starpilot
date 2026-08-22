@@ -362,7 +362,7 @@ class StarPilotLateralLayout(_SettingsPage):
     self._ford_rows = [
       SettingRow(
         "FordLateralMode", "value", tr_noop("Steering Strategy"),
-        subtitle=tr_noop("Native keeps the existing Ford controls. Curvature and Angle enable the enhanced Ford strategies."),
+        subtitle=tr_noop("Curvature is the tuned default. Angle is available for comparison; Native preserves the original controls."),
         get_value=self._get_ford_lateral_mode,
         on_click=self._show_ford_lateral_mode,
       ),

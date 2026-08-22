@@ -4,9 +4,11 @@ from collections.abc import Iterable
 from hypothesis import settings, given, strategies as st
 from parameterized import parameterized
 
+from opendbc.car import gen_empty_fingerprint
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
-from opendbc.car.ford.values import CAR, FW_QUERY_CONFIG, FW_PATTERN, get_platform_codes, match_vin_to_car
+from opendbc.car.ford.interface import CarInterface
+from opendbc.car.ford.values import CAR, FW_QUERY_CONFIG, FW_PATTERN, FordSafetyFlags, get_platform_codes, match_vin_to_car
 from opendbc.car.ford.fingerprints import FW_VERSIONS
 
 Ecu = CarParams.Ecu
@@ -154,3 +156,19 @@ class TestFordFW:
     live_fw[(0x760, None)] = {b"M1MC-2D053-XX\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"}
     candidates = FW_QUERY_CONFIG.match_fw_to_car_fuzzy(live_fw, '', {expected_fingerprint: offline_fw})
     assert len(candidates) == 0, "Should not match new model year hint"
+
+
+def test_mach_e_longitudinal_toggle_controls_stock_acc_selection():
+  stock = CarInterface.get_params(
+    CAR.FORD_MUSTANG_MACH_E_MK1, gen_empty_fingerprint(), [], False, False, False, None)
+  enhanced = CarInterface.get_params(
+    CAR.FORD_MUSTANG_MACH_E_MK1, gen_empty_fingerprint(), [], True, False, False, None)
+
+  assert stock.alphaLongitudinalAvailable
+  assert not stock.openpilotLongitudinalControl
+  assert stock.pcmCruise
+  assert not (stock.safetyConfigs[-1].safetyParam & FordSafetyFlags.LONG_CONTROL)
+
+  assert enhanced.alphaLongitudinalAvailable
+  assert enhanced.openpilotLongitudinalControl
+  assert enhanced.safetyConfigs[-1].safetyParam & FordSafetyFlags.LONG_CONTROL

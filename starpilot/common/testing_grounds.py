@@ -63,9 +63,10 @@ TESTING_GROUNDS_SLOT_DEFINITIONS = (
   },
   {
     "id": TESTING_GROUND_5,
-    "name": "Unused",
-    "description": "Unused slot.",
+    "name": "EV6 GT-Line Long",
+    "description": "Kia EV6 GT-Line longitudinal tuning sandbox.",
     "aLabel": "A - Installed tune",
+    "bLabel": "B - EV6 GT-Line long tune",
   },
   {
     "id": TESTING_GROUND_6,

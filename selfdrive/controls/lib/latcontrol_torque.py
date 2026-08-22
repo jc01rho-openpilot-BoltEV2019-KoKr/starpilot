@@ -592,6 +592,8 @@ class LatControlTorque(LatControl):
       elif sienna_4th_gen_active:
         output_torque *= get_sienna_4th_gen_center_taper_scale(setpoint, CS.vEgo)
         output_torque *= get_sienna_4th_gen_high_speed_output_taper_scale(CS.vEgo)
+      elif toyota_highlander_tss2_active:
+        output_torque *= get_toyota_highlander_tss2_output_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif toyota_corolla_tss2_active:
         output_torque *= get_toyota_corolla_tss2_center_output_scale(setpoint, CS.vEgo)
       elif prius_active:

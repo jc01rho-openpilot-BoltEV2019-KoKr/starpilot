@@ -46,9 +46,7 @@ BURN_IN_SHIFT_TRANSITION_SECONDS = min(
   BURN_IN_SHIFT_INTERVAL,
   max(0.1, float(os.getenv("BURN_IN_SHIFT_TRANSITION_SECONDS", "1"))),
 )
-WHITE_LUMINANCE_CAP = min(1.0, max(0.0, float(os.getenv(
-  "WHITE_LUMINANCE_CAP", "1.0"
-))))
+WHITE_LUMINANCE_CAP = min(1.0, max(0.0, float(os.getenv("WHITE_LUMINANCE_CAP", "1.0"))))
 SHOW_FPS = os.getenv("SHOW_FPS") == "1"
 SHOW_TOUCHES = os.getenv("SHOW_TOUCHES") == "1"
 STRICT_MODE = os.getenv("STRICT_MODE") == "1"
@@ -66,6 +64,7 @@ OFFSCREEN = os.getenv("OFFSCREEN") == "1"  # Disable FPS limiting for fast offli
 
 def _raylib_target_fps(fps: int) -> int:
   return 0 if OFFSCREEN else fps
+
 
 GL_VERSION = """
 #version 300 es
@@ -88,7 +87,9 @@ BURN_IN_SHIFT_PATTERN = (
   (0, 1),
   (-1, 1),
 )
-BURN_IN_VERTEX_SHADER = GL_VERSION + """
+BURN_IN_VERTEX_SHADER = (
+  GL_VERSION
+  + """
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 uniform mat4 mvp;
@@ -98,7 +99,10 @@ void main() {
   gl_Position = mvp * vec4(vertexPosition, 1.0);
 }
 """
-BURN_IN_FRAGMENT_SHADER = GL_VERSION + """
+)
+BURN_IN_FRAGMENT_SHADER = (
+  GL_VERSION
+  + """
 in vec2 fragTexCoord;
 uniform sampler2D texture0;
 out vec4 fragColor;
@@ -114,7 +118,10 @@ void main() {
   fragColor = vec4(gradient, sampled.a);
 }
 """
-WHITE_LUMINANCE_FRAGMENT_SHADER = GL_VERSION + """
+)
+WHITE_LUMINANCE_FRAGMENT_SHADER = (
+  GL_VERSION
+  + """
 in vec2 fragTexCoord;
 uniform sampler2D texture0;
 uniform float whiteLuminanceCap;
@@ -137,6 +144,7 @@ void main() {
   fragColor = sampled;
 }
 """
+)
 
 DEFAULT_TEXT_SIZE = 60
 DEFAULT_TEXT_COLOR = rl.Color(255, 255, 255, int(255 * 0.9))
@@ -159,6 +167,7 @@ class FontWeight(StrEnum):
   BOLD = "Inter-Bold.fnt"
   SEMI_BOLD = "Inter-SemiBold.fnt"
   UNIFONT = "unifont.fnt"
+  BRAND = "como-heavy.fnt"
 
   # Small UI fonts
   DISPLAY_REGULAR = "Inter-Regular.fnt"
@@ -175,9 +184,7 @@ def _font_supports_text(font: rl.Font, text: str) -> bool:
 
   texture_id = font.texture.id
   if texture_id not in _font_codepoint_cache:
-    _font_codepoint_cache[texture_id] = frozenset(
-      font.glyphs[index].value for index in range(font.glyphCount)
-    )
+    _font_codepoint_cache[texture_id] = frozenset(font.glyphs[index].value for index in range(font.glyphCount))
 
   codepoints = _font_codepoint_cache[texture_id]
   return all(ord(character) in codepoints for character in text if character not in "\r\n")
@@ -240,14 +247,14 @@ class DesktopMouseProvider:
 class MacOSDesktopMouseProvider(DesktopMouseProvider):
   def __init__(self):
     import Quartz
+
     self._quartz = Quartz
 
   def sample(self) -> tuple[MousePos, bool]:
     q = self._quartz
     loc = q.CGEventGetLocation(q.CGEventCreate(None))
-    left_down = (
-      q.CGEventSourceButtonState(q.kCGEventSourceStateHIDSystemState, q.kCGMouseButtonLeft) or
-      q.CGEventSourceButtonState(q.kCGEventSourceStateCombinedSessionState, q.kCGMouseButtonLeft)
+    left_down = q.CGEventSourceButtonState(q.kCGEventSourceStateHIDSystemState, q.kCGMouseButtonLeft) or q.CGEventSourceButtonState(
+      q.kCGEventSourceStateCombinedSessionState, q.kCGMouseButtonLeft
     )
     return MousePos(loc.x, loc.y), bool(left_down)
 
@@ -255,6 +262,7 @@ class MacOSDesktopMouseProvider(DesktopMouseProvider):
 class LinuxDesktopMouseProvider(DesktopMouseProvider):
   def __init__(self):
     from Xlib import X, display
+
     self._button_mask = X.Button1Mask
     self._display = display.Display()
     self._root = self._display.screen().root
@@ -270,6 +278,7 @@ class LinuxDesktopMouseProvider(DesktopMouseProvider):
 class WindowsDesktopMouseProvider(DesktopMouseProvider):
   def __init__(self):
     import ctypes
+
     self._ctypes = ctypes
     self._user32 = ctypes.windll.user32
 
@@ -376,13 +385,15 @@ class MouseState:
       left_released = prev_left_down and not left_down
       if left_pressed or left_released or pos != prev_pos:
         with self._lock:
-          self._desktop_samples.append(DesktopMouseSample(
-            pos,
-            left_pressed,
-            left_released,
-            left_down,
-            time.monotonic(),
-          ))
+          self._desktop_samples.append(
+            DesktopMouseSample(
+              pos,
+              left_pressed,
+              left_released,
+              left_down,
+              time.monotonic(),
+            )
+          )
 
       prev_pos = pos
       prev_left_down = left_down
@@ -437,35 +448,39 @@ class MouseState:
             (sample.pos.x - window_pos.x) / scale,
             (sample.pos.y - window_pos.y) / scale,
           )
-          event = self._debounce_desktop_mouse_event(MouseEvent(
-            local_pos,
-            0,
-            sample.left_pressed,
-            sample.left_released,
-            sample.left_down,
-            sample.t,
-          ))
+          event = self._debounce_desktop_mouse_event(
+            MouseEvent(
+              local_pos,
+              0,
+              sample.left_pressed,
+              sample.left_released,
+              sample.left_down,
+              sample.t,
+            )
+          )
           if event is not None:
             self._append_mouse_event(event)
         return
 
       left_down = rl.is_mouse_button_down(rl.MouseButton.MOUSE_BUTTON_LEFT)  # noqa: TID251
       left_pressed = (
-        rl.is_mouse_button_pressed(rl.MouseButton.MOUSE_BUTTON_LEFT) or  # noqa: TID251
-        (left_down and not self._desktop_left_down)
+        rl.is_mouse_button_pressed(rl.MouseButton.MOUSE_BUTTON_LEFT)  # noqa: TID251
+        or (left_down and not self._desktop_left_down)
       )
       left_released = (
-        rl.is_mouse_button_released(rl.MouseButton.MOUSE_BUTTON_LEFT) or  # noqa: TID251
-        (self._desktop_left_down and not left_down)
+        rl.is_mouse_button_released(rl.MouseButton.MOUSE_BUTTON_LEFT)  # noqa: TID251
+        or (self._desktop_left_down and not left_down)
       )
-      self._append_mouse_event(MouseEvent(
-        self._desktop_mouse_pos(),
-        0,
-        left_pressed,
-        left_released,
-        left_down,
-        time.monotonic(),
-      ))
+      self._append_mouse_event(
+        MouseEvent(
+          self._desktop_mouse_pos(),
+          0,
+          left_pressed,
+          left_released,
+          left_down,
+          time.monotonic(),
+        )
+      )
       self._desktop_left_down = left_down
       return
 
@@ -473,14 +488,16 @@ class MouseState:
       mouse_pos = rl.get_touch_position(slot)
       x = mouse_pos.x / self._scale if self._scale != 1.0 else mouse_pos.x
       y = mouse_pos.y / self._scale if self._scale != 1.0 else mouse_pos.y
-      self._append_mouse_event(MouseEvent(
-        MousePos(x, y),
-        slot,
-        rl.is_mouse_button_pressed(slot),  # noqa: TID251
-        rl.is_mouse_button_released(slot),  # noqa: TID251
-        rl.is_mouse_button_down(slot),
-        time.monotonic(),
-      ))
+      self._append_mouse_event(
+        MouseEvent(
+          MousePos(x, y),
+          slot,
+          rl.is_mouse_button_pressed(slot),  # noqa: TID251
+          rl.is_mouse_button_released(slot),  # noqa: TID251
+          rl.is_mouse_button_down(slot),
+          time.monotonic(),
+        )
+      )
 
   def _append_mouse_event(self, ev: MouseEvent):
     if ev.left_pressed and ev.left_released:
@@ -629,8 +646,10 @@ class GuiApplication:
 
   def init_window(self, title: str, fps: int = _DEFAULT_FPS):
     with self._startup_profile_context():
+
       def _request_close(sig, frame):
         self.request_close()
+
       signal.signal(signal.SIGINT, _request_close)
       atexit.register(self.close)
 
@@ -649,10 +668,14 @@ class GuiApplication:
 
       # Keep big-UI burn-in movement in final-frame composition. Translating the live EGL
       # camera/widget pass can corrupt the camera presentation instead of shifting the UI.
-      needs_render_texture = ((self._scale != 1.0 and not PC) or BURN_IN_MODE or RECORD or
-                              MICI_FORCE_RENDER_TEXTURE or
-                              (BURN_IN_PREVENTION and DEVICE_TYPE != "mici") or
-                              WHITE_LUMINANCE_CAP < 1.0)
+      needs_render_texture = (
+        (self._scale != 1.0 and not PC)
+        or BURN_IN_MODE
+        or RECORD
+        or MICI_FORCE_RENDER_TEXTURE
+        or (BURN_IN_PREVENTION and DEVICE_TYPE != "mici")
+        or WHITE_LUMINANCE_CAP < 1.0
+      )
       if PC and self._scale != 1.0:
         rl.set_mouse_scale(1 / self._scale, 1 / self._scale)
       if PC:
@@ -667,26 +690,38 @@ class GuiApplication:
         output_fps = fps * RECORD_SPEED
         ffmpeg_args = [
           'ffmpeg',
-          '-v', 'warning',          # Reduce ffmpeg log spam
-          '-nostats',               # Suppress encoding progress
-          '-f', 'rawvideo',         # Input format
-          '-pix_fmt', 'rgba',       # Input pixel format
-          '-s', f'{self._render_texture_width}x{self._render_texture_height}',  # Input resolution
-          '-r', str(fps),           # Input frame rate
-          '-i', 'pipe:0',           # Input from stdin
-          '-vf', 'vflip,format=yuv420p',  # Flip vertically and convert to yuv420p
-          '-r', str(output_fps),    # Output frame rate (for speed multiplier)
-          '-c:v', 'libx264',
-          '-preset', 'veryfast',
-          '-crf', str(RECORD_QUALITY)
+          '-v',
+          'warning',  # Reduce ffmpeg log spam
+          '-nostats',  # Suppress encoding progress
+          '-f',
+          'rawvideo',  # Input format
+          '-pix_fmt',
+          'rgba',  # Input pixel format
+          '-s',
+          f'{self._render_texture_width}x{self._render_texture_height}',  # Input resolution
+          '-r',
+          str(fps),  # Input frame rate
+          '-i',
+          'pipe:0',  # Input from stdin
+          '-vf',
+          'vflip,format=yuv420p',  # Flip vertically and convert to yuv420p
+          '-r',
+          str(output_fps),  # Output frame rate (for speed multiplier)
+          '-c:v',
+          'libx264',
+          '-preset',
+          'veryfast',
+          '-crf',
+          str(RECORD_QUALITY),
         ]
         if RECORD_BITRATE:
           # NOTE: custom bitrate overrides crf setting
           ffmpeg_args += ['-b:v', RECORD_BITRATE, '-maxrate', RECORD_BITRATE, '-bufsize', RECORD_BITRATE]
         ffmpeg_args += [
-          '-y',                     # Overwrite existing file
-          '-f', 'mp4',              # Output format
-          RECORD_OUTPUT,            # Output file path
+          '-y',  # Overwrite existing file
+          '-f',
+          'mp4',  # Output format
+          RECORD_OUTPUT,  # Output file path
         ]
         self._ffmpeg_proc = subprocess.Popen(ffmpeg_args, stdin=subprocess.PIPE)
         self._ffmpeg_queue = queue.Queue(maxsize=60)  # Buffer up to 60 frames
@@ -708,8 +743,7 @@ class GuiApplication:
         self._white_luminance_shader = rl.load_shader_from_memory(BURN_IN_VERTEX_SHADER, WHITE_LUMINANCE_FRAGMENT_SHADER)
         cap_location = rl.get_shader_location(self._white_luminance_shader, "whiteLuminanceCap")
         cap_value = rl.ffi.new("float[]", [WHITE_LUMINANCE_CAP])
-        rl.set_shader_value(self._white_luminance_shader, cap_location, cap_value,
-                            rl.ShaderUniformDataType.SHADER_UNIFORM_FLOAT)
+        rl.set_shader_value(self._white_luminance_shader, cap_location, cap_value, rl.ShaderUniformDataType.SHADER_UNIFORM_FLOAT)
 
       if not PC:
         self._mouse.start()
@@ -849,8 +883,9 @@ class GuiApplication:
     if should_render:
       self.request_high_fps()
 
-  def texture(self, asset_path: str, width: int | None = None, height: int | None = None,
-              alpha_premultiply=False, keep_aspect_ratio=True, flip_x: bool = False) -> rl.Texture:
+  def texture(
+    self, asset_path: str, width: int | None = None, height: int | None = None, alpha_premultiply=False, keep_aspect_ratio=True, flip_x: bool = False
+  ) -> rl.Texture:
     if width is not None:
       width = round(width)
     if height is not None:
@@ -872,8 +907,7 @@ class GuiApplication:
     self._textures[cache_key] = texture_obj
     return texture_obj
 
-  def cached_render_texture(self, cache_key: str, width: int, height: int,
-                            render: Callable[[], None]) -> object | None:
+  def cached_render_texture(self, cache_key: str, width: int, height: int, render: Callable[[], None]) -> object | None:
     """Return a cached texture, scheduling cache misses between frames.
 
     Raylib render-texture modes are not nestable. Widgets call this while the
@@ -884,9 +918,7 @@ class GuiApplication:
     if cached is not None:
       return cached.texture
 
-    self._pending_render_textures.setdefault(
-      cache_key, (max(1, int(width)), max(1, int(height)), render)
-    )
+    self._pending_render_textures.setdefault(cache_key, (max(1, int(width)), max(1, int(height)), render))
     return None
 
   def _populate_render_texture_cache(self) -> None:
@@ -907,9 +939,12 @@ class GuiApplication:
         # resulting texture can then be composited with BLEND_ALPHA_PREMULTIPLY
         # without squaring translucent vector alpha.
         rl.rl_set_blend_factors_separate(
-          rl.RL_SRC_ALPHA, rl.RL_ONE_MINUS_SRC_ALPHA,
-          rl.RL_ONE, rl.RL_ONE_MINUS_SRC_ALPHA,
-          rl.RL_FUNC_ADD, rl.RL_FUNC_ADD,
+          rl.RL_SRC_ALPHA,
+          rl.RL_ONE_MINUS_SRC_ALPHA,
+          rl.RL_ONE,
+          rl.RL_ONE_MINUS_SRC_ALPHA,
+          rl.RL_FUNC_ADD,
+          rl.RL_FUNC_ADD,
         )
         rl.begin_blend_mode(rl.BlendMode.BLEND_CUSTOM_SEPARATE)
         began_blend_mode = True
@@ -928,8 +963,15 @@ class GuiApplication:
       rl.set_texture_wrap(cached.texture, rl.TextureWrap.TEXTURE_WRAP_CLAMP)
       self._cached_render_textures[cache_key] = cached
 
-  def _load_image_from_path(self, image_path: str, width: int | None = None, height: int | None = None,
-                            alpha_premultiply: bool = False, keep_aspect_ratio: bool = True, flip_x: bool = False) -> rl.Image:
+  def _load_image_from_path(
+    self,
+    image_path: str,
+    width: int | None = None,
+    height: int | None = None,
+    alpha_premultiply: bool = False,
+    keep_aspect_ratio: bool = True,
+    flip_x: bool = False,
+  ) -> rl.Image:
     """Load and resize an image, storing it for later automatic unloading."""
     image = rl.load_image(image_path)
 
@@ -1047,6 +1089,7 @@ class GuiApplication:
     try:
       if self._profile_render_frames > 0:
         import cProfile
+
         self._render_profiler = cProfile.Profile()
         self._render_profile_start_time = time.monotonic()
         self._render_profiler.enable()
@@ -1108,7 +1151,7 @@ class GuiApplication:
 
         # Only render top widgets
         self._mark_progress("gui_app.before_widget_render")
-        for widget in self._nav_stack[-self._nav_stack_widgets_to_render:]:
+        for widget in self._nav_stack[-self._nav_stack_widgets_to_render :]:
           widget.render(rl.Rectangle(0, 0, self.width, self.height))
         self._mark_progress("gui_app.after_widget_render")
 
@@ -1267,9 +1310,7 @@ class GuiApplication:
       return
 
     def _begin_scissor_mode_scaled(x, y, width, height):
-      return rl._orig_begin_scissor_mode(
-        int(x * scale_x), int(y * scale_y),
-        int(math.ceil(width * scale_x)), int(math.ceil(height * scale_y)))
+      return rl._orig_begin_scissor_mode(int(x * scale_x), int(y * scale_y), int(math.ceil(width * scale_x)), int(math.ceil(height * scale_y)))
 
     rl.begin_scissor_mode = _begin_scissor_mode_scaled
 
@@ -1381,14 +1422,14 @@ class GuiApplication:
     green = "\033[92m"
     reset = "\033[0m"
     print(f"\n{green}Rendered {self._frame} frames in {elapsed_ms:.1f} ms{reset}")
-    print(f"{green}Average frame time: {avg_frame_time:.2f} ms ({1000/avg_frame_time:.1f} FPS){reset}")
+    print(f"{green}Average frame time: {avg_frame_time:.2f} ms ({1000 / avg_frame_time:.1f} FPS){reset}")
     sys.exit(0)
 
   def _calculate_auto_scale(self) -> float:
     if os.getenv("SP_HEADLESS_TEST") == "1":
       return 1.0
 
-     # Create temporary window to query monitor info
+    # Create temporary window to query monitor info
     rl.init_window(1, 1, "")
     w, h = rl.get_monitor_width(0), rl.get_monitor_height(0)
     rl.close_window()

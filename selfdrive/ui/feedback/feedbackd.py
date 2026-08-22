@@ -13,7 +13,7 @@ def main():
   params = Params()
   params_memory = Params(memory=True)
   pm = messaging.PubMaster(['userBookmark', 'audioFeedback'])
-  sm = messaging.SubMaster(['rawAudioData', 'bookmarkButton', 'carState'])
+  sm = messaging.SubMaster(['rawAudioData', 'bookmarkButton', 'visionSpeedLimitBookmark', 'carState'])
   should_record_audio = False
   block_num = 0
   waiting_for_release = False
@@ -62,6 +62,10 @@ def main():
 
     if sm.updated['bookmarkButton']:
       cloudlog.info("Bookmark button pressed!")
+      bookmark_requests += 1
+
+    if sm.updated['visionSpeedLimitBookmark']:
+      cloudlog.info("Vision speed limit bookmark requested!")
       bookmark_requests += 1
 
     wheel_bookmark_counter = params_memory.get_int("WheelButtonBookmarkCounter")

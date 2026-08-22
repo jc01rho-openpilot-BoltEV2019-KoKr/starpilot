@@ -112,6 +112,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_toyota_highlander_tss2_ff_scale,
   get_toyota_highlander_tss2_friction_scale,
   get_toyota_highlander_tss2_friction_threshold,
+  get_toyota_highlander_tss2_output_taper_scale,
   get_toyota_corolla_tss2_center_output_scale,
   get_toyota_corolla_tss2_ff_scale,
   get_lexus_is_ff_scale,
@@ -1032,6 +1033,13 @@ class TestLatControl:
     turn_scale = get_toyota_highlander_tss2_friction_scale(9.0, 0.8, 0.8)
     assert 0.90 < unwind_scale < 1.0
     assert turn_scale == pytest.approx(1.0)
+
+    unwind_output = get_toyota_highlander_tss2_output_taper_scale(0.8, -0.8, 9.0)
+    turn_output = get_toyota_highlander_tss2_output_taper_scale(0.8, 0.8, 9.0)
+    highway_output = get_toyota_highlander_tss2_output_taper_scale(0.8, -0.8, 28.0)
+    assert 0.80 < unwind_output < 1.0
+    assert turn_output == pytest.approx(1.0)
+    assert highway_output > unwind_output
 
   def test_rav4_prime_forced_torque_update_path(self, monkeypatch):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(TOYOTA.TOYOTA_RAV4_PRIME, force_torque=True)

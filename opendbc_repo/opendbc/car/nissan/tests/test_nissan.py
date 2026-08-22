@@ -148,17 +148,17 @@ def test_leaf_ecu_disable_is_strict_and_falls_back(monkeypatch, ecu_disabled):
   assert calls[0]["addr"] == 0x707
   assert calls[0]["bus"] == 0
   assert calls[0]["response_offset"] == 0x20
-  assert calls[0]["require_response"] is True
-  assert calls[0]["diag_request"] == b"\x10\xf0"
-  assert calls[0]["diag_response"] == b"\x50\xf0"
-  assert calls[0]["com_cont_req"] == b"\x28\x01"
+  assert calls[0]["require_response"] is False
+  assert calls[0]["diag_request"] == b"\x10\xc0"
+  assert calls[0]["diag_response"] == b"\x50\xc0"
+  assert calls[0]["com_cont_req"] == b"\x28\x02"
   assert calls[0]["retry"] == 1
   assert CP.openpilotLongitudinalControl is ecu_disabled
   assert CP.pcmCruise is not ecu_disabled
   assert bool(CP.safetyConfigs[-1].safetyParam & NissanSafetyFlags.LONG_CONTROL) is ecu_disabled
 
 
-def test_leaf_kwp_data_monitor_session_can_confirm_ecu_disable(monkeypatch):
+def test_leaf_kwp_no_response_disable_can_confirm_ecu_silence(monkeypatch):
   CP = CarInterface.get_params(CAR.NISSAN_LEAF, gen_empty_fingerprint(), SUPPORTED_LEAF_FW, True, False, False, None)
 
   monkeypatch.setattr("opendbc.car.nissan.interface.disable_ecu", lambda *args, **kwargs: True)

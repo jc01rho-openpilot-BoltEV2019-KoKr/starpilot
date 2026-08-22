@@ -36,6 +36,10 @@ TOYOTA_SIENNA_COMFORT_FILTER_MIN_TTC = 4.5
 TOYOTA_SIENNA_COMFORT_FILTER_MAX_CLOSING_SPEED = 4.0
 TOYOTA_SIENNA_COMFORT_FILTER_MAX_LEAD_BRAKE = 2.5
 TOYOTA_SIENNA_COMFORT_FILTER_BRAKE_BYPASS = -2.5
+TOYOTA_SIENNA_LEAD_DEPARTURE_MAX_SPEED = 8.0
+TOYOTA_SIENNA_LEAD_DEPARTURE_MIN_SPEED_DELTA = 0.25
+TOYOTA_SIENNA_LEAD_DEPARTURE_ACCEL_CAP_BP = [0.0, 1.0, 3.0, 6.0, TOYOTA_SIENNA_LEAD_DEPARTURE_MAX_SPEED]
+TOYOTA_SIENNA_LEAD_DEPARTURE_ACCEL_CAP_V = [1.0, 1.15, 1.35, 1.55, 1.70]
 TOYOTA_COROLLA_TARGET_FILTER_MAX_SPEED = 3.0
 TOYOTA_COROLLA_TARGET_FILTER_UP_TAU = 0.30
 TOYOTA_COROLLA_TARGET_FILTER_DOWN_TAU = 0.18
@@ -335,6 +339,33 @@ class LongControlVehicleTuning:
     alpha = DT_CTRL / (tau + DT_CTRL)
     self.toyota_sienna_filtered_a_target += alpha * (float(a_target) - self.toyota_sienna_filtered_a_target)
     return self.toyota_sienna_filtered_a_target
+
+  def cap_toyota_sienna_lead_departure_accel(self, a_target, v_ego, leads=None):
+    """Keep a nearby departing lead from producing a low-speed launch kick."""
+    if (
+      not self.is_toyota_sienna_4g or
+      a_target <= 0.0 or
+      v_ego >= TOYOTA_SIENNA_LEAD_DEPARTURE_MAX_SPEED or
+      not leads
+    ):
+      return a_target
+
+    departing_lead = next((
+      lead for lead in leads
+      if bool(getattr(lead, "status", False)) and
+      abs(float(getattr(lead, "yRel", 0.0))) <= 1.75 and
+      0.0 < float(getattr(lead, "dRel", 0.0)) <= 30.0 and
+      float(getattr(lead, "vLead", 0.0)) > v_ego + TOYOTA_SIENNA_LEAD_DEPARTURE_MIN_SPEED_DELTA
+    ), None)
+    if departing_lead is None:
+      return a_target
+
+    accel_cap = float(interp(
+      v_ego,
+      TOYOTA_SIENNA_LEAD_DEPARTURE_ACCEL_CAP_BP,
+      TOYOTA_SIENNA_LEAD_DEPARTURE_ACCEL_CAP_V,
+    ))
+    return min(float(a_target), accel_cap)
 
   def shape_toyota_corolla_accel_target(self, a_target, v_ego, should_stop, last_output_accel):
     """Smooth low-speed Corolla TSS2 stop releases without delaying hard braking."""

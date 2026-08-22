@@ -1,2 +1,4 @@
 fonts/*.fnt
 fonts/*.png
+!fonts/como-heavy.fnt
+!fonts/como-heavy.png

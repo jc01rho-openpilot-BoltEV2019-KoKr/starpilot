@@ -346,7 +346,7 @@ class SpeedLimitVisionDaemon:
       from openpilot.common.realtime import Ratekeeper
 
       self.messaging = messaging
-      self.pm = messaging.PubMaster(["userBookmark"])
+      self.pm = messaging.PubMaster(["visionSpeedLimitBookmark"])
       self.params = Params(return_defaults=True)
       self.params_memory = Params(memory=True)
       self.is_metric = self.params.get_bool("IsMetric")
@@ -799,8 +799,8 @@ class SpeedLimitVisionDaemon:
     if not self.use_runtime or self.pm is None or self.messaging is None:
       return
     self.ignore_next_user_bookmark = True
-    msg = self.messaging.new_message("userBookmark", valid=True)
-    self.pm.send("userBookmark", msg)
+    msg = self.messaging.new_message("visionSpeedLimitBookmark", valid=True)
+    self.pm.send("visionSpeedLimitBookmark", msg)
 
   def _maybe_commit_auto_bookmark(self, now):
     pending = self.pending_auto_bookmark

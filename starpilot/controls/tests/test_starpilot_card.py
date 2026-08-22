@@ -219,6 +219,48 @@ def make_wrapped_button_event(button_type, pressed):
   return SimpleNamespace(type=SimpleNamespace(raw=int(button_type)), pressed=pressed)
 
 
+@pytest.mark.parametrize(
+  ("car_fingerprint", "expect_normalized_release"),
+  (
+    (spc.HYUNDAI_CAR.HYUNDAI_ELANTRA_HEV_2024, True),
+    (spc.HYUNDAI_CAR.HYUNDAI_ELANTRA_2024, False),
+  ),
+)
+def test_distance_release_normalization_is_limited_to_reported_elantra_hybrid(
+    monkeypatch, tmp_path, car_fingerprint, expect_normalized_release,
+):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(
+    SimpleNamespace(brand="hyundai", carFingerprint=car_fingerprint),
+    SimpleNamespace(alternativeExperience=0),
+  )
+  toggles = make_toggles(
+    experimental_mode_via_distance=False,
+    bookmark_via_distance=False,
+    force_coast_via_distance=False,
+    pulse_and_glide_via_distance=False,
+    pause_lateral_via_distance=False,
+    pause_longitudinal_via_distance=False,
+    switchback_mode_via_distance=False,
+  )
+  sm = make_sm()
+  starpilot_car_state = SimpleNamespace(distancePressed=True)
+
+  card.update(make_car_state(), starpilot_car_state, sm, toggles)
+
+  starpilot_car_state.distancePressed = False
+  car_state = make_car_state(button_events=[SimpleNamespace(type=spc.ButtonType.unknown, pressed=False)])
+  card.update(car_state, starpilot_car_state, sm, toggles)
+
+  assert any(
+    be.type == spc.ButtonType.gapAdjustCruise and not be.pressed
+    for be in car_state.buttonEvents
+  ) is expect_normalized_release
+
+
 def test_honda_lkas_button_can_toggle_always_on_lateral(monkeypatch, tmp_path):
   monkeypatch.setattr(spc, "Params", FakeParams)
   monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
@@ -280,7 +322,7 @@ def test_sonata_hybrid_lkas_button_can_start_aol_before_normal_engagement(monkey
   car_state = make_car_state(available=False, enabled=False, button_events=[SimpleNamespace(type=spc.ButtonType.lkas, pressed=True)])
   starpilot_car_state = SimpleNamespace(distancePressed=False)
   sm = make_sm()
-  toggles = make_toggles(always_on_lateral=True, always_on_lateral_lkas=True)
+  toggles = make_toggles(always_on_lateral=True, always_on_lateral_lkas=True, lkas_allowed_for_aol=True)
 
   ret = card.update(car_state, starpilot_car_state, sm, toggles)
 
@@ -300,7 +342,7 @@ def test_sonata_hybrid_preserves_aol_latch_across_reverse(monkeypatch, tmp_path)
 
   starpilot_car_state = SimpleNamespace(distancePressed=False)
   sm = make_sm()
-  toggles = make_toggles(always_on_lateral=True, always_on_lateral_lkas=True)
+  toggles = make_toggles(always_on_lateral=True, always_on_lateral_lkas=True, lkas_allowed_for_aol=True)
 
   enabled_state = make_car_state(available=False, enabled=False, button_events=[SimpleNamespace(type=spc.ButtonType.lkas, pressed=True)])
   ret = card.update(enabled_state, starpilot_car_state, sm, toggles)

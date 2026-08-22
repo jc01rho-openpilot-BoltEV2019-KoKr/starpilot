@@ -1,4 +1,5 @@
 import json
+import sys
 
 from openpilot.common.params import ParamKeyType
 
@@ -8,11 +9,19 @@ from test_dashboard_stats import MODULE_DIR, _install_server_import_stubs
 def _load_server_module():
   import importlib.util
 
+  favorite_slots_name = "openpilot.starpilot.common.favorite_slots"
+  previous_favorite_slots = sys.modules.get(favorite_slots_name)
   _install_server_import_stubs()
-  spec = importlib.util.spec_from_file_location("navigation_params_server", MODULE_DIR / "the_galaxy.py")
-  module = importlib.util.module_from_spec(spec)
-  spec.loader.exec_module(module)
-  return module
+  try:
+    spec = importlib.util.spec_from_file_location("navigation_params_server", MODULE_DIR / "the_galaxy.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+  finally:
+    if previous_favorite_slots is None:
+      sys.modules.pop(favorite_slots_name, None)
+    else:
+      sys.modules[favorite_slots_name] = previous_favorite_slots
 
 
 the_galaxy = _load_server_module()
@@ -344,6 +353,14 @@ def test_favorite_values_endpoint_returns_current_selected_value(monkeypatch):
 
   assert response.status_code == 200
   assert response.get_json() == {"values": {"ForceOffroad": False}}
+
+
+def test_device_settings_layout_asset_is_served_from_common_catalog(monkeypatch):
+  client, _ = _params_client(monkeypatch, {}, "tici")
+
+  with client.get("/assets/components/tools/device_settings_layout.json") as response:
+    assert response.status_code == 200
+    assert response.get_json() == the_galaxy.load_settings_catalog()
 
 
 def test_favorite_slot_options_include_virtual_cruise_actions(monkeypatch):
