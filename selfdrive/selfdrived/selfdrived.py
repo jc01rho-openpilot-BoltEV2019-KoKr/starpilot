@@ -979,6 +979,7 @@ class SelfdriveD:
     fpss.alertSize = self.starpilot_AM.current_alert.alert_size
     fpss.alertStatus = self.starpilot_AM.current_alert.alert_status
     fpss.alertType = self.starpilot_AM.current_alert.alert_type
+    fpss.vEgo = CS.vEgo
     fpss.alertSound, self.forcing_stop_chime_played = filter_forcing_stop_alert_sound(
       fpss.alertType,
       self.starpilot_AM.current_alert.audible_alert,

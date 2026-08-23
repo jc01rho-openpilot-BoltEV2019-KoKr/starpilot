@@ -40,6 +40,8 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   GROUP_HEADER_GAP,
   GROUP_HEADER_LINE_GAP,
   GROUP_HEADER_HEIGHT,
+  GROUP_HEADER_TOTAL_HEIGHT,
+  GROUP_TOP_INSET,
   draw_group_header,
   AetherSliderDialog,
   mix_colors,
@@ -493,9 +495,8 @@ class SystemSettingsManagerView(PanelManagerView):
     draw_custom_icon("first_aid", icon_x, icon_y, s, icon_color)
 
   def _measure_content_height(self, width: float) -> float:
-    hdr_h = GROUP_HEADER_HEIGHT + GROUP_HEADER_LINE_GAP + GROUP_HEADER_GAP
-    display_h = self._slider_section_height(self._display_slider_keys, width) + 4 + hdr_h
-    power_h = self._slider_section_height(self._power_slider_keys, width) + 4 + hdr_h
+    display_h = self._slider_section_height(self._display_slider_keys, width) + GROUP_TOP_INSET + GROUP_HEADER_TOTAL_HEIGHT
+    power_h = self._slider_section_height(self._power_slider_keys, width) + GROUP_TOP_INSET + GROUP_HEADER_TOTAL_HEIGHT
 
     if self._uses_two_columns(width):
       column_w = self._column_width(width)
@@ -507,7 +508,7 @@ class SystemSettingsManagerView(PanelManagerView):
       display_container_h = self._slider_section_height(self._display_slider_keys, column_w)
       power_container_h = self._slider_section_height(self._power_slider_keys, column_w)
 
-      left_overhead = 4.0 + 2 * (GROUP_HEADER_HEIGHT + GROUP_HEADER_LINE_GAP + GROUP_HEADER_GAP) + SECTION_GAP
+      left_overhead = GROUP_TOP_INSET + 2 * GROUP_HEADER_TOTAL_HEIGHT + SECTION_GAP
       left_natural_content_h = left_overhead + display_container_h + power_container_h
       
       tiles_content_h = self.measure_page_grid_height(self._connectivity_tile_grid, column_w - 24)
@@ -558,7 +559,7 @@ class SystemSettingsManagerView(PanelManagerView):
 
       draw_list_group_shell(rl.Rectangle(x, y, column_w, adj_container_h), style=PANEL_STYLE)
 
-      current_y = y + 4
+      current_y = y + GROUP_TOP_INSET
       current_y = draw_group_header(x + 24, current_y, column_w - 48, tr("Display"))
       for index, key in enumerate(self._display_slider_keys):
         current_y = self._draw_slider_row(rl.Rectangle(x, current_y, column_w, 0), key, is_last=index == len(self._display_slider_keys) - 1)
@@ -588,10 +589,10 @@ class SystemSettingsManagerView(PanelManagerView):
     self._render_page_grid(self._connectivity_tile_grid, rl.Rectangle(x + 12, y + 12, width - 24, tiles_content_h))
 
   def _draw_slider_section(self, y: float, x: float, width: float, title: str, keys: list[str]) -> float:
-    group_h = self._slider_section_height(keys, width) + 4 + GROUP_HEADER_HEIGHT + GROUP_HEADER_LINE_GAP + GROUP_HEADER_GAP
+    group_h = self._slider_section_height(keys, width) + GROUP_TOP_INSET + GROUP_HEADER_TOTAL_HEIGHT
     group_rect = rl.Rectangle(x, y, width, group_h)
     draw_list_group_shell(group_rect, style=PANEL_STYLE)
-    current_y = group_rect.y + 4
+    current_y = group_rect.y + GROUP_TOP_INSET
     current_y = draw_group_header(x + 24, current_y, width - 48, title)
     for index, key in enumerate(keys):
       current_y = self._draw_slider_row(rl.Rectangle(group_rect.x, current_y, group_rect.width, 0), key, is_last=index == len(keys) - 1)

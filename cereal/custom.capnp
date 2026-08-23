@@ -265,6 +265,7 @@ struct StarPilotSelfdriveState @0xf416ec09499d9d19 {
   alertSize @3 :AlertSize;
   alertType @4 :Text;
   alertSound @5 :Car.CarControl.HUDControl.AudibleAlert;
+  vEgo @6 :Float32;
 
   enum AlertStatus {
     normal @0;

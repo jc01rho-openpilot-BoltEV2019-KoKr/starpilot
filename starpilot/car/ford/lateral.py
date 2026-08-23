@@ -29,7 +29,7 @@ PATH_ANGLE_MAX = 0.5235
 STEER_DT = CarControllerParams.STEER_STEP * DT_CTRL
 CURVATURE_LOOKAHEAD_MIN = 0.20
 CURVATURE_LOOKAHEAD_MAX = 0.40
-HANDOFF_PRESS_SECONDS = 0.5
+ANGLE_HANDOFF_PRESS_SECONDS = 0.5
 HANDOFF_PAUSE_FRAMES = 6
 HANDOFF_COOLDOWN_SECONDS = 2.0
 HANDOFF_MAX_PATH_ANGLE = 0.10
@@ -108,6 +108,7 @@ class FordLateralController:
     self.model = None
 
     self.mode = FordLateralMode.curvature
+    self.hands_free_cluster_enabled = False
     self.human_turn_enabled = True
     self.curvature_blend_low = 0.4
     self.curvature_blend_high = 0.4
@@ -137,6 +138,8 @@ class FordLateralController:
     except ValueError:
       self.mode = FordLateralMode.native
 
+    self.hands_free_cluster_enabled = bool(
+      self.CP.flags & FordFlags.CANFD and self.params.get_bool("FordHandsFreeCluster"))
     self.human_turn_enabled = self.params.get_bool("FordHumanTurnDetection")
     self.curvature_blend_low = float(np.clip(self.params.get_float("FordCurvatureBlendLow", return_default=True), 0.0, 1.0))
     self.curvature_blend_high = float(np.clip(self.params.get_float("FordCurvatureBlendHigh", return_default=True), 0.0, 1.0))
@@ -219,21 +222,28 @@ class FordLateralController:
     self.angle_stall_timer = 0.0
     self.angle_stall_recoveries = 0
 
-  def _driver_handoff_active(self, CS) -> bool:
+  def _angle_handoff_pause_active(self, CS) -> bool:
     if not self.human_turn_enabled:
       self._reset_handoff()
       return False
 
+    self.angle_pause_cooldown = max(0.0, self.angle_pause_cooldown - STEER_DT)
     if CS.out.steeringPressed:
       self.handoff_press_timer += STEER_DT
-      self.handoff_driver_override |= self.handoff_press_timer + 1e-9 >= HANDOFF_PRESS_SECONDS
+      self.handoff_driver_override |= self.handoff_press_timer + 1e-9 >= ANGLE_HANDOFF_PRESS_SECONDS
     else:
-      if self.handoff_driver_override:
-        self.angle_pause_cooldown = HANDOFF_COOLDOWN_SECONDS
+      if (self.handoff_driver_override and self.angle_pause_cooldown <= 0.0
+          and self.angle_pause_frames <= 0 and abs(self.path_angle_last) < HANDOFF_MAX_PATH_ANGLE):
+        self.angle_pause_frames = HANDOFF_PAUSE_FRAMES
       self.handoff_driver_override = False
       self.handoff_press_timer = 0.0
 
-    return self.handoff_driver_override
+    if self.angle_pause_frames > 0:
+      self.angle_pause_frames -= 1
+      if self.angle_pause_frames == 0:
+        self.angle_pause_cooldown = HANDOFF_COOLDOWN_SECONDS
+      return True
+    return False
 
   def _inactive_angle_result(self, current_curvature: float) -> FordLateralResult:
     self.path_angle_last = 0.0
@@ -248,16 +258,11 @@ class FordLateralController:
       self.curvature_last = 0.0
       return FordLateralResult(shadow_curvature=current)
 
-    if self._manual_turn(CC, CS):
+    if self._manual_turn(CC, CS) or CS.out.vEgoRaw < 0.1:
       self._reset_handoff()
       self.curvature_samples.clear()
       self.curvature_last = 0.0
-      return FordLateralResult(shadow_curvature=current)
-
-    if self._driver_handoff_active(CS) or CS.out.vEgoRaw < 0.1:
-      self.curvature_samples.clear()
-      self.curvature_last = 0.0
-      return FordLateralResult(shadow_curvature=current)
+      return FordLateralResult(active=True, shadow_curvature=current)
 
     v_ego = float(CS.out.vEgoRaw)
     predicted = self._predicted_curvature(v_ego, self._curvature_lookahead())
@@ -310,17 +315,8 @@ class FordLateralController:
       self._reset_handoff()
       return self._inactive_angle_result(current)
 
-    if self._driver_handoff_active(CS):
+    if self._angle_handoff_pause_active(CS):
       return self._inactive_angle_result(current)
-
-    if self.human_turn_enabled:
-      if self.angle_pause_frames > 0:
-        self.angle_pause_frames -= 1
-        if self.angle_pause_frames == 0:
-          self.angle_pause_cooldown = HANDOFF_COOLDOWN_SECONDS
-        return self._inactive_angle_result(current)
-
-    self.angle_pause_cooldown = max(0.0, self.angle_pause_cooldown - STEER_DT)
 
     v_ego = float(CS.out.vEgoRaw)
     live_delay = 0.12 if self.sm is None else float(np.clip(self.sm["liveDelay"].lateralDelay, 0.1, 0.15))

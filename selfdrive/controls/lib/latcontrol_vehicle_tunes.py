@@ -76,6 +76,9 @@ BOLT_CARS = BOLT_2022_2023_CARS + BOLT_2018_2021_CARS + BOLT_2017_CARS
 HONDA_ACCORD_STEER_RATIO_SCALE = 14.0 / 16.33
 HONDA_ACCORD_TORQUE_KP = 0.8
 HONDA_ACCORD_TORQUE_KI = 0.15
+HONDA_ACCORD_TURN_FF_REDUCTION_MAX = 0.10
+HONDA_ACCORD_TURN_FF_ONSET = 0.45
+HONDA_ACCORD_TURN_FF_WIDTH = 0.12
 VOLT_STANDARD_CARS = (
   GM_CAR.CHEVROLET_VOLT,
   GM_CAR.CHEVROLET_VOLT_2019,
@@ -433,7 +436,7 @@ GMC_YUKON_CC_UNWIND_FF_REDUCTION = 0.12
 
 SONATA_HYBRID_BASE_LAT_ACCEL_FACTOR_MULT = 1.05
 SONATA_HYBRID_FF_REDUCTION_LEFT = 0.09
-SONATA_HYBRID_FF_REDUCTION_RIGHT = 0.22
+SONATA_HYBRID_FF_REDUCTION_RIGHT = 0.26
 SONATA_HYBRID_FF_ONSET = 0.18
 SONATA_HYBRID_FF_ONSET_WIDTH = 0.08
 SONATA_HYBRID_FF_CUTOFF = 1.35
@@ -444,7 +447,7 @@ SONATA_HYBRID_TURN_IN_BOOST_LEFT = 0.12
 SONATA_HYBRID_TURN_IN_BOOST_RIGHT = 0.02
 SONATA_HYBRID_UNWIND_TAPER_LEFT = 0.18
 SONATA_HYBRID_UNWIND_TAPER_RIGHT = 0.10
-SONATA_HYBRID_CENTER_TAPER_MAX = 0.07
+SONATA_HYBRID_CENTER_TAPER_MAX = 0.10
 SONATA_HYBRID_CENTER_TAPER_LAT = 0.16
 SONATA_HYBRID_CENTER_TAPER_LAT_WIDTH = 0.025
 SONATA_HYBRID_CENTER_TAPER_SPEED = 22.0
@@ -1178,6 +1181,13 @@ RAM_1500_CENTER_OUTPUT_TAPER_SPEED_ONSET = 5.5
 RAM_1500_CENTER_OUTPUT_TAPER_SPEED_ONSET_WIDTH = 1.5
 RAM_1500_CENTER_OUTPUT_TAPER_SPEED_MAX = 16.0
 RAM_1500_CENTER_OUTPUT_TAPER_SPEED_MAX_WIDTH = 2.0
+RAM_1500_UNWIND_OUTPUT_TAPER_MAX = 0.18
+RAM_1500_UNWIND_OUTPUT_SPEED_ONSET = 20.0
+RAM_1500_UNWIND_OUTPUT_SPEED_FULL = 29.0
+RAM_1500_UNWIND_OUTPUT_JERK_ONSET = 0.50
+RAM_1500_UNWIND_OUTPUT_JERK_FULL = 1.80
+RAM_1500_UNWIND_OUTPUT_LAT_ONSET = 0.65
+RAM_1500_UNWIND_OUTPUT_LAT_WIDTH = 0.30
 
 # The Kona route is exceptionally accurate below highway speed, but Pop V2
 # reverses the requested lateral acceleration roughly once per second at
@@ -1787,6 +1797,23 @@ def get_ram_1500_transition_output_scale(desired_lateral_accel: float, desired_l
   return 1.0 - (RAM_1500_TRANSITION_TAPER_MAX * speed_weight * jerk_weight * lat_weight)
 
 
+def get_ram_1500_unwind_output_scale(desired_lateral_accel: float, desired_lateral_jerk: float,
+                                     v_ego: float) -> float:
+  """Soften only rapid high-speed unwind reversals on the RAM 1500."""
+  if desired_lateral_accel * desired_lateral_jerk >= 0.0:
+    return 1.0
+
+  speed_weight = float(np.interp(v_ego,
+                                 [RAM_1500_UNWIND_OUTPUT_SPEED_ONSET, RAM_1500_UNWIND_OUTPUT_SPEED_FULL],
+                                 [0.0, 1.0]))
+  jerk_weight = float(np.interp(abs(desired_lateral_jerk),
+                                [RAM_1500_UNWIND_OUTPUT_JERK_ONSET, RAM_1500_UNWIND_OUTPUT_JERK_FULL],
+                                [0.0, 1.0]))
+  curve_weight = _sigmoid((abs(desired_lateral_accel) - RAM_1500_UNWIND_OUTPUT_LAT_ONSET) /
+                           RAM_1500_UNWIND_OUTPUT_LAT_WIDTH)
+  return 1.0 - (RAM_1500_UNWIND_OUTPUT_TAPER_MAX * speed_weight * jerk_weight * curve_weight)
+
+
 def get_ram_1500_center_output_scale(desired_lateral_accel: float, v_ego: float) -> float:
   """Damp only center corrections at low/mid speed, not turn authority."""
   center_weight = _sigmoid((RAM_1500_CENTER_OUTPUT_TAPER_LAT - abs(desired_lateral_accel)) /
@@ -2003,6 +2030,13 @@ def get_bolt_2017_steer_ratio_scale(v_ego: float) -> float:
 
 def get_honda_accord_steer_ratio_scale(_v_ego: float) -> float:
   return HONDA_ACCORD_STEER_RATIO_SCALE
+
+
+def get_honda_accord_ff_scale(desired_lateral_accel: float) -> float:
+  """Taper only sharp-turn feedforward where the Accord carries excess curvature."""
+  turn_weight = _sigmoid((abs(desired_lateral_accel) - HONDA_ACCORD_TURN_FF_ONSET) /
+                         HONDA_ACCORD_TURN_FF_WIDTH)
+  return 1.0 - (HONDA_ACCORD_TURN_FF_REDUCTION_MAX * turn_weight)
 
 
 def get_bolt_2017_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:

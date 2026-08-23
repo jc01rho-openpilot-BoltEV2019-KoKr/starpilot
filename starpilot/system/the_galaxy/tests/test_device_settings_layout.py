@@ -175,6 +175,34 @@ def test_requested_simple_and_advanced_settings_tiers():
   assert sections["Visual (Display & UI)"]["DisableWideRoad"]["settings_tier"] == "advanced"
 
 
+def test_turn_steering_limit_mute_speed_is_galaxy_developer_only():
+  sections = _params_by_section(_layout())
+  setting = sections["Developer"]["TurnSteeringLimitMuteSpeed"]
+
+  assert setting["parent_key"] == "GalaxyDeveloperMode"
+  assert setting["settings_tier"] == "advanced"
+  assert setting["data_type"] == "int"
+  assert setting["min"] == 0.0
+  assert setting["max"] == 99.0
+  assert _declared_default("TurnSteeringLimitMuteSpeed") == "0"
+
+  physical_settings = (
+    REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/sounds.py",
+    REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/aethergrid.py",
+  )
+  assert all("TurnSteeringLimitMuteSpeed" not in path.read_text(encoding="utf-8") for path in physical_settings)
+
+
+def test_honda_pid_scale_controls_use_galaxy_fine_granularity():
+  developer = _params_by_section(_layout())["Developer"]
+
+  for key in ("HondaLateralPidKpScale", "HondaLateralPidKiScale"):
+    setting = developer[key]
+    assert setting["step"] == 0.01
+    assert setting["precision"] == 2
+    assert setting["settings_tier"] == "advanced"
+
+
 def test_hidden_feature_defaults_remain_enabled():
   assert _declared_default("GalaxyDeveloperMode") == "0"
   assert _declared_default("NavDesiresAllowed") == "1"

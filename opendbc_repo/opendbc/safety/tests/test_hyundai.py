@@ -597,6 +597,14 @@ class TestHyundaiSafetyFCEVLong(TestHyundaiLongitudinalSafety, TestHyundaiSafety
     self.safety.init_tests()
 
 
+class TestHyundaiLegacyLongitudinalSafety(TestHyundaiLongitudinalSafety, TestHyundaiLegacySafety):
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_kia_generic")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiLegacy, HyundaiSafetyFlags.LONG)
+    self.safety.init_tests()
+
+
 class TestHyundaiLegacyLongitudinalSafetyHEV(TestHyundaiLongitudinalSafety, TestHyundaiLegacySafetyHEV):
   def setUp(self):
     self.packer = CANPackerSafety("hyundai_kia_generic")

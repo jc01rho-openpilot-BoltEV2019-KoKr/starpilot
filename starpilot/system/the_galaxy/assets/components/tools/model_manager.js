@@ -76,6 +76,10 @@ function normalizeSeries(model) {
   return safeText(model?.series, "Custom Series") || "Custom Series";
 }
 
+function modelHardwareTag(model) {
+  return model?.requiresGpu ? "eGPU" : "On-device GPU";
+}
+
 function modelSortCompare(a, b) {
   if (state.sortMode === "release_date") {
     const dateDelta = parseReleased(b?.released) - parseReleased(a?.released);
@@ -516,6 +520,7 @@ function renderModelRow(model) {
         <div class="mm-row-meta">
           <span class="mm-chip">${key}</span>
           ${model.builtin ? html`<span class="mm-chip">Built-in</span>` : ""}
+          <span class="mm-chip ${model.requiresGpu ? "mm-chip-egpu" : "mm-chip-device-gpu"}">${modelHardwareTag(model)}</span>
           ${state.sortMode === "release_date" ? "" : model.series ? html`<span class="mm-chip">${safeText(model.series)}</span>` : ""}
           ${model.version ? html`<span class="mm-chip">Version ${safeText(model.version)}</span>` : ""}
           ${model.released ? html`<span class="mm-chip">Released ${safeText(model.released)}</span>` : ""}

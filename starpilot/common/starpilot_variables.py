@@ -772,6 +772,14 @@ class StarPilotVariables:
 
     toggle.alert_volume_controller = self.get_value("AlertVolumeControl")
     toggle.below_steer_speed_volume = self.get_value("BelowSteerSpeedVolume", cast=float, condition=toggle.alert_volume_controller)
+    toggle.turn_steering_limit_mute_speed = self.get_value(
+      "TurnSteeringLimitMuteSpeed",
+      cast=float,
+      condition=self.params.get_bool("GalaxyDeveloperMode"),
+      conversion=speed_conversion,
+      min=0,
+      max=99 * speed_conversion,
+    )
     toggle.switchback_mode_cooldown = self.get_value("SwitchbackModeCooldown", cast=float, conversion=60, min=0, max=1800)
     toggle.disengage_volume = self.get_value("DisengageVolume", cast=float, condition=toggle.alert_volume_controller)
     toggle.engage_volume = self.get_value("EngageVolume", cast=float, condition=toggle.alert_volume_controller)

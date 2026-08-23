@@ -187,11 +187,6 @@ def _apply_legacy_launch_param_migrations(params: ParamsLike, marker: Path) -> N
       _approx_equal(steer_kp_stock, LEGACY_STEER_KP_STOCK_PLACEHOLDER)):
     params.put_float(STEER_KP_STOCK_KEY, DEFAULT_STEER_KP)
 
-  # Initialize UsePrebuilt to True if never explicitly set, so the UI default
-  # matches the shell script's default of USE_PREBUILT=1.
-  if not Path(params.get_param_path("UsePrebuilt")).exists():
-    params.put_bool("UsePrebuilt", True)
-
   marker.touch()
 
 
