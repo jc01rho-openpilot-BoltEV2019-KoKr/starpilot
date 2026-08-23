@@ -989,6 +989,45 @@ class TestHyundaiFingerprint:
     assert long_xceed.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.HYBRID_GAS
     assert long_xceed.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG
 
+  def test_g80_alpha_long_preserves_legacy_safety(self):
+    toggles = get_test_toggles()
+
+    stock_g80 = CarInterface.get_params(CAR.GENESIS_G80, gen_empty_fingerprint(), [], False, False, False, toggles)
+    assert CAR.GENESIS_G80 in LEGACY_LONGITUDINAL_CAR
+    assert stock_g80.alphaLongitudinalAvailable
+    assert not stock_g80.openpilotLongitudinalControl
+    assert stock_g80.pcmCruise
+    assert stock_g80.safetyConfigs[-1].safetyModel == CarParams.SafetyModel.hyundaiLegacy
+    assert not (stock_g80.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG)
+
+    long_g80 = CarInterface.get_params(CAR.GENESIS_G80, gen_empty_fingerprint(), [], True, False, False, toggles)
+    assert long_g80.alphaLongitudinalAvailable
+    assert long_g80.openpilotLongitudinalControl
+    assert not long_g80.pcmCruise
+    assert long_g80.safetyConfigs[-1].safetyModel == CarParams.SafetyModel.hyundaiLegacy
+    assert long_g80.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG
+
+  @pytest.mark.parametrize("ecu_disabled", (True, False))
+  def test_g80_alpha_long_disables_stock_scc(self, monkeypatch, ecu_disabled):
+    toggles = get_test_toggles()
+    CP = CarInterface.get_params(CAR.GENESIS_G80, gen_empty_fingerprint(), [], True, False, False, toggles)
+
+    called = {}
+
+    def fake_disable_ecu(*args, **kwargs):
+      called.update(kwargs)
+      return ecu_disabled
+
+    monkeypatch.setattr("opendbc.car.hyundai.interface.disable_ecu", fake_disable_ecu)
+    CarInterface.init(CP, None, None)
+
+    assert called["addr"] == 0x7d0
+    assert called["bus"] == 0
+    assert called["reset"] is False
+    assert CP.openpilotLongitudinalControl == ecu_disabled
+    assert CP.pcmCruise != ecu_disabled
+    assert bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG) == ecu_disabled
+
   def test_xceed_phev_disable_failure_falls_back_to_stock_acc(self, monkeypatch):
     toggles = get_test_toggles()
     CP = CarInterface.get_params(CAR.KIA_XCEED_PHEV, gen_empty_fingerprint(), [], True, False, False, toggles)

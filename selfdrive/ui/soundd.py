@@ -5,7 +5,7 @@ import wave
 
 from pathlib import Path
 
-from cereal import car, custom, log, messaging
+from cereal import custom, log, messaging
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
@@ -40,11 +40,29 @@ StarPilotAudibleAlert = custom.StarPilotCarControl.HUDControl.AudibleAlert
 # stock sounds still work, and only offset custom random-event sounds.
 STARPILOT_CUSTOM_ALERT_OFFSET = 1000
 STARPILOT_CUSTOM_ALERT_START = int(StarPilotAudibleAlert.angry)
+TURN_STEERING_LIMIT_ALERT_SUFFIX = "steersaturated"
+# Keep carState out of this list; C4's onroad stack is near msgq's 15-reader limit.
+SOUNDD_SERVICES = ('selfdriveState', 'soundPressure', 'starpilotSelfdriveState', 'starpilotPlan')
 
 
 def starpilot_alert_key(alert):
   raw_alert = int(alert)
   return STARPILOT_CUSTOM_ALERT_OFFSET + raw_alert if raw_alert >= STARPILOT_CUSTOM_ALERT_START else raw_alert
+
+
+def is_turn_steering_limit_alert(alert_type: str) -> bool:
+  """Return whether an alert type represents Turn Exceeds Steering Limit."""
+  alert_name = str(alert_type or "").split("/", 1)[0].casefold()
+  return alert_name.endswith(TURN_STEERING_LIMIT_ALERT_SUFFIX)
+
+
+def should_mute_turn_steering_limit_alert(alert_type: str, v_ego: float, mute_below_speed: float) -> bool:
+  """Mute only the audio for steering-limit alerts below the configured speed."""
+  return (
+    mute_below_speed > 0.0 and
+    v_ego < mute_below_speed and
+    is_turn_steering_limit_alert(alert_type)
+  )
 
 
 sound_list: dict[int, tuple[str, int | None, float]] = {
@@ -111,7 +129,7 @@ class Soundd:
 
     self.openpilot_crashed_played = False
 
-    self.auto_volume = 0
+    self.auto_volume = MIN_VOLUME
     self.pending_stream_status = None
 
     self.previous_sound_pack = None
@@ -286,9 +304,7 @@ class Soundd:
     # sounddevice must be imported after forking processes
     import sounddevice as sd
 
-    sm = messaging.SubMaster(['selfdriveState', 'soundPressure'])
-
-    sm = sm.extend(['starpilotSelfdriveState', 'starpilotPlan'])
+    sm = messaging.SubMaster(list(SOUNDD_SERVICES))
 
     while True:
       stream = None
@@ -306,18 +322,28 @@ class Soundd:
 
           if sm.updated['soundPressure'] and self.current_alert == AudibleAlert.none: # only update volume filter when not playing alert
             self.spl_filter_weighted.update(sm["soundPressure"].soundPressureWeightedDb)
-            self.current_volume = self.calculate_volume(float(self.spl_filter_weighted.x))
+            self.auto_volume = self.calculate_volume(float(self.spl_filter_weighted.x))
+            self.current_volume = self.auto_volume
 
             if self.starpilot_toggles.alert_volume_controller:
-              self.auto_volume = self.current_volume
               self.current_volume = 0.0
 
-          elif self.current_alert != AudibleAlert.none and self.starpilot_toggles.alert_volume_controller:
-            self.current_volume = self.get_volume_override()
-            if self.current_volume == 1.01:
-              self.current_volume = self.auto_volume
-
           self.get_audible_alert(sm)
+
+          if self.current_alert != AudibleAlert.none:
+            v_ego = max(float(getattr(sm["starpilotSelfdriveState"], "vEgo", 0.0)), 0.0)
+            if should_mute_turn_steering_limit_alert(
+              self.current_alert_type,
+              v_ego,
+              float(getattr(self.starpilot_toggles, "turn_steering_limit_mute_speed", 0.0)),
+            ):
+              self.current_volume = 0.0
+            elif self.starpilot_toggles.alert_volume_controller:
+              self.current_volume = self.get_volume_override()
+              if self.current_volume == 1.01:
+                self.current_volume = self.auto_volume
+            else:
+              self.current_volume = self.auto_volume
 
           rk.keep_time()
 

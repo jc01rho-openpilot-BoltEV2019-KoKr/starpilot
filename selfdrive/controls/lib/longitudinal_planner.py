@@ -21,6 +21,8 @@ from openpilot.selfdrive.controls.lib.lead_follow_policy import is_nonurgent_dup
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_far_follow_output_slew_rates,
   get_follow_prebrake_min_headway,
+  get_honda_accord_lead_departure_tune,
+  get_toyota_rav4_tss2_lead_departure_tune,
   get_force_stop_distance_bias,
   get_force_stop_handoff_distance,
   allow_radar_standstill_gap_settle,
@@ -30,6 +32,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   is_toyota_rav4_tss2_radar_follow_lead,
   get_toyota_sienna_post_departure_restop_cap,
   get_untracked_slow_lead_decel_scale,
+  get_toyota_prius_stopped_lead_obstacle_bias,
 )
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.selfdrive.car.cruise import V_CRUISE_UNSET
@@ -1505,9 +1508,14 @@ class LongitudinalPlanner:
                                max(LEAD_DEPART_ACCEL_HOLD_FULL_GAP - LEAD_DEPART_ACCEL_HOLD_MIN_GAP, 0.1), 0.0, 1.0))
     lead_factor = float(np.clip((lead_speed - LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_SPEED) /
                                 max(LEAD_DEPART_ACCEL_HOLD_FULL_LEAD_SPEED - LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_SPEED, 0.1), 0.0, 1.0))
-    accel_cap = LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL + (LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL - LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL) * np.clip(
+    departure_tune = get_honda_accord_lead_departure_tune(self.CP)
+    if departure_tune is None:
+      departure_tune = get_toyota_rav4_tss2_lead_departure_tune(self.CP)
+    max_accel = LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL if departure_tune is None else departure_tune[0]
+    assist = LEAD_DEPART_ACCEL_ASSIST if departure_tune is None else departure_tune[1]
+    accel_cap = LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL + (max_accel - LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL) * np.clip(
       0.55 * lead_factor + 0.45 * gap_factor, 0.0, 1.0)
-    assisted_model_accel = float(model_desired_accel) + LEAD_DEPART_ACCEL_ASSIST
+    assisted_model_accel = float(model_desired_accel) + assist
     return min(accel_cap, max(assisted_model_accel, LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL))
 
   def get_reusable_lead_depart_accel_floor(self, lead, v_ego, t_follow):
@@ -2201,6 +2209,19 @@ class LongitudinalPlanner:
         get_force_stop_distance_bias(self.CP.carFingerprint)
       )
 
+    prius_lead_obstacle_bias = (0.0, 0.0)
+    if (
+      self.mode == 'acc' and
+      not bool(getattr(sm['modelV2'].action, 'shouldStop', False)) and
+      not bool(getattr(sm['starpilotPlan'], 'redLight', False)) and
+      not bool(getattr(sm['starpilotPlan'], 'forcingStop', False)) and
+      not bool(getattr(sm['carState'], 'standstill', False))
+    ):
+      prius_lead_obstacle_bias = (
+        get_toyota_prius_stopped_lead_obstacle_bias(self.CP, self.lead_one, scene_v_ego),
+        get_toyota_prius_stopped_lead_obstacle_bias(self.CP, self.lead_two, scene_v_ego),
+      )
+
     self.mpc.update(sm['radarState'], v_cruise, x, v, a, j,
                     sm['starpilotPlan'].dangerFactor, effective_t_follow,
                     personality=personality, tracking_lead=lead_control_active,
@@ -2208,7 +2229,8 @@ class LongitudinalPlanner:
                     smooth_duplicate_vision=nonurgent_duplicate_vision_follow and not panic_bypass,
                     stop_x=force_stop_x,
                     silverado_early_follow=early_truck_follow,
-                    modelV2=sm['modelV2'])
+                    modelV2=sm['modelV2'],
+                    lead_obstacle_bias=prius_lead_obstacle_bias)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)

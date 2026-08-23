@@ -14,7 +14,7 @@ from openpilot.selfdrive.ui.onroad.starpilot.widgets import (
 )
 from openpilot.selfdrive.ui.onroad.starpilot.stopping_point import render_stopping_point
 from openpilot.selfdrive.ui.onroad.starpilot.pause_indicators import render_lateral_paused, render_longitudinal_paused
-from openpilot.selfdrive.ui.onroad.starpilot.pulse_glide import render_pulse_glide
+from openpilot.selfdrive.ui.onroad.starpilot.pulse_glide import render_pulse_glide, render_pulse_glide_banner
 from openpilot.selfdrive.ui.onroad.starpilot.pip_sidecam import PipSideCamera
 from openpilot.selfdrive.ui.onroad.starpilot.favorite_radial_menu import FavoriteRadialMenu
 from openpilot.selfdrive.ui.onroad.starpilot.weather_icon import render_weather_icon
@@ -178,12 +178,25 @@ class StarPilotOnroadView(AugmentedRoadView):
     if alert_showing is not None:
       return
 
+    self._render_pulse_glide_banner()
     self._render_developer_metrics()
 
     self.layout_manager.render_widgets(exclude={"speed_limit", "set_speed"})
 
     self._render_torque_bar()
     self._render_bottom_row_widgets()
+
+  def _render_pulse_glide_banner(self) -> None:
+    starpilot_car_state = (
+      ui_state.sm["starpilotCarState"]
+      if ui_state.sm.valid.get("starpilotCarState", False) else None
+    )
+    if not starpilot_car_state or not starpilot_car_state.pulseAndGlide:
+      return
+
+    plan = ui_state.sm["starpilotPlan"] if ui_state.sm.valid.get("starpilotPlan", False) else None
+    coasting = bool(getattr(plan, "pulseGlideCoasting", False)) if plan else False
+    render_pulse_glide_banner(self._content_rect, coasting)
 
   def _render_torque_bar(self) -> None:
     """Draw the curved torque-utilization indicator at the bottom of the screen."""

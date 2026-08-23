@@ -908,6 +908,7 @@ def test_render_boolean_toggle_switch_and_picker_badges(monkeypatch):
   monkeypatch.setattr(rl, "draw_rectangle_rounded", lambda *args: None)
   monkeypatch.setattr(rl, "draw_rectangle_rounded_lines_ex", lambda *args: None)
   monkeypatch.setattr(rl, "draw_line_ex", lambda *args: None)
+  monkeypatch.setattr(rl, "draw_triangle", lambda *args: None)
   monkeypatch.setattr(rl, "draw_rectangle_rec", lambda *args: None)
   monkeypatch.setattr(rl, "draw_text_ex", lambda *args: None)
 

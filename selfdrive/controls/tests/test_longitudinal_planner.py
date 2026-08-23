@@ -27,6 +27,9 @@ from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   allow_radar_standstill_gap_settle,
   get_far_follow_output_slew_rates,
   get_follow_prebrake_min_headway,
+  get_honda_accord_lead_departure_tune,
+  get_toyota_prius_stopped_lead_obstacle_bias,
+  get_toyota_rav4_tss2_lead_departure_tune,
   get_toyota_rav4_tss2_early_lead_cap,
   get_toyota_sienna_post_departure_restop_cap,
   is_toyota_rav4_tss2_radar_follow_lead,
@@ -89,6 +92,28 @@ def test_mpc_duplicate_lead_filters_do_not_cross_contaminate_tracks():
   mpc.process_lead(lead_one, lead_index=0, smooth_duplicate_vision=True)
   assert 12.0 < mpc.duplicate_lead_v_filters[0].x < 14.0
   assert mpc.duplicate_lead_v_filters[1].x == pytest.approx(28.0)
+
+
+def test_prius_stopped_lead_obstacle_bias_is_small_and_vehicle_specific():
+  prius = ToyotaCarInterface.get_non_essential_params(TOYOTA_CAR.TOYOTA_PRIUS)
+  other = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  stopped_lead = make_lead(status=True, d_rel=18.0, v_lead=0.2, model_prob=0.99)
+
+  bias = get_toyota_prius_stopped_lead_obstacle_bias(prius, stopped_lead, v_ego=8.0)
+  assert 0.0 < bias < 1.5
+  assert get_toyota_prius_stopped_lead_obstacle_bias(other, stopped_lead, v_ego=8.0) == pytest.approx(0.0)
+  assert get_toyota_prius_stopped_lead_obstacle_bias(
+    prius, make_lead(status=True, d_rel=18.0, v_lead=4.0), v_ego=8.0,
+  ) == pytest.approx(0.0)
+
+
+def test_prius_stopped_lead_obstacle_bias_does_not_apply_at_standstill_or_to_departures():
+  prius = ToyotaCarInterface.get_non_essential_params(TOYOTA_CAR.TOYOTA_PRIUS)
+  stopped_lead = make_lead(status=True, d_rel=4.0, v_lead=0.0, model_prob=0.99)
+  departing_lead = make_lead(status=True, d_rel=18.0, v_lead=2.0, model_prob=0.99)
+
+  assert get_toyota_prius_stopped_lead_obstacle_bias(prius, stopped_lead, v_ego=0.0) == pytest.approx(0.0)
+  assert get_toyota_prius_stopped_lead_obstacle_bias(prius, departing_lead, v_ego=8.0) == pytest.approx(0.0)
 
 
 def test_mpc_duplicate_vision_filter_smooths_distance_jumps_per_track():
@@ -2477,6 +2502,55 @@ def test_route_251682_rav4_confirmed_depart_adds_bounded_accel_assist():
 
   assert 0.52 <= floor <= 0.54
   assert floor <= longitudinal_planner_module.LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL
+
+
+def test_honda_accord_lead_departure_assist_is_stronger_but_vehicle_scoped():
+  accord = CarInterface.get_non_essential_params(CAR.HONDA_ACCORD)
+  civic = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(accord, init_v=0.0)
+  lead = make_lead(
+    status=True,
+    d_rel=7.7,
+    v_lead=2.0,
+    a_lead=1.79,
+    radar=False,
+    model_prob=1.0,
+  )
+
+  accord_floor = planner.get_lead_depart_accel_floor(lead, v_ego=0.0, model_desired_accel=0.44)
+  civic_floor = LongitudinalPlanner(civic, init_v=0.0).get_lead_depart_accel_floor(
+    lead, v_ego=0.0, model_desired_accel=0.44,
+  )
+
+  assert get_honda_accord_lead_departure_tune(accord) is not None
+  assert get_honda_accord_lead_departure_tune(civic) is None
+  assert accord_floor > civic_floor
+  assert accord_floor <= get_honda_accord_lead_departure_tune(accord)[0]
+
+
+def test_rav4_tss2_lead_departure_assist_is_vehicle_scoped():
+  rav4 = ToyotaCarInterface.get_non_essential_params(TOYOTA_CAR.TOYOTA_RAV4_TSS2_2023)
+  civic = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  lead = make_lead(
+    status=True,
+    d_rel=7.7,
+    v_lead=2.0,
+    a_lead=1.79,
+    radar=False,
+    model_prob=1.0,
+  )
+
+  rav4_floor = LongitudinalPlanner(rav4, init_v=0.0).get_lead_depart_accel_floor(
+    lead, v_ego=0.0, model_desired_accel=0.44,
+  )
+  civic_floor = LongitudinalPlanner(civic, init_v=0.0).get_lead_depart_accel_floor(
+    lead, v_ego=0.0, model_desired_accel=0.44,
+  )
+
+  assert get_toyota_rav4_tss2_lead_departure_tune(rav4) is not None
+  assert get_toyota_rav4_tss2_lead_departure_tune(civic) is None
+  assert rav4_floor > civic_floor
+  assert rav4_floor == pytest.approx(0.64)
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])

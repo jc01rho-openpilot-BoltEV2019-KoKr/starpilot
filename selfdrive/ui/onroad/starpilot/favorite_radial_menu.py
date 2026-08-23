@@ -263,9 +263,9 @@ class FavoriteRadialMenu:
   def _layout_slot_rects(self) -> None:
     scale = self._scale_for(self._rect)
     origin = self.corner_center(self._rect)
-    orbit_radius = 425.0 * scale
+    orbit_radius = 515.0 * scale
     node_radius = 52.0 * scale
-    slot_angles_deg = (78.0, 41.0, 18.0)
+    slot_angles_deg = (66.0, 40.0, 18.0)
     blade_w = 450.0 * scale
     blade_h = 104.0 * scale
 
@@ -698,27 +698,80 @@ class FavoriteRadialMenu:
     return lines
 
   def _draw_corner_hint(self) -> None:
-    center = self.corner_center(self._rect)
     scale = self._scale_for(self._rect)
-    purple = self._PURPLE
-    for radius, alpha in ((self.CORNER_HINT_OUTER_RADIUS, 16), (48, 28), (36, 48)):
-      rl.draw_circle_v(center, radius * scale, rl.Color(*purple, alpha))
-    rl.draw_ring(center, 38 * scale, self.CORNER_HINT_RING_RADIUS * scale, 0, 360, 32, rl.Color(*purple, 150))
+    x0 = self._rect.x
+    y0 = self._rect.y + self._rect.height
+    is_pressed = self._corner_press is not None
 
-    tail = rl.Vector2(center.x - 18 * scale, center.y + 18 * scale)
-    tip = rl.Vector2(center.x + 26 * scale, center.y - 26 * scale)
-    arrow_color = rl.Color(240, 231, 255, 214)
-    rl.draw_line_ex(tail, tip, 4.5 * scale, arrow_color)
-    rl.draw_line_ex(tip, rl.Vector2(tip.x - 18 * scale, tip.y + 1 * scale), 4.5 * scale, arrow_color)
-    rl.draw_line_ex(tip, rl.Vector2(tip.x - 1 * scale, tip.y + 18 * scale), 4.5 * scale, arrow_color)
+    size = 120.0 * scale
+    purple = self._PURPLE
+
+    steps = 6
+    max_alpha = 135 if is_pressed else 95
+    for i in range(steps):
+      t_a = i / float(steps)
+      t_b = (i + 1) / float(steps)
+      t_mid = (t_a + t_b) * 0.5
+
+      # Non-linear quadratic fade: dissolves cleanly into transparent road video
+      alpha = int(max_alpha * ((1.0 - t_mid) ** 1.7))
+      if alpha <= 0:
+        continue
+
+      slice_col = rl.Color(*purple, alpha)
+      v_a_top = rl.Vector2(x0, y0 - size * t_a)
+      v_a_right = rl.Vector2(x0 + size * t_a, y0)
+      v_b_top = rl.Vector2(x0, y0 - size * t_b)
+      v_b_right = rl.Vector2(x0 + size * t_b, y0)
+
+      if i == 0:
+        rl.draw_triangle(rl.Vector2(x0, y0), v_b_right, v_b_top, slice_col)
+      else:
+        rl.draw_triangle(v_a_top, v_a_right, v_b_top, slice_col)
+        rl.draw_triangle(v_b_top, v_a_right, v_b_right, slice_col)
+
+    # 2. Elegant, optically centered vector arrow
+    cx = x0 + size * 0.32
+    cy = y0 - size * 0.32
+
+    tip = rl.Vector2(cx + 8.0 * scale, cy - 8.0 * scale)
+    tail = rl.Vector2(cx - 7.0 * scale, cy + 7.0 * scale)
+    wing1 = rl.Vector2(tip.x - 9.0 * scale, tip.y + 0.5 * scale)
+    wing2 = rl.Vector2(tip.x - 0.5 * scale, tip.y + 9.0 * scale)
+
+    line_w = 3.0 * scale
+    arrow_col = rl.Color(255, 255, 255, 235 if is_pressed else 195)
+    shadow_col = rl.Color(16, 10, 28, 120)
+    shadow_offset = 1.2 * scale
+
+    # Soft ambient drop shadow behind arrow
+    s_tip = rl.Vector2(tip.x + shadow_offset, tip.y + shadow_offset)
+    s_tail = rl.Vector2(tail.x + shadow_offset, tail.y + shadow_offset)
+    s_w1 = rl.Vector2(wing1.x + shadow_offset, wing1.y + shadow_offset)
+    s_w2 = rl.Vector2(wing2.x + shadow_offset, wing2.y + shadow_offset)
+    rl.draw_line_ex(s_tail, s_tip, line_w + 1.0 * scale, shadow_col)
+    rl.draw_line_ex(s_tip, s_w1, line_w + 1.0 * scale, shadow_col)
+    rl.draw_line_ex(s_tip, s_w2, line_w + 1.0 * scale, shadow_col)
+
+    # Crisp arrow strokes
+    rl.draw_line_ex(tail, tip, line_w, arrow_col)
+    rl.draw_line_ex(tip, wing1, line_w, arrow_col)
+    rl.draw_line_ex(tip, wing2, line_w, arrow_col)
+
+    # Smooth rounded joints
+    r_cap = line_w * 0.5
+    rl.draw_circle_v(tip, r_cap, arrow_col)
+    rl.draw_circle_v(tail, r_cap, arrow_col)
+    rl.draw_circle_v(wing1, r_cap, arrow_col)
+    rl.draw_circle_v(wing2, r_cap, arrow_col)
 
   def _draw_radial_menu(self) -> None:
     scale = self._scale_for(self._rect)
     origin = self.corner_center(self._rect)
     purple = self._PURPLE
 
-    rail_r = 380.0 * scale
-    rail_start_rl = 278.0
+    rail_r = 460.0 * scale
+    rail_start_rl = 289.0
     rail_end_rl = 348.0
     segments = 44
 

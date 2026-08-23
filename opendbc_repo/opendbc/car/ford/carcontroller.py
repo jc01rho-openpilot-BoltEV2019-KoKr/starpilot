@@ -255,9 +255,15 @@ class CarController(CarControllerBase):
 
     if (self.frame % CarControllerParams.ACC_UI_STEP) == 0 or send_ui:
       show_distance_bars = self.frame - self.distance_bar_frame < 400
+      hands_free_cluster = bool(
+        self.ford_lateral is not None
+        and self.ford_lateral.mode != FordLateralMode.native
+        and self.ford_lateral.mode == self.ford_lateral_announced_mode
+        and self.ford_lateral.hands_free_cluster_enabled)
       can_sends.append(fordcan.create_acc_ui_msg(self.packer, self.CAN, self.CP, main_on, CC.latActive,
                                                  fcw_alert, CS.out.cruiseState.standstill, show_distance_bars,
-                                                 hud_control, CS.acc_tja_status_stock_values))
+                                                 hud_control, CS.acc_tja_status_stock_values,
+                                                 hands_free_cluster))
 
     self.main_on_last = main_on
     self.lkas_enabled_last = CC.latActive

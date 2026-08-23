@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from openpilot.system.hardware import HARDWARE
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
-from openpilot.system.ui.lib.application import gui_app, FontWeight
+from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.system.ui.widgets import DialogResult
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
@@ -205,7 +205,8 @@ class StarPilotLateralLayout(_SettingsPage):
       ),
       SettingRow(
         "LaneChangeCloseGap", "toggle", tr_noop("Close Gap On Lane Change"),
-        subtitle=tr_noop("Allows for a temporary shorter follow distance behind lead so that openpilot merges smoothly out of current lane, it will allow car to accelerate as it changes lanes."),
+        subtitle=tr_noop("Allows for a temporary shorter follow distance behind lead so that openpilot merges smoothly " +
+                         "out of current lane, it will allow car to accelerate as it changes lanes."),
         get_state=lambda: p.get_bool("LaneChangeCloseGap"),
         set_state=lambda s: p.put_bool("LaneChangeCloseGap", s),
         visible=lc_on,
@@ -316,7 +317,8 @@ class StarPilotLateralLayout(_SettingsPage):
         "SteerLatAccel", "value", tr_noop("Lateral Acceleration"),
         subtitle=tr_noop("Maps steering torque to turning response."),
         get_value=lambda: f"{p.get_float('SteerLatAccel'):.2f}",
-        on_click=lambda: self._show_slider("SteerLatAccel", max(0.01, cs.latAccelFactor) * 0.5, max(0.01, cs.latAccelFactor) * 1.5, step=0.01, value_type="float"),
+        on_click=lambda: self._show_slider("SteerLatAccel", max(0.01, cs.latAccelFactor) * 0.5,
+                                           max(0.01, cs.latAccelFactor) * 1.5, step=0.01, value_type="float"),
         visible=lambda: alt_on() and cs.latAccelFactor != 0 and cs.isTorqueCar and not cs.isAngleCar,
       ),
       SettingRow(
@@ -368,9 +370,16 @@ class StarPilotLateralLayout(_SettingsPage):
       ),
       SettingRow(
         "FordHumanTurnDetection", "toggle", tr_noop("Manual Turn Release"),
-        subtitle=tr_noop("Release lateral control during a sustained hands-on turn, then ramp back in smoothly."),
+        subtitle=tr_noop("Yield during an intentional manual turn while keeping the Ford steering session ready."),
         get_state=lambda: p.get_bool("FordHumanTurnDetection"),
         set_state=lambda s: p.put_bool("FordHumanTurnDetection", s),
+        visible=ford_enhanced_mode,
+      ),
+      SettingRow(
+        "FordHandsFreeCluster", "toggle", tr_noop("Hands-Free Cluster Display"),
+        subtitle=tr_noop("Show the vehicle's hands-free assistance graphic while lateral control is active. Driver monitoring requirements do not change."),
+        get_state=lambda: p.get_bool("FordHandsFreeCluster"),
+        set_state=lambda s: p.put_bool("FordHandsFreeCluster", s),
         visible=ford_enhanced_mode,
       ),
       SettingRow(

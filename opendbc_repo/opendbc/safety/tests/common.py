@@ -1103,6 +1103,7 @@ class SafetyTest(SafetyTestBase):
                                               'TestHyundaiSafetyFCEVLong', 'TestHyundaiLongitudinalAolLkasOnEngageSafety',
                                               'TestHyundaiSafetyCanRefreshLong', 'TestHyundaiSafetyCanRefreshLongCameraSCC',
                                               'TestHyundaiCanCanfdBlendedLongitudinalSafety',
+                                              'TestHyundaiLegacyLongitudinalSafety',
                                               'TestHyundaiLegacyLongitudinalSafetyHEV'}):
               continue
             volkswagen_shared = ('TestVolkswagenMqb', 'TestVolkswagenMlb', 'TestVolkswagenMeb')
@@ -1156,6 +1157,7 @@ class SafetyTest(SafetyTestBase):
             if attr.startswith('TestHyundaiLongitudinal') or attr in ('TestHyundaiSafetyFCEVLong',
                                                                       'TestHyundaiLongitudinalAolLkasOnEngageSafety',
                                                                       'TestHyundaiCanCanfdBlendedLongitudinalSafety',
+                                                                      'TestHyundaiLegacyLongitudinalSafety',
                                                                       'TestHyundaiLegacyLongitudinalSafetyHEV'):
               # exceptions for common msgs across different Hyundai CAN platforms
               tx = list(filter(lambda m: m[0] not in [0x420, 0x50A, 0x389, 0x4A2], tx))

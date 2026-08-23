@@ -469,6 +469,8 @@ class LatControlTorque(LatControl):
         friction_threshold = CIVIC_BOSCH_MODIFIED_B_FIXED_FRICTION_THRESHOLD
         friction_scale = get_civic_bosch_modified_b_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = 1.0 + ((friction_scale - 1.0) * civic_bosch_modified_a_center_taper)
+      if self.is_honda_accord:
+        ff *= get_honda_accord_ff_scale(setpoint)
       if flm_surface_active and self.flm_surface_profile_key and not ioniq_6_active:
         universal_flm_profile = self.flm_surface_profile_key == FLM_UNIVERSAL_PROFILE_KEY
         flm_full_surface_center_taper = get_flm_full_surface_center_taper_scale(self.flm_surface_profile_key, setpoint, CS.vEgo,
@@ -580,6 +582,8 @@ class LatControlTorque(LatControl):
         output_torque *= get_ram_1500_center_output_scale(setpoint, CS.vEgo)
         if output_torque * setpoint > 0.0:
           output_torque *= get_ram_1500_transition_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+        if setpoint * desired_lateral_jerk < 0.0:
+          output_torque *= get_ram_1500_unwind_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif self.is_kona_non_scc:
         output_torque *= get_kona_non_scc_center_taper_scale(setpoint, CS.vEgo)
         rapid_reversal = setpoint * desired_lateral_jerk < 0.0

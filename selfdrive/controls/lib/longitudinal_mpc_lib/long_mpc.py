@@ -923,7 +923,8 @@ class LongitudinalMpc:
   def update(self, radarstate, v_cruise, x, v, a, j, danger_factor, t_follow,
              personality=log.LongitudinalPersonality.standard, tracking_lead=True,
              optional_far_lead_comfort=True, smooth_duplicate_vision=False,
-             stop_x=None, silverado_early_follow=False, modelV2=None):
+             stop_x=None, silverado_early_follow=False, modelV2=None,
+             lead_obstacle_bias=(0.0, 0.0)):
     v_ego = self.x0[1]
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
@@ -943,6 +944,8 @@ class LongitudinalMpc:
     # and then treat that as a stopped car/obstacle at this new distance.
     lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1])
     lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1])
+    lead_0_obstacle -= float(lead_obstacle_bias[0])
+    lead_1_obstacle -= float(lead_obstacle_bias[1])
 
     self.params[:,0] = ACCEL_MIN
     self.params[:,1] = max(0.0, self.max_a)

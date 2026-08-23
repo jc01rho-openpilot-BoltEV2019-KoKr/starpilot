@@ -1671,6 +1671,27 @@ def test_clear_generated_build_state_preserves_prebuilts_and_user_data(tmp_path)
   assert user_model.read_text() == "test"
 
 
+def test_sentry_notification_rate_limit_persists_and_expires(monkeypatch, tmp_path):
+  server = _load_server_module()
+  rate_limit_path = tmp_path / "sentry_notification_rate_limit.json"
+  now = [1000.0]
+  monkeypatch.setattr(server, "_sentry_notification_rate_limit_path", lambda: rate_limit_path)
+  monkeypatch.setattr(server.time, "time", lambda: now[0])
+  server._SENTRY_NOTIFICATION_LAST_AT = None
+  event = {"eventId": "event-1"}
+
+  assert server._claim_sentry_notification_slot(event) is True
+  assert rate_limit_path.exists()
+  server._SENTRY_NOTIFICATION_LAST_AT = None
+  assert server._claim_sentry_notification_slot({"eventId": "event-2"}) is False
+
+  now[0] += server.SENTRY_NOTIFICATION_RATE_LIMIT_SECONDS - 0.1
+  assert server._claim_sentry_notification_slot({"eventId": "event-3"}) is False
+
+  now[0] += 0.1
+  assert server._claim_sentry_notification_slot({"eventId": "event-4"}) is True
+
+
 def test_troubleshoot_steer_delay_normalizes_vehicle_delay_for_display():
   server = _load_server_module()
 

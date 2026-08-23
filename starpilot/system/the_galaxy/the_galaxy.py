@@ -114,6 +114,7 @@ LEGACY_LATERAL_METHOD_API_PREFIX = "/api/" + "".join(("f", "t", "m"))
 VASM_CONFIGURATION_KEYS = {"VASMEnabled", "VASMConfidenceThreshold", "VASMSmoothSeconds", "VASMAnnotationConfig"}
 PIP_PREVIEW_CONFIGURATION_KEYS = {"PIPPreviewEnabled", "PIPPreviewMask", "PIPPreviewShowOnBlinker", "PIPPreviewShowOnBSM"}
 MODEL_SMOOTHING_KEYS = {"LatSmoothSeconds", "LongSmoothSeconds"}
+GALAXY_DEVELOPER_ONLY_KEYS = {"TurnSteeringLimitMuteSpeed"}
 PULSE_GLIDE_BUTTON_KEYS = {
   "CancelButtonControl", "DistanceButtonControl",
   "LongCancelButtonControl", "LongDistanceButtonControl",
@@ -125,6 +126,7 @@ SENTRY_NUMERIC_PARAM_BOUNDS = {
   "SentryModeSensitivity": (0.005, 1.0),
   "SentryModeWarningTime": (0.1, 10.0),
 }
+SENTRY_NOTIFICATION_RATE_LIMIT_SECONDS = 180.0
 
 GALAXY_DEPS_PATH = "/data/galaxy_deps"
 LEGACY_GALAXY_DEPS_PATH = "/data/" + "".join(chr(code) for code in (112, 111, 110, 100)) + "_deps"
@@ -788,6 +790,8 @@ def _capture_sentry_live_images() -> list[str]:
 
 
 _SENTRY_PUSH_LOCK = threading.Lock()
+_SENTRY_NOTIFICATION_RATE_LIMIT_LOCK = threading.Lock()
+_SENTRY_NOTIFICATION_LAST_AT: float | None = None
 _SENTRY_PUSH_PRIVATE_KEY_NAME = "sentry_vapid_private.pem"
 _SENTRY_PUSH_SUBSCRIPTIONS_NAME = "sentry_push_subscriptions.json"
 _SENTRY_PUSH_SUBJECT = os.getenv("STARPILOT_VAPID_SUBJECT", "mailto:galaxy@firestar.link")
@@ -910,6 +914,61 @@ def _sentry_notification_channels() -> dict[str, bool]:
   }
 
 
+def _sentry_notification_rate_limit_path() -> Path:
+  return _get_galaxy_dir() / "sentry_notification_rate_limit.json"
+
+
+def _load_sentry_notification_last_at() -> float | None:
+  try:
+    payload = json.loads(_sentry_notification_rate_limit_path().read_text())
+    value = float(payload.get("lastNotificationAt")) if isinstance(payload, dict) else None
+  except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    return None
+  return value if value is not None and math.isfinite(value) else None
+
+
+def _claim_sentry_notification_slot(event: dict) -> bool:
+  """Reserve the shared notification slot for a real Sentry event."""
+  global _SENTRY_NOTIFICATION_LAST_AT
+
+  now = time.time()
+  with _SENTRY_NOTIFICATION_RATE_LIMIT_LOCK:
+    persisted_last_at = _load_sentry_notification_last_at()
+    last_at = max(
+      (value for value in (_SENTRY_NOTIFICATION_LAST_AT, persisted_last_at) if value is not None),
+      default=None,
+    )
+    if last_at is not None:
+      elapsed = max(0.0, now - last_at)
+      if elapsed < SENTRY_NOTIFICATION_RATE_LIMIT_SECONDS:
+        remaining = SENTRY_NOTIFICATION_RATE_LIMIT_SECONDS - elapsed
+        cloudlog.info(
+          "Galaxy: Sentry notification suppressed by rate limit (%.0f seconds remaining; event=%s)",
+          remaining,
+          event.get("eventId", ""),
+        )
+        return False
+
+    _SENTRY_NOTIFICATION_LAST_AT = now
+    rate_limit_path = _sentry_notification_rate_limit_path()
+    temporary_path = rate_limit_path.with_suffix(".tmp")
+    try:
+      rate_limit_path.parent.mkdir(parents=True, exist_ok=True)
+      temporary_path.write_text(json.dumps({
+        "lastNotificationAt": now,
+        "eventId": str(event.get("eventId") or ""),
+      }, separators=(",", ":")))
+      temporary_path.chmod(0o600)
+      temporary_path.replace(rate_limit_path)
+    except OSError:
+      cloudlog.warning("Galaxy: unable to persist Sentry notification rate-limit state")
+      try:
+        temporary_path.unlink(missing_ok=True)
+      except OSError:
+        pass
+    return True
+
+
 def _sentry_test_notification_event() -> dict:
   return {
     "eventId": f"notification-test-{int(time.time())}-{secrets.token_hex(4)}",
@@ -970,7 +1029,12 @@ def _dispatch_sentry_push(event: dict) -> None:
       ])
 
 
-def _dispatch_sentry_event(event: dict) -> None:
+def _dispatch_sentry_event(event: dict, *, bypass_rate_limit: bool = False) -> None:
+  if not any(_sentry_notification_channels().values()):
+    return
+  if not bypass_rate_limit and not _claim_sentry_notification_slot(event):
+    return
+
   _dispatch_sentry_push(event)
   message = f"🚨 StarPilot Sentry Mode: {event['message']}"
   webhook = (params.get("SentryModeWebhook", encoding="utf-8") or "").strip()
@@ -5025,6 +5089,9 @@ def setup(app):
         if not params.get_bool("GalaxyDeveloperMode"):
           return jsonify({"error": "Pulse and Glide is available only with Galaxy Developer Mode enabled."}), 403
 
+      if key in GALAXY_DEVELOPER_ONLY_KEYS and not params.get_bool("GalaxyDeveloperMode"):
+        return jsonify({"error": f"{key} is available only with Galaxy Developer Mode enabled."}), 403
+
       if key in SENTRY_NUMERIC_PARAM_BOUNDS:
         minimum, maximum = SENTRY_NUMERIC_PARAM_BOUNDS[key]
         try:
@@ -7254,6 +7321,7 @@ def setup(app):
     threading.Thread(
       target=_dispatch_sentry_event,
       args=(event,),
+      kwargs={"bypass_rate_limit": True},
       name="galaxy-sentry-notification-test",
       daemon=True,
     ).start()
@@ -7367,7 +7435,13 @@ def setup(app):
       event["imagePaths"] = _capture_sentry_test_images(event_id)
       _record_sentry_event(event)
       params.put("SentryModeLastEvent", json.dumps(event, separators=(",", ":")))
-      threading.Thread(target=_dispatch_sentry_event, args=(event,), name="galaxy-sentry-test-notify", daemon=True).start()
+      threading.Thread(
+        target=_dispatch_sentry_event,
+        args=(event,),
+        kwargs={"bypass_rate_limit": True},
+        name="galaxy-sentry-test-notify",
+        daemon=True,
+      ).start()
 
     threading.Thread(target=capture_and_publish, name="galaxy-sentry-test-capture", daemon=True).start()
     return jsonify({"accepted": True, "eventId": event_id}), 202
