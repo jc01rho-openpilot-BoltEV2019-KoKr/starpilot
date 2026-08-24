@@ -521,6 +521,7 @@ class GuiApplication:
 
     self._fonts: dict[FontWeight, rl.Font] = {}
     self._text_fonts: dict[tuple[int, ...], rl.Font] = {}
+    self._pending_font_unloads: list[rl.Font] = []
     self._width = width if width is not None else GuiApplication._default_width()
     self._height = height if height is not None else GuiApplication._default_height()
 
@@ -1042,6 +1043,8 @@ class GuiApplication:
     if not rl.is_window_ready():
       return
 
+    self._flush_pending_font_unloads()
+
     for texture in self._textures.values():
       rl.unload_texture(texture)
     self._textures = {}
@@ -1200,6 +1203,7 @@ class GuiApplication:
         self._mark_progress("gui_app.before_end_drawing")
         rl.end_drawing()
         self._mark_progress("gui_app.after_end_drawing")
+        self._flush_pending_font_unloads()
         self._populate_render_texture_cache()
 
         if RECORD:
@@ -1257,10 +1261,15 @@ class GuiApplication:
         evicted_key, evicted_font = next(iter(self._text_fonts.items()))
         del self._text_fonts[evicted_key]
         _font_codepoint_cache.pop(evicted_font.texture.id, None)
-        rl.unload_font(evicted_font)
+        self._pending_font_unloads.append(evicted_font)
     else:
       self._text_fonts[codepoints] = self._text_fonts.pop(codepoints)
     return font
+
+  def _flush_pending_font_unloads(self) -> None:
+    for font in self._pending_font_unloads:
+      rl.unload_font(font)
+    self._pending_font_unloads.clear()
 
   @property
   def width(self):
