@@ -697,73 +697,105 @@ class FavoriteRadialMenu:
       lines[-1] = FavoriteRadialMenu._append_ellipsis(font, lines[-1], font_size, max_width)
     return lines
 
+  @staticmethod
+  def _sample_aether_color(t: float, alpha: int) -> rl.Color:
+    """Sample from the tri-stop Aether gradient (#C49EFF -> #AC7DFF -> #58329E)."""
+    if t <= 0.5:
+      w = t * 2.0
+      r = int(196 - 24 * w)
+      g = int(158 - 33 * w)
+      b = 255
+    else:
+      w = (t - 0.5) * 2.0
+      r = int(172 - 84 * w)
+      g = int(125 - 75 * w)
+      b = int(255 - 97 * w)
+    return rl.Color(r, g, b, alpha)
+
   def _draw_corner_hint(self) -> None:
     scale = self._scale_for(self._rect)
     x0 = self._rect.x
     y0 = self._rect.y + self._rect.height
     is_pressed = self._corner_press is not None
 
-    size = 120.0 * scale
-    purple = self._PURPLE
+    size = 150.0 * scale
+    steps = 48
 
-    steps = 6
-    max_alpha = 135 if is_pressed else 95
+    # 1. Precompute edge vertices to minimize per-frame allocations
+    v_origin = rl.Vector2(x0, y0)
+    inv_steps = 1.0 / steps
+    pts_top = [rl.Vector2(x0, y0 - size * (k * inv_steps)) for k in range(steps + 1)]
+    pts_right = [rl.Vector2(x0 + size * (k * inv_steps), y0) for k in range(steps + 1)]
+
+    # 2. Pass 0 (Smoked Obsidian Base) & Pass 1 (Tri-Stop Aether Gradient Mesh)
+    # Borderless design: smooth monotonic decay into exact 0 alpha at hypotenuse
+    base_max_alpha = 200 if is_pressed else 160
+    purple_max_alpha = 145 if is_pressed else 105
+
     for i in range(steps):
-      t_a = i / float(steps)
-      t_b = (i + 1) / float(steps)
-      t_mid = (t_a + t_b) * 0.5
+      t_mid = (i + 0.5) * inv_steps
+      v_ta, v_tb = pts_top[i], pts_top[i + 1]
+      v_ra, v_rb = pts_right[i], pts_right[i + 1]
 
-      # Non-linear quadratic fade: dissolves cleanly into transparent road video
-      alpha = int(max_alpha * ((1.0 - t_mid) ** 1.7))
-      if alpha <= 0:
-        continue
+      base_a = int(base_max_alpha * ((1.0 - t_mid) ** 1.40))
+      purple_a = int(purple_max_alpha * ((1.0 - t_mid) ** 1.75))
 
-      slice_col = rl.Color(*purple, alpha)
-      v_a_top = rl.Vector2(x0, y0 - size * t_a)
-      v_a_right = rl.Vector2(x0 + size * t_a, y0)
-      v_b_top = rl.Vector2(x0, y0 - size * t_b)
-      v_b_right = rl.Vector2(x0 + size * t_b, y0)
+      for col in (rl.Color(8, 6, 18, base_a) if base_a > 0 else None,
+                  self._sample_aether_color(t_mid, purple_a) if purple_a > 0 else None):
+        if col is None:
+          continue
+        if i == 0:
+          rl.draw_triangle(v_origin, v_rb, v_tb, col)
+        else:
+          rl.draw_triangle(v_ta, v_ra, v_tb, col)
+          rl.draw_triangle(v_tb, v_ra, v_rb, col)
 
-      if i == 0:
-        rl.draw_triangle(rl.Vector2(x0, y0), v_b_right, v_b_top, slice_col)
-      else:
-        rl.draw_triangle(v_a_top, v_a_right, v_b_top, slice_col)
-        rl.draw_triangle(v_b_top, v_a_right, v_b_right, slice_col)
+    # 3. Ultra-Polished Frosted-Glass Vector Arrow (Nestled deep in purple corner)
+    cx = x0 + 34.0 * scale
+    cy = y0 - 34.0 * scale
 
-    # 2. Elegant, optically centered vector arrow
-    cx = x0 + size * 0.32
-    cy = y0 - size * 0.32
+    tip = rl.Vector2(cx + 15.0 * scale, cy - 15.0 * scale)
+    tail = rl.Vector2(cx - 15.0 * scale, cy + 15.0 * scale)
+    wing1 = rl.Vector2(tip.x - 14.0 * scale, tip.y + 1.2 * scale)
+    wing2 = rl.Vector2(tip.x - 1.2 * scale, tip.y + 14.0 * scale)
 
-    tip = rl.Vector2(cx + 8.0 * scale, cy - 8.0 * scale)
-    tail = rl.Vector2(cx - 7.0 * scale, cy + 7.0 * scale)
-    wing1 = rl.Vector2(tip.x - 9.0 * scale, tip.y + 0.5 * scale)
-    wing2 = rl.Vector2(tip.x - 0.5 * scale, tip.y + 9.0 * scale)
+    line_w = 4.6 * scale
 
-    line_w = 3.0 * scale
-    arrow_col = rl.Color(255, 255, 255, 235 if is_pressed else 195)
-    shadow_col = rl.Color(16, 10, 28, 120)
-    shadow_offset = 1.2 * scale
+    # Tier 1: Deep Subsurface Ambient Occlusion Shadow
+    s_off = 1.6 * scale
+    s_tip = rl.Vector2(tip.x + s_off, tip.y + s_off)
+    s_tail = rl.Vector2(tail.x + s_off, tail.y + s_off)
+    s_w1 = rl.Vector2(wing1.x + s_off, wing1.y + s_off)
+    s_w2 = rl.Vector2(wing2.x + s_off, wing2.y + s_off)
+    shadow_w = line_w + 2.0 * scale
+    shadow_col = rl.Color(8, 6, 16, 130 if is_pressed else 105)
 
-    # Soft ambient drop shadow behind arrow
-    s_tip = rl.Vector2(tip.x + shadow_offset, tip.y + shadow_offset)
-    s_tail = rl.Vector2(tail.x + shadow_offset, tail.y + shadow_offset)
-    s_w1 = rl.Vector2(wing1.x + shadow_offset, wing1.y + shadow_offset)
-    s_w2 = rl.Vector2(wing2.x + shadow_offset, wing2.y + shadow_offset)
-    rl.draw_line_ex(s_tail, s_tip, line_w + 1.0 * scale, shadow_col)
-    rl.draw_line_ex(s_tip, s_w1, line_w + 1.0 * scale, shadow_col)
-    rl.draw_line_ex(s_tip, s_w2, line_w + 1.0 * scale, shadow_col)
+    # Tier 2: Aether Violet Refractive Halo / Glass Bloom
+    halo_w = line_w + 3.2 * scale
+    halo_col = rl.Color(185, 145, 255, 75 if is_pressed else 55)
 
-    # Crisp arrow strokes
-    rl.draw_line_ex(tail, tip, line_w, arrow_col)
-    rl.draw_line_ex(tip, wing1, line_w, arrow_col)
-    rl.draw_line_ex(tip, wing2, line_w, arrow_col)
+    # Tier 3: Radiant High-Luminance Frost White Body
+    arrow_col = rl.Color(255, 255, 255, 245 if is_pressed else 225)
 
-    # Smooth rounded joints
-    r_cap = line_w * 0.5
-    rl.draw_circle_v(tip, r_cap, arrow_col)
-    rl.draw_circle_v(tail, r_cap, arrow_col)
-    rl.draw_circle_v(wing1, r_cap, arrow_col)
-    rl.draw_circle_v(wing2, r_cap, arrow_col)
+    # Tier 4: Specular Spine Highlight
+    spec_w = 2.0 * scale
+    spec_col = rl.Color(255, 255, 255, 255 if is_pressed else 240)
+
+    # Render multi-pass optical stack
+    layers = (
+      (s_tail, s_tip, s_w1, s_w2, shadow_w, shadow_col),
+      (tail, tip, wing1, wing2, halo_w, halo_col),
+      (tail, tip, wing1, wing2, line_w, arrow_col),
+      (tail, tip, wing1, wing2, spec_w, spec_col),
+    )
+
+    for p_tail, p_tip, p_w1, p_w2, width, col in layers:
+      rl.draw_line_ex(p_tail, p_tip, width, col)
+      rl.draw_line_ex(p_tip, p_w1, width, col)
+      rl.draw_line_ex(p_tip, p_w2, width, col)
+      r_cap = width * 0.5
+      for pt in (p_tail, p_tip, p_w1, p_w2):
+        rl.draw_circle_v(pt, r_cap, col)
 
   def _draw_radial_menu(self) -> None:
     scale = self._scale_for(self._rect)
