@@ -39,6 +39,7 @@ from openpilot.starpilot.controls.starpilot_card import StarPilotCard
 REPLAY = "REPLAY" in os.environ
 OPENPILOT_LEAD_MIN_DISTANCE = 0.1
 REDNECK_DECREASE_LOOKAHEAD_POINTS = 10
+SLC_SOURCE_NONE = "None"
 EventName = log.OnroadEvent.EventName
 
 # forward
@@ -276,14 +277,19 @@ class Car:
       self.CP.openpilotLongitudinalControl and not self.CP.pcmCruise
     )
     if not preap_software_cruise:
-      speed_limit_confirmation_pending = is_speed_limit_confirmation_pending(self.sm['starpilotPlan'])
+      starpilot_plan = self.sm['starpilotPlan']
+      speed_limit_confirmation_pending = is_speed_limit_confirmation_pending(starpilot_plan)
+      slc_target_with_offset = 0.0
+      if self.starpilot_toggles.speed_limit_controller and starpilot_plan.slcSpeedLimitSource != SLC_SOURCE_NONE:
+        slc_target_with_offset = starpilot_plan.slcSpeedLimit + starpilot_plan.slcSpeedLimitOffset
       self.v_cruise_helper.update_v_cruise(
         CS,
         self.sm['carControl'].enabled,
         self.is_metric,
         speed_limit_confirmation_pending,
         self.starpilot_toggles,
-        FPCS,
+        starpilot_car_state=FPCS,
+        slc_target_with_offset=slc_target_with_offset,
       )
     else:
       preap_v_cruise_kph = float(CS.cruiseState.speed * CV.MS_TO_KPH)

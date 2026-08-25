@@ -119,6 +119,47 @@ class TestVCruiseHelper:
         )
         assert pressed == (self.v_cruise_helper.v_cruise_kph == self.v_cruise_helper.v_cruise_kph_last)
 
+  def test_accel_stops_at_slc_target_before_crossing_it(self):
+    self.starpilot_toggles.cruise_increase = 5
+    self.v_cruise_helper.v_cruise_kph = 30
+    self.v_cruise_helper.v_cruise_cluster_kph = 30
+    slc_target_with_offset = 33 * CV.KPH_TO_MS
+
+    # A 30 km/h limit with a +3 km/h SLC offset should be an intermediate stop.
+    for expected_kph in (33, 35, 40):
+      for pressed in (True, False):
+        CS = car.CarState(cruiseState={"available": True})
+        CS.buttonEvents = [ButtonEvent(type=ButtonType.accelCruise, pressed=pressed)]
+        self.v_cruise_helper.update_v_cruise(
+          CS,
+          enabled=True,
+          is_metric=True,
+          speed_limit_changed=False,
+          starpilot_toggles=self.starpilot_toggles,
+          slc_target_with_offset=slc_target_with_offset,
+        )
+
+      assert self.v_cruise_helper.v_cruise_kph == pytest.approx(expected_kph)
+
+  def test_accel_uses_normal_interval_without_an_active_slc_target(self):
+    self.starpilot_toggles.cruise_increase = 5
+    self.v_cruise_helper.v_cruise_kph = 30
+    self.v_cruise_helper.v_cruise_cluster_kph = 30
+
+    # Card passes zero when SLC is disabled or has no active speed-limit source.
+    for pressed in (True, False):
+      CS = car.CarState(cruiseState={"available": True})
+      CS.buttonEvents = [ButtonEvent(type=ButtonType.accelCruise, pressed=pressed)]
+      self.v_cruise_helper.update_v_cruise(
+        CS,
+        enabled=True,
+        is_metric=True,
+        speed_limit_changed=False,
+        starpilot_toggles=self.starpilot_toggles,
+      )
+
+    assert self.v_cruise_helper.v_cruise_kph == pytest.approx(35)
+
   def test_hard_press_uses_long_press_interval(self):
     self.enable(52 * CV.MPH_TO_MS, False)
     initial_v_cruise_kph = self.v_cruise_helper.v_cruise_kph
