@@ -1,4 +1,3 @@
-from contextlib import nullcontext
 from types import SimpleNamespace
 
 from openpilot.system.ui.lib import application
@@ -85,8 +84,8 @@ def test_dynamic_font_eviction_defers_gpu_unload_until_frame_boundary(monkeypatc
   new_font = SimpleNamespace(texture=SimpleNamespace(id=999))
   unloaded_texture_ids = []
 
-  monkeypatch.setattr(application, "as_file", lambda _: nullcontext(SimpleNamespace(as_posix=lambda: "unifont.otf")))
-  monkeypatch.setattr(application.rl, "load_font_ex", lambda *_: new_font)
+  monkeypatch.setattr(application, "_unifont_bytes", lambda: (object(), 1024))
+  monkeypatch.setattr(application.rl, "load_font_from_memory", lambda *_: new_font)
   monkeypatch.setattr(application.rl, "set_texture_filter", lambda *_: None)
   monkeypatch.setattr(application.rl, "unload_font", lambda font: unloaded_texture_ids.append(font.texture.id))
 
