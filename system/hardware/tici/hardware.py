@@ -516,18 +516,26 @@ class Tici(HardwareBase):
       except Exception:
         pass
 
-    # eSIM prime
-    dest = "/etc/NetworkManager/system-connections/esim.nmconnection"
-    if self.get_sim_lpa().is_comma_profile(sim_id) and not os.path.exists(dest):
-      with open(Path(__file__).parent/'esim.nmconnection') as f, tempfile.NamedTemporaryFile(mode='w') as tf:
-        dat = f.read()
-        dat = dat.replace("sim-id=", f"sim-id={sim_id}")
-        tf.write(dat)
-        tf.flush()
+    # eSIM prime. Optional: needs the lpac binary, which is absent on some images. Letting this
+    # raise would abort configure_modem() before the caller marks the modem configured, so it
+    # would retry every cycle and write a traceback each time.
+    try:
+      dest = "/etc/NetworkManager/system-connections/esim.nmconnection"
+      if self.get_sim_lpa().is_comma_profile(sim_id) and not os.path.exists(dest):
+        with open(Path(__file__).parent/'esim.nmconnection') as f, tempfile.NamedTemporaryFile(mode='w') as tf:
+          dat = f.read()
+          dat = dat.replace("sim-id=", f"sim-id={sim_id}")
+          tf.write(dat)
+          tf.flush()
 
-        # needs to be root
-        os.system(f"sudo cp {tf.name} {dest}")
-      os.system(f"sudo nmcli con load {dest}")
+          # needs to be root
+          os.system(f"sudo cp {tf.name} {dest}")
+        os.system(f"sudo nmcli con load {dest}")
+    except Exception:
+      # cloudlog cannot be imported at module scope here: swaglog imports system.hardware,
+      # which imports this module. The caller logs the outcome.
+      from openpilot.common.swaglog import cloudlog
+      cloudlog.warning("eSIM prime skipped", exc_info=True)
 
   def reboot_modem(self):
     modem = self.get_modem()
