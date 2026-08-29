@@ -177,6 +177,22 @@ class FontWeight(StrEnum):
 
 _font_codepoint_cache: dict[int, frozenset[int]] = {}
 
+# The dynamic fallback face is ~5MB. Reading it from eMMC on every cache miss stalls the
+# render loop for seconds under I/O contention, which trips the UI watchdog and gets the
+# process killed. Keep the bytes resident and rasterize straight from memory instead.
+_unifont_data: tuple[object, object, int] | None = None
+
+
+def _unifont_bytes() -> tuple[object, int]:
+  global _unifont_data
+  if _unifont_data is None:
+    with as_file(FONT_DIR.joinpath("unifont.otf")) as fspath:
+      raw = fspath.read_bytes()
+    # The cast pointer does not own the buffer, so keep the allocation referenced too.
+    owner = rl.ffi.new("unsigned char[]", raw)
+    _unifont_data = (owner, rl.ffi.cast("unsigned char *", owner), len(raw))
+  return _unifont_data[1], _unifont_data[2]
+
 
 def _font_supports_text(font: rl.Font, text: str) -> bool:
   if not text:
@@ -1252,9 +1268,10 @@ class GuiApplication:
       return self.font(FontWeight.UNIFONT)
     font = self._text_fonts.get(codepoints)
     if font is None:
-      with as_file(FONT_DIR.joinpath("unifont.otf")) as fspath:
-        cp_buffer = rl.ffi.new("int[]", codepoints)
-        font = rl.load_font_ex(fspath.as_posix(), DYNAMIC_FONT_SIZE, rl.ffi.cast("int *", cp_buffer), len(codepoints))
+      font_data, font_size = _unifont_bytes()
+      cp_buffer = rl.ffi.new("int[]", codepoints)
+      font = rl.load_font_from_memory(".otf", font_data, font_size, DYNAMIC_FONT_SIZE,
+                                      rl.ffi.cast("int *", cp_buffer), len(codepoints))
       rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
       self._text_fonts[codepoints] = font
       while len(self._text_fonts) > MAX_DYNAMIC_FONTS:
