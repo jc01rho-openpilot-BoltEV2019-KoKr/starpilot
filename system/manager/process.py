@@ -147,10 +147,11 @@ def _find_process_dirs(match_terms: tuple[str, ...]) -> list[Path]:
 
   matches = []
   for proc_dir in proc_dirs:
+    # Match the executable name only. Searching the full cmdline also matches unrelated
+    # processes that merely mention the term in their arguments, including this dump's own
+    # diagnostic greps.
     comm = _read_text_file(proc_dir / "comm", 256).strip()
-    cmdline = _read_proc_cmdline(proc_dir, 2048)
-    haystacks = (comm, cmdline)
-    if any(term in haystack for term in match_terms for haystack in haystacks):
+    if any(term in comm for term in match_terms):
       matches.append(proc_dir)
   return matches
 
@@ -317,8 +318,10 @@ def _append_ui_watchdog_context(lines: list[str], ui_proc_dir: Path) -> None:
     ),
     (
       "== recent swaglog weston/ui ==",
-      "grep -RinE 'Watchdog timeout for ui|weston|Wayland|EGL|gbm|drm|GPU|segfault|SIGSEGV|OOM|fatal' "
-      "/data/log/swaglog* 2>/dev/null | tail -n 160 || true",
+      # Only the newest few logs: this runs while the UI is already stalling, and scanning the
+      # whole ~500MB swaglog history starves the very process we are trying to capture.
+      "ls -1t /data/log/swaglog.* 2>/dev/null | head -n 5 | xargs -r "
+      "grep -inE 'Watchdog timeout for ui|weston|Wayland|EGL|gbm|drm|GPU|segfault|SIGSEGV|OOM|fatal' 2>/dev/null | tail -n 160 || true",
       1.5,
     ),
     (
