@@ -23,7 +23,7 @@ from openpilot.system.hardware import HARDWARE
 from openpilot.system.version import get_build_metadata
 from panda import Panda, FW_PATH
 
-from openpilot.starpilot.common.starpilot_variables import EARTH_RADIUS, STARPILOT_API, FROGS_GO_MOO_PATH, KONIK_PATH
+from openpilot.starpilot.common.starpilot_variables import EARTH_RADIUS, STARPILOT_API, KONIK_PATH
 
 
 def capture_exception(exception):
@@ -270,11 +270,6 @@ def get_sentry_dsn():
     return response.json().get("dsn", "")
   except Exception:
     return ""
-
-
-@cache
-def is_FrogsGoMoo():
-  return FROGS_GO_MOO_PATH.is_file()
 
 
 def is_url_pingable(url):

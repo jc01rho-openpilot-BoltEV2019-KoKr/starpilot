@@ -69,10 +69,6 @@ class VCruiseHelper:
   def _get_cruise_delta_intervals(self, starpilot_toggles: SimpleNamespace) -> tuple[float, float]:
     short_interval = self._get_cruise_delta_interval(getattr(starpilot_toggles, "cruise_increase", None))
     long_interval = self._get_cruise_delta_interval(getattr(starpilot_toggles, "cruise_increase_long", None))
-
-    if getattr(starpilot_toggles, "reverse_cruise_increase", False):
-      return long_interval, short_interval
-
     return short_interval, long_interval
 
   @property

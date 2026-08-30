@@ -3,7 +3,7 @@ import numpy as np
 from opendbc.car import CanBusBase, CanData
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.crc import CRC16_XMODEM
-from opendbc.car.hyundai.values import HyundaiFlags, CAR
+from opendbc.car.hyundai.values import HyundaiFlags, CAR, CANFD_ALT_BUTTONS_RESUME_CAR
 
 
 def _set_value(msg: bytearray, sig, ival: int) -> None:
@@ -152,17 +152,14 @@ def create_angle_adas_cmd(packer, CAN, apply_angle: float, lat_active: bool, tor
 
 
 def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque, apply_angle,
-                             lfa_base_values=None, lkas_base_values=None, lka_icon=None,
-                             send_lfa_status=False, lfa_only=False):
+                             lfa_base_values=None, lkas_base_values=None, lka_icon=None):
   if lka_icon is None:
     lka_icon = 2 if enabled else 1
 
   if CP.carFingerprint == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN and CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
     ret = []
-    if CP.openpilotLongitudinalControl or send_lfa_status:
+    if CP.openpilotLongitudinalControl:
       ret.append(_create_gv70_lka_status_msg(packer, CAN, "LFA", CAN.ECAN, enabled, lat_active, apply_torque))
-    if lfa_only:
-      return ret
     ret.append(_create_gv70_lka_status_msg(packer, CAN, "LKAS", CAN.ACAN, enabled, lat_active, apply_torque))
     return ret
 
@@ -258,10 +255,8 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
   ret = []
   if CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
     lkas_msg = "LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT else "LKAS"
-    if (CP.openpilotLongitudinalControl and not CP.flags & HyundaiFlags.CAN_CANFD_BLENDED) or send_lfa_status:
+    if CP.openpilotLongitudinalControl and not CP.flags & HyundaiFlags.CAN_CANFD_BLENDED:
       ret.append(packer.make_can_msg("LFA", CAN.ECAN, lfa_values))
-    if lfa_only:
-      return ret
     ret.append(packer.make_can_msg(lkas_msg, CAN.ACAN, lkas_values))
   else:
     if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
@@ -311,16 +306,27 @@ def create_suppress_lfa(packer, CAN, lfa_block_msg, lka_steering_alt):
 
 
 def create_buttons(packer, CP, CAN, cnt, btn=0, base_values=None, left_paddle=False, right_paddle=False):
-  values = {k: v for k, v in base_values.items() if k not in ("_CHECKSUM", "COUNTER")} if base_values else {}
+  values = {k: v for k, v in base_values.items() if k not in ("CHECKSUM", "_CHECKSUM", "COUNTER")} if base_values else {}
   values.update({
     "COUNTER": cnt,
     "SET_ME_1": 1,
     "CRUISE_BUTTONS": btn,
-    "LEFT_PADDLE": int(left_paddle),
-    "RIGHT_PADDLE": int(right_paddle),
   })
+  if not (CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS and CP.carFingerprint in CANFD_ALT_BUTTONS_RESUME_CAR):
+    values.update({
+      "LEFT_PADDLE": int(left_paddle),
+      "RIGHT_PADDLE": int(right_paddle),
+    })
 
   bus = CAN.ECAN if CP.flags & HyundaiFlags.CANFD_LKA_STEERING else CAN.CAM
+  if CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS and CP.carFingerprint in CANFD_ALT_BUTTONS_RESUME_CAR:
+    address, dat, bus = packer.make_can_msg("CRUISE_BUTTONS_ALT", bus, values)
+    dat = bytearray(dat)
+    checksum = hkg_can_fd_checksum(address, None, dat)
+    dat[0] = checksum & 0xFF
+    dat[1] = (checksum >> 8) & 0xFF
+    return address, bytes(dat), bus
+
   return packer.make_can_msg("CRUISE_BUTTONS", bus, values)
 
 

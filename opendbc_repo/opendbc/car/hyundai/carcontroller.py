@@ -9,7 +9,7 @@ from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CANFD_ANGLE_LONGITUDINAL_CAR, \
-                                        CANFD_RADAR_LIVE_LONGITUDINAL_CAR, kia_ev6_gt_line_longitudinal_tuning, \
+                                        CANFD_RADAR_LIVE_LONGITUDINAL_CAR, CANFD_ALT_BUTTONS_RESUME_CAR, kia_ev6_gt_line_longitudinal_tuning, \
                                         KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
@@ -431,6 +431,12 @@ def suppress_redundant_gv70_brake_cancel(CP, brake_pressed: bool, lat_active: bo
   )
 
 
+def clear_ioniq_6_torque_when_request_inactive(CP, apply_torque: int, apply_steer_req: bool) -> int:
+  if CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and not apply_steer_req:
+    return 0
+  return apply_torque
+
+
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -613,6 +619,8 @@ class CarController(CarControllerBase):
       if not CC.latActive:
         apply_torque = 0
 
+      apply_torque = clear_ioniq_6_torque_when_request_inactive(self.CP, apply_torque, apply_steer_req)
+
       # Hold torque with induced temporary fault when cutting the actuation bit
       # FIXME: we don't use this with CAN FD?
       torque_fault = CC.latActive and not apply_steer_req
@@ -789,6 +797,7 @@ class CarController(CarControllerBase):
       # TODO: unclear if this is needed
       jerk = 3.0 if actuators.longControlState == LongCtrlState.pid else 1.0
       use_fca = self.CP.flags & HyundaiFlags.USE_FCA.value
+      main_cruise_enabled = getattr(CS, "main_cruise_on", False) if getattr(CS, "main_cruise_tracking", False) else True
       if blended_hda2:
         stopping = stopping and CS.out.vEgoRaw < 0.1
         can_sends.extend(hyundaican.create_acc_commands_can_canfd_blended_hda2(
@@ -804,7 +813,8 @@ class CarController(CarControllerBase):
       else:
         can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled, accel, jerk, int(self.frame / 2),
                                                         hud_control, set_speed_in_units, stopping,
-                                                        CC.cruiseControl.override, use_fca, self.CP))
+                                                        CC.cruiseControl.override, use_fca, self.CP,
+                                                        main_cruise_enabled))
 
     # 20 Hz LFA MFA message
     if self.frame % 5 == 0 and (self.CP.flags & HyundaiFlags.SEND_LFA.value or (self.long_active_ecu and blended_hda2)):
@@ -866,14 +876,7 @@ class CarController(CarControllerBase):
                                                              steering_msg_active, apply_torque, apply_angle,
                                                              CS.stock_lfa_msg if preserve_stock_lfa_status else None,
                                                              CS.stock_lkas_msg if preserve_stock_lkas else None,
-                                                             lka_icon=lka_icon,
-                                                             send_lfa_status=self.ecu_disable_failed and
-                                                             self.CP.carFingerprint == CAR.KIA_EV9))
-    elif self.ecu_disable_failed and self.CP.carFingerprint == CAR.KIA_EV9:
-      can_sends.extend(hyundaicanfd.create_steering_messages(
-        self.packer, self.CP, self.CAN, CC.enabled, False, 0.0, 0.0,
-        CS.stock_lfa_msg, lka_icon=lka_icon, send_lfa_status=True, lfa_only=True,
-      ))
+                                                             lka_icon=lka_icon))
     direct_steering_active = ccnc_angle_long and drive_gear and CC.latActive and self.direct_angle_request_allowed and not CS.angle_steering_fault
     inactive_steering_angle = float(np.clip(CS.angle_steering_angle,
                                             -self.params.ANGLE_LIMITS.STEER_ANGLE_MAX,
@@ -1047,9 +1050,13 @@ class CarController(CarControllerBase):
 
         # cruise standstill resume
         elif CC.cruiseControl.resume:
-          if self.CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS:
-            # TODO: resume for alt button cars
-            pass
+          if self.CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS and self.CP.carFingerprint in CANFD_ALT_BUTTONS_RESUME_CAR:
+            for _ in range(20):
+              can_sends.append(hyundaicanfd.create_buttons(
+                self.packer, self.CP, self.CAN, (CS.buttons_counter + 1) % 0x100,
+                Buttons.RES_ACCEL, base_values=CS.cruise_buttons_msg,
+              ))
+            self.last_button_frame = self.frame
           else:
             for _ in range(20):
               can_sends.append(hyundaicanfd.create_buttons(self.packer, self.CP, self.CAN, CS.buttons_counter + 1, Buttons.RES_ACCEL))

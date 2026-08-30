@@ -42,7 +42,6 @@ class StarPilotCarState:
     canUseSDSU: bool = False
 
     # ========== Device/Car State ==========
-    isFrogsGoMoo: bool = False
     hasPCMCruise: bool = False
     hasModeStarButtons: bool = False
     lkasAllowedForAOL: bool = False

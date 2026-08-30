@@ -345,8 +345,10 @@ class CarController(CarControllerBase):
     apply_torque = apply_meas_steer_torque_limits(new_torque, self.last_torque, CS.out.steeringTorqueEps, self.params)
 
     # >100 degree/sec steering fault prevention
-    self.steer_rate_counter, apply_steer_req = common_fault_avoidance(abs(CS.out.steeringRateDeg) >= MAX_STEER_RATE, lat_active,
-                                                                      self.steer_rate_counter, MAX_STEER_RATE_FRAMES)
+    self.steer_rate_counter, apply_steer_req = common_fault_avoidance(
+      abs(CS.out.steeringRateDeg) >= MAX_STEER_RATE, lat_active,
+      self.steer_rate_counter, MAX_STEER_RATE_FRAMES,
+    )
 
     if not lat_active:
       apply_torque = 0
@@ -518,7 +520,8 @@ class CarController(CarControllerBase):
 
         main_accel_cmd = 0. if self.CP.flags & ToyotaFlags.SECOC.value else pcm_accel_cmd
         can_sends.append(toyotacan.create_accel_command(self.packer, main_accel_cmd, pcm_cancel_cmd, self.permit_braking, self.standstill_req, lead,
-                                                        CS.acc_type, fcw_alert, self.distance_button, starpilot_toggles.reverse_cruise_increase))
+                                                        CS.acc_type, fcw_alert, self.distance_button,
+                                                        getattr(starpilot_toggles, "reverse_cruise_increase", False)))
         if self.CP.flags & ToyotaFlags.SECOC.value:
           acc_cmd_2 = toyotacan.create_accel_command_2(self.packer, pcm_accel_cmd)
           acc_cmd_2 = add_mac(self.secoc_key,
@@ -538,7 +541,8 @@ class CarController(CarControllerBase):
           can_sends.append(toyotacan.create_acc_cancel_command(self.packer))
         else:
           can_sends.append(toyotacan.create_accel_command(self.packer, 0, pcm_cancel_cmd, True, False, lead, CS.acc_type, False,
-                                                          self.distance_button, starpilot_toggles.reverse_cruise_increase))
+                                                          self.distance_button,
+                                                          getattr(starpilot_toggles, "reverse_cruise_increase", False)))
 
     # *** hud ui ***
     if self.CP.carFingerprint != CAR.TOYOTA_PRIUS_V:

@@ -29,9 +29,9 @@ from openpilot.starpilot.common.maps_download_progress import (
   storage_bytes,
 )
 from openpilot.starpilot.common.theme_asset_names import find_matching_theme_asset_file
-from openpilot.starpilot.common.starpilot_utilities import get_starpilot_api_info, is_FrogsGoMoo, is_url_pingable, run_cmd
+from openpilot.starpilot.common.starpilot_utilities import get_starpilot_api_info, is_url_pingable, run_cmd
 from openpilot.starpilot.common.starpilot_variables import (
-  ERROR_LOGS_PATH, STARPILOT_API, FROGS_GO_MOO_PATH, HD_LOGS_PATH, KONIK_LOGS_PATH, MAPS_PATH, THEME_SAVE_PATH,
+  ERROR_LOGS_PATH, STARPILOT_API, HD_LOGS_PATH, KONIK_LOGS_PATH, MAPS_PATH, THEME_SAVE_PATH,
   StarPilotVariables, get_starpilot_toggles
 )
 
@@ -112,13 +112,6 @@ def install_starpilot(build_metadata, params):
   register_device(build_metadata, params)
 
   update_boot_logo(starpilot=True, selected_logo=params.get("BootLogo"))
-
-  if is_FrogsGoMoo():
-    mount_options = run_cmd(["findmnt", "-n", "-o", "OPTIONS", "/persist"], "Successfully retrieved mount options", "Failed to retrieve mount options")
-    run_cmd(["sudo", "mount", "-o", "remount,rw", "/persist"], "Successfully remounted /persist as read-write", "Failed to remount /persist")
-    run_cmd(["sudo", "python3", FROGS_GO_MOO_PATH], "Successfully ran frogsgomoo.py", "Failed to run frogsgomoo.py")
-    run_cmd(["sudo", "mount", "-o", f"remount,{mount_options}", "/persist"], "Successfully restored /persist mount options", "Failed to restore /persist mount options")
-
 
 def register_device(build_metadata, params):
   def register_thread():

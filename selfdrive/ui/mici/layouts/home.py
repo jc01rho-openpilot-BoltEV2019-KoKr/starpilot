@@ -160,6 +160,8 @@ class MiciHomeLayout(Widget):
     self._current_model_name = "default"
 
     self._mode_status_atom = ModeStatusAtom()
+    self._bluetooth_icon = IconWidget("icons_mici/settings/bluetooth.png", (38, 38), opacity=0.9)
+    self._bluetooth_icon.set_visible(False)
     self._egpu_icon = IconWidget("icons_mici/egpu.png", (50, 37))
     self._egpu_icon_gray = IconWidget("icons_mici/egpu_gray.png", (50, 37))
     self._mic_icon = IconWidget("icons_mici/microphone.png", (32, 46))
@@ -167,6 +169,7 @@ class MiciHomeLayout(Widget):
     self._status_bar_layout = HBoxLayout([
       IconWidget("icons_mici/settings.png", (48, 48), opacity=0.9),
       NetworkIcon(),
+      self._bluetooth_icon,
       self._mode_status_atom,
       self._egpu_icon,
       self._egpu_icon_gray,
@@ -187,6 +190,7 @@ class MiciHomeLayout(Widget):
 
   def _update_params(self):
     self._experimental_mode = ui_state.params.get_bool("ExperimentalMode")
+    self._bluetooth_icon.set_visible(ui_state.params.get_bool("BluetoothEnabled"))
     self._mode_status_atom.refresh()
 
     def _clean_model_name(value: str) -> str:

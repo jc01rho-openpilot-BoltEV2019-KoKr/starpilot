@@ -384,6 +384,13 @@
   padding: 0.2rem 0.6rem;
 }
 
+.ds-row-readout {
+  background-color: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .ds-stepper-container {
   width: 100%;
 }

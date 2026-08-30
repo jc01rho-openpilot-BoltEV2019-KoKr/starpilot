@@ -9,6 +9,7 @@ from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import HyundaiFlags, HyundaiStarPilotFlags, HyundaiStarPilotSafetyFlags, CAR, DBC, Buttons, CarControllerParams, \
                                        CANFD_ANGLE_LONGITUDINAL_CAR, CANFD_CORNER_RADAR_BSM_CAR, \
+                                       CANFD_ALT_BUTTONS_RESUME_CAR, \
                                        hyundai_cancel_button_enables_cruise, ALT_BUS_LDA_BUTTON_CARS, ALT_BUS_LDA_BUTTON_SWL_STAT_CARS
 from opendbc.car.interfaces import CarStateBase
 
@@ -132,6 +133,7 @@ class CarState(CarStateBase):
     self.is_metric = False
     self.buttons_counter = 0
     self.main_cruise_on = False
+    self.main_cruise_tracking = bool(getattr(FPCP, "flags", 0) & HyundaiStarPilotFlags.MAIN_CRUISE_STATE_TRACKING)
 
     self.cruise_info = {}
     self.msg_161 = {}
@@ -558,7 +560,9 @@ class CarState(CarStateBase):
     self.main_buttons.extend(cp.vl_all[self.cruise_btns_msg_canfd]["ADAPTIVE_CRUISE_MAIN_BTN"])
     self.lda_button = cp.vl[self.cruise_btns_msg_canfd]["LDA_BTN"]
     self.left_paddle = 0
-    if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
+    if self.CP.carFingerprint in CANFD_ALT_BUTTONS_RESUME_CAR:
+      self.cruise_buttons_msg = copy.copy(cp.vl[self.cruise_btns_msg_canfd])
+    elif self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6:
       self.cruise_buttons_msg = copy.copy(cp.vl["CRUISE_BUTTONS"])
       self.left_paddle = cp.vl["CRUISE_BUTTONS"]["LEFT_PADDLE"]
     self.buttons_counter = cp.vl[self.cruise_btns_msg_canfd]["COUNTER"]
@@ -591,7 +595,7 @@ class CarState(CarStateBase):
                         *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
                         *create_button_events(self.lda_button, prev_lda_button, {1: ButtonType.lkas}),
                         *create_button_events(self.left_paddle, prev_left_paddle, {1: ButtonType.altButton2})]
-    if self.CP.openpilotLongitudinalControl and self.CP.carFingerprint == CAR.KIA_EV9:
+    if self.CP.openpilotLongitudinalControl and (self.CP.carFingerprint == CAR.KIA_EV9 or self.main_cruise_tracking):
       ret.cruiseState.available = self.update_main_cruise(ret)
 
     ret.blockPcmEnable = not self.recent_button_interaction()
@@ -618,7 +622,9 @@ class CarState(CarStateBase):
   def get_can_parsers_canfd(self, CP):
     msgs = []
     cam_msgs = []
-    if not (CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS):
+    if CP.carFingerprint in CANFD_ALT_BUTTONS_RESUME_CAR:
+      msgs.append(("CRUISE_BUTTONS_ALT", 50))
+    elif not (CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS):
       # The EV9 can stop publishing this during the non-ECU-disabled startup
       # state. Keep decoding it when present without making CAN invalid.
       msgs += [

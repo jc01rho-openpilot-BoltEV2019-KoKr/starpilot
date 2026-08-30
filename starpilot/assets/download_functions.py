@@ -8,12 +8,10 @@ import urllib.parse
 from datetime import datetime
 from pathlib import Path
 
+from openpilot.starpilot.common.starpilot_download_utilities import HF_BUCKET_URL, GITHUB_URL
 from openpilot.starpilot.common.starpilot_utilities import delete_file, is_url_pingable
 
 RESOURCES_REPO = os.getenv("STARPILOT_RESOURCES_REPO", "firestar5683/StarPilot-Resources")
-GITLAB_RESOURCES_REPO = os.getenv("STARPILOT_GITLAB_RESOURCES_REPO", "firestar5683/FrogPilot-Resources")
-GITHUB_URL = f"https://raw.githubusercontent.com/{RESOURCES_REPO}"
-GITLAB_URL = f"https://gitlab.com/{GITLAB_RESOURCES_REPO}/-/raw"
 LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
 MAX_MULTIPART_FILES = 100
 
@@ -204,12 +202,19 @@ def get_remote_file_size(url, suppress_errors=False):
       handle_request_error(error, None, None, None, None)
     return 0
 
+def get_resource_urls():
+  """Return resource origins in priority order; GitHub is the only fallback."""
+  urls = []
+  if is_url_pingable("https://huggingface.co"):
+    urls.append(HF_BUCKET_URL)
+  if is_url_pingable("https://github.com") or is_url_pingable("https://api.github.com"):
+    urls.append(GITHUB_URL)
+  return urls
+
+
 def get_repository_url():
-  if is_url_pingable("https://github.com"):
-    if check_github_rate_limit():
-      return GITHUB_URL
-  if is_url_pingable("https://gitlab.com"):
-    return GITLAB_URL
+  for url in get_resource_urls():
+    return url
   return None
 
 def handle_error(destination, error_message, error, download_param, progress_param, params_memory):

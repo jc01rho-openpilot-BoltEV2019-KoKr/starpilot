@@ -16,6 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
   sys.path.insert(0, str(REPO_ROOT))
 
+from openpilot.starpilot.common.model_versions import UNIFIED_ARTIFACT_FORMAT
+
 DEFAULT_INPUT_ROOT = Path("/data/openpilot/uncompiledmodels")
 DEFAULT_OUTPUT_ROOT = Path("/data/openpilot/compiledmodels")
 COMPILE_SCRIPT = REPO_ROOT / "tinygrad_repo/examples/openpilot/compile3.py"
@@ -46,6 +48,7 @@ MODEL_CONTEXT_FREQ = 5
 REPOSITORY_FILE_LIMIT = 100_000_000
 DEFAULT_MULTIPART_SIZE = 95 * 1024 * 1024
 USBGPU_PROBE_ATTEMPTS = 10
+DEFAULT_SUPERCOMBO_BEHAVIOR_VERSION = "v16"
 
 
 def build_compile_env(*, supercombo: bool = False) -> dict[str, str]:
@@ -278,6 +281,13 @@ def infer_model_version(model_key: str, explicit_version: str | None) -> str:
   return ""
 
 
+def resolve_behavior_version(model_key: str, explicit_version: str | None, input_format: str) -> str:
+  version = infer_model_version(model_key, explicit_version)
+  if not version and input_format == "supercombo":
+    return DEFAULT_SUPERCOMBO_BEHAVIOR_VERSION
+  return version
+
+
 def select_input_format(requested: str, files: dict[str, Path]) -> str:
   if requested == "supercombo":
     if "driving_supercombo" not in files:
@@ -389,15 +399,33 @@ def multipart_output_paths(artifact: Path, output_dir: Path | None = None) -> li
   ]
 
 
-def install_local_artifact(artifact: Path, model_key: str, version: str) -> None:
+def _update_local_artifact_metadata(model_key: str, external_gpu: bool) -> None:
+  metadata_path = MODELS_PATH / ".model_artifacts.json"
+  try:
+    payload = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
+    if not isinstance(payload, dict):
+      payload = {}
+    metadata = payload.get(model_key)
+    if not isinstance(metadata, dict):
+      metadata = {}
+    metadata["artifact_format"] = UNIFIED_ARTIFACT_FORMAT
+    metadata["uses_external_gpu"] = bool(external_gpu)
+    payload[model_key] = metadata
+    metadata_path.write_text(json.dumps(payload))
+  except Exception as error:
+    print(f"  WARN: could not update {metadata_path.name}: {error}")
+
+
+def install_local_artifact(artifact: Path, model_key: str, version: str, external_gpu: bool = False) -> None:
   """Copy a freshly compiled local- model into the runtime dir modeld loads from,
-  and ensure its <id>.json sidecar carries the correct version.
+  and ensure its <id>.json sidecar and artifact cache carry the correct metadata.
 
   The sidecar version is NOT cosmetic: without it _discover_local_models() records
   an empty version, which downstream parses on the wrong contract (a v15 model then
   drives like v11). Since we know the build version here, we write it so the local
-  install is correct by default. Local models must be a single is_file() in
-  /data/models to show in the picker. No-ops off-device (no /data/models).
+  install is correct by default. The GPU flag is equally important: it selects
+  the out-of-band loader and AMD queue at runtime. Local models must be a single
+  is_file() in /data/models to show in the picker. No-ops off-device.
   """
   if not MODELS_PATH.is_dir():
     print(f"  skipped auto-install: {MODELS_PATH} not present (not on device?)")
@@ -415,20 +443,19 @@ def install_local_artifact(artifact: Path, model_key: str, version: str) -> None
         info = loaded
     except Exception as error:
       print(f"  WARN: existing sidecar {sidecar.name} is malformed, rewriting: {error}")
-  if not version:
-    if not str(info.get("version") or "").strip():
-      print(f"  WARN: could not determine version -- set it by hand in {sidecar.name} "
-            "or the model may drive on the wrong version contract")
-    return
-  # keep any user-set name/series; only guarantee a correct, non-empty version
-  if str(info.get("version") or "").strip() == version and sidecar.is_file():
-    print(f"  sidecar ok: {sidecar.name} (version {version})")
-    return
-  info.setdefault("name", model_key[len("local-"):].replace("_", " ").replace("-", " ").strip())
-  info.setdefault("series", "Local")
-  info["version"] = version
-  sidecar.write_text(json.dumps(info, indent=2) + "\n")
-  print(f"  wrote sidecar {sidecar.name} (version {version})")
+  if version:
+    info.setdefault("name", model_key[len("local-"):].replace("_", " ").replace("-", " ").strip())
+    info.setdefault("series", "Local")
+    info["version"] = version
+  elif not str(info.get("version") or "").strip():
+    print(f"  WARN: could not determine version -- set it by hand in {sidecar.name} "
+          "or the model may drive on the wrong version contract")
+
+  info["uses_external_gpu"] = bool(external_gpu)
+  if version or sidecar.is_file() or external_gpu:
+    sidecar.write_text(json.dumps(info, indent=2) + "\n")
+    print(f"  wrote sidecar {sidecar.name} (gpu={bool(external_gpu)})")
+  _update_local_artifact_metadata(model_key, external_gpu)
 
 
 def split_oversized_artifact(
@@ -531,10 +558,13 @@ def compile_driving(
     command += ["--behavior-version", version]
   compile_env = build_compile_env(supercombo=input_format == "supercombo")
   if external_gpu:
+    gpu_debug = os.environ.get("STARPILOT_GPU_DEBUG", "1")
+    if gpu_debug not in {"1", "2"}:
+      gpu_debug = "1"
     for qcom_only_flag in ("IMAGE", "NOLOCALS", "OPENPILOT_HACKS"):
       compile_env.pop(qcom_only_flag, None)
     compile_env.update({
-      "DEBUG": "2",
+      "DEBUG": gpu_debug,
       "DEV": "USB+AMD:LLVM",
       "WARP_DEV": "QCOM",
       "FLOAT16": "1",
@@ -642,9 +672,7 @@ def main() -> int:
     source_path = Path(source)
     validate_onnx_source(source_path)
     print(f"  source {option.removeprefix('--')}: {source_path} ({source_path.stat().st_size} bytes)")
-  version = infer_model_version(model_key, args.version)
-  if not version and input_format == "supercombo":
-    version = "v15"
+  version = resolve_behavior_version(model_key, args.version, input_format)
   version_label = version or "unspecified behavior"
   will_install = model_key.startswith("local-") and not args.no_install
   target = f"{args.output_dir}" + (f" -> {MODELS_PATH} (auto-install)" if will_install else "")
@@ -665,7 +693,7 @@ def main() -> int:
         print(f"  --no-split: kept one {size_mb:.1f} MB file; over 100 MB, so split it "
               "before committing to a repo (re-run without --no-split, or --split-artifact)")
     if is_local and not args.no_install:
-      install_local_artifact(output, model_key, version)
+      install_local_artifact(output, model_key, version, args.external_gpu)
   else:
     multipart_outputs = split_oversized_artifact(output)
     if multipart_outputs:

@@ -1344,6 +1344,17 @@ def test_toyota_sienna_target_filter_smooths_mild_high_speed_handoffs():
 
   assert -0.20 < filtered < 0.30
 
+
+def test_toyota_sienna_2019_target_filter_smooths_mild_high_speed_handoffs():
+  CP = make_longcontrol_cp(brand="toyota", carFingerprint="TOYOTA_SIENNA")
+  tuning = vehicle_tunes.LongControlVehicleTuning(CP)
+
+  assert tuning.shape_toyota_sienna_accel_target(0.30, 20.0, False) == pytest.approx(0.30)
+  filtered = tuning.shape_toyota_sienna_accel_target(-0.20, 20.0, False)
+
+  assert -0.20 < filtered < 0.30
+
+
 def test_toyota_sienna_target_filter_smooths_nonurgent_low_speed_lead_braking():
   CP = make_longcontrol_cp(brand="toyota", carFingerprint=TOYOTA_CAR.TOYOTA_SIENNA_4TH_GEN)
   tuning = vehicle_tunes.LongControlVehicleTuning(CP)

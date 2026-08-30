@@ -245,6 +245,11 @@ class CarState(CarStateBase):
 
         buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
 
+    if self.CP.carFingerprint in LEGACY_PRIUS_CAR and not self.has_SDSU:
+      prev_distance_button = self.distance_button
+      self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
+      buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
+
     if self.CP.carFingerprint in DISTANCE_BUTTON_CAR:
       prev_distance_button = self.distance_button
       self.distance_button = cp.vl["PCM_CRUISE_4"]["DISTANCE"]
@@ -294,14 +299,20 @@ class CarState(CarStateBase):
     pt_messages = [
       ("BLINKERS_STATE", float('nan')),
     ]
+    cam_messages = []
 
     if CP.enableGasInterceptorDEPRECATED:
       pt_messages.append(("GAS_SENSOR", 50))
+
+    if CP.carFingerprint in LEGACY_PRIUS_CAR:
+      pt_messages.append(("ACC_CONTROL", float('nan')))
+      if CP.flags & ToyotaFlags.DSU_BYPASS.value:
+        cam_messages.append(("ACC_CONTROL", float('nan')))
 
     if CP.carFingerprint in DISTANCE_BUTTON_CAR:
       pt_messages.append(("PCM_CRUISE_4", 1))
 
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
-      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2),
+      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, 2),
     }

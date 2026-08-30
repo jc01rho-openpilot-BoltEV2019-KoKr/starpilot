@@ -10,6 +10,7 @@ import sys
 import sysconfig
 import tarfile
 
+import io
 from io import BytesIO
 from pathlib import Path
 
@@ -102,6 +103,24 @@ from openpilot.starpilot.system.low_voltage_discord import configure_webhook, ow
 from openpilot.starpilot.system.the_galaxy.factory_reset import remove_path as _run_factory_reset_delete
 from openpilot.starpilot.system.the_galaxy import flm_workspace, utilities
 from openpilot.starpilot.system.the_galaxy.update_recovery import inspect_interrupted_update, public_recovery_status, recover_interrupted_update
+from openpilot.starpilot.system.bluetooth import BluetoothClient
+from openpilot.starpilot.system.wheel_controls import (
+  CONTROLLER_ACTION_OPTIONS,
+  CONTROLLER_ACTION_SET_SPEED,
+  CONTROLLER_ACTION_SLOT_COUNT,
+  FAVORITE_SLOT_COUNT,
+  cancel_learning as cancel_wheel_control_learning,
+  clear_mappings as clear_wheel_control_mappings,
+  controller_speed_bounds,
+  delete_mapping as delete_wheel_control_mapping,
+  load_controller_action_slots,
+  public_status as wheel_control_status,
+  set_controller_action_slot,
+  set_joystick_device,
+  start_learning as start_wheel_control_learning,
+  start_testing as start_wheel_control_testing,
+  stop_testing as stop_wheel_control_testing,
+)
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 # Keep Galaxy independent of opendbc's generated car bindings while matching RivianFlags.ANGLE_HARNESS.
@@ -112,7 +131,7 @@ GITLAB_SUBMISSIONS_PROJECT_ID = "71992109"
 GITLAB_TOKEN = os.environ.get("GITLAB_TOKEN", "")
 LEGACY_LATERAL_METHOD_API_PREFIX = "/api/" + "".join(("f", "t", "m"))
 VASM_CONFIGURATION_KEYS = {"VASMEnabled", "VASMConfidenceThreshold", "VASMSmoothSeconds", "VASMAnnotationConfig"}
-PIP_PREVIEW_CONFIGURATION_KEYS = {"PIPPreviewEnabled", "PIPPreviewMask", "PIPPreviewShowOnBlinker", "PIPPreviewShowOnBSM"}
+PIP_PREVIEW_CONFIGURATION_KEYS = {"PIPPreviewEnabled", "PIPPreviewMask", "PIPPreviewShowOnBlinker", "PIPPreviewShowOnBSM", "PIPPreviewInvert"}
 MODEL_SMOOTHING_KEYS = {"LatSmoothSeconds", "LongSmoothSeconds"}
 GALAXY_DEVELOPER_ONLY_KEYS = {"TurnSteeringLimitMuteSpeed"}
 PULSE_GLIDE_BUTTON_KEYS = {
@@ -682,7 +701,7 @@ def _normalize_sentry_event(payload) -> dict | None:
 
   event_id = str(payload.get("eventId") or "").strip()
   kind = str(payload.get("kind") or "").strip().lower()
-  if not event_id or kind not in {"warning", "alarm", "power_off"}:
+  if not event_id or kind not in {"warning", "alarm", "power_off", "selfie"}:
     return None
 
   event = {
@@ -787,6 +806,57 @@ def _capture_sentry_live_images() -> list[str]:
     jpeg_write(str(path), front)
     paths.append(str(path))
   return paths
+
+
+def _get_live_driver_jpeg():
+  from openpilot.system.manager.process_config import managed_processes
+  started = False
+  try:
+    try:
+      subprocess.check_call(["pgrep", "camerad"])
+    except subprocess.CalledProcessError:
+      managed_processes['camerad'].start()
+      started = True
+
+    client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_DRIVER, True)
+    if not client.connect(True):
+      return None
+
+    if started:
+      settle_deadline = time.monotonic() + 4.0
+      while time.monotonic() < settle_deadline:
+        client.recv(timeout_ms=100)
+
+    buf = client.recv(timeout_ms=5000)
+    if buf is None:
+      return None
+
+    y = np.array(buf.data[:buf.uv_offset], dtype=np.uint8).reshape((-1, buf.stride))[:buf.height, :buf.width]
+    u = np.array(buf.data[buf.uv_offset::2], dtype=np.uint8).reshape((-1, buf.stride // 2))[:buf.height // 2, :buf.width // 2]
+    v = np.array(buf.data[buf.uv_offset + 1::2], dtype=np.uint8).reshape((-1, buf.stride // 2))[:buf.height // 2, :buf.width // 2]
+
+    ul = np.repeat(np.repeat(u, 2).reshape(u.shape[0], y.shape[1]), 2, axis=0).reshape(y.shape)
+    vl = np.repeat(np.repeat(v, 2).reshape(v.shape[0], y.shape[1]), 2, axis=0).reshape(y.shape)
+
+    yuv = np.dstack((y, ul, vl)).astype(np.int16)
+    yuv[:, :, 1:] -= 128
+
+    m = np.array([
+      [1.00000, 1.00000, 1.00000],
+      [0.00000, -0.39465, 2.03211],
+      [1.13983, -0.58060, 0.00000],
+    ])
+    rgb = np.dot(yuv, m).clip(0, 255).astype(np.uint8)
+
+    img = Image.fromarray(rgb)
+    buf_io = BytesIO()
+    img.save(buf_io, format="JPEG", quality=85)
+    return buf_io.getvalue()
+  except Exception:
+    return None
+  finally:
+    if started:
+      managed_processes['camerad'].stop()
 
 
 _SENTRY_PUSH_LOCK = threading.Lock()
@@ -1118,6 +1188,28 @@ def _get_toggle_backup_keys():
   return keys
 
 
+def _route_log_files(name):
+  """Full logs for a route as [(segment, filename, path, size)], oldest segment first."""
+  if not utilities.ROUTE_RE.fullmatch(str(name or "")):
+    return []
+
+  for footage_path in FOOTAGE_PATHS:
+    logs = []
+    try:
+      segments = utilities.get_segments_in_route(name, footage_path)
+    except OSError:
+      continue
+    for segment in sorted(segments, key=lambda s: int(s.rsplit("--", 1)[1])):
+      for filename in ROUTE_LOG_CANDIDATES:
+        path = os.path.join(footage_path, segment, filename)
+        if os.path.isfile(path):
+          logs.append((segment, filename, path, os.path.getsize(path)))
+          break
+    if logs:
+      return logs
+  return []
+
+
 def _coerce_toggle_restore_value(key, value):
   value_type = _get_param_key_type(_params_raw, key)
 
@@ -1194,6 +1286,206 @@ except TypeError:
     str(Paths.log_root()),
   ]
 
+# Full drive logs, newest format first. comma only accepts qlog/qcamera uploads, so these come off the device directly.
+ROUTE_LOG_CANDIDATES = ("rlog.zst", "rlog.bz2", "rlog")
+ROUTE_METADATA_WORKERS = 4
+ROUTE_METADATA_BATCH_SIZE = 8
+ROUTE_THUMBNAIL_CACHE_SECONDS = 7 * 24 * 60 * 60
+# Browsers only allow a handful of connections per origin, so a request must never
+# park on the preview queue: give up and let the card fall back, the job keeps running.
+ROUTE_THUMBNAIL_WAIT_SECONDS = 25
+# One minute per segment, matching loggerd's segment length.
+SEGMENT_DURATION_SECONDS = 60
+# Only ever remux one segment at a time; the driving stack needs the headroom. The
+# subprocess timeout is the hard bound, with a small allowance for executor handoff.
+VIDEO_REMUX_WAIT_SECONDS = utilities.VIDEO_REMUX_TIMEOUT_SECONDS + 5
+# Segment media never changes once loggerd has closed it, so let the browser keep it.
+VIDEO_CACHE_SECONDS = 7 * 24 * 60 * 60
+_VIDEO_REMUX_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="video-remux")
+_VIDEO_REMUX_FUTURES = {}
+_VIDEO_REMUX_LOCK = threading.Lock()
+_ROUTE_THUMBNAIL_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="route-thumbnail")
+_ROUTE_THUMBNAIL_FUTURES = {}
+_ROUTE_THUMBNAIL_LOCK = threading.Lock()
+
+
+def _route_scan_entries(footage_paths):
+  """Route scan entries in footage-root priority order, deduplicated by route id."""
+  entries = []
+  seen_names = set()
+  for footage_path in footage_paths:
+    try:
+      route_details = utilities.get_routes_with_segment_details(footage_path)
+    except OSError:
+      continue
+    for name, details in route_details:
+      if name in seen_names:
+        continue
+      seen_names.add(name)
+      entries.append((
+        footage_path,
+        name,
+        max(0, int(details.get("segmentCount", 0))),
+        max(0, int(details.get("firstSegmentNum", 0))),
+      ))
+  return entries
+
+
+def _route_metadata_events(entries, connect_dongle_id="", process_route=None):
+  """Yield SSE payloads while keeping queued metadata work cancellable."""
+  route_processor = process_route or utilities.process_route
+  total = len(entries)
+  yield {"routes": [], "progress": 0, "total": total, "connectDongleId": connect_dongle_id}
+  if total == 0:
+    return
+
+  executor = ThreadPoolExecutor(max_workers=ROUTE_METADATA_WORKERS, thread_name_prefix="route-metadata")
+  futures = []
+  try:
+    futures = [
+      executor.submit(route_processor, path, name, segment_count, first_segment_num)
+      for path, name, segment_count, first_segment_num in entries
+    ]
+    batch = []
+    for processed, future in enumerate(as_completed(futures), start=1):
+      try:
+        batch.append(future.result())
+      except Exception as exception:
+        print(f"Error processing route: {exception}")
+
+      if len(batch) >= ROUTE_METADATA_BATCH_SIZE or processed == total:
+        yield {"routes": batch, "progress": processed, "total": total}
+        batch = []
+  finally:
+    for future in futures:
+      future.cancel()
+    executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _route_first_segment_path(name, footage_path):
+  """Oldest surviving segment of a route. loggerd ages out --0 first, so it is not always --0."""
+  try:
+    segments = utilities.get_segments_in_route(name, footage_path)
+  except OSError:
+    return None
+  return os.path.join(footage_path, segments[0]) if segments else None
+
+
+def _resolve_route_thumbnail(file_path, footage_paths=None):
+  """Resolve only <segment>/preview.png below a configured footage root."""
+  parts = Path(str(file_path or "")).parts
+  if len(parts) != 2 or parts[1] != "preview.png" or not utilities.SEGMENT_RE.fullmatch(parts[0]):
+    return None
+
+  for footage_path in footage_paths if footage_paths is not None else FOOTAGE_PATHS:
+    footage_root = Path(footage_path).resolve()
+    segment_path = (footage_root / parts[0]).resolve()
+    if segment_path.parent != footage_root or not segment_path.is_dir():
+      continue
+    preview_path = segment_path / "preview.png"
+    if preview_path.is_symlink():
+      continue
+    if preview_path.exists():
+      resolved_preview = preview_path.resolve()
+      if resolved_preview.parent != segment_path:
+        continue
+      return resolved_preview
+    return preview_path
+  return None
+
+
+def _generate_route_thumbnail(preview_path):
+  if preview_path.is_file():
+    return preview_path
+
+  for filename in ("qcamera.ts", "fcamera.hevc"):
+    source_path = preview_path.parent / filename
+    if source_path.resolve().parent == preview_path.parent and source_path.is_file() and utilities.video_to_png(source_path, preview_path) and preview_path.is_file():
+      return preview_path
+  return None
+
+
+def _remove_video_remux_future(key, future):
+  with _VIDEO_REMUX_LOCK:
+    if _VIDEO_REMUX_FUTURES.get(key) is future:
+      _VIDEO_REMUX_FUTURES.pop(key, None)
+
+
+def _get_or_create_segment_mp4(source_path):
+  """Remuxed mp4 for one segment, or None if it is not ready in time.
+
+  Concurrent requests share one ffmpeg run instead of racing to write the same file.
+  """
+  key = str(source_path)
+  created = False
+  with _VIDEO_REMUX_LOCK:
+    future = _VIDEO_REMUX_FUTURES.get(key)
+    if future is None:
+      future = _VIDEO_REMUX_EXECUTOR.submit(utilities.ffmpeg_mp4_wrap_to_path, source_path)
+      _VIDEO_REMUX_FUTURES[key] = future
+      created = True
+
+  if created:
+    future.add_done_callback(lambda completed: _remove_video_remux_future(key, completed))
+
+  try:
+    return future.result(timeout=VIDEO_REMUX_WAIT_SECONDS)
+  except TimeoutError:
+    # The callback keeps the running job deduplicated, then evicts it when done.
+    return None
+
+
+def _remove_route_thumbnail_future(key, future):
+  with _ROUTE_THUMBNAIL_LOCK:
+    if _ROUTE_THUMBNAIL_FUTURES.get(key) is future:
+      _ROUTE_THUMBNAIL_FUTURES.pop(key, None)
+
+
+def _get_or_create_route_thumbnail(file_path, footage_paths=None):
+  preview_path = _resolve_route_thumbnail(file_path, footage_paths)
+  if preview_path is None:
+    return None
+  if preview_path.is_file():
+    return preview_path
+
+  key = str(preview_path)
+  created = False
+  with _ROUTE_THUMBNAIL_LOCK:
+    future = _ROUTE_THUMBNAIL_FUTURES.get(key)
+    if future is None:
+      future = _ROUTE_THUMBNAIL_EXECUTOR.submit(_generate_route_thumbnail, preview_path)
+      _ROUTE_THUMBNAIL_FUTURES[key] = future
+      created = True
+
+  if created:
+    future.add_done_callback(lambda completed: _remove_route_thumbnail_future(key, completed))
+
+  try:
+    return future.result(timeout=ROUTE_THUMBNAIL_WAIT_SECONDS)
+  except TimeoutError:
+    # The completion callback keeps the running job deduplicated, then evicts it when done.
+    return None
+
+
+class _TarBuffer(io.RawIOBase):
+  """Collects tarfile output so a route archive can be streamed out instead of built on disk."""
+
+  def __init__(self):
+    self._chunks = []
+
+  def writable(self):
+    return True
+
+  def write(self, data):
+    self._chunks.append(bytes(data))
+    return len(data)
+
+  def pop(self):
+    data = b"".join(self._chunks)
+    self._chunks.clear()
+    return data
+
+
 KEYS = {
   "amap1": ("amap1", "", "AMapKey1", "AMap / Gaode key #1", 39),
   "amap2": ("amap2", "", "AMapKey2", "AMap / Gaode key #2", 39),
@@ -1212,6 +1504,7 @@ TMUX_LOGS_PATH = Path("/data/tmux_logs")
 
 MODEL_DOWNLOAD_PARAM = "ModelToDownload"
 MODEL_DOWNLOAD_ALL_PARAM = "DownloadAllModels"
+ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM = "AllowGpuModelDownloadWithoutGpu"
 MODEL_DOWNLOAD_PROGRESS_PARAM = "ModelDownloadProgress"
 MODEL_CANCEL_DOWNLOAD_PARAM = "CancelModelDownload"
 MODEL_SORT_MODE_PARAM = "ModelSortMode"
@@ -3005,6 +3298,15 @@ def _get_available_favorite_slot_options():
     {"HasRivianAngleHarness": _get_has_rivian_angle_harness()},
   )
 
+
+def _get_available_controller_action_options():
+  options = [*_get_available_favorite_slot_options(), *(dict(option) for option in CONTROLLER_ACTION_OPTIONS)]
+  return sorted(options, key=lambda option: (
+    str(option.get("section") or "").casefold(),
+    str(option.get("label") or option.get("key") or "").casefold(),
+  ))
+
+
 def _favorite_slot_values(options):
   return get_favorite_values(options, params)
 
@@ -4642,6 +4944,200 @@ def setup(app):
     response.headers["Expires"] = "0"
     return response
 
+  @app.route("/api/bluetooth/status", methods=["GET"])
+  def bluetooth_status():
+    try:
+      status = BluetoothClient(timeout=3.0).status()
+      return jsonify(BluetoothClient.serialize_status(status)), 200
+    except Exception as error:
+      return jsonify({
+        "available": False,
+        "enabled": params.get_bool("BluetoothEnabled"),
+        "offroad": params.get_bool("IsOffroad"),
+        "selected_audio": params.get("BluetoothAudioAddress", encoding="utf-8") or "",
+        "devices": [],
+        "error": str(error),
+      }), 503
+
+  @app.route("/api/bluetooth/<operation>", methods=["POST"])
+  def bluetooth_operation(operation):
+    commands = {
+      "power": "set_power",
+      "scan": "start_scan",
+      "stop_scan": "stop_scan",
+      "pair": "pair",
+      "connect": "connect",
+      "disconnect": "disconnect",
+      "forget": "forget",
+      "select_audio": "select_audio",
+      "test_audio": "test_audio",
+      "pairing_response": "pairing_response",
+    }
+    command = commands.get(operation)
+    if command is None:
+      return jsonify({"error": "Unknown Bluetooth operation."}), 404
+    offroad_only = {"power", "scan", "stop_scan", "pair", "forget", "test_audio", "pairing_response"}
+    if operation in offroad_only and not params.get_bool("IsOffroad"):
+      return jsonify({"error": "Bluetooth settings can only be changed offroad."}), 409
+
+    data = request.get_json(silent=True) or {}
+    payload = {}
+    if command == "set_power":
+      payload["enabled"] = bool(data.get("enabled", False))
+    elif command == "pairing_response":
+      payload = {
+        "prompt_id": str(data.get("prompt_id", "")),
+        "accepted": bool(data.get("accepted", False)),
+        "value": str(data.get("value", "")),
+      }
+    elif command not in {"start_scan", "stop_scan"}:
+      payload["address"] = str(data.get("address", ""))
+      if not payload["address"] and command != "select_audio":
+        return jsonify({"error": "Bluetooth device address is required."}), 400
+    try:
+      client = BluetoothClient(timeout=10.0)
+      if command == "set_power":
+        client.set_power(payload["enabled"])
+        result = {}
+      else:
+        result = client.call(command, **payload)
+      return jsonify({"message": "Bluetooth operation started.", **result}), 200
+    except Exception as error:
+      return jsonify({"error": str(error)}), 503
+
+  @app.route("/api/wheel-controls/status", methods=["GET"])
+  def wheel_controls_status():
+    status = wheel_control_status(params, params_memory)
+    favorite_options = _get_available_favorite_slot_options()
+    favorite_option_by_key = {option["key"]: option for option in favorite_options}
+    controller_options = _get_available_controller_action_options()
+    controller_option_by_key = {option["key"]: option for option in controller_options}
+    slots = normalize_favorite_slots(
+      params.get(FAVORITE_SLOTS_PARAM),
+      params=params,
+      eligible_keys=set(favorite_option_by_key),
+    )
+    for slot in slots:
+      key = slot.get("key")
+      if key in favorite_option_by_key:
+        slot["label"] = favorite_option_by_key[key]["label"]
+    controller_slots = load_controller_action_slots(params, set(controller_option_by_key))
+    for slot in controller_slots:
+      key = slot.get("key")
+      if key in controller_option_by_key:
+        slot["label"] = controller_option_by_key[key]["label"]
+    status["slots"] = slots
+    status["controller_slots"] = controller_slots
+    status["controller_options"] = controller_options
+    is_metric = params.get_bool("IsMetric")
+    speed_minimum, speed_maximum = controller_speed_bounds(is_metric)
+    status["speed_unit"] = "km/h" if is_metric else "mph"
+    status["speed_minimum"] = speed_minimum
+    status["speed_maximum"] = speed_maximum
+    return jsonify(status), 200
+
+  @app.route("/api/wheel-controls/<operation>", methods=["POST"])
+  def wheel_controls_operation(operation):
+    if operation not in {"action", "learn", "cancel", "delete", "clear", "test", "test-stop", "joystick"}:
+      return jsonify({"error": "Unknown wheel control operation."}), 404
+    if not params.get_bool("IsOffroad"):
+      return jsonify({"error": "Wheel controls can only be configured offroad."}), 409
+
+    data = request.get_json(silent=True) or {}
+    try:
+      if operation == "action":
+        slot_index = int(data.get("slot", -1))
+        key = str(data.get("key") or "").strip()
+        options = _get_available_controller_action_options()
+        option_by_key = {option["key"]: option for option in options}
+        if not 0 <= slot_index < CONTROLLER_ACTION_SLOT_COUNT:
+          return jsonify({"error": f"Controller action must be between 1 and {CONTROLLER_ACTION_SLOT_COUNT}."}), 400
+        if key and key not in option_by_key:
+          return jsonify({"error": "That controller action is not available."}), 400
+        value = None
+        if key == CONTROLLER_ACTION_SET_SPEED:
+          try:
+            value = float(data.get("value"))
+          except (TypeError, ValueError):
+            return jsonify({"error": "Enter a valid set speed."}), 400
+          speed_minimum, speed_maximum = controller_speed_bounds(params.get_bool("IsMetric"))
+          if not math.isfinite(value) or not speed_minimum <= value <= speed_maximum:
+            unit = "km/h" if params.get_bool("IsMetric") else "mph"
+            return jsonify({"error": f"Set speed must be between {speed_minimum} and {speed_maximum} {unit}."}), 400
+        cancel_wheel_control_learning(params_memory, params)
+        set_controller_action_slot(
+          slot_index,
+          key or None,
+          str(option_by_key.get(key, {}).get("label") or ""),
+          params,
+          value=value,
+          eligible_keys=set(option_by_key),
+        )
+        return jsonify({"message": f"Controller Action #{slot_index + 1} updated."}), 200
+      if operation == "joystick":
+        device_id = str(data.get("device_id") or "").strip()
+        enabled = bool(data.get("enabled", False))
+        if enabled:
+          devices = wheel_control_status(params, params_memory).get("devices", [])
+          device = next((item for item in devices if item.get("device_id") == device_id), None)
+          if device is None:
+            return jsonify({"error": "Controller is not connected."}), 404
+          if not device.get("joystick_capable"):
+            return jsonify({"error": "This device does not expose joystick axes."}), 400
+        set_joystick_device(device_id, enabled, params)
+        return jsonify({"message": "Joystick controller updated."}), 200
+      if operation == "learn":
+        stop_wheel_control_testing(params_memory)
+        slot_index = int(data.get("slot", -1))
+        favorite_options = _get_available_favorite_slot_options()
+        favorite_eligible_keys = {option["key"] for option in favorite_options}
+        controller_options = _get_available_controller_action_options()
+        controller_eligible_keys = {option["key"] for option in controller_options}
+        slots = normalize_favorite_slots(
+          params.get(FAVORITE_SLOTS_PARAM),
+          params=params,
+          eligible_keys=favorite_eligible_keys,
+        )
+        if 0 <= slot_index < FAVORITE_SLOT_COUNT:
+          target = slots[slot_index]
+          target_name = f"Favorite #{slot_index + 1}"
+        elif FAVORITE_SLOT_COUNT <= slot_index < FAVORITE_SLOT_COUNT + CONTROLLER_ACTION_SLOT_COUNT:
+          controller_index = slot_index - FAVORITE_SLOT_COUNT
+          target = load_controller_action_slots(params, controller_eligible_keys)[controller_index]
+          target_name = f"Controller Action #{controller_index + 1}"
+        else:
+          return jsonify({"error": "Unknown controller mapping target."}), 400
+        if not target.get("enabled") or not target.get("key"):
+          return jsonify({"error": f"Configure {target_name} before learning a button."}), 400
+        start_wheel_control_learning(slot_index, params_memory, params)
+        return jsonify({"message": f"Press a button for {target_name}."}), 200
+      if operation == "cancel":
+        cancel_wheel_control_learning(params_memory, params)
+        return jsonify({"message": "Button learning cancelled."}), 200
+      if operation == "test":
+        cancel_wheel_control_learning(params_memory, params)
+        start_wheel_control_testing(params_memory, params)
+        return jsonify({"message": "Button testing enabled."}), 200
+      if operation == "test-stop":
+        stop_wheel_control_testing(params_memory)
+        return jsonify({"message": "Button testing disabled."}), 200
+      if operation == "clear":
+        clear_wheel_control_mappings(params)
+        cancel_wheel_control_learning(params_memory, params)
+        stop_wheel_control_testing(params_memory)
+        return jsonify({"message": "Wheel control mappings cleared."}), 200
+
+      identifier = str(data.get("id") or "").strip()
+      if not identifier:
+        return jsonify({"error": "Mapping id is required."}), 400
+      if not delete_wheel_control_mapping(identifier, params):
+        return jsonify({"error": "Wheel control mapping was not found."}), 404
+      return jsonify({"message": "Wheel control mapping removed."}), 200
+    except (TypeError, ValueError) as error:
+      return jsonify({"error": str(error)}), 400
+    except Exception as error:
+      return jsonify({"error": str(error)}), 503
+
   @app.route("/assets/components/tools/device_settings_layout.json", methods=["GET"])
   def device_settings_layout_asset():
     if not SETTINGS_CATALOG_PATH.is_file():
@@ -4672,50 +5168,51 @@ def setup(app):
     try:
       with car.CarParams.from_bytes(params.get("CarParamsPersistent")) as cp:
         if tool == "doors":
-          return jsonify({"result": HARDWARE.get_device_type() != "tici" and cp.carName == "toyota"})
+          car_brand = getattr(cp, "brand", getattr(cp, "carName", ""))
+          return jsonify({"result": car_brand == "toyota"})
         elif tool == "tsk":
-          return jsonify({"result": cp.secOcRequired})
+          return jsonify({"result": getattr(cp, "secOcRequired", False)})
     except Exception:
       pass
     return jsonify({"result": False})
 
+  def _send_door_command(command, should_be_locked, success_message, action):
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Door controls are unavailable while driving."}), 409
+
+    try:
+      can_parser = CANParser("toyota_nodsu_pt_generated", [("DOOR_LOCKS", 3)], bus=0)
+      can_sock = messaging.sub_sock("can", timeout=100)
+
+      for _ in range(6):
+        if params.get_bool("IsOnroad"):
+          return jsonify({"error": "Door controls are unavailable while driving."}), 409
+        try:
+          with Panda(disable_checks=True) as panda:
+            panda.set_safety_mode(car.CarParams.SafetyModel.toyota)
+            panda.can_send(0x750, command, 0)
+            panda.can_send(0x750, command, 1)
+        except Exception as error:
+          cloudlog.warning("Galaxy door %s attempt failed: %s", action, error)
+          continue
+
+        time.sleep(1)
+
+        lock_status = get_lock_status(can_parser, can_sock)
+        if (lock_status == 0) == should_be_locked:
+          return {"message": success_message}, 200
+    except Exception as error:
+      cloudlog.exception("Galaxy door %s failed: %s", action, error)
+
+    return jsonify({"error": f"Unable to confirm that the doors were {action}ed."}), 502
+
   @app.route("/api/doors/lock", methods=["POST"])
   def lock_doors():
-    can_parser = CANParser("toyota_nodsu_pt_generated", [("DOOR_LOCKS", 3)], bus=0)
-    can_sock = messaging.sub_sock("can", timeout=100)
-
-    while True:
-      with Panda(disable_checks=True) as panda:
-        if not params.get_bool("IsOnroad"):
-          panda.set_safety_mode(panda.SAFETY_TOYOTA)
-        panda.can_send(0x750, LOCK_CMD, 0)
-
-      time.sleep(1)
-
-      lock_status = get_lock_status(can_parser, can_sock)
-      if lock_status == 0:
-        break
-
-    return {"message": "Doors locked!"}
+    return _send_door_command(LOCK_CMD, True, "Doors locked!", "lock")
 
   @app.route("/api/doors/unlock", methods=["POST"])
   def unlock_doors():
-    can_parser = CANParser("toyota_nodsu_pt_generated", [("DOOR_LOCKS", 3)], bus=0)
-    can_sock = messaging.sub_sock("can", timeout=100)
-
-    while True:
-      with Panda(disable_checks=True) as panda:
-        if not params.get_bool("IsOnroad"):
-          panda.set_safety_mode(panda.SAFETY_TOYOTA)
-        panda.can_send(0x750, UNLOCK_CMD, 0)
-
-      time.sleep(1)
-
-      lock_status = get_lock_status(can_parser, can_sock)
-      if lock_status != 0:
-        break
-
-    return {"message": "Doors unlocked!"}
+    return _send_door_command(UNLOCK_CMD, False, "Doors unlocked!", "unlock")
 
   @app.route("/api/error_logs", methods=["GET"])
   def get_error_logs():
@@ -5477,6 +5974,9 @@ def setup(app):
     params.put("CalibratedLateralAcceleration", 2.0)
     params.remove("CalibrationProgress")
     params.remove("CurvatureData")
+    params_memory.put("CalibratedLateralAcceleration", 2.0)
+    params_memory.put("CalibrationProgress", 0.0)
+    params_memory.remove("CurvatureData")
 
     return jsonify({
       "message": "Curve Speed Controller data reset. Training will restart on the next drive.",
@@ -5504,6 +6004,12 @@ def setup(app):
     result["VehicleParked"] = _get_vehicle_parked()
     result["AlphaLongitudinalAvailable"] = _get_alpha_longitudinal_available()
     result["HasRivianAngleHarness"] = _get_has_rivian_angle_harness()
+
+    for key in ("CalibratedLateralAcceleration", "CalibrationProgress"):
+      try:
+        result[key] = _get_current_param_value(key, float, defaults_lookup)
+      except Exception:
+        result[key] = None
 
     return jsonify(_sanitize_json_value(result)), 200
 
@@ -5754,11 +6260,13 @@ def setup(app):
 
     if model["installed"]:
       return jsonify({"message": f"\"{model['label']}\" is already installed."}), 200
-    if model["requiresGpu"] and not model["gpuAvailable"]:
+    allow_gpu_without_gpu = data.get("allowGpuWithoutGpu") is True
+    if model["requiresGpu"] and not model["gpuAvailable"] and not allow_gpu_without_gpu:
       return jsonify({"error": "This model requires a detected external GPU."}), 409
 
     params_memory.remove(MODEL_CANCEL_DOWNLOAD_PARAM)
     params_memory.remove(MODEL_DOWNLOAD_ALL_PARAM)
+    params_memory.put_bool(ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM, allow_gpu_without_gpu)
     params_memory.put(MODEL_DOWNLOAD_PARAM, model_key)
     params_memory.put(MODEL_DOWNLOAD_PROGRESS_PARAM, "Downloading...")
 
@@ -5772,12 +6280,18 @@ def setup(app):
     if params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM) or (params_memory.get(MODEL_DOWNLOAD_PARAM, encoding="utf-8") or ""):
       return jsonify({"error": "A model download is already in progress."}), 409
 
-    missing_models = [model for model in get_model_catalog() if not model["installed"] and (not model["requiresGpu"] or model["gpuAvailable"])]
+    data = request.get_json(silent=True) or {}
+    allow_gpu_without_gpu = data.get("allowGpuWithoutGpu") is True
+    missing_models = [
+      model for model in get_model_catalog()
+      if not model["installed"] and (not model["requiresGpu"] or model["gpuAvailable"] or allow_gpu_without_gpu)
+    ]
     if not missing_models:
       return jsonify({"message": "All models are already installed."}), 200
 
     params_memory.remove(MODEL_CANCEL_DOWNLOAD_PARAM)
     params_memory.remove(MODEL_DOWNLOAD_PARAM)
+    params_memory.put_bool(ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM, allow_gpu_without_gpu)
     params_memory.put_bool(MODEL_DOWNLOAD_ALL_PARAM, True)
     params_memory.put(MODEL_DOWNLOAD_PROGRESS_PARAM, "Downloading...")
 
@@ -6148,35 +6662,31 @@ def setup(app):
   @app.route("/api/routes", methods=["GET"])
   def list_routes():
     def generate():
-      routes = [
-        (path, name, segment_count)
-        for path in FOOTAGE_PATHS
-        for name, segment_count in utilities.get_routes_with_segment_counts(path)
-      ]
-      total = len(routes)
+      routes = _route_scan_entries(FOOTAGE_PATHS)
       connect_dongle_id = params.get("StockDongleId", encoding="utf-8") or params.get("DongleId", encoding="utf-8") or ""
-      yield f"data: {json.dumps({'progress': 0, 'total': total, 'connectDongleId': connect_dongle_id})}\n\n"
+      for payload in _route_metadata_events(routes, connect_dongle_id):
+        yield f"data: {json.dumps(payload)}\n\n"
 
-      with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {
-          executor.submit(utilities.process_route, path, name, segment_count): (path, name)
-          for path, name, segment_count in routes
-        }
-        for processed, future in enumerate(as_completed(futures), start=1):
-          try:
-            result = future.result()
-            yield f"data: {json.dumps({'routes': [result]})}\n\n"
-          except Exception as exception:
-            print(f"Error processing route: {exception}")
-          yield f"data: {json.dumps({'progress': processed, 'total': total})}\n\n"
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
-    return Response(generate(), mimetype="text/event-stream")
+  def _valid_route_name(name):
+    return bool(utilities.ROUTE_RE.fullmatch(str(name or "")))
 
   @app.route("/api/routes/<name>", methods=["DELETE"])
   def delete_route(name):
+    if not _valid_route_name(name):
+      return jsonify({"error": "Invalid route name."}), 400
+
+    segment_prefix = f"{name}--"
     for footage_path in FOOTAGE_PATHS:
+      if not os.path.isdir(footage_path):
+        continue
       for segment in os.listdir(footage_path):
-        if segment.startswith(name):
+        if utilities.SEGMENT_RE.fullmatch(segment) and segment.startswith(segment_prefix):
           delete_file(os.path.join(footage_path, segment))
     return {"message": "Route deleted!"}, 200
 
@@ -6190,6 +6700,7 @@ def setup(app):
 
     try:
       utilities.stop_dashboard_background_analysis()
+      include_preserved = request.args.get("include_preserved", "true").strip().lower() not in ("0", "false", "no", "off")
 
       route_paths = []
       seen_paths = set()
@@ -6199,18 +6710,51 @@ def setup(app):
           seen_paths.add(path)
           route_paths.append(path)
 
-      for route_path in route_paths:
-        _run_factory_reset_delete(route_path)
+      preserved_route_names = set()
+      deleted_route_names = set()
+      if include_preserved:
+        for route_path in route_paths:
+          _run_factory_reset_delete(route_path)
+      else:
+        # The preserve xattr lives on one segment, but preservation applies to the
+        # whole route in every footage root.
+        for route_path in route_paths:
+          if not os.path.isdir(route_path):
+            continue
+          for segment in os.listdir(route_path):
+            if utilities.SEGMENT_RE.fullmatch(segment) and utilities.has_preserve_attr(os.path.join(route_path, segment)):
+              preserved_route_names.add(segment.rsplit("--", 1)[0])
 
-      persisted_route_count = utilities.clear_dashboard_route_history(params)
+        for route_path in route_paths:
+          if not os.path.isdir(route_path):
+            continue
+          for segment in os.listdir(route_path):
+            if not utilities.SEGMENT_RE.fullmatch(segment):
+              continue
+            route_name = segment.rsplit("--", 1)[0]
+            if route_name in preserved_route_names:
+              continue
+            delete_file(os.path.join(route_path, segment))
+            deleted_route_names.add(route_name)
+
+      persisted_route_count = utilities.clear_dashboard_route_history(
+        params,
+        retained_route_names=preserved_route_names if not include_preserved else None,
+      )
       _STATS_RESPONSE_CACHE.update({
         "updated_at": 0.0,
         "payload": None,
       })
       return jsonify({
         "success": True,
-        "message": "All local driving routes deleted. Saved personal records were kept.",
-        "deletedPaths": len(route_paths),
+        "message": (
+          "All local driving routes deleted, including preserved routes. Saved personal records were kept."
+          if include_preserved else
+          "All non-preserved local driving routes deleted. Preserved routes were kept."
+        ),
+        "deletedPaths": len(route_paths) if include_preserved else 0,
+        "deletedRoutes": len(deleted_route_names) if not include_preserved else None,
+        "preservedRoutes": len(preserved_route_names) if not include_preserved else 0,
         "clearedDashboardRoutes": persisted_route_count,
       }), 200
     except Exception as exception:
@@ -6220,39 +6764,51 @@ def setup(app):
 
   @app.route("/api/routes/<name>/preserve", methods=["POST"])
   def preserve_route(name):
-    preserved_routes = 0
-    for footage_path in FOOTAGE_PATHS:
-      for segment in os.listdir(footage_path):
-        if segment.endswith("--0"):
-          segment_path = os.path.join(footage_path, segment)
-          if PRESERVE_ATTR_NAME in os.listxattr(segment_path) and os.getxattr(segment_path, PRESERVE_ATTR_NAME) == PRESERVE_ATTR_VALUE:
-            preserved_routes += 1
+    if not _valid_route_name(name):
+      return jsonify({"error": "Invalid route name."}), 400
 
-    if preserved_routes >= PRESERVE_COUNT:
+    preserved_routes = set()
+    for footage_path in FOOTAGE_PATHS:
+      if not os.path.isdir(footage_path):
+        continue
+      for segment in os.listdir(footage_path):
+        if utilities.SEGMENT_RE.fullmatch(segment) and utilities.has_preserve_attr(os.path.join(footage_path, segment)):
+          preserved_routes.add(segment.rsplit("--", 1)[0])
+
+    if name not in preserved_routes and len(preserved_routes) >= PRESERVE_COUNT:
       return {"error": f"Maximum of {PRESERVE_COUNT} preserved routes reached..."}, 400
 
     for footage_path in FOOTAGE_PATHS:
-      route_path = os.path.join(footage_path, f"{name}--0")
-      if os.path.exists(route_path):
-        os.setxattr(route_path, PRESERVE_ATTR_NAME, PRESERVE_ATTR_VALUE)
+      segment_path = _route_first_segment_path(name, footage_path)
+      if segment_path is not None:
+        os.setxattr(segment_path, PRESERVE_ATTR_NAME, PRESERVE_ATTR_VALUE)
         return {"message": "Route preserved!!"}, 200
 
     return {"error": "Route not found"}, 404
 
   @app.route("/api/routes/<name>/preserve", methods=["DELETE"])
   def un_preserve_route(name):
+    if not _valid_route_name(name):
+      return jsonify({"error": "Invalid route name."}), 400
+
     for footage_path in FOOTAGE_PATHS:
-      route_path = os.path.join(footage_path, f"{name}--0")
-      if PRESERVE_ATTR_NAME in os.listxattr(route_path):
-        os.removexattr(route_path, PRESERVE_ATTR_NAME)
+      segment_path = _route_first_segment_path(name, footage_path)
+      if segment_path is not None and utilities.has_preserve_attr(segment_path):
+        os.removexattr(segment_path, PRESERVE_ATTR_NAME)
         return {"message": "Route unpreserved!"}, 200
     return {"error": "Route not found"}, 404
 
   @app.route("/video/<name>/combined", methods=["GET"])
   def get_combined_route_video(name):
+    if not _valid_route_name(name):
+      return jsonify({"error": "Invalid route name."}), 400
+
     camera = request.args.get("camera", "forward")
     for footage_path in FOOTAGE_PATHS:
-      segments = utilities.get_segments_in_route(name, footage_path)
+      try:
+        segments = utilities.get_segments_in_route(name, footage_path)
+      except OSError:
+        continue
       if segments:
         cam_file = {
           "forward": "fcamera.hevc",
@@ -6269,38 +6825,100 @@ def setup(app):
         if not input_files:
           return {"error": "No video files found"}, 404
 
-        mp4_file = utilities.ffmpeg_concat_segments_to_mp4(input_files, cache_key=f"{name}-{camera}")
-        return send_file(mp4_file, mimetype="video/mp4")
+        response = Response(utilities.ffmpeg_stream_concatenated_mp4(input_files), mimetype="video/mp4")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
 
     return {"error": "Route not found"}, 404
 
   @app.route("/api/routes/<name>", methods=["GET"])
   def get_route(name):
-    for footage_path in FOOTAGE_PATHS:
-      base_path = f"{footage_path}{name}--0"
-      if os.path.exists(base_path):
-        segments = utilities.get_segments_in_route(name, footage_path)
-        if not segments:
-          break
+    if not _valid_route_name(name):
+      return jsonify({"error": "Invalid route name."}), 400
 
+    for footage_path in FOOTAGE_PATHS:
+      try:
+        segments = utilities.get_segments_in_route(name, footage_path)
+      except OSError:
+        continue
+      if segments:
+        base_path = os.path.join(footage_path, segments[0])
         segment_urls = [f"/video/{segment}" for segment in segments]
-        total_duration = sum(utilities.get_video_duration(f"{footage_path}{name}--{i}/fcamera.hevc") for i in range(len(segment_urls)))
+        # Probing each segment cost an ffprobe before playback could even start,
+        # and segments are a fixed minute anyway.
+        total_duration = len(segments) * SEGMENT_DURATION_SECONDS
         return {
           "name": name,
           "segment_urls": segment_urls,
-          "total_duration": round(total_duration),
+          "total_duration": total_duration,
           "date": utilities.get_route_start_time(base_path),
           "available_cameras": utilities.get_available_cameras(base_path),
         }, 200
     return {"error": "Route not found"}, 404
 
+  @app.route("/api/routes/<name>/logs", methods=["GET"])
+  def list_route_logs(name):
+    logs = _route_log_files(name)
+    if not logs:
+      return jsonify({"error": "No full logs are stored on the device for this route."}), 404
+
+    return jsonify({
+      "name": name,
+      "totalBytes": sum(size for *_, size in logs),
+      "segments": [
+        {
+          "segment": segment,
+          "segmentNum": int(segment.rsplit("--", 1)[1]),
+          "filename": filename,
+          "bytes": size,
+          "url": f"/api/routes/{name}/logs/{int(segment.rsplit('--', 1)[1])}",
+        }
+        for segment, filename, _, size in logs
+      ],
+    }), 200
+
+  @app.route("/api/routes/<name>/logs/<int:segment_num>", methods=["GET"])
+  def download_route_log(name, segment_num):
+    for segment, filename, path, _ in _route_log_files(name):
+      if int(segment.rsplit("--", 1)[1]) == segment_num:
+        return send_file(path, as_attachment=True, download_name=f"{segment}-{filename}")
+    return jsonify({"error": "No full log is stored on the device for this segment."}), 404
+
+  @app.route("/api/routes/<name>/logs/download", methods=["GET"])
+  def download_route_logs_archive(name):
+    logs = _route_log_files(name)
+    if not logs:
+      return jsonify({"error": "No full logs are stored on the device for this route."}), 404
+
+    def generate():
+      buffer = _TarBuffer()
+      # streamed a file at a time so a long route never needs its whole archive in memory
+      with tarfile.open(fileobj=buffer, mode="w|") as archive:
+        for segment, filename, path, _ in logs:
+          try:
+            archive.add(path, arcname=f"{segment}/{filename}")
+          except OSError:
+            continue
+          chunk = buffer.pop()
+          if chunk:
+            yield chunk
+      chunk = buffer.pop()
+      if chunk:
+        yield chunk
+
+    response = Response(generate(), mimetype="application/x-tar")
+    response.headers["Content-Disposition"] = f'attachment; filename="{name}-logs.tar"'
+    return response
+
   @app.route("/api/routes/clear_name", methods=["POST"])
+  @app.route("/api/routes/reset_name", methods=["POST"])
   def clear_route_name():
     data = request.get_json()
     route_name = data.get("name")
 
-    if not route_name:
-      return jsonify({"error": "Missing route name"}), 400
+    if not _valid_route_name(route_name):
+      return jsonify({"error": "Invalid route name"}), 400
 
     cleared = False
     original_timestamp = None
@@ -6315,7 +6933,7 @@ def setup(app):
       for segment in segments_to_process:
         segment_dir = os.path.join(footage_path, segment)
         for item in os.listdir(segment_dir):
-          if not item.endswith((".hevc", ".ts", ".png", ".gif")) and item not in utilities.LOG_CANDIDATES:
+          if utilities.is_route_marker_file(item):
             try:
               os.remove(os.path.join(segment_dir, item))
               cleared = True
@@ -6337,8 +6955,8 @@ def setup(app):
     old_name = data.get("old")
     new_name_raw = data.get("new")
 
-    if not old_name or not new_name_raw:
-      return jsonify({"error": "Missing old or new name"}), 400
+    if not _valid_route_name(old_name) or not new_name_raw:
+      return jsonify({"error": "Missing or invalid route name"}), 400
 
     new_name = utilities.secure_filename(new_name_raw)
     renamed = False
@@ -6354,7 +6972,7 @@ def setup(app):
       for segment in segments_to_process:
         segment_dir = os.path.join(footage_path, segment)
         for item in os.listdir(segment_dir):
-          if not item.endswith((".hevc", ".ts", ".png", ".gif", "rlog")):
+          if utilities.is_route_marker_file(item):
             try:
               os.remove(os.path.join(segment_dir, item))
             except OSError:
@@ -6372,7 +6990,7 @@ def setup(app):
           return jsonify({"error": f"Error creating new name file: {e}"}), 500
 
     if renamed:
-      return jsonify({"message": "Route renamed successfully!"}), 200
+      return jsonify({"message": "Route renamed successfully!", "name": new_name}), 200
     else:
       return jsonify({"error": "Route not found"}), 404
 
@@ -6602,7 +7220,7 @@ def setup(app):
       "dashboard": dashboard_stats,
     }
     _STATS_RESPONSE_CACHE.update({
-      "updated_at": cache_now,
+      "updated_at": time.monotonic(),
       "payload": payload,
     })
     return payload
@@ -6764,11 +7382,13 @@ def setup(app):
   @app.route("/api/flm/status", methods=["GET"])
   def get_flm_status():
     is_onroad = params.get_bool("IsOnroad")
+    lane_centering = params.get_bool("LaneCentering")
     if is_onroad:
       flm_workspace.cancel_flm_if_onroad()
     workspace = flm_workspace.list_workspace()
     return jsonify({
       "isOnroad": is_onroad,
+      "laneCentering": lane_centering,
       "status": flm_workspace.read_flm_status(),
       "activeTrial": workspace.get("activeTrial"),
       "reports": workspace.get("reports", [])[:10],
@@ -6780,6 +7400,10 @@ def setup(app):
   def start_flm_analysis():
     if params.get_bool("IsOnroad"):
       return jsonify({"error": "FLM analysis can only run offroad."}), 409
+    if params.get_bool("LaneCentering"):
+      return jsonify({
+        "error": "Turn Lane Centering off before running FLM. Its correction must not be mixed into lateral-tuning analysis."
+      }), 409
 
     data = request.get_json(silent=True) or {}
     route_names = [str(route).strip() for route in data.get("routes", []) if str(route).strip()]
@@ -7414,6 +8038,33 @@ def setup(app):
       "imagePaths": image_paths,
     })
     return jsonify({"capturedAt": captured_at, "imageUrls": event["imageUrls"]})
+
+  @app.route("/api/sentry/selfie", methods=["POST"])
+  def sentry_selfie():
+    if request.remote_addr not in {None, "127.0.0.1", "::1"}:
+      return jsonify({"error": "Comma Selfies must originate on the device."}), 403
+
+    with _SENTRY_LIVE_CAPTURE_LOCK:
+      jpeg = _get_live_driver_jpeg()
+    if jpeg is None:
+      return jsonify({"error": "Unable to capture the driver camera."}), 503
+
+    captured_at = datetime.now(timezone.utc).isoformat()
+    event_id = f"selfie-{int(time.time())}-{secrets.token_hex(4)}"
+    directory = _sentry_event_roots()[0] / event_id
+    directory.mkdir(parents=True, exist_ok=True)
+    image_path = directory / "driver.jpg"
+    image_path.write_bytes(jpeg)
+    event = {
+      "eventId": event_id,
+      "kind": "selfie",
+      "detectedAt": captured_at,
+      "imagePaths": [str(image_path)],
+      "message": "Comma Selfie",
+    }
+    _record_sentry_event(event)
+    params.put("SentryModeLastEvent", json.dumps(event, separators=(",", ":")))
+    return jsonify({"accepted": True, "capturedAt": captured_at, "eventId": event_id}), 201
 
   @app.route("/api/sentry/test", methods=["POST"])
   def sentry_test():
@@ -8578,56 +9229,6 @@ def setup(app):
     return jsonify({"error": "Unable to capture live frame from driver camera."}), 503
 
 
-  def _get_live_driver_jpeg():
-    from openpilot.system.manager.process_config import managed_processes
-    started = False
-    try:
-      try:
-        subprocess.check_call(["pgrep", "camerad"])
-      except subprocess.CalledProcessError:
-        managed_processes['camerad'].start()
-        started = True
-
-      client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_DRIVER, True)
-      if not client.connect(True):
-        return None
-
-      if started:
-        settle_deadline = time.monotonic() + 4.0
-        while time.monotonic() < settle_deadline:
-          client.recv(timeout_ms=100)
-
-      buf = client.recv(timeout_ms=5000)
-      if buf is None:
-        return None
-
-      y = np.array(buf.data[:buf.uv_offset], dtype=np.uint8).reshape((-1, buf.stride))[:buf.height, :buf.width]
-      u = np.array(buf.data[buf.uv_offset::2], dtype=np.uint8).reshape((-1, buf.stride // 2))[:buf.height // 2, :buf.width // 2]
-      v = np.array(buf.data[buf.uv_offset + 1::2], dtype=np.uint8).reshape((-1, buf.stride // 2))[:buf.height // 2, :buf.width // 2]
-
-      ul = np.repeat(np.repeat(u, 2).reshape(u.shape[0], y.shape[1]), 2, axis=0).reshape(y.shape)
-      vl = np.repeat(np.repeat(v, 2).reshape(v.shape[0], y.shape[1]), 2, axis=0).reshape(y.shape)
-
-      yuv = np.dstack((y, ul, vl)).astype(np.int16)
-      yuv[:, :, 1:] -= 128
-
-      m = np.array([
-        [1.00000,  1.00000, 1.00000],
-        [0.00000, -0.39465, 2.03211],
-        [1.13983, -0.58060, 0.00000],
-      ])
-      rgb = np.dot(yuv, m).clip(0, 255).astype(np.uint8)
-
-      img = Image.fromarray(rgb)
-      buf_io = BytesIO()
-      img.save(buf_io, format="JPEG", quality=85)
-      return buf_io.getvalue()
-    except Exception:
-      return None
-    finally:
-      if started:
-        managed_processes['camerad'].stop()
-
   @app.route("/api/v_asm/config", methods=["GET"])
   def v_asm_get_config():
     return jsonify(_decode_json_object(params.get("VASMAnnotationConfig")))
@@ -8709,72 +9310,65 @@ def setup(app):
 
   @app.route("/thumbnails/<path:file_path>", methods=["GET"])
   def get_thumbnail(file_path):
-    for footage_path in FOOTAGE_PATHS:
-      if os.path.exists(os.path.join(footage_path, file_path)):
-        return send_from_directory(footage_path, file_path, as_attachment=True)
-    return {"error": "Thumbnail not found"}, 404
+    preview_path = _get_or_create_route_thumbnail(file_path)
+    if preview_path is None:
+      return {"error": "Thumbnail not found"}, 404
+
+    response = send_file(
+      preview_path,
+      mimetype="image/png",
+      conditional=True,
+      max_age=ROUTE_THUMBNAIL_CACHE_SECONDS,
+    )
+    response.headers["Cache-Control"] = f"public, max-age={ROUTE_THUMBNAIL_CACHE_SECONDS}"
+    return response
 
   @app.route("/video/<path>", methods=["GET"])
   def get_video(path):
+    if not utilities.SEGMENT_RE.fullmatch(path or ""):
+      return {"error": "Invalid segment name"}, 400
+
     camera = request.args.get("camera")
     filename = {"driver": "dcamera.hevc", "wide": "ecamera.hevc"}.get(camera, "fcamera.hevc")
+
+    # qcamera.ts is a 526x330 companion to the road camera, so wrapping it costs a
+    # fraction of the full stream. It still needs the mp4 wrap - a bare MPEG-TS will
+    # not play in a <video>. Anything missing falls through to the full stream.
+    if request.args.get("quality") == "low" and filename == "fcamera.hevc":
+      for footage_path in FOOTAGE_PATHS:
+        preview_path = os.path.join(footage_path, path, "qcamera.ts")
+        if not os.path.isfile(preview_path):
+          continue
+        try:
+          preview_mp4 = _get_or_create_segment_mp4(preview_path)
+        except (FileNotFoundError, ValueError):
+          break
+        if preview_mp4 is None:
+          return {"error": "Preview video is still being prepared"}, 503
+        return send_file(
+          preview_mp4,
+          mimetype="video/mp4",
+          conditional=True,
+          max_age=VIDEO_CACHE_SECONDS,
+        )
+
     for footage_path in FOOTAGE_PATHS:
-      filepath = f"{footage_path}{path}/{filename}"
+      filepath = os.path.join(footage_path, path, filename)
       if os.path.exists(filepath):
-        file_handle = utilities.ffmpeg_mp4_wrap_process_builder(filepath)
+        try:
+          cache_path = _get_or_create_segment_mp4(filepath)
+        except (FileNotFoundError, ValueError) as error:
+          return {"error": str(error)}, 409
+        if cache_path is None:
+          return {"error": "Video is still being prepared"}, 503
 
-        file_handle.seek(0, 2)
-        file_size = file_handle.tell()
-        file_handle.seek(0)
-
-        range_header = request.headers.get('Range', None)
-        if range_header:
-          byte_start = 0
-          byte_end = file_size - 1
-
-          if range_header.startswith('bytes='):
-            range_spec = range_header[6:]
-            if '-' in range_spec:
-              start, end = range_spec.split('-', 1)
-              if start:
-                byte_start = max(0, int(start))
-              if end:
-                byte_end = min(file_size - 1, int(end))
-
-          if byte_start >= file_size:
-            file_handle.close()
-            return Response("Requested Range Not Satisfiable", 416)
-
-          byte_end = max(byte_start, byte_end)
-
-          file_handle.seek(byte_start)
-          read_length = byte_end - byte_start + 1
-          data = file_handle.read(read_length)
-
-          response = Response(
-            data,
-            206,
-            headers={
-              'Content-Range': f'bytes {byte_start}-{byte_end}/{file_size}',
-              'Accept-Ranges': 'bytes',
-              'Content-Length': str(len(data)),
-              'Content-Type': 'video/mp4'
-            }
-          )
-        else:
-          data = file_handle.read()
-          response = Response(
-            data,
-            200,
-            headers={
-              'Accept-Ranges': 'bytes',
-              'Content-Length': str(file_size),
-              'Content-Type': 'video/mp4'
-            }
-          )
-
-        file_handle.close()
-        return response
+        # send_file streams from disk and handles Range and ETag itself.
+        return send_file(
+          cache_path,
+          mimetype="video/mp4",
+          conditional=True,
+          max_age=VIDEO_CACHE_SECONDS,
+        )
     return {"error": "Video not found"}, 404
 
 def main():
@@ -8797,7 +9391,7 @@ def main():
     print("\"The Galaxy\" is not running on a comma device, enabling debug mode")
 
   app.secret_key = secrets.token_hex(32)
-  app.run(host=host, port=port, debug=debug, use_reloader=use_reloader)
+  app.run(host=host, port=port, debug=debug, use_reloader=use_reloader, threaded=True)
 
 if __name__ == "__main__":
   main()

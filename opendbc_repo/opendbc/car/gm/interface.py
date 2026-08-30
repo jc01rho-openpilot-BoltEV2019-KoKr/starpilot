@@ -285,7 +285,6 @@ class CarInterface(CarInterfaceBase):
 
     kaofui_camera_cars = {
       CAR.CHEVROLET_VOLT_CAMERA,
-      CAR.CHEVROLET_VOLT_CC,
       CAR.CHEVROLET_MALIBU_HYBRID_CC,
     }
     bolt_cc_camera_cars = {
@@ -699,6 +698,8 @@ class CarInterface(CarInterfaceBase):
 
     if candidate in CC_ONLY_CAR:
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_NO_ACC.value
+      if candidate == CAR.CHEVROLET_VOLT_CC and ret.networkLocation == NetworkLocation.gateway:
+        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_VOLT_CC_GATEWAY.value
 
     if candidate in SDGM_CAR and ACCELERATOR_POS_MSG not in fingerprint[CanBus.POWERTRAIN]:
       ret.flags |= GMFlags.FORCE_BRAKE_C9.value
@@ -712,7 +713,7 @@ class CarInterface(CarInterfaceBase):
 
     if ACCELERATOR_POS_MSG not in fingerprint[CanBus.POWERTRAIN]:
       ret.flags |= GMFlags.NO_ACCELERATOR_POS_MSG.value
-      if candidate == CAR.CHEVROLET_VOLT and ret.networkLocation == NetworkLocation.gateway:
+      if candidate in (CAR.CHEVROLET_VOLT, CAR.CHEVROLET_VOLT_CC) and ret.networkLocation == NetworkLocation.gateway:
         # Reuse the no-camera safety bit as an ASCM Volt selector for the alternate EBCM brake path.
         ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_NO_CAMERA.value
 

@@ -84,6 +84,10 @@ class CarSpecificEvents:
 
   def update(self, CS: car.CarState, CS_prev: car.CarState, CC: car.CarControl):
     extra_gears = BRAND_EXTRA_GEARS.get(self.CP.brand, None)
+    # The Accord 11G is the only Honda currently using the B/regen gear in
+    # StarPilot. Do not change wrong-gear handling for other Honda models.
+    if self.CP.brand == 'honda' and self.CP.carFingerprint == 'HONDA_ACCORD_11G':
+      extra_gears = [GearShifter.sport, GearShifter.brake]
 
     if self.CP.brand in ('body', 'mock'):
       events = Events()

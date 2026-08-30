@@ -123,6 +123,13 @@ class LongControlVehicleTuning:
       getattr(CP, "carFingerprint", None) in (CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_SILVERADO_CC) and
       not CP.enableGasInterceptorDEPRECATED
     )
+    self.is_toyota_sienna = bool(
+      CP.brand == "toyota" and
+      str(getattr(CP, "carFingerprint", "")) in (
+        str(TOYOTA_CAR.TOYOTA_SIENNA),
+        str(TOYOTA_CAR.TOYOTA_SIENNA_4TH_GEN),
+      )
+    )
     self.is_toyota_sienna_4g = bool(
       CP.brand == "toyota" and
       str(getattr(CP, "carFingerprint", "")) == str(TOYOTA_CAR.TOYOTA_SIENNA_4TH_GEN)
@@ -268,7 +275,7 @@ class LongControlVehicleTuning:
 
   def shape_toyota_sienna_accel_target(self, a_target, v_ego, should_stop, leads=None):
     """Smooth Sienna lead braking only while there is still comfortable stopping room."""
-    if not self.is_toyota_sienna_4g or should_stop:
+    if not self.is_toyota_sienna or should_stop:
       self.toyota_sienna_target_filter_initialized = False
       return a_target
 

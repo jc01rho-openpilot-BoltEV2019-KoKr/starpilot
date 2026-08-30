@@ -204,13 +204,14 @@ def _packed_policy_shapes(input_shapes, include_prev_feature=False):
     shapes[key] = tuple(shape)
   if include_prev_feature:
     features_shape = input_shapes["features_buffer"]
-    shapes["prev_feat"] = (features_shape[0], features_shape[2])
+    shapes["prev_feat"] = (features_shape[0], math.prod(features_shape[2:]))
   return shapes, [math.prod(shape) for shape in shapes.values()]
 
 
 def make_split_input_queues(vision_input_shapes, policy_input_shapes, frame_skip, device):
   queues, npy = make_warp_input_queues(vision_input_shapes, frame_skip, device)
   features_shape = policy_input_shapes["features_buffer"]
+  feature_dim = math.prod(features_shape[2:])
   desire_key = _detect_desire_key(policy_input_shapes)
   desire_shape = policy_input_shapes[desire_key]
   packed_shapes, packed_sizes = _packed_policy_shapes(policy_input_shapes)
@@ -224,7 +225,7 @@ def make_split_input_queues(vision_input_shapes, policy_input_shapes, frame_skip
   })
   queues.update({
     "feat_q": Tensor(
-      np.zeros((frame_skip * (features_shape[1] - 1) + 1, features_shape[0], features_shape[2]), dtype=np.float32),
+      np.zeros((frame_skip * (features_shape[1] - 1) + 1, features_shape[0], feature_dim), dtype=np.float32),
       device=device,
     ).contiguous().realize(),
     "desire_q": Tensor(
@@ -239,6 +240,7 @@ def make_split_input_queues(vision_input_shapes, policy_input_shapes, frame_skip
 def make_supercombo_input_queues(input_shapes, frame_skip, device):
   queues, npy = make_warp_input_queues(input_shapes, frame_skip, device)
   features_shape = input_shapes["features_buffer"]
+  feature_dim = math.prod(features_shape[2:])
   desire_key = _detect_desire_key(input_shapes)
   desire_shape = input_shapes[desire_key]
   packed_shapes, packed_sizes = _packed_policy_shapes(input_shapes, include_prev_feature=True)
@@ -252,7 +254,7 @@ def make_supercombo_input_queues(input_shapes, frame_skip, device):
   })
   queues.update({
     "feat_q": Tensor(
-      np.zeros((frame_skip * features_shape[1], features_shape[0], features_shape[2]), dtype=np.float32),
+      np.zeros((frame_skip * features_shape[1], features_shape[0], feature_dim), dtype=np.float32),
       device=device,
     ).contiguous().realize(),
     "desire_q": Tensor(
@@ -335,6 +337,7 @@ def make_run_split_policy(vision_runner, policy_runners, metadata, policy_order,
     vision_output = next(iter(vision_runner({road_key: img, wide_key: big_img}).values())).cast("float32")
     new_feature = vision_output[:, vision_features_slice].reshape(1, -1).unsqueeze(0)
     features_buffer = shift_and_sample(feat_q, new_feature, sample_skip_fn)
+    features_buffer = features_buffer.reshape(policy_metadata["input_shapes"]["features_buffer"])
 
     policy_inputs = {
       "features_buffer": features_buffer,
@@ -388,6 +391,7 @@ def make_run_supercombo(model_runner, metadata, frame_skip, image_history_pipeli
     features_buffer = shift_and_sample(
       feat_q, previous_feature.reshape(1, 1, -1), sample_skip_fn,
     )
+    features_buffer = features_buffer.reshape(input_shapes["features_buffer"])
     model_inputs = {
       road_key: img,
       wide_key: big_img,
