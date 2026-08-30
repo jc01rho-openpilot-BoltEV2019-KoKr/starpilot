@@ -17,6 +17,7 @@ from openpilot.system import micd
 from openpilot.system.hardware import HARDWARE
 
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH, ERROR_LOGS_PATH, RANDOM_EVENTS_PATH, get_starpilot_toggles
+from openpilot.starpilot.system.bluetooth.audio import BluetoothAudioSink
 
 SAMPLE_RATE = 48000
 SAMPLE_BUFFER = 4096 # (approx 100ms)
@@ -131,6 +132,11 @@ class Soundd:
 
     self.auto_volume = MIN_VOLUME
     self.pending_stream_status = None
+    self.bluetooth_audio = None
+    self.bluetooth_supported = HARDWARE.get_device_type() in ("tici", "tizi", "mici")
+    self.bluetooth_params = Params() if self.bluetooth_supported else None
+    self.bluetooth_enabled = False
+    self.bluetooth_last_check = 0.0
 
     self.previous_sound_pack = None
     self.previous_sound_source_signature = None
@@ -214,7 +220,24 @@ class Soundd:
   def callback(self, data_out: np.ndarray, frames: int, time, status) -> None:
     if status:
       self.pending_stream_status = status
-    data_out[:frames, 0] = self.get_sound_data(frames)
+    samples = self.get_sound_data(frames)
+    bluetooth_healthy = self.bluetooth_audio.submit(samples) if self.bluetooth_audio is not None else False
+    data_out[:frames, 0] = 0.0 if bluetooth_healthy else samples
+
+  def update_bluetooth_audio(self) -> None:
+    if not self.bluetooth_supported or time.monotonic() - self.bluetooth_last_check < 1.0:
+      return
+    self.bluetooth_last_check = time.monotonic()
+    enabled = self.bluetooth_params.get_bool("BluetoothEnabled")
+    if enabled == self.bluetooth_enabled:
+      return
+    self.bluetooth_enabled = enabled
+    if enabled:
+      self.bluetooth_audio = BluetoothAudioSink(params=self.bluetooth_params)
+    elif self.bluetooth_audio is not None:
+      sink = self.bluetooth_audio
+      self.bluetooth_audio = None
+      sink.close()
 
   def update_alert(self, new_alert):
     current_alert_played_once = self.current_alert == AudibleAlert.none or self.current_sound_frame > len(self.loaded_sounds[self.current_alert])
@@ -314,6 +337,7 @@ class Soundd:
 
         while True:
           sm.update(0)
+          self.update_bluetooth_audio()
 
           if self.pending_stream_status is not None:
             status = self.pending_stream_status

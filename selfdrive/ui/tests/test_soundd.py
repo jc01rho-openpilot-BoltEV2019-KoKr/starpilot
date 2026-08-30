@@ -4,11 +4,13 @@ from cereal.messaging import SubMaster, PubMaster
 from openpilot.selfdrive.ui.soundd import (
   SELFDRIVE_STATE_TIMEOUT,
   SOUNDD_SERVICES,
+  Soundd,
   check_selfdrive_timeout_alert,
   is_turn_steering_limit_alert,
   should_mute_turn_steering_limit_alert,
 )
 
+import numpy as np
 import time
 
 AudibleAlert = log.SelfdriveState.AudibleAlert
@@ -31,6 +33,21 @@ class TestSoundd:
     assert not should_mute_turn_steering_limit_alert("steerSaturated/warning", 30.0, 25.0)
     assert not should_mute_turn_steering_limit_alert("steerSaturated/warning", 10.0, 0.0)
     assert not should_mute_turn_steering_limit_alert("laneChangeBlocked/warning", 10.0, 25.0)
+
+  def test_bluetooth_audio_mutes_local_only_while_healthy(self):
+    soundd = Soundd.__new__(Soundd)
+    samples = np.array([0.25, -0.5], dtype=np.float32)
+    soundd.get_sound_data = lambda _frames: samples
+    data_out = np.zeros((2, 1), dtype=np.float32)
+    soundd.pending_stream_status = None
+
+    soundd.bluetooth_audio = type("Sink", (), {"submit": lambda self, _samples: True})()
+    soundd.callback(data_out, 2, None, None)
+    np.testing.assert_array_equal(data_out[:, 0], np.zeros(2, dtype=np.float32))
+
+    soundd.bluetooth_audio = type("Sink", (), {"submit": lambda self, _samples: False})()
+    soundd.callback(data_out, 2, None, None)
+    np.testing.assert_array_equal(data_out[:, 0], samples)
 
   def test_check_selfdrive_timeout_alert(self):
     sm = SubMaster(['selfdriveState'])

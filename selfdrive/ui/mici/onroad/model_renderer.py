@@ -6,6 +6,7 @@ from cereal import messaging, car
 from dataclasses import dataclass, field
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
+from openpilot.selfdrive.controls.lib.lane_centering import get_lane_centering_visual_direction
 from openpilot.selfdrive.locationd.calibrationd import HEIGHT_INIT
 from openpilot.selfdrive.ui.lib.starpilot_theme import get_param_color, get_theme_color, get_visual_color, is_stock_color_scheme, with_alpha
 from openpilot.selfdrive.ui.onroad.starpilot.rainbow_path import RainbowPath
@@ -20,6 +21,7 @@ CLIP_MARGIN = 500
 MIN_DRAW_DISTANCE = 10.0
 MAX_DRAW_DISTANCE = 100.0
 STOCK_LANE_LINES_COLOR = rl.Color(255, 255, 255, 255)
+OCEAN_BLUE_LANE_LINES_COLOR = rl.Color(0, 176, 220, 255)
 DEFAULT_LANE_LINES_WIDTH = 4.0
 DEFAULT_PATH_WIDTH = 6.1
 DEFAULT_ROAD_EDGES_WIDTH = 2.0
@@ -134,7 +136,7 @@ class ModelRenderer(Widget):
     model = sm['modelV2']
     radar_state = sm['radarState'] if sm.valid['radarState'] else None
     lead_one = radar_state.leadOne if radar_state else None
-    render_lead_indicator = self._longitudinal_control and radar_state is not None and lead_indicator_enabled(self._params, hide_by_default=True)
+    render_lead_indicator = self._should_render_lead_indicator(radar_state)
 
     # Update model data when needed
     model_updated = sm.updated['modelV2']
@@ -158,6 +160,9 @@ class ModelRenderer(Widget):
 
     if render_lead_indicator and radar_state:
       self._draw_lead_indicator()
+
+  def _should_render_lead_indicator(self, radar_state) -> bool:
+    return radar_state is not None and lead_indicator_enabled(self._params, hide_by_default=True)
 
   def _update_raw_points(self, model):
     """Update raw 3D points from model data"""
@@ -360,7 +365,32 @@ class ModelRenderer(Widget):
 
     return LeadVehicle(glow=glow, chevron=chevron, fill_alpha=int(fill_alpha))
 
-  def _lane_line_palette(self) -> tuple[bool, rl.Color, rl.Color]:
+  def _lane_centering_direction(self) -> int:
+    toggles = ui_state.starpilot_toggles
+    sm = ui_state.sm
+    if (sm.recv_frame.get("modelV2", 0) < ui_state.started_frame or
+        sm.recv_frame.get("carState", 0) < ui_state.started_frame):
+      return 0
+
+    car_state = sm["carState"]
+    applied_correction = None
+    if sm.recv_frame.get("controlsState", 0) >= ui_state.started_frame:
+      try:
+        applied_correction = sm["controlsState"].desiredCurvature - sm["modelV2"].action.desiredCurvature
+      except (AttributeError, TypeError, ValueError):
+        pass
+    return get_lane_centering_visual_direction(
+      sm["modelV2"], car_state.vEgo,
+      toggles.get("lane_center_offset", 0.0),
+      toggles.get("lane_centering_e2e_authority", 1.0),
+      bool(toggles.get("lane_centering", False)),
+      ui_state.status == UIStatus.ENGAGED or ui_state.always_on_lateral_active,
+      bool(toggles.get("lane_centering_pause_on_signal", True)),
+      bool(car_state.leftBlinker or car_state.rightBlinker),
+      applied_correction,
+    )
+
+  def _lane_line_palette(self) -> tuple[bool, rl.Color, rl.Color, int]:
     stock_scheme = is_stock_color_scheme(self._params)
     line_status = UIStatus.ENGAGED if ui_state.status == UIStatus.DISENGAGED and ui_state.always_on_lateral_active else ui_state.status
 
@@ -373,12 +403,18 @@ class ModelRenderer(Widget):
     if lane_color is None:
       lane_color = STOCK_LANE_LINES_COLOR if stock_scheme else get_theme_color("LaneLines", STOCK_LANE_LINES_COLOR)
 
-    return stock_scheme, edge_color, lane_color
+    lane_centering_direction = self._lane_centering_direction()
+    return stock_scheme, edge_color, lane_color, lane_centering_direction
 
   def _get_ll_color(self, prob: float, adjacent: bool, left: bool, stock_scheme: bool,
-                    edge_color: rl.Color, lane_color: rl.Color):
+                    edge_color: rl.Color, lane_color: rl.Color, lane_centering_direction: int = 0):
     alpha = np.clip(prob, 0.0, 0.7)
-    if adjacent:
+    lane_centering_line = adjacent and ((lane_centering_direction > 0 and not left) or
+                                        (lane_centering_direction < 0 and left))
+    if lane_centering_line:
+      color = rl.Color(OCEAN_BLUE_LANE_LINES_COLOR.r, OCEAN_BLUE_LANE_LINES_COLOR.g,
+                       OCEAN_BLUE_LANE_LINES_COLOR.b, int(alpha * OCEAN_BLUE_LANE_LINES_COLOR.a))
+    elif adjacent:
       color = rl.Color(edge_color.r, edge_color.g, edge_color.b, int(alpha * edge_color.a))
 
       # turn adjacent lls orange if torque is high
@@ -401,13 +437,13 @@ class ModelRenderer(Widget):
   def _draw_lane_lines(self):
     """Draw lane lines and road edges"""
     """Two closest lines should be green (lane line or road edges)"""
-    stock_scheme, edge_color, lane_color = self._lane_line_palette()
+    stock_scheme, edge_color, lane_color, lane_centering_direction = self._lane_line_palette()
     for i, lane_line in enumerate(self._lane_lines):
       if lane_line.projected_points.size == 0:
         continue
 
       color = self._get_ll_color(float(self._lane_line_probs[i]), i in (1, 2), i in (0, 1),
-                                 stock_scheme, edge_color, lane_color)
+                                 stock_scheme, edge_color, lane_color, lane_centering_direction)
       draw_polygon(self._rect, lane_line.projected_points, color)
 
     for i, road_edge in enumerate(self._road_edges):

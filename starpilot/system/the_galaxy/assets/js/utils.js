@@ -38,6 +38,20 @@ export function parseErrorLogToDate(filename) {
 }
 
 /**
+ * Escape a value for interpolation into an HTML string
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;")
+}
+
+/**
  * Capitalize the first character of a string
  * @param {string} str
  * @returns {string}

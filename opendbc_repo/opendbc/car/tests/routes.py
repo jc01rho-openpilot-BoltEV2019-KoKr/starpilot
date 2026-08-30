@@ -14,6 +14,7 @@ from opendbc.car.tesla.values import CAR as TESLA
 from opendbc.car.toyota.values import CAR as TOYOTA
 from opendbc.car.values import Platform
 from opendbc.car.volkswagen.values import CAR as VOLKSWAGEN
+from opendbc.car.volvo.values import CAR as VOLVO
 from opendbc.car.body.values import CAR as COMMA
 from opendbc.car.psa.values import CAR as PSA
 
@@ -104,6 +105,11 @@ non_tested_cars = [
   # TOYOTA.LEXUS_ES  # hybrid
   TOYOTA.TOYOTA_COROLLA,
   TOYOTA.TOYOTA_RAV4H,
+
+  # No recorded routes yet
+  VOLVO.VOLVO_XC40_RECHARGE,
+  VOLVO.VOLVO_S60_RECHARGE,
+  VOLVO.POLESTAR_2,
 
 ]
 

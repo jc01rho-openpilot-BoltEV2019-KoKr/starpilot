@@ -8,6 +8,7 @@ const state = reactive({
   sortMode: "release_date",
   communityFavoriteFilter: "all",
   userFavoriteFilter: "all",
+  allowGpuDownloadsWithoutGpu: false,
   models: [],
   currentModel: "",
   summary: { installed: 0, missing: 0, total: 0 },
@@ -78,6 +79,10 @@ function normalizeSeries(model) {
 
 function modelHardwareTag(model) {
   return model?.requiresGpu ? "eGPU" : "On-device GPU";
+}
+
+function gpuDownloadBlocked(model) {
+  return !!model?.requiresGpu && !model?.gpuAvailable && !state.allowGpuDownloadsWithoutGpu;
 }
 
 function modelSortCompare(a, b) {
@@ -309,14 +314,21 @@ async function startDownload(modelKey) {
   const payload = await fetchJson("/api/models/download", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: modelKey }),
+    body: JSON.stringify({
+      model: modelKey,
+      allowGpuWithoutGpu: state.allowGpuDownloadsWithoutGpu,
+    }),
   });
 
   notify(payload.message || `Downloading "${modelKey}"...`);
 }
 
 async function startDownloadAll() {
-  const payload = await fetchJson("/api/models/download_all", { method: "POST" });
+  const payload = await fetchJson("/api/models/download_all", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ allowGpuWithoutGpu: state.allowGpuDownloadsWithoutGpu }),
+  });
   notify(payload.message || "Started downloading all models.");
 }
 
@@ -436,6 +448,11 @@ function bindDomHandlers() {
     if (!isModelRouteActive()) return;
 
     const target = event.target;
+    if (target instanceof HTMLInputElement && target.id === "mm-gpu-download-override") {
+      state.allowGpuDownloadsWithoutGpu = target.checked;
+      return;
+    }
+
     if (!(target instanceof HTMLSelectElement)) return;
     if (target.id === "mm-active-model-select") {
       const modelKey = safeText(target.value, "");
@@ -502,7 +519,11 @@ function renderActions(model) {
     `;
   }
 
-  return html`<button class="mm-btn mm-btn-primary" data-mm-action="download" data-model="${modelKey}">Download</button>`;
+  return html`
+    <button class="mm-btn mm-btn-primary" data-mm-action="download" data-model="${modelKey}" disabled="${() => gpuDownloadBlocked(model) || false}">
+      ${() => gpuDownloadBlocked(model) ? "GPU Required" : "Download"}
+    </button>
+  `;
 }
 
 function renderModelRow(model) {
@@ -663,6 +684,17 @@ export function ModelManager() {
           <option value="yes" selected="${() => state.communityFavoriteFilter === "yes" || false}">Yes</option>
           <option value="no" selected="${() => state.communityFavoriteFilter === "no"}">No</option>
         </select>
+
+        <div class="mm-filter-break"></div>
+
+        <label class="mm-filter-checkbox" for="mm-gpu-download-override">
+          <input
+            id="mm-gpu-download-override"
+            type="checkbox"
+            checked="${() => state.allowGpuDownloadsWithoutGpu || false}">
+          Download GPU models without GPU
+        </label>
+        <span class="mm-chip mm-chip-warning">GPU models are very large and will not run without an external GPU.</span>
       </div>
 
       ${() => state.loading ? html`<div class="mm-empty">Loading models...</div>` : ""}

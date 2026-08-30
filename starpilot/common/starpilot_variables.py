@@ -20,7 +20,7 @@ from opendbc.car.gm.values import CAR as GM_CAR, EV_CAR as GM_EV_CAR, GMFlags
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, EV_CAR as HYUNDAI_EV_CAR, HyundaiFlags, HyundaiStarPilotSafetyFlags
 from opendbc.car.interfaces import TORQUE_SUBSTITUTE_PATH, CarInterfaceBase, GearShifter
 from opendbc.car.mock.values import CAR as MOCK
-from opendbc.car.subaru.values import SubaruFlags
+from opendbc.car.subaru.values import SUBARU_STOP_START_CARS, SubaruFlags
 from opendbc.car.tesla.values import CAR as TESLA_CAR
 from opendbc.car.toyota.values import CAR as TOYOTA_CAR, ToyotaStarPilotFlags
 from openpilot.common.basedir import BASEDIR
@@ -74,7 +74,7 @@ def _lkas_allowed_for_aol(car_make, cp_flags, fpcp_safety_configs) -> bool:
   hyundai_can_use_lkas_for_aol = car_make == "hyundai" and (
     bool(cp_flags & HyundaiFlags.CANFD) or hyundai_has_lda_button
   )
-  return hyundai_can_use_lkas_for_aol or car_make == "honda"
+  return hyundai_can_use_lkas_for_aol or car_make in ("ford", "honda")
 
 
 def _main_cruise_aol_allowed(button_control: float) -> bool:
@@ -145,8 +145,6 @@ BACKUP_PATH = _FP_CACHE_ROOT / "on_backup"
 STARPILOT_BACKUPS = _FP_DATA_ROOT / "backups"
 TOGGLE_BACKUPS = _FP_DATA_ROOT / "toggle_backups"
 
-FROGS_GO_MOO_PATH = _FP_PERSIST_ROOT / "frogsgomoo.py"
-
 HD_LOGS_PATH = _FP_DATA_ROOT / "media/0/realdata_HD"
 HD_PATH = _FP_CACHE_ROOT / "use_HD"
 
@@ -183,6 +181,7 @@ CANCEL_BUTTON_MAPPINGS = (
 )
 
 AOL_LKAS_MIGRATION_KEY = "AOLLKASMigratedToButtonControl"
+FORD_LKAS_MIGRATION_KEY = "FordLKASButtonControlMigrated"
 
 
 def sync_reboot_marker(marker_path: Path, enabled: bool, params: Params) -> bool:
@@ -401,6 +400,18 @@ def migrate_aol_lkas_to_button_control(params: Params | None = None) -> bool:
   return True
 
 
+def migrate_ford_lkas_button_default(car_make: str, params: Params | None = None) -> bool:
+  params = params or Params(return_defaults=True)
+  if car_make != "ford" or params.get_bool(FORD_LKAS_MIGRATION_KEY):
+    return False
+
+  if params.get_int("LKASButtonControl") == BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"]:
+    params.put_int("LKASButtonControl", BUTTON_FUNCTIONS["AOL_TOGGLE"])
+
+  params.put_bool(FORD_LKAS_MIGRATION_KEY, True)
+  return True
+
+
 class StarPilotVariables:
   def __init__(self):
     self.params = Params(return_defaults=True)
@@ -419,7 +430,6 @@ class StarPilotVariables:
     self.testing_branch = branch == "StarPilot-Testing"
     self.vetting_branch = branch == "StarPilot-Vetting"
 
-    self.frogs_go_moo = FROGS_GO_MOO_PATH.is_file()
     # Development/vetting branches are no longer gated into dashcam mode.
     toggle.block_user = False
 
@@ -611,6 +621,15 @@ class StarPilotVariables:
 
     alpha_longitudinal = CP.alphaLongitudinalAvailable
     toggle.car_make = CP.brand
+    toggle.ford_lateral_mode = self.get_value(
+      "FordLateralMode",
+      cast=int,
+      condition=toggle.car_make == "ford",
+      default=1,
+      min=0,
+      max=2,
+    )
+    migrate_ford_lkas_button_default(toggle.car_make, self.params)
     toggle.car_model = CP.carFingerprint
     toggle.disable_openpilot_long = self.get_value("DisableOpenpilotLongitudinal", condition=not alpha_longitudinal)
     friction = CP.lateralTuning.torque.friction
@@ -696,7 +715,7 @@ class StarPilotVariables:
     toggle.hide_distance_profile_banner = self.get_value("HideDistanceProfileBanner", condition=advanced_custom_ui and not toggle.debug_mode)
     toggle.hide_turning_banner = self.get_value("HideTurningBanner", condition=advanced_custom_ui and not toggle.debug_mode)
     toggle.hide_dm_icon = self.get_value("HideDMIcon", condition=advanced_custom_ui) and not toggle.debug_mode
-    toggle.hide_lead_marker = self.get_value("HideLeadMarker", condition=advanced_custom_ui and toggle.openpilot_longitudinal and not toggle.debug_mode)
+    toggle.hide_lead_marker = self.get_value("HideLeadMarker", condition=advanced_custom_ui and not toggle.debug_mode)
     toggle.hide_max_speed = self.get_value("HideMaxSpeed", condition=advanced_custom_ui and not toggle.debug_mode)
     toggle.hide_speed = self.get_value("HideSpeed", condition=advanced_custom_ui and not toggle.debug_mode)
     toggle.hide_speed_limit = self.get_value("HideSpeedLimit", condition=advanced_custom_ui and not toggle.debug_mode)
@@ -791,7 +810,10 @@ class StarPilotVariables:
 
     toggle.always_on_lateral = self.get_value("AlwaysOnLateral")
     lkas_button_assigned_to_aol = self.get_button_function("LKASButtonControl") == BUTTON_FUNCTIONS["AOL_TOGGLE"]
-    toggle.always_on_lateral_lkas = toggle.always_on_lateral and toggle.lkas_allowed_for_aol and lkas_button_assigned_to_aol
+    toggle.ford_lkas_aol_toggle = toggle.car_make == "ford" and lkas_button_assigned_to_aol
+    toggle.always_on_lateral_lkas = (
+      toggle.always_on_lateral and toggle.lkas_allowed_for_aol and lkas_button_assigned_to_aol and not toggle.ford_lkas_aol_toggle
+    )
     toggle.always_on_lateral_main = toggle.always_on_lateral and not prohibited_main_aol
     toggle.always_on_lateral_pause_speed = self.get_value("PauseAOLOnBrake", cast=float, condition=toggle.always_on_lateral)
 
@@ -944,7 +966,7 @@ class StarPilotVariables:
     developer_widgets = self.get_value("DeveloperWidgets", condition=toggle.developer_ui)
     toggle.adjacent_lead_tracking = has_radar and (self.get_value("AdjacentLeadsUI", condition=developer_widgets) or toggle.debug_mode)
     toggle.radar_tracks = has_radar and (self.get_value("RadarTracksUI", condition=developer_widgets) or toggle.debug_mode)
-    toggle.show_stopping_point = toggle.openpilot_longitudinal and (self.get_value("ShowStoppingPoint", condition=developer_widgets) or toggle.debug_mode)
+    toggle.show_stopping_point = self.get_value("ShowStoppingPoint", condition=developer_widgets) or toggle.debug_mode
     toggle.show_stopping_point_metrics = self.get_value("ShowStoppingPointMetrics", condition=toggle.show_stopping_point) or toggle.debug_mode
 
     device_management = self.get_value("DeviceManagement")
@@ -1280,7 +1302,6 @@ class StarPilotVariables:
     map_gears = self.get_value("MapGears", condition=quality_of_life_longitudinal)
     toggle.map_acceleration = self.get_value("MapAcceleration", condition=map_gears)
     toggle.map_deceleration = self.get_value("MapDeceleration", condition=map_gears)
-    toggle.reverse_cruise_increase = self.get_value("ReverseCruise", condition=quality_of_life_cruise)
     toggle.set_speed_offset = self.get_value("SetSpeedOffset", cast=float, condition=(quality_of_life_longitudinal and not pcm_cruise), conversion=(1 if toggle.is_metric else CV.MPH_TO_KPH))
     toggle.weather_presets = self.get_value("WeatherPresets", condition=quality_of_life_longitudinal)
     toggle.increase_following_distance_low_visibility = self.get_value("IncreaseFollowingLowVisibility", cast=float, condition=toggle.weather_presets)
@@ -1468,6 +1489,9 @@ class StarPilotVariables:
     toggle.subaru_sng = self.get_value("SubaruSNG", condition=toggle.car_make == "subaru" and
                                        not (CP.flags & (SubaruFlags.GLOBAL_GEN2 | SubaruFlags.HYBRID | SubaruFlags.LKAS_ANGLE)))
     toggle.subaru_sng_manual_parking_brake = self.get_value("SubaruSNGManualParkingBrake", condition=toggle.subaru_sng)
+    toggle.subaru_stop_start_off = self.get_value(
+      "SubaruStopStartOff", condition=toggle.car_model in SUBARU_STOP_START_CARS,
+    )
 
     toggle.jeep_brake_hold = self.get_value(
       "JeepBrakeHold",

@@ -59,6 +59,8 @@ sys.modules.setdefault("openpilot.starpilot.assets.theme_manager", theme_manager
 
 import utilities
 
+_REAL_COMMON_PARAMS_MODULE = sys.modules.get("openpilot.common.params")
+
 for _module_name, _module in _INITIAL_MODULES.items():
   if _module is None:
     sys.modules.pop(_module_name, None)
@@ -86,6 +88,8 @@ def _simple_module(name, **attrs):
 
 
 def _install_server_import_stubs():
+  if _REAL_COMMON_PARAMS_MODULE is not None:
+    sys.modules["openpilot.common.params"] = _REAL_COMMON_PARAMS_MODULE
   sys.modules["openpilot.system.loggerd.config"] = loggerd_config
   sys.modules["openpilot.system.loggerd.deleter"] = loggerd_deleter
   sys.modules["openpilot.system.loggerd.uploader"] = loggerd_uploader
@@ -130,6 +134,14 @@ def _install_server_import_stubs():
   )
 
   sys.modules["openpilot.common.realtime"] = _simple_module("openpilot.common.realtime", DT_HW=0.01)
+  sys.modules["openpilot.common.swaglog"] = _simple_module(
+    "openpilot.common.swaglog",
+    cloudlog=SimpleNamespace(
+      error=lambda *args, **kwargs: None,
+      exception=lambda *args, **kwargs: None,
+      info=lambda *args, **kwargs: None,
+    ),
+  )
   sys.modules["openpilot.common.time_helpers"] = _simple_module("openpilot.common.time_helpers", system_time_valid=lambda: True)
   sys.modules["openpilot.system.hardware"] = _simple_module(
     "openpilot.system.hardware",
@@ -149,6 +161,15 @@ def _install_server_import_stubs():
     get_longitudinal_maneuver_support=lambda *args, **kwargs: {},
   )
   sys.modules["panda"] = _simple_module("panda", Panda=lambda *args, **kwargs: SimpleNamespace(can_send=lambda *send_args, **send_kwargs: None))
+  msgq_module = _simple_module("msgq")
+  msgq_visionipc = _simple_module(
+    "msgq.visionipc",
+    VisionIpcClient=lambda *args, **kwargs: SimpleNamespace(connect=lambda *connect_args: False),
+    VisionStreamType=SimpleNamespace(VISION_STREAM_DRIVER=0),
+  )
+  msgq_module.visionipc = msgq_visionipc
+  sys.modules["msgq"] = msgq_module
+  sys.modules["msgq.visionipc"] = msgq_visionipc
 
   model_manager.is_builtin_model_key = lambda value: False
   model_manager.model_key_aliases = lambda value: [value]
@@ -297,6 +318,29 @@ def _install_server_import_stubs():
     "openpilot.starpilot.system.the_galaxy.flm_workspace",
   )
   sys.modules["openpilot.starpilot.system.the_galaxy.utilities"] = utilities
+  sys.modules["openpilot.starpilot.system.wheel_controls"] = _simple_module(
+    "openpilot.starpilot.system.wheel_controls",
+    CONTROLLER_ACTION_OPTIONS=(
+      {"key": "__starpilot_controller_action__:set_speed", "label": "Set Speed To", "section": "Controller Actions", "value_type": "speed"},
+      {"key": "__starpilot_controller_action__:selfie", "label": "Take Comma Selfie", "section": "Controller Actions"},
+    ),
+    CONTROLLER_ACTION_SET_SPEED="__starpilot_controller_action__:set_speed",
+    CONTROLLER_ACTION_SLOT_COUNT=10,
+    FAVORITE_SLOT_COUNT=3,
+    cancel_learning=lambda *args, **kwargs: None,
+    clear_mappings=lambda *args, **kwargs: None,
+    controller_speed_bounds=lambda is_metric: (8, 145) if is_metric else (5, 90),
+    delete_mapping=lambda *args, **kwargs: True,
+    load_controller_action_slots=lambda *args, **kwargs: [
+      {"enabled": False, "key": None, "label": "", "value": None} for _ in range(10)
+    ],
+    public_status=lambda *args, **kwargs: {"mappings": [], "devices": [], "available": True},
+    set_controller_action_slot=lambda *args, **kwargs: None,
+    set_joystick_device=lambda *args, **kwargs: None,
+    start_learning=lambda *args, **kwargs: None,
+    start_testing=lambda *args, **kwargs: None,
+    stop_testing=lambda *args, **kwargs: None,
+  )
 
 
 class FakeParams:
@@ -337,17 +381,16 @@ class FakeDashboardAnalyzerProcess:
 
 
 def test_route_inventory_counts_segments_without_video_probing(monkeypatch):
-  segments = [
-    SimpleNamespace(route_name=SimpleNamespace(time_str="route-new")),
-    SimpleNamespace(route_name=SimpleNamespace(time_str="route-new")),
-    SimpleNamespace(route_name=SimpleNamespace(time_str="route-new")),
-    SimpleNamespace(route_name=SimpleNamespace(time_str="route-old")),
-  ]
+  def segment(time_str, segment_num):
+    return SimpleNamespace(route_name=SimpleNamespace(time_str=time_str), segment_num=segment_num)
+
+  # route-new has aged out of its first two segments, so it no longer starts at --0.
+  segments = [segment("route-new", 4), segment("route-new", 2), segment("route-new", 3), segment("route-old", 0)]
   monkeypatch.setattr(utilities, "get_all_segment_names", lambda _path: segments)
 
-  assert utilities.get_routes_with_segment_counts("/tmp/routes") == [
-    ("route-old", 1),
-    ("route-new", 3),
+  assert utilities.get_routes_with_segment_details("/tmp/routes") == [
+    ("route-old", {"segmentCount": 1, "firstSegmentNum": 0}),
+    ("route-new", {"segmentCount": 3, "firstSegmentNum": 2}),
   ]
 
 
@@ -1069,6 +1112,28 @@ def test_clear_dashboard_route_history_keeps_durable_records(tmp_path, monkeypat
   assert stats["personalRecords"]["cleanDriveStreak"]["drives"] == 4
   assert stats["attentionRecords"]["cleanDriveStreak"]["drives"] == 4
   assert stats["modelUsage"]["orion"]["drives"] == 3
+
+
+def test_clear_dashboard_route_history_can_retain_preserved_routes(tmp_path, monkeypatch):
+  monkeypatch.setattr(utilities, "DASHBOARD_PARAMS_DIR", tmp_path)
+  params = FakeParams({
+    utilities.DASHBOARD_PERSISTENT_STATS_PARAM: {
+      "routes": {
+        "0000006a--9f0a7bdf9c": {"date": "2026-06-15T08:00:00"},
+        "0000006b--9f0a7bdf9d": {"date": "2026-06-16T08:00:00"},
+      },
+      "ignoredRoutes": ["0000006a--9f0a7bdf9c", "0000006b--9f0a7bdf9d"],
+      "personalRecords": {"cleanDriveStreak": {"drives": 4}},
+    },
+  })
+
+  removed = utilities.clear_dashboard_route_history(params, retained_route_names={"0000006a--9f0a7bdf9c"})
+
+  assert removed == 1
+  stats = utilities._load_dashboard_persistent_stats(params)
+  assert list(stats["routes"]) == ["0000006a--9f0a7bdf9c"]
+  assert stats["ignoredRoutes"] == ["0000006a--9f0a7bdf9c"]
+  assert stats["personalRecords"]["cleanDriveStreak"]["drives"] == 4
 
 
 def test_lightweight_routes_surface_recent_drives_without_log_analysis(monkeypatch):

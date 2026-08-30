@@ -22,6 +22,7 @@ DEVELOPER_METRIC_DISPLAY_KEYS = (
 )
 DEVICE_SHUTDOWN_KEY = "DeviceShutdown"
 CAMERA_VIEW_KEY = "CameraView"
+REVERSE_CRUISE_KEY = "ReverseCruise"
 
 DEFAULT_STEER_KP = 0.6
 LEGACY_STEER_KP = 0.7
@@ -38,6 +39,7 @@ LANE_CHANGE_SMOOTHING_MIGRATION_MARKER = ".starpilot_lane_change_smoothing_defau
 SPEED_LIMIT_VISIBILITY_MIGRATION_MARKER = ".starpilot_speed_limit_visibility_v1"
 DEVICE_SHUTDOWN_HOURS_MIGRATION_MARKER = ".starpilot_device_shutdown_hours_v1"
 CAMERA_VIEW_DEFAULT_MIGRATION_MARKER = ".starpilot_camera_view_default_v1"
+REVERSE_CRUISE_REMOVAL_MIGRATION_MARKER = ".starpilot_remove_reverse_cruise_v1"
 MARKER_DIRNAME = ".starpilot_param_migrations"
 
 LATERAL_METHOD_PARAM_SUFFIXES = (
@@ -143,6 +145,10 @@ def _device_shutdown_hours_marker_path(params: ParamsLike) -> Path:
 
 def _camera_view_default_marker_path(params: ParamsLike) -> Path:
   return _marker_dir_path(params) / CAMERA_VIEW_DEFAULT_MIGRATION_MARKER
+
+
+def _reverse_cruise_removal_marker_path(params: ParamsLike) -> Path:
+  return _marker_dir_path(params) / REVERSE_CRUISE_REMOVAL_MIGRATION_MARKER
 
 
 def _marker_dir_path(params: ParamsLike) -> Path:
@@ -326,6 +332,15 @@ def _apply_camera_view_default_migration(params: ParamsLike, marker: Path) -> No
   marker.touch()
 
 
+def _remove_reverse_cruise_param(params: ParamsLike, marker: Path) -> None:
+  if marker.exists():
+    return
+
+  marker.parent.mkdir(parents=True, exist_ok=True)
+  Path(params.get_param_path(REVERSE_CRUISE_KEY)).unlink(missing_ok=True)
+  marker.touch()
+
+
 def apply_launch_param_migrations(params: ParamsLike, marker_path: Path | None = None,
                                   branch_defaults_marker_path: Path | None = None,
                                   acceleration_profile_marker_path: Path | None = None,
@@ -336,7 +351,8 @@ def apply_launch_param_migrations(params: ParamsLike, marker_path: Path | None =
                                   lane_change_smoothing_marker_path: Path | None = None,
                                   speed_limit_visibility_marker_path: Path | None = None,
                                   device_shutdown_hours_marker_path: Path | None = None,
-                                  camera_view_default_marker_path: Path | None = None) -> None:
+                                  camera_view_default_marker_path: Path | None = None,
+                                  reverse_cruise_removal_marker_path: Path | None = None) -> None:
   _apply_legacy_launch_param_migrations(params, marker_path or _default_marker_path(params))
   # Keep branch-default rollout on its own marker so older installs that already
   # have the legacy marker still receive this one-time param reset.
@@ -367,6 +383,9 @@ def apply_launch_param_migrations(params: ParamsLike, marker_path: Path | None =
   )
   _apply_camera_view_default_migration(
     params, camera_view_default_marker_path or _camera_view_default_marker_path(params)
+  )
+  _remove_reverse_cruise_param(
+    params, reverse_cruise_removal_marker_path or _reverse_cruise_removal_marker_path(params)
   )
 
 

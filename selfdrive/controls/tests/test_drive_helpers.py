@@ -16,7 +16,7 @@ if "smbus2" not in sys.modules:
 
 import numpy as np
 
-from openpilot.selfdrive.controls.lib.drive_helpers import get_lateral_active
+from openpilot.selfdrive.controls.lib.drive_helpers import get_kona_non_scc_lateral_active, get_lateral_active
 
 
 def test_get_lateral_active_requires_enabled_without_aol():
@@ -304,3 +304,28 @@ def test_lc_update_requires_explicit_model_valid():
   sig = inspect.signature(LaneCenteringController.update)
   assert "model_valid" in sig.parameters
   assert sig.parameters["model_valid"].default is inspect.Parameter.empty
+
+
+def test_kona_non_scc_aol_waits_for_driver_steering_to_release():
+  assert not get_kona_non_scc_lateral_active(
+    False, False, True, False, False, False, False, True, True, False,
+  )
+  assert get_kona_non_scc_lateral_active(
+    False, False, True, False, False, False, False, True, False, False,
+  )
+  assert get_kona_non_scc_lateral_active(
+    False, False, True, False, False, False, False, True, True, True,
+  )
+
+
+def test_kona_non_scc_aol_gate_does_not_change_fault_or_normal_lateral_gates():
+  assert not get_kona_non_scc_lateral_active(
+    False, False, True, True, False, False, False, True, False, False,
+  )
+  assert get_kona_non_scc_lateral_active(
+    True, True, False, False, False, False, False, True, True, False,
+  )
+
+
+def test_get_lateral_active_honors_manual_pause_while_cruise_is_engaged():
+  assert not get_lateral_active(True, True, False, False, False, False, False, False)

@@ -4,6 +4,7 @@ from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car import DT_CTRL
 from opendbc.car.common.conversions import Conversions as CV
+from opendbc.car.gps import get_car_gps_config
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.gm.values import (
   ALT_ACCS,
@@ -104,6 +105,31 @@ class CarState(CarStateBase):
     self.lkas_enabled = 0
     self.pcm_acc_status = AccState.OFF
     self.stock_fcw_alert = 0
+    self.car_gps_config = get_car_gps_config(CP)
+    self.car_gps_supported = self.car_gps_config is not None
+    self.car_gps = None
+    self._car_gps_timestamp_nanos = 0
+
+  def _update_car_gps(self, cp) -> None:
+    if self.car_gps_config is None:
+      return
+
+    timestamps = [max(cp.ts_nanos[name].values(), default=0) for name in self.car_gps_config.messages]
+    if not all(timestamps) or max(timestamps) - min(timestamps) > 2_000_000_000:
+      return
+
+    timestamp_nanos = max(timestamps)
+    if timestamp_nanos <= self._car_gps_timestamp_nanos:
+      return
+
+    gps = self.car_gps_config.decoder(*(cp.vl[name] for name in self.car_gps_config.messages))
+    if gps is not None:
+      gps["timestamp_nanos"] = timestamp_nanos
+      self.car_gps = gps
+      self._car_gps_timestamp_nanos = timestamp_nanos
+
+  def get_car_gps(self):
+    return self.car_gps
 
   def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
     if not self.CP.pcmCruise:
@@ -118,6 +144,8 @@ class CarState(CarStateBase):
     pt_cp = can_parsers[Bus.pt]
     cam_cp = can_parsers[Bus.cam]
     loopback_cp = can_parsers[Bus.loopback]
+
+    self._update_car_gps(pt_cp)
 
     ret = structs.CarState()
 
@@ -428,6 +456,9 @@ class CarState(CarStateBase):
 
   @staticmethod
   def get_can_parsers(CP):
+    gps_config = get_car_gps_config(CP)
+    gps_messages = [(name, 0) for name in gps_config.messages] if gps_config is not None else []
+
     volt_like = {
       CAR.CHEVROLET_VOLT,
       CAR.CHEVROLET_VOLT_2019,
@@ -451,6 +482,7 @@ class CarState(CarStateBase):
       ("PSCMSteeringAngle", 100),
       ("ECMAcceleratorPos", 80),
       ("SportMode", 0),
+      *gps_messages,
     ]
 
     prndl2_rate = 10 if CP.carFingerprint in kaofui_state_cars else 40

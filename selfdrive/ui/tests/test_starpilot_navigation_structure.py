@@ -24,7 +24,6 @@ if "openpilot.starpilot.common.starpilot_variables" not in sys.modules:
     sv_mod.MODELS_PATH = "/tmp"
     sv_mod.EARTH_RADIUS = 6371000
     sv_mod.STARPILOT_API = ""
-    sv_mod.FROGS_GO_MOO_PATH = "/tmp"
     sv_mod.KONIK_PATH = "/tmp"
     sys.modules["openpilot.starpilot.common.starpilot_variables"] = sv_mod
 
@@ -361,5 +360,4 @@ def test_breadcrumb_panel_stack_unwinds_nav_stack(monkeypatch):
   assert nav_stack == [layout]
   assert len(layout._panel_stack) == 1
   assert layout._panel_stack[0] == (StarPilotPanelType.MAPS, "sub1")
-
 

@@ -622,6 +622,32 @@ class TestHyundaiLongitudinalAolLkasOnEngageSafety(HyundaiAolLkasOnEngageBase, T
     self.safety.init_tests()
 
 
+class TestHyundaiLongitudinalAolMainLkasOnEngageSafety(TestHyundaiLongitudinalSafety):
+  def setUp(self):
+    self.packer = CANPackerSafety("hyundai_kia_generic")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(
+      CarParams.SafetyModel.hyundai,
+      HyundaiSafetyFlags.LONG | HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_ON_ENGAGE,
+    )
+    self.safety.init_tests()
+
+  def test_aol_lkas_auto_enables_on_main_engagement(self):
+    self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL)
+    self.safety.set_controls_allowed(False)
+
+    self._rx(self._button_msg(Buttons.NONE, main_button=1))
+    self._rx(self._button_msg(Buttons.NONE, main_button=0))
+    self.assertTrue(self.safety.get_acc_main_on())
+    self.assertTrue(self.safety.get_lkas_on())
+    self.assertTrue(self.safety.get_aol_allowed())
+
+    self._rx(self._user_brake_msg(True))
+    self.assertFalse(self.safety.get_controls_allowed())
+    self._set_prev_torque(0)
+    self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_RATE_UP)))
+
+
 class TestHyundaiAolLkasOnEngageStockSafety(HyundaiAolLkasOnEngageStockBase, TestHyundaiSafety):
   def setUp(self):
     self.packer = CANPackerSafety("hyundai_kia_generic")

@@ -31,7 +31,7 @@ ENABLE_BUTTONS = (ButtonType.accelCruise, ButtonType.decelCruise, ButtonType.can
 # Track when ECU disable happened - used to permanently suppress CAN errors from disabled ECU
 ECU_DISABLE_TIMESTAMP = 0.0
 KONA_NON_SCC_FCA_RADAR_ADDR = 0x602
-KIA_EV9_ACCEL_MAX = 2.5
+KIA_EV9_ACCEL_MAX = 2.2
 
 
 def apply_platform_longitudinal_params(ret: structs.CarParams) -> None:

@@ -86,8 +86,12 @@ class Car:
     self.can_sock = messaging.sub_sock('can', timeout=20)
     self.sm = messaging.SubMaster(['pandaStates', 'carControl', 'onroadEvents', 'radarState', 'longitudinalPlan'])
     self.pm = messaging.PubMaster(['sendcan', 'carState', 'carParams', 'carOutput', 'liveTracks'])
+    self.gps_pm = None
 
     self.can_rcv_cum_timeout_counter = 0
+    self._last_car_gps_timestamp_nanos = 0
+    self._last_car_gps_received_monotonic = 0.0
+    self._last_car_gps_publish_monotonic = 0.0
 
     self.CC_prev = car.CarControl.new_message()
     self.CS_prev = car.CarState.new_message()
@@ -134,6 +138,11 @@ class Car:
     else:
       self.CI, self.CP, self.FPCP = CI, CI.CP, CI.FPCP
       self.RI = RI
+
+    car_gps_supported = bool(getattr(self.CI.CS, 'car_gps_supported', False))
+    self.params.put_bool("CarGpsAvailable", car_gps_supported)
+    if car_gps_supported:
+      self.gps_pm = messaging.PubMaster(['gpsLocationExternal'])
 
     interface_alternative_experience = self.CP.alternativeExperience
     self.CP.alternativeExperience = interface_alternative_experience
@@ -331,6 +340,37 @@ class Car:
 
   def state_publish(self, CS: car.CarState, RD: structs.RadarDataT | None, FPCS: custom.StarPilotCarState):
     """carState and carParams publish loop"""
+
+    get_car_gps = getattr(self.CI.CS, 'get_car_gps', None)
+    car_gps = get_car_gps() if get_car_gps is not None else None
+    now = time.monotonic()
+    if car_gps is not None and car_gps['timestamp_nanos'] > self._last_car_gps_timestamp_nanos:
+      self._last_car_gps_timestamp_nanos = car_gps['timestamp_nanos']
+      self._last_car_gps_received_monotonic = now
+
+    if car_gps is not None and self._last_car_gps_received_monotonic > 0.0 and \
+        now - self._last_car_gps_received_monotonic <= 2.5 and \
+        now - self._last_car_gps_publish_monotonic >= 0.2:
+      gps_send = messaging.new_message('gpsLocationExternal', valid=True)
+      gps = gps_send.gpsLocationExternal
+      gps.flags = 0
+      gps.latitude = car_gps['latitude']
+      gps.longitude = car_gps['longitude']
+      gps.altitude = car_gps['altitude']
+      gps.speed = car_gps['speed']
+      gps.bearingDeg = car_gps['bearingDeg']
+      gps.horizontalAccuracy = car_gps['horizontalAccuracy']
+      gps.unixTimestampMillis = car_gps['unixTimestampMillis']
+      gps.source = log.GpsLocationData.SensorSource.car
+      gps.vNED = car_gps['vNED']
+      gps.verticalAccuracy = car_gps['verticalAccuracy']
+      gps.bearingAccuracyDeg = car_gps['bearingAccuracyDeg']
+      gps.speedAccuracy = car_gps['speedAccuracy']
+      gps.hasFix = car_gps['hasFix']
+      gps.satelliteCount = car_gps['satelliteCount']
+      assert self.gps_pm is not None
+      self.gps_pm.send('gpsLocationExternal', gps_send)
+      self._last_car_gps_publish_monotonic = now
 
     # carParams - logged every 50 seconds (> 1 per segment)
     if self.sm.frame % int(50. / DT_CTRL) == 0:

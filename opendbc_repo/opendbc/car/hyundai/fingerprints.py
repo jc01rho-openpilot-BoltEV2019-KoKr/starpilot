@@ -1402,6 +1402,14 @@ FW_VERSIONS = {
       b'\xf1\x00JK__ RDR -----      1.00 1.01 99110-DS500         ',
     ],
   },
+  CAR.GENESIS_GV70_2026: {
+    (Ecu.fwdCamera, 0x7c4, None): [
+      b'\xf1\x00JK  MFC  AT USA LHD 1.00 1.11 99211-IY600 241125',
+    ],
+    (Ecu.fwdRadar, 0x7d0, None): [
+      b'\xf1\x00JK__ RDR -----      1.00 1.01 99110-AR600         ',
+    ],
+  },
   CAR.GENESIS_GV80_2025: {
     (Ecu.fwdRadar, 0x7d0, None): [
       b'\xf1\x00JX__ RDR -----      1.00 1.03 99110-T6500         ',

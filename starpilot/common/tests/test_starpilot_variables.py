@@ -21,6 +21,10 @@ def test_hyundai_and_honda_keep_lkas_aol_button_path():
   assert spv._lkas_allowed_for_aol("hyundai", spv.HyundaiFlags.CANFD, []) is True
 
 
+def test_ford_can_map_lkas_button_to_aol():
+  assert spv._lkas_allowed_for_aol("ford", 0, []) is True
+
+
 def test_explicit_main_cruise_aol_mapping_is_not_disabled_by_longitudinal_gate():
   aol_button = spv.BUTTON_FUNCTIONS["AOL_TOGGLE"]
 
@@ -128,6 +132,33 @@ class _FakeParams:
     self.floats.pop(key, None)
     self.ints.pop(key, None)
     self.bools.pop(key, None)
+
+
+def test_ford_lkas_default_migrates_from_experimental_to_aol_toggle():
+  params = _FakeParams(ints={"LKASButtonControl": spv.BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"]})
+
+  assert spv.migrate_ford_lkas_button_default("ford", params) is True
+  assert params.get_int("LKASButtonControl") == spv.BUTTON_FUNCTIONS["AOL_TOGGLE"]
+  assert params.get_bool(spv.FORD_LKAS_MIGRATION_KEY) is True
+
+  params.put_int("LKASButtonControl", spv.BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"])
+  assert spv.migrate_ford_lkas_button_default("ford", params) is False
+  assert params.get_int("LKASButtonControl") == spv.BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"]
+
+
+def test_ford_lkas_default_migration_preserves_custom_mapping():
+  params = _FakeParams(ints={"LKASButtonControl": spv.BUTTON_FUNCTIONS["BOOKMARK"]})
+
+  assert spv.migrate_ford_lkas_button_default("ford", params) is True
+  assert params.get_int("LKASButtonControl") == spv.BUTTON_FUNCTIONS["BOOKMARK"]
+
+
+def test_ford_lkas_default_migration_ignores_other_brands():
+  params = _FakeParams(ints={"LKASButtonControl": spv.BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"]})
+
+  assert spv.migrate_ford_lkas_button_default("honda", params) is False
+  assert params.get_int("LKASButtonControl") == spv.BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"]
+  assert params.get_bool(spv.FORD_LKAS_MIGRATION_KEY) is False
 
 
 def test_sync_reboot_marker_uses_manager_guard(tmp_path):

@@ -7,6 +7,7 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.starpilot.common.starpilot_variables import CITY_SPEED_LIMIT, CRUISING_SPEED, DEFAULT_LATERAL_ACCELERATION, PLANNER_TIME
 
 CALIBRATION_PROGRESS_THRESHOLD = 10 / DT_MDL
+MIN_TRAINING_TIME = 5.0
 CSC_MIN_SPEED = CITY_SPEED_LIMIT * CV.MPH_TO_MS
 CSC_MAX_DECEL_RATE = 1.5
 MAX_CURVATURE = 0.1
@@ -54,7 +55,7 @@ class CurveSpeedController:
     self.required_curvatures = [str(round(road_curvature, ROUNDING_PRECISION)) for road_curvature in np.arange(MIN_CURVATURE, MAX_CURVATURE + STEP, STEP)]
 
     self.update_lateral_acceleration()
-    self._publish_calibration_progress()
+    self._publish_calibration_progress(persist=True)
 
   @staticmethod
   def _bucket_curvature(road_curvature):
@@ -117,8 +118,11 @@ class CurveSpeedController:
         progress += min(self.curvature_data[key]["count"] / CALIBRATION_PROGRESS_THRESHOLD, 1.0)
     return (progress / len(self.required_curvatures)) * 100
 
-  def _publish_calibration_progress(self):
-    self._put_memory_param("CalibrationProgress", self._calibration_progress())
+  def _publish_calibration_progress(self, persist=False):
+    progress = self._calibration_progress()
+    if persist:
+      self.starpilot_planner.params.put_nonblocking("CalibrationProgress", progress)
+    self._put_memory_param("CalibrationProgress", progress)
 
   def _put_memory_param(self, key, value):
     params_memory = getattr(self.starpilot_planner, "params_memory", None)
@@ -147,9 +151,8 @@ class CurveSpeedController:
       self.persistence_timer += DT_MDL
 
     in_curve = (
-      self.training_timer >= PLANNER_TIME and
-      self.starpilot_planner.driving_in_curve and
-      not (sm["carState"].leftBlinker or sm["carState"].rightBlinker)
+      self.training_timer >= MIN_TRAINING_TIME and
+      self.starpilot_planner.driving_in_curve
     )
     if in_curve:
       lateral_acceleration = abs(self.starpilot_planner.lateral_acceleration)

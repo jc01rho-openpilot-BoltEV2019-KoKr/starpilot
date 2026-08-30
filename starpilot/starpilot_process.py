@@ -206,7 +206,7 @@ def transition_onroad(error_log):
     error_log.unlink()
 
 def update_checks(now, model_manager, theme_manager, thread_manager, params, params_memory, starpilot_toggles, boot_run=False):
-  while not (is_url_pingable("https://github.com") or is_url_pingable("https://gitlab.com")):
+  while not (is_url_pingable("https://huggingface.co") or is_url_pingable("https://github.com")):
     time.sleep(60)
 
   model_manager.update_models(boot_run)
@@ -286,6 +286,7 @@ def starpilot_thread():
   run_update_checks = False
   safe_mode_active = safe_mode_enabled(params_raw)
   started_previously = False
+  starpilot_tracking = None
   model_randomizer_previously = params.get_bool("ModelRandomizer")
   time_validated = False
 
@@ -306,6 +307,7 @@ def starpilot_thread():
     low_voltage_reporter.sample(extract_voltage_mv(sm["peripheralState"], alive=sm.alive["peripheralState"], valid=sm.valid["peripheralState"]))
 
     if not started and started_previously:
+      starpilot_tracking.flush(now, time_validated)
       starpilot_planner.shutdown()
 
       starpilot_toggles = update_toggles(starpilot_variables, started, theme_manager, thread_manager, time_validated, params, starpilot_toggles)

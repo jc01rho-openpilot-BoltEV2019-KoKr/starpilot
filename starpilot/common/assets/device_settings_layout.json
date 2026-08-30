@@ -388,6 +388,238 @@
         "settings_tier": "simple"
       },
       {
+        "key": "FordLateralMode",
+        "label": "Ford Steering Strategy",
+        "description": "Choose the Ford lateral controller. Curvature is the tuned default, Angle uses path-angle control, and Native preserves the original Ford controls.",
+        "picker_description": "Chooses Native, Curvature, or Angle steering on Ford vehicles.",
+        "data_type": "int",
+        "ui_type": "dropdown",
+        "options": [
+          {
+            "value": 0,
+            "label": "Native"
+          },
+          {
+            "value": 1,
+            "label": "Curvature"
+          },
+          {
+            "value": 2,
+            "label": "Angle"
+          }
+        ],
+        "is_parent_toggle": true,
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
+        "key": "FordHumanTurnDetection",
+        "label": "Manual Turn Release",
+        "description": "Yield during an intentional manual turn while keeping the Ford steering session ready.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "FordLateralMode",
+        "visible_when_key": "FordLateralMode",
+        "visible_when_values": [
+          1,
+          2
+        ],
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
+        "key": "FordHandsFreeCluster",
+        "label": "Hands-Free Cluster Display",
+        "description": "Show the hands-free assistance graphic on supported CAN-FD Ford clusters while lateral control is active. Driver monitoring requirements do not change.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "FordLateralMode",
+        "visible_when_key": "FordLateralMode",
+        "visible_when_values": [
+          1,
+          2
+        ],
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
+        "key": "FordCurvatureBlendLow",
+        "label": "Small-Curve Prediction Blend",
+        "description": "Blend model-predicted curvature into gentle turns. 0 uses planner curvature only; 1 uses model prediction only.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.05,
+        "precision": 2,
+        "parent_key": "FordLateralMode",
+        "visible_when_key": "FordLateralMode",
+        "visible_when_values": [
+          1
+        ],
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
+        "key": "FordCurvatureBlendHigh",
+        "label": "Large-Curve Prediction Blend",
+        "description": "Blend model-predicted curvature into tighter turns. 0 uses planner curvature only; 1 uses model prediction only.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.05,
+        "precision": 2,
+        "parent_key": "FordLateralMode",
+        "visible_when_key": "FordLateralMode",
+        "visible_when_values": [
+          1
+        ],
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
+        "key": "FordCurvatureLaneChangeFactor",
+        "label": "Curvature Lane-Change Factor",
+        "description": "Scale steering during high-speed lane changes in Curvature mode.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 1.25,
+        "step": 0.05,
+        "precision": 2,
+        "parent_key": "FordLateralMode",
+        "visible_when_key": "FordLateralMode",
+        "visible_when_values": [
+          1
+        ],
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
+        "key": "FordAngleBlend",
+        "label": "Angle Prediction Blend",
+        "description": "Blend model prediction into the Ford path-angle command. 0 uses planner curvature only; 1 uses model prediction only.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "FordLateralMode",
+        "visible_when_key": "FordLateralMode",
+        "visible_when_values": [
+          2
+        ],
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
+        "key": "FordAngleLowSpeedFactor",
+        "label": "Low-Speed Angle Response",
+        "description": "Adjust path-angle strength at lower speeds and higher curvature.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 1.5,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "FordLateralMode",
+        "visible_when_key": "FordLateralMode",
+        "visible_when_values": [
+          2
+        ],
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
+        "key": "FordAngleHighSpeedFactor",
+        "label": "High-Speed Angle Response",
+        "description": "Adjust path-angle strength through larger highway curves.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 1.5,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "FordLateralMode",
+        "visible_when_key": "FordLateralMode",
+        "visible_when_values": [
+          2
+        ],
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
+        "key": "FordAngleHighSpeedDamping",
+        "label": "High-Speed Angle Damping",
+        "description": "Dampen small steering corrections at highway speed.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.25,
+        "max": 1.25,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "FordLateralMode",
+        "visible_when_key": "FordLateralMode",
+        "visible_when_values": [
+          2
+        ],
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
+        "key": "FordAngleLaneChangeFactor",
+        "label": "Angle Lane-Change Factor",
+        "description": "Scale steering during high-speed lane changes in Angle mode.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.5,
+        "max": 1.5,
+        "step": 0.01,
+        "precision": 2,
+        "parent_key": "FordLateralMode",
+        "visible_when_key": "FordLateralMode",
+        "visible_when_values": [
+          2
+        ],
+        "galaxy_only": true,
+        "vehicle_makes": [
+          "Ford"
+        ],
+        "settings_tier": "simple"
+      },
+      {
         "key": "VASMEnabled",
         "label": "Enable V-ASM",
         "description": "Camera-based adjacent spot monitoring using the driver camera. Supplements factory blind spot monitoring.",
@@ -402,12 +634,12 @@
       {
         "key": "VASMConfidenceThreshold",
         "label": "Confidence Threshold",
-        "description": "Minimum vehicle-detection confidence (0.25-1.00, default 0.85). Higher values reduce false positives but may miss detections.",
+        "description": "Minimum vehicle-detection confidence (0.80-1.00, default 0.94). Higher values reduce false positives but may miss detections.",
         "data_type": "float",
         "ui_type": "numeric",
-        "min": 0.25,
+        "min": 0.80,
         "max": 1.00,
-        "step": 0.05,
+        "step": 0.01,
         "precision": 2,
         "parent_key": "VASMEnabled",
         "settings_tier": "advanced"
@@ -843,6 +1075,30 @@
         "picker_description": "Uses Curve Speed Controller only without a lead.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "parent_key": "CurveSpeedController",
+        "settings_tier": "simple"
+      },
+      {
+        "key": "CalibratedLateralAcceleration",
+        "label": "Calibrated Lateral Accel",
+        "description": "The learned lateral acceleration from collected driving data. Higher values allow faster cornering.",
+        "picker_description": "Learned cornering comfort from your driving data.",
+        "data_type": "float",
+        "ui_type": "readout",
+        "precision": 2,
+        "unit": " m/s²",
+        "parent_key": "CurveSpeedController",
+        "settings_tier": "simple"
+      },
+      {
+        "key": "CalibrationProgress",
+        "label": "Calibration Progress",
+        "description": "How much curve data has been collected. Normal for the value to stay low.",
+        "picker_description": "How much curve data has been collected.",
+        "data_type": "float",
+        "ui_type": "readout",
+        "precision": 2,
+        "unit": "%",
         "parent_key": "CurveSpeedController",
         "settings_tier": "simple"
       },
@@ -2314,7 +2570,7 @@
       {
         "key": "PIPPreviewShowOnBlinker",
         "label": "Show on Turn Signal",
-        "description": "Display the side preview bubble while the corresponding turn signal is engaged.",
+        "description": "Display the side preview while the corresponding turn signal is engaged.",
         "picker_description": "Shows the side preview while a turn signal is on.",
         "data_type": "bool",
         "ui_type": "toggle",
@@ -2324,8 +2580,18 @@
       {
         "key": "PIPPreviewShowOnBSM",
         "label": "Show on Blind Spot Detection",
-        "description": "Display the side preview bubble when a vehicle is detected in the blind spot, whether from factory BSM, V-ASM, or both.",
+        "description": "Display the side preview when a vehicle is detected in the blind spot, whether from factory BSM, V-ASM, or both.",
         "picker_description": "Shows the side preview when a blind spot is detected.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "PIPPreviewEnabled",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "PIPPreviewInvert",
+        "label": "Invert Side View Orientation",
+        "description": "Flips the camera horizontally to switch whether your car's body appears on the inner/left or outer/right edge of the preview.",
+        "picker_description": "Keep off for the default view with the car body along the inside edge.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "PIPPreviewEnabled",
@@ -3170,6 +3436,16 @@
         "picker_description": "Enables manual-handbrake stop-and-go on supported Subarus.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "settings_tier": "simple"
+      },
+      {
+        "key": "SubaruStopStartOff",
+        "label": "Stop/Start Off at Startup",
+        "description": "For supported Subaru Outback 2023-24 and Legacy 2025 vehicles, send one momentary Stop/Start request after ignition while stationary and in Park or Neutral.",
+        "picker_description": "Requests Stop/Start OFF once after ignition on supported Subarus.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "galaxy_only": true,
         "settings_tier": "simple"
       },
       {

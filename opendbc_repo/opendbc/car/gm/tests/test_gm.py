@@ -20,6 +20,7 @@ from opendbc.car.gm.carcontroller import (
 )
 import opendbc.car.gm.interface as gm_interface
 from opendbc.car.common.conversions import Conversions as CV
+from opendbc.car.gps import CHEVROLET_BOLT_GPS_CARS, CHEVROLET_BOLT_GPS_MESSAGES, get_car_gps_config, parse_chevrolet_bolt_can_gps
 from opendbc.car.gm.fingerprints import FINGERPRINTS
 from opendbc.car.gm.values import ASCM_INT, CAMERA_ACC_CAR, CAR, CC_ONLY_CAR, DBC, GM_RX_OFFSET, CarControllerParams, CruiseButtons, GMFlags, GMSafetyFlags
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
@@ -63,6 +64,43 @@ class TestGMFingerprint:
       for finger in fingerprints:
         for required_addr in (CAMERA_DIAGNOSTIC_ADDRESS, CAMERA_DIAGNOSTIC_ADDRESS + GM_RX_OFFSET):
           assert finger.get(required_addr) == 8, required_addr
+
+
+class TestBoltGps:
+  @parameterized.expand(CHEVROLET_BOLT_GPS_CARS)
+  def test_all_bolt_generations_are_registered(self, car_model):
+    config = get_car_gps_config(SimpleNamespace(carFingerprint=car_model, brand="gm"))
+    assert config is not None
+    assert config.messages == CHEVROLET_BOLT_GPS_MESSAGES
+    gps = parse_chevrolet_bolt_can_gps({
+      "GPSLatitude": 145292743.0,
+      "GPSLongitude": -267520892.0,
+    })
+    assert gps is not None
+    assert gps["hasFix"]
+    assert gps["latitude"] == pytest.approx(40.3590953)
+    assert gps["longitude"] == pytest.approx(-74.3113589)
+
+  def test_invalid_bolt_position_does_not_become_a_fix(self):
+    gps = parse_chevrolet_bolt_can_gps({"GPSLatitude": 0.0, "GPSLongitude": -2147483648.0})
+    assert gps is not None
+    assert not gps["hasFix"]
+    assert gps["latitude"] == 0.0
+    assert gps["longitude"] == 0.0
+
+  @parameterized.expand(CHEVROLET_BOLT_GPS_CARS)
+  def test_gps_message_is_added_to_powertrain_parser(self, car_model):
+    cp = SimpleNamespace(
+      brand="gm",
+      carFingerprint=car_model,
+      flags=0,
+      networkLocation=structs.CarParams.NetworkLocation.gateway,
+      transmissionType=structs.CarParams.TransmissionType.direct,
+      enableBsm=False,
+      enableGasInterceptorDEPRECATED=False,
+    )
+    parsers = GMCarState.get_can_parsers(cp)
+    assert all(message in parsers[Bus.pt].vl for message in CHEVROLET_BOLT_GPS_MESSAGES)
 
 
 class TestGMInterface:
@@ -200,6 +238,45 @@ class TestGMInterface:
 
     assert car_params.flags & GMFlags.NO_CAMERA.value
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_CAMERA.value
+
+  def test_volt_cc_obd_gateway_uses_cc_long_no_camera_path(self):
+    CarInterface = interfaces[CAR.CHEVROLET_VOLT_CC]
+    car_params = CarInterface.get_params(
+      CAR.CHEVROLET_VOLT_CC,
+      _empty_fingerprint(),
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=_test_starpilot_toggles(),
+    )
+
+    assert car_params.networkLocation == structs.CarParams.NetworkLocation.gateway
+    assert car_params.flags & GMFlags.CC_LONG.value
+    assert car_params.flags & GMFlags.NO_CAMERA.value
+    assert not (car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.HW_CAM.value)
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_CC_LONG.value
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_ACC.value
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_CAMERA.value
+
+    parsers = CarInterface.CarState.get_can_parsers(car_params)
+    assert "ECMCruiseControl" in parsers[Bus.pt].vl
+    assert not parsers[Bus.cam].vl
+
+  def test_other_cc_only_gateway_does_not_use_volt_cc_safety_path(self):
+    CarInterface = interfaces[CAR.CHEVROLET_SILVERADO_CC]
+    car_params = CarInterface.get_params(
+      CAR.CHEVROLET_SILVERADO_CC,
+      _empty_fingerprint(),
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=_test_starpilot_toggles(),
+    )
+
+    assert car_params.networkLocation == structs.CarParams.NetworkLocation.gateway
+    assert not (car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_VOLT_CC_GATEWAY.value)
 
   def test_volt_ascm_sparse_fingerprint_without_camera_does_not_set_no_camera(self):
     CarInterface = interfaces[CAR.CHEVROLET_VOLT_ASCM]
@@ -533,6 +610,7 @@ class TestGMCarController:
       CP=SimpleNamespace(
         carFingerprint=CAR.CHEVROLET_VOLT_CC,
         flags=0,
+        networkLocation=structs.CarParams.NetworkLocation.fwdCamera,
         minEnableSpeed=24 * CV.MPH_TO_MS,
       ),
       buttons_counter=2,
@@ -554,6 +632,7 @@ class TestGMCarController:
       CP=SimpleNamespace(
         carFingerprint=CAR.CHEVROLET_VOLT_CC,
         flags=GMFlags.NO_CAMERA.value,
+        networkLocation=structs.CarParams.NetworkLocation.gateway,
         minEnableSpeed=24 * CV.MPH_TO_MS,
       ),
       buttons_counter=2,

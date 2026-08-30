@@ -11,10 +11,12 @@ const MENU_ITEMS = {
   ],
   tools: [
     { name: "Toggles", link: "/device_settings", icon: "bi-toggle-on" },
+    { name: "Bluetooth", link: "/bluetooth", icon: "bi-bluetooth" },
     { name: "Download Speed Limits", link: "/download_speed_limits", icon: "bi-download" },
     { name: "Error Logs", link: "/manage_error_logs", icon: "bi-exclamation-triangle" },
     { name: "Galaxy", link: "/galaxy", icon: "bi-globe2" },
     { name: "Sentry Mode", link: "/sentry", icon: "bi-shield-exclamation" },
+    { name: "Controllers", link: "/wheel-controls", icon: "bi-controller" },
     { name: "Lateral Tuning", link: "/tuning", icon: "bi-sign-turn-right" },
     { name: "Long Maneuvers", link: "/longitudinal_maneuvers", icon: "bi-signpost-split" },
     { name: "Maps", link: "/manage_maps", icon: "bi-map" },

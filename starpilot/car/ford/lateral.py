@@ -30,9 +30,11 @@ STEER_DT = CarControllerParams.STEER_STEP * DT_CTRL
 CURVATURE_LOOKAHEAD_MIN = 0.20
 CURVATURE_LOOKAHEAD_MAX = 0.40
 ANGLE_HANDOFF_PRESS_SECONDS = 0.5
+HANDOFF_PAUSE_MIN_FRAMES = 3
 HANDOFF_PAUSE_FRAMES = 6
 HANDOFF_COOLDOWN_SECONDS = 2.0
 HANDOFF_MAX_PATH_ANGLE = 0.10
+LAT_CTL_STATUS_AVAILABLE = 1
 STALL_GAP_MIN = 2.0 * CarControllerParams.CURVATURE_ERROR
 STALL_HOLD_SECONDS = 0.5
 STALL_MAX_RECOVERIES = 3
@@ -239,6 +241,16 @@ class FordLateralController:
       self.handoff_press_timer = 0.0
 
     if self.angle_pause_frames > 0:
+      pause_frames_sent = HANDOFF_PAUSE_FRAMES - self.angle_pause_frames
+      pscm_available = getattr(CS, "lateral_control_status", None) == LAT_CTL_STATUS_AVAILABLE
+      # CAN-FD reports when the mode-0 reset has reached the PSCM. Keep a short minimum
+      # dwell, then resume immediately on that acknowledgement; retain the full pulse
+      # as a fallback for platforms without the status signal.
+      if pause_frames_sent >= HANDOFF_PAUSE_MIN_FRAMES and pscm_available:
+        self.angle_pause_frames = 0
+        self.angle_pause_cooldown = HANDOFF_COOLDOWN_SECONDS
+        return False
+
       self.angle_pause_frames -= 1
       if self.angle_pause_frames == 0:
         self.angle_pause_cooldown = HANDOFF_COOLDOWN_SECONDS

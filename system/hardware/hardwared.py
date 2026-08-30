@@ -82,6 +82,32 @@ def notify_sentry_power_off(reason: str, power_monitor: PowerMonitoring) -> bool
     return False
 
 
+def notify_sentry_low_voltage(power_monitor: PowerMonitoring) -> bool:
+  port = os.environ.get("SP_GALAXY_PORT", "8083" if PC else "8082")
+  v = round(power_monitor.car_voltage_mV / 1000, 2)
+  event = {
+    "eventId": f"low-voltage-{time.time_ns()}",
+    "kind": "warning",
+    "detectedAt": datetime.now(timezone.utc).isoformat(),
+    "reason": "low_voltage",
+    "message": f"Low vehicle battery warning: {v:.2f}V (at or below 11.8V).",
+    "voltage": v,
+    "instantVoltage": round(power_monitor.car_voltage_instant_mV / 1000, 2),
+    "batteryCapacityUwh": power_monitor.get_car_battery_capacity(),
+  }
+  try:
+    response = requests.post(
+      f"http://127.0.0.1:{port}/api/sentry/events",
+      json=event,
+      timeout=4,
+    )
+    response.raise_for_status()
+    return True
+  except requests.RequestException as error:
+    cloudlog.warning(f"Sentry low-voltage notification unavailable: {error}")
+    return False
+
+
 class Chestnut:
   """Keep the ASM2464PD dock on the firmware expected by the GPU runtime."""
   MAX_ATTEMPTS = 3
@@ -305,6 +331,8 @@ def hardware_thread(end_event, hw_queue) -> None:
   pwrsave = False
   offroad_cycle_count = 0
   sentry_power_off_notified = False
+  sentry_low_voltage_notified = False
+  last_low_voltage_notify_ts = 0.0
 
   params = Params()
   power_monitor = PowerMonitoring()
@@ -523,6 +551,10 @@ def hardware_thread(end_event, hw_queue) -> None:
     statlog.sample("som_power_draw", som_power_draw)
     msg.deviceState.somPowerDrawW = som_power_draw
 
+    if not onroad_conditions["ignition"] and (count % int(30. / DT_HW) == 0):
+      low_v_str = f" [LOW VOLTAGE SUSTAINED: {time.monotonic() - power_monitor.low_voltage_start_time:.1f}s / 30.0s]" if power_monitor.low_voltage_start_time else ""
+      print(f"[hardwared] Offroad Power: {power_monitor.car_voltage_mV / 1000.0:.2f}V (instant: {power_monitor.car_voltage_instant_mV / 1000.0:.2f}V), draw: {current_power_draw:.1f}W{low_v_str}", flush=True)
+
     # Check if we need to shut down
     shutdown_reason = power_monitor.shutdown_reason(
       onroad_conditions["ignition"], in_car, off_ts, started_seen, starpilot_toggles,
@@ -535,6 +567,21 @@ def hardware_thread(end_event, hw_queue) -> None:
       params.put_bool("DoShutdown", True)
     else:
       sentry_power_off_notified = False
+
+    # Low voltage warning notification (without device shutdown)
+    if in_car and not onroad_conditions["ignition"] and off_ts is not None:
+      voltage_v = power_monitor.car_voltage_mV / 1000.0
+      if voltage_v <= 11.8:
+        now_mono = time.monotonic()
+        if not sentry_low_voltage_notified or (now_mono - last_low_voltage_notify_ts > 1800):
+          sentry_low_voltage_notified = True
+          last_low_voltage_notify_ts = now_mono
+          if params.get_bool("SentryModeEnabled"):
+            notify_sentry_low_voltage(power_monitor)
+      elif voltage_v > 12.2:
+        sentry_low_voltage_notified = False
+    else:
+      sentry_low_voltage_notified = False
 
     msg.deviceState.started = started_ts is not None
     msg.deviceState.startedMonoTime = int(1e9*(started_ts or 0))

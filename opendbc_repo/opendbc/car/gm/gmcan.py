@@ -1,4 +1,4 @@
-from opendbc.car import DT_CTRL
+from opendbc.car import DT_CTRL, structs
 from opendbc.car.can_definitions import CanData
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.values import CAR, CanBus, CruiseButtons, GMFlags
@@ -420,9 +420,11 @@ def create_gm_cc_spam_command(packer, controller, CS, actuators, starpilot_toggl
     idx = (CS.buttons_counter + 1) % 4  # Need to predict the next idx for '22-23 EUV
     msgs = [create_buttons(packer, CanBus.POWERTRAIN, idx, cruise_btn)]
 
-    # Flashed camera-forward Volt CC installs also need the button spoof on the
-    # camera side. Removed-camera installs set NO_CAMERA and keep this PT-only.
-    if CS.CP.carFingerprint == CAR.CHEVROLET_VOLT_CC and not (CS.CP.flags & GMFlags.NO_CAMERA.value):
+    # A camera-forward Volt CC install needs the button spoof on both sides.
+    # The OBD-C/L&P gateway variant has no camera bus and remains PT-only.
+    if (CS.CP.carFingerprint == CAR.CHEVROLET_VOLT_CC and
+        getattr(CS.CP, "networkLocation", None) == structs.CarParams.NetworkLocation.fwdCamera and
+        not (CS.CP.flags & GMFlags.NO_CAMERA.value)):
       msgs.append(create_buttons(packer, CanBus.CAMERA, idx, cruise_btn))
     return msgs
   else:

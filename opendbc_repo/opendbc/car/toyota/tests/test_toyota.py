@@ -19,7 +19,7 @@ from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface, TSSP_RADAR_EGO_SPEED_SCALE
 from opendbc.car.toyota.values import CAR, DBC, TSS2_CAR, ANGLE_CONTROL_CAR, RADAR_ACC_CAR, SECOC_CAR, \
                                                   FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, FUZZY_EXCLUDED_PLATFORMS, \
-                                                  ToyotaFlags, ToyotaSafetyFlags, get_platform_codes
+                                                  ToyotaFlags, ToyotaSafetyFlags, ToyotaStarPilotFlags, get_platform_codes
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.common.params import Params
 
@@ -39,6 +39,32 @@ class TestToyotaInterfaces:
   def test_lta_platforms(self):
     # At this time, only RAV4 2023 is expected to use LTA/angle control
     assert ANGLE_CONTROL_CAR == {CAR.TOYOTA_RAV4_TSS2_2023}
+
+  @pytest.mark.parametrize("candidate", [CAR.TOYOTA_RAV4_TSS2, CAR.TOYOTA_RAV4_TSS2_2023])
+  def test_rav4_can_filter_is_optional(self, candidate):
+    def get_params(has_can_filter):
+      fingerprint = {bus: {} for bus in range(8)}
+      if has_can_filter:
+        fingerprint[0][0x2AA] = 8
+
+      car_params = CarInterface.get_params(
+        candidate,
+        fingerprint,
+        [],
+        alpha_long=False,
+        is_release=False,
+        docs=False,
+        starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
+      )
+      return CarInterface.get_starpilot_params(candidate, fingerprint, [], car_params, SimpleNamespace())
+
+    without_filter = get_params(False)
+    with_filter = get_params(True)
+
+    assert not without_filter.flags & ToyotaStarPilotFlags.RADAR_CAN_FILTER.value
+    assert not without_filter.flags & ToyotaStarPilotFlags.SMART_DSU.value
+    assert with_filter.flags & ToyotaStarPilotFlags.RADAR_CAN_FILTER.value
+    assert with_filter.flags & ToyotaStarPilotFlags.SMART_DSU.value
 
   def test_rav4_prime_force_torque_controller(self):
     fingerprint = {bus: {} for bus in range(8)}
@@ -845,6 +871,22 @@ class TestToyotaCarController:
     parser.update([(1, [reverse_msg])])
     assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 2
 
+  def test_acc_control_accepts_toggle_namespace_without_reverse_cruise_option(self):
+    # Older or partially refreshed toggle broadcasts do not include this optional field.
+    toggles = SimpleNamespace()
+    assert getattr(toggles, "reverse_cruise_increase", False) is False
+
+    packer = CANPacker(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt])
+    msg = toyotacan.create_accel_command(
+      packer, 0.0, False, True, False, False, 1, False, 0,
+      getattr(toggles, "reverse_cruise_increase", False),
+    )
+    parser = CANParser(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt], [("ACC_CONTROL", 0)], 0)
+    parser.update([(1, [msg])])
+
+    assert parser.can_valid
+    assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 1
+
   def test_auto_brake_hold_sends_modified_pre_collision_after_timer(self):
     controller = self._make_controller()
     controller.packer = CANPacker(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt])
@@ -996,6 +1038,36 @@ class TestToyotaCarController:
 
 
 class TestToyotaCarState:
+  @pytest.mark.parametrize("candidate", [CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT])
+  def test_legacy_prius_distance_button_generates_events(self, candidate):
+    params = CarInterface.get_params(
+      candidate,
+      {bus: {} for bus in range(8)},
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
+    )
+    starpilot_params = CarInterface.get_starpilot_params(candidate, {bus: {} for bus in range(8)}, [], params, SimpleNamespace())
+    car_state = CarState(params, starpilot_params)
+    can_parsers = car_state.get_can_parsers(params)
+
+    assert "ACC_CONTROL" in can_parsers[Bus.pt].vl
+    assert ("ACC_CONTROL" in can_parsers[Bus.cam].vl) == bool(params.flags & ToyotaFlags.DSU_BYPASS.value)
+
+    can_parsers[Bus.pt].vl["ACC_CONTROL"]["DISTANCE"] = 1
+    ret, _ = car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
+    assert [(event.type, event.pressed) for event in ret.buttonEvents] == [
+      (structs.CarState.ButtonEvent.Type.gapAdjustCruise, True),
+    ]
+
+    can_parsers[Bus.pt].vl["ACC_CONTROL"]["DISTANCE"] = 0
+    ret, _ = car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
+    assert [(event.type, event.pressed) for event in ret.buttonEvents] == [
+      (structs.CarState.ButtonEvent.Type.gapAdjustCruise, False),
+    ]
+
   def test_lkas_button_platforms(self):
     assert CAR.TOYOTA_PRIUS in LKAS_BUTTON_CAR
     assert TSS2_CAR <= LKAS_BUTTON_CAR

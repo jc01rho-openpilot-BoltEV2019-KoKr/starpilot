@@ -76,6 +76,22 @@ def get_lateral_active(enabled: bool, active: bool, always_on_lateral_enabled: b
   return lateral_allowed and not steer_fault_temporary and not steer_fault_permanent and \
          (not standstill or steer_at_standstill) and lateral_check
 
+
+def get_kona_non_scc_lateral_active(enabled: bool, active: bool, always_on_lateral_enabled: bool,
+                                    steer_fault_temporary: bool, steer_fault_permanent: bool,
+                                    standstill: bool, steer_at_standstill: bool, lateral_check: bool,
+                                    steering_pressed: bool, previous_lateral_active: bool) -> bool:
+  """Avoid the Kona EPS torque fault when AOL is enabled over driver steering input."""
+  lateral_active = get_lateral_active(enabled, active, always_on_lateral_enabled,
+                                      steer_fault_temporary, steer_fault_permanent,
+                                      standstill, steer_at_standstill, lateral_check)
+  if not lateral_active:
+    return False
+
+  aol_rising_edge = always_on_lateral_enabled and not enabled and not previous_lateral_active
+  return not (aol_rising_edge and steering_pressed)
+
+
 def curv_from_psis(psi_target, psi_rate, vego, action_t):
   vego = np.clip(vego, MIN_SPEED, np.inf)
   curv_from_psi = psi_target / (vego * action_t)

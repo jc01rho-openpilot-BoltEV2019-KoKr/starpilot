@@ -79,6 +79,7 @@ CEM_PID=""
 ALERT_PID=""
 CSC_PID=""
 GALAXY_PID=""
+GPU_SYNC_PID=""
 GALAXY_PORT=""
 GALAXY_URL=""
 ONROAD_TEMP_PREFIX=""
@@ -262,6 +263,9 @@ cleanup() {
   if [[ -n "${GALAXY_PID}" ]]; then
     kill "${GALAXY_PID}" >/dev/null 2>&1 || true
   fi
+  if [[ -n "${GPU_SYNC_PID}" ]]; then
+    kill "${GPU_SYNC_PID}" >/dev/null 2>&1 || true
+  fi
 
   for pid in "${UI_PIDS[@]-}"; do
     if [[ -n "${pid}" ]]; then
@@ -285,6 +289,9 @@ cleanup() {
   fi
   if [[ -n "${GALAXY_PID}" ]]; then
     wait "${GALAXY_PID}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${GPU_SYNC_PID}" ]]; then
+    wait "${GPU_SYNC_PID}" >/dev/null 2>&1 || true
   fi
 
   if [[ -n "${ONROAD_TEMP_PREFIX:-}" && "${ONROAD_TEMP_PREFIX}" == desktop-onroad-* ]]; then
@@ -466,6 +473,11 @@ launch_replay() {
     wait "${REPLAY_PID}"
     return 1
   fi
+}
+
+launch_gpu_param_sync() {
+  "${ROOT_DIR}/.venv/bin/python3" "${ROOT_DIR}/tools/replay/onroad_config.py" sync-gpu &
+  GPU_SYNC_PID=$!
 }
 
 launch_nav_demo() {
@@ -687,6 +699,7 @@ fi
 
 echo "Starting replay: ${REPLAY_ARGS[*]}"
 launch_replay
+launch_gpu_param_sync
 
 if [[ "${NAV_DEMO}" == "1" && "${OFFROAD_DEMO}" != "1" ]]; then
   launch_nav_demo

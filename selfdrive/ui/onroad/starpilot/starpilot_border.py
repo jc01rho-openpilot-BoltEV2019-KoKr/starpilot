@@ -39,6 +39,7 @@ _GREEN = rl.Color(34, 197, 94, 255)
 _AMBER = rl.Color(251, 191, 36, 255)
 _ORANGE = rl.Color(234, 88, 12, 255)
 _RED = rl.Color(201, 34, 49, 255)
+_TRAINING = rl.Color(112, 192, 216, 255)
 
 _last_was_active = False
 _activation_start = 0.0
@@ -57,7 +58,7 @@ def _csc_state():
 
   plan = sm["starpilotPlan"]
   params = ui_state.ui_params
-  if plan.speedLimitChanged or not params.get_bool("ShowCSCStatus"):
+  if not params.get_bool("ShowCSCStatus"):
     return None
 
   car_state = sm["carState"]
@@ -113,7 +114,8 @@ def _render_csc_glow(border_rect: rl.Rectangle, border_width: float = UI_BORDER_
   state = _csc_state()
   now = rl.get_time()
 
-  if state is None or not state['active']:
+  visible = state is not None and (state['active'] or state['training'])
+  if not visible:
     if _last_was_active:
       _fade_out_start = now
       _last_was_active = False
@@ -131,9 +133,9 @@ def _render_csc_glow(border_rect: rl.Rectangle, border_width: float = UI_BORDER_
       _fade_out_start = 0.0
     _last_was_active = True
 
-    intensity = _intensity(state['curvature'])
+    intensity = _intensity(state['curvature']) if state['active'] else _GLOW_BASE_INTENSITY
     period = _glow_period(intensity)
-    color = _glow_color(intensity)
+    color = _glow_color(intensity) if state['active'] else _TRAINING
     t_norm = max(0.0, min(1.0, (intensity - _GLOW_BASE_INTENSITY) / (1.0 - _GLOW_BASE_INTENSITY)))
     _last_state = (intensity, period, color, t_norm)
     fade = min(1.0, (now - _activation_start) / _GLOW_FADE_IN_DURATION)

@@ -15,12 +15,13 @@ class FakeParams:
   (object(), 0, False, True),
   (object(), 1, False, False),
   (object(), 2, False, False),
-  (object(), 1, True, True),
-  (object(), 2, True, True),
+  (object(), 0, True, True),
+  (object(), 1, True, False),
+  (object(), 2, True, False),
   (None, 0, False, False),
   (None, 1, True, False),
 ])
-def test_model_output_is_suppressed_after_vipc_drop(model_output, dropped_frames, external_gpu_active, expected):
+def test_model_output_is_suppressed_after_vipc_drop_for_both_runtimes(model_output, dropped_frames, external_gpu_active, expected):
   assert modeld._should_publish_model_output(model_output, dropped_frames, external_gpu_active) is expected
 
 
