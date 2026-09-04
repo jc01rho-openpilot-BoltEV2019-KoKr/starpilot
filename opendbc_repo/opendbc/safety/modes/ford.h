@@ -89,6 +89,8 @@ static bool ford_get_quality_flag_valid(const CANPacket_t *msg) {
 static bool ford_lka_steering = false;
 static bool ford_extended_lateral = false;
 static bool ford_angle_mode = false;
+static bool ford_longitudinal = false;
+static bool ford_cancel_resume_button = false;
 static int16_t ford_shadow_curvature = 0;
 
 // Curvature rate limits
@@ -219,6 +221,10 @@ static void ford_rx_hook(const CANPacket_t *msg) {
 
       acc_main_on = (cruise_state == 3U) || cruise_engaged;
     }
+
+    if (msg->addr == FORD_Steering_Data_FD1) {
+      ford_cancel_resume_button = ((msg->data[2] >> 5) & 1U) != 0U;
+    }
   }
 }
 
@@ -276,7 +282,8 @@ static bool ford_tx_hook(const CANPacket_t *msg) {
     // if cancel button is pressed when cruise isn't engaged.
     bool violation = false;
     violation |= ((msg->data[1] >> 0) & 1U) && !cruise_engaged_prev;   // Signal: CcAslButtnCnclPress (cancel)
-    violation |= ((msg->data[3] >> 1) & 1U) && !controls_allowed;     // Signal: CcAsllButtnResPress (resume)
+    bool stock_resume_from_driver = !ford_longitudinal && acc_main_on && ford_cancel_resume_button;
+    violation |= ((msg->data[3] >> 1) & 1U) && !(controls_allowed || stock_resume_from_driver);  // Signal: CcAsllButtnResPress (resume)
 
     if (violation) {
       tx = false;
@@ -415,6 +422,7 @@ static safety_config ford_init(uint16_t param) {
     {.msg = {{FORD_Yaw_Data_FD1, 0, 8, 100U, .max_counter = 255U}, { 0 }, { 0 }}},
     // These messages have no counter or checksum
     {.msg = {{FORD_EngBrakeData, 0, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    {.msg = {{FORD_Steering_Data_FD1, 0, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{FORD_EngVehicleSpThrottle, 0, 8, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{FORD_DesiredTorqBrk, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
   };
@@ -454,10 +462,11 @@ static safety_config ford_init(uint16_t param) {
   ford_lka_steering = GET_FLAG(param, FORD_PARAM_LKA_STEERING);
   ford_extended_lateral = false;
   ford_angle_mode = false;
+  ford_cancel_resume_button = false;
   ford_shadow_curvature = 0;
   ford_desired_path_angle_last = 0;
 
-  bool ford_longitudinal = false;
+  ford_longitudinal = false;
 
 #ifdef ALLOW_DEBUG
   const uint16_t FORD_PARAM_LONGITUDINAL = 1;

@@ -29,7 +29,11 @@ PATH_ANGLE_MAX = 0.5235
 STEER_DT = CarControllerParams.STEER_STEP * DT_CTRL
 CURVATURE_LOOKAHEAD_MIN = 0.20
 CURVATURE_LOOKAHEAD_MAX = 0.40
+FORD_CURVATURE_LOOKAHEAD = {
+  CAR.FORD_EXPLORER_MK6: 0.20,
+}
 ANGLE_HANDOFF_PRESS_SECONDS = 0.5
+ANGLE_HANDOFF_RECOVERY_SECONDS = 0.75
 HANDOFF_PAUSE_MIN_FRAMES = 3
 HANDOFF_PAUSE_FRAMES = 6
 HANDOFF_COOLDOWN_SECONDS = 2.0
@@ -129,6 +133,8 @@ class FordLateralController:
     self.handoff_driver_override = False
     self.angle_pause_frames = 0
     self.angle_pause_cooldown = 0.0
+    self.angle_handoff_recovery = 0.0
+    self.angle_handoff_rebase = False
     self.angle_stall_timer = 0.0
     self.angle_stall_recoveries = 0
     self._frame = 0
@@ -173,6 +179,8 @@ class FordLateralController:
     return float(np.interp(lookup_time, ModelConstants.T_IDXS, curvatures))
 
   def _curvature_lookahead(self) -> float:
+    if self.CP.carFingerprint in FORD_CURVATURE_LOOKAHEAD:
+      return FORD_CURVATURE_LOOKAHEAD[self.CP.carFingerprint]
     if self.sm is None:
       return CURVATURE_LOOKAHEAD_MIN
     live_delay = float(self.sm["liveDelay"].lateralDelay)
@@ -221,6 +229,8 @@ class FordLateralController:
     self.handoff_driver_override = False
     self.angle_pause_frames = 0
     self.angle_pause_cooldown = 0.0
+    self.angle_handoff_recovery = 0.0
+    self.angle_handoff_rebase = False
     self.angle_stall_timer = 0.0
     self.angle_stall_recoveries = 0
 
@@ -231,12 +241,17 @@ class FordLateralController:
 
     self.angle_pause_cooldown = max(0.0, self.angle_pause_cooldown - STEER_DT)
     if CS.out.steeringPressed:
+      self.angle_handoff_recovery = 0.0
+      self.angle_handoff_rebase = False
       self.handoff_press_timer += STEER_DT
       self.handoff_driver_override |= self.handoff_press_timer + 1e-9 >= ANGLE_HANDOFF_PRESS_SECONDS
     else:
-      if (self.handoff_driver_override and self.angle_pause_cooldown <= 0.0
-          and self.angle_pause_frames <= 0 and abs(self.path_angle_last) < HANDOFF_MAX_PATH_ANGLE):
-        self.angle_pause_frames = HANDOFF_PAUSE_FRAMES
+      if self.handoff_driver_override:
+        self.angle_handoff_recovery = ANGLE_HANDOFF_RECOVERY_SECONDS
+        self.angle_handoff_rebase = True
+        if (self.angle_pause_cooldown <= 0.0 and self.angle_pause_frames <= 0
+            and abs(self.path_angle_last) < HANDOFF_MAX_PATH_ANGLE):
+          self.angle_pause_frames = HANDOFF_PAUSE_FRAMES
       self.handoff_driver_override = False
       self.handoff_press_timer = 0.0
 
@@ -256,6 +271,15 @@ class FordLateralController:
         self.angle_pause_cooldown = HANDOFF_COOLDOWN_SECONDS
       return True
     return False
+
+  def _recover_angle_handoff(self, requested: float, current: float) -> float:
+    if self.angle_handoff_recovery <= 0.0:
+      return requested
+
+    authority = 1.0 - self.angle_handoff_recovery / ANGLE_HANDOFF_RECOVERY_SECONDS
+    recovered = current + float(np.clip(authority, 0.0, 1.0)) * (requested - current)
+    self.angle_handoff_recovery = max(0.0, self.angle_handoff_recovery - STEER_DT)
+    return recovered
 
   def _inactive_angle_result(self, current_curvature: float) -> FordLateralResult:
     self.path_angle_last = 0.0
@@ -323,11 +347,9 @@ class FordLateralController:
       self._reset_handoff()
       return self._inactive_angle_result(current)
 
-    if self._manual_turn(CC, CS):
-      self._reset_handoff()
-      return self._inactive_angle_result(current)
-
-    if self._angle_handoff_pause_active(CS):
+    manual_turn = self._manual_turn(CC, CS)
+    handoff_pause = self._angle_handoff_pause_active(CS)
+    if manual_turn or handoff_pause:
       return self._inactive_angle_result(current)
 
     v_ego = float(CS.out.vEgoRaw)
@@ -344,6 +366,11 @@ class FordLateralController:
                                 current + CarControllerParams.CURVATURE_ERROR))
     deviation_limited = abs(requested - requested_before_deviation_limit) > 1e-9
 
+    measured_curvature = float(getattr(CC, "currentCurvature", current))
+    if not np.isfinite(measured_curvature):
+      measured_curvature = current
+    requested = self._recover_angle_handoff(requested, measured_curvature)
+
     low_gain_high_speed, high_gain_high_speed = self._platform_angle_gains()
     low_gain = float(np.interp(v_ego, [13.5, 26.82],
                                [1.0, low_gain_high_speed * self.angle_high_speed_damping]))
@@ -354,7 +381,10 @@ class FordLateralController:
     path_angle = float(np.clip(requested * v_ego * gain, PATH_ANGLE_MIN, PATH_ANGLE_MAX))
 
     max_delta = float(np.interp(v_ego, [9.0, 10.0, 15.0, 25.0], [0.055, 0.055, 0.0425, 0.009]))
-    path_angle = float(np.clip(path_angle, self.path_angle_last - max_delta, self.path_angle_last + max_delta))
+    if self.angle_handoff_rebase:
+      self.angle_handoff_rebase = False
+    else:
+      path_angle = float(np.clip(path_angle, self.path_angle_last - max_delta, self.path_angle_last + max_delta))
     self.path_angle_last = path_angle
 
     lane_change = self._lane_change()[0]

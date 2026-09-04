@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Build StarPilot AGNOS from the exact upstream system image.
+"""Legacy verifier for the pre-builder StarPilot AGNOS image path.
+
+Production images are built by agnos-builder. Keep this module only for
+auditing the previously published 19.6.13 image; do not use it for releases.
 
 The output starts with comma's pinned AGNOS system partition, adds the Python
 packages required by StarPilot's older runtime and C3 support, and customizes

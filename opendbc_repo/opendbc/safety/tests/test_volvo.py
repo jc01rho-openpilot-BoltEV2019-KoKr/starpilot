@@ -175,6 +175,17 @@ class TestVolvoSafetyBase(common.CarSafetyTest):
     self.assertTrue(self._tx(self._angle_cmd_msg(10)))
     self.assertFalse(self._tx(self._angle_cmd_msg(20)))
 
+  def test_angle_tx_rate_matches_controller_cadence(self):
+    """LCA_5 is 50 Hz, so each frame may contain two 100 Hz controller steps."""
+    self._reset_speed_measurement(50)
+    self.safety.set_controls_allowed(True)
+
+    self.safety.set_desired_angle_last(0)
+    self.assertTrue(self._tx(self._angle_cmd_msg(0.4)))
+
+    self.safety.set_desired_angle_last(round(0.4 / 0.05596))
+    self.assertFalse(self._tx(self._angle_cmd_msg(0.9)))
+
   def test_lca_authority_is_bounded(self):
     self.safety.set_controls_allowed(True)
     valid = {
@@ -201,10 +212,19 @@ class TestVolvoSafetyBase(common.CarSafetyTest):
     self.assertFalse(self._tx(invalid))
 
   def test_driver_override_disengages_controls(self):
+    def driver_input_msg(value):
+      return self.mid_packer.make_can_msg_safety(
+        "DRIVER_INPUT", VOLVO_PARTY_BUS, {"STEERING_DRIVER_INPUT": value})
+
+    for value in (2, 3, 5):
+      self._rx(driver_input_msg(0))
+      self.safety.set_controls_allowed(True)
+      self._rx(driver_input_msg(value))
+      self.assertTrue(self.safety.get_controls_allowed(), f"unexpected disengage at {value=}")
+
+    self._rx(driver_input_msg(0))
     self.safety.set_controls_allowed(True)
-    msg = self.mid_packer.make_can_msg_safety(
-      "DRIVER_INPUT", VOLVO_PARTY_BUS, {"STEERING_DRIVER_INPUT": 6})
-    self._rx(msg)
+    self._rx(driver_input_msg(6))
     self.assertFalse(self.safety.get_controls_allowed())
 
   # ---- Volvo-specific consistency tests ----

@@ -18,9 +18,6 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper, DT_CTRL
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.gps import get_gps_location_service
-from openpilot.common.params import Params
-from openpilot.common.realtime import DT_CTRL, Priority, Ratekeeper, config_realtime_process
-from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.car.car_specific import CarSpecificEvents
 from openpilot.selfdrive.locationd.helpers import Pose, PoseCalibrator
 from openpilot.selfdrive.road_speed_limiter import SpeedLimiter
@@ -36,6 +33,7 @@ from openpilot.system.hardware import HARDWARE
 from openpilot.system.version import get_build_metadata
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.common.constants import CV
+from openpilot.starpilot.common.lateral_only_experimental import experimental_mode_available
 from openpilot.starpilot.common.vision_bsm import get_fresh_vasm_state
 
 REPLAY = "REPLAY" in os.environ
@@ -219,7 +217,7 @@ class SelfdriveD:
     # cleanup old params
     if not self.CP.alphaLongitudinalAvailable:
       self.params.remove("AlphaLongitudinalEnabled")
-    if not self.CP.openpilotLongitudinalControl:
+    if not experimental_mode_available(self.CP):
       self.params.remove("ExperimentalMode")
 
     self.CS_prev = car.CarState.new_message()
@@ -1018,7 +1016,7 @@ class SelfdriveD:
       if self.safe_mode:
         self.experimental_mode = False
       elif not self.starpilot_toggles.conditional_experimental_mode:
-        self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
+        self.experimental_mode = self.params.get_bool("ExperimentalMode") and experimental_mode_available(self.CP)
       self.personality = log.LongitudinalPersonality.relaxed if self.safe_mode else self.params.get("LongitudinalPersonality", return_default=True)
       time.sleep(0.1)
 

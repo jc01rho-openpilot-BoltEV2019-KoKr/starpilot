@@ -40,7 +40,7 @@
   <link rel="stylesheet" href="/assets/components/tools/toggles.css">
   <link rel="stylesheet" href="/assets/components/tools/update_manager.css">
   <link rel="stylesheet" href="/assets/components/tools/device_settings.css?v=favorite-actions-1">
-  <link rel="stylesheet" href="/assets/components/tools/bluetooth.css?v=bluetooth-4">
+  <link rel="stylesheet" href="/assets/components/tools/bluetooth.css?v=bluetooth-6">
   <link rel="stylesheet" href="/assets/components/tools/wheel_controls.css?v=controllers-2">
   <link rel="stylesheet" href="/assets/components/tools/galaxy.css">
   <link rel="stylesheet" href="/assets/components/tools/sentry.css">
@@ -68,6 +68,15 @@
   <script src="/assets/js/snackbar.js"></script>
 
   <title>Galaxy</title>
+
+  <script>
+    const _inEmbed =
+      new URLSearchParams(window.location.search).has("embedded") ||
+      (window.self !== window.top);
+    if (_inEmbed) {
+      document.documentElement.classList.add("embedded");
+    }
+  </script>
 </head>
 
 <body>

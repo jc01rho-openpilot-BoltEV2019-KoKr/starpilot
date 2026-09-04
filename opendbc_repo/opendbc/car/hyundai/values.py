@@ -45,8 +45,12 @@ class CarControllerParams:
       self.STEER_DRIVER_MULTIPLIER = 2
       self.STEER_THRESHOLD = 100
       if vEgoRaw < 15.0:  # below ~34 mph - more aggressive for tight turns
-        self.STEER_DELTA_UP = 10
-        self.STEER_DELTA_DOWN = 8
+        if CP.carFingerprint == CAR.KIA_CARNIVAL_HEV_4TH_GEN:
+          self.STEER_DELTA_UP = 2
+          self.STEER_DELTA_DOWN = 3
+        else:
+          self.STEER_DELTA_UP = 10
+          self.STEER_DELTA_DOWN = 8
       else:
         self.STEER_DELTA_UP = 2
         self.STEER_DELTA_DOWN = 3
@@ -120,6 +124,7 @@ class HyundaiStarPilotSafetyFlags(IntFlag):
 class HyundaiStarPilotFlags(IntFlag):
   SPEED_LIMIT_AVAILABLE = 1
   MAIN_CRUISE_STATE_TRACKING = 2 ** 2
+  HAS_LKAS12 = 2 ** 9
 
 
 class HyundaiFlags(IntFlag):
@@ -940,6 +945,11 @@ class CAR(Platforms):
     [HyundaiNonSccCarDocs("Hyundai Kona Electric Non-SCC 2019", car_parts=CarParts.common([CarHarness.hyundai_g]))],
     HYUNDAI_KONA_EV.specs,
     flags=HyundaiFlags.EV | HyundaiFlags.ALT_LIMITS,
+  )
+  KIA_RAY_EV = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Kia Ray EV 2025", car_parts=CarParts.common([CarHarness.hyundai_h]))],
+    CarSpecs(mass=1295, wheelbase=2.52, steerRatio=14.5),
+    flags=HyundaiFlags.EV | HyundaiFlags.CHECKSUM_CRC8,
   )
   KIA_CEED_PHEV_2022_NON_SCC = HyundaiNonSccPlatformConfig(
     [HyundaiNonSccCarDocs("Kia Ceed Plug-in Hybrid Non-SCC 2022", car_parts=CarParts.common([CarHarness.hyundai_i]))],

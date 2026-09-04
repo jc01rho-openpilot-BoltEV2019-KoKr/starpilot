@@ -75,6 +75,7 @@ class TestFordSafetyBase(common.CarSafetyTest):
                                MSG_LateralMotionControl2, MSG_IPMA_Data]}
 
   STEER_MESSAGE = 0
+  STOCK_LONGITUDINAL = False
 
   # Curvature control limits
   LKA_STEERING = False
@@ -198,6 +199,17 @@ class TestFordSafetyBase(common.CarSafetyTest):
       "TjaButtnOnOffPress": 1 if button == Buttons.TJA_TOGGLE else 0,
     }
     return self.packer.make_can_msg_safety("Steering_Data_FD1", bus, values)
+
+  def _combined_cancel_resume_msg(self, pressed: bool):
+    values = {"CcAslButtnCnclResPress": int(pressed)}
+    return self.packer.make_can_msg_safety("Steering_Data_FD1", 0, values)
+
+  def _pcm_main_on_msg(self, main_on: bool):
+    values = {
+      "BpedDrvAppl_D_Actl": 1,
+      "CcStat_D_Actl": 3 if main_on else 0,
+    }
+    return self.packer.make_can_msg_safety("EngBrakeData", 0, values)
 
   def test_rx_hook(self):
     # checksum, counter, and quality flag checks
@@ -381,6 +393,25 @@ class TestFordSafetyBase(common.CarSafetyTest):
       for bus in (0, 2):
         self.assertEqual(enabled, self._tx(self._acc_button_msg(Buttons.CANCEL, bus)))
 
+  def test_stock_resume_relay_requires_physical_button_and_cruise_main(self):
+    self.safety.set_controls_allowed(False)
+    self._rx(self._pcm_main_on_msg(True))
+    for bus in (0, 2):
+      self.assertFalse(self._tx(self._acc_button_msg(Buttons.RESUME, bus)))
+
+    self._rx(self._combined_cancel_resume_msg(True))
+    for bus in (0, 2):
+      self.assertEqual(self.STOCK_LONGITUDINAL, self._tx(self._acc_button_msg(Buttons.RESUME, bus)))
+
+    self._rx(self._combined_cancel_resume_msg(False))
+    for bus in (0, 2):
+      self.assertFalse(self._tx(self._acc_button_msg(Buttons.RESUME, bus)))
+
+    self._rx(self._pcm_main_on_msg(False))
+    self._rx(self._combined_cancel_resume_msg(True))
+    for bus in (0, 2):
+      self.assertFalse(self._tx(self._acc_button_msg(Buttons.RESUME, bus)))
+
   def _toggle_aol(self, toggle_on):
     # EngBrakeData, CcStat_D_Actl is the cruise state
     # 3 is standby (main on), 5 is active (engaged)
@@ -394,6 +425,7 @@ class TestFordSafetyBase(common.CarSafetyTest):
 
 class TestFordCANFDStockSafety(TestFordSafetyBase):
   STEER_MESSAGE = MSG_LateralMotionControl2
+  STOCK_LONGITUDINAL = True
 
   TX_MSGS = [
     [MSG_Steering_Data_FD1, 0], [MSG_Steering_Data_FD1, 2], [MSG_ACCDATA_3, 0], [MSG_Lane_Assist_Data1, 0],
@@ -446,6 +478,7 @@ class TestFordCANFDStockSafety(TestFordSafetyBase):
 
 class TestFordStockSafety(TestFordSafetyBase):
   STEER_MESSAGE = MSG_LateralMotionControl
+  STOCK_LONGITUDINAL = True
 
   TX_MSGS = [
     [MSG_Steering_Data_FD1, 0], [MSG_Steering_Data_FD1, 2], [MSG_ACCDATA_3, 0], [MSG_Lane_Assist_Data1, 0],

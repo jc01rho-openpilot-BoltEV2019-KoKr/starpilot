@@ -146,6 +146,29 @@ def test_curve_speed_controller_readouts_are_display_only_and_nested():
     assert readout["settings_tier"] == "simple"
 
 
+def test_custom_accel_profile_exposes_variable_breakpoints():
+  longitudinal = _params_by_section(_layout())["Longitudinal (Speed & Following)"]
+  point_count = longitudinal["CustomAccelProfilePointCount"]
+
+  assert point_count["parent_key"] == "CustomAccelProfile"
+  assert point_count["min"] == 2
+  assert point_count["max"] == 12
+  assert _declared_default("CustomAccelProfilePointCount") == "7"
+
+  for point in range(1, 13):
+    speed = longitudinal[f"CustomAccelProfileBreakpoint{point}MPH"]
+    accel = longitudinal[f"CustomAccelProfilePoint{point}Accel"]
+    assert speed["parent_key"] == "CustomAccelProfile"
+    assert accel["parent_key"] == "CustomAccelProfile"
+    assert _declared_default(speed["key"]) is not None
+    assert _declared_default(accel["key"]) is not None
+
+    if point > 2:
+      expected_counts = list(range(point, 13))
+      assert speed["visible_when_values"] == expected_counts
+      assert accel["visible_when_values"] == expected_counts
+
+
 def test_every_galaxy_setting_has_a_shared_settings_tier():
   layout = _layout()
   tiers = {

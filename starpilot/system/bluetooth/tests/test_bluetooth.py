@@ -8,7 +8,10 @@ import pytest
 from openpilot.starpilot.system.bluetooth.audio import BluetoothAudioSink
 from openpilot.starpilot.system.bluetooth.bluez import PairingAgent
 from openpilot.starpilot.system.bluetooth.daemon import BluetoothController
-from openpilot.starpilot.system.bluetooth.protocol import A2DP_SINK_UUID, HID_UUID, BluetoothDevice, BluetoothStatus, device_capabilities, show_pairing_device
+from openpilot.starpilot.system.bluetooth.protocol import (A2DP_SINK_UUID, HID_UUID, BluetoothClient, BluetoothDevice, BluetoothStatus,
+                                                           device_capabilities, show_pairing_device)
+from openpilot.system import hardware
+from openpilot.system.ui.lib.bluetooth_manager import BluetoothManager
 
 
 class FakeParams:
@@ -36,6 +39,9 @@ class FakeAgent:
   def __init__(self):
     self.responses = []
 
+  def set_auto_accept_incoming(self, _enabled):
+    pass
+
   def respond(self, prompt_id, accepted, value):
     self.responses.append((prompt_id, accepted, value))
     return prompt_id == "prompt"
@@ -45,10 +51,12 @@ class FakeBlueZ:
   def __init__(self):
     self.agent = FakeAgent()
     self.powered = False
+    self.discoverable = False
     self.discovering = False
     self.closed = False
     self.actions = []
     self.device = {
+      "path": "/fake/device",
       "address": "00:11:22:33:44:55",
       "name": "Speaker",
       "paired": True,
@@ -64,6 +72,9 @@ class FakeBlueZ:
   def set_powered(self, powered):
     self.powered = powered
 
+  def set_discoverable(self, discoverable):
+    self.discoverable = discoverable
+
   def status(self):
     return {"powered": self.powered, "discovering": self.discovering, "devices": [dict(self.device)], "prompt": None}
 
@@ -72,11 +83,12 @@ class FakeBlueZ:
 
   def stop_discovery(self):
     self.discovering = False
+    self.actions.append(("stop_scan", ""))
 
   def device_for_address(self, _address):
     return dict(self.device)
 
-  def pair(self, address):
+  def pair(self, address, _device_path=None):
     self.actions.append(("pair", address))
 
   def connect(self, address):
@@ -102,6 +114,35 @@ class FakeRadio:
 
   def stop(self):
     self.stops += 1
+
+
+class BlockingStopRadio(FakeRadio):
+  def __init__(self):
+    super().__init__()
+    self.stop_started = threading.Event()
+    self.allow_stop = threading.Event()
+
+  def stop(self):
+    self.stops += 1
+    self.stop_started.set()
+    self.allow_stop.wait()
+
+
+class BlockingPowerClient:
+  def __init__(self):
+    self.power_entered = threading.Event()
+    self.allow_power = threading.Event()
+    self.power_finished = threading.Event()
+    self.status_calls = 0
+
+  def set_power(self, _enabled):
+    self.power_entered.set()
+    self.allow_power.wait()
+    self.power_finished.set()
+
+  def status(self):
+    self.status_calls += 1
+    return BluetoothStatus()
 
 
 class FakeProcess:
@@ -137,11 +178,64 @@ def test_pairing_list_filters_anonymous_and_irrelevant_advertisements():
   assert not show_pairing_device("00:11:22:33:44:55", "00:11:22:33:44:55", False, False, False, False, False, False)
   assert not show_pairing_device("00:11:22:33:44:55", "Nearby sensor", False, False, False, False, False, False)
   assert show_pairing_device("00:11:22:33:44:55", "Media Remote", False, False, False, False, False, True)
+  assert show_pairing_device("00:11:22:33:44:55", "Media Remote", False, False, False, False, False, True, True)
+  assert not show_pairing_device("00:11:22:33:44:55", "Nearby sensor", False, False, False, False, False, False, True)
   assert show_pairing_device("00:11:22:33:44:55", "Known device", True, True, False, False, False, False)
+
+
+def test_desktop_fake_bluetooth_is_stateful_and_interactive(monkeypatch, tmp_path):
+  monkeypatch.setenv("SP_ALLOW_DESKTOP_FAKE_BLUETOOTH", "1")
+  monkeypatch.setenv("SIMULATION", "1")
+  monkeypatch.setenv("NOBOARD", "1")
+  client = BluetoothClient(socket_path=str(tmp_path / "bluetooth.sock"))
+
+  initial = client.status()
+  speaker, controller = initial.devices[:2]
+  assert initial.available and initial.enabled and speaker.connected
+
+  client.start_scan()
+  assert client.status().discovering
+
+  client.pair(controller.address)
+  client.connect(controller.address)
+  paired_controller = next(device for device in client.status().devices if device.address == controller.address)
+  assert paired_controller.paired and paired_controller.trusted and paired_controller.connected
+
+  client.select_audio(speaker.address)
+  assert client.status().selected_audio == speaker.address
+  assert client.test_audio(speaker.address) == 3.0
+
+  client.forget(controller.address)
+  forgotten_controller = next(device for device in client.status().devices if device.address == controller.address)
+  assert not forgotten_controller.paired and not forgotten_controller.connected
+
+  client.set_power(False)
+  disabled = client.status()
+  assert not disabled.enabled and not disabled.powered and not disabled.discovering
+  assert disabled.selected_audio == speaker.address
+  with pytest.raises(RuntimeError, match="Enable Bluetooth"):
+    client.start_scan()
+  client.set_power(True)
+  enabled = client.status()
+  assert enabled.enabled and enabled.selected_audio == speaker.address
+
+
+def test_desktop_fake_bluetooth_cannot_activate_on_device(monkeypatch, tmp_path):
+  monkeypatch.setenv("SP_ALLOW_DESKTOP_FAKE_BLUETOOTH", "1")
+  monkeypatch.setenv("SIMULATION", "1")
+  monkeypatch.setenv("NOBOARD", "1")
+  monkeypatch.setattr(hardware, "PC", False)
+  client = BluetoothClient(socket_path=str(tmp_path / "bluetooth.sock"))
+
+  assert client._get_desktop_fake() is None
+  assert client._desktop_fake is None
 
 
 def test_pairing_agent_accept_reject_and_timeout():
   agent = PairingAgent()
+  agent.set_auto_accept_incoming(True)
+  assert agent.request("confirmation", "/incoming", "123456") == (True, "")
+  agent.set_auto_accept_incoming(False)
   result = []
   worker = threading.Thread(target=lambda: result.append(agent.request("confirmation", "/device", "123456", timeout=1.0)))
   worker.start()
@@ -165,6 +259,18 @@ def test_disabled_status_does_not_start_radio_or_bluez():
   assert radio.starts == 0 and created == []
 
 
+def test_enabled_initialization_registers_bluetooth_agent_without_ui_poll():
+  params = FakeParams(IsOffroad=True, BluetoothEnabled=True)
+  radio = FakeRadio()
+  created = []
+  controller = BluetoothController(params, lambda: created.append(FakeBlueZ()) or created[-1], radio)
+
+  controller.initialize()
+
+  assert radio.starts == 1 and len(created) == 1
+  assert created[0].powered
+
+
 def test_power_pair_audio_and_offroad_enforcement():
   params = FakeParams(IsOffroad=True, BluetoothEnabled=False)
   radio = FakeRadio()
@@ -185,6 +291,104 @@ def test_power_pair_audio_and_offroad_enforcement():
   params.values["IsOffroad"] = True
   controller.handle({"command": "set_power", "enabled": False})
   assert not params.get_bool("BluetoothEnabled") and radio.stops == 1 and clients[0].closed
+
+
+def test_disconnect_is_idempotent_and_suppresses_auto_reconnect():
+  params = FakeParams(IsOffroad=False, BluetoothEnabled=True)
+  client = FakeBlueZ()
+  controller = BluetoothController(params, lambda: client, FakeRadio())
+
+  controller.handle({"command": "disconnect", "address": client.device["address"]})
+
+  address = client.device["address"].upper()
+  assert client.actions == [("disconnect", client.device["address"])]
+  assert address in controller._manual_disconnect_until
+  assert controller._manual_disconnect_until[address] > time.monotonic()
+
+
+def test_power_off_preserves_saved_audio_selection():
+  params = FakeParams(IsOffroad=True, BluetoothEnabled=False, BluetoothAudioAddress="00:11:22:33:44:55")
+  controller = BluetoothController(params, FakeBlueZ, FakeRadio())
+
+  controller.handle({"command": "set_power", "enabled": True})
+  controller.handle({"command": "set_power", "enabled": False})
+
+  assert params.get("BluetoothAudioAddress") == "00:11:22:33:44:55"
+
+
+def test_status_does_not_restart_radio_during_disable():
+  params = FakeParams(IsOffroad=True, BluetoothEnabled=True)
+  radio = BlockingStopRadio()
+  client = FakeBlueZ()
+  controller = BluetoothController(params, lambda: client, radio)
+  controller._bluez = client
+
+  errors = []
+  def disable():
+    try:
+      controller.handle({"command": "set_power", "enabled": False})
+    except Exception as error:
+      errors.append(error)
+
+  status_started = threading.Event()
+  status_done = threading.Event()
+  status_result = []
+
+  def read_status():
+    status_started.set()
+    status_result.append(controller.status())
+    status_done.set()
+
+  worker = threading.Thread(target=disable, daemon=True)
+  worker.start()
+  assert radio.stop_started.wait(timeout=1.0)
+
+  status_worker = threading.Thread(target=read_status, daemon=True)
+  status_worker.start()
+  try:
+    assert status_started.wait(timeout=1.0)
+    assert not status_done.wait(timeout=0.1)
+  finally:
+    radio.allow_stop.set()
+
+  worker.join(timeout=1.0)
+  status_worker.join(timeout=1.0)
+
+  assert not worker.is_alive()
+  assert not status_worker.is_alive()
+  assert errors == []
+  assert radio.starts == 0
+  assert radio.stops == 1
+  status = status_result[0]
+  assert not status["enabled"]
+  assert not params.get_bool("BluetoothEnabled")
+
+
+def test_status_poll_does_not_overlap_power_transition():
+  client = BlockingPowerClient()
+  manager = object.__new__(BluetoothManager)
+  manager._client = client
+  manager._lock = threading.Lock()
+  manager._client_lock = threading.Lock()
+  manager._status = BluetoothStatus()
+  manager._active = True
+  manager._exit = False
+  manager._operation_error = ""
+  manager._operations = {}
+  manager._power_pending = False
+  manager._audio_test_deadline = 0.0
+
+  manager.set_power(True)
+  assert client.power_entered.wait(timeout=1.0)
+  poller = threading.Thread(target=manager._poll_status)
+  poller.start()
+  poller.join(timeout=1.0)
+
+  client.allow_power.set()
+  assert client.power_finished.wait(timeout=1.0)
+
+  assert not poller.is_alive()
+  assert client.status_calls == 0
 
 
 def test_audio_uses_soundd_engage_alert_and_cleans_up():
@@ -226,6 +430,22 @@ def test_scan_stops_after_timeout():
 
   controller._maintain_scan(controller.status(), controller._scan_deadline)
   assert not client.discovering and controller._scan_deadline == 0.0
+
+
+def test_pair_keeps_discovery_until_pair_starts():
+  params = FakeParams(IsOffroad=True, BluetoothEnabled=True)
+  client = FakeBlueZ()
+  controller = BluetoothController(params, lambda: client, FakeRadio())
+  controller.handle({"command": "start_scan"})
+  controller.handle({"command": "pair", "address": client.device["address"]})
+
+  deadline = time.monotonic() + 1.0
+  while not any(action[0] == "pair" for action in client.actions) and time.monotonic() < deadline:
+    time.sleep(0.01)
+
+  pair_index = client.actions.index(("pair", client.device["address"]))
+  assert client.actions[-1] == ("stop_scan", "")
+  assert pair_index < len(client.actions) - 1
 
 
 def test_audio_queue_is_nonblocking_and_falls_back():

@@ -1,5 +1,10 @@
 CM_ "IMPORT _subaru_global.dbc";
 
+BO_ 811 AVH: 8 XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" XXX
+ SG_ COUNTER : 8|4@1+ (1,0) [0|15] "" XXX
+ SG_ AVH : 45|1@0+ (1,0) [0|1] "" XXX
+
 BO_ 72 Transmission: 8 XXX
  SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" XXX
  SG_ COUNTER : 8|4@1+ (1,0) [0|15] "" XXX

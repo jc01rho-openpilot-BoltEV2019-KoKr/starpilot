@@ -4,6 +4,10 @@ from __future__ import annotations
 from cereal import log
 
 from openpilot.common.params import Params, UnknownKeyName
+from openpilot.starpilot.common.accel_profile import (
+  CUSTOM_ACCEL_PROFILE_BREAKPOINTS_INITIALIZED_KEY,
+  CUSTOM_ACCEL_PROFILE_CURVE_PARAM_KEYS,
+)
 
 SAFE_MODE_PARAM = "SafeMode"
 SAFE_MODE_BACKUP_PARAM = "SafeModeBackup"
@@ -71,6 +75,8 @@ SAFE_MODE_MANAGED_KEYS = (
   "CustomAccelProfile45MPH",
   "CustomAccelProfile56MPH",
   "CustomAccelProfile89MPH",
+  CUSTOM_ACCEL_PROFILE_BREAKPOINTS_INITIALIZED_KEY,
+  *CUSTOM_ACCEL_PROFILE_CURVE_PARAM_KEYS,
   "LongitudinalActuatorDelay",
   "MaxDesiredAcceleration",
   "StartAccel",
@@ -193,6 +199,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "SubaruSNG",
   "SubaruSNGManualParkingBrake",
   "SubaruStopStartOff",
+  "SubaruAvhOnAtStartup",
   "VoltSNG",
   "JeepBrakeHold",
   "GMAutoHold",
@@ -211,6 +218,7 @@ SAFE_MODE_FIXED_VALUES = {
   "LongitudinalPersonality": int(log.LongitudinalPersonality.relaxed),
   "UseAutoSteerDelay": True,
   "SubaruStopStartOff": False,
+  "SubaruAvhOnAtStartup": False,
 }
 
 SAFE_MODE_STOCK_PARAM_MAP = {

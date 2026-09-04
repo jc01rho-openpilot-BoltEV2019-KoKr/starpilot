@@ -69,6 +69,66 @@
   color: #ffe2a3;
 }
 
+.bluetoothPromptHeader,
+.bluetoothPromptActions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.bluetoothPromptHeader {
+  color: #ffe2a3;
+}
+
+.bluetoothPromptHeader i {
+  font-size: 1.15rem;
+}
+
+.bluetoothPrompt p {
+  margin: 8px 0 0;
+}
+
+.bluetoothPromptPasskey {
+  font-size: 1.05rem;
+}
+
+.bluetoothPromptInput {
+  background: var(--input-bg);
+  border: 1px solid var(--sidebar-border-color);
+  border-radius: var(--border-radius-md);
+  color: var(--text-color);
+  font: inherit;
+  margin-top: 12px;
+  max-width: 260px;
+  padding: 10px 12px;
+}
+
+.bluetoothPromptActions {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.bluetoothPromptActions button {
+  background: linear-gradient(135deg, #765bb6, #9474ce);
+  border: 0;
+  border-radius: var(--border-radius-md);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 9px 14px;
+}
+
+.bluetoothPromptActions button.bluetoothPromptReject {
+  background: var(--input-bg);
+  border: 1px solid var(--sidebar-border-color);
+  color: var(--text-color);
+}
+
+.bluetoothPromptActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .bluetoothError {
   color: #ff9ab3;
 }

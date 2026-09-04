@@ -249,6 +249,7 @@ def test_bluetooth_status_api(monkeypatch):
   response = client.get("/api/bluetooth/status")
 
   assert response.status_code == 200
+  assert response.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, max-age=0"
   assert response.get_json() == {
     "available": True,
     "devices": [],
@@ -330,6 +331,10 @@ def test_wheel_controls_status_includes_favorite_slots(monkeypatch):
     "ForceOffroad",
     "__starpilot_controller_action__:set_speed",
     "__starpilot_controller_action__:selfie",
+    "__starpilot_controller_action__:bookmark",
+    "__starpilot_controller_action__:pulse_and_glide",
+    "__starpilot_controller_action__:force_coast",
+    "__starpilot_controller_action__:toggle_aol",
   }
   assert response.get_json()["speed_unit"] == "mph"
 
@@ -347,6 +352,10 @@ def test_wheel_controls_configures_a_controller_only_action(monkeypatch):
     "ForceOffroad",
     "__starpilot_controller_action__:set_speed",
     "__starpilot_controller_action__:selfie",
+    "__starpilot_controller_action__:bookmark",
+    "__starpilot_controller_action__:pulse_and_glide",
+    "__starpilot_controller_action__:force_coast",
+    "__starpilot_controller_action__:toggle_aol",
   }
   assert calls == [((9, "ForceOffroad", "Force Offroad", the_galaxy.params), {"value": None, "eligible_keys": expected_keys})]
 
@@ -663,6 +672,68 @@ def test_ford_lateral_mode_is_editable_through_galaxy(monkeypatch):
   assert response.status_code == 200
   assert fake_params.values["FordLateralMode"] == "2"
   assert ("FordLateralMode", "2") in fake_params.writes
+
+
+def test_custom_accel_breakpoint_update_validates_the_complete_curve(monkeypatch):
+  point_count_key = the_galaxy.CUSTOM_ACCEL_PROFILE_POINT_COUNT_KEY
+  breakpoint_keys = the_galaxy.CUSTOM_ACCEL_PROFILE_BREAKPOINT_PARAM_KEYS
+  value_keys = the_galaxy.CUSTOM_ACCEL_PROFILE_POINT_VALUE_PARAM_KEYS
+  values = {
+    the_galaxy.CUSTOM_ACCEL_PROFILE_BREAKPOINTS_INITIALIZED_KEY: True,
+    point_count_key: 3,
+    **dict(zip(breakpoint_keys, [0.0, 20.0, 40.0] + [50.0] * 9, strict=True)),
+    **dict.fromkeys(value_keys, 1.0),
+  }
+  client, fake_params = _params_client(monkeypatch, values, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_param_type_info", lambda: ({breakpoint_keys[1]}, {breakpoint_keys[1]: float}))
+  monkeypatch.setattr(the_galaxy, "_get_custom_accel_profile_breakpoints_initialized", lambda: True)
+  monkeypatch.setattr(the_galaxy, "_get_default_param_values", dict)
+
+  valid_response = client.put("/api/params", json={"key": breakpoint_keys[1], "value": 25.0})
+  assert valid_response.status_code == 200
+  assert fake_params.values[breakpoint_keys[1]] == "25.0"
+
+  invalid_response = client.put("/api/params", json={"key": breakpoint_keys[1], "value": 45.0})
+  assert invalid_response.status_code == 400
+  assert "strictly increasing" in invalid_response.get_json()["error"]
+  assert fake_params.values[breakpoint_keys[1]] == "25.0"
+
+
+def test_uninitialized_custom_accel_curve_returns_zero_mph_breakpoint(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {}, "tici")
+  monkeypatch.setattr(the_galaxy, "_params_live_raw", fake_params)
+
+  response = client.get(f"/api/params?key={the_galaxy.CUSTOM_ACCEL_PROFILE_BREAKPOINT_PARAM_KEYS[0]}")
+
+  assert response.status_code == 200
+  assert response.get_data(as_text=True) == "0.0"
+
+
+def test_first_breakpoint_edit_seeds_existing_legacy_accel_values(monkeypatch):
+  legacy_keys = [f"CustomAccelProfile{speed}MPH" for speed in (0, 11, 22, 34, 45, 56, 89)]
+  breakpoint_keys = the_galaxy.CUSTOM_ACCEL_PROFILE_BREAKPOINT_PARAM_KEYS
+  value_keys = the_galaxy.CUSTOM_ACCEL_PROFILE_POINT_VALUE_PARAM_KEYS
+  legacy_values = [3.2, 2.7, 2.1, 1.6, 1.1, 0.75, 0.5]
+  defaults = {
+    the_galaxy.CUSTOM_ACCEL_PROFILE_POINT_COUNT_KEY: 7,
+    **dict(zip(breakpoint_keys, the_galaxy.CUSTOM_ACCEL_PROFILE_DEFAULT_BREAKPOINTS_MPH, strict=True)),
+    **dict.fromkeys(value_keys, 0.35),
+  }
+  values = dict(zip(legacy_keys, legacy_values, strict=True))
+  client, fake_params = _params_client(monkeypatch, values, "tici")
+  monkeypatch.setattr(the_galaxy, "_params_live_raw", fake_params)
+  monkeypatch.setattr(the_galaxy, "CUSTOM_ACCEL_PROFILE_PARAM_KEYS", legacy_keys)
+  monkeypatch.setattr(the_galaxy, "_get_param_type_info", lambda: ({breakpoint_keys[1]}, {breakpoint_keys[1]: float}))
+  monkeypatch.setattr(the_galaxy, "_get_custom_accel_profile_initialized", lambda: True)
+  monkeypatch.setattr(the_galaxy, "_get_custom_accel_profile_breakpoints_initialized", lambda: False)
+  monkeypatch.setattr(the_galaxy, "_get_default_param_values", lambda: defaults)
+
+  response = client.put("/api/params", json={"key": breakpoint_keys[1], "value": 18.0})
+
+  assert response.status_code == 200
+  assert [float(fake_params.values[key]) for key in value_keys[:7]] == legacy_values
+  assert fake_params.values[breakpoint_keys[1]] == "18.0"
+  assert fake_params.values[the_galaxy.CUSTOM_ACCEL_PROFILE_BREAKPOINTS_INITIALIZED_KEY] is True
 
 
 def test_favorite_slot_options_include_virtual_cruise_actions(monkeypatch):

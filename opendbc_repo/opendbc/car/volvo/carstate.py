@@ -10,6 +10,8 @@ TransmissionType = structs.CarParams.TransmissionType
 # main-bus SPEED (0x60) is raw counts in the DBC; measured against GPS ground speed.
 # Must match VOLVO_SPEED_TO_MS in opendbc/safety/modes/volvo.h.
 SPEED_TO_MS = 0.003977
+STEERING_PRESSED_THRESHOLD = 2
+STEERING_DISENGAGE_THRESHOLD = 5
 
 
 class CarState(CarStateBase):
@@ -75,7 +77,9 @@ class CarState(CarStateBase):
 
     # Driver steering torque feedback (used for driver override detection)
     ret.steeringTorque = -cp_party.vl['DRIVER_INPUT']['STEERING_DRIVER_INPUT']  # Car right turn is negative, openpilot right turn is positive
-    ret.steeringPressed = abs(cp_party.vl['DRIVER_INPUT']['STEERING_DRIVER_INPUT']) > 2
+    driver_input = abs(cp_party.vl['DRIVER_INPUT']['STEERING_DRIVER_INPUT'])
+    ret.steeringPressed = driver_input > STEERING_PRESSED_THRESHOLD
+    ret.steeringDisengage = driver_input > STEERING_DISENGAGE_THRESHOLD
 
     # EPS status - placeholder until actual signal is found
     self.eps_active = True  # Assume EPS is active for now

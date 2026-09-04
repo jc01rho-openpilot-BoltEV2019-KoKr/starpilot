@@ -37,6 +37,7 @@ class SubaruMsg(enum.IntEnum):
   ES_STATIC_1       = 0x22a
   ES_STATIC_2       = 0x325
   Dashlights        = 0x390
+  AVH               = 0x32b
 
 
 SUBARU_MAIN_BUS = 0
@@ -383,6 +384,20 @@ class TestSubaruGen2FixedAngleStopStartSafety(TestSubaruGen2FixedAngleSafety):
   def test_stop_start_tx_requires_pressed_bit(self):
     self.assertTrue(self._tx(self._stop_start_msg(True)))
     self.assertFalse(self._tx(self._stop_start_msg(False)))
+
+
+class TestSubaruGen2FixedAngleStopStartAvhSafety(TestSubaruGen2FixedAngleStopStartSafety):
+  FLAGS = TestSubaruGen2FixedAngleStopStartSafety.FLAGS | SubaruSafetyFlags.AVH_BUTTON
+  TX_MSGS = TestSubaruGen2FixedAngleStopStartSafety.TX_MSGS + [[SubaruMsg.AVH, SUBARU_ALT_BUS]]
+
+  def _avh_msg(self, pressed):
+    return self.packer.make_can_msg_safety(
+      "AVH", SUBARU_ALT_BUS, {"COUNTER": 0, "AVH": pressed},
+    )
+
+  def test_avh_tx_requires_pressed_bit(self):
+    self.assertTrue(self._tx(self._avh_msg(True)))
+    self.assertFalse(self._tx(self._avh_msg(False)))
 
 
 class TestSubaruDPlatformAngleSafety(TestSubaruStockLongitudinalSafetyBase, TestSubaruAngleSafetyBase):

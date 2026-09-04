@@ -198,9 +198,9 @@ class TestTeslaPreAPSafety(common.SafetyTestBase):
     self.assertTrue(self._rx(self._msg(0x118, b"\x00\x00\x01\x00\x01\x00")))
     self.assertTrue(self._rx(self._msg(0x118, b"\x00\x00\x20\x03\x02\x00")))
 
-  def test_forwarding_passthrough(self):
-    self.assertEqual(self.safety.safety_fwd_hook(0, 0x123), 2)
-    self.assertEqual(self.safety.safety_fwd_hook(2, 0x123), 0)
+  def test_forwarding_to_dead_ap_bus_is_blocked(self):
+    self.assertEqual(self.safety.safety_fwd_hook(0, 0x123), -1)
+    self.assertEqual(self.safety.safety_fwd_hook(2, 0x123), -1)
 
 
 if __name__ == "__main__":

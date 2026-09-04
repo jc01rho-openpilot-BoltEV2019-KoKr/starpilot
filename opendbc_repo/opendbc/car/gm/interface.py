@@ -512,9 +512,7 @@ class CarInterface(CarInterfaceBase):
         ret.flags |= GMFlags.PEDAL_LONG.value
 
     elif candidate in (CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_SILVERADO_CC):
-      # On the Bolt, the ECM and camera independently check that you are either above 5 kph or at a stop
-      # with foot on brake to allow engagement, but this platform only has that check in the camera.
-      # TODO: check if this is split by EV/ICE with more platforms in the future
+      ret.minEnableSpeed = 0.
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
     elif candidate in (CAR.CHEVROLET_EQUINOX, CAR.CHEVROLET_EQUINOX_CC):
@@ -680,7 +678,8 @@ class CarInterface(CarInterfaceBase):
       ret.alphaLongitudinalAvailable = False
       ret.openpilotLongitudinalControl = not disable_openpilot_long
       ret.pcmCruise = False
-      ret.minEnableSpeed = 24 * CV.MPH_TO_MS
+      if candidate not in (CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_SILVERADO_CC):
+        ret.minEnableSpeed = 24 * CV.MPH_TO_MS
       ret.radarUnavailable = True
       ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_CC_LONG.value
 

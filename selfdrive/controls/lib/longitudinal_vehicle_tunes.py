@@ -19,8 +19,10 @@ HONDA_ACCORD_STOP_GO_MAX_LEAD_BRAKE = 0.25
 HONDA_ACCORD_STOP_GO_MAX_LATERAL_OFFSET = 1.25
 HONDA_ACCORD_STOP_GO_MIN_MODEL_PROB = 0.95
 HONDA_ACCORD_STOP_GO_ACCEL_RISE_RATE = 4.0
+HONDA_ACCORD_LOW_SPEED_STOP_MAX_LEAD_SPEED = 1.0
+HONDA_ACCORD_STANDSTILL_GUARD_MAX_EGO_SPEED = 0.25
 HYUNDAI_ELANTRA_LEAD_FOLLOW_JERK_SCALE = 1.25
-GENESIS_GV70_ELECTRIFIED_LEAD_FOLLOW_JERK_SCALE = 1.35
+GENESIS_GV70_ELECTRIFIED_LEAD_FOLLOW_JERK_SCALE = 1.75
 FORD_LIGHTNING_LEAD_FOLLOW_JERK_SCALE = 1.35
 HONDA_CRV_5G_LEAD_FOLLOW_JERK_SCALE = 1.35
 GM_SILVERADO_EARLY_FOLLOW_MIN_EGO_SPEED = 18.0
@@ -33,6 +35,10 @@ FORD_LIGHTNING_FOLLOW_PREBRAKE_MIN_HEADWAY = 0.75
 FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_MIN_HEADWAY_MARGIN = 0.10
 FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_FULL_HEADWAY_MARGIN = 0.25
 FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_BIAS_GAIN = 1.0
+FORD_LIGHTNING_STOPPED_RADAR_FOLLOW_MAX_EGO_SPEED = 4.5
+FORD_LIGHTNING_STOPPED_RADAR_FOLLOW_MAX_DISTANCE = 18.0
+FORD_LIGHTNING_STOPPED_RADAR_FOLLOW_MAX_LEAD_SPEED = 2.0
+FORD_LIGHTNING_STOPPED_RADAR_FOLLOW_MAX_LATERAL_OFFSET = 1.25
 HONDA_CRV_5G_TRACKED_LEAD_CATCHUP_MIN_HEADWAY_MARGIN = 0.10
 HONDA_CRV_5G_TRACKED_LEAD_CATCHUP_FULL_HEADWAY_MARGIN = 0.35
 HONDA_CRV_5G_TRACKED_LEAD_CATCHUP_BIAS_GAIN = 1.25
@@ -288,6 +294,12 @@ def get_standstill_stopped_lead_guard_max_lead_speed(CP, default):
   return float(default)
 
 
+def get_standstill_stopped_lead_guard_max_ego_speed(CP, default):
+  if CP.brand == "honda" and str(CP.carFingerprint) == "HONDA_ACCORD":
+    return HONDA_ACCORD_STANDSTILL_GUARD_MAX_EGO_SPEED
+  return float(default)
+
+
 def get_tracked_lead_catchup_headway_margins(CP):
   if is_honda_crv_5g(CP):
     return (
@@ -339,6 +351,23 @@ def is_ford_f150_lightning(CP):
     getattr(CP, "brand", "") == "ford" and
     str(getattr(CP, "carFingerprint", "")) == "FORD_F_150_LIGHTNING_MK1"
   )
+
+
+def is_ford_f150_lightning_stopped_radar_follow_lead(CP, lead, v_ego):
+  """Keep a credible stopped radar lead active after the CEM model horizon collapses."""
+  if (
+    not is_ford_f150_lightning(CP) or
+    lead is None or not bool(getattr(lead, "status", False)) or
+    not bool(getattr(lead, "radar", False)) or
+    float(v_ego) < 0.0 or
+    float(v_ego) > FORD_LIGHTNING_STOPPED_RADAR_FOLLOW_MAX_EGO_SPEED or
+    float(getattr(lead, "dRel", float("inf"))) > FORD_LIGHTNING_STOPPED_RADAR_FOLLOW_MAX_DISTANCE or
+    max(float(getattr(lead, "vLead", 0.0)), 0.0) > FORD_LIGHTNING_STOPPED_RADAR_FOLLOW_MAX_LEAD_SPEED or
+    abs(float(getattr(lead, "yRel", 0.0))) > FORD_LIGHTNING_STOPPED_RADAR_FOLLOW_MAX_LATERAL_OFFSET
+  ):
+    return False
+
+  return float(getattr(lead, "dRel", 0.0)) > 0.0
 
 
 def is_toyota_rav4_tss2_post_departure_tune(CP):
@@ -541,6 +570,13 @@ def get_honda_accord_stop_go_accel_rise_rate(CP):
   if CP.brand == "honda" and str(CP.carFingerprint) == "HONDA_ACCORD":
     return HONDA_ACCORD_STOP_GO_ACCEL_RISE_RATE
   return 0.0
+
+
+def get_vision_low_speed_stop_buffer_lead_speed_limits(CP, max_lead_speed, hold_max_lead_speed):
+  """Keep the Accord's low-speed stop guard from treating a moving lead as stopped."""
+  if CP.brand == "honda" and str(CP.carFingerprint) == "HONDA_ACCORD":
+    return HONDA_ACCORD_LOW_SPEED_STOP_MAX_LEAD_SPEED, HONDA_ACCORD_LOW_SPEED_STOP_MAX_LEAD_SPEED
+  return max_lead_speed, hold_max_lead_speed
 
 
 def is_gm_silverado_early_follow_lead(CP, lead, v_ego):

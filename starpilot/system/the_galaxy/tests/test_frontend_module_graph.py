@@ -21,8 +21,8 @@ def test_router_and_settings_cache_bust_is_consistent():
   router = ROUTER_PATH.read_text(encoding="utf-8")
   index = INDEX_PATH.read_text(encoding="utf-8")
 
-  assert "/assets/components/settings.js?v=router-cycle-fix-3" in router
-  assert "/assets/components/router.js?v=router-cycle-fix-3" in index
+  assert "/assets/components/settings.js?v=router-cycle-fix-5" in router
+  assert "/assets/components/router.js?v=router-cycle-fix-6" in index
 
 
 def test_bluetooth_actions_use_reactive_disabled_bindings():
@@ -37,11 +37,26 @@ def test_bluetooth_actions_use_reactive_disabled_bindings():
   assert 'request("test_audio", { address: device.address })' in source
   assert "startAudioTestCountdown" in source
   assert "The test sound is sent at NOW" in source
-  assert 'deviceSection("My Devices"' in source
-  assert 'deviceSection("Available Devices"' in source
+  assert 'renderDeviceSection("My Devices"' in source
+  assert 'renderDeviceSection("Available Devices"' in source
   assert "bluetoothForgetButton" in source
   assert "bi-trash3" in source
   assert "state.pairingAddress" in source
+  assert "state.busy !== \"power\"" in source
+  assert "Turning Bluetooth" in source
+  assert "!device.paired" in source
+  assert 'galaxyPath("/bluetooth")' in source
+  assert 'window.location.pathname === "/bluetooth"' not in source
+  assert "schedulePoll(250)" in source
+  assert "while (refreshRequested)" in source
+  assert 'cache: "no-store"' in source
+  assert "const ACTIVE_POLL_INTERVAL_MS = 250" in source
+  assert "document.visibilityState !== \"hidden\"" in source
+  assert "window.addEventListener(\"pageshow\", refresh)" in source
+  assert 'state.revision)' in source
+  assert "const revisionAttribute" in source
+  assert 'data-revision="${revision}"' in source
+  assert 'bluetooth-live-15' in ROUTER_PATH.read_text(encoding="utf-8")
 
 
 def test_controller_test_mode_has_explicit_start_and_stop():

@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ..lateral import HANDOFF_PAUSE_FRAMES, HANDOFF_PAUSE_MIN_FRAMES, FordLateralController, HumanTurnDetector
+from opendbc.car.ford.values import CAR
+from ..lateral import ANGLE_HANDOFF_RECOVERY_SECONDS, HANDOFF_PAUSE_FRAMES, HANDOFF_PAUSE_MIN_FRAMES, STEER_DT, FordLateralController, HumanTurnDetector
 
 
 class FakeSubMaster(dict):
@@ -63,6 +64,17 @@ def test_curvature_lookahead_tracks_bounded_live_delay(controller):
 
   controller.sm["liveDelay"].lateralDelay = 0.6
   assert controller._curvature_lookahead() == pytest.approx(0.4)
+
+
+def test_explorer_curvature_lookahead_does_not_follow_actuator_delay(monkeypatch):
+  messaging = SimpleNamespace(SubMaster=FakeSubMaster)
+  monkeypatch.setitem(sys.modules, "cereal.messaging", messaging)
+  CP = SimpleNamespace(flags=0, carFingerprint=CAR.FORD_EXPLORER_MK6)
+  controller = FordLateralController(CP)
+  controller.sm = FakeSubMaster(["modelV2", "liveDelay"])
+  controller.sm["liveDelay"].lateralDelay = 0.42
+
+  assert controller._curvature_lookahead() == pytest.approx(0.20)
 
 
 def test_curvature_strategy_uses_learned_lookahead(controller, monkeypatch):
@@ -174,6 +186,45 @@ def test_angle_control_resumes_after_pscm_acknowledges_pause(controller):
 
   assert controller.update_angle(
     CC, car_state(lateral_control_status=1), actuators).active
+
+
+def test_long_manual_turn_still_resets_angle_control_on_release(controller):
+  controller.human_turn_enabled = True
+  CC = SimpleNamespace(latActive=True, currentCurvature=0.0)
+  actuators = SimpleNamespace(curvature=0.001)
+
+  for _ in range(40):
+    controller.update_angle(
+      CC, car_state(steering_pressed=True, steering_angle=50.0), actuators)
+
+  for _ in range(HANDOFF_PAUSE_FRAMES):
+    assert not controller.update_angle(CC, car_state(), actuators).active
+
+  assert controller.update_angle(CC, car_state(), actuators).active
+
+
+def test_angle_handoff_reenters_from_measured_curvature(controller):
+  controller.human_turn_enabled = True
+  controller.angle_blend = 0.0
+  measured_curvature = 0.004
+  CC = SimpleNamespace(latActive=True, currentCurvature=measured_curvature)
+  actuators = SimpleNamespace(curvature=-0.005)
+
+  for _ in range(10):
+    controller.update_angle(
+      CC, car_state(speed=8.0, curvature=measured_curvature, steering_pressed=True, steering_angle=10.0), actuators)
+  for _ in range(HANDOFF_PAUSE_FRAMES):
+    assert not controller.update_angle(
+      CC, car_state(speed=8.0, curvature=measured_curvature), actuators).active
+
+  resumed = controller.update_angle(CC, car_state(speed=8.0, curvature=measured_curvature), actuators)
+  assert resumed.active
+  assert resumed.path_angle == pytest.approx(measured_curvature * 8.0 * 1.3)
+
+  recovery_frames = round(ANGLE_HANDOFF_RECOVERY_SECONDS / STEER_DT)
+  for _ in range(recovery_frames + 2):
+    recovered = controller.update_angle(CC, car_state(speed=8.0, curvature=measured_curvature), actuators)
+  assert recovered.path_angle < 0.0
 
 
 def test_angle_control_recovers_from_bounded_tracking_stall(controller):

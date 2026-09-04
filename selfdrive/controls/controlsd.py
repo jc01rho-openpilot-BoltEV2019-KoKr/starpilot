@@ -21,6 +21,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
   clip_curvature,
   get_kona_non_scc_lateral_active,
   get_lateral_active,
+  update_lateral_fault_latch,
 )
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
@@ -403,6 +404,9 @@ class Controls:
     self.turn_blinker_swept = 0.0
     self.twitch_guard_remaining = 0.0
     self.kona_non_scc_lateral_active = False
+    self.kona_non_scc_lateral_faulted = False
+    self.elantra_hev_2024_lateral_faulted = False
+    self.elantra_hev_2024_previous_cruise_enabled = False
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -499,15 +503,41 @@ class Controls:
     # Check which actuators can be enabled
     standstill = abs(CS.vEgo) <= max(self.CP.minSteerSpeed, 0.3) or CS.standstill
     if self.CP.carFingerprint == HYUNDAI_CAR.HYUNDAI_KONA_NON_SCC:
+      always_on_lateral_enabled = self.sm['starpilotCarState'].alwaysOnLateralEnabled
+      lateral_requested = (CC.enabled and self.sm['selfdriveState'].active) or always_on_lateral_enabled
+      if not lateral_requested:
+        self.kona_non_scc_lateral_faulted = False
+      elif CS.steerFaultTemporary:
+        self.kona_non_scc_lateral_faulted = True
       CC.latActive = get_kona_non_scc_lateral_active(
         CC.enabled, self.sm['selfdriveState'].active,
-        self.sm['starpilotCarState'].alwaysOnLateralEnabled,
+        always_on_lateral_enabled,
         CS.steerFaultTemporary, CS.steerFaultPermanent,
         standstill, self.CP.steerAtStandstill,
         self.sm['starpilotPlan'].lateralCheck,
         CS.steeringPressed, self.kona_non_scc_lateral_active,
+        self.kona_non_scc_lateral_faulted,
       )
       self.kona_non_scc_lateral_active = CC.latActive
+    elif self.CP.carFingerprint == HYUNDAI_CAR.HYUNDAI_ELANTRA_HEV_2024:
+      always_on_lateral_enabled = self.sm['starpilotCarState'].alwaysOnLateralEnabled
+      lateral_requested = (CC.enabled and self.sm['selfdriveState'].active) or always_on_lateral_enabled
+      cruise_reenabled = CS.cruiseState.enabled and not self.elantra_hev_2024_previous_cruise_enabled
+      self.elantra_hev_2024_lateral_faulted = update_lateral_fault_latch(
+        self.elantra_hev_2024_lateral_faulted,
+        lateral_requested,
+        CS.steerFaultTemporary,
+        reset=cruise_reenabled,
+      )
+      CC.latActive = get_lateral_active(
+        CC.enabled, self.sm['selfdriveState'].active,
+        always_on_lateral_enabled,
+        CS.steerFaultTemporary, CS.steerFaultPermanent,
+        standstill, self.CP.steerAtStandstill,
+        self.sm['starpilotPlan'].lateralCheck,
+        self.elantra_hev_2024_lateral_faulted,
+      )
+      self.elantra_hev_2024_previous_cruise_enabled = CS.cruiseState.enabled
     else:
       CC.latActive = get_lateral_active(CC.enabled, self.sm['selfdriveState'].active,
                                         self.sm['starpilotCarState'].alwaysOnLateralEnabled,
@@ -722,7 +752,8 @@ class Controls:
       CC.latActive,
       bool(self.sm.all_checks(['modelV2'])),
       self.starpilot_toggles.lane_centering_pause_on_signal,
-      bool(CS.leftBlinker or CS.rightBlinker))
+      bool(CS.leftBlinker or CS.rightBlinker),
+      bool(CS.steeringPressed))
 
     jerk_factor = 1.0
     if self.starpilot_toggles.lane_change_pace < 10:
