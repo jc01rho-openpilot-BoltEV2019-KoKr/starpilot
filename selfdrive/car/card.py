@@ -33,7 +33,8 @@ from openpilot.starpilot.common.favorite_slots import (
   FAVORITE_ACTION_ACCEL_COUNTER,
   FAVORITE_ACTION_DECEL_COUNTER,
 )
-from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles, update_starpilot_toggles
+from openpilot.starpilot.common.starpilot_variables import always_on_lateral_available, get_starpilot_toggles, update_starpilot_toggles
+from openpilot.starpilot.common.lateral_only_experimental import experimental_mode_available
 from openpilot.starpilot.controls.starpilot_card import StarPilotCard
 
 REPLAY = "REPLAY" in os.environ
@@ -144,7 +145,10 @@ class Car:
     if car_gps_supported:
       self.gps_pm = messaging.PubMaster(['gpsLocationExternal'])
 
+    aol_available = always_on_lateral_available(self.CP)
     interface_alternative_experience = self.CP.alternativeExperience
+    if not aol_available:
+      interface_alternative_experience &= ~ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL
     self.CP.alternativeExperience = interface_alternative_experience
     openpilot_enabled_toggle = self.params.get_bool("OpenpilotEnabledToggle")
     controller_available = self.CI.CC is not None and openpilot_enabled_toggle
@@ -203,7 +207,11 @@ class Car:
 
     self.is_metric = self.params.get_bool("IsMetric")
     self.safe_mode = self.params.get_bool("SafeMode")
-    self.experimental_mode = self.params.get_bool("ExperimentalMode") and not self.safe_mode
+    self.experimental_mode = (
+      self.params.get_bool("ExperimentalMode") and
+      experimental_mode_available(self.CP) and
+      not self.safe_mode
+    )
 
     # card is driven by can recv, expected at 100Hz
     self.rk = Ratekeeper(100, print_delay_threshold=None)
@@ -212,8 +220,10 @@ class Car:
     self.starpilot_toggles = get_starpilot_toggles(read_persisted_force_params=True)
 
     self.FPCP.alternativeExperience |= interface_alternative_experience
+    if not aol_available:
+      self.FPCP.alternativeExperience &= ~ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL
 
-    if self.starpilot_toggles.always_on_lateral:
+    if self.starpilot_toggles.always_on_lateral and aol_available:
       self.CP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL
       self.FPCP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL
     if getattr(self.starpilot_toggles, "remap_cancel_to_distance", False):
@@ -546,7 +556,11 @@ class Car:
     while not evt.is_set():
       self.safe_mode = self.params.get_bool("SafeMode")
       self.is_metric = self.params.get_bool("IsMetric")
-      self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl and not self.safe_mode
+      self.experimental_mode = (
+        self.params.get_bool("ExperimentalMode") and
+        experimental_mode_available(self.CP) and
+        not self.safe_mode
+      )
       time.sleep(0.1)
 
   def card_thread(self):

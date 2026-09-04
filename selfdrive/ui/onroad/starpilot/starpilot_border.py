@@ -11,6 +11,7 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.lib.starpilot_status import (
   CEM_OVERRIDE_COLOR, ENGAGED_COLOR, EXPERIMENTAL_COLOR, TRAFFIC_COLOR
 )
+from openpilot.selfdrive.ui.lib.starpilot_visuals import get_border_roundness
 
 
 
@@ -218,6 +219,7 @@ def get_traffic_border_colors() -> tuple[rl.Color, rl.Color] | None:
 def render_background_effects(rect: rl.Rectangle, border_width: float):
   global _smoothed_steer
   sm = ui_state.sm
+  border_roundness = get_border_roundness(rect, border_width)
 
   # 1. Turn Signal and Blind Spot indicators
   colors = get_traffic_border_colors()
@@ -225,11 +227,11 @@ def render_background_effects(rect: rl.Rectangle, border_width: float):
     left_color, right_color = colors
     if left_color.a > 0:
       rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width // 2), int(rect.height))
-      rl.draw_rectangle_rounded(rect, 0.12, 10, left_color)
+      rl.draw_rectangle_rounded(rect, border_roundness, 10, left_color)
       rl.end_scissor_mode()
     if right_color.a > 0:
       rl.begin_scissor_mode(int(rect.x + rect.width // 2), int(rect.y), int(rect.width // 2), int(rect.height))
-      rl.draw_rectangle_rounded(rect, 0.12, 10, right_color)
+      rl.draw_rectangle_rounded(rect, border_roundness, 10, right_color)
       rl.end_scissor_mode()
 
   # 2. Steering Torque Border
@@ -262,7 +264,7 @@ def render_background_effects(rect: rl.Rectangle, border_width: float):
         else:
           rl.begin_scissor_mode(int(rect.x + rect.width - border_width), y_pos, int(border_width), int(visible_height))
 
-        rl.draw_rectangle_rounded(rect, 0.12, 10, col)
+        rl.draw_rectangle_rounded(rect, border_roundness, 10, col)
         rl.end_scissor_mode()
 
 

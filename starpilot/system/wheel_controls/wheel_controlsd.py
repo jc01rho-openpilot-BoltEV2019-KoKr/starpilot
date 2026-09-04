@@ -33,6 +33,16 @@ CONTROLLER_ACTION_SLOT_COUNT = 10
 MAPPING_SLOT_COUNT = FAVORITE_SLOT_COUNT + CONTROLLER_ACTION_SLOT_COUNT
 CONTROLLER_ACTION_SET_SPEED = "__starpilot_controller_action__:set_speed"
 CONTROLLER_ACTION_SELFIE = "__starpilot_controller_action__:selfie"
+CONTROLLER_ACTION_BOOKMARK = "__starpilot_controller_action__:bookmark"
+CONTROLLER_ACTION_PULSE_AND_GLIDE = "__starpilot_controller_action__:pulse_and_glide"
+CONTROLLER_ACTION_FORCE_COAST = "__starpilot_controller_action__:force_coast"
+CONTROLLER_ACTION_TOGGLE_AOL = "__starpilot_controller_action__:toggle_aol"
+CONTROLLER_ACTION_COUNTERS = {
+  CONTROLLER_ACTION_BOOKMARK: "WheelButtonBookmarkCounter",
+  CONTROLLER_ACTION_PULSE_AND_GLIDE: "WheelControlPulseGlideCounter",
+  CONTROLLER_ACTION_FORCE_COAST: "WheelControlForceCoastCounter",
+  CONTROLLER_ACTION_TOGGLE_AOL: "WheelControlAOLCounter",
+}
 CONTROLLER_ACTION_OPTIONS = (
   {
     "key": CONTROLLER_ACTION_SET_SPEED,
@@ -46,6 +56,30 @@ CONTROLLER_ACTION_OPTIONS = (
     "key": CONTROLLER_ACTION_SELFIE,
     "label": "Take Comma Selfie",
     "description": "Captures the driver camera and saves it in Sentry history.",
+    "section": "Controller Actions",
+  },
+  {
+    "key": CONTROLLER_ACTION_BOOKMARK,
+    "label": "Bookmark",
+    "description": "Creates a driving bookmark without changing the on-screen Favorites.",
+    "section": "Controller Actions",
+  },
+  {
+    "key": CONTROLLER_ACTION_PULSE_AND_GLIDE,
+    "label": "Pulse and Glide",
+    "description": "Toggles Pulse and Glide using the same transient control as a mapped vehicle button.",
+    "section": "Controller Actions",
+  },
+  {
+    "key": CONTROLLER_ACTION_FORCE_COAST,
+    "label": "Force Coasting",
+    "description": "Toggles forced coasting using the same transient control as a mapped vehicle button.",
+    "section": "Controller Actions",
+  },
+  {
+    "key": CONTROLLER_ACTION_TOGGLE_AOL,
+    "label": "Toggle AOL",
+    "description": "Toggles Always On Lateral like the vehicle LKAS button; it does not change the AOL setting.",
     "section": "Controller Actions",
   },
 )
@@ -271,6 +305,14 @@ def request_comma_selfie() -> bool:
   return True
 
 
+def trigger_controller_action(key: str, params_memory: Params) -> bool:
+  counter_key = CONTROLLER_ACTION_COUNTERS.get(key)
+  if counter_key is None:
+    return False
+  params_memory.put_int(counter_key, params_memory.get_int(counter_key) + 1)
+  return True
+
+
 def normalize_mappings(value: Any) -> list[dict[str, Any]]:
   if isinstance(value, bytes):
     value = value.decode("utf-8", errors="replace")
@@ -443,6 +485,8 @@ def execute_controller_action(index: int, params: Params, params_memory: Params)
     return set_controller_cruise_speed(slot.get("value"), params, params_memory)
   if slot.get("key") == CONTROLLER_ACTION_SELFIE:
     return request_comma_selfie()
+  if slot.get("key") in CONTROLLER_ACTION_COUNTERS:
+    return trigger_controller_action(slot["key"], params_memory)
   return execute_favorite_key(slot.get("key"), params, params_memory)
 
 
@@ -583,9 +627,11 @@ class WheelControlsDaemon:
       self._remove(fd)
       return
 
-    buffer = self.buffers[fd]
+    buffer = self.buffers.get(fd)
+    source = self.sources.get(fd)
+    if buffer is None or source is None:
+      return
     buffer.extend(chunk)
-    source = self.sources[fd]
     while len(buffer) >= INPUT_EVENT.size:
       raw = bytes(buffer[:INPUT_EVENT.size])
       del buffer[:INPUT_EVENT.size]
@@ -622,7 +668,10 @@ class WheelControlsDaemon:
           self._scan_devices()
           self.last_scan = now
         for key, _mask in self.selector.select(timeout=0.1):
-          self._read_events(key.fd)
+          try:
+            self._read_events(key.fd)
+          except (KeyError, OSError):
+            self._remove(key.fd)
         now = time.monotonic()
         if now - self.last_status >= STATUS_INTERVAL_SECONDS:
           self._publish_status(now)

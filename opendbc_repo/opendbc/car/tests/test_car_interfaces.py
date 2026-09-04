@@ -300,7 +300,7 @@ class TestCarInterfaces:
     )
     assert fp_car_params.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
 
-  def test_hyundai_elantra_hev_auto_aol_sets_lkas_on_engage_flag(self):
+  def test_hyundai_elantra_hev_auto_aol_uses_main_engage_flag(self):
     toggles = get_test_starpilot_toggles()
     toggles.always_on_lateral_main = True
     fingerprint = {bus: {} for bus in range(8)}
@@ -322,8 +322,33 @@ class TestCarInterfaces:
       toggles,
     )
 
-    assert fp_car_params.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
     assert fp_car_params.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_ON_ENGAGE.value
+    assert not (fp_car_params.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value)
+
+  def test_hyundai_elantra_hev_lkas_aol_uses_lkas_engage_flag(self):
+    toggles = get_test_starpilot_toggles()
+    toggles.always_on_lateral_lkas = True
+    fingerprint = {bus: {} for bus in range(8)}
+
+    car_params = HyundaiCarInterface.get_params(
+      HYUNDAI_CAR.HYUNDAI_ELANTRA_HEV_2024,
+      fingerprint,
+      [],
+      alpha_long=True,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=toggles,
+    )
+    fp_car_params = HyundaiCarInterface.get_starpilot_params(
+      HYUNDAI_CAR.HYUNDAI_ELANTRA_HEV_2024,
+      fingerprint,
+      [],
+      car_params,
+      toggles,
+    )
+
+    assert fp_car_params.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
+    assert not (fp_car_params.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_ON_ENGAGE.value)
 
   @pytest.mark.parametrize(
     ("candidate", "sets_main_aol_flag"),

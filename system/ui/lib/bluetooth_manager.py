@@ -9,10 +9,12 @@ class BluetoothManager:
   def __init__(self):
     self._client = BluetoothClient(timeout=5.0)
     self._lock = threading.Lock()
+    self._client_lock = threading.Lock()
     self._status = BluetoothStatus()
     self._active = False
     self._exit = False
     self._operation_error = ""
+    self._power_pending = False
     self._operations = {}
     self._audio_test_deadline = 0.0
     self._thread = threading.Thread(target=self._poll, daemon=True)
@@ -54,14 +56,27 @@ class BluetoothManager:
   def _poll(self) -> None:
     while not self._exit:
       if self._active:
-        try:
-          status = self._client.status()
-          with self._lock:
-            self._status = status
-        except Exception as error:
-          with self._lock:
-            self._status = BluetoothStatus(error=str(error))
+        self._poll_status()
       time.sleep(1.0 if self._active else 2.0)
+
+  def _poll_status(self) -> None:
+    # Power-on bootstraps the daemon before its RPC completes; do not report a
+    # transient status timeout while that transition owns the client.
+    with self._lock:
+      if self._power_pending:
+        return
+
+    with self._client_lock:
+      with self._lock:
+        if self._power_pending:
+          return
+      try:
+        status = self._client.status()
+        with self._lock:
+          self._status = status
+      except Exception as error:
+        with self._lock:
+          self._status = BluetoothStatus(error=str(error))
 
   def _run(self, fn, *args, operation: str = "", address: str = "") -> None:
     normalized_address = address.upper()
@@ -71,7 +86,8 @@ class BluetoothManager:
 
     def worker():
       try:
-        fn(*args)
+        with self._client_lock:
+          fn(*args)
       except Exception as error:
         with self._lock:
           self._operation_error = str(error)
@@ -83,7 +99,23 @@ class BluetoothManager:
     threading.Thread(target=worker, daemon=True).start()
 
   def set_power(self, enabled: bool) -> None:
-    self._run(self._client.set_power, enabled)
+    with self._lock:
+      if self._power_pending:
+        return
+      self._power_pending = True
+
+    def worker():
+      try:
+        with self._client_lock:
+          self._client.set_power(enabled)
+      except Exception as error:
+        with self._lock:
+          self._operation_error = str(error)
+      finally:
+        with self._lock:
+          self._power_pending = False
+
+    threading.Thread(target=worker, daemon=True).start()
 
   def set_scanning(self, scanning: bool) -> None:
     self._run(self._client.start_scan if scanning else self._client.stop_scan)
@@ -106,7 +138,8 @@ class BluetoothManager:
   def test_audio(self, address: str) -> None:
     def worker():
       try:
-        delay = self._client.test_audio(address)
+        with self._client_lock:
+          delay = self._client.test_audio(address)
         with self._lock:
           self._audio_test_deadline = time.monotonic() + delay
       except Exception as error:

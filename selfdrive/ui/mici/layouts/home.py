@@ -217,8 +217,8 @@ class MiciHomeLayout(Widget):
 
     if self._mouse_down_t is not None:
       if time.monotonic() - self._mouse_down_t > 0.5:
-        # long gating for experimental mode - only allow toggle if longitudinal control is available
-        if ui_state.has_longitudinal_control:
+        # Only allow the toggle when this vehicle exposes Experimental Mode.
+        if ui_state.experimental_mode_available:
           self._experimental_mode = not self._experimental_mode
           ui_state.params.put("ExperimentalMode", self._experimental_mode)
           self._mode_status_atom.refresh()

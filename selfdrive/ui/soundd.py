@@ -165,44 +165,72 @@ class Soundd:
 
     return str(resolved_path), sound_files
 
+  def _sound_candidates(self, filename: str) -> list[Path]:
+    random_events_path = self.random_events_directory / filename
+    sounds_path = self.sound_directory / filename
+
+    if not sounds_path.exists() and "_tizi" in filename:
+      standard_path = self.sound_directory / filename.replace("_tizi", "")
+      if standard_path.exists():
+        sounds_path = standard_path
+
+    stock_filename = "engage.wav" if filename == "startup.wav" else filename
+    stock_path = Path(BASEDIR) / "selfdrive" / "assets" / "sounds" / stock_filename
+
+    candidates = []
+    for path in (random_events_path, sounds_path, stock_path):
+      if path.exists() and path not in candidates:
+        candidates.append(path)
+    return candidates
+
+  @staticmethod
+  def _read_sound(path: Path) -> np.ndarray | None:
+    with wave.open(str(path), 'r') as wavefile:
+      if wavefile.getnchannels() != 1 or wavefile.getsampwidth() != 2 or wavefile.getframerate() != SAMPLE_RATE:
+        cloudlog.warning(f"soundd: invalid format {path}, skipping")
+        return None
+      length = wavefile.getnframes()
+      if length <= 0:
+        cloudlog.warning(f"soundd: empty audio {path}, skipping")
+        return None
+      raw = wavefile.readframes(length)
+      if len(raw) < 2 or (len(raw) % 2) != 0:
+        cloudlog.warning(f"soundd: truncated audio {path}, skipping")
+        return None
+      sound = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / (2**16/2)
+      if sound.size == 0:
+        cloudlog.warning(f"soundd: empty audio {path}, skipping")
+        return None
+      return sound
+
   def load_sounds(self):
     self.loaded_sounds: dict[int, np.ndarray] = {}
 
-    # Load all sounds
     for sound in sound_list:
       filename, play_count, volume = sound_list[sound]
-
-      random_events_path = self.random_events_directory / filename
-      sounds_path = self.sound_directory / filename
-
-      if not sounds_path.exists() and "_tizi" in filename:
-        standard_path = self.sound_directory / filename.replace("_tizi", "")
-        if standard_path.exists():
-          sounds_path = standard_path
-
-      if random_events_path.exists():
-        wavefile = wave.open(str(random_events_path), 'r')
-      elif sounds_path.exists():
-        wavefile = wave.open(str(sounds_path), 'r')
-      else:
-        if filename == "startup.wav":
-          filename = "engage.wav"
-        wavefile = wave.open(BASEDIR + "/selfdrive/assets/sounds/" + filename, 'r')
-
-      assert wavefile.getnchannels() == 1
-      assert wavefile.getsampwidth() == 2
-      assert wavefile.getframerate() == SAMPLE_RATE
-
-      length = wavefile.getnframes()
-      self.loaded_sounds[sound] = np.frombuffer(wavefile.readframes(length), dtype=np.int16).astype(np.float32) / (2**16/2)
+      loaded = False
+      for path in self._sound_candidates(filename):
+        try:
+          sound_data = self._read_sound(path)
+        except (OSError, EOFError, ValueError, wave.Error):
+          cloudlog.exception(f"soundd: failed to load {path}")
+          continue
+        if sound_data is not None:
+          self.loaded_sounds[sound] = sound_data
+          loaded = True
+          break
+      if not loaded:
+        cloudlog.warning(f"soundd: missing {filename}, skipping")
 
   def get_sound_data(self, frames): # get "frames" worth of data from the current alert sound, looping when required
 
     ret = np.zeros(frames, dtype=np.float32)
 
-    if self.current_alert != AudibleAlert.none:
+    if self.current_alert != AudibleAlert.none and self.current_alert in self.loaded_sounds:
       num_loops = sound_list[self.current_alert][1]
       sound_data = self.loaded_sounds[self.current_alert]
+      if sound_data.size == 0:
+        return ret * self.current_volume
       written_frames = 0
 
       current_sound_frame = self.current_sound_frame % len(sound_data)
@@ -239,8 +267,17 @@ class Soundd:
       self.bluetooth_audio = None
       sink.close()
 
+  def select_critical_alert(self, stock_alert, goat_scream_critical):
+    goat_alert = starpilot_alert_key(StarPilotAudibleAlert.goat)
+    if goat_scream_critical and goat_alert in self.loaded_sounds:
+      return goat_alert
+    return stock_alert
+
   def update_alert(self, new_alert):
-    current_alert_played_once = self.current_alert == AudibleAlert.none or self.current_sound_frame > len(self.loaded_sounds[self.current_alert])
+    if new_alert != AudibleAlert.none and new_alert not in self.loaded_sounds:
+      new_alert = AudibleAlert.none
+    loaded = self.loaded_sounds.get(self.current_alert)
+    current_alert_played_once = self.current_alert == AudibleAlert.none or loaded is None or self.current_sound_frame > len(loaded)
     if self.current_alert != new_alert and (new_alert != AudibleAlert.none or current_alert_played_once):
       self.current_alert = new_alert
       self.current_sound_frame = 0
@@ -268,8 +305,10 @@ class Soundd:
 
       critical_full_alert = sm['selfdriveState'].alertStatus == log.SelfdriveState.AlertStatus.critical
       critical_full_alert &= sm['selfdriveState'].alertSize == log.SelfdriveState.AlertSize.full
-      if self.starpilot_toggles.goat_scream_critical_alerts and critical_full_alert:
-        new_alert = starpilot_alert_key(StarPilotAudibleAlert.goat)
+      new_alert = self.select_critical_alert(
+        new_alert,
+        self.starpilot_toggles.goat_scream_critical_alerts and critical_full_alert,
+      )
 
       new_starpilot_alert = sm['starpilotSelfdriveState'].alertSound.raw
       if new_alert == AudibleAlert.none and new_starpilot_alert != StarPilotAudibleAlert.none:

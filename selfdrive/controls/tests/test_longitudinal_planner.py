@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from cereal import log
+from openpilot.common.constants import CV
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
 from opendbc.car.gm.values import CAR as GM_CAR, GMFlags
@@ -40,6 +41,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_standstill_stopped_lead_guard_distance_margin,
   get_standstill_stopped_lead_guard_max_lead_speed,
   get_stop_sign_low_speed_hold,
+  is_ford_f150_lightning_stopped_radar_follow_lead,
   get_tracked_lead_catchup_bias_cap,
   get_tracked_lead_catchup_bias_gain,
   get_tracked_lead_catchup_cruise_error_full,
@@ -652,6 +654,8 @@ def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False):
     model_version=model_version,
     vEgoStopping=0.5,
     radar_takeoffs=radar_takeoffs,
+    conditional_limit=0.0,
+    conditional_limit_lead=0.0,
   )
 
 
@@ -805,6 +809,22 @@ def test_lightning_stopped_lead_guard_tune_is_vehicle_specific():
   assert get_tracked_lead_catchup_bias_gain(lightning) == pytest.approx(1.0)
   assert get_tracked_lead_catchup_headway_margins(civic) is None
   assert get_tracked_lead_catchup_bias_gain(civic) is None
+
+
+def test_lightning_stopped_radar_lead_handoff_is_narrow_and_vehicle_specific():
+  lightning = FordCarInterface.get_non_essential_params(FORD_CAR.FORD_F_150_LIGHTNING_MK1)
+  civic = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  lead = make_lead(status=True, d_rel=17.2, v_lead=0.2, radar=True, model_prob=1.0, y_rel=0.1)
+
+  assert is_ford_f150_lightning_stopped_radar_follow_lead(lightning, lead, v_ego=2.6)
+  assert is_ford_f150_lightning_stopped_radar_follow_lead(lightning, lead, v_ego=0.0)
+  assert not is_ford_f150_lightning_stopped_radar_follow_lead(lightning, make_lead(
+    status=True, d_rel=18.1, v_lead=0.2, radar=True, model_prob=1.0, y_rel=0.1,
+  ), v_ego=2.6)
+  assert not is_ford_f150_lightning_stopped_radar_follow_lead(lightning, make_lead(
+    status=True, d_rel=17.2, v_lead=2.1, radar=True, model_prob=1.0, y_rel=0.1,
+  ), v_ego=2.6)
+  assert not is_ford_f150_lightning_stopped_radar_follow_lead(civic, lead, v_ego=2.6)
 
 
 def test_crv_tracked_lead_catchup_tune_is_vehicle_specific():
@@ -1753,6 +1773,50 @@ def test_acc_mode_low_speed_vision_stop_buffer_brakes_harder_for_close_slow_visi
   assert planner.mode == "acc"
   assert planner.output_should_stop
   assert planner.output_a_target <= -2.7
+
+
+def test_accord_low_speed_vision_stop_buffer_ignores_moving_stop_and_go_lead():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_ACCORD)
+  planner = LongitudinalPlanner(CP, init_v=3.43)
+  moving_lead = make_lead(
+    status=True, d_rel=7.3, v_lead=3.07, a_lead=0.23, radar=False, model_prob=1.0,
+  )
+
+  cap, active = planner.get_vision_low_speed_stop_buffer_cap(moving_lead, 3.43, -2.0)
+
+  assert cap is None
+  assert not active
+
+
+def test_accord_low_speed_vision_stop_buffer_keeps_stopped_lead_guard():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_ACCORD)
+  planner = LongitudinalPlanner(CP, init_v=3.43)
+  stopped_lead = make_lead(
+    status=True, d_rel=6.0, v_lead=0.0, a_lead=0.0, radar=False, model_prob=1.0,
+  )
+
+  cap, active = planner.get_vision_low_speed_stop_buffer_cap(stopped_lead, 3.43, -2.0)
+
+  assert cap is not None
+  assert active
+
+
+def test_accord_standstill_guard_waits_for_final_crawl():
+  accord = CarInterface.get_non_essential_params(CAR.HONDA_ACCORD)
+  civic = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  accord_planner = LongitudinalPlanner(accord, init_v=0.49)
+  civic_planner = LongitudinalPlanner(civic, init_v=0.49)
+  stopped_lead = make_lead(status=True, d_rel=7.3, v_lead=0.0, radar=False, model_prob=1.0)
+
+  assert accord_planner.get_standstill_stopped_lead_guard_cap(
+    stopped_lead, 0.49, -2.0, 5.5, False, False,
+  ) is None
+  assert civic_planner.get_standstill_stopped_lead_guard_cap(
+    stopped_lead, 0.49, -2.0, 5.5, False, False,
+  ) is not None
+  assert accord_planner.get_standstill_stopped_lead_guard_cap(
+    stopped_lead, 0.20, -2.0, 5.5, False, False,
+  ) is not None
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
@@ -3631,6 +3695,46 @@ def test_experimental_release_accel_transition_damps_moving_lead_handoff():
   )
 
   assert target == pytest.approx(0.09)
+
+
+def test_experimental_speed_handoff_weight_ramps_into_cespeed():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP)
+  toggles = make_toggles()
+  limit = 35.0 * CV.MPH_TO_MS
+  band = longitudinal_planner_module.EXPERIMENTAL_SPEED_HANDOFF_BAND
+  toggles.conditional_limit = limit
+
+  assert planner.get_experimental_speed_handoff_weight(limit - band - 1.0, True, False, toggles, False) == 0.0
+  assert planner.get_experimental_speed_handoff_weight(limit, True, False, toggles, False) == pytest.approx(1.0)
+  assert planner.get_experimental_speed_handoff_weight(limit - 0.5 * band, True, False, toggles, False) == pytest.approx(0.5)
+  assert planner.get_experimental_speed_handoff_weight(limit, True, False, toggles, True) == 0.0
+  assert planner.get_experimental_speed_handoff_weight(limit, False, False, toggles, False) == 0.0
+
+
+def test_experimental_speed_handoff_uses_lead_limit_when_following():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP)
+  toggles = make_toggles()
+  toggles.conditional_limit = 55.0 * CV.MPH_TO_MS
+  toggles.conditional_limit_lead = 20.0 * CV.MPH_TO_MS
+
+  assert planner.get_experimental_speed_handoff_weight(20.0 * CV.MPH_TO_MS, True, True, toggles, False) == pytest.approx(1.0)
+  assert planner.get_experimental_speed_handoff_weight(20.0 * CV.MPH_TO_MS, True, False, toggles, False) == 0.0
+
+
+def test_experimental_speed_handoff_keeps_stronger_e2e_brake():
+  kept = LongitudinalPlanner.apply_experimental_speed_handoff(-0.50, 0.20, -0.50, 1.0)
+  blended = LongitudinalPlanner.apply_experimental_speed_handoff(0.02, 0.40, 0.02, 0.5)
+
+  assert kept == pytest.approx(-0.50)
+  assert blended == pytest.approx(0.21)
+
+
+def test_experimental_speed_handoff_following_lead_matches_cem_window():
+  assert LongitudinalPlanner.is_cem_following_lead(True, 40.0, 1.5, 20.0)
+  assert not LongitudinalPlanner.is_cem_following_lead(True, 80.0, 1.5, 20.0)
+  assert not LongitudinalPlanner.is_cem_following_lead(False, 10.0, 1.5, 20.0)
 
 
 def test_experimental_release_accel_transition_does_not_mask_stopped_lead():

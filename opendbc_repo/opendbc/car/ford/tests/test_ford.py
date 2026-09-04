@@ -9,6 +9,7 @@ import pytest
 from opendbc.car import Bus, gen_empty_fingerprint
 from opendbc.can import CANPacker
 from opendbc.car.ford import fordcan
+from opendbc.car.ford.carcontroller import FordStockCruiseButton
 from opendbc.car.gps import FORD_MACH_E_GPS_MESSAGES, get_car_gps_config, parse_ford_can_gps
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
@@ -17,6 +18,24 @@ from opendbc.car.ford.values import CAR, FW_QUERY_CONFIG, FW_PATTERN, FordSafety
 from opendbc.car.ford.fingerprints import FW_VERSIONS
 
 Ecu = CarParams.Ecu
+
+
+def test_stock_cruise_button_latches_context_until_release():
+  button = FordStockCruiseButton()
+
+  assert button.update(True, cruise_available=True, cruise_enabled=True) == (True, False)
+  assert button.update(True, cruise_available=True, cruise_enabled=False) == (True, False)
+  assert button.update(False, cruise_available=True, cruise_enabled=False) == (False, False)
+
+  assert button.update(True, cruise_available=True, cruise_enabled=False) == (False, True)
+  assert button.update(True, cruise_available=True, cruise_enabled=True) == (False, True)
+  assert button.update(False, cruise_available=True, cruise_enabled=True) == (False, False)
+
+
+def test_stock_cruise_button_ignores_press_with_cruise_master_off():
+  button = FordStockCruiseButton()
+
+  assert button.update(True, cruise_available=False, cruise_enabled=False) == (False, False)
 
 
 ECU_ADDRESSES = {

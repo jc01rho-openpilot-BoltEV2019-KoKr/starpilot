@@ -4,7 +4,7 @@ from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarStateBase
-from opendbc.car.subaru.values import DBC, CanBus, SUBARU_STOP_START_CARS, SubaruFlags
+from opendbc.car.subaru.values import DBC, CanBus, SUBARU_AVH_CARS, SUBARU_STOP_START_CARS, SubaruFlags
 from opendbc.car import CanSignalRateCalculator
 
 
@@ -18,6 +18,8 @@ class CarState(CarStateBase):
     self.dashlights_msg = {}
     self.dashlights_dat = b""
     self.stop_start_state = 0
+    self.avh_msg = {}
+    self.avh_dat = b""
 
   def update(self, can_parsers, starpilot_toggles) -> structs.CarState:
     cp = can_parsers[Bus.pt]
@@ -32,6 +34,11 @@ class CarState(CarStateBase):
       self.dashlights_msg = copy.copy(stop_start_cp.vl["Dashlights"])
       self.dashlights_dat = stop_start_cp.vl_raw["Dashlights"]
       self.stop_start_state = stop_start_cp.vl["Engine_Stop_Start"]["STOP_START_STATE"]
+
+    if self.CP.carFingerprint in SUBARU_AVH_CARS:
+      avh_cp = cp_alt if self.CP.flags & SubaruFlags.GLOBAL_GEN2 else cp
+      self.avh_msg = copy.copy(avh_cp.vl["AVH"])
+      self.avh_dat = avh_cp.vl_raw["AVH"]
 
     throttle_msg = cp.vl["Throttle"] if not (self.CP.flags & SubaruFlags.HYBRID) else cp_alt.vl["Throttle_Hybrid"]
     ret.gasPressed = throttle_msg["Throttle_Pedal"] > 1e-5
@@ -156,10 +163,11 @@ class CarState(CarStateBase):
 
   @staticmethod
   def get_can_parsers(CP):
+    avh_messages = [("AVH", 0)] if CP.carFingerprint in SUBARU_AVH_CARS else []
     parsers = {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], [], CanBus.main_for_cp(CP)),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], CanBus.camera),
-      Bus.alt: CANParser(DBC[CP.carFingerprint][Bus.pt], [], CanBus.alt_for_cp(CP))
+      Bus.alt: CANParser(DBC[CP.carFingerprint][Bus.pt], avh_messages, CanBus.alt_for_cp(CP))
     }
     if CP.flags & SubaruFlags.D_PLATFORM:
       parsers[Bus.main] = CANParser(DBC[CP.carFingerprint][Bus.pt], [], CanBus.main)

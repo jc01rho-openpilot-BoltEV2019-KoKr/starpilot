@@ -513,7 +513,11 @@ class LatControlTorque(LatControl):
       elif ioniq_5_active:
         vehicle_friction_jerk_deadzone = get_ioniq_5_friction_jerk_deadzone(CS.vEgo, setpoint)
       elif prius_active:
-        vehicle_friction_jerk_deadzone = get_prius_friction_jerk_deadzone(CS.vEgo, setpoint)
+        prius_deadzone_max = (PRIUS_STANDARD_FRICTION_JERK_DEADZONE_MAX if self.is_standard_prius
+                              else PRIUS_FRICTION_JERK_DEADZONE_MAX)
+        vehicle_friction_jerk_deadzone = get_prius_friction_jerk_deadzone(
+          CS.vEgo, setpoint, prius_deadzone_max,
+        )
       elif genesis_g70_active:
         vehicle_friction_jerk_deadzone = get_genesis_g70_friction_jerk_deadzone(CS.vEgo, setpoint)
       elif self.is_genesis_gv70:

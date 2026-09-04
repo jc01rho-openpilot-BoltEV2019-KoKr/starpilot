@@ -4,7 +4,7 @@ from opendbc.car import Bus, DT_CTRL, make_tester_present_msg, structs
 from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_std_steer_angle_limits, apply_steer_angle_limits_vm, common_fault_avoidance
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.subaru import subarucan
-from opendbc.car.subaru.values import CAR, DBC, GLOBAL_ES_ADDR, SUBARU_STOP_START_CARS, CanBus, CarControllerParams, SubaruFlags
+from opendbc.car.subaru.values import CAR, DBC, GLOBAL_ES_ADDR, SUBARU_AVH_CARS, SUBARU_STOP_START_CARS, CanBus, CarControllerParams, SubaruFlags
 from opendbc.car.vehicle_model import VehicleModel
 
 # FIXME: These limits aren't exact. The real limit is more than likely over a larger time period and
@@ -37,6 +37,9 @@ _STOP_START_STARTUP_DELAY_FRAMES = 100
 _STOP_START_STARTUP_DEADLINE_FRAMES = 1000
 _STOP_START_PULSE_FRAMES = 30
 _STOP_START_PULSE_PERIOD_FRAMES = 5
+_AVH_STARTUP_DELAY_FRAMES = _STOP_START_STARTUP_DELAY_FRAMES
+_AVH_STARTUP_DEADLINE_FRAMES = _STOP_START_STARTUP_DEADLINE_FRAMES
+_AVH_PULSE_MESSAGES = 15  # Match the native 10 Hz AVH frame for roughly 1.5 seconds
 
 
 def get_safety_CP():
@@ -87,6 +90,10 @@ class CarController(CarControllerBase):
     self.stop_start_initial_state = None
     self.stop_start_counter = 0
     self.stop_start_acknowledged = False
+    self.avh_attempted = False
+    self.avh_request_started = False
+    self.avh_last_counter = None
+    self.avh_messages_sent = 0
 
   def _stop_start_off_request(self, CC, CS, starpilot_toggles):
     """Send one bounded Subaru Stop/Start OFF request after ignition.
@@ -141,6 +148,55 @@ class CarController(CarControllerBase):
       counter=self.stop_start_counter, bus=CanBus.alt_for_cp(self.CP),
     )
     self.stop_start_counter = (self.stop_start_counter + 1) % 0x10
+    return msg
+
+  def _avh_on_request(self, CC, CS, starpilot_toggles):
+    """Send a bounded Subaru AVH ON pulse after ignition.
+
+    The AVH button frame was identified on the 2025 Legacy only. Keep this
+    independent from Stop/Start so the existing Outback request is unchanged.
+    """
+    if self.CP.carFingerprint not in SUBARU_AVH_CARS or \
+       not getattr(starpilot_toggles, "subaru_avh_on", False) or self.avh_attempted:
+      return None
+
+    if self.frame > _AVH_STARTUP_DEADLINE_FRAMES or getattr(CC, "enabled", False):
+      self.avh_attempted = True
+      return None
+
+    if self.frame < _AVH_STARTUP_DELAY_FRAMES or not getattr(getattr(CS, "out", None), "canValid", True):
+      return None
+
+    out = CS.out
+    if not getattr(out, "standstill", False) or out.gearShifter not in (
+      structs.CarState.GearShifter.park,
+      structs.CarState.GearShifter.neutral,
+    ):
+      return None
+
+    avh_msg = getattr(CS, "avh_msg", None)
+    avh_dat = getattr(CS, "avh_dat", None)
+    if not avh_msg or not avh_dat:
+      return None
+
+    if not self.avh_request_started:
+      self.avh_request_started = True
+      self.avh_last_counter = int(avh_msg.get("COUNTER", 0)) % 0x10
+
+    if self.avh_messages_sent >= _AVH_PULSE_MESSAGES:
+      self.avh_attempted = True
+      return None
+
+    counter = int(avh_msg.get("COUNTER", 0)) % 0x10
+    if counter == self.avh_last_counter:
+      return None
+
+    msg = subarucan.create_avh_control(
+      self.packer, avh_msg, raw_dat=avh_dat,
+      counter=counter, bus=CanBus.alt_for_cp(self.CP),
+    )
+    self.avh_last_counter = counter
+    self.avh_messages_sent += 1
     return msg
 
   def _reset_legacy_2025_handoff(self):
@@ -415,6 +471,10 @@ class CarController(CarControllerBase):
     stop_start_msg = self._stop_start_off_request(CC, CS, starpilot_toggles)
     if stop_start_msg is not None:
       can_sends.append(stop_start_msg)
+
+    avh_msg = self._avh_on_request(CC, CS, starpilot_toggles)
+    if avh_msg is not None:
+      can_sends.append(avh_msg)
 
     # *** steering ***
     if (self.frame % self.p.STEER_STEP) == 0:

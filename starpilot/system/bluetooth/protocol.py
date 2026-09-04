@@ -1,9 +1,10 @@
 import json
 import os
 import socket
+import threading
 import time
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ A2DP_SINK_UUID = "0000110b-0000-1000-8000-00805f9b34fb"
 HID_UUID = "00001124-0000-1000-8000-00805f9b34fb"
 HOG_UUID = "00001812-0000-1000-8000-00805f9b34fb"
 COMMAND_TIMEOUTS = {
-  "set_power": 55.0,
+  "set_power": 90.0,
   "start_scan": 20.0,
   "stop_scan": 20.0,
   "connect": 35.0,
@@ -24,6 +25,7 @@ COMMAND_TIMEOUTS = {
   "forget": 20.0,
   "test_audio": 10.0,
 }
+TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -93,18 +95,130 @@ def device_capabilities(uuids: list[str] | tuple[str, ...], bluetooth_class: int
 
 
 def show_pairing_device(address: str, name: str, paired: bool, trusted: bool, connected: bool, blocked: bool,
-                        audio: bool, controller: bool) -> bool:
+                        audio: bool, controller: bool, discovering: bool = False) -> bool:
   known = paired or trusted or connected
-  named = bool(name) and name not in {address, "Unknown device"}
+  normalized_address = "".join(character for character in address.upper() if character.isalnum())
+  normalized_name = "".join(character for character in name.upper() if character.isalnum())
+  named = bool(name) and name != "Unknown device" and normalized_name != normalized_address
   return known or (named and not blocked and (audio or controller))
+
+
+class _DesktopFakeBluetooth:
+  """Small stateful fallback for desktop UI demos when bluetooth_managerd is absent."""
+  def __init__(self):
+    self._lock = threading.Lock()
+    self._enabled = True
+    self._discovering = False
+    self._selected_audio = "00:11:22:33:44:55"
+    self._devices = (
+      BluetoothDevice("00:11:22:33:44:55", "Bluetooth Speaker", paired=True, trusted=True, connected=True, audio=True, rssi=-34),
+      BluetoothDevice("AA:BB:CC:DD:EE:FF", "Game Controller", controller=True, rssi=-48),
+      BluetoothDevice("10:20:30:40:50:60", "Wireless Headphones", audio=True, rssi=-63),
+    )
+
+  def status(self) -> BluetoothStatus:
+    with self._lock:
+      return BluetoothStatus(
+        available=True,
+        enabled=self._enabled,
+        powered=self._enabled,
+        discovering=self._discovering,
+        # Desktop demos do not run bluetooth_managerd, so keep the mock usable from Settings.
+        offroad=True,
+        selected_audio=self._selected_audio,
+        devices=self._devices,
+      )
+
+  def _device_index(self, address: str) -> int:
+    normalized_address = address.upper()
+    for index, device in enumerate(self._devices):
+      if device.address.upper() == normalized_address:
+        return index
+    raise RuntimeError("Bluetooth device not found")
+
+  def _replace_device(self, address: str, **changes: Any) -> BluetoothDevice:
+    index = self._device_index(address)
+    device = replace(self._devices[index], **changes)
+    self._devices = (*self._devices[:index], device, *self._devices[index + 1:])
+    return device
+
+  def _require_enabled(self) -> None:
+    if not self._enabled:
+      raise RuntimeError("Enable Bluetooth before continuing")
+
+  def call(self, command: str, **payload: Any) -> dict[str, Any]:
+    with self._lock:
+      address = str(payload.get("address", ""))
+      if command == "set_power":
+        self._enabled = bool(payload.get("enabled", False))
+        self._discovering = False
+        if not self._enabled:
+          self._devices = tuple(replace(device, connected=False) for device in self._devices)
+      elif command == "start_scan":
+        self._require_enabled()
+        self._discovering = True
+      elif command == "stop_scan":
+        self._discovering = False
+      elif command == "pair":
+        self._require_enabled()
+        self._replace_device(address, paired=True, trusted=True)
+      elif command == "connect":
+        self._require_enabled()
+        device = self._devices[self._device_index(address)]
+        if not device.paired:
+          raise RuntimeError("Pair the Bluetooth device before connecting")
+        self._replace_device(address, connected=True)
+      elif command == "disconnect":
+        self._replace_device(address, connected=False)
+      elif command == "forget":
+        self._replace_device(address, paired=False, trusted=False, connected=False)
+        if self._selected_audio.upper() == address.upper():
+          self._selected_audio = ""
+      elif command == "select_audio":
+        if not address:
+          self._selected_audio = ""
+        else:
+          device = self._devices[self._device_index(address)]
+          if not device.audio:
+            raise RuntimeError("Selected device does not support Bluetooth audio")
+          self._selected_audio = device.address
+      elif command == "test_audio":
+        device = self._devices[self._device_index(address)]
+        if not device.audio:
+          raise RuntimeError("Selected device does not support Bluetooth audio")
+        if not device.paired or not device.connected:
+          raise RuntimeError("Connect the Bluetooth audio device before testing")
+        self._selected_audio = device.address
+        return {"audio_test_delay_ms": 3000}
+      elif command != "pairing_response":
+        raise RuntimeError(f"Unknown Bluetooth command: {command}")
+      return {}
 
 
 class BluetoothClient:
   def __init__(self, socket_path: str = BLUETOOTH_SOCKET_PATH, timeout: float = 5.0):
     self.socket_path = socket_path
     self.timeout = timeout
+    self._desktop_fake: _DesktopFakeBluetooth | None = None
+
+  def _get_desktop_fake(self) -> _DesktopFakeBluetooth | None:
+    if not (os.getenv("SP_ALLOW_DESKTOP_FAKE_BLUETOOTH", "0").lower() in TRUE_VALUES and
+            os.getenv("SIMULATION", "0").lower() in TRUE_VALUES and
+            os.getenv("NOBOARD", "0").lower() in TRUE_VALUES and
+            not os.path.exists(self.socket_path)):
+      return None
+    from openpilot.system.hardware import PC
+    if not PC:
+      return None
+    if self._desktop_fake is None:
+      self._desktop_fake = _DesktopFakeBluetooth()
+    return self._desktop_fake
 
   def call(self, command: str, **payload: Any) -> dict[str, Any]:
+    fake = self._get_desktop_fake()
+    if fake is not None:
+      return fake.call(command, **payload)
+
     request = json.dumps({"command": command, **payload}, separators=(",", ":")).encode() + b"\n"
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
       sock.settimeout(max(self.timeout, COMMAND_TIMEOUTS.get(command, 0.0)))
@@ -125,18 +239,9 @@ class BluetoothClient:
     return result
 
   def status(self) -> BluetoothStatus:
-    if os.getenv("SP_ALLOW_DESKTOP_FAKE_BLUETOOTH", "0") == "1" and not os.path.exists(self.socket_path):
-      return BluetoothStatus(
-        available=True,
-        enabled=True,
-        powered=True,
-        discovering=False,
-        offroad=True,
-        devices=(
-          BluetoothDevice("00:11:22:33:44:55", "Bluetooth Speaker", paired=True, connected=True, audio=True),
-          BluetoothDevice("AA:BB:CC:DD:EE:FF", "Game Controller", controller=True, rssi=-48),
-        ),
-      )
+    fake = self._get_desktop_fake()
+    if fake is not None:
+      return fake.status()
     if not os.path.exists(self.socket_path):
       params = Params()
       return BluetoothStatus(
@@ -152,11 +257,16 @@ class BluetoothClient:
     return asdict(status)
 
   def set_power(self, enabled: bool) -> None:
+    fake = self._get_desktop_fake()
+    if fake is not None:
+      fake.call("set_power", enabled=enabled)
+      return
+
     params = Params()
     bootstrap = enabled and not os.path.exists(self.socket_path)
     if bootstrap:
       params.put_bool("BluetoothEnabled", True)
-      deadline = time.monotonic() + max(self.timeout, 10.0)
+      deadline = time.monotonic() + max(self.timeout, 45.0)
       while not os.path.exists(self.socket_path):
         if time.monotonic() >= deadline:
           params.put_bool("BluetoothEnabled", False)

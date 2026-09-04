@@ -77,6 +77,15 @@ def test_controller_action_slots_are_separate_and_fixed_at_ten():
   assert wheel_controlsd.CONTROLLER_ACTIONS_PARAM != "StarPilotFavoriteSlots"
 
 
+def test_controller_action_options_include_vehicle_controls():
+  options = {option["key"]: option for option in wheel_controlsd.CONTROLLER_ACTION_OPTIONS}
+
+  assert options[wheel_controlsd.CONTROLLER_ACTION_BOOKMARK]["label"] == "Bookmark"
+  assert options[wheel_controlsd.CONTROLLER_ACTION_PULSE_AND_GLIDE]["label"] == "Pulse and Glide"
+  assert options[wheel_controlsd.CONTROLLER_ACTION_FORCE_COAST]["label"] == "Force Coasting"
+  assert options[wheel_controlsd.CONTROLLER_ACTION_TOGGLE_AOL]["label"] == "Toggle AOL"
+
+
 def test_joystick_selection_is_explicit_and_exclusive():
   params = FakeParams()
 
@@ -204,6 +213,28 @@ def test_controller_custom_actions_dispatch_their_own_payload(monkeypatch):
   assert selfies == [True]
 
 
+def test_controller_actions_trigger_runtime_counters():
+  params = FakeParams({
+    wheel_controlsd.CONTROLLER_ACTIONS_PARAM: [
+      {"enabled": True, "key": wheel_controlsd.CONTROLLER_ACTION_BOOKMARK, "label": "Bookmark"},
+      {"enabled": True, "key": wheel_controlsd.CONTROLLER_ACTION_PULSE_AND_GLIDE, "label": "Pulse and Glide"},
+      {"enabled": True, "key": wheel_controlsd.CONTROLLER_ACTION_FORCE_COAST, "label": "Force Coasting"},
+      {"enabled": True, "key": wheel_controlsd.CONTROLLER_ACTION_TOGGLE_AOL, "label": "Toggle AOL"},
+    ],
+  })
+  memory = FakeParams()
+
+  for index in range(4):
+    assert wheel_controlsd.execute_controller_action(index, params, memory)
+
+  assert memory.values == {
+    "WheelButtonBookmarkCounter": 1,
+    "WheelControlPulseGlideCounter": 1,
+    "WheelControlForceCoastCounter": 1,
+    "WheelControlAOLCounter": 1,
+  }
+
+
 def test_learning_accepts_the_tenth_controller_action():
   params = FakeParams({"IsOffroad": True})
   memory = FakeParams()
@@ -252,6 +283,22 @@ def test_only_key_down_is_dispatched(monkeypatch):
   daemon._read_events(read_fd)
 
   assert triggered == [0]
+  os.close(write_fd)
+  daemon.close()
+
+
+def test_stale_selector_event_after_controller_disconnect_is_ignored():
+  params = FakeParams({"IsOffroad": False})
+  memory = FakeParams()
+  daemon = wheel_controlsd.WheelControlsDaemon(params, memory)
+  read_fd, write_fd = os.pipe()
+  os.set_blocking(read_fd, False)
+  os.write(write_fd, wheel_controlsd.INPUT_EVENT.pack(0, 0, wheel_controlsd.EV_KEY, 30, 1))
+
+  daemon._read_events(read_fd)
+
+  assert read_fd not in daemon.sources
+  assert read_fd not in daemon.buffers
   os.close(write_fd)
   daemon.close()
 

@@ -1696,4 +1696,9 @@ FW_VERSIONS = {
       b'\xf1\x00BC3 LKA  AT EUR LHD 1.00 1.01 99211-Q0100 261',
     ],
   },
+  CAR.KIA_RAY_EV: {
+    (Ecu.fwdCamera, 0x7c4, None): [
+      b'\xf1\x00TAM MFC  AT KOR LHD 1.00 1.02 99211-E2000 230901',
+    ],
+  },
 }

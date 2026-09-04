@@ -1,12 +1,14 @@
 import { html, reactive } from "/assets/vendor/arrow-core.js"
 import { createBrowserHistory, createRouter } from "/assets/vendor/remix-router-1.3.1.js"
 import { hideSidebar } from "/assets/js/utils.js"
-import { Bluetooth } from "/assets/components/tools/bluetooth.js?v=bluetooth-4"
+import { Bluetooth } from "/assets/components/tools/bluetooth.js?v=bluetooth-live-15"
 import { WheelControls } from "/assets/components/tools/wheel_controls.js?v=controllers-2"
+import { DoorControl } from "/assets/components/tools/doors.js"
 const galaxyAssetVersion = encodeURIComponent(window.__GALAXY_ASSET_VERSION__ || Date.now())
 const { DeviceSettings } = await import(`/assets/components/tools/device_settings.js?v=${galaxyAssetVersion}`)
 import { ErrorLogs } from "/assets/components/tools/error_logs.js"
 import { VehicleFeatures } from "/assets/components/tools/vehicle_features.js"
+import { TSKManager } from "/assets/components/tools/tsk_manager.js"
 import { GalaxyPairing } from "/assets/components/tools/galaxy.js"
 import { Home } from "/assets/components/home/home.js"
 import { LongitudinalManeuvers } from "/assets/components/tools/longitudinal_maneuvers.js"
@@ -14,7 +16,7 @@ import { MapsManager } from "/assets/components/tools/maps.js"
 import { NavDestination } from "/assets/components/navigation/navigation_destination.js?v=nav-search-context-2"
 import { NavKeys } from "/assets/components/navigation/navigation_keys.js?v=app-keys-session-1"
 import { RouteRecordings } from "/assets/components/recordings/dashcam_routes.js"
-import { SettingsView } from "/assets/components/settings.js?v=router-cycle-fix-3"
+import { SettingsView } from "/assets/components/settings.js?v=router-cycle-fix-5"
 import { ScreenRecordings } from "/assets/components/recordings/screen_recordings.js"
 import { Sidebar } from "/assets/components/sidebar.js?v=controllers-nav-1"
 import { SentryMode } from "/assets/components/tools/sentry.js"
@@ -71,12 +73,15 @@ function Root() {
   let routes = [
     createRoute("bluetooth", "/bluetooth", Bluetooth),
     createRoute("wheel_controls", "/wheel-controls", WheelControls),
+    createRoute("doors", "/manage_doors", DoorControl),
+    createRoute("tsk", "/manage_tsk", TSKManager),
     createRoute("device_settings", "/device_settings/:section?", DeviceSettings),
     createRoute("errorLogs", "/manage_error_logs", ErrorLogs),
     createRoute("galaxy", "/galaxy", GalaxyPairing),
     createRoute("navdestination", "/set_navigation_destination", NavDestination),
     createRoute("navkeys", "/manage_navigation_keys", NavKeys),
     createRoute("root", "/", Home),
+    createRoute("classicRoot", "/classic", Home),
     createRoute("routes", "/dashcam_routes", RouteRecordings),
     createRoute("screen_recordings", "/screen_recordings", ScreenRecordings),
     createRoute("sentry", "/sentry", SentryMode),

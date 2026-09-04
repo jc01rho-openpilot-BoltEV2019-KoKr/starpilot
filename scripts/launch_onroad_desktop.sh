@@ -607,6 +607,27 @@ launch_python_ui() {
   UI_PIDS+=("$!")
 }
 
+configure_bluetooth_demo() {
+  case " ${UI_TARGETS[*]-} " in
+    *" c3 "*|*" c4 "*)
+      local fake_bluetooth="${SP_ONROAD_FAKE_BLUETOOTH:-}"
+      if [[ -z "${fake_bluetooth}" ]]; then
+        case " ${UI_TARGETS[*]-} " in
+          " c3 ") fake_bluetooth="${SP_C3_FAKE_BLUETOOTH:-1}" ;;
+          " c4 ") fake_bluetooth="${SP_C4_FAKE_BLUETOOTH:-1}" ;;
+          *) fake_bluetooth=1 ;;
+        esac
+      fi
+
+      if env_var_truthy "${fake_bluetooth}"; then
+        export SP_ALLOW_DESKTOP_FAKE_BLUETOOTH=1
+      else
+        export SP_ALLOW_DESKTOP_FAKE_BLUETOOTH=0
+      fi
+      ;;
+  esac
+}
+
 launch_control_bar() {
   local watch_pids="${UI_PIDS[*]}"
   (
@@ -673,6 +694,8 @@ if [[ "${REPLAY_ONLY}" != "1" && ${#UI_TARGETS[@]} -eq 0 ]]; then
   echo "Select at least one UI with --c3, --c4, or use --replay-only." >&2
   exit 1
 fi
+
+configure_bluetooth_demo
 
 echo "Preparing replay and desktop UI runtime..."
 

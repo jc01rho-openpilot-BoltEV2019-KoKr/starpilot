@@ -303,10 +303,35 @@ class TestGMInterface:
 
     assert car_params.openpilotLongitudinalControl
     assert not car_params.enableGasInterceptorDEPRECATED
+    assert car_params.minEnableSpeed == pytest.approx(0.0)
     assert list(car_params.longitudinalTuning.kpBP) == pytest.approx([0.0, 5.0, 15.0, 35.0])
     assert list(car_params.longitudinalTuning.kpV) == pytest.approx([0.02, 0.03, 0.028, 0.022])
     assert list(car_params.longitudinalTuning.kiBP) == pytest.approx([0.0, 5.0, 15.0, 35.0])
     assert list(car_params.longitudinalTuning.kiV) == pytest.approx([0.20, 0.18, 0.13, 0.08])
+
+  def test_silverado_camera_acc_allows_engage_from_stop(self):
+    CarInterface = interfaces[CAR.CHEVROLET_SILVERADO]
+    fingerprint = _empty_fingerprint()
+    fingerprint[0] = FINGERPRINTS[CAR.CHEVROLET_SILVERADO][0].copy()
+
+    car_params = CarInterface.get_params(CAR.CHEVROLET_SILVERADO, fingerprint, [], alpha_long=False, is_release=False,
+                                         docs=False, starpilot_toggles=_test_starpilot_toggles())
+
+    assert car_params.minEnableSpeed == pytest.approx(0.0)
+
+  def test_silverado_cc_allows_engage_from_stop(self):
+    CarInterface = interfaces[CAR.CHEVROLET_SILVERADO_CC]
+    car_params = CarInterface.get_params(
+      CAR.CHEVROLET_SILVERADO_CC,
+      _empty_fingerprint(),
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=_test_starpilot_toggles(),
+    )
+
+    assert car_params.minEnableSpeed == pytest.approx(0.0)
 
   def test_blazer_uses_softer_low_speed_stop_hold_tune(self):
     CarInterface = interfaces[CAR.CHEVROLET_BLAZER]
@@ -602,6 +627,13 @@ class TestGMCarController:
 
     assert not should_send_cc_button_spam(SimpleNamespace(flags=GMFlags.CC_LONG.value, minEnableSpeed=10.0), cc, cs)
     assert not should_send_cc_button_spam(SimpleNamespace(flags=0, minEnableSpeed=10.0), cc, cs)
+
+  def test_cc_button_spam_allows_standstill_when_min_enable_is_zero(self):
+    cp = SimpleNamespace(flags=GMFlags.CC_LONG.value, minEnableSpeed=0.0)
+    cc = SimpleNamespace(longActive=True)
+    cs = SimpleNamespace(out=SimpleNamespace(vEgo=0.0, cruiseState=SimpleNamespace(enabled=False)))
+
+    assert should_send_cc_button_spam(cp, cc, cs)
 
   def test_volt_cc_redneck_spam_is_mirrored_to_camera_bus(self):
     packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_CC][Bus.pt])

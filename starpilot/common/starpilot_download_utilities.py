@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from openpilot.starpilot.common.starpilot_utilities import delete_file, is_url_pingable
 from openpilot.starpilot.common.starpilot_variables import RESOURCES_REPO
 
-HF_BUCKET = os.getenv("STARPILOT_HF_BUCKET", "firestar4430/StarPilot-Resources")
+HF_BUCKET = os.getenv("STARPILOT_HF_BUCKET", "StarPilot-Driving/StarPilot-Resources")
 HF_BUCKET_URL = f"https://huggingface.co/buckets/{HF_BUCKET}/resolve"
 GITHUB_URL = f"https://raw.githubusercontent.com/{RESOURCES_REPO}"
 

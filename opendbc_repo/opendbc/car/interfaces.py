@@ -242,10 +242,16 @@ class CarInterfaceBase(ABC):
           if 0x1FA in fingerprint[CAN.ECAN]:
             fp_ret.flags |= HyundaiStarPilotFlags.SPEED_LIMIT_AVAILABLE.value
 
+        if not (CP.flags & HyundaiFlags.CANFD) and 0x53E in fingerprint[2]:
+          fp_ret.flags |= HyundaiStarPilotFlags.HAS_LKAS12.value
+
         fp_ret.redneckCruiseAvailable = bool(CP.flags & HyundaiFlags.NON_SCC) and not bool(CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS)
         if fp_ret.redneckCruiseAvailable and params.get_bool("RedneckCruise"):
           fp_ret.pcmCruiseSpeed = False
           CP.openpilotLongitudinalControl = True
+
+        if candidate == HYUNDAI.HYUNDAI_ELANTRA_HEV_2024 and CP.openpilotLongitudinalControl:
+          fp_ret.flags |= HyundaiStarPilotFlags.MAIN_CRUISE_STATE_TRACKING.value
 
         hyundai_has_lda_button = not (CP.flags & HyundaiFlags.CANFD) and (
           0x391 in fingerprint[0] or
@@ -261,11 +267,14 @@ class CarInterfaceBase(ABC):
 
         if candidate in (HYUNDAI.HYUNDAI_ELANTRA_HEV_2024, HYUNDAI.HYUNDAI_SONATA_HYBRID) and \
             getattr(starpilot_toggles, "always_on_lateral_main", False):
-          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
           fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_ON_ENGAGE.value
+          if candidate == HYUNDAI.HYUNDAI_SONATA_HYBRID:
+            fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
 
-        # LKASButtonControl == 9 means BUTTON_FUNCTIONS["AOL_TOGGLE"] in starpilot_variables.
-        if params.get_bool("AlwaysOnLateral") and params.get_int("LKASButtonControl") == 9:
+        # The refresh Elantra's safety mapping comes from the resolved Galaxy
+        # toggle above, not from this legacy persisted-parameter fallback.
+        if candidate != HYUNDAI.HYUNDAI_ELANTRA_HEV_2024 and \
+            params.get_bool("AlwaysOnLateral") and params.get_int("LKASButtonControl") == 9:
           fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
 
         if candidate == HYUNDAI.HYUNDAI_SONATA_HYBRID and getattr(starpilot_toggles, "always_on_lateral_lkas", False) and \
