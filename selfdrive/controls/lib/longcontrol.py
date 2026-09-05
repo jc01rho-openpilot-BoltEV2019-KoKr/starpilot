@@ -344,13 +344,17 @@ class LongControl:
       a_target = self.vehicle_tuning.shape_hyundai_elantra_lead_target(
         a_target, CS.vEgo, should_stop, leads,
       )
-      error = a_target - self._cruise_hold_error_aEgo(CS.aEgo, a_target)
+      requested_a_target = a_target
+      error_a_ego = self._cruise_hold_error_aEgo(CS.aEgo, requested_a_target)
+      a_target = self.vehicle_tuning.shape_bolt_cc_accel_target(a_target, CS.vEgo, should_stop, leads)
+      error = a_target - error_a_ego
+      requested_error = requested_a_target - error_a_ego
       self.update_mpc_mode(self.experimental_mode)
       self.vehicle_tuning.shape_volt_test_tune_integrator(self.pid, error, CS.vEgo)
       self.vehicle_tuning.trim_volt_cruise_integrator(
         self.pid, a_target, error, CS.vEgo, should_stop, has_lead,
       )
-      self._trim_positive_overshoot_integrator(a_target, error, CS)
+      self._trim_positive_overshoot_integrator(requested_a_target, requested_error, CS)
       self.vehicle_tuning.trim_gm_truck_positive_hold_integrator(
         self.pid, self.last_output_accel, a_target, error, CS,
       )
@@ -369,7 +373,7 @@ class LongControl:
       d_term = self._compute_d_term(CS.aEgo, CS.vEgo)
       raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward + d_term,
                                          freeze_integrator=freeze_integrator)
-      raw_output_accel = self._cap_positive_output_on_negative_target(raw_output_accel, a_target, error, CS)
+      raw_output_accel = self._cap_positive_output_on_negative_target(raw_output_accel, requested_a_target, requested_error, CS)
       raw_output_accel = self.vehicle_tuning.apply_pedal_long_brake_bias(raw_output_accel, a_target, CS)
       raw_output_accel = self.vehicle_tuning.apply_bolt_start_handoff_floor(
         raw_output_accel,

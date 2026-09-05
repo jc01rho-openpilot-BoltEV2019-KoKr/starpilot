@@ -43,6 +43,108 @@ def make_longcontrol_cp(**overrides):
   return CP
 
 
+@pytest.fixture
+def bolt_cc_cp():
+  return make_longcontrol_cp(
+    brand="gm", carFingerprint=CAR.CHEVROLET_BOLT_CC_2018_2021,
+    enableGasInterceptorDEPRECATED=True, flags=GMFlags.PEDAL_LONG.value,
+  )
+
+
+@pytest.mark.parametrize("target", [0.3, -0.3])
+def test_bolt_cc_target_filter_reduces_accel_and_decel_command_noise(bolt_cc_cp, target):
+  import numpy as np
+
+  smooth = LongControl(bolt_cc_cp)
+  reference = LongControl(bolt_cc_cp)
+  reference.vehicle_tuning.is_bolt_cc_pedal = False
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=target)
+  outputs = [[], []]
+  for frame in range(200):
+    noisy_target = target + 0.15 * np.sin(2.0 * np.pi * 5.0 * frame * DT_CTRL)
+    for controller, values in zip((smooth, reference), outputs):
+      values.append(controller.update(True, CS, noisy_target, False, (-3.5, 2.0), make_toggles()))
+
+  smooth_jerk = np.max(np.abs(np.diff(outputs[0][100:]))) / DT_CTRL
+  reference_jerk = np.max(np.abs(np.diff(outputs[1][100:]))) / DT_CTRL
+  assert smooth_jerk < reference_jerk * 0.5
+  assert np.mean(outputs[0][100:]) == pytest.approx(target, abs=0.01)
+
+
+@pytest.mark.parametrize("initial,target", [(0.1, 0.35), (-0.1, -0.35), (-0.35, -0.1)])
+def test_bolt_cc_target_filter_converges_without_overshoot(bolt_cc_cp, initial, target):
+  tuning = LongControl(bolt_cc_cp).vehicle_tuning
+  tuning.shape_bolt_cc_accel_target(initial, 20.0, False)
+  previous = initial
+  for _ in range(150):
+    value = tuning.shape_bolt_cc_accel_target(target, 20.0, False)
+    assert min(previous, target) <= value <= max(previous, target)
+    previous = value
+  assert value == pytest.approx(target, abs=0.001)
+
+
+@pytest.mark.parametrize("target", [-0.6, -2.5, -0.15])
+def test_bolt_cc_target_filter_passes_hard_braking_and_large_drops(bolt_cc_cp, target):
+  tuning = LongControl(bolt_cc_cp).vehicle_tuning
+  tuning.shape_bolt_cc_accel_target(0.3, 20.0, False)
+  assert tuning.shape_bolt_cc_accel_target(target, 20.0, False) == pytest.approx(target)
+
+
+@pytest.mark.parametrize("lead_changes", [{"dRel": 10.0}, {"vLead": 15.0}, {"aLeadK": -1.5}])
+@pytest.mark.parametrize("lead_index", [0, 1])
+def test_bolt_cc_target_filter_passes_urgent_request_from_either_lead(bolt_cc_cp, lead_changes, lead_index):
+  tuning = LongControl(bolt_cc_cp).vehicle_tuning
+  lead_data = {"status": True, "dRel": 50.0, "vLead": 20.0, "aLeadK": 0.0}
+  leads = [SimpleNamespace(**lead_data), SimpleNamespace(**lead_data)]
+  for key, value in lead_changes.items():
+    setattr(leads[lead_index], key, value)
+  tuning.shape_bolt_cc_accel_target(0.2, 20.0, False)
+  assert tuning.shape_bolt_cc_accel_target(-0.1, 20.0, False, leads) == pytest.approx(-0.1)
+
+
+def test_bolt_cc_smoothing_keeps_negative_target_overshoot_guards(bolt_cc_cp):
+  lc = LongControl(bolt_cc_cp)
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=1.0)
+  for _ in range(100):
+    lc.update(True, CS, 0.1, False, (-3.5, 2.0), make_toggles())
+  lc.pid.i = 1.0
+  output = lc.update(True, CS, -0.15, False, (-3.5, 2.0), make_toggles())
+
+  assert lc.vehicle_tuning.bolt_cc_filtered_a_target <= 0.0
+  assert lc.pid.i < 0.55
+  assert output <= 0.05
+
+
+@pytest.mark.parametrize("v_ego,should_stop", [(1.5, False), (20.0, True)])
+def test_bolt_cc_target_filter_drops_history_when_stopping_or_crawling(bolt_cc_cp, v_ego, should_stop):
+  tuning = LongControl(bolt_cc_cp).vehicle_tuning
+  tuning.shape_bolt_cc_accel_target(0.3, 20.0, False)
+  assert tuning.shape_bolt_cc_accel_target(-0.1, v_ego, should_stop) == pytest.approx(-0.1)
+  assert tuning.shape_bolt_cc_accel_target(0.25, 20.0, False) == pytest.approx(0.25)
+
+
+def test_bolt_cc_target_filter_resets_when_disengaged(bolt_cc_cp):
+  lc = LongControl(bolt_cc_cp)
+  CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0)
+  lc.update(True, CS, 0.3, False, (-3.5, 2.0), make_toggles())
+  assert lc.update(False, CS, 0.3, False, (-3.5, 2.0), make_toggles()) == 0.0
+  assert lc.update(True, CS, -0.15, False, (-3.5, 2.0), make_toggles()) == pytest.approx(-0.15)
+
+
+@pytest.mark.parametrize("overrides", [
+  {"enableGasInterceptorDEPRECATED": False},
+  {"flags": 0},
+  {"carFingerprint": CAR.CHEVROLET_VOLT},
+  {"carFingerprint": CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL},
+])
+def test_bolt_cc_target_filter_does_not_change_other_platforms(bolt_cc_cp, overrides):
+  for key, value in overrides.items():
+    setattr(bolt_cc_cp, key, value)
+  tuning = LongControl(bolt_cc_cp).vehicle_tuning
+  tuning.shape_bolt_cc_accel_target(0.3, 20.0, False)
+  assert tuning.shape_bolt_cc_accel_target(-0.1, 20.0, False) == pytest.approx(-0.1)
+
+
 class TestLongControlStateTransition:
 
   def test_stay_stopped(self):
