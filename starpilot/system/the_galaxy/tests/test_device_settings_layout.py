@@ -214,6 +214,7 @@ def test_requested_simple_and_advanced_settings_tiers():
         param for param in params
         if not param["key"].startswith("PIPPreview")
         and param["key"] != "DisableWideRoad"
+        and param["key"] != "HomeScreenName"
       ]
     assert {param["settings_tier"] for param in params} == {"simple"}
 
@@ -259,6 +260,8 @@ def test_requested_simple_and_advanced_settings_tiers():
   assert developer["DeveloperUI"]["settings_tier"] == "advanced"
   assert developer["RedneckCruise"]["settings_tier"] == "advanced"
   assert sections["Visual (Display & UI)"]["DisableWideRoad"]["settings_tier"] == "advanced"
+  assert sections["Visual (Display & UI)"]["HomeScreenName"]["settings_tier"] == "advanced"
+  assert sections["Visual (Display & UI)"]["HomeScreenName"]["max_length"] == 12
 
 
 def test_turn_steering_limit_mute_speed_is_galaxy_developer_only():
