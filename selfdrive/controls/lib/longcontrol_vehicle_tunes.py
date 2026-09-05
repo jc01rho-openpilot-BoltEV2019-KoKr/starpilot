@@ -19,6 +19,10 @@ BOLT_ACC_PEDAL_START_HANDOFF_FLOOR_BP = [0.0, 0.5, BOLT_ACC_PEDAL_START_HANDOFF_
 BOLT_ACC_PEDAL_START_HANDOFF_FLOOR_V = [0.22, 0.18, 0.10]
 NEGATIVE_TARGET_CREEP_GUARD_SPEED = 0.35
 NEGATIVE_TARGET_CREEP_GUARD_DECEL = 0.40
+BOLT_CC_TARGET_FILTER_MIN_SPEED = 2.0
+BOLT_CC_TARGET_FILTER_TAU = 0.16
+BOLT_CC_TARGET_FILTER_BRAKE_BYPASS = -0.60
+BOLT_CC_TARGET_FILTER_DROP_BYPASS = 0.40
 GM_TRUCK_TARGET_FILTER_MIN_SPEED = 12.0
 GM_TRUCK_TARGET_FILTER_UP_TAU = 0.20
 GM_TRUCK_TARGET_FILTER_DOWN_TAU = 0.14
@@ -115,6 +119,9 @@ class LongControlVehicleTuning:
     self.is_gm_pedal_long = bool(
       CP.brand == "gm" and CP.enableGasInterceptorDEPRECATED and (CP.flags & GMFlags.PEDAL_LONG.value)
     )
+    self.is_bolt_cc_pedal = self.is_gm_pedal_long and CP.carFingerprint in (
+      CAR.CHEVROLET_BOLT_CC_2017, CAR.CHEVROLET_BOLT_CC_2018_2021, CAR.CHEVROLET_BOLT_CC_2022_2023,
+    )
     self.is_volt = bool(
       CP.brand == "gm" and str(CP.carFingerprint).startswith("CHEVROLET_VOLT")
     )
@@ -159,6 +166,8 @@ class LongControlVehicleTuning:
   def reset(self):
     self.last_a_target = 0.0
     self.integrator_hold_frames = 0
+    self.bolt_cc_filtered_a_target = 0.0
+    self.bolt_cc_target_filter_initialized = False
     self.gm_truck_filtered_a_target = 0.0
     self.gm_truck_target_filter_initialized = False
     self.toyota_sienna_filtered_a_target = 0.0
@@ -251,6 +260,35 @@ class LongControlVehicleTuning:
                                BOLT_ACC_PEDAL_START_HANDOFF_FLOOR_V))
     target_floor = min(speed_floor, max(0.0, 0.4 * float(a_target)))
     return max(float(output_accel), min(float(last_output_accel), target_floor))
+
+  def shape_bolt_cc_accel_target(self, a_target, v_ego, should_stop, leads=None):
+    """Soften small pedal-target changes while preserving urgent deceleration."""
+    if not self.is_bolt_cc_pedal or should_stop or v_ego < BOLT_CC_TARGET_FILTER_MIN_SPEED:
+      self.bolt_cc_target_filter_initialized = False
+      return a_target
+
+    urgent_lead = any(
+      bool(getattr(lead, "status", False)) and (
+        float(getattr(lead, "dRel", 0.0)) < max(8.0, v_ego * 1.2) or
+        v_ego - float(getattr(lead, "vLead", 0.0)) > 4.0 or
+        float(getattr(lead, "aLeadK", 0.0)) < -1.0
+      )
+      for lead in (leads or ())
+    )
+    bypass_filter = (
+      urgent_lead or a_target <= BOLT_CC_TARGET_FILTER_BRAKE_BYPASS or
+      a_target < self.bolt_cc_filtered_a_target - BOLT_CC_TARGET_FILTER_DROP_BYPASS
+    )
+    if not self.bolt_cc_target_filter_initialized or bypass_filter:
+      self.bolt_cc_filtered_a_target = float(a_target)
+      self.bolt_cc_target_filter_initialized = True
+      return float(a_target)
+
+    self.bolt_cc_filtered_a_target += DT_CTRL / (BOLT_CC_TARGET_FILTER_TAU + DT_CTRL) * (float(a_target) - self.bolt_cc_filtered_a_target)
+    # A deceleration request must not retain a positive filtered target.
+    if a_target < 0.0:
+      self.bolt_cc_filtered_a_target = min(0.0, self.bolt_cc_filtered_a_target)
+    return self.bolt_cc_filtered_a_target
 
   def shape_gm_truck_accel_target(self, a_target, v_ego, should_stop):
     if not self.is_gm_stock_truck:
