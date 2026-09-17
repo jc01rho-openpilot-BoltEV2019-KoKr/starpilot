@@ -89,6 +89,38 @@ def test_galaxy_new_ui_is_the_visible_default_choice():
   assert "Galaxy (old)" in galaxy_default["description"]
 
 
+def test_driving_personality_controls_are_not_parked_only():
+  params = {
+    param["key"]: param
+    for section in _layout()
+    for param in section.get("params", [])
+  }
+  personality_keys = {
+    "CustomPersonalities",
+    *{f"{profile}PersonalityProfile" for profile in ("Traffic", "Aggressive", "Standard", "Relaxed")},
+    "TrafficFollow", "AggressiveFollow", "AggressiveFollowHigh", "StandardFollow", "StandardFollowHigh",
+    "RelaxedFollow", "RelaxedFollowHigh",
+    *{
+      f"{profile}{suffix}"
+      for profile in ("Traffic", "Aggressive", "Standard", "Relaxed")
+      for suffix in ("JerkAcceleration", "JerkDeceleration", "JerkDanger", "JerkSpeedDecrease", "JerkSpeed")
+    },
+  }
+
+  assert personality_keys <= params.keys()
+  assert all(params[key].get("requires_offroad") is not True for key in personality_keys)
+
+
+def test_pedal_feedback_wheel_uses_existing_pedal_toggle():
+  setting = _params_by_section(_layout())["Visual (Display & UI)"]["PedalsOnUI"]
+
+  assert _declared_default("PedalsOnUI") == "0"
+  assert setting["label"] == "Pedal-Responsive Wheel"
+  assert setting["settings_tier"] == "simple"
+  assert setting["ui_type"] == "toggle"
+  assert "ShowBrakeStatus" not in _params_by_section(_layout())["Visual (Display & UI)"]
+
+
 def test_ford_lateral_controls_are_ford_only_and_galaxy_only():
   lateral = _params_by_section(_layout())["Lateral (Steering)"]
   ford_keys = {
@@ -263,6 +295,15 @@ def test_requested_simple_and_advanced_settings_tiers():
         and param["key"] != "DisableWideRoad"
         and param["key"] != "HomeScreenName"
       ]
+    if section_name == "Device & Data":
+      params = [
+        param for param in params
+        if param["key"] not in {
+          "ScreenBrightness", "ScreenBrightnessOnroad", "StandbyWakeEngage",
+          "StandbyWakeDisengage", "StandbyWakeInfoAlert", "StandbyWakeWarningAlert",
+          "StandbyWakeCriticalAlert", "StandbyWakeTurnSignal", "StandbyWakeButton",
+        }
+      ]
     assert {param["settings_tier"] for param in params} == {"simple"}
 
   for key in ("AlwaysOnLateral", "LaneChanges", "QOLLateral"):
@@ -309,6 +350,16 @@ def test_requested_simple_and_advanced_settings_tiers():
   assert sections["Visual (Display & UI)"]["DisableWideRoad"]["settings_tier"] == "advanced"
   assert sections["Visual (Display & UI)"]["HomeScreenName"]["settings_tier"] == "advanced"
   assert sections["Visual (Display & UI)"]["HomeScreenName"]["max_length"] == 12
+
+  device = sections["Device & Data"]
+  assert device["ScreenBrightness"]["settings_tier"] == "advanced"
+  assert device["ScreenBrightnessOnroad"]["settings_tier"] == "advanced"
+  for key in (
+    "StandbyWakeEngage", "StandbyWakeDisengage", "StandbyWakeInfoAlert",
+    "StandbyWakeWarningAlert", "StandbyWakeCriticalAlert", "StandbyWakeTurnSignal",
+    "StandbyWakeButton",
+  ):
+    assert device[key]["settings_tier"] == "advanced"
 
 
 def test_turn_steering_limit_mute_speed_is_galaxy_developer_only():

@@ -123,7 +123,12 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
   else:
     lkas_values = copy.copy(control_values)
     lkas_values["LKA_AVAILABLE"] = 0
-    if CP.carFingerprint in (CAR.KIA_CARNIVAL_4TH_GEN, CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN):
+    if CP.carFingerprint in (
+      CAR.KIA_CARNIVAL_4TH_GEN,
+      CAR.KIA_CARNIVAL_2025,
+      CAR.KIA_CARNIVAL_HEV_4TH_GEN,
+      CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN,
+    ):
       lkas_values["DAMP_FACTOR"] = 100
 
   if lfa_base_values:
@@ -699,13 +704,13 @@ def create_ioniq_6_cluster_lane_change_messages(CAN, frame, side=None):
 
 def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_override, set_speed, hud_control,
                        main_mode_acc=1, jerk_lower=None, jerk_upper=None, direct_accel=False,
-                       lead_distance=None, lead_rel_speed=None, lead_visible=None, cruise_info=None):
+                       lead_distance=None, lead_rel_speed=None, lead_visible=None, cruise_info=None, raw_accel=None):
   jerk = 5
   jn = jerk / 50
   if not enabled or gas_override:
     a_val, a_raw = 0, 0
   elif direct_accel:
-    a_raw = accel
+    a_raw = accel if raw_accel is None else raw_accel
     a_val = accel
   else:
     a_raw = accel
