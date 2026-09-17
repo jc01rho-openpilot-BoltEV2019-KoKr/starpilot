@@ -20,6 +20,7 @@ from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.constants import CV
 from openpilot.starpilot.common.favorite_slots import FAVORITE_SLOT_COUNT
+from openpilot.starpilot.common.screen_settings import STANDBY_BUTTON_PRESS_PARAM
 
 
 MAPPINGS_PARAM = "WheelControlMappings"
@@ -370,7 +371,7 @@ def start_learning(slot: int, params_memory: Params | None = None, params: Param
 
 def cancel_learning(params_memory: Params | None = None, params: Params | None = None) -> None:
   (params_memory or Params(memory=True)).remove(LEARN_SLOT_PARAM)
-  if params is not None and not load_mappings(params):
+  if params is not None and params.get_bool(ENABLED_PARAM) and not load_mappings(params):
     params.put_bool(ENABLED_PARAM, False)
 
 
@@ -504,6 +505,7 @@ class WheelControlsDaemon:
     self.sources: dict[int, InputSource] = {}
     self.buffers: dict[int, bytearray] = {}
     self.hat_values: dict[tuple[int, int], int] = {}
+    self.pressed_keys: set[tuple[int, int]] = set()
     self.learning_slot: int | None = None
     self.learning_deadline = 0.0
     self.last_learned: dict[str, Any] | None = None
@@ -531,6 +533,7 @@ class WheelControlsDaemon:
     self.sources.pop(fd, None)
     self.buffers.pop(fd, None)
     self.hat_values = {key: value for key, value in self.hat_values.items() if key[0] != fd}
+    self.pressed_keys = {key for key in self.pressed_keys if key[0] != fd}
 
   def _scan_devices(self) -> None:
     current_paths = {source.path for source in self.sources.values()}
@@ -607,6 +610,9 @@ class WheelControlsDaemon:
       }
       return
 
+    # The daemon may also run only to wake the screen, with mapped actions disabled.
+    if not self.params.get_bool(ENABLED_PARAM):
+      return
     for mapping in mappings:
       if mapping["device_id"] == source.device_id and mapping["event_code"] == code:
         try:
@@ -636,13 +642,30 @@ class WheelControlsDaemon:
       raw = bytes(buffer[:INPUT_EVENT.size])
       del buffer[:INPUT_EVENT.size]
       _seconds, _microseconds, event_type, code, value = INPUT_EVENT.unpack(raw)
-      if event_type == EV_KEY and value == KEY_DOWN:
-        self._handle_key(source, code)
+      if event_type == EV_KEY:
+        key = (fd, code)
+        if value == 0:
+          self.pressed_keys.discard(key)
+        elif value == KEY_DOWN:
+          if key not in self.pressed_keys:
+            self.pressed_keys.add(key)
+            self._publish_button_press(time.monotonic_ns())
+          self._handle_key(source, code)
       elif event_type == EV_ABS and ABS_HAT0X <= code <= ABS_HAT3Y:
         previous = self.hat_values.get((fd, code), 0)
         self.hat_values[(fd, code)] = value
         if value and value != previous:
+          self._publish_button_press(time.monotonic_ns())
           self._handle_key(source, hat_event_code(code, value))
+
+  def _publish_button_press(self, timestamp: int) -> None:
+    try:
+      if not all(self.params.get_bool(key) for key in ("ScreenManagement", "StandbyMode", "StandbyWakeButton")):
+        return
+      self.params_memory.put_int(STANDBY_BUTTON_PRESS_PARAM, timestamp)
+    except Exception:
+      # A display notification must not interrupt existing controller actions.
+      cloudlog.exception("wheel controls: screen wake notification failed")
 
   def _publish_status(self, now: float) -> None:
     remaining = max(0, round(self.learning_deadline - now, 1)) if self.learning_slot is not None else 0

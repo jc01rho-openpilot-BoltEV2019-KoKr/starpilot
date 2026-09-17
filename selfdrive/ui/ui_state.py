@@ -13,7 +13,11 @@ from openpilot.selfdrive.ui.lib.prime_state import PrimeState
 from openpilot.selfdrive.ui.lib.ui_param_cache import shared_ui_params
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.starpilot.common.lateral_only_experimental import lateral_only_experimental_available
+from openpilot.starpilot.common.car_params_capability import capability_car_params_bytes
 from openpilot.system.hardware import HARDWARE, PC
+from openpilot.starpilot.common.screen_settings import (
+  alert_wake_key, brightness_preferences, calculate_screen_brightness, enabled_wake_keys, standby_button_press_time,
+)
 
 BACKLIGHT_OFFROAD = 65 if HARDWARE.get_device_type() == "mici" else 50
 
@@ -72,7 +76,8 @@ class UIState:
         "liveTracks",
         "liveDelay",
         "liveTorqueParameters",
-      ]
+      ],
+      drain_services=["carState"],
     )
 
     self.prime_state = PrimeState()
@@ -280,7 +285,7 @@ class UIState:
   def update_params(self) -> None:
     # For slower operations
     # Update longitudinal control state
-    CP_bytes = self.params.get("CarParamsPersistent")
+    CP_bytes = capability_car_params_bytes(self.params)
     if CP_bytes is not None:
       self.CP = messaging.log_from_bytes(CP_bytes, car.CarParams)
       if self.CP.alphaLongitudinalAvailable:
@@ -292,6 +297,8 @@ class UIState:
         lateral_only_experimental_available(self.CP)
       )
     else:
+      self.CP = None
+      self.has_longitudinal_control = False
       self.experimental_mode_available = False
     self._param_update_time = time.monotonic()
 
@@ -301,6 +308,9 @@ class Device:
 
   def __init__(self):
     self._ignition = False
+    self._last_button_press = standby_button_press_time(ui_state.params_memory)
+    self._last_car_button_frame = int(time.monotonic() * 1e9)
+    self._last_turn_signal = None
     self._interaction_time: float = -1
     self._override_interactive_timeout: int | None = None
     self._interactive_timeout_callbacks: list[Callable] = []
@@ -316,6 +326,8 @@ class Device:
     self._screen_timeout_onroad = 30
     self._standby_mode = False
     self._last_status = ui_state.status
+    self._screen_offset = self._screen_offset_onroad = 0
+    self._wake_keys = frozenset()
     self._refresh_screen_settings(force=True)
 
     self._offroad_brightness: int = BACKLIGHT_OFFROAD
@@ -378,6 +390,9 @@ class Device:
       self._screen_timeout,
       self._screen_timeout_onroad,
       self._standby_mode,
+      self._screen_offset,
+      self._screen_offset_onroad,
+      self._wake_keys,
     )
 
     self._screen_management = self._params.get_bool("ScreenManagement")
@@ -387,12 +402,17 @@ class Device:
       self._screen_timeout = self._params.get_int("ScreenTimeout", return_default=True)
       self._screen_timeout_onroad = self._params.get_int("ScreenTimeoutOnroad", return_default=True)
       self._standby_mode = self._params.get_bool("StandbyMode")
+      self._screen_offset = brightness_preferences(self._params, "ScreenBrightness")["offset"]
+      self._screen_offset_onroad = brightness_preferences(self._params, "ScreenBrightnessOnroad")["offset"]
+      self._wake_keys = frozenset(enabled_wake_keys(self._params))
     else:
       self._screen_brightness = 101
       self._screen_brightness_onroad = 101
       self._screen_timeout = 30
       self._screen_timeout_onroad = 30
       self._standby_mode = False
+      self._screen_offset = self._screen_offset_onroad = 0
+      self._wake_keys = frozenset()
 
     self._screen_settings_refresh_time = now
     current = (
@@ -402,6 +422,9 @@ class Device:
       self._screen_timeout,
       self._screen_timeout_onroad,
       self._standby_mode,
+      self._screen_offset,
+      self._screen_offset_onroad,
+      self._wake_keys,
     )
     if previous != current and self._interaction_time > 0:
       self._reset_interactive_timeout()
@@ -434,17 +457,16 @@ class Device:
 
       clipped_brightness = float(np.interp(clipped_brightness, [0, 1], [30, 100]))
 
-    brightness = round(self._brightness_filter.update(clipped_brightness))
-    if not self._awake:
-      brightness = 0
-    elif ui_state.started and self._standby_mode and time.monotonic() > self._interaction_time:
-      brightness = 0
-    elif ui_state.started and self._screen_brightness_onroad != 101:
-      brightness = max(5, self._screen_brightness_onroad) if time.monotonic() <= self._interaction_time else self._screen_brightness_onroad
-    elif not ui_state.started and self._screen_brightness != 101:
-      brightness = self._screen_brightness
-
-    return brightness
+    automatic = self._brightness_filter.update(clipped_brightness)
+    interactive = time.monotonic() <= self._interaction_time
+    return calculate_screen_brightness(
+      automatic,
+      self._screen_brightness_onroad if ui_state.started else self._screen_brightness,
+      self._screen_offset_onroad if ui_state.started else self._screen_offset,
+      interactive=interactive,
+      awake=self._awake,
+      standby_timed_out=ui_state.started and self._standby_mode and not interactive,
+    )
 
   def _update_wakefulness(self):
     # Handle interactive timeout
@@ -453,10 +475,16 @@ class Device:
 
     status_changed = ui_state.status != self._last_status and ui_state.status != UIStatus.OVERRIDE
     self._last_status = ui_state.status
+    status_key = "StandbyWakeEngage" if ui_state.status == UIStatus.ENGAGED else "StandbyWakeDisengage"
+    input_events = self._wake_input_events()
+    selected_status_change = status_changed and status_key in self._wake_keys
+    selected_turn_signal = bool(input_events & self._wake_keys)
+    button_pressed = (self._standby_mode and (ui_state.started or ui_state.ignition) and
+                      "StandbyWakeButton" in self._wake_keys and "button" in input_events)
     wake_for_onroad_event = (ui_state.started and self._standby_mode and self._screen_brightness_onroad != 0 and
-                             (status_changed or self._visible_onroad_alert()))
+                             (selected_status_change or self._visible_onroad_alert() or selected_turn_signal))
 
-    if ignition_state_changed or any(ev.left_down for ev in gui_app.mouse_events) or wake_for_onroad_event:
+    if ignition_state_changed or any(ev.left_down for ev in gui_app.mouse_events) or button_pressed or wake_for_onroad_event:
       self._reset_interactive_timeout()
 
     interaction_timeout = time.monotonic() > self._interaction_time
@@ -465,28 +493,63 @@ class Device:
         callback()
     self._prev_timed_out = interaction_timeout
 
-    self._set_awake(ui_state.ignition or not interaction_timeout or PC)
+    standby_active = ui_state.started and self._standby_mode
+    keep_display_awake = not interaction_timeout or PC
+    keep_display_awake |= ui_state.ignition and not standby_active
+    self._set_awake(keep_display_awake)
 
   @staticmethod
-  def _visible_onroad_alert() -> bool:
-    if not ui_state.started:
-      return False
-
+  def _fresh_message(name):
     sm = ui_state.sm
     try:
-      selfdrive_state = sm["selfdriveState"]
-      if selfdrive_state.alertSize != log.SelfdriveState.AlertSize.none:
-        return True
-      if selfdrive_state.alertStatus != log.SelfdriveState.AlertStatus.normal:
-        return True
+      return sm[name] if sm.alive[name] and sm.valid[name] else None
+    except (KeyError, AttributeError):
+      return None
+
+  def _wake_input_events(self):
+    button_time = standby_button_press_time(ui_state.params_memory)
+    button_pressed = button_time > self._last_button_press and 0 <= time.monotonic() - button_time / 1e9 < 2
+    self._last_button_press = button_time
+    events = {"button"} if button_pressed else set()
+    # Reuse the UI reader: another carState subscriber can exhaust msgq slots.
+    frames = getattr(ui_state.sm, "drained", {}).get("carState", []) if ui_state.started else []
+    now_ns = int(time.monotonic() * 1e9)
+    for message in frames:
+      timestamp = int(message.logMonoTime)
+      if not message.valid or not 0 <= now_ns - timestamp < 2_000_000_000 or timestamp <= self._last_car_button_frame:
+        continue
+      self._last_car_button_frame = timestamp
+      if any(event.pressed and str(event.type) not in ("unknown", "0") for event in message.carState.buttonEvents):
+        events.add("button")
+    car_state = self._fresh_message("carState") if ui_state.started else None
+    turn_signal = (int(car_state.leftBlinker) | (int(car_state.rightBlinker) << 1)) if car_state is not None else None
+    if self._last_turn_signal is not None and turn_signal and turn_signal != self._last_turn_signal:
+      events.add("StandbyWakeTurnSignal")
+    self._last_turn_signal = turn_signal
+    return events
+
+  def _active_standby_alerts(self):
+    # Match Dom's alert predicate and primary-message precedence. The toggle
+    # selects the category; it does not introduce another alert renderer.
+    if not ui_state.started:
+      return set()
+    try:
+      key = alert_wake_key(ui_state.sm["selfdriveState"])
+      if key is not None:
+        return {key}
     except Exception:
       pass
-
     try:
-      starpilot_state = sm["starpilotSelfdriveState"]
-      return getattr(starpilot_state.alertSize, "raw", 0) != 0
+      alert = ui_state.sm["starpilotSelfdriveState"]
+      if str(alert.alertSize) not in ("none", "0"):
+        key = alert_wake_key(alert)
+        return {key} if key is not None else set()
     except Exception:
-      return False
+      pass
+    return set()
+
+  def _visible_onroad_alert(self):
+    return bool(self._active_standby_alerts() & self._wake_keys)
 
   def _set_awake(self, on: bool):
     if on != self._awake:

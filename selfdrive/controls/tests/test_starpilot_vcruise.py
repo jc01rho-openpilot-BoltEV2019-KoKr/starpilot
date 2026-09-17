@@ -122,6 +122,44 @@ def test_active_slc_control_target_does_not_require_set_speed_limit():
   assert target == pytest.approx((48.0 * CV.MPH_TO_MS) - 0.4)
 
 
+@pytest.mark.parametrize(
+  ("slc_target_mph", "slc_offset_mph", "expected_v_cruise_mph"),
+  [
+    (30.0, 0.0, 30.0),
+    (25.0, 0.0, 25.0),
+    (24.0, 0.0, 24.0),
+    (20.0, 0.0, 20.0),
+    (15.0, 0.0, 15.0),
+    (0.0, 0.0, 35.0),
+    (20.0, 5.0, 25.0),
+  ],
+)
+def test_active_slc_target_constrains_vcruise_below_csc_minimum(slc_target_mph, slc_offset_mph, expected_v_cruise_mph):
+  _, vcruise = make_vcruise()
+  sm = make_sm(standstill=False)
+  toggles = make_toggles()
+  toggles.speed_limit_controller = True
+  toggles.is_metric = False
+  for index in range(1, 8):
+    setattr(toggles, f"speed_limit_offset{index}", slc_offset_mph * CV.MPH_TO_MS)
+
+  vcruise.slc.target = slc_target_mph * CV.MPH_TO_MS
+  vcruise.slc.source = "Dashboard"
+  vcruise.slc.update_limits = lambda *_args, **_kwargs: None
+  vcruise.slc.update_override = lambda *_args, **_kwargs: None
+
+  result = update_vcruise(
+    vcruise,
+    sm,
+    toggles,
+    now=10.0,
+    v_ego=35.0 * CV.MPH_TO_MS,
+    v_cruise=35.0 * CV.MPH_TO_MS,
+  )
+
+  assert result == pytest.approx(expected_v_cruise_mph * CV.MPH_TO_MS)
+
+
 def test_elantra_gets_lead_veto_margin_before_force_stop():
   assert get_lead_veto_distance(SimpleNamespace(carFingerprint="HYUNDAI_ELANTRA_2021")) == pytest.approx(90.0)
   assert get_lead_veto_distance(SimpleNamespace(carFingerprint="OTHER_CAR")) == pytest.approx(75.0)
@@ -1244,6 +1282,52 @@ def test_nav_turn_speed_control_slows_for_imminent_turn():
   assert result < 20.0
   assert result == pytest.approx(vcruise.nav_turn_target)
   assert result > 0.0
+
+
+def test_nav_turn_speed_control_begins_before_reported_intersection_approach():
+  _, vcruise = make_vcruise(nav_state={
+    "valid": True,
+    "maneuverType": "turn",
+    "maneuverModifier": "right",
+    "maneuverDistance": 111.0,
+    "nextManeuverType": "",
+    "nextManeuverModifier": "",
+    "nextManeuverDistance": 0.0,
+  })
+
+  toggles = make_toggles()
+  toggles.nav_longitudinal_allowed = True
+  result = vcruise.update(
+    controls_enabled=True,
+    now=0.0,
+    time_validated=True,
+    v_cruise=16.1,
+    v_ego=16.0,
+    sm=make_sm(standstill=False),
+    starpilot_toggles=toggles,
+  )
+
+  assert result < 16.1
+  assert result == pytest.approx(vcruise.nav_turn_target)
+
+
+def test_nav_turn_speed_control_starts_earlier_at_reported_route_cruise():
+  _, vcruise = make_vcruise(nav_state={
+    "valid": True,
+    "maneuverType": "turn",
+    "maneuverModifier": "right",
+    "maneuverDistance": 100.0,
+    "nextManeuverType": "",
+    "nextManeuverModifier": "",
+    "nextManeuverDistance": 0.0,
+  })
+
+  toggles = make_toggles()
+  toggles.nav_longitudinal_allowed = True
+  result = update_vcruise(vcruise, make_sm(standstill=False), toggles, now=0.0, v_ego=11.94, v_cruise=11.94)
+
+  assert result < 11.94
+  assert result == pytest.approx(vcruise.nav_turn_target)
 
 
 def test_nav_turn_speed_control_ignores_distant_turn():

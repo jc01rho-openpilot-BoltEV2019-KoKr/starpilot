@@ -7,6 +7,9 @@ class FakeParams:
   def __init__(self, **values):
     self.values = values
 
+  def get(self, key):
+    return self.values.get(key)
+
   def get_bool(self, key, **_kwargs):
     return bool(self.values.get(key, False))
 
@@ -31,6 +34,7 @@ def make_device(monkeypatch, **overrides):
   values.update(overrides)
   state = SimpleNamespace(
     ui_params=FakeParams(**values),
+    params_memory=FakeParams(),
     status=ui_state_module.UIStatus.DISENGAGED,
     started=False,
     ignition=False,
@@ -113,6 +117,32 @@ def test_standby_blanks_after_timeout_and_touch_wakes(monkeypatch):
   assert device._calculate_brightness() == 45
 
 
+def test_standby_powers_down_onroad_and_touch_wakes(monkeypatch):
+  now = 100.0
+  monkeypatch.setattr(ui_state_module.time, "monotonic", lambda: now)
+  monkeypatch.setattr(ui_state_module, "PC", False)
+  display_power = []
+  monkeypatch.setattr(ui_state_module.HARDWARE, "set_display_power", display_power.append)
+  device, state = make_device(monkeypatch, StandbyMode=True)
+  state.started = True
+  state.ignition = True
+  device._ignition = True
+  device._interaction_time = now - 1
+
+  device._update_wakefulness()
+
+  assert display_power == [False]
+  assert not device.awake
+  assert device._calculate_brightness() == 0
+
+  monkeypatch.setattr(ui_state_module.gui_app, "_mouse_events", [SimpleNamespace(left_down=True)])
+  device._update_wakefulness()
+
+  assert display_power == [False, True]
+  assert device.awake
+  assert device._calculate_brightness() == 45
+
+
 def test_hide_ui_blanks_after_timeout_and_touch_wakes(monkeypatch):
   now = 100.0
   monkeypatch.setattr(ui_state_module.time, "monotonic", lambda: now)
@@ -139,7 +169,7 @@ def test_standby_wakes_for_visible_alert(monkeypatch):
   state.ignition = True
   device._ignition = True
   device._interaction_time = now - 1
-  device._visible_onroad_alert = lambda: True
+  device._active_standby_alerts = lambda: {"StandbyWakeInfoAlert"}
 
   device._update_wakefulness()
 

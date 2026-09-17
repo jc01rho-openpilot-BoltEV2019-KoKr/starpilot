@@ -2,6 +2,7 @@ import { api, showSnackbar } from "../api.js"
 import { usePolling } from "../composables.js"
 import { GalaxyConfirm } from "../components/GalaxyModal.js"
 import { GalaxySection } from "../components/GalaxySection.js"
+import { GalaxySheet } from "../components/GalaxySheet.js"
 
 function b64ToBytes(value) {
   const padding = "=".repeat((4 - (value.length % 4)) % 4)
@@ -12,7 +13,7 @@ function b64ToBytes(value) {
 
 export const Sentry = {
   name: "Sentry",
-  components: { GalaxySection },
+  components: { GalaxySection, GalaxySheet },
   data() {
     return {
       loading: true,
@@ -28,14 +29,24 @@ export const Sentry = {
       liveBusy: false,
       deleteBusy: false,
       pushBusy: false,
+      selectedImage: null,
     }
   },
   created() {
     this.poll = usePolling(() => this.loadStatus(), { interval: 5000 })
     this.poll.start()
   },
-  mounted() { this.loadParams() },
-  beforeUnmount() { this.poll?.destroy() },
+  mounted() {
+    this.loadParams()
+    this._onKeydown = (event) => {
+      if (event.key === "Escape" && this.selectedImage) this.closeImage()
+    }
+    window.addEventListener("keydown", this._onKeydown)
+  },
+  beforeUnmount() {
+    this.poll?.destroy()
+    window.removeEventListener("keydown", this._onKeydown)
+  },
   computed: {
     statusText() { return String(this.status?.state || "unknown") },
     hasEvent() { return !!(this.event && this.event.eventId) },
@@ -128,6 +139,13 @@ export const Sentry = {
     liveImageUrl(url) {
       const cacheKey = encodeURIComponent(this.liveCapture?.capturedAt || "")
       return cacheKey ? `${url}?t=${cacheKey}` : url
+    },
+    openImage(src, alt) {
+      if (!src) return
+      this.selectedImage = { src: String(src), alt: String(alt || "Sentry capture") }
+    },
+    closeImage() {
+      this.selectedImage = null
     },
     async enablePush() {
       if (this.pushBusy) return
@@ -309,10 +327,11 @@ export const Sentry = {
           </div>
           <template v-if="Array.isArray(liveCapture.imageUrls) && liveCapture.imageUrls.length">
             <p class="gx-row__desc">Captured {{ liveCapture.capturedAt || 'just now' }}.</p>
-            <div style="display:flex; flex-wrap:wrap; gap:8px;">
-              <a v-for="(u, i) in liveCapture.imageUrls" :key="u + i" :href="liveImageUrl(u)" target="_blank" rel="noopener" style="flex:1 1 45%; min-width:120px;">
-                <img :src="liveImageUrl(u)" :alt="'Live Sentry camera ' + (i + 1)" style="width:100%; border-radius:8px; display:block;" />
-              </a>
+            <div class="gx-sentry-images">
+              <button v-for="(u, i) in liveCapture.imageUrls" :key="u + i" type="button" class="gx-sentry-image-button"
+                :aria-label="'Open Live Sentry camera ' + (i + 1)" @click="openImage(liveImageUrl(u), 'Live Sentry camera ' + (i + 1))">
+                <img :src="liveImageUrl(u)" :alt="'Live Sentry camera ' + (i + 1)" />
+              </button>
             </div>
           </template>
           <p v-else class="gx-empty">No live snapshot captured yet.</p>
@@ -341,10 +360,11 @@ export const Sentry = {
             </div>
             <p style="margin:8px 0;"><strong>{{ event.message || 'Movement detected while parked.' }}</strong></p>
             <template v-if="Array.isArray(event.imageUrls) && event.imageUrls.length">
-              <div style="display:flex; flex-wrap:wrap; gap:8px;">
-                <a v-for="(u, i) in event.imageUrls" :key="u + i" :href="u" target="_blank" rel="noopener" style="flex:1 1 45%; min-width:120px;">
-                  <img :src="u" :alt="'Sentry capture ' + (i + 1)" loading="lazy" style="width:100%; border-radius:8px; display:block;" />
-                </a>
+              <div class="gx-sentry-images">
+                <button v-for="(u, i) in event.imageUrls" :key="u + i" type="button" class="gx-sentry-image-button"
+                  :aria-label="'Open Sentry capture ' + (i + 1)" @click="openImage(u, 'Sentry capture ' + (i + 1))">
+                  <img :src="u" :alt="'Sentry capture ' + (i + 1)" loading="lazy" />
+                </button>
               </div>
             </template>
             <p v-else-if="event.kind === 'power_off'" class="gx-empty">Power-off alerts do not include camera captures because the device is shutting down.</p>
@@ -368,10 +388,11 @@ export const Sentry = {
                 </div>
                 <p style="margin:8px 0;"><strong>{{ ev.message || 'Movement detected while parked.' }}</strong></p>
                 <template v-if="Array.isArray(ev.imageUrls) && ev.imageUrls.length">
-                  <div style="display:flex; flex-wrap:wrap; gap:8px;">
-                    <a v-for="(u, i) in ev.imageUrls" :key="u + i" :href="u" target="_blank" rel="noopener" style="flex:1 1 45%; min-width:120px;">
-                      <img :src="u" :alt="'Sentry capture ' + (i + 1)" loading="lazy" style="width:100%; border-radius:8px; display:block;" />
-                    </a>
+                  <div class="gx-sentry-images">
+                    <button v-for="(u, i) in ev.imageUrls" :key="u + i" type="button" class="gx-sentry-image-button"
+                      :aria-label="'Open Sentry capture ' + (i + 1)" @click="openImage(u, 'Sentry capture ' + (i + 1))">
+                      <img :src="u" :alt="'Sentry capture ' + (i + 1)" loading="lazy" />
+                    </button>
                   </div>
                 </template>
                 <p v-else class="gx-empty">No camera images were available for this event.</p>
@@ -381,6 +402,11 @@ export const Sentry = {
           </div>
         </div>
       </GalaxySection>
+
+      <GalaxySheet :open="!!selectedImage" :title="selectedImage?.alt || ''" icon="bi-camera"
+        scrim-class="gx-scrim--image-viewer" sheet-class="gx-image-viewer" @close="closeImage">
+        <img class="gx-image-viewer__image" :src="selectedImage?.src" :alt="selectedImage?.alt || ''" />
+      </GalaxySheet>
     </div>
   `,
 }

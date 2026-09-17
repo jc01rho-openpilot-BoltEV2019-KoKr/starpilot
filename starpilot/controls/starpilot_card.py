@@ -31,6 +31,16 @@ from openpilot.starpilot.system.wheel_controls import (
 )
 
 HYUNDAI_MAIN_CRUISE_AOL_CONFIRM_TIMEOUT_FRAMES = 100
+AOL_NON_BLOCKING_IMMEDIATE_DISABLE_ALERTS = {
+  f"speedTooLow/{ET.IMMEDIATE_DISABLE}",
+}
+
+
+def aol_blocked_by_immediate_disable(*alert_types) -> bool:
+  return any(
+    ET.IMMEDIATE_DISABLE in alert_type and alert_type not in AOL_NON_BLOCKING_IMMEDIATE_DISABLE_ALERTS
+    for alert_type in alert_types
+  )
 
 
 class StarPilotCard:
@@ -49,11 +59,11 @@ class StarPilotCard:
     self.accel_pressed = False
     self.always_on_lateral_allowed = False
     hyundai_flags = getattr(self.CP, "flags", 0)
-    kia_forte_non_scc = (
+    self.kia_forte_non_scc = (
       getattr(self.CP, "carFingerprint", None) in (HYUNDAI_CAR.KIA_FORTE_2019_NON_SCC, HYUNDAI_CAR.KIA_FORTE_2021_NON_SCC) and
       bool(hyundai_flags & HyundaiFlags.NON_SCC)
     )
-    hyundai_aol_before_engagement = kia_forte_non_scc or getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.GENESIS_G90
+    hyundai_aol_before_engagement = self.kia_forte_non_scc or getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.GENESIS_G90
     self.hyundai_preserve_aol_across_reverse = getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.HYUNDAI_SONATA_HYBRID
     self.hyundai_aol_needs_engagement = (
       self.CP.brand == "hyundai" and not (hyundai_flags & HyundaiFlags.CANFD) and not hyundai_aol_before_engagement
@@ -249,6 +259,7 @@ class StarPilotCard:
       getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.GENESIS_G70_2020
       and starpilot_toggles.main_cruise_aol_toggle
     )
+    forte_main_cruise_aol_managed = self.kia_forte_non_scc and starpilot_toggles.main_cruise_aol_toggle
 
     if carState.gearShifter in NON_DRIVING_GEARS or not g70_main_cruise_aol_managed:
       self.g70_main_cruise_aol_pending = False
@@ -282,7 +293,7 @@ class StarPilotCard:
               # Wait for that state change before sending active LKAS11 torque.
               self.g70_main_cruise_aol_pending = True
               self.g70_main_cruise_aol_pending_frames = 0
-            else:
+            elif not forte_main_cruise_aol_managed:
               self.always_on_lateral_allowed = not self.always_on_lateral_allowed
           elif starpilot_toggles.main_cruise_slc_adopt and starpilot_toggles.speed_limit_controller:
             self.params_memory.put_bool("SLCAdoptSpeedLimit", True)
@@ -305,6 +316,9 @@ class StarPilotCard:
         if self.g70_main_cruise_aol_pending_frames >= HYUNDAI_MAIN_CRUISE_AOL_CONFIRM_TIMEOUT_FRAMES:
           self.g70_main_cruise_aol_pending = False
           self.g70_main_cruise_aol_pending_frames = 0
+
+    if forte_main_cruise_aol_managed:
+      self.always_on_lateral_allowed = carState.cruiseState.available
 
     if starpilot_toggles.always_on_lateral_main and not button_managed_aol:
       car_fingerprint = getattr(self.CP, "carFingerprint", None)
@@ -338,8 +352,9 @@ class StarPilotCard:
     self.always_on_lateral_enabled &= not hyundai_aol_needs_engagement or self.hyundai_aol_ready
     self.always_on_lateral_enabled &= sm["starpilotPlan"].lateralCheck
     self.always_on_lateral_enabled &= sm["liveCalibration"].calPerc >= 1
-    alert_types = sm["selfdriveState"].alertType + sm["starpilotSelfdriveState"].alertType
-    self.always_on_lateral_enabled &= ET.IMMEDIATE_DISABLE not in alert_types
+    self.always_on_lateral_enabled &= not aol_blocked_by_immediate_disable(
+      sm["selfdriveState"].alertType, sm["starpilotSelfdriveState"].alertType,
+    )
     self.always_on_lateral_enabled &= not (carState.brakePressed and carState.vEgo < starpilot_toggles.always_on_lateral_pause_speed) or carState.standstill
     self.always_on_lateral_enabled &= not self.error_log.is_file()
 

@@ -11,6 +11,7 @@ from opendbc.car.toyota import toyotacan
 from opendbc.car.toyota.carcontroller import CarController, get_camry_hybrid_feedforward, get_long_tune, get_prius_feedforward, \
                                              get_prius_positive_feedforward_scale, \
                                              get_rav4_interceptor_pedal_scale, \
+                                             get_toyota_lat_active, \
                                              limit_interceptor_pcm_accel, \
                                              limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
                                              limit_prius_stopping_accel, should_bypass_toyota_long_pid, supports_toyota_auto_hold, \
@@ -734,6 +735,15 @@ class TestToyotaFingerprint:
 
 
 class TestToyotaCarController:
+  def test_corolla_tss2_hands_off_immediately_when_driver_is_steering(self):
+    assert not get_toyota_lat_active(CAR.TOYOTA_COROLLA_TSS2, True, 117, True)
+
+  def test_corolla_tss2_stays_active_without_driver_input(self):
+    assert get_toyota_lat_active(CAR.TOYOTA_COROLLA_TSS2, True, 99, False)
+
+  def test_toyota_driver_handoff_behavior_is_corolla_only(self):
+    assert get_toyota_lat_active(CAR.TOYOTA_RAV4_TSS2, True, 117, True)
+
   @staticmethod
   def _make_controller(*, standstill_req=False, last_standstill=False):
     controller = CarController.__new__(CarController)

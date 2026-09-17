@@ -1238,7 +1238,6 @@
       },
       {
         "key": "CustomPersonalities",
-        "requires_offroad": true,
         "label": "Driving Personalities",
         "description": "Customize braking, acceleration, and following distance for each profile.",
         "picker_description": "Customizes driving personalities to match your style.",
@@ -1249,7 +1248,6 @@
       },
       {
         "key": "TrafficPersonalityProfile",
-        "requires_offroad": true,
         "label": "Traffic Mode",
         "description": "Customize the \"Traffic Mode\" personality profile. Designed for stop-and-go driving.",
         "picker_description": "Customizes Traffic Mode for stop-and-go driving.",
@@ -1261,7 +1259,6 @@
       },
       {
         "key": "AggressivePersonalityProfile",
-        "requires_offroad": true,
         "label": "Aggressive",
         "description": "Customize the \"Aggressive\" personality profile. Designed for assertive driving with tighter gaps.",
         "picker_description": "Customizes Aggressive Mode for assertive driving.",
@@ -1273,7 +1270,6 @@
       },
       {
         "key": "StandardPersonalityProfile",
-        "requires_offroad": true,
         "label": "Standard",
         "description": "Customize the \"Standard\" personality profile. Designed for balanced driving with moderate gaps.",
         "picker_description": "Customizes Standard Mode for balanced driving.",
@@ -1285,7 +1281,6 @@
       },
       {
         "key": "RelaxedPersonalityProfile",
-        "requires_offroad": true,
         "label": "Relaxed",
         "description": "Customize the \"Relaxed\" personality profile. Designed for smoother, more comfortable driving with larger gaps.",
         "picker_description": "Customizes Relaxed Mode for smoother driving.",
@@ -1297,7 +1292,6 @@
       },
       {
         "key": "TrafficFollow",
-        "requires_offroad": true,
         "label": "Following Distance",
         "description": "The minimum following distance to the lead vehicle. openpilot blends between this value and the \"Relaxed\" profile as speed increases. Increase for more space; decrease for tighter gaps.",
         "data_type": "float",
@@ -1310,7 +1304,6 @@
       },
       {
         "key": "TrafficJerkAcceleration",
-        "requires_offroad": true,
         "label": "Acceleration Smoothness",
         "description": "How smoothly openpilot accelerates. Increase for gentler starts; decrease for faster but more abrupt takeoffs.",
         "data_type": "float",
@@ -1323,7 +1316,6 @@
       },
       {
         "key": "TrafficJerkDeceleration",
-        "requires_offroad": true,
         "label": "Braking Smoothness",
         "description": "How smoothly openpilot brakes. Increase for gentler stops; decrease for quicker but sharper braking.",
         "data_type": "float",
@@ -1336,7 +1328,6 @@
       },
       {
         "key": "TrafficJerkDanger",
-        "requires_offroad": true,
         "label": "Safety Gap Bias",
         "description": "How much extra space openpilot keeps from the vehicle ahead. Increase for larger gaps and more cautious following; decrease for tighter gaps and closer following.",
         "data_type": "float",
@@ -1349,7 +1340,6 @@
       },
       {
         "key": "TrafficJerkSpeedDecrease",
-        "requires_offroad": true,
         "label": "Slowdown Response",
         "description": "How smoothly openpilot slows down. Increase for more gradual deceleration; decrease for faster but sharper slowdowns.",
         "data_type": "float",
@@ -1362,7 +1352,6 @@
       },
       {
         "key": "TrafficJerkSpeed",
-        "requires_offroad": true,
         "label": "Speed-Up Response",
         "description": "How smoothly openpilot speeds up. Increase for more gradual acceleration; decrease for quicker but more jolting acceleration.",
         "data_type": "float",
@@ -1375,7 +1364,6 @@
       },
       {
         "key": "AggressiveFollow",
-        "requires_offroad": true,
         "label": "Following Distance",
         "description": "How many seconds openpilot follows behind lead vehicles when using the \"Aggressive\" profile. Increase for more space; decrease for tighter gaps.\n\nDefault: 1.25 seconds.",
         "data_type": "float",
@@ -1388,7 +1376,6 @@
       },
       {
         "key": "AggressiveFollowHigh",
-        "requires_offroad": true,
         "label": "High Speed Following Distance",
         "description": "Following distance for higher speeds in the \"Aggressive\" profile. openpilot smoothly blends from the base value to this value as speed rises.",
         "data_type": "float",
@@ -1401,7 +1388,6 @@
       },
       {
         "key": "AggressiveJerkAcceleration",
-        "requires_offroad": true,
         "label": "Acceleration Smoothness",
         "description": "How smoothly openpilot accelerates. Increase for gentler starts; decrease for faster but more abrupt takeoffs.",
         "data_type": "float",
@@ -1414,7 +1400,6 @@
       },
       {
         "key": "AggressiveJerkDeceleration",
-        "requires_offroad": true,
         "label": "Braking Smoothness",
         "description": "How smoothly openpilot brakes. Increase for gentler stops; decrease for quicker but sharper braking.",
         "data_type": "float",
@@ -1427,7 +1412,6 @@
       },
       {
         "key": "AggressiveJerkDanger",
-        "requires_offroad": true,
         "label": "Safety Gap Bias",
         "description": "How much extra space openpilot keeps from the vehicle ahead. Increase for larger gaps and more cautious following; decrease for tighter gaps and closer following.",
         "data_type": "float",
@@ -1440,7 +1424,6 @@
       },
       {
         "key": "AggressiveJerkSpeedDecrease",
-        "requires_offroad": true,
         "label": "Slowdown Response",
         "description": "How smoothly openpilot slows down. Increase for more gradual deceleration; decrease for faster but sharper slowdowns.",
         "data_type": "float",
@@ -1453,7 +1436,6 @@
       },
       {
         "key": "AggressiveJerkSpeed",
-        "requires_offroad": true,
         "label": "Speed-Up Response",
         "description": "How smoothly openpilot speeds up. Increase for more gradual acceleration; decrease for quicker but more jolting acceleration.",
         "data_type": "float",
@@ -1466,7 +1448,6 @@
       },
       {
         "key": "StandardFollow",
-        "requires_offroad": true,
         "label": "Following Distance",
         "description": "How many seconds openpilot follows behind lead vehicles when using the \"Standard\" profile. Increase for more space; decrease for tighter gaps.\n\nDefault: 1.45 seconds.",
         "data_type": "float",
@@ -1479,7 +1460,6 @@
       },
       {
         "key": "StandardFollowHigh",
-        "requires_offroad": true,
         "label": "High Speed Following Distance",
         "description": "Following distance for higher speeds in the \"Standard\" profile. openpilot smoothly blends from the base value to this value as speed rises.",
         "data_type": "float",
@@ -1492,7 +1472,6 @@
       },
       {
         "key": "StandardJerkAcceleration",
-        "requires_offroad": true,
         "label": "Acceleration Smoothness",
         "description": "How smoothly openpilot accelerates. Increase for gentler starts; decrease for faster but more abrupt takeoffs.",
         "data_type": "float",
@@ -1505,7 +1484,6 @@
       },
       {
         "key": "StandardJerkDeceleration",
-        "requires_offroad": true,
         "label": "Braking Smoothness",
         "description": "How smoothly openpilot brakes. Increase for gentler stops; decrease for quicker but sharper braking.",
         "data_type": "float",
@@ -1518,7 +1496,6 @@
       },
       {
         "key": "StandardJerkDanger",
-        "requires_offroad": true,
         "label": "Safety Gap Bias",
         "description": "How much extra space openpilot keeps from the vehicle ahead. Increase for larger gaps and more cautious following; decrease for tighter gaps and closer following.",
         "data_type": "float",
@@ -1531,7 +1508,6 @@
       },
       {
         "key": "StandardJerkSpeedDecrease",
-        "requires_offroad": true,
         "label": "Slowdown Response",
         "description": "How smoothly openpilot slows down. Increase for more gradual deceleration; decrease for faster but sharper slowdowns.",
         "data_type": "float",
@@ -1544,7 +1520,6 @@
       },
       {
         "key": "StandardJerkSpeed",
-        "requires_offroad": true,
         "label": "Speed-Up Response",
         "description": "How smoothly openpilot speeds up. Increase for more gradual acceleration; decrease for quicker but more jolting acceleration.",
         "data_type": "float",
@@ -1557,7 +1532,6 @@
       },
       {
         "key": "RelaxedFollow",
-        "requires_offroad": true,
         "label": "Following Distance",
         "description": "How many seconds openpilot follows behind lead vehicles when using the \"Relaxed\" profile. Increase for more space; decrease for tighter gaps.\n\nDefault: 1.6 seconds.",
         "data_type": "float",
@@ -1570,7 +1544,6 @@
       },
       {
         "key": "RelaxedFollowHigh",
-        "requires_offroad": true,
         "label": "High Speed Following Distance",
         "description": "Following distance for higher speeds in the \"Relaxed\" profile. openpilot smoothly blends from the base value to this value as speed rises.",
         "data_type": "float",
@@ -1583,7 +1556,6 @@
       },
       {
         "key": "RelaxedJerkAcceleration",
-        "requires_offroad": true,
         "label": "Acceleration Smoothness",
         "description": "How smoothly openpilot accelerates. Increase for gentler starts; decrease for faster but more abrupt takeoffs.",
         "data_type": "float",
@@ -1596,7 +1568,6 @@
       },
       {
         "key": "RelaxedJerkDeceleration",
-        "requires_offroad": true,
         "label": "Braking Smoothness",
         "description": "How smoothly openpilot brakes. Increase for gentler stops; decrease for quicker but sharper braking.",
         "data_type": "float",
@@ -1609,7 +1580,6 @@
       },
       {
         "key": "RelaxedJerkDanger",
-        "requires_offroad": true,
         "label": "Safety Gap Bias",
         "description": "How much extra space openpilot keeps from the vehicle ahead. Increase for larger gaps and more cautious following; decrease for tighter gaps and closer following.",
         "data_type": "float",
@@ -1622,7 +1592,6 @@
       },
       {
         "key": "RelaxedJerkSpeedDecrease",
-        "requires_offroad": true,
         "label": "Slowdown Response",
         "description": "How smoothly openpilot slows down. Increase for more gradual deceleration; decrease for faster but sharper slowdowns.",
         "data_type": "float",
@@ -1635,7 +1604,6 @@
       },
       {
         "key": "RelaxedJerkSpeed",
-        "requires_offroad": true,
         "label": "Speed-Up Response",
         "description": "How smoothly openpilot speeds up. Increase for more gradual acceleration; decrease for quicker but more jolting acceleration.",
         "data_type": "float",
@@ -2845,9 +2813,9 @@
       },
       {
         "key": "PedalsOnUI",
-        "label": "Gas / Brake Pedal Indicators",
-        "description": "On-screen gas and brake indicators.\n\nDynamic: Opacity changes according to how much openpilot is accelerating or braking\nStatic: Full when active, dim when not",
-        "picker_description": "Shows gas and brake indicators on the driving screen.",
+        "label": "Pedal-Responsive Wheel",
+        "description": "Tint the on-screen steering-wheel icon green while accelerating and red while braking. Also show gas and brake indicators.\n\nDynamic: Opacity changes according to how much openpilot is accelerating or braking\nStatic: Full when active, dim when not",
+        "picker_description": "Colors the driving-screen wheel by acceleration and braking, with optional pedal indicators.",
         "data_type": "bool",
         "ui_type": "toggle",
         "is_parent_toggle": true,
@@ -4726,6 +4694,17 @@
         "settings_tier": "simple"
       },
       {
+        "key": "AggressiveCoolingEnabled",
+        "label": "C3/C3X Aggressive Cooling",
+        "description": "Runs the fan on a lower, more aggressive temperature curve: the fan ramps up sooner and reacts faster to rising temperature, keeping the device meaningfully cooler on hot days at the cost of more fan noise.",
+        "picker_description": "Cooler-running, louder fan curve for comma 3/3X.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "DeviceManagement",
+        "settings_tier": "simple",
+        "requires_capability": "IsTiciOrTizi"
+      },
+      {
         "key": "UseKonikServer",
         "label": "Use Konik Server",
         "description": "Upload driving data to \"stable.konik.ai\" instead of \"connect.comma.ai\".",
@@ -4748,22 +4727,30 @@
       {
         "key": "ScreenBrightness",
         "label": "Screen Brightness (Offroad)",
-        "description": "The screen brightness while not driving.",
+        "description": "Use automatic brightness with an adjustable offset, or Manual to set a fixed brightness while parked.",
         "data_type": "int",
         "ui_type": "numeric",
-        "step": 1.0,
+        "galaxy_ui_type": "brightness",
+        "step": 1,
         "parent_key": "ScreenManagement",
-        "settings_tier": "simple"
+        "settings_tier": "advanced",
+        "default": 101,
+        "min": 0,
+        "max": 101
       },
       {
         "key": "ScreenBrightnessOnroad",
         "label": "Screen Brightness (Onroad)",
-        "description": "The screen brightness while driving.",
+        "description": "Choose Auto to follow ambient light with an adjustable offset, or Manual to set a fixed brightness while driving.",
         "data_type": "int",
         "ui_type": "numeric",
-        "step": 1.0,
+        "galaxy_ui_type": "brightness",
+        "step": 1,
         "parent_key": "ScreenManagement",
-        "settings_tier": "simple"
+        "settings_tier": "advanced",
+        "default": 101,
+        "min": 0,
+        "max": 101
       },
       {
         "key": "ScreenRecorder",
@@ -4778,36 +4765,141 @@
       {
         "key": "ScreenTimeout",
         "label": "Screen Timeout (Offroad)",
-        "description": "How long the screen stays on after being tapped while not driving.",
+        "description": "How long the parked screen stays awake after a touch.",
         "data_type": "int",
         "ui_type": "numeric",
         "min": 5.0,
         "max": 60.0,
         "step": 5.0,
         "parent_key": "ScreenManagement",
-        "settings_tier": "simple"
+        "settings_tier": "simple",
+        "unit": " seconds"
       },
       {
         "key": "ScreenTimeoutOnroad",
         "label": "Screen Timeout (Onroad)",
-        "description": "How long the screen stays on after being tapped while driving.",
+        "description": "How long the driving screen stays awake before Standby Mode turns it off.",
         "data_type": "int",
         "ui_type": "numeric",
         "min": 5.0,
         "max": 60.0,
         "step": 5.0,
-        "parent_key": "ScreenManagement",
-        "settings_tier": "simple"
+        "parent_key": "StandbyMode",
+        "settings_tier": "simple",
+        "unit": " seconds",
+        "visible_when_all_true": [
+          "ScreenManagement",
+          "StandbyMode"
+        ]
       },
       {
         "key": "StandbyMode",
         "label": "Standby Mode",
-        "description": "Turn the screen off while driving and automatically wake it up for alerts or engagement state changes.",
-        "picker_description": "Turns the screen off while driving and wakes for alerts.",
+        "description": "Turn off the screen after the onroad timeout. Touch and ignition changes always wake it. Choose additional wake events below.",
+        "picker_description": "Turn off the driving screen after inactivity and choose additional wake events.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "ScreenManagement",
-        "settings_tier": "simple"
+        "settings_tier": "simple",
+        "is_parent_toggle": true
+      },
+      {
+        "key": "StandbyWakeEngage",
+        "label": "Engagement",
+        "description": "Wake the screen from Standby when driving assistance engages.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "default": true,
+        "parent_key": "StandbyMode",
+        "visible_when_all_true": [
+          "ScreenManagement",
+          "StandbyMode"
+        ],
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "StandbyWakeDisengage",
+        "label": "Disengagement",
+        "description": "Wake the screen from Standby when driving assistance disengages.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "default": true,
+        "parent_key": "StandbyMode",
+        "visible_when_all_true": [
+          "ScreenManagement",
+          "StandbyMode"
+        ],
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "StandbyWakeInfoAlert",
+        "label": "Informational alerts",
+        "description": "Wake the screen from Standby and keep it awake while an informational alert is displayed.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "default": true,
+        "parent_key": "StandbyMode",
+        "visible_when_all_true": [
+          "ScreenManagement",
+          "StandbyMode"
+        ],
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "StandbyWakeWarningAlert",
+        "label": "Warning alerts",
+        "description": "Wake the screen from Standby and keep it awake while a warning alert is displayed.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "default": true,
+        "parent_key": "StandbyMode",
+        "visible_when_all_true": [
+          "ScreenManagement",
+          "StandbyMode"
+        ],
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "StandbyWakeCriticalAlert",
+        "label": "Critical / takeover alerts",
+        "description": "Wake the screen from Standby and keep it awake while a critical or takeover alert is displayed.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "default": true,
+        "parent_key": "StandbyMode",
+        "visible_when_all_true": [
+          "ScreenManagement",
+          "StandbyMode"
+        ],
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "StandbyWakeTurnSignal",
+        "label": "Turn signals",
+        "description": "Wake the screen from Standby when a turn signal is activated.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "default": false,
+        "parent_key": "StandbyMode",
+        "visible_when_all_true": [
+          "ScreenManagement",
+          "StandbyMode"
+        ],
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "StandbyWakeButton",
+        "label": "Bluetooth or steering wheel button",
+        "description": "Wake the screen from Standby when a recognised Bluetooth, controller or steering wheel button is pressed, including buttons without an assigned action.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "default": false,
+        "parent_key": "StandbyMode",
+        "visible_when_all_true": [
+          "ScreenManagement",
+          "StandbyMode"
+        ],
+        "settings_tier": "advanced"
       }
     ]
   },

@@ -6,11 +6,12 @@ from openpilot.common.constants import CV
 from openpilot.selfdrive.road_speed_limiter import SpeedLimiter
 from openpilot.common.realtime import DT_MDL
 
-from openpilot.starpilot.common.starpilot_variables import CITY_SPEED_LIMIT, CRUISING_SPEED
+from openpilot.starpilot.common.starpilot_variables import CRUISING_SPEED
 from openpilot.starpilot.controls.lib.curve_speed_controller import (
   CSC_ACTIVE_OFF_DELTA,
   CSC_GLOW_HOLD_TIME,
   CSC_GLOW_ON_DELTA,
+  CSC_MIN_SPEED,
   CurveSpeedController,
   is_manual_speed_control,
 )
@@ -22,7 +23,6 @@ from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_force_stop_reanchor_speed_tolerance,
 )
 
-CSC_MIN_SPEED = CITY_SPEED_LIMIT * CV.MPH_TO_MS
 OVERRIDE_FORCE_STOP_TIMER = 10
 STANDSTILL_FORCE_STOP_CLEAR_TIME = 0.75
 # Open-loop — green is undetectable at standstill, so this only needs to cover the
@@ -36,7 +36,10 @@ SLC_LEAD_DROP_RELAXATION_MAX_POST_DROP_CLOSING_SPEED = 0.35
 SLC_LEAD_DROP_RELAXATION_MAX_LEAD_BRAKE = 0.25
 SLC_LEAD_DROP_RELAXATION_OVERSPEED_BP = [0.0, 5.0 * CV.MPH_TO_MS, 10.0 * CV.MPH_TO_MS, 15.0 * CV.MPH_TO_MS]
 SLC_LEAD_DROP_RELAXATION_DECEL_V = [0.7, 0.9, 1.15, 1.35]
-NAV_TURN_COMFORT_DECEL = 1.25
+# This is an approach envelope, not a request for harder braking. A gentler
+# deceleration value lowers the target farther from the turn and gives the MPC
+# more time to settle before the intersection.
+NAV_TURN_COMFORT_DECEL = 0.45
 NAV_TURN_DISTANCE_BUFFER = 8.0
 NAV_TURN_MIN_TARGET_DELTA = 0.25
 NAV_TURN_TARGET_SPEEDS = {
@@ -786,7 +789,7 @@ class StarPilotVCruise:
         getattr(self.slc, "source", "None"),
       )
       self._applied_slc_control_target = slc_control_target if slc_control_target > 0.0 else 0.0
-      if slc_control_target >= CSC_MIN_SPEED:
+      if slc_control_target > 0.0:
         targets.append(slc_control_target)
       if self.nav_turn_target > 0.0:
         targets.append(self.nav_turn_target)

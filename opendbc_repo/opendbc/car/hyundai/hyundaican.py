@@ -1,5 +1,6 @@
 import crcmod
 from opendbc.car.hyundai.hyundaicanfd import CanBus
+from opendbc.car.hyundai.lead_data import CanLeadData
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 
 hyundai_checksum = crcmod.mkCrcFun(0x11D, initCrc=0xFD, rev=False, xorOut=0xdf)
@@ -51,7 +52,7 @@ def create_lkas11(packer, frame, CP, apply_torque, steer_req,
     # FcwOpt_USM 2 = Green car + lanes
     # FcwOpt_USM 1 = White car + lanes
     # FcwOpt_USM 0 = No car + lanes
-    values["CF_Lkas_FcwOpt_USM"] = lka_icon if CP.carFingerprint == CAR.GENESIS_G70_2020 else 2 if enabled else 1
+    values["CF_Lkas_FcwOpt_USM"] = lka_icon
 
     # SysWarning 4 = keep hands on wheel
     # SysWarning 5 = keep hands on wheel (red)
@@ -128,13 +129,13 @@ def create_lkas11_can_canfd_blended(packer, frame, CP, apply_steer, steer_req,
                                     torque_fault, lkas11, sys_warning, sys_state, enabled,
                                     left_lane, right_lane,
                                     left_lane_depart, right_lane_depart, msg_364,
-                                    include_alerts=True, counter_mod=0x10):
+                                    include_alerts=True, counter_mod=0x10, fcw_opt_usm=None):
   bus = CanBus(CP).ECAN
   values = {
     "CF_Lkas_LdwsActivemode": int(left_lane) + (int(right_lane) << 1),
     "CF_Lkas_LdwsLHWarning": left_lane_depart,
     "CF_Lkas_LdwsRHWarning": right_lane_depart,
-    "CF_Lkas_FcwOpt_USM": 2 if enabled else 1,
+    "CF_Lkas_FcwOpt_USM": (2 if enabled else 1) if fcw_opt_usm is None else fcw_opt_usm,
     "CR_Lkas_StrToqReq": apply_steer,
     "CF_Lkas_ActToi": steer_req,
     "CF_Lkas_ToiFlt": torque_fault,
@@ -317,19 +318,20 @@ def create_acc_commands_can_canfd_blended_hda2(packer, enabled, accel, accel_las
 
 
 def create_acc_commands(packer, enabled, accel, upper_jerk, idx, hud_control, set_speed, stopping, long_override, use_fca, CP,
-                        main_cruise_enabled=True):
+                        main_cruise_enabled=True, lead_data: CanLeadData | None = None):
   commands = []
+  lead_data = lead_data or CanLeadData()
 
   scc11_values = {
     "MainMode_ACC": int(bool(main_cruise_enabled)),
     "TauGapSet": hud_control.leadDistanceBars,
     "VSetDis": set_speed if enabled else 0,
     "AliveCounterACC": idx % 0x10,
-    "ObjValid": 1, # close lead makes controls tighter
-    "ACC_ObjStatus": 1, # close lead makes controls tighter
+    "ObjValid": int(lead_data.lead_visible),
+    "ACC_ObjStatus": int(lead_data.lead_visible),
     "ACC_ObjLatPos": 0,
-    "ACC_ObjRelSpd": 0,
-    "ACC_ObjDist": 1, # close lead makes controls tighter
+    "ACC_ObjRelSpd": lead_data.lead_rel_speed,
+    "ACC_ObjDist": int(lead_data.lead_distance),
     }
   commands.append(packer.make_can_msg("SCC11", 0, scc11_values))
 
@@ -357,7 +359,8 @@ def create_acc_commands(packer, enabled, accel, upper_jerk, idx, hud_control, se
     "JerkUpperLimit": upper_jerk, # stock usually is 1.0 but sometimes uses higher values
     "JerkLowerLimit": 5.0, # stock usually is 0.5 but sometimes uses higher values
     "ACCMode": 2 if enabled and long_override else 1 if enabled else 4, # stock will always be 4 instead of 0 after first disengage
-    "ObjGap": 2 if hud_control.leadVisible else 0, # 5: >30, m, 4: 25-30 m, 3: 20-25 m, 2: < 20 m, 0: no lead
+    "ObjGap": lead_data.object_gap, # 5: >30 m, 4: 25-30 m, 3: 20-25 m, 2: <20 m, 0: no lead
+    "ObjDistStat": lead_data.object_rel_gap,
   }
   commands.append(packer.make_can_msg("SCC14", 0, scc14_values))
 

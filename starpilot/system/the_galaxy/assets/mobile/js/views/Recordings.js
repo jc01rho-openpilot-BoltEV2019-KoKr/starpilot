@@ -1,8 +1,10 @@
 import { api, showSnackbar } from "../api.js"
 import { GalaxyConfirm } from "../components/GalaxyModal.js"
+import { GalaxySheet } from "../components/GalaxySheet.js"
 import { GalaxyTabs } from "../components/GalaxyTabs.js"
 import { GxNotice } from "../components/GxNotice.js"
 import { isFirestarOrigin } from "../components/PwaInstallSection.js"
+import { normalizeRoute, routeMatchesSearch, sortRoutes } from "../../../components/recordings/dashcam_routes_helpers.js"
 
 function fmtDuration(seconds) {
   seconds = Number(seconds) || 0
@@ -37,21 +39,6 @@ function formatScreenDate(dateString) {
   return `${month} ${day}${getOrdinalSuffix(day)}, ${year} - ${hour}:${minuteStr}${ampm}`
 }
 
-function normalizeRoute(r) {
-  const name = String(r?.name || "")
-  const isCustomName = !!r?.isCustomName
-  return {
-    name,
-    displayName: r?.displayName || name.split("--").pop() || name,
-    displayDate: r?.displayDate || "",
-    approxDurationSeconds: Number(r?.approxDurationSeconds || 0),
-    segmentCount: Number(r?.segmentCount || r?.numSegments || 0),
-    is_preserved: !!r?.is_preserved,
-    isCustomName,
-    png: r?.png || "",
-  }
-}
-
 function localDeviceUrl(ip, route = "/") {
   const raw = String(ip || "").trim()
   if (!raw || raw === "unknown") return ""
@@ -61,7 +48,7 @@ function localDeviceUrl(ip, route = "/") {
 
 export const Recordings = {
   name: "Recordings",
-  components: { GalaxyTabs, GxNotice },
+  components: { GalaxyTabs, GxNotice, GalaxySheet },
   data() {
     return {
       sub: "routes",
@@ -77,7 +64,6 @@ export const Recordings = {
       playerError: "",
       segments: [],
       current: 0,
-      segmentMenuOpen: false,
       cameras: [],
       selectedCamera: "",
       logsRoute: null,
@@ -101,19 +87,8 @@ export const Recordings = {
       }
     },
     visibleRoutes() {
-      let list = this.routes.slice()
-      if (this.showPreservedOnly) list = list.filter((r) => r.is_preserved)
-      if (this.searchQuery.trim()) {
-        const q = this.searchQuery.toLowerCase()
-        list = list.filter((r) => [r.displayName, r.displayDate, r.name].some((v) => String(v || "").toLowerCase().includes(q)))
-      }
-      const sorters = {
-        newest: (a, b) => (b.name > a.name ? 1 : -1),
-        oldest: (a, b) => (a.name > b.name ? 1 : -1),
-        longest: (a, b) => b.approxDurationSeconds - a.approxDurationSeconds,
-        shortest: (a, b) => a.approxDurationSeconds - b.approxDurationSeconds,
-      }
-      return list.sort(sorters[this.sortOrder] || sorters.newest)
+      const list = this.routes.filter((r) => (!this.showPreservedOnly || r.is_preserved) && routeMatchesSearch(r, this.searchQuery))
+      return sortRoutes(list, this.sortOrder)
     },
   },
   methods: {
@@ -207,8 +182,8 @@ export const Recordings = {
       if (!newName || newName === route.displayName) return
       try {
         const payload = await api.renameRoute(route.name, newName)
-        Object.assign(route, normalizeRoute({ ...route, isCustomName: true }))
-        route.displayName = payload.name || newName
+        const savedName = payload.name || newName
+        Object.assign(route, normalizeRoute({ ...route, timestamp: savedName, isCustomName: true }))
         showSnackbar("Route renamed!")
       } catch (e) {
         showSnackbar("Rename failed.", "error")
@@ -238,7 +213,6 @@ export const Recordings = {
         if (!cameras.length) throw new Error("No camera video for this route.")
         this.segments = segments
         this.current = 0
-        this.segmentMenuOpen = false
         this.cameras = cameras
         this.selectedCamera = cameras.includes("forward") ? "forward" : cameras[0]
         this.$nextTick(() => this.playSegment())
@@ -271,14 +245,7 @@ export const Recordings = {
       video.load()
       video.play().catch(() => {})
     },
-    toggleSegmentMenu() {
-      this.segmentMenuOpen = !this.segmentMenuOpen
-      if (this.segmentMenuOpen) {
-        this.$nextTick(() => this.$el.querySelector(".gx-segment-picker__item.active")?.scrollIntoView({ block: "nearest" }))
-      }
-    },
     selectSegment(i) {
-      this.segmentMenuOpen = false
       if (i === this.current) return
       this.current = i
       this.playSegment()
@@ -297,7 +264,6 @@ export const Recordings = {
       this.playerLoading = false
       this.playerError = ""
       this.segments = []
-      this.segmentMenuOpen = false
       this.cameras = []
     },
     async openLogs(route) {
@@ -392,13 +358,13 @@ export const Recordings = {
           <span class="gx-section__count">{{ stats.count }} drives · {{ stats.formattedDuration }}</span>
         </div>
         <div style="padding: var(--sp-3); display:flex; gap:8px; flex-wrap:wrap;">
-          <input class="gx-field" style="flex:1; min-width:160px;" type="search" placeholder="Search routes..." v-model="searchQuery" />
-          <select class="gx-field" v-model="sortOrder">
+          <input class="gx-field" style="flex:1; min-width:160px;" type="search" placeholder="Search routes, dates, or IDs..." v-model="searchQuery" />
+          <GalaxySelect class="gx-field" v-model="sortOrder">
             <option value="newest">Newest first</option>
             <option value="oldest">Oldest first</option>
             <option value="longest">Longest duration</option>
             <option value="shortest">Shortest duration</option>
-          </select>
+          </GalaxySelect>
         </div>
         <div style="padding: 0 var(--sp-3) var(--sp-3);">
           <GalaxyTabs :items="{ all: 'All', preserved: 'Preserved' }" :active="showPreservedOnly ? 'preserved' : 'all'" @select="setPreservedFilter" />
@@ -412,7 +378,7 @@ export const Recordings = {
         <article v-for="r in visibleRoutes" :key="r.name" class="gx-row gx-recordings-row" :class="{ 'gx-recordings-row--preserved': r.is_preserved }" style="cursor:pointer;" @click="openPlayer(r)">
           <div class="gx-row__info">
             <span class="gx-row__label">{{ r.displayName }}</span>
-            <span class="gx-row__desc">{{ fmtDuration(r.approxDurationSeconds) }} · {{ r.segmentCount }} segments</span>
+            <span class="gx-row__desc"><template v-if="r.isCustomName">{{ r.displayDate }} · </template>{{ fmtDuration(r.approxDurationSeconds) }} · {{ r.segmentCount }} segments</span>
             <span v-if="r.is_preserved" class="gx-chip gx-chip--dev gx-recordings-preserved-chip">Preserved</span>
           </div>
           <div class="gx-row__actions">
@@ -491,67 +457,39 @@ export const Recordings = {
       </section>
       </template>
 
-      <Teleport to="body">
-        <transition name="gx-fade">
-          <div v-if="sub === 'routes' && playerRoute" class="gx-scrim gx-scrim--bottomsheet" @click.self="closePlayer">
-            <div class="gx-sheet" role="dialog" aria-label="Route video player" @click="segmentMenuOpen = false">
-              <div class="gx-section__header gx-video-player-header" style="cursor:default;">
-                <i class="bi bi-camera-video"></i>
-                <span class="gx-section__title">{{ playerRoute.displayName }}</span>
-                <button type="button" class="gx-icon-btn" aria-label="Close player" @click="closePlayer"><i class="bi bi-x-lg"></i></button>
+      <GalaxySheet :open="sub === 'routes' && !!playerRoute" :title="playerRoute?.displayName || ''" icon="bi-camera-video" bottomsheet @close="closePlayer">
+        <div style="padding: var(--sp-3);">
+          <div v-if="playerError" class="gx-empty" style="color: var(--error);">{{ playerError }}</div>
+          <div v-else-if="playerLoading" class="gx-loading"><i class="bi bi-hourglass-split"></i> Loading video...</div>
+          <template v-else-if="segments.length">
+            <video ref="player" class="gx-video" controls muted playsinline preload="metadata"></video>
+            <div style="display:flex; flex-direction:column; gap:8px; padding: var(--sp-3) 0 0;">
+              <div class="gx-video-segment-controls">
+                <button type="button" class="gx-btn gx-btn--tonal gx-btn--icon" aria-label="Previous segment" :disabled="current<=0" @click="current--; playSegment()"><i class="bi bi-chevron-left"></i></button>
+                <GalaxySelect class="gx-field gx-video-segment-select" aria-label="Video segment" :value="String(current)" :disabled="!segments.length" @change="selectSegment(Number($event.target.value))">
+                  <option v-for="(s, i) in segments" :key="i" :value="String(i)">Segment {{ i + 1 }} of {{ segments.length }}</option>
+                </GalaxySelect>
+                <button type="button" class="gx-btn gx-btn--tonal gx-btn--icon" aria-label="Next segment" :disabled="current>=segments.length-1" @click="current++; playSegment()"><i class="bi bi-chevron-right"></i></button>
               </div>
-              <div style="padding: var(--sp-3);">
-                <div v-if="playerError" class="gx-empty" style="color: var(--error);">{{ playerError }}</div>
-                <div v-else-if="playerLoading" class="gx-loading"><i class="bi bi-hourglass-split"></i> Loading video...</div>
-                <template v-else-if="segments.length">
-                  <video ref="player" class="gx-video" controls muted playsinline preload="metadata"></video>
-                  <div style="display:flex; flex-direction:column; gap:8px; padding: var(--sp-3) 0 0;">
-                    <div class="gx-video-segment-controls">
-                      <button type="button" class="gx-btn gx-btn--tonal gx-btn--icon" aria-label="Previous segment" :disabled="current<=0" @click="current--; playSegment()"><i class="bi bi-chevron-left"></i></button>
-                      <div class="gx-segment-picker gx-video-segment-select">
-                        <button type="button" class="gx-segment-picker__trigger" :aria-expanded="segmentMenuOpen ? 'true' : 'false'" @click.stop="toggleSegmentMenu">
-                          <span>Segment {{ current + 1 }} of {{ segments.length }}</span>
-                          <i class="bi" :class="segmentMenuOpen ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
-                        </button>
-                        <div v-if="segmentMenuOpen" class="gx-segment-picker__menu" role="listbox" @click.stop>
-                          <button v-for="(s,i) in segments" :key="i" type="button" class="gx-segment-picker__item" :class="{ active: i === current }" role="option" :aria-selected="i === current ? 'true' : 'false'" @click="selectSegment(i)">Segment {{ i + 1 }}</button>
-                        </div>
-                      </div>
-                      <button type="button" class="gx-btn gx-btn--tonal gx-btn--icon" aria-label="Next segment" :disabled="current>=segments.length-1" @click="current++; playSegment()"><i class="bi bi-chevron-right"></i></button>
-                    </div>
-                    <div class="gx-video-actions" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                      <button v-for="c in cameras" :key="c" type="button" class="gx-chip" :style="selectedCamera===c?'background:var(--primary);color:var(--on-primary);':''" @click="selectedCamera=c; playSegment()">{{ c }}</button>
-                      <button type="button" class="gx-btn gx-btn--tonal gx-btn--icon gx-video-download" title="Download" style="margin-left:auto;" @click="downloadRoute"><i class="bi bi-download"></i></button>
-                    </div>
-                  </div>
-                </template>
+              <div class="gx-video-actions" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                <button v-for="c in cameras" :key="c" type="button" class="gx-chip" :style="selectedCamera===c?'background:var(--primary);color:var(--on-primary);':''" @click="selectedCamera=c; playSegment()">{{ c }}</button>
+                <button type="button" class="gx-btn gx-btn--tonal gx-btn--icon gx-video-download" title="Download" style="margin-left:auto;" @click="downloadRoute"><i class="bi bi-download"></i></button>
               </div>
             </div>
-          </div>
-        </transition>
-      </Teleport>
+          </template>
+        </div>
+      </GalaxySheet>
 
-      <Teleport to="body">
-        <transition name="gx-fade">
-          <div v-if="recPlay" class="gx-scrim gx-scrim--bottomsheet" @click.self="closeRecPlayer">
-            <div class="gx-sheet" role="dialog" aria-label="Screen recording player">
-              <div class="gx-section__header gx-video-player-header" style="cursor:default;">
-                <i class="bi bi-record-circle"></i>
-                <span class="gx-section__title">{{ screenDisplayName(recPlay) }}</span>
-                <button type="button" class="gx-icon-btn" aria-label="Close player" @click="closeRecPlayer"><i class="bi bi-x-lg"></i></button>
-              </div>
-              <div style="padding: var(--sp-3);">
-                <video class="gx-video" controls autoplay playsinline :src="screenUrl(recPlay.filename)"></video>
-                <div style="display:flex; gap:8px; padding: var(--sp-3) 0 0; flex-wrap:wrap;">
-                  <button type="button" class="gx-btn" @click="downloadRec(recPlay)"><i class="bi bi-download"></i> Download</button>
-                  <button type="button" class="gx-btn gx-btn--tonal" @click="renameRec(recPlay)"><i class="bi bi-pencil"></i> Rename</button>
-                  <button type="button" class="gx-btn gx-btn--danger" @click="deleteRec(recPlay)"><i class="bi bi-trash"></i> Delete</button>
-                </div>
-              </div>
-            </div>
+      <GalaxySheet :open="!!recPlay" :title="screenDisplayName(recPlay)" icon="bi-record-circle" bottomsheet @close="closeRecPlayer">
+        <div style="padding: var(--sp-3);">
+          <video class="gx-video" controls autoplay playsinline :src="screenUrl(recPlay?.filename)"></video>
+          <div style="display:flex; gap:8px; padding: var(--sp-3) 0 0; flex-wrap:wrap;">
+            <button type="button" class="gx-btn" @click="downloadRec(recPlay)"><i class="bi bi-download"></i> Download</button>
+            <button type="button" class="gx-btn gx-btn--tonal" @click="renameRec(recPlay)"><i class="bi bi-pencil"></i> Rename</button>
+            <button type="button" class="gx-btn gx-btn--danger" @click="deleteRec(recPlay)"><i class="bi bi-trash"></i> Delete</button>
           </div>
-        </transition>
-      </Teleport>
+        </div>
+      </GalaxySheet>
       </template>
 
       <GxNotice v-else tone="info" icon="bi-satellite" title="Recordings unavailable via Galaxy">

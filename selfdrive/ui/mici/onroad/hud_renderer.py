@@ -11,6 +11,7 @@ from openpilot.selfdrive.ui.onroad.starpilot.rivian_lateral_mode import rivian_l
 from openpilot.selfdrive.ui.mici.onroad.speed_limit_utils import resolve_display_speed_limit_ms
 from openpilot.selfdrive.ui.onroad.starpilot.navigation_card import NavigationCardRenderer
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
+from openpilot.selfdrive.ui.onroad.exp_button import get_wheel_tint
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.utils import draw_circle_gradient_compat
 from openpilot.system.ui.lib.multilang import tr
@@ -194,7 +195,24 @@ class HudRenderer(Widget):
     controls_state = sm['controlsState']
     car_state = sm['carState']
     rivian_lateral_mode.update()
-    self._wheel_tint = rivian_lateral_mode.wheel_tint
+    car_control = sm['carControl'] if sm.valid.get('carControl', False) else None
+    actuators = getattr(car_control, "actuators", None)
+    long_active = bool(getattr(car_control, "longActive", False))
+    starpilot_car_state = sm['starpilotCarState'] if sm.valid.get('starpilotCarState', False) else None
+    try:
+      pedal_feedback_enabled = ui_state.ui_params.get_bool("PedalsOnUI") or ui_state.ui_params.get_bool("ShowBrakeStatus")
+    except Exception:
+      pedal_feedback_enabled = False
+    self._wheel_tint = get_wheel_tint(
+      getattr(car_state, "brakePressed", False) or getattr(car_state, "regenBraking", False),
+      rivian_lateral_mode.wheel_tint,
+      pedal_feedback_enabled,
+      getattr(starpilot_car_state, "brakeLights", False),
+      getattr(car_state, "aEgo", 0.0),
+      getattr(car_state, "gasPressed", False),
+      getattr(actuators, "accel", 0.0) if long_active else 0.0,
+      getattr(actuators, "gas", 0.0) if long_active else 0.0,
+    )
 
     v_cruise_cluster = car_state.vCruiseCluster
     set_speed = (
