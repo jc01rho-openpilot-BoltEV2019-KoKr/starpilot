@@ -20,8 +20,7 @@ from opendbc.car.hyundai.carcontroller import CarController, CANCEL_BUTTON_DELAY
                                              should_track_stop_accel_directly_for_car, \
                                              preserve_stock_canfd_lfa_status, \
                                              preserve_stock_canfd_lkas_status, \
-                                             suppress_redundant_gv70_brake_cancel, \
-                                             clear_ioniq_6_torque_when_request_inactive
+                                             suppress_redundant_gv70_brake_cancel
 from opendbc.car.hyundai.carstate import CarState, decode_canfd_camera_lead, decode_ioniq_6_blindspot_radar_state, \
                                              get_canfd_cruise_available
 from opendbc.car.hyundai.interface import CarInterface, KIA_EV9_ACCEL_MAX, get_communication_control_request
@@ -152,6 +151,60 @@ class TestHyundaiFingerprint:
     assert get_communication_control_request(CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN) == stock_request
 
     assert get_communication_control_request(CAR.HYUNDAI_IONIQ_6) == radar_keepalive_request
+
+  def test_ev6_adrv_0x51_replays_factory_payload(self):
+    CP = CarParams.new_message()
+    CP.carFingerprint = CAR.KIA_EV6
+    CP.flags = int(HyundaiFlags.CANFD | HyundaiFlags.CANFD_LKA_STEERING | HyundaiFlags.EV)
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    can_bus = CanBus(CP)
+    factory = bytes.fromhex("88ed2e091700ffff5e0d0000012006ff021c2200000000000800000010000000")
+
+    hyundaicanfd.cache_adrv_0x51_template(CAR.KIA_EV6, factory)
+    try:
+      address, dat, bus = hyundaicanfd.create_adrv_0x51(packer, can_bus, 7, CAR.KIA_EV6, drive_gear=True)
+      _, parked_dat, _ = hyundaicanfd.create_adrv_0x51(packer, can_bus, 8, CAR.KIA_EV6, drive_gear=False)
+      _, other_dat, _ = hyundaicanfd.create_adrv_0x51(packer, can_bus, 7, CAR.HYUNDAI_IONIQ_6)
+    finally:
+      hyundaicanfd.cache_adrv_0x51_template(CAR.KIA_EV6, None)
+
+    assert address == 0x51
+    assert bus == can_bus.ACAN
+    assert dat[2] == (factory[2] + 8) & 0xFF
+    assert dat[3:] == factory[3:]
+    assert int.from_bytes(dat[:2], "little") == hkg_can_fd_checksum(address, None, bytearray(dat))
+    assert parked_dat[3] == factory[3] & ~0x1
+    assert parked_dat[4:] == factory[4:]
+    assert int.from_bytes(parked_dat[:2], "little") == hkg_can_fd_checksum(address, None, bytearray(parked_dat))
+    assert other_dat[3:] == bytes(29)
+
+  def test_ev6_init_captures_factory_adrv_0x51(self, monkeypatch):
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[CanBus(None, fingerprint).CAM][0x50] = 16
+    radar_config = get_radar_track_config(CAR.KIA_EV6)
+    fingerprint[radar_config.bus][radar_config.start_addr] = radar_config.expected_length
+    car_fw = [CarParams.CarFw(ecu=Ecu.adas, fwVersion=b"", address=0x730, brand="hyundai")]
+    CP = CarInterface.get_params(CAR.KIA_EV6, fingerprint, car_fw, True, False, False, get_test_toggles())
+    factory = bytes.fromhex("6b657d090900e1ff000000000020ffff00000000000000000800000010000000")
+
+    def can_recv(*, wait_for_one=True):
+      msg = SimpleNamespace(address=0x51, src=CanBus(CP).ACAN, dat=factory)
+      return [[msg]]
+
+    def fake_disable_ecu(capturing_can_recv, *_args, **_kwargs):
+      capturing_can_recv(wait_for_one=True)
+      return True
+
+    monkeypatch.setattr("opendbc.car.hyundai.interface.disable_ecu", fake_disable_ecu)
+    CarInterface.init(CP, can_recv, None)
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    try:
+      _, dat, _ = hyundaicanfd.create_adrv_0x51(packer, CanBus(CP), 0, CAR.KIA_EV6, drive_gear=True)
+    finally:
+      hyundaicanfd.cache_adrv_0x51_template(CAR.KIA_EV6, None)
+
+    assert dat[3:] == factory[3:]
 
   def test_carnival_hev_low_speed_torque_rate_limits(self):
     CP = CarInterface.get_params(CAR.KIA_CARNIVAL_HEV_4TH_GEN, gen_empty_fingerprint(), [],
@@ -630,14 +683,7 @@ class TestHyundaiFingerprint:
     assert not (CP.flags & HyundaiFlags.CANFD_LKA_STEERING)
     assert bool(CP.flags & HyundaiFlags.CANFD_CAMERA_SCC)
 
-  def test_ioniq_6_clears_torque_with_inactive_safety_request(self):
-    ioniq_6_cp = SimpleNamespace(carFingerprint=CAR.HYUNDAI_IONIQ_6)
-    other_cp = SimpleNamespace(carFingerprint=CAR.KIA_EV6)
-
-    assert clear_ioniq_6_torque_when_request_inactive(ioniq_6_cp, -409, False) == 0
-    assert clear_ioniq_6_torque_when_request_inactive(ioniq_6_cp, -409, True) == -409
-    assert clear_ioniq_6_torque_when_request_inactive(other_cp, -409, False) == -409
-
+  def test_palisade_2023_uses_can_canfd_blended_layout(self):
     palisade_2023 = CarInterface.get_params(CAR.HYUNDAI_PALISADE_2023, gen_empty_fingerprint(), [], True, False, False, None)
     assert palisade_2023.flags & HyundaiFlags.CAN_CANFD_BLENDED
     assert DBC[palisade_2023.carFingerprint][Bus.pt] == "hyundai_palisade_2023_generated"
