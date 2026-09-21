@@ -1036,6 +1036,11 @@ class FavoriteRadialMenu:
 
     page_start = self._picker_page * self.PICKER_PAGE_SIZE
     for option_index, option_rect in self._option_rects:
+      # The option list can be rebuilt between layout and draw (toggle availability changes
+      # with car state), so never index it blind: a stale rect used to raise IndexError and
+      # take the whole UI process down with it.
+      if option_index >= len(self._picker_options):
+        continue
       option = self._picker_options[option_index]
       self._draw_option_card(option_rect, option, scale,
                              pressed=self._pressed_target == ("option", option_index))

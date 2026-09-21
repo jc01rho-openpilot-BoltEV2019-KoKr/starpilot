@@ -37,6 +37,9 @@ def _break_long_word(font: rl.Font, word: str, font_size: int, max_width: int, s
   return parts
 
 
+# Same rationale as text_measure: wrapped strings can be per-frame dynamic text.
+MAX_CACHE_ENTRIES = 2048
+
 _cache: dict[int, list[str]] = {}
 
 
@@ -103,5 +106,7 @@ def wrap_text(font: rl.Font, text: str, font_size: int, max_width: int, spacing:
     # Add all lines from this paragraph
     all_lines.extend(lines)
 
+  if len(_cache) >= MAX_CACHE_ENTRIES:
+    _cache.pop(next(iter(_cache)), None)
   _cache[key] = all_lines
   return all_lines

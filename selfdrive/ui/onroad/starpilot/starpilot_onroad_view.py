@@ -198,8 +198,10 @@ class StarPilotOnroadView(AugmentedRoadView):
       int(round(self._content_rect.x)), int(round(self._content_rect.y)),
       int(round(self._content_rect.width)), int(round(self._content_rect.height)),
     )
-    self._torque_bar.render(self._content_rect)
-    rl.end_scissor_mode()
+    try:
+      self._torque_bar.render(self._content_rect)
+    finally:
+      rl.end_scissor_mode()
 
   def _render_extra_road_overlays(self, rect: rl.Rectangle) -> None:
     """Render path features in the parent's clipped road-overlay layer."""
