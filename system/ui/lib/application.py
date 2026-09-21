@@ -156,6 +156,9 @@ FONT_SCALE = 1.242 if BIG_UI else 1.16
 # enough for the biggest on-screen text, otherwise upscaling blurs them.
 DYNAMIC_FONT_SIZE = 64
 MAX_DYNAMIC_FONTS = 64
+# A widget that fails every frame must not spam the log or grow the failure map without
+# bound; keep one entry per currently failing widget and forget it once it recovers.
+MAX_TRACKED_RENDER_FAILURES = 64
 
 ASSETS_DIR = files("openpilot.selfdrive").joinpath("assets")
 FONT_DIR = ASSETS_DIR.joinpath("fonts")
@@ -538,6 +541,8 @@ class GuiApplication:
     self._fonts: dict[FontWeight, rl.Font] = {}
     self._text_fonts: dict[tuple[int, ...], rl.Font] = {}
     self._pending_font_unloads: list[rl.Font] = []
+    self._widget_render_failures: dict[int, bool] = {}
+    self._nav_tick_failures: dict[int, bool] = {}
     self._width = width if width is not None else GuiApplication._default_width()
     self._height = height if height is not None else GuiApplication._default_height()
 
@@ -1104,6 +1109,46 @@ class GuiApplication:
   def last_mouse_event(self) -> MouseEvent:
     return self._last_mouse_event
 
+  @staticmethod
+  def _note_failure(failures: dict[int, bool], key: int) -> bool:
+    """Track a per-callable failure, returning True the first time it fails."""
+    first_failure = key not in failures
+    if first_failure and len(failures) >= MAX_TRACKED_RENDER_FAILURES:
+      failures.pop(next(iter(failures)), None)
+    failures[key] = True
+    return first_failure
+
+  def _run_nav_stack_ticks(self) -> None:
+    """Run nav-stack ticks; one failing tick must not take down the UI process."""
+    for tick in self._nav_stack_ticks:
+      key = id(tick)
+      try:
+        tick()
+      except Exception:
+        if self._note_failure(self._nav_tick_failures, key):
+          cloudlog.exception(f"nav stack tick failed: {getattr(tick, '__qualname__', tick)}")
+      else:
+        self._nav_tick_failures.pop(key, None)
+
+  def _render_widgets(self) -> None:
+    """Render the visible widgets.
+
+    An exception here used to propagate out of render() and end the process, so a single
+    bad frame left the panel stuck on its last image until the manager watchdog killed and
+    restarted the UI. Keep drawing the remaining widgets instead, and log once per failing
+    widget so a transient widget error costs one widget rather than the whole screen.
+    """
+    rect = rl.Rectangle(0, 0, self.width, self.height)
+    for widget in self._nav_stack[-self._nav_stack_widgets_to_render :]:
+      key = id(widget)
+      try:
+        widget.render(rect)
+      except Exception:
+        if self._note_failure(self._widget_render_failures, key):
+          cloudlog.exception(f"widget render failed: {type(widget).__name__}")
+      else:
+        self._widget_render_failures.pop(key, None)
+
   def render(self):
     try:
       if self._profile_render_frames > 0:
@@ -1164,14 +1209,12 @@ class GuiApplication:
 
         # Allow a Widget to still run a function regardless of the stack depth
         self._mark_progress("gui_app.before_nav_ticks")
-        for tick in self._nav_stack_ticks:
-          tick()
+        self._run_nav_stack_ticks()
         self._mark_progress("gui_app.after_nav_ticks")
 
         # Only render top widgets
         self._mark_progress("gui_app.before_widget_render")
-        for widget in self._nav_stack[-self._nav_stack_widgets_to_render :]:
-          widget.render(rl.Rectangle(0, 0, self.width, self.height))
+        self._render_widgets()
         self._mark_progress("gui_app.after_widget_render")
 
         self._mark_progress("gui_app.frame_ready")

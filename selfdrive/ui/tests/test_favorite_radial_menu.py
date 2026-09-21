@@ -983,3 +983,54 @@ def test_native_saved_speed_favorite_tap_dispatches_configured_value(monkeypatch
 
   assert dispatched == [(CONTROLLER_ACTION_SET_SPEED, 42)]
   assert params.get(FAVORITE_SLOTS_PARAM) == [slot]
+
+
+def _stub_picker_drawing(monkeypatch, menu):
+  """Stub only the GPU-backed primitives so _draw_picker runs without a GL context."""
+  for name in ("draw_rectangle_rec", "draw_rectangle_rounded", "draw_rectangle_rounded_lines_ex",
+               "draw_rectangle_lines_ex", "draw_circle", "draw_circle_v", "draw_line_ex",
+               "draw_text_ex", "draw_ring", "draw_poly", "draw_triangle"):
+    monkeypatch.setattr(rl, name, lambda *_args, **_kwargs: None, raising=False)
+  monkeypatch.setattr(menu, "_font", lambda *_args, **_kwargs: rl.Font())
+  monkeypatch.setattr(menu, "_measure_text", staticmethod(lambda *_args: rl.Vector2(10, 10)))
+  monkeypatch.setattr(menu, "_draw_text", staticmethod(lambda *_args, **_kwargs: None))
+  monkeypatch.setattr(menu, "_draw_centered_text", staticmethod(lambda *_args, **_kwargs: None))
+  monkeypatch.setattr(menu, "_draw_close_icon", lambda *_args, **_kwargs: None)
+  monkeypatch.setattr(menu, "_draw_pager_button", lambda *_args, **_kwargs: None)
+
+
+def test_picker_draw_survives_option_list_shrinking_between_layout_and_draw(monkeypatch):
+  clock = [0.0]
+  menu, _params, _memory = _menu(clock)
+  rect = rl.Rectangle(0, 0, 2160, 1080)
+  _open_picker(menu, rect)
+
+  assert menu._option_rects
+
+  drawn = []
+  _stub_picker_drawing(monkeypatch, menu)
+  monkeypatch.setattr(menu, "_draw_option_card", lambda *args, **kwargs: drawn.append(args[0]))
+
+  # The option source is rebuilt between layout and draw (availability changes with car
+  # state), leaving stale indices in _option_rects. Drawing must skip them instead of
+  # raising IndexError, which would take the whole UI process down.
+  menu._picker_options = []
+
+  menu._draw_picker()
+
+  assert drawn == []
+
+
+def test_picker_draw_still_draws_options_that_are_present(monkeypatch):
+  clock = [0.0]
+  menu, _params, _memory = _menu(clock)
+  rect = rl.Rectangle(0, 0, 2160, 1080)
+  _open_picker(menu, rect)
+
+  drawn = []
+  _stub_picker_drawing(monkeypatch, menu)
+  monkeypatch.setattr(menu, "_draw_option_card", lambda *args, **kwargs: drawn.append(args[0]))
+
+  menu._draw_picker()
+
+  assert len(drawn) == len(menu._option_rects)

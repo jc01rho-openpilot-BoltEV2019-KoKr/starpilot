@@ -114,7 +114,10 @@ void VisionIpcServer::listener(){
 
     VisionStreamType type = VisionStreamType::VISION_STREAM_MAX;
     int r = ipc_sendrecv_with_fds(false, fd, &type, sizeof(type), nullptr, 0, nullptr);
-    assert(r == sizeof(type));
+    if (r != sizeof(type)) {
+      close(fd);
+      continue;
+    }
 
     // send available stream types
     if (type == VisionStreamType::VISION_STREAM_MAX) {
@@ -123,8 +126,10 @@ void VisionIpcServer::listener(){
         available_stream_types.push_back(stream_type);
       }
       r = ipc_sendrecv_with_fds(true, fd, available_stream_types.data(), available_stream_types.size() * sizeof(VisionStreamType), nullptr, 0, nullptr);
-      assert(r == available_stream_types.size() * sizeof(VisionStreamType));
       close(fd);
+      if (r != available_stream_types.size() * sizeof(VisionStreamType)) {
+        continue;
+      }
       continue;
     }
 
@@ -153,6 +158,9 @@ void VisionIpcServer::listener(){
     r = ipc_sendrecv_with_fds(true, fd, &bufs, sizeof(VisionBuf) * num_fds, fds, num_fds, nullptr);
 
     close(fd);
+    if (r != sizeof(VisionBuf) * num_fds) {
+      continue;
+    }
   }
 
   std::cout << "Stopping listener for: " << name << std::endl;

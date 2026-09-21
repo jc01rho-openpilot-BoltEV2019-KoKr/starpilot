@@ -1,5 +1,10 @@
 #include <thread>
 #include <chrono>
+#include <atomic>
+#include <future>
+
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "catch2/catch.hpp"
 
@@ -22,6 +27,64 @@ TEST_CASE("Connecting"){
   REQUIRE(client.connect());
 
   REQUIRE(client.connected);
+}
+
+TEST_CASE("Nonblocking connect times out when server does not reply"){
+  const std::string name = "camerad";
+  const std::string ipc_path = get_ipc_path(name);
+  int listener_fd = ipc_bind(ipc_path.c_str());
+  REQUIRE(listener_fd >= 0);
+
+  std::atomic<bool> request_received = false;
+  std::promise<void> release_server;
+  auto release_future = release_server.get_future();
+  std::thread unresponsive_server([&] {
+    int client_fd = accept(listener_fd, nullptr, nullptr);
+    if (client_fd >= 0) {
+      VisionStreamType type = VISION_STREAM_MAX;
+      int result = ipc_sendrecv_with_fds(false, client_fd, &type, sizeof(type), nullptr, 0, nullptr);
+      request_received = result == sizeof(type);
+      release_future.wait();
+      close(client_fd);
+    }
+    close(listener_fd);
+    unlink(ipc_path.c_str());
+  });
+
+  VisionIpcClient client(name, VISION_STREAM_ROAD, false);
+  auto started = std::chrono::steady_clock::now();
+  bool connected = client.connect(false);
+  auto elapsed = std::chrono::steady_clock::now() - started;
+
+  release_server.set_value();
+  unresponsive_server.join();
+
+  REQUIRE(request_received);
+  REQUIRE_FALSE(connected);
+  REQUIRE(elapsed < std::chrono::seconds(2));
+}
+
+TEST_CASE("Server survives clients that disconnect during handshake"){
+  VisionIpcServer server("camerad");
+  server.create_buffers(VISION_STREAM_ROAD, 1, 100, 100);
+  server.start_listener();
+
+  VisionIpcClient first_client("camerad", VISION_STREAM_ROAD, false);
+  REQUIRE(first_client.connect());
+
+  const std::string ipc_path = get_ipc_path("camerad");
+  int disconnected_fd = ipc_connect(ipc_path.c_str());
+  REQUIRE(disconnected_fd >= 0);
+  close(disconnected_fd);
+
+  int abandoned_fd = ipc_connect(ipc_path.c_str());
+  REQUIRE(abandoned_fd >= 0);
+  VisionStreamType type = VISION_STREAM_ROAD;
+  REQUIRE(ipc_sendrecv_with_fds(true, abandoned_fd, &type, sizeof(type), nullptr, 0, nullptr) == sizeof(type));
+  close(abandoned_fd);
+
+  VisionIpcClient recovered_client("camerad", VISION_STREAM_ROAD, false);
+  REQUIRE(recovered_client.connect());
 }
 
 TEST_CASE("getAvailableStreams"){

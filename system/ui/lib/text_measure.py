@@ -2,6 +2,10 @@ import pyray as rl
 from openpilot.system.ui.lib.application import FONT_SCALE, font_fallback
 from openpilot.system.ui.lib.emoji import find_emoji
 
+# Onroad widgets measure strings that change every frame (speeds, distances, timers), so an
+# unbounded cache grows for the whole drive. Keep the most recent entries only.
+MAX_CACHE_ENTRIES = 4096
+
 _cache: dict[int, rl.Vector2] = {}
 
 
@@ -38,5 +42,7 @@ def measure_text_cached(font: rl.Font, text: str, font_size: int, spacing: float
     if result.y == 0:
       result.y = font_size * FONT_SCALE
 
+  if len(_cache) >= MAX_CACHE_ENTRIES:
+    _cache.pop(next(iter(_cache)), None)
   _cache[key] = result
   return result
