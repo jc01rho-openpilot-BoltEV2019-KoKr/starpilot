@@ -11,13 +11,15 @@
 #include "msgq/visionipc/visionipc_server.h"
 #include "msgq/logger/logger.h"
 
-static int connect_to_vipc_server(const std::string &name, bool blocking) {
+static constexpr int NONBLOCKING_HANDSHAKE_TIMEOUT_MS = 100;
+
+static int connect_to_vipc_server(const std::string &name, bool blocking, int timeout_ms) {
   const std::string ipc_path = get_ipc_path(name);
-  int socket_fd = ipc_connect(ipc_path.c_str());
+  int socket_fd = ipc_connect(ipc_path.c_str(), timeout_ms);
   while (socket_fd < 0 && blocking) {
     std::cout << "VisionIpcClient connecting" << std::endl;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    socket_fd = ipc_connect(ipc_path.c_str());
+    socket_fd = ipc_connect(ipc_path.c_str(), timeout_ms);
   }
   return socket_fd;
 }
@@ -33,6 +35,7 @@ VisionIpcClient::VisionIpcClient(std::string name, VisionStreamType type, bool c
 // Connect is not thread safe. Do not use the buffers while calling connect
 bool VisionIpcClient::connect(bool blocking) {
   connected = false;
+  const int timeout_ms = blocking ? -1 : NONBLOCKING_HANDSHAKE_TIMEOUT_MS;
 
   // Cleanup old buffers on reconnect
   for (size_t i = 0; i < num_buffers; i++) {
@@ -43,21 +46,22 @@ bool VisionIpcClient::connect(bool blocking) {
 
   num_buffers = 0;
 
-  int socket_fd = connect_to_vipc_server(name, blocking);
+  int socket_fd = connect_to_vipc_server(name, blocking, timeout_ms);
   if (socket_fd < 0) {
     return false;
   }
   // Send stream type to server to request FDs
-  int r = ipc_sendrecv_with_fds(true, socket_fd, &type, sizeof(type), nullptr, 0, nullptr);
-  assert(r == sizeof(type));
+  int r = ipc_sendrecv_with_fds(true, socket_fd, &type, sizeof(type), nullptr, 0, nullptr, timeout_ms);
+  if (r != sizeof(type)) {
+    close(socket_fd);
+    return false;
+  }
 
   // Get FDs
   int fds[VISIONIPC_MAX_FDS];
   VisionBuf bufs[VISIONIPC_MAX_FDS];
-  r = ipc_sendrecv_with_fds(false, socket_fd, &bufs, sizeof(bufs), fds, VISIONIPC_MAX_FDS, &num_buffers);
+  r = ipc_sendrecv_with_fds(false, socket_fd, &bufs, sizeof(bufs), fds, VISIONIPC_MAX_FDS, &num_buffers, timeout_ms);
   if (r < 0) {
-    // only expected error is server shutting down
-    assert(errno == ECONNRESET);
     close(socket_fd);
     return false;
   }
@@ -124,20 +128,22 @@ VisionBuf * VisionIpcClient::recv(VisionIpcBufExtra * extra, const int timeout_m
 }
 
 std::set<VisionStreamType> VisionIpcClient::getAvailableStreams(const std::string &name, bool blocking) {
-  int socket_fd = connect_to_vipc_server(name, blocking);
+  const int timeout_ms = blocking ? -1 : NONBLOCKING_HANDSHAKE_TIMEOUT_MS;
+  int socket_fd = connect_to_vipc_server(name, blocking, timeout_ms);
   if (socket_fd < 0) {
     return {};
   }
   // Send VISION_STREAM_MAX to server to request available streams
   int request = VISION_STREAM_MAX;
-  int r = ipc_sendrecv_with_fds(true, socket_fd, &request, sizeof(request), nullptr, 0, nullptr);
-  assert(r == sizeof(request));
+  int r = ipc_sendrecv_with_fds(true, socket_fd, &request, sizeof(request), nullptr, 0, nullptr, timeout_ms);
+  if (r != sizeof(request)) {
+    close(socket_fd);
+    return {};
+  }
 
   VisionStreamType available_streams[VISION_STREAM_MAX] = {};
-  r = ipc_sendrecv_with_fds(false, socket_fd, &available_streams, sizeof(available_streams), nullptr, 0, nullptr);
+  r = ipc_sendrecv_with_fds(false, socket_fd, &available_streams, sizeof(available_streams), nullptr, 0, nullptr, timeout_ms);
   if (r < 0) {
-    // only expected error is server shutting down
-    assert(errno == ECONNRESET);
     close(socket_fd);
     return {};
   }
