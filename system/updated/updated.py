@@ -230,6 +230,12 @@ def finalize_update() -> None:
   run(["git", "reset", "--hard"], FINALIZED)
   run(["git", "submodule", "foreach", "--recursive", "git", "reset", "--hard"], FINALIZED)
 
+  # Force a rebuild on the next boot. launch_chffrplus.sh skips ./build.py when this
+  # marker exists, and the marker is tracked here, so the reset above restores it - an
+  # update that changed C++ sources would otherwise keep running stale compiled
+  # artifacts. build.py never recreates it, so this costs one build per update.
+  Path(FINALIZED, "prebuilt").unlink(missing_ok=True)
+
   cloudlog.info("Starting git cleanup in finalized update")
   t = time.monotonic()
   try:
