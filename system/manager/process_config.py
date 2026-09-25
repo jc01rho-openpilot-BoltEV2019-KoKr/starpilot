@@ -13,6 +13,8 @@ from openpilot.system.manager.process import PythonProcess, NativeProcess, Daemo
 
 WEBCAM = os.getenv("USE_WEBCAM") is not None
 UI_WATCHDOG_MAX_DT = int(os.getenv("UI_WATCHDOG_MAX_DT", "10"))
+# After the 5s Python stall dump, before the 10s kill: gdb needs the process alive.
+UI_NATIVE_STACK_DT = float(os.getenv("UI_NATIVE_STACK_DT", "6"))
 CAMERAD_WATCHDOG_MAX_DT = int(os.getenv("CAMERAD_WATCHDOG_MAX_DT", "5"))
 
 
@@ -240,8 +242,10 @@ procs += [
 device_type = HARDWARE.get_device_type()
 if device_type in ("tici", "tizi"):
   procs.append(big_device_ui_process())
+  procs[-1].native_stack_dt = UI_NATIVE_STACK_DT
 else:
   procs.append(PythonProcess("ui", "selfdrive.ui.ui", always_run, watchdog_max_dt=UI_WATCHDOG_MAX_DT))
+  procs[-1].native_stack_dt = UI_NATIVE_STACK_DT
 
 procs += [
   PythonProcess("device_syncd", "starpilot.system.device_syncd", always_run),
