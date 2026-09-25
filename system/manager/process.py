@@ -21,6 +21,7 @@ from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.watchdog import WATCHDOG_FN
+from openpilot.system.manager.native_stack import NativeStackWatch, capture_native_stack
 
 ENABLE_WATCHDOG = os.getenv("NO_WATCHDOG") is None
 
@@ -475,6 +476,8 @@ class ManagerProcess(ABC):
   last_watchdog_time = 0
   watchdog_max_dt: int | None = None
   watchdog_seen = False
+  native_stack_dt: float | None = None
+  _native_stack_watch: NativeStackWatch | None = None
   shutting_down = False
 
   @abstractmethod
@@ -508,6 +511,17 @@ class ManagerProcess(ABC):
     )
     thread.start()
 
+  def _native_stack_watcher(self) -> NativeStackWatch | None:
+    if self.native_stack_dt is None or self.proc is None or self.proc.pid is None:
+      return None
+    if self._native_stack_watch is None:
+      name = self.name
+      self._native_stack_watch = NativeStackWatch(
+        self.native_stack_dt,
+        lambda pid, dt: capture_native_stack(name, pid, dt, _debug_dump_dir()),
+      )
+    return self._native_stack_watch
+
   def check_watchdog(self, started: bool) -> None:
     if self.watchdog_max_dt is None or self.proc is None:
       return
@@ -522,6 +536,12 @@ class ManagerProcess(ABC):
         return
 
     dt = time.monotonic() - self.last_watchdog_time / 1e9
+    watch = self._native_stack_watcher()
+    if watch is not None and ENABLE_WATCHDOG:
+      pid = self.proc.pid
+      watch.maybe_capture(pid, dt)
+      if dt > self.watchdog_max_dt and watch.defer_kill(pid, dt, self.watchdog_max_dt):
+        return
     if dt > self.watchdog_max_dt and ENABLE_WATCHDOG:
       self.capture_watchdog_debug_dump_async(f"watchdog_timeout started={started}", dt)
       cloudlog.error(f"Watchdog timeout for {self.name} (exitcode {self.proc.exitcode}) restarting ({started=})")
