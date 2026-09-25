@@ -1,36 +1,15 @@
 #!/usr/bin/env python3
-import gc
 import os
 import time
 
 from openpilot.system.hardware import TICI
-from openpilot.common.realtime import set_core_affinity
+from openpilot.common.realtime import Priority, config_realtime_process, set_core_affinity
 from openpilot.common.watchdog import kick_watchdog
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.selfdrive.ui.stall_monitor import UIStallMonitor
 from openpilot.selfdrive.ui.ui_state import ui_state
 
 BIG_UI = gui_app.big_ui()
-
-# Every core except camerad's isolated core 6 and modeld's core 7. Cores 0-3 never go
-# offline, so the mask stays valid while power save offlines the big cluster.
-UI_CORES = (0, 1, 2, 3, 4, 5)
-
-
-def configure_ui_scheduling() -> None:
-  """Run the UI as an ordinary time-shared task instead of a real-time one.
-
-  The UI used to be SCHED_FIFO 50 pinned to core 5 alone, where plannerd, radard and
-  starpilot_process run at FIFO 51 (and every thread they spawn inherits it). A strict
-  priority FIFO gives a lower task no CPU at all while a higher one is runnable, so a
-  load burst at a control-state change (lane change, lateral engage) could stall the
-  render loop past the manager's 10s watchdog. As a normal task the scheduler moves the
-  UI to whichever allowed core has time, and it can never delay a control process.
-  """
-  gc.disable()
-  if TICI:
-    os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
-  set_core_affinity(list(UI_CORES))
 
 
 def _stall_context() -> dict[str, object]:
@@ -64,7 +43,8 @@ def _stall_context() -> dict[str, object]:
 
 
 def main():
-  configure_ui_scheduling()
+  cores = {5, }
+  config_realtime_process(0, Priority.UI)
 
   stall_monitor = UIStallMonitor("raylib_ui")
   stall_monitor.progress("ui.before_init_window")
@@ -88,7 +68,7 @@ def main():
     stall_monitor.progress("ui.loop_ready")
     context_update_time = 0.0
 
-    for _should_render in gui_app.render():
+    for should_render in gui_app.render():
       stall_monitor.progress("ui.loop_iteration")
       kick_watchdog()
       stall_monitor.progress("ui.after_watchdog")
@@ -98,6 +78,13 @@ def main():
       if now - context_update_time >= 1.0:
         stall_monitor.set_context(_stall_context())
         context_update_time = now
+      if should_render:
+        # reaffine after power save offlines our core
+        if TICI and os.sched_getaffinity(0) != cores:
+          try:
+            set_core_affinity(list(cores))
+          except OSError:
+            pass
       stall_monitor.progress("ui.loop_idle")
   finally:
     gui_app.set_progress_hook(None)

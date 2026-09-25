@@ -72,6 +72,40 @@ def test_font_fallback_loads_missing_text_glyphs(monkeypatch):
 
   assert application.font_fallback(inter_font, "한글") is dynamic_font
 
+def _fallback_fixture(monkeypatch, glyphs, texture_id):
+  base_font = SimpleNamespace(
+    texture=SimpleNamespace(id=texture_id),
+    glyphCount=len(glyphs),
+    glyphs=[SimpleNamespace(value=ord(glyph)) for glyph in glyphs],
+  )
+  requested: list[str] = []
+  dynamic_font = object()
+
+  def font_for_text(text):
+    requested.append(text)
+    return dynamic_font
+
+  monkeypatch.setattr(application, "gui_app", SimpleNamespace(font=lambda _: base_font, font_for_text=font_for_text))
+  monkeypatch.setattr(application.multilang, "requires_unifont", lambda: False)
+  return base_font, dynamic_font, requested
+
+
+def test_font_fallback_never_builds_a_font_for_emoji(monkeypatch):
+  base_font, _, requested = _fallback_fixture(monkeypatch, "0123456789 kphm", 104)
+
+  assert application.font_fallback(base_font, "70 kph \U0001f4f8 531 m") is base_font
+  assert application.font_fallback(base_font, "\U0001f4f8") is base_font
+  assert application.font_fallback(base_font, "\U0001f389") is base_font
+  assert requested == []
+
+
+def test_font_fallback_still_loads_real_missing_glyphs_next_to_emoji(monkeypatch):
+  base_font, dynamic_font, requested = _fallback_fixture(monkeypatch, "A ", 105)
+
+  assert application.font_fallback(base_font, "A 한글 \U0001f4f8") is dynamic_font
+  assert requested == ["A 한글 "]
+
+
 
 def test_dynamic_font_eviction_defers_gpu_unload_until_frame_boundary(monkeypatch):
   # Given
