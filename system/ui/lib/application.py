@@ -211,6 +211,12 @@ def _font_supports_text(font: rl.Font, text: str) -> bool:
 
 def font_fallback(font: rl.Font, text: str = "") -> rl.Font:
   """Use a font that contains every glyph in the requested text."""
+  # Labels draw emoji as separate NotoColorEmoji textures (emoji.py), and raylib cannot
+  # rasterize that color-bitmap face. Counting emoji here built an atlas from glyphs no
+  # font has, which stalled the render loop past the UI watchdog on the camera alert.
+  from openpilot.system.ui.lib.emoji import EMOJI_REGEX
+
+  text = EMOJI_REGEX.sub("", text)
   candidate = gui_app.font(FontWeight.UNIFONT) if multilang.requires_unifont() else font
   if _font_supports_text(candidate, text):
     return candidate
