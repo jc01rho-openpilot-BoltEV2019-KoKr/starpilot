@@ -6,12 +6,14 @@ from hypothesis import given, settings, strategies as st
 from opendbc.car import Bus, structs
 from opendbc.can import CANPacker, CANParser
 from opendbc.car.structs import CarParams
+from opendbc.car.lateral import common_fault_avoidance
 from opendbc.car.fw_versions import build_fw_dict, match_fw_to_car
 from opendbc.car.toyota import toyotacan
 from opendbc.car.toyota.carcontroller import CarController, get_camry_hybrid_feedforward, get_long_tune, get_prius_feedforward, \
                                              get_prius_positive_feedforward_scale, \
                                              get_rav4_interceptor_pedal_scale, \
-                                             get_toyota_lat_active, \
+                                             get_toyota_lat_active, get_toyota_steer_rate_limit, \
+                                             MAX_STEER_RATE, MAX_STEER_RATE_FRAMES, MAX_USER_TORQUE, \
                                              limit_interceptor_pcm_accel, \
                                              limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
                                              limit_prius_stopping_accel, should_bypass_toyota_long_pid, supports_toyota_auto_hold, \
@@ -23,6 +25,7 @@ from opendbc.car.toyota.radar_interface import RadarInterface, TSSP_RADAR_EGO_SP
 from opendbc.car.toyota.values import CAR, DBC, MIN_ACC_SPEED, TSS2_CAR, ANGLE_CONTROL_CAR, RADAR_ACC_CAR, SECOC_CAR, \
                                                   FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, FUZZY_EXCLUDED_PLATFORMS, \
                                                   ToyotaFlags, ToyotaSafetyFlags, ToyotaStarPilotFlags, TOYOTA_AUTO_HOLD_CARS, \
+                                                  TOYOTA_AUTO_HOLD_AEB_CARS, \
                                                   get_platform_codes
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.common.params import Params
@@ -209,13 +212,17 @@ class TestToyotaInterfaces:
       params.remove("ToyotaAutoHold")
 
     assert car_params.flags & ToyotaFlags.AUTO_BRAKE_HOLD.value
-    assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.TOYOTA_AUTO_HOLD
-    assert not car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALLOW_AEB
+    if candidate in TOYOTA_AUTO_HOLD_AEB_CARS:
+      assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALLOW_AEB
+      assert not car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.TOYOTA_AUTO_HOLD
+    else:
+      assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.TOYOTA_AUTO_HOLD
+      assert not car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALLOW_AEB
 
     can_parsers = CarState.get_can_parsers(car_params)
     car_state = CarState(car_params, SimpleNamespace(flags=0))
     car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
-    assert "PRE_COLLISION_2" not in can_parsers[Bus.cam].vl
+    assert (0x344 in can_parsers[Bus.cam].vl) == (candidate in TOYOTA_AUTO_HOLD_AEB_CARS)
 
   @pytest.mark.parametrize("candidate", [CAR.TOYOTA_CAMRY_TSS2, CAR.TOYOTA_RAV4, CAR.TOYOTA_RAV4H])
   def test_auto_hold_is_disabled_by_default(self, candidate):
@@ -735,14 +742,43 @@ class TestToyotaFingerprint:
 
 
 class TestToyotaCarController:
-  def test_corolla_tss2_hands_off_immediately_when_driver_is_steering(self):
-    assert not get_toyota_lat_active(CAR.TOYOTA_COROLLA_TSS2, True, 117, True)
+  @pytest.mark.parametrize("driver_torque", [-191, -117, -99, 99, 117, 191])
+  def test_toyota_assisting_driver_keeps_lateral_active(self, driver_torque):
+    assert get_toyota_lat_active(True, driver_torque)
 
-  def test_corolla_tss2_stays_active_without_driver_input(self):
-    assert get_toyota_lat_active(CAR.TOYOTA_COROLLA_TSS2, True, 99, False)
+  @pytest.mark.parametrize("driver_torque", [-MAX_USER_TORQUE, MAX_USER_TORQUE, MAX_USER_TORQUE + 1])
+  def test_toyota_high_driver_torque_still_disables_lateral(self, driver_torque):
+    assert not get_toyota_lat_active(True, driver_torque)
 
-  def test_toyota_driver_handoff_behavior_is_corolla_only(self):
-    assert get_toyota_lat_active(CAR.TOYOTA_RAV4_TSS2, True, 117, True)
+  def test_toyota_inactive_request_stays_inactive(self):
+    assert not get_toyota_lat_active(False, 0)
+
+  def test_toyota_assisting_driver_retains_rate_fault_protection(self):
+    counter = 0
+    requests = []
+    for _ in range(36):
+      counter, request = common_fault_avoidance(
+        150 >= MAX_STEER_RATE, get_toyota_lat_active(True, 117), counter, MAX_STEER_RATE_FRAMES,
+      )
+      requests.append(request)
+    assert requests == ([True] * 17 + [False]) * 2
+
+  @pytest.mark.parametrize("candidate", list(CAR))
+  def test_steer_rate_margin_is_corolla_only(self, candidate):
+    expected = 80 if candidate == CAR.TOYOTA_COROLLA_TSS2 else MAX_STEER_RATE
+    assert get_toyota_steer_rate_limit(candidate) == expected
+
+  @pytest.mark.parametrize("direction", [-1, 1])
+  def test_corolla_rate_margin_preserves_request_spacing(self, direction):
+    counter = 0
+    requests = []
+    for rate in [0] * 30 + [90 * direction] * 36 + [0] * 30:
+      counter, request = common_fault_avoidance(
+        abs(rate) >= get_toyota_steer_rate_limit(CAR.TOYOTA_COROLLA_TSS2),
+        get_toyota_lat_active(True, 117 * direction), counter, MAX_STEER_RATE_FRAMES,
+      )
+      requests.append(request)
+    assert requests == [True] * 30 + ([True] * 17 + [False]) * 2 + [True] * 30
 
   @staticmethod
   def _make_controller(*, standstill_req=False, last_standstill=False):
@@ -857,6 +893,31 @@ class TestToyotaCarController:
 
     controller.update_auto_hold_state(cs, activation_frames=0)
     assert not controller.brake_hold_active
+
+  def test_camry_auto_hold_uses_legacy_aeb_brake_path(self):
+    controller = self._make_controller()
+    controller.CP.carFingerprint = CAR.TOYOTA_CAMRY_TSS2
+    controller.packer = CANPacker(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt])
+    controller.frame = 0
+
+    cs = SimpleNamespace(
+      out=SimpleNamespace(
+        standstill=True,
+        cruiseState=SimpleNamespace(available=True, enabled=False),
+        gasPressed=False,
+        brakePressed=True,
+        gearShifter=structs.CarState.GearShifter.drive,
+      ),
+      pre_collision_2={},
+    )
+
+    can_sends = controller.create_auto_brake_hold_messages(cs, brake_hold_allowed_timer=0)
+    parser = CANParser(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt], [("PRE_COLLISION_2", 0)], 0)
+    parser.update([(1, can_sends)])
+
+    assert controller.brake_hold_active
+    assert parser.vl["PRE_COLLISION_2"]["DSS1GDRV"] == -1.0
+    assert parser.vl["PRE_COLLISION_2"]["PBRTRGR"] == 1
 
   def test_prius_resume_request_releases_standstill_latch(self):
     controller = self._make_controller(standstill_req=True, last_standstill=True)

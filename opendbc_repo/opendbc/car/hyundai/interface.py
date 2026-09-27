@@ -201,6 +201,8 @@ class CarInterface(CarInterfaceBase):
       if ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
         ret.steerControlType = structs.CarParams.SteerControlType.angle
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_ANGLE_STEERING.value
+        if candidate == CAR.KIA_SPORTAGE_HEV_2026:
+          ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.CANFD_NO_STOCK_LKA.value
       if candidate == CAR.HYUNDAI_IONIQ_6:
         # Keep lateral active through stops: zeroing torque at standstill dropped the
         # stop-turn hold and forced a rate-limit re-ramp from zero on every pull-away
@@ -313,7 +315,7 @@ class CarInterface(CarInterfaceBase):
       ret.pcmCruise = False
       ret.radarUnavailable = True
       ret.autoResumeSng = False
-      ret.minEnableSpeed = 5.0  # pedal-only: no commanded friction brake/standstill hold
+      ret.minEnableSpeed = -1.0
       ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.LONG.value
 
     # Car specific configuration overrides
@@ -331,8 +333,8 @@ class CarInterface(CarInterfaceBase):
 
     if candidate == CAR.HYUNDAI_ELANTRA_2021:
       ret.longitudinalActuatorDelay = 0.22
-      ret.stopAccel = -0.85
-      ret.stoppingDecelRate = 0.35
+      ret.stopAccel = -1.1
+      ret.stoppingDecelRate = 0.55
 
     if candidate == CAR.HYUNDAI_ELANTRA_HEV_2024:
       ret.longitudinalActuatorDelay = 0.22

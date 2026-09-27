@@ -117,6 +117,7 @@ class HyundaiSafetyFlags(IntFlag):
 
 
 class HyundaiStarPilotSafetyFlags(IntFlag):
+  CANFD_NO_STOCK_LKA = 4096  # CAN-FD only; classic CAN uses this bit for NON_SCC.
   AOL_MAIN_LKAS_ON_ENGAGE = 128
   AOL_MAIN_LKAS_SYNC = 32
   HAS_LDA_BUTTON = 1024

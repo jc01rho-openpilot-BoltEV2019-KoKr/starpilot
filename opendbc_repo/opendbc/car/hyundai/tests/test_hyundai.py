@@ -556,6 +556,13 @@ class TestHyundaiFingerprint:
     CP = CarInterface.get_params(CAR.KIA_SPORTAGE_HEV_2026, fingerprint, [], False, False, False, None)
     assert CP.flags & HyundaiFlags.SEND_LFA
 
+  @pytest.mark.parametrize("candidate", list(CAR))
+  def test_no_stock_lka_safety_flag_is_sportage_only(self, candidate):
+    CP = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], False, False, False, None)
+    if CP.flags & HyundaiFlags.CANFD:
+      assert bool(CP.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.CANFD_NO_STOCK_LKA) == \
+        (candidate == CAR.KIA_SPORTAGE_HEV_2026)
+
   def test_smart_mdps_allows_low_speed_steering(self):
     candidate = CAR.HYUNDAI_IONIQ_EV_LTD
 
@@ -1624,8 +1631,8 @@ class TestHyundaiFingerprint:
     CP = CarInterface.get_params(CAR.HYUNDAI_ELANTRA_2021, gen_empty_fingerprint(), [], True, False, False, toggles)
 
     assert CP.longitudinalActuatorDelay == pytest.approx(0.22)
-    assert CP.stopAccel == pytest.approx(-0.85)
-    assert CP.stoppingDecelRate == pytest.approx(0.35)
+    assert CP.stopAccel == pytest.approx(-1.1)
+    assert CP.stoppingDecelRate == pytest.approx(0.55)
 
   def test_elantra_hev_2024_longitudinal_delay_matches_observed_response(self):
     toggles = get_test_toggles()
@@ -1667,6 +1674,20 @@ class TestHyundaiFingerprint:
     exact, matches = match_fw_to_car(car_fw, "", allow_exact=True, allow_fuzzy=False, log=False)
     assert exact
     assert matches == {candidate}
+
+  def test_staria_2023_australian_route_fw_exact_matches(self):
+    route_fw = {
+      (Ecu.fwdCamera, 0x7c4): b'\xf1\x00US4 MFC  AT AUS RHD 1.00 1.04 99211-CG000 210819',
+      (Ecu.fwdRadar, 0x7d0): b'\xf1\x00US4_ RDR -----      1.00 1.00 99110-CG000         ',
+    }
+    car_fw = [
+      CarParams.CarFw(ecu=ecu, fwVersion=version, address=address, subAddress=0, brand="hyundai")
+      for (ecu, address), version in route_fw.items()
+    ]
+
+    exact, matches = match_fw_to_car(car_fw, "KMFYFX71MPU095311", allow_fuzzy=False, log=False)
+    assert exact
+    assert matches == {CAR.HYUNDAI_STARIA_4TH_GEN}
 
   def test_kona_ev_non_scc_has_no_dedicated_fw_coverage(self):
     assert CAR.HYUNDAI_KONA_EV_NON_SCC not in FW_VERSIONS

@@ -4,6 +4,7 @@ from opendbc.car import Bus, DT_CTRL, make_tester_present_msg, structs
 from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_std_steer_angle_limits, apply_steer_angle_limits_vm, common_fault_avoidance
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.subaru import subarucan
+from opendbc.car.subaru.avh import AvhStartup
 from opendbc.car.subaru.values import CAR, DBC, GLOBAL_ES_ADDR, SUBARU_STOP_START_CARS, CanBus, CarControllerParams, SubaruFlags
 from opendbc.car.vehicle_model import VehicleModel
 
@@ -45,6 +46,7 @@ class CarController(CarControllerBase):
     self.angle_override_confirm_frames = 0
     self.angle_lkas_active = False
     self.angle_handoff_active = False
+    self.ascent_angle_initialized = False
     self.ascent_aol_arm_frames = 0
 
     self.cruise_button_prev = 0
@@ -69,6 +71,7 @@ class CarController(CarControllerBase):
     self.stop_start_counter = 0
     self.stop_start_acknowledged = False
     self.last_redneck_button_frame = 0
+    self.avh_startup = AvhStartup()
 
   def _stop_start_off_request(self, CC, CS, starpilot_toggles):
     """Send one bounded Subaru Stop/Start OFF request after ignition.
@@ -202,6 +205,10 @@ class CarController(CarControllerBase):
       return subarucan.create_steering_control_angle(self.packer, apply_steer, lkas_active, self.angle_bus)
 
     if self.CP.carFingerprint in (CAR.SUBARU_ASCENT_2023, CAR.SUBARU_OUTBACK_2023):
+      if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023 and not self.ascent_angle_initialized:
+        self.apply_steer_last = CS.out.steeringAngleDeg
+        self.ascent_angle_initialized = True
+
       mads_only = CC.latActive and not CC.enabled
       mads_only_ok = CS.out.vEgoRaw > _ANGLE_MADS_MIN_SPEED and \
         abs(CS.out.steeringAngleDeg) < _ANGLE_MADS_MAX_STEER_ANGLE
@@ -215,12 +222,13 @@ class CarController(CarControllerBase):
           self.ascent_aol_arm_frames = _ASCENT_AOL_ARM_FRAMES if lkas_available else 0
 
       if self.CP.carFingerprint == CAR.SUBARU_OUTBACK_2023:
-        manual_handoff = False
+        manual_handoff = not self.angle_lkas_active and \
+          abs(getattr(CS.out, "steeringRateDeg", 0.0)) > _ANGLE_REENGAGE_MAX_STEER_RATE
       else:
         manual_handoff = self._angle_manual_handoff(CS, lkas_available)
       lkas_active = lkas_available and not manual_handoff
 
-      if lkas_active and not self.angle_lkas_active:
+      if lkas_active and not self.angle_lkas_active and self.CP.carFingerprint != CAR.SUBARU_ASCENT_2023:
         self.apply_steer_last = CS.out.steeringAngleDeg
 
       apply_steer = apply_std_steer_angle_limits(
@@ -306,6 +314,13 @@ class CarController(CarControllerBase):
     stop_start_msg = self._stop_start_off_request(CC, CS, starpilot_toggles)
     if stop_start_msg is not None:
       can_sends.append(stop_start_msg)
+
+    if self.CP.carFingerprint == CAR.SUBARU_LEGACY_2025:
+      can_sends.extend(self.avh_startup.update(
+        now_nanos / 1e9, getattr(CS, "avh_frames", {}),
+        getattr(starpilot_toggles, "subaru_avh_on", False), getattr(CS.out, "canValid", False),
+        CC.enabled or CC.latActive or CC.longActive,
+      ))
 
     # *** steering ***
     if (self.frame % self.p.STEER_STEP) == 0:
