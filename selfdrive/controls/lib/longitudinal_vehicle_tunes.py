@@ -23,6 +23,7 @@ HONDA_ACCORD_LOW_SPEED_STOP_MAX_LEAD_SPEED = 1.0
 HONDA_ACCORD_STANDSTILL_GUARD_MAX_EGO_SPEED = 0.25
 HYUNDAI_ELANTRA_LEAD_FOLLOW_JERK_SCALE = 1.25
 GENESIS_GV70_ELECTRIFIED_LEAD_FOLLOW_JERK_SCALE = 1.75
+KIA_NIRO_EV_LEAD_FOLLOW_JERK_SCALE = 1.5
 GENESIS_GV70_ELECTRIFIED_SCC_JERK_UPPER = 1.5
 GENESIS_GV70_ELECTRIFIED_SCC_JERK_LOWER = 2.0
 GENESIS_GV70_ELECTRIFIED_SCC_URGENT_JERK_LOWER = 5.0
@@ -517,9 +518,11 @@ def get_untracked_slow_lead_decel_scale(CP):
 
 
 def get_lead_follow_jerk_scale(CP):
-  """Spread the lead-source transition for cars with a sharp vision-lead handoff."""
+  """Apply vehicle-specific acceleration smoothing while following a lead."""
   if getattr(CP, "brand", "") == "hyundai" and str(getattr(CP, "carFingerprint", "")) == "HYUNDAI_ELANTRA_2021":
     return HYUNDAI_ELANTRA_LEAD_FOLLOW_JERK_SCALE
+  if getattr(CP, "brand", "") == "hyundai" and str(getattr(CP, "carFingerprint", "")) == "KIA_NIRO_EV":
+    return KIA_NIRO_EV_LEAD_FOLLOW_JERK_SCALE
   if (
     getattr(CP, "brand", "") == "hyundai" and
     str(getattr(CP, "carFingerprint", "")) == "GENESIS_GV70_ELECTRIFIED_1ST_GEN"

@@ -1,6 +1,11 @@
 from openpilot.system.ui.lib import application
 
 
+class _StubWidget:
+  def covers_background(self, _rect):
+    return False
+
+
 def _app(nav_stack):
   app = object.__new__(application.GuiApplication)
   app._nav_stack = nav_stack
@@ -14,11 +19,11 @@ def _app(nav_stack):
 def test_widget_render_failure_does_not_abort_the_frame(monkeypatch):
   rendered = []
 
-  class FailingWidget:
+  class FailingWidget(_StubWidget):
     def render(self, _rect):
       raise RuntimeError("onroad widget blew up")
 
-  class HealthyWidget:
+  class HealthyWidget(_StubWidget):
     def render(self, _rect):
       rendered.append("healthy")
 
@@ -33,7 +38,7 @@ def test_widget_render_failure_does_not_abort_the_frame(monkeypatch):
 
 
 def test_repeated_widget_render_failure_is_logged_once_per_widget(monkeypatch):
-  class FailingWidget:
+  class FailingWidget(_StubWidget):
     def render(self, _rect):
       raise RuntimeError("still broken")
 
@@ -48,7 +53,7 @@ def test_repeated_widget_render_failure_is_logged_once_per_widget(monkeypatch):
 
 
 def test_widget_render_failure_is_logged_again_after_recovery(monkeypatch):
-  class FlakyWidget:
+  class FlakyWidget(_StubWidget):
     def __init__(self):
       self.should_fail = True
 
@@ -92,7 +97,7 @@ def test_nav_tick_failure_does_not_abort_the_frame(monkeypatch):
 def test_widget_render_failure_tracking_does_not_grow_without_bound(monkeypatch):
   monkeypatch.setattr(application.cloudlog, "exception", lambda _message: None)
 
-  class FailingWidget:
+  class FailingWidget(_StubWidget):
     def render(self, _rect):
       raise RuntimeError("boom")
 
@@ -108,7 +113,7 @@ def test_widget_render_failure_tracking_does_not_grow_without_bound(monkeypatch)
 def test_render_widgets_uses_full_window_rect():
   seen = []
 
-  class RecordingWidget:
+  class RecordingWidget(_StubWidget):
     def render(self, rect):
       seen.append((rect.x, rect.y, rect.width, rect.height))
 
