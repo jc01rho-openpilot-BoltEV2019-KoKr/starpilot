@@ -161,3 +161,50 @@ def test_clipping_region_bounds_parity(renderer):
   for b, i in zip(batched, individual, strict=True):
     assert b.shape == i.shape
     np.testing.assert_allclose(b, i, rtol=1e-5, atol=1e-3)
+
+
+def test_radar_update_decoupled_from_model_regeneration(monkeypatch):
+  from unittest.mock import MagicMock
+  import pyray as rl
+  from openpilot.selfdrive.ui.onroad.model_renderer import ModelPoints
+
+  r = object.__new__(ModelRenderer)
+  r._path = ModelPoints()
+  r._path.raw_points = np.zeros((10, 3), dtype=np.float32)
+  r._transform_dirty = False
+  r._started_frame = 0
+  r._should_render_lead_indicator = lambda rs: True
+  r._update_model = MagicMock()
+  r._update_leads = MagicMock()
+  r._update_adjacent_leads = MagicMock()
+  r._draw_lane_lines = MagicMock()
+  r._draw_path = MagicMock()
+  r._draw_lead_indicator = MagicMock()
+  r._draw_radar_tracks = MagicMock()
+  r._update_raw_points = MagicMock()
+  r._params = SimpleNamespace(get_bool=lambda *args, **kwargs: False)
+
+  from openpilot.selfdrive.ui.ui_state import ui_state
+  class MockSM:
+    recv_frame = {"liveCalibration": 1, "modelV2": 1}
+    updated = {"carParams": False, "modelV2": False, "radarState": True}
+    valid = {"radarState": True, "starpilotRadarState": False}
+    def __getitem__(self, k):
+      return SimpleNamespace(openpilotLongitudinalControl=False, experimentalMode=False, leadOne=None, position=None, height=[1.22])
+
+  mock_sm = MockSM()
+  monkeypatch.setattr(ui_state, "sm", mock_sm)
+  monkeypatch.setattr(ui_state, "started_frame", 0)
+
+  # Frame 1: Only radarState updated. _update_model must NOT run, but _update_leads MUST run.
+  r._render(rl.Rectangle(0, 0, 100, 100))
+  assert not r._update_model.called, "Model geometry should not reproject on radarState alone"
+  assert r._update_leads.called, "Lead indicators should update on radarState"
+
+  # Frame 2: modelV2 updated. _update_model MUST run.
+  mock_sm.updated["modelV2"] = True
+  mock_sm.updated["radarState"] = False
+  r._update_model.reset_mock()
+  r._render(rl.Rectangle(0, 0, 100, 100))
+  assert r._update_model.called, "Model geometry should reproject when modelV2 updates"
+

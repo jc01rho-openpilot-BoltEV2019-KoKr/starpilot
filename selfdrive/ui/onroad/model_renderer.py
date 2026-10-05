@@ -76,6 +76,7 @@ class ModelRenderer(Widget):
     self._adjacent_path_vertices = [np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)]
     # Outer path polygon for edge rendering
     self._track_edge_vertices = np.empty((0, 2), dtype=np.float32)
+    self._path_edge_width = 0.0
 
     # Initialize ModelPoints objects
     self._path = ModelPoints()
@@ -147,22 +148,25 @@ class ModelRenderer(Widget):
       self._rainbow_path.update(max(sm['carState'].vEgo, 0.0))
     render_lead_indicator = self._should_render_lead_indicator(radar_state)
 
-    # Update model data when needed
+    # Update model and lead data
     model_updated = sm.updated['modelV2']
-    if model_updated or sm.updated['radarState'] or self._transform_dirty:
-      if model_updated:
-        self._update_raw_points(model)
+    transform_dirty = self._transform_dirty
 
-      path_x_array = self._path.raw_points[:, 0]
-      if path_x_array.size == 0:
-        return
+    if model_updated:
+      self._update_raw_points(model)
 
+    path_x_array = self._path.raw_points[:, 0]
+    if path_x_array.size == 0:
+      return
+
+    if model_updated or transform_dirty:
       self._update_model(lead_one, path_x_array)
-      if render_lead_indicator:
-        self._update_leads(radar_state, path_x_array)
-        if sm.valid.get("starpilotRadarState", False):
-          self._update_adjacent_leads(sm["starpilotRadarState"], path_x_array)
       self._transform_dirty = False
+
+    if render_lead_indicator and (sm.updated['radarState'] or model_updated or transform_dirty):
+      self._update_leads(radar_state, path_x_array)
+      if sm.valid.get("starpilotRadarState", False):
+        self._update_adjacent_leads(sm["starpilotRadarState"], path_x_array)
 
     self._lead_text_rects = []
     self._adjacent_lead_text_rects = []
@@ -253,6 +257,8 @@ class ModelRenderer(Widget):
         path_width *= 0.75
       else:
         path_width *= 0.50
+
+    self._path_edge_width = path_width * path_edge_width_pct
 
     unclipped_max_distance = np.clip(path_x_array[-1], MIN_DRAW_DISTANCE, MAX_DRAW_DISTANCE)
     unclipped_max_idx = self._get_path_length_idx(self._lane_lines[0].raw_points[:, 0], unclipped_max_distance)

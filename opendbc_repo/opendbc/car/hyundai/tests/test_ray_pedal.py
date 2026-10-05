@@ -235,6 +235,12 @@ def test_ray_controller_heartbeats_and_only_actuates_when_ready(speed):
   CS.out.vEgo = 12.0
   hud.setSpeed = 8.0 / 3.6
   assert pedal_msg(-0.3, 472)[:4] == bytes(4)
+  hud.setSpeed = 145.0 / 3.6
+  assert pedal_msg(1.5, 476)[4] & 0x80
+  assert controller._ray_pedal_gas_last == pytest.approx(0.02)
+  assert pedal_msg(1.5, 480)[4] & 0x80
+  assert controller._ray_pedal_gas_last == pytest.approx(0.04)
+  assert pedal_msg(-0.3, 484)[:4] == bytes(4)
 
 
 @pytest.mark.parametrize("candidate", [CAR.KIA_RAY_EV, CAR.HYUNDAI_KONA_EV_NON_SCC])

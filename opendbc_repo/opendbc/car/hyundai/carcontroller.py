@@ -770,7 +770,8 @@ class CarController(CarControllerBase):
     lead_data = self._can_lead_data.update(lead_distance, lead_rel_speed, lead_visible)
 
     # HUD messages
-    sys_warning, sys_state, left_lane_warning, right_lane_warning = process_hud_alert(CC.enabled, self.car_fingerprint,
+    stinger_hud_enabled = CC.enabled or (self.CP.carFingerprint == CAR.KIA_STINGER_2022 and CC.latActive)
+    sys_warning, sys_state, left_lane_warning, right_lane_warning = process_hud_alert(stinger_hud_enabled, self.car_fingerprint,
                                                                                       hud_control)
 
     if blended_hda2:
@@ -834,7 +835,7 @@ class CarController(CarControllerBase):
                       not CS.out.gasPressed and not CS.out.brakePressed)
       if pedal_active:
         set_speed = hud_control.setSpeed
-        if not np.isfinite(set_speed) or not 1.0 <= set_speed <= 40.0:
+        if not np.isfinite(set_speed) or set_speed < 1.0:
           self._ray_pedal_gas_last = 0.0
         else:
           speed_error = set_speed - CS.out.vEgo
@@ -1042,9 +1043,12 @@ class CarController(CarControllerBase):
             left_sound_active=left_warning.sound_active, right_sound_active=right_warning.sound_active,
           )
         else:
+          host_speed = getattr(CS.out, "vEgoRaw", None) \
+            if self.CP.carFingerprint == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN else None
           adrv_messages = hyundaicanfd.create_adrv_messages(self.packer, self.CAN, self.frame,
                                                              car_fingerprint=self.CP.carFingerprint,
-                                                             drive_gear=drive_gear)
+                                                             drive_gear=drive_gear,
+                                                             v_ego=host_speed)
         can_sends.extend(adrv_messages)
         # The front radar treats ADAS_DRV's 0x100 broadcast as its host heartbeat
         # and stops publishing object tracks when it disappears.

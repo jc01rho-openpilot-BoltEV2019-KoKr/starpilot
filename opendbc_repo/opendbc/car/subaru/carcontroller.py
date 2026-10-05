@@ -48,6 +48,7 @@ class CarController(CarControllerBase):
     self.angle_handoff_active = False
     self.ascent_angle_initialized = False
     self.ascent_aol_arm_frames = 0
+    self.ascent_es_distance_counter_last = None
 
     self.cruise_button_prev = 0
     self.steer_rate_counter = 0
@@ -411,7 +412,12 @@ class CarController(CarControllerBase):
           can_sends.append(subarucan.create_es_distance(self.packer, self.frame // 5, CS.es_distance_msg, 0, pcm_cancel_cmd,
                                                         self.CP.openpilotLongitudinalControl, cruise_brake > 0, cruise_throttle))
       else:
-        if pcm_cancel_cmd:
+        cancel_frame_ready = True
+        if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023:
+          stock_counter = CS.es_distance_msg["COUNTER"]
+          cancel_frame_ready = stock_counter != self.ascent_es_distance_counter_last
+          self.ascent_es_distance_counter_last = stock_counter
+        if pcm_cancel_cmd and cancel_frame_ready:
           if not (self.CP.flags & SubaruFlags.HYBRID):
             bus = CanBus.alt_for_cp(self.CP) if self.CP.flags & SubaruFlags.GLOBAL_GEN2 else self.main_bus
             can_sends.append(subarucan.create_es_distance(self.packer, CS.es_distance_msg["COUNTER"] + 1, CS.es_distance_msg, bus, pcm_cancel_cmd))

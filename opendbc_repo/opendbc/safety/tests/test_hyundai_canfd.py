@@ -992,6 +992,22 @@ class TestSportageNoStockLka(unittest.TestCase):
       "Damping_Gain": 100,
     })
 
+  def test_stock_scc_buttons_require_engagement(self):
+    resume = self.packer.make_can_msg_safety("CRUISE_BUTTONS", 1, {"CRUISE_BUTTONS": Buttons.RESUME})
+    set_button = self.packer.make_can_msg_safety("CRUISE_BUTTONS", 1, {"CRUISE_BUTTONS": Buttons.SET})
+    self.assertFalse(self.safety.safety_tx_hook(resume))
+    self.assertFalse(self.safety.safety_tx_hook(set_button))
+
+    self.safety.safety_rx_hook(set_button)
+    self.safety.safety_rx_hook(self.packer.make_can_msg_safety("SCC_CONTROL", 1, {"ACCMode": 1}))
+    self.assertTrue(self.safety.get_controls_allowed())
+    self.assertTrue(self.safety.safety_tx_hook(resume))
+    self.assertTrue(self.safety.safety_tx_hook(set_button))
+
+    self.safety.safety_rx_hook(self.packer.make_can_msg_safety("SCC_CONTROL", 1, {"ACCMode": 0}))
+    self.assertFalse(self.safety.safety_tx_hook(resume))
+    self.assertFalse(self.safety.safety_tx_hook(set_button))
+
   def test_aol_toggle_keeps_stock_blocked_and_inactive_status_allowed(self):
     self._speed(30)
     for expected_aol in (False, True, False, True, False):
