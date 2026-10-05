@@ -395,7 +395,7 @@ class CarInterface(CarInterfaceBase):
 
       if not skip_disable_ecu:
         disable_can_recv = can_recv
-        if CP.carFingerprint == CAR.KIA_EV6 and can_recv is not None:
+        if CP.carFingerprint in (CAR.KIA_EV6, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN) and can_recv is not None:
           hyundaicanfd.cache_adrv_0x51_template(CP.carFingerprint, None)
           base_can_recv = can_recv
           adrv_bus = CanBus(CP).ACAN
