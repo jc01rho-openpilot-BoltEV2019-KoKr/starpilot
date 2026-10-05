@@ -501,7 +501,7 @@ def test_slc_state_extraction_respects_feature_and_display_toggles(slc_ui):
 @pytest.mark.parametrize("presented_source,expected_source,expected_speed", [
   ("", "Map Data", "30"),
   ("Map Data", "Map Data", "30"),
-  ("None", "None", "–"),
+  ("None", "Map Data", "30"),
   ("Previous Limit", "Previous Limit", "30"),
   ("Vision", "Vision", "30"),
 ])
@@ -566,15 +566,69 @@ def test_active_underline_with_legacy_and_current_plans(slc_ui, monkeypatch, pre
     assert lines[0][3] == unified_speed.UNIFIED_ACCENT
 
 
-def test_legacy_plan_without_active_source_does_not_use_diagnostic_map_limit(slc_ui):
+@pytest.mark.parametrize("accepted_limit,source", [(30 * CV.MPH_TO_MS, "None"), (0.0, "None"), (0.0, "Map Data")])
+def test_plan_without_accepted_limit_shows_map_limit(slc_ui, accepted_limit, source):
   message = slc_ui.sm["starpilotPlan"]
-  message.slcSpeedLimitSource = "None"
+  message.slcSpeedLimit = accepted_limit
+  message.slcSpeedLimitSource = source
+  message.slcMapSpeedLimit = 40 * CV.MPH_TO_MS
   with custom.StarPilotPlan.from_bytes(message.to_bytes()) as plan:
     slc_ui.sm["starpilotPlan"] = plan
     state = slc_speed_limit._get_slc_state()
-    assert round(state["map_sl"]) == 30
-    result = resolve_unified_speed(True, True, 35, state, True, False)
-    assert (result.source, result.posted_speed_text, result.mode) == ("None", "–", "split")
+
+    result = resolve_unified_speed(True, True, 45, state, True, False)
+
+  assert (result.source, result.posted_speed_text, result.confirmation_pending) == ("Map Data", "40", False)
+  assert result.active_side != "slc"
+
+
+def test_accepted_limit_is_not_replaced_by_map_limit(slc_ui):
+  message = slc_ui.sm["starpilotPlan"]
+  message.slcSpeedLimitSource = "Vision"
+  message.slcMapSpeedLimit = 40 * CV.MPH_TO_MS
+  with custom.StarPilotPlan.from_bytes(message.to_bytes()) as plan:
+    slc_ui.sm["starpilotPlan"] = plan
+
+    result = resolve_unified_speed(True, True, 45, slc_speed_limit._get_slc_state(), True, False)
+
+  assert (result.source, result.posted_speed_text) == ("Vision", "30")
+
+
+def test_plan_without_any_limit_still_shows_dash(slc_ui):
+  message = slc_ui.sm["starpilotPlan"]
+  message.slcSpeedLimit = 0.0
+  message.slcSpeedLimitSource = "None"
+  message.slcMapSpeedLimit = 0.0
+  with custom.StarPilotPlan.from_bytes(message.to_bytes()) as plan:
+    slc_ui.sm["starpilotPlan"] = plan
+
+    result = resolve_unified_speed(True, True, 35, slc_speed_limit._get_slc_state(), True, False)
+
+  assert (result.source, result.posted_speed_text, result.mode) == ("None", "–", "split")
+
+
+def test_upcoming_limit_is_shown_as_pending_change(slc_ui):
+  message = slc_ui.sm["starpilotPlan"]
+  message.slcNextSpeedLimit = 50 * CV.MPH_TO_MS
+  with custom.StarPilotPlan.from_bytes(message.to_bytes()) as plan:
+    slc_ui.sm["starpilotPlan"] = plan
+
+    result = resolve_unified_speed(True, True, 55, slc_speed_limit._get_slc_state(), True, False)
+
+  assert (result.posted_speed_text, result.confirmation_pending) == ("50", True)
+
+
+def test_unconfirmed_limit_wins_over_upcoming_limit(slc_ui):
+  message = slc_ui.sm["starpilotPlan"]
+  message.slcNextSpeedLimit = 50 * CV.MPH_TO_MS
+  message.unconfirmedSlcSpeedLimit = 45 * CV.MPH_TO_MS
+  message.speedLimitChanged = True
+  with custom.StarPilotPlan.from_bytes(message.to_bytes()) as plan:
+    slc_ui.sm["starpilotPlan"] = plan
+
+    result = resolve_unified_speed(True, True, 55, slc_speed_limit._get_slc_state(), True, False)
+
+  assert (result.posted_speed_text, result.confirmation_pending) == ("45", True)
 
 
 def test_legacy_pending_candidate_remains_visible_without_active_source(slc_ui):
