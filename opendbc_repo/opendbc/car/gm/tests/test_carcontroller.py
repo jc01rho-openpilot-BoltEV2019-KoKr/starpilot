@@ -805,6 +805,93 @@ def test_calc_pedal_command_small_accel_deadband_keeps_creep_target_stable():
   assert pos_pedal == neg_pedal
 
 
+@pytest.mark.parametrize("car_fingerprint", [
+  CAR.CHEVROLET_BOLT_CC_2017,
+  CAR.CHEVROLET_BOLT_CC_2018_2021,
+  CAR.CHEVROLET_BOLT_CC_2022_2023,
+])
+@pytest.mark.parametrize("v_ego", [15.0, 80.0 / 3.6, 35.0])
+@pytest.mark.parametrize("accel", [-0.15, -0.04, 0.0, 0.04, 0.15])
+def test_bolt_cc_pedal_small_commands_are_continuous(car_fingerprint, v_ego, accel):
+  controller = _controller(car_fingerprint)
+  below, _ = controller.calc_pedal_command(accel - 1e-6, True, v_ego)
+
+  above, regen = controller.calc_pedal_command(accel + 1e-6, True, v_ego)
+
+  assert abs(above - below) < 1e-5
+  assert not regen
+
+
+def test_bolt_cc_pedal_cruise_trim_preserves_sign_and_monotonicity():
+  requests = np.linspace(-0.15, 0.15, 301)
+
+  outputs = [_controller().calc_pedal_command(float(accel), True, 80.0 / 3.6)[0] for accel in requests]
+
+  assert all(current > previous for previous, current in zip(outputs[:-1], outputs[1:], strict=True))
+  neutral = outputs[len(outputs) // 2]
+  assert all(output < neutral for output in outputs[:len(outputs) // 2])
+  assert all(output > neutral for output in outputs[len(outputs) // 2 + 1:])
+
+
+def test_bolt_cc_pedal_passes_small_cruise_commands_proportionally():
+  v_ego = 80.0 / 3.6
+  neutral, _ = _controller().calc_pedal_command(0.0, True, v_ego)
+
+  half, _ = _controller().calc_pedal_command(0.02, True, v_ego)
+  full, _ = _controller().calc_pedal_command(0.04, True, v_ego)
+
+  assert (half - neutral) == pytest.approx((full - neutral) / 2, rel=0.05)
+
+
+@pytest.mark.parametrize("car_fingerprint", [
+  CAR.CHEVROLET_VOLT,
+  CAR.CHEVROLET_MALIBU_HYBRID_CC,
+  CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+])
+def test_other_pedal_platforms_keep_small_command_deadband(car_fingerprint):
+  controller = _controller(car_fingerprint)
+
+  outputs = [controller.calc_pedal_command(accel, True, 80.0 / 3.6)[0] for accel in (-0.0399, 0.0, 0.0399)]
+
+  assert outputs[0] == outputs[1] == outputs[2]
+
+
+@pytest.mark.parametrize("v_ego", [0.3, 8.0, 50.0 / 3.6, 80.0 / 3.6])
+@pytest.mark.parametrize("accel", [-2.5, -0.15, 0.0, 0.15, 1.4])
+def test_bolt_cc_pedal_preserves_larger_requests(v_ego, accel):
+  controller = _controller()
+  reference = _controller(CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL)
+
+  actual = [controller.calc_pedal_command(accel, True, v_ego) for _ in range(50)]
+  expected = [reference.calc_pedal_command(accel, True, v_ego) for _ in range(50)]
+
+  assert actual == expected
+
+
+@pytest.mark.parametrize("v_ego", [0.3, 5.0, 8.0])
+@pytest.mark.parametrize("accel", [-0.05, -0.0399, 0.0399, 0.05])
+def test_bolt_cc_pedal_preserves_low_speed_commands(v_ego, accel):
+  controller = _controller()
+  reference = _controller(CAR.CHEVROLET_MALIBU_HYBRID_CC)
+
+  actual = controller.calc_pedal_command(accel, True, v_ego)
+  expected = reference.calc_pedal_command(accel, True, v_ego)
+
+  assert actual == expected
+
+
+@pytest.mark.parametrize("v_ego", [8.0, 15.0])
+@pytest.mark.parametrize("accel", [-0.04, -0.02, 0.02, 0.04])
+def test_bolt_cc_pedal_blend_is_continuous_across_speed_boundaries(v_ego, accel):
+  below_controller = _controller()
+  above_controller = _controller()
+
+  below, _ = below_controller.calc_pedal_command(accel, True, v_ego - 1e-6)
+  above, _ = above_controller.calc_pedal_command(accel, True, v_ego + 1e-6)
+
+  assert abs(above - below) < 1e-5
+
+
 def test_calc_pedal_command_creep_switch_does_not_snap_to_target():
   controller = _controller()
   controller.pedal_active_last = True

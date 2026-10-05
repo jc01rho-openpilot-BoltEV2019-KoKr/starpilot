@@ -723,6 +723,13 @@ class CarController(CarControllerBase):
 
     # Suppress tiny planner sign flaps around zero so creep-speed pedal shaping stays stable.
     pedal_accel = 0.0 if abs(accel) < 0.04 else accel
+    if self.CP.carFingerprint in (
+      CAR.CHEVROLET_BOLT_CC_2017, CAR.CHEVROLET_BOLT_CC_2018_2021, CAR.CHEVROLET_BOLT_CC_2022_2023,
+    ) and v_ego > 8.0:
+      # Fade out the creep deadband at road speed so small cruise trims reach
+      # the pedal continuously instead of stepping at the deadband edge.
+      cruise_blend = np.interp(v_ego, [8.0, 15.0], [0.0, 1.0])
+      pedal_accel += cruise_blend * (accel - pedal_accel)
 
     accel_term_scale = (1.0 / max(gain, 1e-3)) if press_regen_paddle else 1.0
     if pedal_accel >= 0.0:
