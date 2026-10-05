@@ -94,10 +94,23 @@ def _get_slc_state():
     return None
 
   plan = sm["starpilotPlan"]
-  speed_limit_changed = plan.speedLimitChanged
   presented_source = getattr(plan, 'slcPresentedSpeedLimitSource', '')
+  accepted_limit = plan.slcSpeedLimit
+  speed_limit_source = plan.slcSpeedLimitSource
+  shown_source = presented_source or speed_limit_source
+  slc_is_limiting_max_set = bool(getattr(plan, 'slcIsLimitingMaxSet', False)) if presented_source else None
 
-  unconfirmed_valid = plan.unconfirmedSlcSpeedLimit > 1
+  # Show the map limit when no source has been accepted yet. This is display
+  # only, so the SLC side is never marked as limiting Max Set.
+  if (accepted_limit <= 1 or shown_source in ("", "None")) and plan.slcMapSpeedLimit > 1:
+    accepted_limit = plan.slcMapSpeedLimit
+    speed_limit_source = shown_source = "Map Data"
+    slc_is_limiting_max_set = False
+
+  # Show the upcoming limit as a pending change when nothing else is pending.
+  unconfirmed_limit = plan.unconfirmedSlcSpeedLimit if plan.unconfirmedSlcSpeedLimit > 1 else plan.slcNextSpeedLimit
+  unconfirmed_valid = unconfirmed_limit > 1
+  speed_limit_changed = bool(plan.speedLimitChanged or plan.slcNextSpeedLimit > 1)
 
   speed_conversion = CV.MS_TO_KPH if ui_state.is_metric else CV.MS_TO_MPH
   dashboard_sl = sm["starpilotCarState"].dashboardSpeedLimit if sm.valid.get("starpilotCarState", False) else 0.0
@@ -112,18 +125,18 @@ def _get_slc_state():
   # The pulse uses the accepted raw limit, so unit changes cannot retrigger it.
   _tick_pulse(plan.slcSpeedLimitSource, plan.slcSpeedLimit)
   return {
-    'accepted_speed_limit_ms': plan.slcSpeedLimit,
+    'accepted_speed_limit_ms': accepted_limit,
     # Match the control target's non-negative base before cluster compensation.
-    'effective_target_ms': max(0.0, plan.slcSpeedLimit + plan.slcSpeedLimitOffset),
+    'effective_target_ms': max(0.0, accepted_limit + plan.slcSpeedLimitOffset),
     'offset_ms': plan.slcSpeedLimitOffset,
     'slc_overridden_speed': plan.slcOverriddenSpeed,
-    'speed_limit_source': plan.slcSpeedLimitSource,
+    'speed_limit_source': speed_limit_source,
     # Older publishers/replays decode the new Text field as "", rather than omitting the attribute.
-    'presented_source': presented_source or plan.slcSpeedLimitSource,
+    'presented_source': shown_source,
     'slc_enabled': slc_enabled,
     # Both UI fields were added together; older plans have no published limiting state.
-    'slc_is_limiting_max_set': bool(getattr(plan, 'slcIsLimitingMaxSet', False)) if presented_source else None,
-    'unconfirmed_speed_limit': max(0.0, plan.unconfirmedSlcSpeedLimit * speed_conversion),
+    'slc_is_limiting_max_set': slc_is_limiting_max_set,
+    'unconfirmed_speed_limit': max(0.0, unconfirmed_limit * speed_conversion),
     'unconfirmed_valid': unconfirmed_valid,
     'speed_limit_changed': speed_limit_changed,
     'speed_conversion': speed_conversion,
