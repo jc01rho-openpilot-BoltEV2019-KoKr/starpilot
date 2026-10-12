@@ -223,6 +223,8 @@ class LaneCenteringController:
         return 0.0, 0.0
       if not (np.all(np.diff(left_x) > 0) and np.all(np.diff(right_x) > 0)):
         return 0.0, 0.0
+      if not all(np.isfinite(v) for v in (probs[1], probs[2], stds[1], stds[2])):
+        return 0.0, 0.0
 
       left = float(np.interp(lookahead, left_x, left_y))
       right = float(np.interp(lookahead, right_x, right_y))

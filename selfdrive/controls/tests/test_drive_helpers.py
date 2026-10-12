@@ -167,6 +167,20 @@ def test_lc_mismatched_model_path_xy_lengths_are_noop():
   assert _ctrl().update(0.01, bad, _V_EGO, True, 0.0, True, True) == 0.01
 
 
+def test_lc_nan_laneline_probability_is_noop():
+  # Unlike the array checks above, a NaN here doesn't raise -- it flows straight into
+  # min()/np.interp() and poisons confidence (and therefore the correction) with a NaN that
+  # survives every subsequent frame until a hard reset, instead of fading like any other
+  # low-confidence sample.
+  bad = _model_v2(left_y=-1.0, right_y=2.6, left_prob=np.nan)
+  assert _ctrl().update(0.01, bad, _V_EGO, True, 0.0, True, True) == 0.01
+
+
+def test_lc_nan_laneline_std_is_noop():
+  bad = _model_v2(left_y=-1.0, right_y=2.6, left_std=np.nan)
+  assert _ctrl().update(0.01, bad, _V_EGO, True, 0.0, True, True) == 0.01
+
+
 def test_lc_non_monotonic_model_path_x_is_noop():
   bad = _model_v2(left_y=-1.5, right_y=2.1)
   bad.position.x[10] = bad.position.x[9]
@@ -321,6 +335,34 @@ def test_lc_smooth_fallback():
   for _ in range(300):
     final = c.update(0.0, v2_bad, _V_EGO, True, 0.0, True, True)
   assert abs(final) < 1e-6  # fully fades back to model curvature
+
+
+def test_lc_nan_laneline_probability_self_heals_without_reset():
+  # The real-world risk this guards against: without the finiteness check, a single bad frame
+  # corrupts self._correction to NaN and it never recovers on its own -- confirmed by reproducing
+  # it against the pre-fix code (NaN persisted for 10+ subsequent good-model frames, requiring a
+  # hard reset to clear). With the guard, a NaN sample must behave like any other low-confidence
+  # frame: the correction stays finite and keeps tracking, no reset required.
+  import math
+  c = _ctrl()
+  v2_good = _model_v2(left_y=-1.5, right_y=2.1)
+  for _ in range(300):
+    c.update(0.0, v2_good, _V_EGO, True, 0.0, True, True)
+  steady = c._correction
+  assert abs(steady) > 1e-6
+  assert math.isfinite(steady)
+
+  v2_nan = _model_v2(left_y=-1.5, right_y=2.1, left_prob=np.nan)
+  out = c.update(0.0, v2_nan, _V_EGO, True, 0.0, True, True)
+  assert math.isfinite(out)
+  assert math.isfinite(c._correction)
+
+  # Good model returns on the very next frame, no hard reset in between -- must keep tracking,
+  # not stay latched.
+  for _ in range(300):
+    out = c.update(0.0, v2_good, _V_EGO, True, 0.0, True, True)
+  assert math.isfinite(out)
+  assert np.isclose(c._correction, steady, atol=1e-6)
 
 
 def test_lc_invalid_model_hard_resets_after_active():
