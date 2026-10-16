@@ -392,6 +392,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ForceStopDistanceOffset", {PERSISTENT, INT, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ForceStandstill", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"FordLKASButtonControlMigrated", {PERSISTENT, BOOL, "0", "0"}},
+    {"SonataHybridLKASButtonControlMigrated", {PERSISTENT, BOOL, "0", "0"}},
     {"ForceTorqueController", {PERSISTENT, BOOL, "0", "0", 3}},
     // These Ford curvature tuning concepts descend from BluePilot bp-7.0. StarPilot's key names and
     // settings integration are local; see /CREDITS.md and /THIRD_PARTY_NOTICES.md for provenance.
@@ -637,6 +638,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ScreenBrightnessOnroadManual", {PERSISTENT, INT, "100", "100", 2, SETTINGS_SIMPLE}},
     {"ScreenBrightnessOnroadOffset", {PERSISTENT, INT, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ScreenManagement", {PERSISTENT, BOOL, "1", "0", 1, SETTINGS_SIMPLE}},
+    {"KeepScreenOnGpuLoading", {PERSISTENT, BOOL, "0", "0", 1, SETTINGS_SIMPLE}},
     {"ScreenRecorder", {PERSISTENT, BOOL, "1", "0", 2, SETTINGS_SIMPLE}},
     {"ScreenTimeout", {PERSISTENT, INT, "30", "30", 2, SETTINGS_SIMPLE}},
     {"ScreenTimeoutOnroad", {PERSISTENT, INT, "30", "10", 2, SETTINGS_SIMPLE}},
@@ -809,6 +811,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"GMAutoHold", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"VoltOnePedalMode", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ToyotaAutoHold", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
+    {"ToyotaRadarMode", {PERSISTENT, INT, "0", "0", 2, SETTINGS_SIMPLE}},
     {"WarningImmediateVolume", {PERSISTENT, INT, "101", "101", 2, SETTINGS_SIMPLE}},
     {"WarningSoftVolume", {PERSISTENT, INT, "101", "101", 2, SETTINGS_SIMPLE}},
     {"WeatherPresets", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
