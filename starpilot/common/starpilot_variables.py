@@ -198,6 +198,7 @@ CANCEL_BUTTON_MAPPINGS = (
 
 AOL_LKAS_MIGRATION_KEY = "AOLLKASMigratedToButtonControl"
 FORD_LKAS_MIGRATION_KEY = "FordLKASButtonControlMigrated"
+SONATA_HYBRID_LKAS_MIGRATION_KEY = "SonataHybridLKASButtonControlMigrated"
 
 
 def sync_reboot_marker(marker_path: Path, enabled: bool, params: Params) -> bool:
@@ -443,6 +444,18 @@ def migrate_ford_lkas_button_default(car_make: str, params: Params | None = None
   return True
 
 
+def migrate_sonata_hybrid_lkas_button_default(car_model: str, params: Params | None = None) -> bool:
+  params = params or Params(return_defaults=True)
+  if car_model != HYUNDAI_CAR.HYUNDAI_SONATA_HYBRID or params.get_bool(SONATA_HYBRID_LKAS_MIGRATION_KEY):
+    return False
+
+  if params.get_int("LKASButtonControl") == BUTTON_FUNCTIONS["EXPERIMENTAL_MODE"]:
+    params.put_int("LKASButtonControl", BUTTON_FUNCTIONS["AOL_TOGGLE"])
+
+  params.put_bool(SONATA_HYBRID_LKAS_MIGRATION_KEY, True)
+  return True
+
+
 class StarPilotVariables:
   def __init__(self):
     self.params = Params(return_defaults=True)
@@ -645,6 +658,7 @@ class StarPilotVariables:
     toggle.tesla_aol_screen_tap_requested = self.params.get_bool("TeslaAOLScreenTap") and self.params.get_bool("AlwaysOnLateral")
     toggle.tesla_aol_screen_brake_disengage_requested = self.params.get_bool("TeslaAOLDisengageOnBrake")
     toggle.rivian_angle_control = self.params.get_bool("RivianAngleControl")
+    toggle.toyota_radar_mode_requested = self.params.get_int("ToyotaRadarMode")
 
     fallback_platform = GM_CAR.CHEVROLET_BOLT_ACC_2022_2023 if HARDWARE.get_device_type() == "pc" else MOCK.MOCK
 
@@ -672,6 +686,7 @@ class StarPilotVariables:
     toggle.car_make = CP.brand
     migrate_ford_lkas_button_default(toggle.car_make, self.params)
     toggle.car_model = CP.carFingerprint
+    migrate_sonata_hybrid_lkas_button_default(toggle.car_model, self.params)
     toggle.disable_openpilot_long = self.get_value("DisableOpenpilotLongitudinal", condition=not alpha_longitudinal)
     friction = CP.lateralTuning.torque.friction
     if not math.isfinite(friction):
