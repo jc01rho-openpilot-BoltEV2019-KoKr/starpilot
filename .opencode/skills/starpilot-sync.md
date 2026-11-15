@@ -91,7 +91,7 @@ git checkout paddle5_215-55-17
 git merge paddle5 --no-edit
 ```
 
-충돌 발생 시: `--ours`(paddle5_215-55-17 유지)로 해결.
+충돌 발생 시: 215 전용 변경인 hunk만 로컬(paddle5_215-55-17)을 유지하고 나머지는 paddle5 쪽을 채택한다. 파일 전체 `--ours`는 금지.
 
 > **capnp 변경 병합 시 재게이트**: Step 2 머지 결과에 `*.capnp` 변경이 포함되어 있으면 **병합 완료 직후** Step 1.5를 다시 통과해야 한다. 로컬 `paddle5`에서 통과한 게이트가 `215-55-17` 측 변경과의 충돌 해결로 의미가 달라질 수 있다.
 
@@ -102,7 +102,7 @@ git push origin paddle5_215-55-17
 ```
 
 ## 원칙
-- Step 1 충돌은 파일 유형별로 superset 확인/3-way 머지 또는 `--theirs`(upstream 최신), `--ours`는 예외에만. Step 2 충돌만 `--ours`(215-55-17 지역 커스터마이징 유지).
+- Step 1 충돌은 파일 유형별로 superset 확인/3-way 머지 또는 `--theirs`(upstream 최신), `--ours`는 예외에만. Step 2 충돌은 215 전용 변경인 hunk만 로컬을 유지하고 파일 전체 `--ours`는 금지.
 - **충돌 해결 후 커밋 전 반드시 py_compile + capnp load+ordinal+union init+round-trip+consumer + 신규 params 키 UI-안전 게이트(Step 1.5)를 통과해야 한다. 실패 시 push 금지.**
 - merge는 `--no-edit`으로 자동 커밋 메시지 사용.
 - 완료 후 `paddle5` 브랜치에서 대기.
