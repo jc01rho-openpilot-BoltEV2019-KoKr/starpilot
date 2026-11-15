@@ -6754,24 +6754,6 @@ def setup(app):
           }
         ), 200
 
-      if key in {"ConditionalExperimental", "ConditionalChill"}:
-        enabled = str_val.strip() in ("1", "true", "True")
-        params.put_bool(key, enabled)
-
-        updated = {key: enabled}
-        if enabled:
-          other_key = "ConditionalChill" if key == "ConditionalExperimental" else "ConditionalExperimental"
-          params.put_bool(other_key, False)
-          updated[other_key] = False
-
-        update_starpilot_toggles()
-        return jsonify(
-          {
-            "message": f"Parameter '{key}' updated successfully.",
-            "updated": updated,
-          }
-        ), 200
-
       if key == "CustomAccelProfile":
         enabled = str_val.strip() in ("1", "true", "True")
         params.put_bool(key, enabled)

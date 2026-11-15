@@ -526,6 +526,11 @@ class LongitudinalMpc:
     self.current_j_ego_cost = get_speed_based_param(speed_mph, J_EGO_COSTS)
     self.current_a_change_cost = get_speed_based_param(speed_mph, A_CHANGE_COSTS)
 
+    # Apply the speed-scheduled jerk/accel-change profile. It is normalized to the first breakpoint so the
+    # caller's base costs (A_CHANGE_COST / J_EGO_COST) keep their meaning at low speed.
+    acceleration_jerk *= self.current_a_change_cost / A_CHANGE_COSTS[0]
+    speed_jerk *= self.current_j_ego_cost / J_EGO_COSTS[0]
+
     # For dist_adapt, start from 0.0 under low speeds while enabling full smooth transitions
     dist_adapt_array = [0.0, DIST_ADAPTS[1], DIST_ADAPTS[2], DIST_ADAPTS[3]]
     self.current_dist_adapt = get_speed_based_param(speed_mph, dist_adapt_array)

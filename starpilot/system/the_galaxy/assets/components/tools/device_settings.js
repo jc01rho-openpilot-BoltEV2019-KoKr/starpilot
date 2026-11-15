@@ -791,40 +791,6 @@ async function removeLowVoltageDiscord() {
   }
 }
 
-function formatSliderValue(val, stepStr, precisionInt, key) {
-  if (val === null || val === undefined) return "--"
-  const v = parseFloat(val)
-  if (Number.isNaN(v)) return val
-
-  if (key === "SwitchbackModeCooldown") {
-    if (v === 0) return "Off"
-    return v === 1 ? "1 min" : `${v} min`
-  }
-
-  if (key === "DeviceShutdown") {
-    return v === 1 ? "1 hour" : `${v} hours`
-  }
-
-  const volumeKeys = [
-    "BelowSteerSpeedVolume", "DisengageVolume", "EngageVolume", "PromptVolume",
-    "PromptDistractedVolume", "RefuseVolume",
-    "WarningImmediateVolume", "WarningSoftVolume",
-  ]
-  if (key && volumeKeys.includes(key)) {
-    if (v === 0) return "Muted"
-    if (v === 101) return "Auto"
-    return `${v}%`
-  }
-
-  if (precisionInt !== undefined && precisionInt !== null) {
-    return Number(v.toFixed(precisionInt)).toString()
-  }
-
-  if (!stepStr || !stepStr.includes(".")) return Math.round(v).toString()
-  const dec = stepStr.split(".")[1].length
-  return Number(v.toFixed(dec)).toString()
-}
-
 function formatReadoutValue(p) {
   const raw = state.values[p.key]
   const v = parseFloat(raw)
