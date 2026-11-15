@@ -300,7 +300,7 @@ def get_nda_camera_warning_context(sm: messaging.SubMaster) -> tuple[float, floa
 
     is_highway = bool(getattr(navi, 'isHighway', False) or False)
     min_limit = 40 if is_highway else 20
-    max_limit = 120
+    max_limit = 120 if is_highway else 100  # keep in sync with SpeedLimiter.get_max_speed
     if cam_type == 22:
       min_limit = 10
 
@@ -322,7 +322,8 @@ def get_nda_camera_warning_context(sm: messaging.SubMaster) -> tuple[float, floa
     if next_limit > 0 and (current_limit <= 0 or next_limit < current_limit):
       limit_speed = next_limit
 
-  return limit_speed, distance_m
+  # SLC/mapd limits are m/s while the navi branch above and the caller work in kph.
+  return limit_speed * CV.MS_TO_KPH, distance_m
 
 
 def get_nda_camera_warning_policy(current_speed: float, limit_speed: float) -> tuple[float, float, float, int]:
@@ -354,11 +355,12 @@ def nda_camera_warning_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.
   limit_text = f"{max(int(round(limit_speed_kph)), 0)} kph" if limit_speed_kph > 0 else "Camera"
   alert_text = f"{limit_text} 📸 {distance_text}"
 
+  audible_alert = AudibleAlert.speedDown if alert_status == AlertStatus.critical else AudibleAlert.none
   return Alert(
     alert_text,
     "",
     alert_status, AlertSize.small,
-    Priority.HIGH, VisualAlert.none, AudibleAlert.none, duration)
+    Priority.HIGH, VisualAlert.none, audible_alert, duration)
 
 
 def calibration_incomplete_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, starpilot_toggles: SimpleNamespace) -> Alert:

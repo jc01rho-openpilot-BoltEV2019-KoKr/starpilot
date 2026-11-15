@@ -315,9 +315,14 @@ class SpeedLimiter:
 
     return self.naviData.roadLimitSpeed
 
-  def get_max_speed(self, CS, v_cruise_kph, autoNaviSpeedCtrlStart=None, autoNaviSpeedCtrlEnd=None):
+  def get_max_speed(self, CS, v_cruise_kph):
     self.recv()
     if self.naviData is None or CS is None:
+      self.slowing_down = False
+      return 0, 0, 0, False, ''
+
+    # Drop stale data the same way get_road_limit_speed does.
+    if (time.monotonic_ns() - self.logMonoTime) / 1e9 > 3.0:
       self.slowing_down = False
       return 0, 0, 0, False, ''
 
