@@ -15,8 +15,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AthenadPid", {PERSISTENT, INT}},
     {"AthenadUploadQueue", {PERSISTENT, JSON}},
     {"AthenadRecentlyViewedRoutes", {PERSISTENT, STRING}},
-    {"AutoNaviSpeedCtrlStart", {PERSISTENT, INT, "22", "22", 0}},
-    {"AutoNaviSpeedCtrlEnd", {PERSISTENT, INT, "11", "11", 0}},
     {"BootCount", {PERSISTENT, INT}},
     {"BluetoothAudioAddress", {PERSISTENT, STRING}},
     {"BluetoothAudioTestActive", {CLEAR_ON_MANAGER_START | DONT_LOG, BOOL}},

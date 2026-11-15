@@ -69,14 +69,11 @@ git checkout paddle5_215-55-17
 if git merge paddle5 --no-edit 2>/dev/null; then
   log "Merge 성공 (fast-forward 또는 auto-merge)"
 else
-  warn "Merge 충돌 발생, ours(paddle5_215-55-17)로 해결..."
-  CONFLICTS=$(git diff --name-only --diff-filter=U)
-  if [ -n "$CONFLICTS" ]; then
-    git checkout --ours $CONFLICTS
-    git add $CONFLICTS
-    git commit --no-edit
-    log "충돌 해결 완료"
-  fi
+  # 파일 전체 --ours 금지(루트 AGENTS.md). 215 전용 변경인 hunk만 로컬을 유지하고 나머지는 paddle5 쪽을 채택해야 함.
+  err "paddle5_215-55-17 ← paddle5 merge 충돌 발생. 자동 --ours 해결 안 함."
+  err "충돌 파일을 215 전용 변경인지 확인하며 수동 해결 후 재실행하세요:"
+  git diff --name-only --diff-filter=U >&2
+  exit 1
 fi
 
 # 3. 검증 (push 전 필수 게이트)

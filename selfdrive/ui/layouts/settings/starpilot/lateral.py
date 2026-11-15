@@ -345,7 +345,7 @@ class StarPilotLateralLayout(_SettingsPage):
         "LaneCenterOffset", "value", tr_noop("Lane Center Offset"),
         subtitle=tr_noop("Shift the centered position within the lane. Negative moves left, positive moves right. Requires both detected lane lines."),
         get_value=lambda: f"{p.get_float('LaneCenterOffset'):.2f} m",
-        on_click=lambda: self._show_slider("LaneCenterOffset", -0.5, 0.5, step=0.01, unit=" m", value_type="float"),
+        on_click=lambda: self._show_slider("LaneCenterOffset", -0.3, 0.3, step=0.01, unit=" m", value_type="float"),
         visible=lambda: alt_on() and p.get_bool("LaneCentering"),
       ),
       SettingRow(

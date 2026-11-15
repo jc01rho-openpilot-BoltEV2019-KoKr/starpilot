@@ -37,11 +37,11 @@ def test_lane_centering_bool_loader_wired_under_advanced_lateral_gate():
   assert "cast=float" not in window, "LaneCentering must be a bool loader, not float"
 
 
-def test_lane_center_offset_float_loader_clamped_to_half_meter():
+def test_lane_center_offset_float_loader_clamped_to_three_tenths():
   window = _loader_window(_advanced_lateral_block(), "LaneCenterOffset", before=0, after=400)
   assert "cast=float" in window, "LaneCenterOffset must be cast to float"
-  assert "min=-0.5" in window, "LaneCenterOffset must clamp min=-0.5"
-  assert "max=0.5" in window, "LaneCenterOffset must clamp max=0.5"
+  assert "min=-0.3" in window, "LaneCenterOffset must clamp min=-0.3"
+  assert "max=0.3" in window, "LaneCenterOffset must clamp max=0.3"
 
 
 def test_steer_offset_gm_torque_only_loader_clamped_to_two_tenths():
@@ -65,7 +65,7 @@ def test_lane_centering_loaders_appear_once_each():
 @pytest.mark.parametrize(
   "key, lo, hi",
   [
-    ("LaneCenterOffset", -0.5, 0.5),
+    ("LaneCenterOffset", -0.3, 0.3),
     ("SteerOffset", -0.2, 0.2),
   ],
 )

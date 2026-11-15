@@ -144,7 +144,7 @@ class TestLateralLaneCenteringRows(unittest.TestCase):
     self.rows["LaneCenterOffset"].on_click()
     self.assertEqual(len(calls), 1)
     args, kwargs = calls[0]
-    self.assertEqual(args, ("LaneCenterOffset", -0.5, 0.5))
+    self.assertEqual(args, ("LaneCenterOffset", -0.3, 0.3))
     self.assertEqual(kwargs["step"], 0.01)
     self.assertEqual(kwargs["unit"], " m")
     self.assertEqual(kwargs["value_type"], "float")
@@ -177,11 +177,11 @@ class TestLateralLaneCenteringRows(unittest.TestCase):
     original = panel.AetherSliderDialog
     panel.AetherSliderDialog = FakeDialog
     try:
-      self.layout._show_slider("LaneCenterOffset", -0.5, 0.5, step=0.01, unit=" m", value_type="float")
+      self.layout._show_slider("LaneCenterOffset", -0.3, 0.3, step=0.01, unit=" m", value_type="float")
     finally:
       panel.AetherSliderDialog = original
 
-    self.assertEqual(captured["range"], (-0.5, 0.5))
+    self.assertEqual(captured["range"], (-0.3, 0.3))
     self.assertEqual(captured["step"], 0.01)
     self.assertEqual(captured["unit"], " m")
 
