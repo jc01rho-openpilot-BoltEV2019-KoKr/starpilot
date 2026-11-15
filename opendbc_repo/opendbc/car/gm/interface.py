@@ -617,6 +617,9 @@ class CarInterface(CarInterfaceBase):
         ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
         ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
         ret.longitudinalTuning.kfDEPRECATED = 0.20
+        # D-term for Bolt pedal-long (547d162901, softened in 1b5464a9ed); lost in the Dom sync conflict fix.
+        ret.longitudinalTuning.kdBP = [0.0, 5.0, 15.0, 35.0]
+        ret.longitudinalTuning.kdV = [0.015, 0.011, 0.008, 0.004]
         ret.longitudinalActuatorDelay = 0.6
       else:
         ret.longitudinalTuning.kfDEPRECATED = 0.25

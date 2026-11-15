@@ -34,6 +34,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurv
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import get_genesis_highway_command_stabilizer
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   BOLT_2018_2021_STEER_RATIO_TEST_SCALE,
+  KP,
   LatControlTorque,
   get_bolt_2017_steer_ratio_scale,
   get_honda_accord_steer_ratio_scale,
@@ -439,6 +440,10 @@ class Controls:
     if self.CP.lateralTuning.which() == "torque" and (self.starpilot_toggles.nnff or self.starpilot_toggles.nnff_lite):
       self.LaC = LatControlNNFF(self.CP, self.CI, DT_CTRL)
 
+    self.stock_steer_kp = None
+    if hasattr(self.LaC, "pid") and self.CP.lateralTuning.which() != "pid":
+      self.stock_steer_kp = [list(self.LaC.pid._k_p[0]), list(self.LaC.pid._k_p[1])]
+
   def update(self):
     self.sm.update(15)
     if self.sm.updated["liveCalibration"]:
@@ -447,8 +452,11 @@ class Controls:
       device_pose = Pose.from_live_pose(self.sm['livePose'])
       self.calibrated_pose = self.pose_calibrator.build_calibrated_pose(device_pose)
 
-    if hasattr(self.LaC, "pid") and self.CP.lateralTuning.which() != "pid":
-      self.LaC.pid._k_p = self.starpilot_toggles.steerKp
+    if self.stock_steer_kp is not None:
+      # SteerKP scales the stock speed-scheduled gains instead of flattening them to one value.
+      stock_bp, stock_values = self.stock_steer_kp
+      scale = self.starpilot_toggles.steerKp[1][0] / KP
+      self.LaC.pid._k_p = [stock_bp, [value * scale for value in stock_values]]
 
     if self.sm.updated['liveDelay'] and hasattr(self.LaC, "update_live_delay"):
       self.LaC.update_live_delay(self.sm['liveDelay'].lateralDelay)
