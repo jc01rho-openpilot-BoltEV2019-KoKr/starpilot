@@ -528,6 +528,7 @@ class Soundd:
 
       AudibleAlert.warningSoft: settings["WarningSoftVolume"] / 100.0,
       AudibleAlert.warningImmediate: settings["WarningImmediateVolume"] / 100.0,
+      AudibleAlert.speedDown: settings["PromptVolume"] / 100.0,
 
       starpilot_alert_key(StarPilotAudibleAlert.goat): settings["PromptVolume"] / 100.0,
       starpilot_alert_key(StarPilotAudibleAlert.startup): settings["EngageVolume"] / 100.0

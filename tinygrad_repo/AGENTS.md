@@ -4,7 +4,4 @@
 - Run `python -m mypy tinygrad/` to typecheck
 - Run `python -m ruff check .` to lint
 - Read `./tinygrad/viz/README.md` for profiling and debugging rewrite rules
-## additional guidance
-
-See `tinygrad_repo/CLAUDE.md` for detailed architecture, testing commands, debugging tips, auto-generated files, and performance optimization guidance.
 - Do not do amend commits. Always do a new commit if a force push to origin would be required.

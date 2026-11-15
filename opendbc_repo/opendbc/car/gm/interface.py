@@ -75,6 +75,10 @@ NON_LINEAR_TORQUE_PARAMS = {
     "left": [3.8060, 0.8282, 0.1702, 0],
     "right": [3.8060, 0.8282, 0.1702, 0],
   },
+  CAR.BUICK_ENVISION_SDGM: {
+    "left": [2.4, 1.05, 0.20, 0.0],
+    "right": [2.4, 1.05, 0.20, 0.0],
+  },
 }
 
 NON_LINEAR_TORQUE_PARAM_ALIASES = {
@@ -450,6 +454,11 @@ class CarInterface(CarInterfaceBase):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
+    elif candidate == CAR.BUICK_ENVISION_SDGM:
+      ret.minEnableSpeed = -1.  # engage speed is decided by pcm
+      ret.steerActuatorDelay = 0.2
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+
     elif candidate in (CAR.BUICK_LACROSSE, CAR.BUICK_LACROSSE_ASCM, CAR.BUICK_LACROSSE_ASCM_19US):
       CarInterfaceBase.configure_torque_tune(CAR.BUICK_LACROSSE, ret.lateralTuning)
       if candidate == CAR.BUICK_LACROSSE_ASCM_19US:
@@ -617,6 +626,9 @@ class CarInterface(CarInterfaceBase):
         ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
         ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
         ret.longitudinalTuning.kfDEPRECATED = 0.20
+        # D-term for Bolt pedal-long (547d162901, softened in 1b5464a9ed); lost in the Dom sync conflict fix.
+        ret.longitudinalTuning.kdBP = [0.0, 5.0, 15.0, 35.0]
+        ret.longitudinalTuning.kdV = [0.015, 0.011, 0.008, 0.004]
         ret.longitudinalActuatorDelay = 0.6
       else:
         ret.longitudinalTuning.kfDEPRECATED = 0.25

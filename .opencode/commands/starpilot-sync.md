@@ -24,7 +24,7 @@ Claude/OpenCode에 `/starpilot-sync`라고 입력하면 됩니다. 또는 다음
 ## 충돌 해결 원칙
 
 - **Step 1** (paddle5 ← upstream): 충돌 파일은 양쪽이 같은 영역을 수정한 파일(upstream만 수정 시 auto-merge로 이미 최신 반영). 로컬 튜닝 파일은 upstream superset 여부를 `git diff`로 확인 후 채택하거나 `git merge-file` 3-way로 공존, 보존 가치 없는 파일은 `--theirs`(upstream 최신). `--ours`는 로컬을 반드시 지켜야 하는 예외에만 — 맹목적 `--ours` 금지.
-- **Step 2** (paddle5_215-55-17 ← paddle5): `--ours`로 해결.
+- **Step 2** (paddle5_215-55-17 ← paddle5): 215 전용 변경인 hunk만 로컬을 유지하고 나머지는 paddle5 쪽을 채택. 파일 전체 `--ours` 금지.
 
 ## 커밋 전 검증 (필수)
 

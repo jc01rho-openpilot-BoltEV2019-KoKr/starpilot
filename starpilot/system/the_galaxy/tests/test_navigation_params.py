@@ -199,7 +199,7 @@ def test_missing_api_route_returns_json_instead_of_spa_html(monkeypatch):
   response = client.put("/api/missing", json={})
   assert response.status_code == 404
   assert response.is_json
-  assert response.get_json() == {"error": "API endpoint not found."}
+  assert response.get_json() == {"error": "Not found"}
 
 
 def test_successful_fast_update_reboots_to_load_new_server_code(monkeypatch):

@@ -179,6 +179,10 @@ class LongControl:
   def reset(self, preserve_stop_release=False):
     self.pid.reset()
     self.vehicle_tuning.reset()
+    # D-term filters only update while the PID runs; clear them so a stale value cannot spike the first frame after re-engaging.
+    self.aEgo_filter.reset(0.0)
+    self.error_aEgo_filter.x = 0.0
+    self.prev_aEgo_filtered = 0.0
     if not preserve_stop_release:
       self.stop_release_counter = 0
 

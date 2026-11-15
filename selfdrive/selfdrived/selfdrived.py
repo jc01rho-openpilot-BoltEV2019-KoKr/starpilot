@@ -316,15 +316,18 @@ class SelfdriveD:
     self.comm_issue_avg_freq_timestamps: list[float] = []
     self.comm_issue_generic_timestamps: list[float] = []
     self.comm_issue_timestamps: list[float] = []
-    self.comm_issue_threshold = 85
+    # The loop runs at 100 Hz, so a 0.75 s window holds at most ~75 samples; the old threshold of 85
+    # could never be reached and silently disabled every event gated by it. 60 requires the condition
+    # to hold for ~80% of the window.
+    self.comm_issue_threshold = 60
     self.comm_issue_window = 0.75
 
     self.locationd_error_timestamps: list[float] = []
-    self.locationd_error_threshold = 85
+    self.locationd_error_threshold = 60
     self.locationd_error_window = 0.75
 
     self.radar_fault_timestamps: list[float] = []
-    self.radar_fault_threshold = 85
+    self.radar_fault_threshold = 60
     self.radar_fault_window = 0.75
 
     self.starpilot_events_prev = []
@@ -543,7 +546,7 @@ class SelfdriveD:
       if self.below_steer_showing and not under_min:
         self.below_steer_showing = False
 
-      # Fully own the event — strip brand emissions, inject our own while active.
+      # Strip brand emissions so the disabled local warning cannot be reintroduced upstream.
       car_events = [e for e in car_events if e.name.raw != EventName.belowSteerSpeed]
       show_alert = self.below_steer_showing and under_min
 
@@ -556,7 +559,8 @@ class SelfdriveD:
           self.last_below_steer_speed_alert_time = now
 
       if show_alert:
-        self.events.add(EventName.belowSteerSpeed)
+        # self.events.add(EventName.belowSteerSpeed)  # Disable the low-speed steering warning.
+        pass
 
       self.events.add_from_msg(car_events)
 
@@ -966,11 +970,14 @@ class SelfdriveD:
     self.AM.add_many(self.sm.frame, alerts)
     self.AM.process_alerts(self.sm.frame, clear_event_types)
 
-    starpilot_alerts = self.starpilot_events.create_alerts(self.state_machine.current_alert_types, [self.CP, CS, self.sm, self.is_metric,
-                                                                                                    self.state_machine.soft_disable_timer, pers,
-                                                                                                    self.starpilot_toggles])
+    starpilot_alert_types, starpilot_clear_event_types = get_starpilot_alert_filters(
+      self.state_machine.current_alert_types, clear_event_types, self.starpilot_events
+    )
+    starpilot_alerts = self.starpilot_events.create_alerts(starpilot_alert_types, [self.CP, CS, self.sm, self.is_metric,
+                                                                                    self.state_machine.soft_disable_timer, pers,
+                                                                                    self.starpilot_toggles])
     self.starpilot_AM.add_many(self.sm.frame, starpilot_alerts)
-    self.starpilot_AM.process_alerts(self.sm.frame, clear_event_types)
+    self.starpilot_AM.process_alerts(self.sm.frame, starpilot_clear_event_types)
 
   def publish_selfdriveState(self, CS):
     # selfdriveState
@@ -1071,7 +1078,7 @@ class SelfdriveD:
 
 
 def main():
-  config_realtime_process(4, Priority.CTRL_HIGH)
+  config_realtime_process(5, Priority.CTRL_HIGH)
   s = SelfdriveD()
   s.run()
 
