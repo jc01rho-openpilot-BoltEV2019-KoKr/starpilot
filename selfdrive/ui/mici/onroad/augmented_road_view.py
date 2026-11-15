@@ -694,8 +694,8 @@ class AugmentedRoadView(CameraView):
 
     self._sidebar_personality_pressed = False
 
-    # Don't trigger click callback if bookmark or HUD widgets consumed the tap.
-    if not self._bookmark_icon.interacting() and not self._hud_renderer.user_interacting() and not self._favorite_slots.interacting():
+    # Don't trigger click callback if the bookmark or favorite slots consumed the tap (the mici HUD has no pressable widgets).
+    if not self._bookmark_icon.interacting() and not self._favorite_slots.interacting():
       super()._handle_mouse_release(mouse_pos)
 
   def _render(self, _):
