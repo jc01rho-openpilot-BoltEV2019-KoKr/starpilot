@@ -252,6 +252,113 @@ def run_case(platform, route, segment, scenario, safety_dir, local_log=None):
                            'Uses recorded actuator requests; does not test new model outputs or every optional feature'])
 
 
+KNOWN_FIXTURE_ERRORS = (
+  'Fixture identity mismatch',
+  'LogsUnavailable',
+  'No recorded CarParams',
+  'No recorded control requests',
+)
+
+
+def classify_error(error_text):
+  text = str(error_text or '')
+  for kind in KNOWN_FIXTURE_ERRORS:
+    if kind in text:
+      return kind
+  return 'unexpected_error'
+
+
+def case_key(item):
+  scenario = item.get('scenario')
+  if not scenario:
+    return str(item['platform'])
+  raw_route = item.get('registered_route') or item.get('route') or ''
+  parts = str(raw_route).split('/')
+  base_route = '/'.join(parts[:2]) if len(parts) >= 3 and parts[-1].isdigit() else str(raw_route)
+  seg = '' if item.get('segment') is None else str(item['segment'])
+  return f"{item['platform']}|{base_route}|{seg}|{scenario}"
+
+
+def load_baseline(baseline_path):
+  payload = json.loads(Path(baseline_path).read_text())
+  if not isinstance(payload, dict) or not isinstance(payload.get('cases'), dict):
+    raise ValueError('Baseline JSON must contain a cases object')
+  cases = payload['cases']
+  for key, entry in cases.items():
+    if not isinstance(entry, dict) or entry.get('status') not in ('pass', 'failed', 'uncovered', 'error'):
+      raise ValueError(f'Invalid baseline entry for {key}')
+  return cases
+
+
+def evaluate_baseline(results, baseline_cases, *, baseline_path=None):
+  regressions = []
+  improvements = []
+  new_uncovered = []
+  matched = 0
+  for item in results:
+    key = case_key(item)
+    status = item['status']
+    expected = baseline_cases.get(key)
+    if expected is None:
+      if status == 'pass':
+        improvements.append(dict(key=key, baseline=None, current='pass'))
+      elif status == 'uncovered' and not item.get('errors'):
+        new_uncovered.append(key)
+      else:
+        regressions.append(dict(key=key, baseline=None, current=status,
+                                detail=item.get('error') or item.get('reason') or item.get('errors')))
+      continue
+    matched += 1
+    base_status = expected['status']
+    if status == 'pass':
+      if base_status != 'pass':
+        improvements.append(dict(key=key, baseline=base_status, current='pass'))
+      continue
+    if base_status == 'pass':
+      regressions.append(dict(key=key, baseline='pass', current=status,
+                              detail=item.get('error') or item.get('reason') or item.get('missing_coverage')))
+    elif base_status == 'uncovered':
+      if status != 'uncovered':
+        regressions.append(dict(key=key, baseline='uncovered', current=status,
+                                detail=item.get('error') or item.get('errors')))
+    elif base_status == 'failed':
+      if status == 'error':
+        regressions.append(dict(key=key, baseline='failed', current='error', detail=item.get('error')))
+      elif status == 'failed':
+        panda = item.get('panda_results') or {}
+        bad_acc = sum(int(v.get('unexpected_acceptances', 0)) for v in panda.values())
+        bad_hook = sum(int(v.get('hook_errors', 0)) for v in panda.values())
+        if item.get('errors') or bad_acc > 0 or bad_hook > 0:
+          regressions.append(dict(key=key, baseline='failed', current='failed_worse',
+                                  detail=dict(errors=item.get('errors'), unexpected_acceptances=bad_acc,
+                                              hook_errors=bad_hook)))
+      elif status == 'uncovered':
+        improvements.append(dict(key=key, baseline='failed', current='uncovered'))
+    elif base_status == 'error':
+      if status == 'failed':
+        regressions.append(dict(key=key, baseline='error', current='failed', detail=item.get('errors')))
+      elif status == 'error':
+        kind = classify_error(item.get('error'))
+        if kind == 'unexpected_error' or kind != expected.get('error_kind'):
+          regressions.append(dict(key=key, baseline=f"error:{expected.get('error_kind')}", current=f"error:{kind}",
+                                  detail=item.get('error')))
+      elif status == 'uncovered':
+        improvements.append(dict(key=key, baseline='error', current='uncovered'))
+  summary = dict(
+    evaluated=len(results),
+    matched_baseline=matched,
+    regression_count=len(regressions),
+    regressions=regressions,
+    improvement_count=len(improvements),
+    improvements=improvements,
+    new_uncovered_count=len(new_uncovered),
+    new_uncovered=new_uncovered,
+  )
+  if baseline_path is not None:
+    summary['baseline_path'] = str(baseline_path)
+  return summary
+
+
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument('--inventory', action='store_true')
@@ -262,6 +369,7 @@ def main():
   parser.add_argument('--scenario', action='append', choices=['recorded', 'aol-main'])
   parser.add_argument('--out', type=Path, default=DEFAULT_OUT)
   parser.add_argument('--release', action='store_true', help='Build without ALLOW_DEBUG')
+  parser.add_argument('--baseline', type=Path, help='Baseline JSON file to gate only on regressions')
   parser.add_argument('--local-log', help='Explicit local rlog, requires one selected platform')
   parser.add_argument('--case-timeout', type=float, default=180)
   parser.add_argument('--worker', type=Path, help=argparse.SUPPRESS)
@@ -300,7 +408,18 @@ def main():
     parser.error('Unknown platforms: '+', '.join(sorted(unknown)))
   if args.local_log and (len(args.platform) != 1 or args.all):
     parser.error('--local-log requires exactly one --platform')
+  if args.local_log and args.baseline:
+    parser.error('--baseline cannot be used with --local-log')
   (args.out/'results.json').write_text(json.dumps(dict(cases=[], counts={}, state='running')))
+  baseline_cases = None
+  if args.baseline:
+    try:
+      baseline_cases = load_baseline(args.baseline)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+      failure = dict(status='error', reason='Baseline load failed', error=repr(error))
+      (args.out/'results.json').write_text(json.dumps(dict(cases=[failure], counts={'error': 1}), indent=2))
+      print(failure['reason'] + ': ' + failure['error'], flush=True)
+      return 1
   try:
     safety_dir = build_safety(args.out, args.release)
   except (subprocess.SubprocessError, OSError) as error:
@@ -320,8 +439,8 @@ def main():
       continue
     for route in registered:
       for scenario in args.scenario or ['recorded', 'aol-main']:
-        case = dict(platform=entry['platform'], **route, scenario=scenario, safety_dir=str(safety_dir),
-                    local_log=args.local_log, execution_id=uuid.uuid4().hex)
+        case = dict(platform=entry['platform'], registered_route=route['route'], **route, scenario=scenario,
+                    safety_dir=str(safety_dir), local_log=args.local_log, execution_id=uuid.uuid4().hex)
         path = args.out / f'case_{len(results):04d}.json'
         path.write_text(json.dumps(case))
         path.with_suffix('.result.json').unlink(missing_ok=True)
@@ -339,7 +458,17 @@ def main():
         print('  '+result['status'], flush=True)
         (args.out/'results.json').write_text(json.dumps(dict(cases=results, counts=dict(Counter(r['status'] for r in results))), indent=2))
   counts = Counter(r['status'] for r in results)
-  (args.out/'results.json').write_text(json.dumps(dict(cases=results, counts=dict(counts)), indent=2))
+  final_report = dict(cases=results, counts=dict(counts))
+  if baseline_cases is not None:
+    baseline_summary = evaluate_baseline(results, baseline_cases, baseline_path=args.baseline)
+    final_report['baseline'] = baseline_summary
+    (args.out/'results.json').write_text(json.dumps(final_report, indent=2))
+    print(json.dumps(dict(counts=dict(counts), regression_count=baseline_summary['regression_count'],
+                          improvement_count=baseline_summary['improvement_count'],
+                          new_uncovered_count=baseline_summary['new_uncovered_count'],
+                          regressions=baseline_summary['regressions']), indent=2))
+    return 0 if results and baseline_summary['regression_count'] == 0 else 1
+  (args.out/'results.json').write_text(json.dumps(final_report, indent=2))
   print(json.dumps(dict(counts), indent=2))
   return 0 if results and all(r['status'] == 'pass' for r in results) else 1
 
