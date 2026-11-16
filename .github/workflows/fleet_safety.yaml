@@ -2,6 +2,17 @@ name: Fleet controller safety
 
 on:
   workflow_dispatch:
+    inputs:
+      run_recorded_fleet:
+        description: "Run 8-shard external route download replay against baseline"
+        type: boolean
+        default: false
+        required: false
+      strict_audit:
+        description: "Fail on pre-existing unbaselined gaps/errors instead of regressions only"
+        type: boolean
+        default: false
+        required: false
   pull_request:
     paths:
       - 'opendbc_repo/**'
@@ -23,13 +34,25 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r selfdrive/car/tests/fleet_requirements.txt
-      - name: Audit accounting and runner failures
+      - name: Audit accounting, runner failures, and GM controller tests
         run: >-
           python -m pytest --noconftest -o addopts='' -q
           selfdrive/car/tests/test_fleet_safety_core.py
           selfdrive/car/tests/test_fleet_safety_runner.py
           opendbc_repo/opendbc/safety/tests/safety_replay/test_replay_drive.py
+          opendbc_repo/opendbc/car/gm/tests/test_carcontroller.py
+      - name: Compile Panda safety for STM32F4 and CANFD
+        working-directory: opendbc_repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMON_FLAGS=(-c -o /dev/null -Os -Wall -Wextra -Werror -Wno-strict-prototypes -nostdlib -fno-builtin -std=gnu11 -fmax-errors=1 -I. -I.. -I../panda -x c opendbc/safety/tests/libsafety/safety.c)
+          gcc -DALLOW_DEBUG -DSTM32F4 "${COMMON_FLAGS[@]}"
+          gcc -DALLOW_DEBUG "${COMMON_FLAGS[@]}"
+          gcc -Wno-unused-variable -DSTM32F4 "${COMMON_FLAGS[@]}"
+          gcc -Wno-unused-variable "${COMMON_FLAGS[@]}"
   recorded_fleet:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_recorded_fleet == true
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -43,10 +66,19 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r selfdrive/car/tests/fleet_requirements.txt
       - name: Current controllers against freshly compiled release safety
-        run: >-
-          python -m selfdrive.car.tests.fleet_safety --all --release
-          --shard-count 8 --shard-index ${{ matrix.shard }}
-          --out selfdrive/car/tests/fleet_results/ci
+        shell: bash
+        env:
+          STRICT_AUDIT: ${{ github.event_name == 'workflow_dispatch' && inputs.strict_audit && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          EXTRA_ARGS=(--baseline selfdrive/car/tests/fleet_safety_baseline.json)
+          if [[ "${STRICT_AUDIT}" == "1" ]]; then
+            EXTRA_ARGS=()
+          fi
+          python -m selfdrive.car.tests.fleet_safety --all --release \
+            --shard-count 8 --shard-index "${{ matrix.shard }}" \
+            --out selfdrive/car/tests/fleet_results/ci \
+            "${EXTRA_ARGS[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
