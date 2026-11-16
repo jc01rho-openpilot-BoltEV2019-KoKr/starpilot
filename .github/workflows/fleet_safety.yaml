@@ -3,6 +3,11 @@ name: Fleet controller safety
 on:
   workflow_dispatch:
     inputs:
+      run_recorded_fleet:
+        description: "Run 8-shard external route download replay against baseline"
+        type: boolean
+        default: false
+        required: false
       strict_audit:
         description: "Fail on pre-existing unbaselined gaps/errors instead of regressions only"
         type: boolean
@@ -47,6 +52,7 @@ jobs:
           gcc -Wno-unused-variable -DSTM32F4 "${COMMON_FLAGS[@]}"
           gcc -Wno-unused-variable "${COMMON_FLAGS[@]}"
   recorded_fleet:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_recorded_fleet == true
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
