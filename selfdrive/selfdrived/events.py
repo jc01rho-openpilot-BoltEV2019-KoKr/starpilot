@@ -326,6 +326,11 @@ def get_nda_camera_warning_context(sm: messaging.SubMaster) -> tuple[float, floa
   return limit_speed * CV.MS_TO_KPH, distance_m
 
 
+def is_nda_rear_camera_hold(sm: messaging.SubMaster) -> bool:
+  navi = sm['naviData']
+  return int(getattr(navi, 'active', 0) or 0) > 0 and bool(getattr(navi, 'camRearPassed', False))
+
+
 def get_nda_camera_warning_policy(current_speed: float, limit_speed: float) -> tuple[float, float, float, int]:
   speed_ratio = 0.0
   if limit_speed > 0:
@@ -351,6 +356,8 @@ def nda_camera_warning_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.
   speed_ratio, _, duration, alert_status = get_nda_camera_warning_policy(current_speed_kph, limit_speed_kph)
 
   distance_text = f"{max(int(round(distance_m)), 0)} m"
+  if is_nda_rear_camera_hold(sm):
+    distance_text = f"hold {distance_text}"
 
   limit_text = f"{max(int(round(limit_speed_kph)), 0)} kph" if limit_speed_kph > 0 else "Camera"
   alert_text = f"{limit_text} 📸 {distance_text}"
