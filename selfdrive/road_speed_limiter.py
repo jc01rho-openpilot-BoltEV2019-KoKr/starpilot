@@ -27,7 +27,8 @@ terminate_flag = threading.Event()
 
 class Port:
   BROADCAST_PORT = 2899
-  RECEIVE_PORT = 3843
+  # 2843 is the pre-2024-06 npilot port that some senders still hardcode; 3843 is the current npilot port.
+  RECEIVE_PORTS = (2843, 3843)
   LOCATION_PORT = BROADCAST_PORT
 
 
@@ -42,6 +43,7 @@ class NaviServer:
     self.lock = threading.Lock()
     self.remote_addr = None
     self.remote_gps_addr = None
+    self.seen_receive_ports = set()
     self.gps_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     self.location = None
 
@@ -144,13 +146,24 @@ class NaviServer:
     except Exception as e:
       cloudlog.info(f"Send SDP error: {e}")
 
-  def udp_recv(self, sock):
+  def udp_recv(self, socks):
     try:
-      ready = select.select([sock], [], [], 0.5)
-      if not ready[0]:
-        return False
+      ready = select.select(socks, [], [], 0.5)[0]
+    except Exception as e:
+      cloudlog.info(f"UDP select error: {e}")
+      return False
+    received = False
+    for sock in ready:
+      received = self._handle_packet(sock) or received
+    return received
 
+  def _handle_packet(self, sock):
+    try:
       data, self.remote_addr = sock.recvfrom(2048)
+      port = sock.getsockname()[1]
+      if port not in self.seen_receive_ports:
+        self.seen_receive_ports.add(port)
+        cloudlog.info(f"road_speed_limiter: first packet on port {port} from {self.remote_addr[0]}")
       json_obj = json.loads(data.decode())
 
       if 'cmd' in json_obj:
@@ -222,13 +235,17 @@ def main():
   v_ego_q = deque(maxlen=3)
   rear_motion = RearCameraMotion()
 
-  with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-    sock.bind(('0.0.0.0', Port.RECEIVE_PORT))
+  socks = []
+  for port in Port.RECEIVE_PORTS:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(('0.0.0.0', port))
     sock.setblocking(False)
+    socks.append(sock)
 
+  try:
     while not terminate_flag.is_set():
       try:
-        server.udp_recv(sock)
+        server.udp_recv(socks)
 
         dat = messaging.new_message('naviData', valid=True)
         dat.init('naviData')
@@ -268,11 +285,14 @@ def main():
         last_run_time = current_time
 
         navi_data_sock.send(dat.to_bytes())
-        server.send_sdp(sock)
+        server.send_sdp(socks[0])
         server.check()
       except Exception as e:
         cloudlog.info(f"road_speed_limiter loop error: {e}")
         time.sleep(1.0)
+  finally:
+    for sock in socks:
+      sock.close()
 
 
 class SpeedLimiter:

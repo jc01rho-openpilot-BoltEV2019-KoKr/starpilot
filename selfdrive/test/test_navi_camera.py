@@ -1,5 +1,8 @@
 import importlib
+import json
+import socket
 import sys
+import threading
 import time
 import types
 from types import SimpleNamespace
@@ -140,6 +143,45 @@ def _limiter(module, **navi):
                   sectionLimitSpeed=0, sectionLeftDist=0, sectionAvgSpeed=0, sectionAdjustSpeed=False)
   limiter.naviData = SimpleNamespace(**{**defaults, **navi})
   return limiter
+
+
+def _server(module):
+  server = module.NaviServer.__new__(module.NaviServer)
+  server.json_road_limit = None
+  server.json_traffic_signal = None
+  server.active = 0
+  server.last_updated = 0.0
+  server.last_updated_active = 0.0
+  server.lock = threading.Lock()
+  server.remote_addr = None
+  server.remote_gps_addr = None
+  server.seen_receive_ports = set()
+  return server
+
+
+class TestNaviServerPorts:
+  def test_listens_on_legacy_and_current_ports(self, road_speed_limiter):
+    assert road_speed_limiter.Port.RECEIVE_PORTS == (2843, 3843)
+
+  def test_udp_recv_accepts_packets_on_every_socket(self, road_speed_limiter):
+    server = _server(road_speed_limiter)
+    socks = []
+    try:
+      for _ in range(2):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.setblocking(False)
+        socks.append(sock)
+      with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+        for limit, sock in zip((50, 80), socks, strict=True):
+          sender.sendto(json.dumps({"active": 1, "road_limit": {"road_limit_speed": limit}}).encode(), sock.getsockname())
+          assert server.udp_recv(socks)
+          assert server.get_limit_val("road_limit_speed") == limit
+      assert server.seen_receive_ports == {sock.getsockname()[1] for sock in socks}
+      assert server.active == 1
+    finally:
+      for sock in socks:
+        sock.close()
 
 
 class TestSpeedLimiter:
