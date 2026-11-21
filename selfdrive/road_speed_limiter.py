@@ -18,14 +18,16 @@ from cereal import messaging
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_CTRL
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.navi_camera import SECTION_SMOOTH_CAMERA_TYPES, RearCameraMotion, traffic_signal_fields
 
 CAMERA_SPEED_FACTOR = 1.0
+ROAD_LIMIT_SERVICE = b'EON:ROAD_LIMIT_SERVICE:v2'
 terminate_flag = threading.Event()
 
 
 class Port:
   BROADCAST_PORT = 2899
-  RECEIVE_PORT = 2843
+  RECEIVE_PORT = 3843
   LOCATION_PORT = BROADCAST_PORT
 
 
@@ -33,6 +35,7 @@ class NaviServer:
   def __init__(self):
     self.sm = messaging.SubMaster(['gpsLocationExternal', 'carState'], frequency=int(1. / DT_CTRL))
     self.json_road_limit = None
+    self.json_traffic_signal = None
     self.active = 0
     self.last_updated = 0.0
     self.last_updated_active = 0.0
@@ -110,11 +113,10 @@ class NaviServer:
             broadcast_address = self.get_broadcast_address()
 
           if broadcast_address is not None and self.remote_addr is None:
-            msg = 'EON:ROAD_LIMIT_SERVICE:v1'.encode()
             for i in range(1, 255):
               ip_tuple = socket.inet_aton(broadcast_address)
               new_ip = ip_tuple[:-1] + bytes([i])
-              sock.sendto(msg, (socket.inet_ntoa(new_ip), Port.BROADCAST_PORT))
+              sock.sendto(ROAD_LIMIT_SERVICE, (socket.inet_ntoa(new_ip), Port.BROADCAST_PORT))
         except Exception as e:
           cloudlog.info(f"Broadcast thread error: {e}")
 
@@ -138,7 +140,7 @@ class NaviServer:
   def send_sdp(self, sock):
     try:
       if self.remote_addr:
-        sock.sendto('EON:ROAD_LIMIT_SERVICE:v1'.encode(), (self.remote_addr[0], Port.BROADCAST_PORT))
+        sock.sendto(ROAD_LIMIT_SERVICE, (self.remote_addr[0], Port.BROADCAST_PORT))
     except Exception as e:
       cloudlog.info(f"Send SDP error: {e}")
 
@@ -177,12 +179,15 @@ class NaviServer:
         if 'road_limit' in json_obj:
           self.json_road_limit = json_obj['road_limit']
           self.last_updated = time.monotonic()
+        if 'traffic_signal' in json_obj:
+          self.json_traffic_signal = json_obj['traffic_signal']
 
       return True
     except Exception as e:
       cloudlog.info(f"UDP receive error: {e}")
       with self.lock:
         self.json_road_limit = None
+        self.json_traffic_signal = None
       return False
 
   def check(self):
@@ -190,6 +195,7 @@ class NaviServer:
     if now - self.last_updated > 6.0:
       with self.lock:
         self.json_road_limit = None
+        self.json_traffic_signal = None
 
     if now - self.last_updated_active > 6.0:
       self.active = 0
@@ -214,6 +220,7 @@ def main():
   last_run_time = time.monotonic()
   target_interval = 0.33
   v_ego_q = deque(maxlen=3)
+  rear_motion = RearCameraMotion()
 
   with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
     sock.bind(('0.0.0.0', Port.RECEIVE_PORT))
@@ -229,7 +236,6 @@ def main():
         dat.naviData.roadLimitSpeed = server.get_limit_val('road_limit_speed', 0)
         dat.naviData.isHighway = server.get_limit_val('is_highway', False)
         dat.naviData.camType = server.get_limit_val('cam_type', 0)
-        dat.naviData.camLimitSpeedLeftDist = server.get_limit_val('cam_limit_speed_left_dist', 0)
         dat.naviData.camLimitSpeed = server.get_limit_val('cam_limit_speed', 0)
         dat.naviData.sectionLimitSpeed = server.get_limit_val('section_limit_speed', 0)
         dat.naviData.sectionLeftDist = server.get_limit_val('section_left_dist', 0)
@@ -239,15 +245,19 @@ def main():
         dat.naviData.camSpeedFactor = server.get_limit_val('cam_speed_factor', CAMERA_SPEED_FACTOR)
         dat.naviData.currentRoadName = server.get_limit_val('current_road_name', '')
         dat.naviData.isNda2 = server.get_limit_val('is_nda2', False)
+        dat.naviData.ts = traffic_signal_fields(server.json_traffic_signal)
 
         if sm.updated['carState']:
           v_ego_q.append(sm['carState'].vEgo)
 
         v_ego = float(np.mean(v_ego_q)) if len(v_ego_q) > 0 else 0.0
-        traveled = (time.monotonic() - server.last_updated) * v_ego
+        now = time.monotonic()
+        traveled = (now - server.last_updated) * v_ego
 
-        if dat.naviData.camLimitSpeedLeftDist > 0:
-          dat.naviData.camLimitSpeedLeftDist = int(max(dat.naviData.camLimitSpeedLeftDist - traveled, 0))
+        dat.naviData.camLimitSpeedLeftDist, dat.naviData.camRearPassed = rear_motion.update(
+          dat.naviData.camType, server.get_limit_val('cam_limit_speed_left_dist', 0),
+          server.get_limit_val('cam_rear_hold_dist'), server.get_limit_val('cam_distance_id'),
+          server.last_updated, now, server.get_limit_val('cam_distance_age', 0.0), v_ego)
         if dat.naviData.sectionLeftDist > 0:
           dat.naviData.sectionLeftDist = int(max(dat.naviData.sectionLeftDist - traveled, 0))
 
@@ -282,6 +292,7 @@ class SpeedLimiter:
     self.slowing_down = False
     self.started_dist = 0
     self.last_limit_speed_left_dist = 0
+    self.rear_passed = False
     self.sock = messaging.sub_sock('naviData')
     self.naviData = None
     self.logMonoTime = 0
@@ -324,12 +335,17 @@ class SpeedLimiter:
     # Drop stale data the same way get_road_limit_speed does.
     if (time.monotonic_ns() - self.logMonoTime) / 1e9 > 3.0:
       self.slowing_down = False
+      self.rear_passed = False
       return 0, 0, 0, False, ''
 
     is_highway = self.naviData.isHighway
     cam_type = int(self.naviData.camType)
     cam_limit_speed_left_dist = self.naviData.camLimitSpeedLeftDist
     cam_limit_speed = self.naviData.camLimitSpeed
+    rear_passed = bool(self.naviData.camRearPassed)
+    if self.rear_passed and not rear_passed:
+      self.slowing_down = False
+    self.rear_passed = rear_passed
     section_limit_speed = self.naviData.sectionLimitSpeed
     section_left_dist = self.naviData.sectionLeftDist
     section_avg_speed = self.naviData.sectionAvgSpeed
@@ -356,6 +372,13 @@ class SpeedLimiter:
       return 0, 0, cam_limit_speed_left_dist, False, ''
 
     if cam_limit_speed_left_dist > 0 and cam_limit_speed > 0:
+      # Past a rear camera the distance counts down the hold zone, so hold the limit instead of re-approaching.
+      if rear_passed and min_limit <= cam_limit_speed <= max_limit:
+        first_started = not self.slowing_down
+        self.slowing_down = True
+        self.last_limit_speed_left_dist = cam_limit_speed_left_dist
+        return cam_limit_speed * CAMERA_SPEED_FACTOR, cam_limit_speed, cam_limit_speed_left_dist, first_started, ''
+
       v_ego = max(float(CS.vEgo), 0.0)
       diff_speed = v_ego * CV.MS_TO_KPH - (cam_limit_speed * CAMERA_SPEED_FACTOR)
       safe_dist = v_ego * (4.0 if cam_type == 22 else 7.0)
@@ -372,7 +395,7 @@ class SpeedLimiter:
 
         td = self.started_dist - safe_dist
         d = cam_limit_speed_left_dist - safe_dist
-        if d > 0.0 and td > 0.0 and diff_speed > 0.0 and (section_left_dist < 10 or cam_type == 2):
+        if d > 0.0 and td > 0.0 and diff_speed > 0.0 and (section_left_dist < 10 or cam_type in SECTION_SMOOTH_CAMERA_TYPES):
           pp = (d / td) ** 0.6
         else:
           pp = 0.0

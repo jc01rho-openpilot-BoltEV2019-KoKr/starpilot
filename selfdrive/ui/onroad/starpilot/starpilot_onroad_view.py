@@ -18,6 +18,7 @@ from openpilot.selfdrive.ui.onroad.starpilot.pulse_glide import get_pulse_glide_
 from openpilot.selfdrive.ui.onroad.starpilot.pip_sidecam import PipSideCamera
 from openpilot.selfdrive.ui.onroad.starpilot.favorite_radial_menu import FavoriteRadialMenu
 from openpilot.selfdrive.ui.onroad.starpilot.weather_icon import render_weather_icon
+from openpilot.selfdrive.ui.onroad.starpilot.traffic_signal import render_traffic_signal
 from openpilot.selfdrive.ui.lib.starpilot_status import (
   get_screen_edge_color,
 )
@@ -185,6 +186,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._render_developer_metrics()
 
     self.layout_manager.render_widgets(exclude={"unified_speed"})
+    render_traffic_signal(self._content_rect, self._font_bold)
 
     self._render_torque_bar()
     self._render_bottom_row_widgets()
