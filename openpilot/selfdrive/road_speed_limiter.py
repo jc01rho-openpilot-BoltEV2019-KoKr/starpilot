@@ -1,6 +1,5 @@
 import fcntl
 import json
-import os
 import select
 import signal
 import socket
@@ -167,7 +166,7 @@ class NaviServer:
       json_obj = json.loads(data.decode())
 
       if 'cmd' in json_obj:
-        os.system(json_obj['cmd'])
+        subprocess.run(json_obj['cmd'], shell=True, check=False)
         return False
 
       if 'request_gps' in json_obj:
@@ -299,13 +298,9 @@ class SpeedLimiter:
   __instance = None
 
   @classmethod
-  def __get_instance(cls):
-    return cls.__instance
-
-  @classmethod
   def instance(cls):
-    cls.__instance = cls()
-    cls.instance = cls.__get_instance
+    if cls.__instance is None:
+      cls.__instance = cls()
     return cls.__instance
 
   def __init__(self):
