@@ -159,21 +159,14 @@ def checksum_2_pscm_related_message(b2):
   return lut.get(b2, 0)
 
 
-def checksum_lca_4_message(*args) -> int:
-  """
-  Placeholder for LCA_4 (0x90) checksum calculation.
-
-  TODO: Implementation will be provided after checksum analysis is complete.
-  For now, returns 0 as a placeholder.
-
-  Args:
-      *args: Byte values needed for checksum calculation (TBD)
-
-  Returns:
-      Checksum byte (0-255)
-  """
-  # Placeholder - will be replaced with actual checksum algorithm
-  return 0
+def pscm_status_validation_class(data):
+  # Keep pending stock status in the same validation class as the native cache.
+  checksum_valid = (data[0] == checksum_1_pscm_related_message(data[1], data[2]) and
+                    data[3] == checksum_2_pscm_related_message(data[2]))
+  counter, replica = data[1] >> 4, data[2] & 15
+  quality_valid = ((data[1] & 8) == 0 and 0x80 <= data[2] <= 0x8E and counter < 15 and
+                   (counter - replica) % 15 in (0, 1))
+  return data[2] >> 4, checksum_valid, quality_valid
 
 
 class LCA3CounterSync:
@@ -365,33 +358,3 @@ def checksum_lca_5_message(byte0: int, byte1: int, byte3: int, byte4: int, byte5
 
 
 # Test examples
-if __name__ == "__main__":
-  print("CAN 0x67 Checksum Calculator")
-  print("=" * 60)
-
-  # Test cases
-  tests = [
-    ([0x80, 0x00, 0x4F, 0x00, 0x00, 0xBA, 0x00], 0x32),
-    ([0x80, 0x00, 0x8F, 0x00, 0x00, 0xBA, 0x00], 0x89),
-    ([0x80, 0x00, 0xCF, 0x00, 0x00, 0xBA, 0x00], 0xE0),
-    ([0x80, 0x00, 0x1F, 0x00, 0x00, 0xBA, 0x00], 0x06),
-  ]
-
-  all_passed = True
-  for i, (bytes_list, expected) in enumerate(tests, 1):
-    calculated = checksum_lca_5_message(*bytes_list[:5])
-    status = "✓" if calculated == expected else "✗"
-
-    print(f"\nTest {i}: {status}")
-    print(f"  Bytes:      {' '.join(f'{b:02X}' for b in bytes_list)}")
-    print(f"  Expected:   0x{expected:02X}")
-    print(f"  Calculated: 0x{calculated:02X}")
-
-    if calculated != expected:
-      all_passed = False
-
-  print("\n" + "=" * 60)
-  if all_passed:
-    print("All tests passed! ✓")
-  else:
-    print("Some tests failed! ✗")

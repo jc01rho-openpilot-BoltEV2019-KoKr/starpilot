@@ -1,4 +1,6 @@
-#include "fdcan_declarations.h"
+#pragma once
+
+#include "board/drivers/drivers.h"
 
 FDCAN_GlobalTypeDef *cans[PANDA_CAN_CNT] = {FDCAN1, FDCAN2, FDCAN3};
 
@@ -27,6 +29,11 @@ void can_clear_send(FDCAN_GlobalTypeDef *FDCANx, uint8_t can_number) {
     can_health[can_number].can_core_reset_cnt += 1U;
     can_health[can_number].total_tx_lost_cnt += (FDCAN_TX_FIFO_EL_CNT - (FDCANx->TXFQS & FDCAN_TXFQS_TFFL)); // TX FIFO msgs will be lost after reset
     llcan_clear_send(FDCANx);
+    #ifndef PANDA_BODY
+    if (power_save_enabled) {
+      set_power_save_state(true);
+    }
+    #endif
     last_reset = time;
   }
 }
@@ -149,7 +156,7 @@ void process_can(uint8_t can_number) {
 
 // FDFDCANx_IT0 IRQ Handler (RX and errors)
 // blink blue when we are receiving CAN messages
-void can_rx(uint8_t can_number) {
+static void can_rx(uint8_t can_number) {
   FDCAN_GlobalTypeDef *FDCANx = CANIF_FROM_CAN_NUM(can_number);
   uint8_t bus_number = BUS_NUM_FROM_CAN_NUM(can_number);
 
@@ -170,10 +177,10 @@ void can_rx(uint8_t can_number) {
 
     uint32_t RxFIFO0SA = FDCAN_START_ADDRESS + (can_number * FDCAN_OFFSET);
     CANPacket_t to_push;
-    canfd_fifo *fifo;
+    const canfd_fifo *fifo;
 
     // getting address
-    fifo = (canfd_fifo *)(RxFIFO0SA + (rx_fifo_idx * FDCAN_RX_FIFO_0_EL_SIZE));
+    fifo = (const canfd_fifo *)(RxFIFO0SA + (rx_fifo_idx * FDCAN_RX_FIFO_0_EL_SIZE));
 
     bool canfd_frame = ((fifo->header[1] >> 21) & 0x1U);
     bool brs_frame = ((fifo->header[1] >> 20) & 0x1U);
@@ -193,12 +200,15 @@ void can_rx(uint8_t can_number) {
     }
     can_set_checksum(&to_push);
 
-    // forwarding (panda only)
-    int bus_fwd_num = safety_fwd_hook(bus_number, to_push.addr);
-    if (bus_fwd_num < 0) {
-      bus_fwd_num = bus_config[can_number].forwarding_bus;
-    }
-    if (bus_fwd_num != -1) {
+    // forwarding
+    #ifdef STM32H7
+    mpu_safety_open();
+    #endif
+    int bus_fwd_num = safety_fwd_packet_hook(&to_push);
+    #ifdef STM32H7
+    mpu_safety_close();
+    #endif
+    if (bus_fwd_num >= 0) {
       CANPacket_t to_send;
 
       to_send.fd = to_push.fd;
@@ -215,7 +225,19 @@ void can_rx(uint8_t can_number) {
       can_health[can_number].total_fwd_cnt += 1U;
     }
 
+    #ifdef PANDA_BODY
+    body_can_rx(&to_push);
+    #endif
+
+    #ifdef STM32H7
+
+    mpu_safety_open();
+
+    #endif
     safety_rx_invalid += safety_rx_hook(&to_push) ? 0U : 1U;
+    #ifdef STM32H7
+    mpu_safety_close();
+    #endif
     ignition_can_hook(&to_push);
 
     led_set(LED_BLUE, true);
@@ -262,6 +284,12 @@ bool can_init(uint8_t can_number) {
     FDCAN_GlobalTypeDef *FDCANx = CANIF_FROM_CAN_NUM(can_number);
     ret &= can_set_speed(can_number);
     ret &= llcan_init(FDCANx);
+    #ifndef PANDA_BODY
+    // Reinitialization must not leave IRQs running on powered-down transceivers.
+    if (power_save_enabled) {
+      set_power_save_state(true);
+    }
+    #endif
     // in case there are queued up messages
     process_can(can_number);
   }

@@ -18,6 +18,7 @@ def _const_int(expr: str) -> int:
 from tinygrad.dtype import dtypes
 from tinygrad.uop.ops import Ops, UOp
 from tinygrad.codegen.decomp.dtype import f2f
+from tinygrad.codegen.decomp.transcendental import exponent_bias
 
 # Type alias for vars dict: stores UOps and tuples for lambda definitions
 VarVal = UOp | tuple[str, list[str], str]
@@ -98,8 +99,7 @@ def _floor(x):
 def _f16_extract(v): return (v & _u32(0xFFFF)).cast(dtypes.uint16).bitcast(dtypes.half) if v.dtype == dtypes.uint32 else v
 
 # ═════ FP8 (E4M3) and BF8 (E5M2) conversion helpers ═════
-# f32→fp8/bf8 uses f2f decomposition directly. fp8/bf8→f32 wraps f2f with subnormal handling
-# (f2f flushes denormals to zero, but AMD V_CVT_F32_FP8/BF8 preserves subnormals).
+# f2f flushes denormals to zero, but AMD FP8 conversions preserve subnormals in both directions.
 def _fp8_to_f32(v: UOp) -> UOp:
   b = (v.cast(dtypes.uint32) & _u32(0xFF)).cast(dtypes.uint8)
   # E4M3 subnormal: exp==0, mant!=0 -> (-1)^sign * 2^(1-7) * (mant/8) = (-1)^sign * mant * 2^(-9)
@@ -120,10 +120,17 @@ def _bf8_to_f32(v: UOp) -> UOp:
   normal = f2f(b, dtypes.fp8e5m2, dtypes.float32)
   return is_sub.where(sub_f32.bitcast(dtypes.float32), normal)
 
-def _f32_to_fp8(v: UOp) -> UOp:
-  return f2f((v.bitcast(dtypes.float32) if v.dtype != dtypes.float32 else v).bitcast(dtypes.uint32), dtypes.float32, dtypes.fp8e4m3, sat=False)
+def _f32_to_fp8(v: UOp, dt=dtypes.fp8e4m3) -> UOp:
+  bits = v.bitcast(dtypes.uint32)
+  magnitude = bits & _u32(0x7FFFFFFF)
+  # Adding this power of two rounds to the subnormal spacing with round-to-nearest-even.
+  magic = _const(dtypes.float32, 2.0**(24 - exponent_bias(dt) - dtypes.finfo(dt)[1]))
+  sub = (magnitude.bitcast(dtypes.float32) + magic).bitcast(dtypes.uint32) - magic.bitcast(dtypes.uint32)
+  sub = (sub | ((bits >> _u32(24)) & _u32(0x80))).cast(dtypes.uint8)
+  is_sub = magnitude < _const(dtypes.float32, 2.0**(1 - exponent_bias(dt))).bitcast(dtypes.uint32)
+  return is_sub.where(sub, f2f(bits, dtypes.float32, dt, sat=False))
 def _f32_to_bf8(v: UOp) -> UOp:
-  return f2f((v.bitcast(dtypes.float32) if v.dtype != dtypes.float32 else v).bitcast(dtypes.uint32), dtypes.float32, dtypes.fp8e5m2, sat=False)
+  return _f32_to_fp8(v, dtypes.fp8e5m2)
 def _f32_to_bf16(v: UOp) -> UOp:
   """Convert f32 to bf16 with round-to-nearest-even. BF16 is the upper 16 bits of F32 with rounding."""
   bits = (v.bitcast(dtypes.float32) if v.dtype != dtypes.float32 else v).bitcast(dtypes.uint32)
@@ -357,7 +364,8 @@ _FUNCS: dict[str, Callable[..., UOp]] = {
   'isEven': lambda a: (UOp(Ops.TRUNC, src=(a,)).cast(dtypes.int) & _const(dtypes.int, 1)).eq(_const(dtypes.int, 0)),
   'max': lambda a, b: UOp(Ops.MAX, src=(a, b)),
   'min': lambda a, b: UOp(Ops.MAX, src=(a.neg(), b.neg())).neg(),
-  'pow': lambda a, b: UOp(Ops.EXP2, src=(b.bitcast(dtypes.float32),)),
+  # pow(2.0, x): interpret the operand's float bits at its original width.
+  'pow': lambda a, b: UOp(Ops.EXP2, src=(b.bitcast({2: dtypes.half, 4: dtypes.float32, 8: dtypes.float64}[b.dtype.itemsize]),)),
   'fma': lambda a, b, c: a * b + c,
   'i32_to_f32': lambda a: a.cast(dtypes.int).cast(dtypes.float32),
   'u32_to_f32': lambda a: a.cast(dtypes.uint32).cast(dtypes.float32),
@@ -561,8 +569,9 @@ class Parser:
         if op == '*': return left * right
         return (left // right) if dtypes.is_int(left.dtype) else (left / right)
       case '**': return UOp(Ops.EXP2, src=(right.cast(left.dtype),)) if _single_value(left) == 2.0 else left
+      case '%': return left % right
 
-  _PREC = [('||',), ('&&',), ('|',), ('^',), ('&',), ('==', '!=', '<>'), ('>=', '<=', '>', '<'), ('>>', '<<'), ('+', '-'), ('*', '/'), ('**',)]
+  _PREC = [('||',), ('&&',), ('|',), ('^',), ('&',), ('==', '!=', '<>'), ('>=', '<=', '>', '<'), ('>>', '<<'), ('+', '-'), ('*', '/', '%'), ('**',)]
 
   def binop(self, prec: int) -> UOp:
     if prec >= len(self._PREC): return self.unary()
@@ -630,6 +639,10 @@ class Parser:
         self.eat('DOT')
         dt_name = self.eat('IDENT').val
         return self._handle_mem_load(addr, DTYPES.get(dt_name, dtypes.uint32))
+      if name in self.funcs and self.try_eat('LBRACKET'):
+        index = self.parse()
+        self.eat('RBRACKET')
+        return self.funcs[name](index)
       if name == 'VGPR' and self.at('LBRACKET'):
         self.eat('LBRACKET')
         lane = self.parse()
@@ -704,6 +717,9 @@ class Parser:
         dt_name = self.eat('IDENT').val
         return result.cast(DTYPES.get(dt_name, dtypes.uint32))
       return result
+    if field in ('i24', 'u24'):
+      val = base.cast(dtypes.uint32) & _u32(0xFFFFFF)
+      return _signext_from_bit(val, _u32(24)).bitcast(dtypes.int32) if field == 'i24' else val
     dt = DTYPES.get(field)
     if dt is None: return base
     if dt == base.dtype: return base
@@ -904,20 +920,16 @@ class Parser:
         idx2 = (addr + _const(adt, 4)) >> _const(adt, 2)
         val = val.cast(dtypes.uint64) | (mindex(idx2).cast(dtypes.uint64) << _u64(32))
       elif dt in (dtypes.uint8, dtypes.int8): val = (val >> ((addr & _const(adt, 3)).cast(dtypes.uint32) * _u32(8))) & _u32(0xFF)
-      elif dt in (dtypes.uint16, dtypes.int16):
-        val = (val >> (((addr >> _const(adt, 1)) & _const(adt, 1)).cast(dtypes.uint32) * _u32(16))) & _u32(0xFFFF)
       else:
-        # Handle unaligned 32-bit loads: combine two consecutive dwords and shift.
-        # To avoid OOB at buffer boundaries for aligned loads, clamp idx_hi to idx (safe).
+        # Handle unaligned 16/32-bit loads: combine two consecutive dwords and shift.
+        # The next dword is only read when the value straddles into it, so a load at the end of a buffer stays in bounds.
         # Use int64 for the WHERE to avoid 32-bit int overflow in C pointer arithmetic (addr can be >8GB).
         byte_off = (addr & _const(adt, 3)).cast(dtypes.uint32)
-        is_unaligned = byte_off.ne(_u32(0))
         idx_native = (addr >> _const(adt, 2)).cast(dtypes.int64)
         idx_hi_native = ((addr + _const(adt, 4)) >> _const(adt, 2)).cast(dtypes.int64)
-        safe_idx_hi = is_unaligned.where(idx_hi_native, idx_native)
-        hi = mindex(safe_idx_hi)
+        hi = mindex((byte_off > _u32(4 - dt.itemsize)).where(idx_hi_native, idx_native))
         combined = val.cast(dtypes.uint64) | (hi.cast(dtypes.uint64) << UOp.const(32, dtypes.uint64))
-        val = is_unaligned.where((combined >> (byte_off.cast(dtypes.uint64) * UOp.const(8, dtypes.uint64))).cast(dtypes.uint32), val)
+        val = (combined >> (byte_off.cast(dtypes.uint64) * UOp.const(8, dtypes.uint64))).cast(dtypes.uint32)
     return _cast_to(val, dt)
 
   def _coerce_cmp(self, l: UOp, r: UOp) -> tuple[UOp, UOp]:
@@ -1010,20 +1022,24 @@ def parse_block(lines: list[str], start: int, env: dict[str, VarVal], funcs: dic
 
     # for loop
     if first == 'for':
-      # Parse: for VAR in [SIZE']START : [SIZE']END do
-      p = Parser(toks, env, funcs)
-      p.eat_val('for', 'IDENT')
-      loop_var = p.eat('IDENT').val
-      p.eat_val('in', 'IDENT')
-      def parse_bound():
-        if p.at('NUM') and p.peek(1).type == 'QUOTE':
-          p.eat('NUM')
-          p.eat('QUOTE')
-        if p.at('NUM'): return int(p.eat('NUM').val.rstrip('UuLl'))
-        return int(p.parse())
-      start_val = parse_bound()
-      p.eat('COLON')
-      end_val = parse_bound()
+      # C-style loops use an exclusive bound; for/in loops use an inclusive bound.
+      if m := re.fullmatch(r'for\s*\(\s*(\w+)\s*=\s*(\d+);\s*\1\s*<\s*(\d+);\s*\1\s*(\+\+|\+=\s*\d+)\s*\)', line):
+        loop_var, start_val, end_val = m[1], int(m[2]), int(m[3]) - 1
+        step = 1 if m[4] == '++' else int(m[4][2:])
+      else:
+        p = Parser(toks, env, funcs)
+        p.eat_val('for', 'IDENT')
+        loop_var = p.eat('IDENT').val
+        p.eat_val('in', 'IDENT')
+        def parse_bound():
+          if p.at('NUM') and p.peek(1).type == 'QUOTE':
+            p.eat('NUM')
+            p.eat('QUOTE')
+          if p.at('NUM'): return int(p.eat('NUM').val.rstrip('UuLl'))
+          return int(p.parse())
+        start_val = parse_bound()
+        p.eat('COLON')
+        end_val, step = parse_bound(), 1
       # Collect body
       i += 1
       body_lines: list[str] = []
@@ -1039,7 +1055,7 @@ def parse_block(lines: list[str], start: int, env: dict[str, VarVal], funcs: dic
       has_break = any('break' in bl.lower() for bl in body_lines)
       found_var = f'_found_{next(_break_var_ids)}' if has_break else None
       if found_var: env[found_var] = block_assigns[found_var] = _const(dtypes.bool, False)
-      for loop_i in range(start_val, end_val + 1):
+      for loop_i in range(start_val, end_val + 1, step):
         subst_lines = [_subst_loop_var(bl, loop_var, loop_i) for bl in body_lines if not (has_break and bl.strip().lower() == 'break')]
         _, iter_assigns, _ = parse_block(subst_lines, 0, {**env, **block_assigns}, funcs, assigns)
         if has_break:
@@ -1228,9 +1244,9 @@ def parse_block(lines: list[str], start: int, env: dict[str, VarVal], funcs: dic
       var = toks[0].val
       j, idx_toks = _match_bracket(toks, 1)
       if j < len(toks) and toks[j].type == 'EQUALS':
+        idx_expr = parse_tokens(idx_toks, env, funcs)
         # Static index: var[NUM] = value
-        if len(idx_toks) == 1 and idx_toks[0].type == 'NUM':
-          idx = int(idx_toks[0].val.rstrip('UuLl'))
+        if isinstance(idx := _single_value(idx_expr), int):
           val = parse_tokens(toks[j+1:], env, funcs)
           existing = block_assigns.get(var, env.get(var))
           if existing is not None and isinstance(existing, UOp):
@@ -1242,7 +1258,6 @@ def parse_block(lines: list[str], start: int, env: dict[str, VarVal], funcs: dic
         # Dynamic index: var[expr] = value where var has @-elements
         elems = [(k.split('@')[1], v) for k, v in {**env, **block_assigns}.items() if k.startswith(f'{var}@') and isinstance(v, UOp)]
         if elems:
-          idx_expr = parse_tokens(idx_toks, env, funcs)
           val = parse_tokens(toks[j+1:], env, funcs)
           for elem_idx_str, old_elem in elems:
             elem_idx = int(elem_idx_str)
@@ -1411,19 +1426,32 @@ def parse_block(lines: list[str], start: int, env: dict[str, VarVal], funcs: dic
 def parse_expr(expr: str, env: dict[str, VarVal], funcs: dict | None = None) -> UOp:
   return parse_tokens(tokenize(expr.strip().rstrip(';')), env, funcs)
 
-def parse_pcode(pcode: str, srcs: dict[str, UOp | int] | None = None) -> tuple[dict, list]:
+def parse_pcode(pcode: str, srcs: dict[str, UOp | int] | None = None, funcs: dict | None = None) -> tuple[dict, list]:
   env: dict = srcs.copy() if srcs else {}
   assigns: list[tuple[str, UOp]] = []
-  raw_lines = [l.strip().rstrip(';') for l in pcode.split('\n') if l.strip() and not l.strip().startswith('//')]
-  # TODO: pcode.py should tokenize full pcode string instead of line-by-line, then this hack can be removed
   lines: list[str] = []
-  for l in raw_lines:
-    if lines and re.search(r'(&&|\|\||[&|+\-*/^])\s*$', lines[-1]): lines[-1] = lines[-1] + ' ' + l
-    else: lines.append(l)
-  _, final, _ = parse_block(lines, 0, env, assigns=assigns)
+  blocks: list[str] = []
+  for raw in pcode.splitlines():
+    line = raw.split('//')[0].strip().rstrip(';')
+    if not line: continue
+    # Both block syntaxes share the same parser; braces supply the implicit end markers.
+    if line.startswith('}') and blocks:
+      end = blocks.pop()
+      line = line[1:].strip()
+      if not line.startswith(('elsif', 'else')): lines.append(end)
+    if m := re.match(r'(if|elsif|else|for)\b.*\{$', line):
+      blocks.append('endfor' if m[1] == 'for' else 'endif')
+      line = line[:-1].rstrip()
+      if m[1] in ('if', 'elsif'): line += ' then'
+    if not line: continue
+    line = re.sub(r'=\s*(\w+):(\w+)$', r'= {\1, \2}', line)
+    if lines and re.search(r'(&&|\|\||[&|+\-*/^])\s*$', lines[-1]): lines[-1] += ' ' + line
+    else: lines.append(line)
+  assert not blocks, "unclosed pcode block"
+  _, final, _ = parse_block(lines, 0, env, {**_FUNCS, **funcs} if funcs else None, assigns=assigns)
   sliced = set(d.split('[')[0] for d, _ in assigns if '[' in d)
   for var, val in final.items():
-    if var in ['D0', 'S0', 'SCC', 'VCC', 'EXEC', 'PC', 'RETURN_DATA', 'VDATA'] and isinstance(val, UOp):
+    if var in ['D0', 'S0', 'SCC', 'VCC', 'EXEC', 'PC', 'RETURN_DATA', 'VDATA', 'SDATA'] and isinstance(val, UOp):
       if var in sliced and not any(re.match(rf'{var}\.\w+\s*=', l) for l in lines): continue
       for l in lines:
         if (m := re.match(rf'{var}\.(\w+(?:\[\w+\])?)', l)):

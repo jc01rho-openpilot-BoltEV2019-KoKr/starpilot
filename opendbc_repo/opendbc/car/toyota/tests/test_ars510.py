@@ -1,5 +1,4 @@
 from math import isfinite, isnan
-from types import SimpleNamespace
 import zlib
 
 import pytest
@@ -13,36 +12,21 @@ from opendbc.car.toyota.radar_interface import RadarInterface
 from opendbc.car.toyota.values import ARS510_RADAR_CAR, CAR, ToyotaFlags
 
 
-@pytest.mark.parametrize("candidate", list(CAR))
-@pytest.mark.parametrize("mode", [0, 1, 2, 3])
-@pytest.mark.parametrize("alpha_long,can_filter", [(False, False), (True, False), (True, True)])
-def test_radar_selection_is_opt_in_and_changes_only_compatible_rav4_radar_fields(candidate, mode, alpha_long, can_filter):
+@pytest.mark.parametrize('candidate', list(CAR))
+@pytest.mark.parametrize('alpha_long,can_filter', [(False, False), (True, False), (True, True)])
+def test_factory_selects_only_live_supported_continental_radar(candidate, alpha_long, can_filter):
   fingerprint = gen_empty_fingerprint()
   if can_filter:
-    fingerprint[0][0x2aa] = 8
-  baseline = CarInterface.get_params(candidate, fingerprint, [], alpha_long, False, False, None)
-  selected = CarInterface.get_params(candidate, fingerprint, [], alpha_long, False, False,
-                                     SimpleNamespace(toyota_radar_mode_requested=mode))
-  expected = baseline.to_dict()
-  if candidate in ARS510_RADAR_CAR and mode in (1, 2):
-    expected["flags"] |= ToyotaFlags.ARS510_RADAR
-    if mode == 2:
-      expected["flags"] |= ToyotaFlags.ARS510_FUSED
-    expected["radarUnavailable"] = False
-    radar = RadarInterface(selected)
-    assert isinstance(radar.ars510, FusedRadarInterface if mode == 2 else AccRadarInterface)
-    assert radar.rcp is radar.pt_cp is None
-  assert selected.to_dict() == expected
-  assert selected.safetyConfigs[0].to_dict() == baseline.safetyConfigs[0].to_dict()
-
-
-@pytest.mark.parametrize("candidate", [CAR.TOYOTA_RAV4_TSS2_2022, CAR.TOYOTA_RAV4_TSS2_2023])
-def test_default_rav4_remains_vision_only(candidate):
-  CP = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], True, False, False, None)
-  radar = RadarInterface(CP)
-  assert CP.radarUnavailable
-  assert not CP.flags & (ToyotaFlags.ARS510_RADAR | ToyotaFlags.ARS510_FUSED)
-  assert radar.ars510 is radar.rcp is None
+    fingerprint[0][0x2AA] = 8
+  cp = CarInterface.get_params(candidate, fingerprint, [], alpha_long, False, False)
+  if candidate in ARS510_RADAR_CAR and not cp.flags & ToyotaFlags.DISABLE_RADAR:
+    assert cp.flags & ToyotaFlags.ARS510_RADAR, 'AUTOMATIC_CONTINENTAL_RADAR'
+    assert not cp.flags & ToyotaFlags.ARS510_FUSED and not cp.radarUnavailable
+    assert isinstance(RadarInterface(cp).ars510, AccRadarInterface)
+  else:
+    assert not cp.flags & (ToyotaFlags.ARS510_RADAR | ToyotaFlags.ARS510_FUSED)
+    if candidate in ARS510_RADAR_CAR:
+      assert cp.radarUnavailable and RadarInterface(cp).ars510 is None
 
 
 def set_bits(data, start, length, value):
@@ -53,7 +37,7 @@ def set_bits(data, start, length, value):
 
 def object_record(age=60, distance=30, lateral=0, speed_code=645, uncertainty=1, count=1):
   record = bytearray(742)
-  record[0] = 0xe4
+  record[0] = 0xE4
   for slot in range(20):
     data = bytearray(IDLE_SLOT)
     if slot < count:
@@ -62,20 +46,20 @@ def object_record(age=60, distance=30, lateral=0, speed_code=645, uncertainty=1,
       set_bits(data, 44, 12, round(2048 + lateral / 0.015))
       set_bits(data, 64, 10, speed_code)
       set_bits(data, 240, 7, uncertainty)
-    record[17 + slot * 36:17 + (slot + 1) * 36] = data
+    record[17 + slot * 36 : 17 + (slot + 1) * 36] = data
   record[737:741] = zlib.crc32(record[1:737]).to_bytes(4, "little")
   return bytes(record)
 
 
 def record_frames(record, bus=1):
-  return [(0x80, bytes([0x12 if i == 0 else 0x20 | i % 16]) + record[i * 7:(i + 1) * 7], bus) for i in range(106)]
+  return [(0x80, bytes([0x12 if i == 0 else 0x20 | i % 16]) + record[i * 7 : (i + 1) * 7], bus) for i in range(106)]
 
 
 def ego_frames(speed=20, yaw_code=512):
   speed_data = bytearray(8)
   speed_data[5:7] = round(speed * 3.6 * 100).to_bytes(2, "big")
-  yaw_data = bytes([yaw_code >> 8, yaw_code & 0xff]) + bytes(6)
-  return [(0xb4, bytes(speed_data), 0), (0x24, yaw_data, 0)]
+  yaw_data = bytes([yaw_code >> 8, yaw_code & 0xFF]) + bytes(6)
+  return [(0xB4, bytes(speed_data), 0), (0x24, yaw_data, 0)]
 
 
 def fused_radar():
@@ -89,8 +73,8 @@ def test_fused_decodes_20_slots_and_preserves_left_positive_geometry():
   assert len({pt.trackId for pt in ret.points}) == 20
   for pt in ret.points:
     assert (pt.dRel, pt.yRel, pt.vRel) == pytest.approx((30, 0.3, (645 - 510.5) * 0.149 - 20))
-    assert pt.measured
-    assert isnan(pt.aRel) and isnan(pt.yvRel)
+    assert pt.deprecated.measured
+    assert isnan(pt.deprecated.aRel) and isnan(pt.deprecated.yvRel)
   assert not ret.errors.canError
 
 
@@ -169,11 +153,14 @@ def test_fused_keeps_healthy_tracks_between_scans_then_reports_actual_silence(mo
 
 
 def acc_frames(packer, counter, cycle, present=True, distance=35, relative_speed=-2, target_id=3):
-  return [packer.make_can_msg(name, 1, values | {"COUNTER": counter % 16}) for name, values in (
-    ("ACC_TARGET_1", {"STATE": 5 if present else 1, "TARGET_ID": target_id, "REL_SPEED": relative_speed}),
-    ("ACC_TARGET_2", {"PRESENT": int(present), "LONG_DIST": distance, "LAT_DIST": 0.25}),
-    ("ACC_TARGET_3", {"TIMESTAMP": cycle}),
-  )]
+  return [
+    packer.make_can_msg(name, 1, values | {"COUNTER": counter % 16})
+    for name, values in (
+      ("ACC_TARGET_1", {"STATE": 5 if present else 1, "TARGET_ID": target_id, "REL_SPEED": relative_speed}),
+      ("ACC_TARGET_2", {"PRESENT": int(present), "LONG_DIST": distance, "LAT_DIST": 0.25}),
+      ("ACC_TARGET_3", {"TIMESTAMP": cycle}),
+    )
+  ]
 
 
 def test_acc_target_decodes_one_lead_once_per_cycle_and_clears_no_target():
@@ -186,22 +173,20 @@ def test_acc_target_decodes_one_lead_once_per_cycle_and_clears_no_target():
   assert len(reports) == 10
   for result in reports:
     assert not result.errors.canError
-    pt, = result.points
+    (pt,) = result.points
     assert pt.trackId == 3
     assert (pt.dRel, pt.yRel, pt.vRel) == pytest.approx((35, 0.25, -2))
-    assert pt.measured and isfinite(pt.vRel)
-    assert isnan(pt.aRel) and isnan(pt.yvRel)
+    assert pt.deprecated.measured and isfinite(pt.vRel)
+    assert isnan(pt.deprecated.aRel) and isnan(pt.deprecated.yvRel)
   ret = radar.update([(1_600_000_000, acc_frames(packer, 30, 660000, present=False))])
   assert not ret.points and not ret.errors.canError
 
 
 def test_acc_target_decodes_captured_rav4_hybrid_frame_bank():
   # Stock RAV4 Hybrid 2022 route 2475fb3eb2ffcc2e/2022-04-29--12-46-23, segment 0.
-  frames = [(0x235, bytes.fromhex("af4563802b24040e"), 1),
-            (0x237, bytes.fromhex("ff404cc3c10a9550"), 1),
-            (0x239, bytes.fromhex("2a464008061677c8"), 1)]
+  frames = [(0x235, bytes.fromhex("af4563802b24040e"), 1), (0x237, bytes.fromhex("ff404cc3c10a9550"), 1), (0x239, bytes.fromhex("2a464008061677c8"), 1)]
   ret = AccRadarInterface(structs.CarParams()).update([(1_000_000_000, frames)])
-  pt, = ret.points
+  (pt,) = ret.points
   assert not ret.errors.canError
   assert pt.trackId == 14
   assert (pt.dRel, pt.yRel, pt.vRel) == pytest.approx((3.825, 1.68, 0.125))
@@ -227,10 +212,8 @@ def test_acc_target_reports_silence_or_a_stuck_clock_without_stale_points(silent
   assert any(r is not None and r.errors.radarUnavailableTemporary and not r.points for r in outputs)
 
 
-@pytest.mark.parametrize("mode", [1, 2])
-def test_rav4_startup_wait_does_not_stall_live_tracks(mode):
-  CP = CarInterface.get_params(CAR.TOYOTA_RAV4_TSS2_2023, gen_empty_fingerprint(), [], False, False, False,
-                               SimpleNamespace(toyota_radar_mode_requested=mode))
+def test_rav4_startup_wait_does_not_stall_live_tracks():
+  CP = CarInterface.get_params(CAR.TOYOTA_RAV4_TSS2_2023, gen_empty_fingerprint(), [], False, False, False)
   radar = RadarInterface(CP)
   outputs = [radar.update([(1_000_000_000 + i * 10_000_000, [])]) for i in range(700)]
   assert sum(r is not None for r in outputs) == 140

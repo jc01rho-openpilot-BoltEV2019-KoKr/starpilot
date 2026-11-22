@@ -31,7 +31,7 @@ class CanBus(CanBusBase):
     return self.offset
 
   @property
-  def aux(self) -> int:
+  def alt(self) -> int:
     # NetworkLocation.fwdCamera: radar-camera object fusion CAN
     # NetworkLocation.gateway: powertrain CAN
     return self.offset + 1
@@ -61,14 +61,12 @@ class CarControllerParams:
   STEER_DRIVER_MULTIPLIER = 3              # weight driver torque heavily
   STEER_DRIVER_FACTOR = 1                  # from dbc
 
-  STEER_TIME_MAX = 360                     # Max time that EPS allows uninterrupted HCA steering control
-  STEER_TIME_ALERT = STEER_TIME_MAX - 10   # If mitigation fails, time to soft disengage before EPS timer expires
   STEER_TIME_STUCK_TORQUE = 1.9            # EPS limits same torque to 6 seconds, reset timer 3x within that period
 
   DEFAULT_MIN_STEER_SPEED = 0.4            # m/s, newer EPS racks fault below this speed, don't show a low speed alert
 
-  ACCEL_MAX = 2.0                          # 2.0 m/s max acceleration
-  ACCEL_MIN = -3.5                         # 3.5 m/s max deceleration
+  ACCEL_MAX = 2.0                          # 2.0 m/s^2 max acceleration
+  ACCEL_MIN = -3.5                         # 3.5 m/s^2 max deceleration
 
   def __init__(self, CP):
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
@@ -106,17 +104,18 @@ class CarControllerParams:
       self.LDW_STEP = 10                  # LDW_02 message frequency 10Hz
       self.ACC_HUD_STEP = 6
       self.KLR_01_STEP = 6                # KLR_01 message frequency 17Hz
-      self.STEER_DRIVER_ALLOWANCE = 100   # Begin reducing steering power at 1.0 Nm driver torque
-      self.STEER_DRIVER_MAX = 300         # Reach minimum steering power at 3.0 Nm driver torque
-      self.STEERING_POWER_MAX = 50
-      self.STEERING_POWER_MIN = 4
-      self.STEERING_POWER_STEP = 2
+      self.STEER_DRIVER_ALLOWANCE = 100   # Driver torque 1.0 Nm, begin steering reduction from MAX
+      self.STEER_DRIVER_MAX = 300         # Driver torque 3.0 Nm, stop steering reduction at MIN
+      self.STEERING_POWER_MAX = 50        # HCA_03 maximum steering power, percentage
+      self.STEERING_POWER_MIN = 4         # HCA_03 minimum steering power, percentage
+      self.STEERING_POWER_STEP = 2        # HCA_03 steering power counter steps
 
-      self.CURVATURE_MAX = 0.195
+      self.CURVATURE_MAX = 0.195          # Max curvature for steering command, m^-1
       self.CURVATURE_LIMITS = CurvatureSteeringLimits(self.CURVATURE_MAX)
 
-      self.ACCEL_INACTIVE = 3.01
-      self.JERK_LIMIT = 4.0
+      # Longitudinal constants
+      self.ACCEL_INACTIVE = 3.01  # m/s^2
+      self.JERK_LIMIT = 4.0  # m/s^3
 
       self.shifter_values = can_define.dv["Getriebe_11"]["GE_Fahrstufe"]
       self.hca_status_values = can_define.dv["QFK_01"]["LatCon_HCA_Status"]
@@ -131,9 +130,9 @@ class CarControllerParams:
       ]
 
       self.LDW_MESSAGES = {
-        "none": 0,
-        "laneAssistTakeOverUrgent": 4,
-        "laneAssistTakeOver": 8,
+        "none": 0,                        # Nothing to display
+        "laneAssistTakeOverUrgent": 4,    # "Lane Assist: Please Take Over Steering" (red)
+        "laneAssistTakeOver": 8,          # "Lane Assist: Please Take Over Steering" (white)
       }
 
     else:
@@ -197,6 +196,7 @@ class WMI(StrEnum):
   VOLKSWAGEN_MEXICO_CAR = "3VW"
   VOLKSWAGEN_ARGENTINA = "8AW"
   VOLKSWAGEN_BRASIL = "9BW"
+  VOLKSWAGEN_CHINA_FAW = "LFV"
   SAIC_VOLKSWAGEN = "LSV"
   SKODA = "TMB"
   SEAT = "VSS"
@@ -223,6 +223,7 @@ class VolkswagenFlags(IntFlag):
   KOMBI_PRESENT = 4
   ALT_GEAR = 32
   STOCK_KLR_PRESENT = 64
+  HAS_BSM = 256  # blind spot monitoring
 
   # Static flags
   PQ = 2
@@ -279,6 +280,10 @@ class VolkswagenCarSpecs(CarSpecs):
 
 
 class Footnote(Enum):
+  SETUP = CarFootnote(
+    "The J533 harness plugs in at the CAN gateway under the dashboard, just above the steering column. " +
+    "More information can be found at <a href=\"https://docs.howtocomma.com/docs/j533-harness-install\" target=\"_blank\">this guide</a>.",
+    Column.MAKE, setup_note=True)
   KAMIQ = CarFootnote(
     "Not including the China market Kamiq, which is based on the (currently) unsupported PQ34 platform.",
     Column.MODEL)
@@ -303,6 +308,7 @@ class Footnote(Enum):
 class VWCarDocs(CarDocs):
   package: str = "Adaptive Cruise Control (ACC) & Lane Assist"
   car_parts: CarParts = field(default_factory=CarParts.common([CarHarness.vw_j533]))
+  footnotes: list[Enum] = field(default_factory=lambda: [Footnote.SETUP])
 
   def init_make(self, CP: structs.CarParams):
     self.footnotes.append(Footnote.VW_EXP_LONG)
@@ -318,7 +324,7 @@ class VWCarDocs(CarDocs):
 # FW_VERSIONS for that existing CAR.
 
 class CAR(Platforms):
-  config: VolkswagenMLBPlatformConfig | VolkswagenMQBPlatformConfig | VolkswagenPQPlatformConfig | VolkswagenMEBPlatformConfig
+  config: VolkswagenMQBPlatformConfig | VolkswagenPQPlatformConfig | VolkswagenMEBPlatformConfig
 
   VOLKSWAGEN_ARTEON_MK1 = VolkswagenMQBPlatformConfig(
     [
@@ -381,14 +387,14 @@ class CAR(Platforms):
     wmis={WMI.VOLKSWAGEN_MEXICO_CAR, WMI.VOLKSWAGEN_EUROPE_CAR},
   )
   VOLKSWAGEN_ID3_MK1 = VolkswagenMEBPlatformConfig(
-    [VWCarDocs("Volkswagen ID.3 2020-23")],
+    [VWCarDocs("Volkswagen ID.3 2020-23", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[])],
     VolkswagenCarSpecs(mass=1935, wheelbase=2.77),
     chassis_codes={"E1"},
     wmis={WMI.VOLKSWAGEN_EUROPE_CAR},
     model_years={"L", "M", "N", "P"},
   )
   VOLKSWAGEN_ID3_MK2 = VolkswagenMEBPlatformConfig(
-    [VWCarDocs("Volkswagen ID.3 2024-25")],
+    [VWCarDocs("Volkswagen ID.3 2024-25", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[])],
     VolkswagenCarSpecs(mass=1935, wheelbase=2.77),
     chassis_codes={"E1"},
     wmis={WMI.VOLKSWAGEN_EUROPE_CAR},
@@ -397,18 +403,19 @@ class CAR(Platforms):
   )
   VOLKSWAGEN_ID4_MK1 = VolkswagenMEBPlatformConfig(
     [
-      VWCarDocs("Volkswagen ID.4 2021-23"),
-      VWCarDocs("Volkswagen ID.5 2022-23"),
+      VWCarDocs("Volkswagen ID.4 2021-23", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[]),
     ],
     VolkswagenCarSpecs(mass=2224, wheelbase=2.77),
-    chassis_codes={"E2"},
+    chassis_codes={"E2", "E8"},
     wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR, WMI.VOLKSWAGEN_EUROPE_SUV},
+    model_years={"M", "N", "P"},
   )
   VOLKSWAGEN_ID4_MK2 = VolkswagenMEBPlatformConfig(
-    [VWCarDocs("Volkswagen ID.4 2024-25")],
+    [VWCarDocs("Volkswagen ID.4 2024-25", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[])],
     VolkswagenCarSpecs(mass=2224, wheelbase=2.77),
     chassis_codes={"E8"},
     wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR, WMI.VOLKSWAGEN_EUROPE_SUV},
+    model_years={"R", "S"},
     flags=VolkswagenFlags.MEB_GEN2,
   )
   VOLKSWAGEN_JETTA_MK6 = VolkswagenPQPlatformConfig(
@@ -419,7 +426,7 @@ class CAR(Platforms):
   )
   VOLKSWAGEN_JETTA_MK7 = VolkswagenMQBPlatformConfig(
     [
-      VWCarDocs("Volkswagen Jetta 2018-23"),
+      VWCarDocs("Volkswagen Jetta 2019-23"),
       VWCarDocs("Volkswagen Jetta GLI 2021-23"),
     ],
     VolkswagenCarSpecs(mass=1328, wheelbase=2.71),
@@ -511,29 +518,35 @@ class CAR(Platforms):
     ],
     VolkswagenCarSpecs(mass=1335, wheelbase=2.61),
     chassis_codes={"8V", "FF"},
-    wmis={WMI.AUDI_GERMANY_CAR, WMI.AUDI_SPORT},
+    wmis={WMI.AUDI_GERMANY_CAR, WMI.AUDI_SPORT, WMI.VOLKSWAGEN_CHINA_FAW},
   )
   AUDI_Q2_MK1 = VolkswagenMQBPlatformConfig(
     [VWCarDocs("Audi Q2 2018")],
     VolkswagenCarSpecs(mass=1205, wheelbase=2.61),
     chassis_codes={"GA"},
-    wmis={WMI.AUDI_GERMANY_CAR},
+    wmis={WMI.AUDI_GERMANY_CAR, WMI.VOLKSWAGEN_CHINA_FAW},
   )
   AUDI_Q3_MK2 = VolkswagenMQBPlatformConfig(
     [VWCarDocs("Audi Q3 2019-24")],
     VolkswagenCarSpecs(mass=1623, wheelbase=2.68),
     chassis_codes={"8U", "F3", "FS"},
+    wmis={WMI.AUDI_EUROPE_MPV, WMI.AUDI_GERMANY_CAR, WMI.VOLKSWAGEN_CHINA_FAW},
+  )
+  AUDI_Q5_MK1 = VolkswagenMLBPlatformConfig(
+    [VWCarDocs("Audi Q5 2013-17")],
+    VolkswagenCarSpecs(mass=1895, wheelbase=2.81),
+    chassis_codes={"8R"},
     wmis={WMI.AUDI_EUROPE_MPV, WMI.AUDI_GERMANY_CAR},
   )
   AUDI_Q4_MK1 = VolkswagenMEBPlatformConfig(
-    [VWCarDocs("Audi Q4 e-tron 2021-23")],
+    [VWCarDocs("Audi Q4 e-tron 2021-23", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[])],
     VolkswagenCarSpecs(mass=1965, wheelbase=2.764),
     chassis_codes={"FZ"},
     wmis={WMI.AUDI_EUROPE_MPV},
     model_years={"M", "N", "P"},
   )
   AUDI_Q4_MK2 = VolkswagenMEBPlatformConfig(
-    [VWCarDocs("Audi Q4 e-tron 2024-25")],
+    [VWCarDocs("Audi Q4 e-tron 2024-25", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[])],
     VolkswagenCarSpecs(mass=1965, wheelbase=2.764),
     chassis_codes={"FZ"},
     wmis={WMI.AUDI_EUROPE_MPV},
@@ -557,20 +570,20 @@ class CAR(Platforms):
     wmis={WMI.SEAT},
   )
   CUPRA_BORN_MK1 = VolkswagenMEBPlatformConfig(
-    [VWCarDocs("CUPRA Born 2021-23")],
-    VolkswagenCarSpecs(mass=1956, wheelbase=2.766, steerRatio=15.9),
+    [VWCarDocs("CUPRA Born 2021-23", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[])],
+    VolkswagenCarSpecs(mass=1956, wheelbase=2.766),
     chassis_codes={"K1"},
     wmis={WMI.SEAT},
   )
   SKODA_ENYAQ_MK1 = VolkswagenMEBPlatformConfig(
-    [VWCarDocs("Škoda Enyaq 2021-23")],
+    [VWCarDocs("Škoda Enyaq 2021-23", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[])],
     VolkswagenCarSpecs(mass=1965, wheelbase=2.77),
     chassis_codes={"NY"},
     model_years={"M", "N", "P"},
     wmis={WMI.SKODA},
   )
   SKODA_ENYAQ_MK2 = VolkswagenMEBPlatformConfig(
-    [VWCarDocs("Škoda Enyaq 2024-25")],
+    [VWCarDocs("Škoda Enyaq 2024-25", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[])],
     VolkswagenCarSpecs(mass=1965, wheelbase=2.77),
     chassis_codes={"NY"},
     model_years={"R", "S"},
@@ -685,6 +698,7 @@ VOLKSWAGEN_VERSION_RESPONSE = bytes([uds.SERVICE_TYPE.READ_DATA_BY_IDENTIFIER + 
 VOLKSWAGEN_RX_OFFSET = 0x6a
 
 FW_QUERY_CONFIG = FwQueryConfig(
+  fw_version_regex=br"\xf1\x87[\x00-\xff]{17,58}",
   requests=[request for bus, obd_multiplexing in [(1, True), (1, False), (0, False)] for request in [
     Request(
       [VOLKSWAGEN_VERSION_REQUEST_MULTI],
@@ -705,7 +719,6 @@ FW_QUERY_CONFIG = FwQueryConfig(
   non_essential_ecus={Ecu.eps: list(CAR)},
   extra_ecus=[(Ecu.fwdCamera, 0x74f, None)],
   match_fw_to_car_fuzzy=match_fw_to_car_fuzzy,
-  fuzzy_only_platforms={car for car in CAR if car.config.flags & VolkswagenFlags.MEB},
 )
 
 DBC = CAR.create_dbc_map()

@@ -2,12 +2,14 @@
 import unittest
 
 from opendbc.car.structs import CarParams
-from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
-from opendbc.safety.tests.common import CANPackerSafety
+from opendbc.safety.tests.common import make_msg
 
 
 class TestMazdaSafety(common.CarSafetyTest, common.DriverTorqueSteeringSafetyTest):
+
+  DBC = "mazda_2017"
+  SAFETY_MODEL = CarParams.SafetyModel.mazda
 
   TX_MSGS = [[0x243, 0], [0x09d, 0], [0x440, 0]]
   STANDSTILL_THRESHOLD = .1
@@ -25,12 +27,6 @@ class TestMazdaSafety(common.CarSafetyTest, common.DriverTorqueSteeringSafetyTes
 
   # Mazda actually does not set any bit when requesting torque
   NO_STEER_REQ_BIT = True
-
-  def setUp(self):
-    self.packer = CANPackerSafety("mazda_2017")
-    self.safety = libsafety_py.libsafety
-    self.safety.set_safety_hooks(CarParams.SafetyModel.mazda, 0)
-    self.safety.init_tests()
 
   def _torque_meas_msg(self, torque):
     values = {"STEER_TORQUE_MOTOR": torque}
@@ -80,10 +76,25 @@ class TestMazdaSafety(common.CarSafetyTest, common.DriverTorqueSteeringSafetyTes
     self.assertTrue(self._tx(self._button_msg(cancel=True)))
     self.assertTrue(self._tx(self._button_msg(resume=True)))
 
-  def _toggle_aol(self, toggle_on):
-    # CRZ_CTRL, CRZ_AVAILABLE is the main on button
-    values = {"CRZ_AVAILABLE": 1 if toggle_on else 0}
-    return self.packer.make_can_msg_panda("CRZ_CTRL", 0, values)
+
+class TestMazdaIgnition(common.SafetyTestBase):
+  SAFETY_MODEL = None
+
+  TX_MSGS: list = []
+
+  def _msg(self, byte0):
+    return make_msg(0, 0x9E, dat=bytes([byte0]) + b"\x00" * 7)
+
+  # 0x9E byte 0 high 3 bits == 6 (0xC0)
+  def test_ignition_on(self):
+    self.safety.ignition_can_hook(self._msg(0xC0))
+    self.assertTrue(self.safety.get_ignition_can())
+
+  def test_ignition_off(self):
+    self.safety.ignition_can_hook(self._msg(0xC0))
+    self.assertTrue(self.safety.get_ignition_can())
+    self.safety.ignition_can_hook(self._msg(0x20))
+    self.assertFalse(self.safety.get_ignition_can())
 
 
 if __name__ == "__main__":

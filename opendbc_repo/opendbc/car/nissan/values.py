@@ -19,22 +19,9 @@ class CarControllerParams:
     ([0., 5., 15.], [5., 3.5, 0.4]),
   )
 
+  LKAS_MIN_TORQUE = 0.2             # Adequate torque when overriding without faulting
   LKAS_MAX_TORQUE = 1               # A value of 1 is easy to overpower
   STEER_THRESHOLD = 1.0
-
-  # 2025 Leaf ProPILOT longitudinal command limits. The propulsion request has
-  # 2048 counts per m/s^2 around a 6144-count zero point. Friction braking is
-  # blended in below -1 m/s^2 using the stock pressure range seen in logs.
-  ACCEL_MIN = -3.5
-  ACCEL_MAX = 2047 / 2048
-  PROPILOT_ACCEL_MIN = -1.0
-  PROPILOT_ACCEL_MAX = ACCEL_MAX
-  PROPILOT_ACCEL_OFFSET = 6144
-  PROPILOT_ACCEL_SCALE = 2048
-  PROPILOT_INACTIVE_RAW = 5320
-  PROPILOT_BRAKE_RAW = 2518
-  BRAKE_MAX = 659       # 0.5 pressure-count units; stock peak is 329.5
-  BRAKE_GAIN = 264.0
 
   def __init__(self, CP):
     pass
@@ -42,7 +29,6 @@ class CarControllerParams:
 
 class NissanSafetyFlags(IntFlag):
   ALT_EPS_BUS = 1
-  LONG_CONTROL = 2
 
 
 class Footnote(Enum):
@@ -75,19 +61,19 @@ class CAR(Platforms):
     NissanCarSpecs(mass=1610, wheelbase=2.705)
   )
   NISSAN_LEAF = NissanPlatformConfig(
-    [NissanCarDocs("Nissan Leaf 2018-25", video="https://youtu.be/vaMbtAh_0cY")],
+    [NissanCarDocs("Nissan Leaf 2018-23", video="https://youtu.be/vaMbtAh_0cY")],
     NissanCarSpecs(mass=1610, wheelbase=2.705),
     {Bus.pt: 'nissan_leaf_2018_generated'},
   )
   # Leaf with ADAS ECU found behind instrument cluster instead of glovebox
   # Currently the only known difference between them is the inverted seatbelt signal.
-  NISSAN_LEAF_IC = NISSAN_LEAF.override(car_docs=[NissanCarDocs("Nissan Leaf Instrument Cluster 2018-25", video=NISSAN_LEAF.car_docs[0].video)])
+  NISSAN_LEAF_IC = NISSAN_LEAF.override(car_docs=[])
   NISSAN_ROGUE = NissanPlatformConfig(
     [NissanCarDocs("Nissan Rogue 2018-20")],
     NissanCarSpecs(mass=1610, wheelbase=2.705)
   )
   NISSAN_ALTIMA = NissanPlatformConfig(
-    [NissanCarDocs("Nissan Altima 2019-20, 2024", car_parts=CarParts.common([CarHarness.nissan_b]))],
+    [NissanCarDocs("Nissan Altima 2019-24", car_parts=CarParts.common([CarHarness.nissan_b]))],
     NissanCarSpecs(mass=1492, wheelbase=2.824)
   )
 
@@ -107,34 +93,48 @@ NISSAN_VERSION_RESPONSE_KWP = b'\x61\x83'
 
 NISSAN_RX_OFFSET = 0x20
 
+# TODO: once we gather enough Altima data on PT bus (1), we can remove OBD queries to speed up fingerprinting
 FW_QUERY_CONFIG = FwQueryConfig(
-  requests=[request for bus, logging in ((0, False), (1, True)) for request in [
+  fw_version_regex=br"(?:[A-Z0-9]{10}|[\x00-\xff]{24})",
+  requests=[request for bus, obd_multiplexing in ((0, False), (1, False), (1, True)) for request in [
     Request(
       [NISSAN_DIAGNOSTIC_REQUEST_KWP, NISSAN_VERSION_REQUEST_KWP],
       [NISSAN_DIAGNOSTIC_RESPONSE_KWP, NISSAN_VERSION_RESPONSE_KWP],
       bus=bus,
-      logging=logging,
+      logging=obd_multiplexing,
+      obd_multiplexing=obd_multiplexing,
     ),
     Request(
       [NISSAN_DIAGNOSTIC_REQUEST_KWP, NISSAN_VERSION_REQUEST_KWP],
       [NISSAN_DIAGNOSTIC_RESPONSE_KWP, NISSAN_VERSION_RESPONSE_KWP],
       rx_offset=NISSAN_RX_OFFSET,
       bus=bus,
-      logging=logging,
+      logging=obd_multiplexing,
+      obd_multiplexing=obd_multiplexing,
     ),
     # Rogue's engine solely responds to this
     Request(
       [NISSAN_DIAGNOSTIC_REQUEST_KWP_2, NISSAN_VERSION_REQUEST_KWP],
       [NISSAN_DIAGNOSTIC_RESPONSE_KWP_2, NISSAN_VERSION_RESPONSE_KWP],
       bus=bus,
-      logging=logging,
+      logging=obd_multiplexing,
+      obd_multiplexing=obd_multiplexing,
     ),
     Request(
       [StdQueries.MANUFACTURER_SOFTWARE_VERSION_REQUEST],
       [StdQueries.MANUFACTURER_SOFTWARE_VERSION_RESPONSE],
       rx_offset=NISSAN_RX_OFFSET,
       bus=bus,
-      logging=logging,
+      logging=obd_multiplexing,
+      obd_multiplexing=obd_multiplexing,
+    ),
+    # Some newer Altima engines respond at normal rx offset
+    Request(
+      [StdQueries.MANUFACTURER_SOFTWARE_VERSION_REQUEST],
+      [StdQueries.MANUFACTURER_SOFTWARE_VERSION_RESPONSE],
+      bus=bus,
+      logging=obd_multiplexing,
+      obd_multiplexing=obd_multiplexing,
     ),
   ]],
 )

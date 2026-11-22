@@ -1,16 +1,34 @@
-from cereal import custom
 from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarStateBase
-from opendbc.car.mazda.values import DBC, LKAS_LIMITS
+from opendbc.car.mazda.values import CAR, DBC, LKAS_LIMITS, MazdaFlags
+from opendbc.car.mazda.stock_aol import qualified
 
 ButtonType = structs.CarState.ButtonEvent.Type
 
+DASHBOARD_CARS = frozenset(CAR)
+
+
+class DashboardCameraParser(CANParser):
+  def __init__(self, dbc_name):
+    super().__init__(dbc_name, [], 2)
+    self.dashboard_parser = CANParser(dbc_name, [("CAM_TRAFFIC_SIGNS", float('nan'))], 2)
+
+  def update(self, strings, sendcan=False):
+    packets = strings
+    if packets and not isinstance(packets[0], list | tuple):
+      packets = [packets]
+    result = super().update(packets, sendcan)
+    admitted = [(stamp, [(address, data, bus) for address, data, bus in frames
+                         if address == 0x35F and bus == 2 and len(data) == 8]) for stamp, frames in packets]
+    self.dashboard_parser.update(admitted, sendcan)
+    return result
+
 
 class CarState(CarStateBase):
-  def __init__(self, CP, FPCP):
-    super().__init__(CP, FPCP)
+  def __init__(self, CP):
+    super().__init__(CP)
 
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
     self.shifter_values = can_define.dv["GEAR"]["GEAR"]
@@ -20,15 +38,16 @@ class CarState(CarStateBase):
     self.lkas_allowed_speed = False
 
     self.distance_button = 0
+    self.accel_button = 0
+    self.decel_button = 0
+    self.cancel_button = 0
+    self.dashboard_stop_sign = None
 
-  def update(self, can_parsers, starpilot_toggles) -> structs.CarState:
+  def update(self, can_parsers) -> structs.CarState:
     cp = can_parsers[Bus.pt]
     cp_cam = can_parsers[Bus.cam]
 
     ret = structs.CarState()
-
-    prev_distance_button = self.distance_button
-    self.distance_button = cp.vl["CRZ_BTNS"]["DISTANCE_LESS"]
 
     self.parse_wheel_speeds(ret,
       cp.vl["WHEEL_SPEEDS"]["FL"],
@@ -57,9 +76,7 @@ class CarState(CarStateBase):
     ret.steeringTorqueEps = cp.vl["STEER_TORQUE"]["STEER_TORQUE_MOTOR"]
     ret.steeringRateDeg = cp.vl["STEER_RATE"]["STEER_ANGLE_RATE"]
 
-    # TODO: this should be from 0 - 1.
     ret.brakePressed = cp.vl["PEDALS"]["BRAKE_ON"] == 1
-    ret.brake = cp.vl["BRAKE"]["BRAKE_PRESSURE"]
 
     ret.seatbeltUnlatched = cp.vl["SEATBELT"]["DRIVER_SEATBELT"] == 0
     ret.doorOpen = any([cp.vl["DOORS"]["FL"], cp.vl["DOORS"]["FR"],
@@ -113,18 +130,38 @@ class CarState(CarStateBase):
     self.cam_laneinfo = cp_cam.vl["CAM_LANEINFO"]
     ret.steerFaultPermanent = cp_cam.vl["CAM_LKAS"]["ERR_BIT_1"] == 1
 
-    # TODO: add button types for inc and dec
-    ret.buttonEvents = create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
+    # cruise control button events: distance, inc, and dec
+    prev_cancel_button = self.cancel_button
+    self.cancel_button = cp.vl["CRZ_BTNS"]["CAN_OFF"]
+    prev_distance_button = self.distance_button
+    prev_accel_button = self.accel_button
+    prev_decel_button = self.decel_button
+    self.distance_button = cp.vl["CRZ_BTNS"]["DISTANCE_LESS"]
+    self.accel_button = cp.vl["CRZ_BTNS"]["RES"]
+    self.decel_button = cp.vl["CRZ_BTNS"]["SET_M"]
 
-    fp_ret = custom.StarPilotCarState.new_message()
+    ret.buttonEvents = [
+      *(create_button_events(self.cancel_button, prev_cancel_button, {1: ButtonType.cancel}) if qualified(self.CP, marked_only=True) else []),
+      *create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise}),
+      *create_button_events(self.accel_button, prev_accel_button, {1: ButtonType.accelCruise}),
+      *create_button_events(self.decel_button, prev_decel_button, {1: ButtonType.decelCruise}),
+    ]
 
-    fp_ret.dashboardStopSign = 1 if cp_cam.vl["CAM_TRAFFIC_SIGNS"]["STOP_SIGN"] == 9 else 0
+    self.dashboard_stop_sign = None
+    if isinstance(cp_cam, DashboardCameraParser):
+      dashboard = cp_cam.dashboard_parser
+      stamp = dashboard.ts_nanos["CAM_TRAFFIC_SIGNS"]["STOP_SIGN"]
+      if stamp > 0:
+        self.dashboard_stop_sign = (dashboard.vl["CAM_TRAFFIC_SIGNS"]["STOP_SIGN"] == 9, stamp)
 
-    return ret, fp_ret
+    return ret
 
   @staticmethod
   def get_can_parsers(CP):
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 0),
-      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [("CAM_TRAFFIC_SIGNS", 0)], 2),
+      Bus.cam: (DashboardCameraParser(DBC[CP.carFingerprint][Bus.pt])
+                if CP.brand == 'mazda' and CP.carFingerprint in DASHBOARD_CARS and
+                int(CP.flags) == int(MazdaFlags.GEN1) and not CP.notCar
+                else CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2)),
     }

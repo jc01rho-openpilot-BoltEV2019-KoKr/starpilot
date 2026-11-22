@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 import random
+import signal
+import subprocess
+import sys
 import unittest
 import numpy as np
 
 from opendbc.car.lateral import get_max_angle_delta_vm, get_max_angle_vm
-from opendbc.car.tesla.values import CarControllerParams, STEER_DISENGAGE_THRESHOLD, TeslaSafetyFlags
+from opendbc.car.tesla.values import CarControllerParams, TeslaSafetyFlags
 from opendbc.car.tesla.carcontroller import get_safety_CP
 from opendbc.car.structs import CarParams
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.can import CANDefine
-from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
-from opendbc.safety.tests.common import CANPackerSafety, MAX_SPEED_DELTA, MAX_WRONG_COUNTERS, away_round, round_speed
+from opendbc.safety.tests.common import MAX_WRONG_COUNTERS, away_round, round_speed, speeds_within_delta
+from opendbc.safety.tests.libsafety import libsafety_py
 
 MSG_DAS_steeringControl = 0x488
 MSG_APS_eacMonitor = 0x27d
@@ -25,7 +28,68 @@ def round_angle(apply_angle, can_offset=0):
   return away_round(apply_angle_can + rnd_offset) * 0.1 - 1638.35
 
 
+class TestTeslaNativeCallbacks(unittest.TestCase):
+  def _assert_checksum_callback_finishes(self, param):
+    packet = common.CANPackerSafety('tesla_model3_party').make_can_msg_safety('DI_speed', 0, {'DI_vehicleSpeed': 0})
+    self.assertEqual((packet.addr, packet.bus, packet.data_len_code), (0x257, 0, 8))
+    try:
+      mutant = libsafety_py.libsafety.mutation_get_active_mutant()
+    except AttributeError:
+      mutant = None
+    script = """import sys
+from opendbc.car.structs import CarParams
+from opendbc.safety.tests.libsafety import libsafety_py
+libsafety_py.load(sys.argv[1])
+safety = libsafety_py.libsafety
+if sys.argv[2] != 'None':
+  safety.mutation_set_active_mutant(int(sys.argv[2]))
+print('NATIVE_SETUP_BEGIN', flush=True)
+status = safety.set_safety_hooks(CarParams.SafetyModel.tesla, int(sys.argv[3]))
+print('NATIVE_SETUP_RETURN', flush=True)
+if status != 0:
+  print('NATIVE_SETUP_ASSERTION', flush=True)
+  raise SystemExit(1)
+safety.init_tests()
+packet = libsafety_py.make_CANPacket(0x257, 0, bytes.fromhex(sys.argv[4]))
+print('NATIVE_CALLBACK_BEGIN', flush=True)
+accepted = safety.safety_rx_hook(packet)
+print('NATIVE_CALLBACK_RETURN', flush=True)
+raise SystemExit(0 if accepted else 1)
+"""
+    try:
+      result = subprocess.run([sys.executable, '-c', script, libsafety_py.libpath, str(mutant),
+                               str(param), bytes(packet.data[0:8]).hex()], capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired as exc:
+      output = exc.stdout or b''
+      if isinstance(output, bytes):
+        output = output.decode(errors='replace')
+      setup_entered = 'NATIVE_SETUP_BEGIN' in output and 'NATIVE_SETUP_RETURN' not in output
+      if 'NATIVE_CALLBACK_BEGIN' not in output and not setup_entered:
+        raise RuntimeError('Native checksum probe did not reach its callback') from exc
+      self.fail('Native checksum callback did not finish within ten seconds')
+    setup_entered = 'NATIVE_SETUP_BEGIN' in result.stdout and 'NATIVE_SETUP_RETURN' not in result.stdout
+    if result.returncode == -signal.SIGSEGV and setup_entered:
+      self.fail('Native initialization faulted on a supported profile: ' + result.stderr)
+    entered = 'NATIVE_CALLBACK_BEGIN' in result.stdout
+    if result.returncode == -signal.SIGSEGV and entered and 'NATIVE_CALLBACK_RETURN' not in result.stdout:
+      self.fail('Native checksum callback faulted on a fully allocated valid packet: ' + result.stderr)
+    asserted = 'NATIVE_SETUP_ASSERTION' in result.stdout or 'NATIVE_CALLBACK_RETURN' in result.stdout
+    if result.returncode not in (0, 1) or not asserted:
+      raise RuntimeError(f'Native checksum probe infrastructure failure ({result.returncode}): {result.stdout}{result.stderr}')
+    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+  def test_stock_checksum_callback_finishes(self):
+    self._assert_checksum_callback_finishes(0)
+
+  def test_longitudinal_checksum_callback_finishes(self):
+    self._assert_checksum_callback_finishes(TeslaSafetyFlags.LONG_CONTROL)
+
+
 class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, common.LongitudinalAccelSafetyTest):
+
+  DBC = "tesla_model3_party"
+  SAFETY_MODEL = CarParams.SafetyModel.tesla
+
   RELAY_MALFUNCTION_ADDRS = {0: (MSG_DAS_steeringControl, MSG_APS_eacMonitor)}
   FWD_BLACKLISTED_ADDRS = {2: [MSG_DAS_steeringControl, MSG_APS_eacMonitor]}
   TX_MSGS = [[MSG_DAS_steeringControl, 0], [MSG_APS_eacMonitor, 0], [MSG_DAS_Control, 0]]
@@ -37,61 +101,46 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
   STEER_ANGLE_MAX = 360  # deg
   DEG_TO_CAN = 10
 
-  # Tesla uses get_max_angle_delta_vm and get_max_angle_vm for real lateral accel and jerk limits
-  # TODO: integrate this into AngleSteeringSafetyTest
-  ANGLE_RATE_BP = [0.]
-  ANGLE_RATE_UP = [CarControllerParams.ANGLE_LIMITS.MAX_ANGLE_RATE]
-  ANGLE_RATE_DOWN = [CarControllerParams.ANGLE_LIMITS.MAX_ANGLE_RATE]
-
   # Real time limits
   LATERAL_FREQUENCY = 50  # Hz
 
   # Long control limits
-  MAX_ACCEL = 2.0
+  MAX_ACCEL = 3.52
   MIN_ACCEL = -3.48
   INACTIVE_ACCEL = 0.0
 
-  cnt_epas = 0
   cnt_angle_cmd = 0
-
-  packer: CANPackerSafety
 
   def _get_steer_cmd_angle_max(self, speed):
     return get_max_angle_vm(max(speed, 1), self.VM, CarControllerParams)
 
   def setUp(self):
+    super().setUp()
     self.VM = VehicleModel(get_safety_CP())
-    self.packer = CANPackerSafety("tesla_model3_party")
-    self.define = CANDefine("tesla_model3_party")
+    self.define = CANDefine(self.DBC)
     self.acc_states = {d: v for v, d in self.define.dv["DAS_control"]["DAS_accState"].items()}
     self.autopark_states = {d: v for v, d in self.define.dv["DI_state"]["DI_autoparkState"].items()}
     self.active_autopark_states = [self.autopark_states[s] for s in ('ACTIVE', 'COMPLETE', 'SELFPARK_STARTED')]
 
     self.steer_control_types = {d: v for v, d in self.define.dv["DAS_steeringControl"]["DAS_steeringControlType"].items()}
 
-  def _angle_cmd_msg(self, angle: float, state: bool | int = True, increment_timer: bool = True, bus: int = 0, enabled: bool | None = None):
-    if enabled is not None:
-      state = enabled
-    values = {"DAS_steeringAngleRequest": angle, "DAS_steeringControlType": state}
+  def _angle_cmd_msg(self, angle: float, state: bool | int, increment_timer: bool = True, bus: int = 0):
+    values = {"DAS_steeringAngleRequest": angle, "DAS_steeringControlType": int(state)}
     if increment_timer:
       self.safety.set_timer(self.cnt_angle_cmd * int(1e6 / self.LATERAL_FREQUENCY))
       self.__class__.cnt_angle_cmd += 1
     return self.packer.make_can_msg_safety("DAS_steeringControl", bus, values)
 
-  def _angle_meas_msg(self, angle: float, hands_on_level: int = 0, eac_status: int = 1, eac_error_code: int = 0,
-                      torsion_bar_torque: float = 0.0):
+  def _angle_meas_msg(self, angle: float, hands_on_level: int = 0, eac_status: int = 1, eac_error_code: int = 0):
     values = {"EPAS3S_internalSAS": angle, "EPAS3S_handsOnLevel": hands_on_level,
-              "EPAS3S_torsionBarTorque": torsion_bar_torque,
-              "EPAS3S_eacStatus": eac_status, "EPAS3S_eacErrorCode": eac_error_code,
-              "EPAS3S_sysStatusCounter": self.cnt_epas % 16}
-    self.__class__.cnt_epas += 1
+              "EPAS3S_eacStatus": eac_status, "EPAS3S_eacErrorCode": eac_error_code}
     return self.packer.make_can_msg_safety("EPAS3S_sysStatus", 0, values)
 
   def _user_brake_msg(self, brake, quality_flag: bool = True):
-    values = {"IBST_driverBrakeApply": 2 if brake else 1}
+    values = {"ESP_driverBrakeApply": 2 if brake else 1}
     if not quality_flag:
-      values["IBST_driverBrakeApply"] = random.choice((0, 3))  # NOT_INIT_OR_OFF, FAULT
-    return self.packer.make_can_msg_safety("IBST_status", 0, values)
+      values["ESP_driverBrakeApply"] = random.choice((0, 3))  # NotInit_orOff, Faulty_SNA
+    return self.packer.make_can_msg_safety("ESP_status", 0, values)
 
   def _speed_msg(self, speed):
     values = {"DI_vehicleSpeed": speed * 3.6}
@@ -189,7 +238,7 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
         self.safety.set_controls_allowed(True)
         self.assertTrue(self._rx(self._speed_msg_2(speed_2)))
 
-        within_delta = abs(speed - speed_2) <= MAX_SPEED_DELTA
+        within_delta = speeds_within_delta(speed, speed_2)
         self.assertEqual(self.safety.get_controls_allowed(), within_delta)
 
     # Test ESP_B quality flag
@@ -263,9 +312,9 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
       self.assertEqual(self.LONGITUDINAL, self._tx(self._long_control_msg(0, acc_state=self.acc_states["ACC_ON"])))
 
   def test_steering_control_type(self):
-    # Only angle control is allowed (no LANE_KEEP_ASSIST or EMERGENCY_LANE_KEEP)
+    # Only angle control is allowed (no LANE_KEEP_ASSIST, EMERGENCY_LANE_KEEP, or FSD)
     self.safety.set_controls_allowed(True)
-    for steer_control_type in range(4):
+    for steer_control_type in range(8):
       should_tx = steer_control_type in (self.steer_control_types["NONE"],
                                          self.steer_control_types["ANGLE_CONTROL"])
       self.assertEqual(should_tx, self._tx(self._angle_cmd_msg(0, state=steer_control_type)))
@@ -286,6 +335,8 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
     self.assertEqual(0, self.safety.safety_fwd_hook(2, lkas_msg_cam.addr))
     self.assertFalse(self._tx(no_lkas_msg))
 
+  # Tesla uses get_max_angle_delta_vm and get_max_angle_vm for real lateral accel and jerk limits
+  # TODO: integrate this into AngleSteeringSafetyTest
   def test_angle_cmd_when_enabled(self):
     # We properly test lateral acceleration and jerk below
     pass
@@ -357,21 +408,10 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
         # Recover
         self.assertTrue(self._tx(self._angle_cmd_msg(0, True)))
 
-  def _toggle_aol(self, toggle_on):
-    # DI_state, DI_cruiseState is the cruise state, 1 is standby
-    values = {"DI_cruiseState": 1 if toggle_on else 0}
-    return self.packer.make_can_msg_panda("DI_state", 0, values)
-
 
 class TestTeslaStockSafety(TestTeslaSafetyBase):
 
   LONGITUDINAL = False
-
-  def setUp(self):
-    super().setUp()
-    self.safety = libsafety_py.libsafety
-    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, 0)
-    self.safety.init_tests()
 
   def test_cancel(self):
     for acc_state in range(16):
@@ -379,26 +419,6 @@ class TestTeslaStockSafety(TestTeslaSafetyBase):
       should_tx = acc_state == self.acc_states["ACC_CANCEL_GENERIC_SILENT"]
       self.assertFalse(self._tx(self._long_control_msg(0, acc_state=acc_state, accel_limits=(self.MIN_ACCEL, self.MAX_ACCEL))))
       self.assertEqual(should_tx, self._tx(self._long_control_msg(0, acc_state=acc_state)))
-
-  def test_cooperative_steering_torque_disengage_flag(self):
-    torque_cases = (
-      (-STEER_DISENGAGE_THRESHOLD - 0.01, True),
-      (-STEER_DISENGAGE_THRESHOLD, False),
-      (STEER_DISENGAGE_THRESHOLD, False),
-      (STEER_DISENGAGE_THRESHOLD + 0.01, True),
-    )
-
-    for param, cooperative_steering in ((0, False), (TeslaSafetyFlags.COOP_STEERING, True)):
-      self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, param)
-      self.safety.init_tests()
-
-      for torsion_bar_torque, exceeds_threshold in torque_cases:
-        self.safety.set_controls_allowed(True)
-        should_disengage = cooperative_steering and exceeds_threshold
-
-        self.assertTrue(self._rx(self._angle_meas_msg(0, torsion_bar_torque=torsion_bar_torque)))
-        self.assertNotEqual(should_disengage, self.safety.get_controls_allowed())
-        self.assertEqual(should_disengage, self.safety.get_steering_disengage_prev())
 
   def test_no_aeb(self):
     for aeb_event in range(4):
@@ -425,14 +445,10 @@ class TestTeslaStockSafety(TestTeslaSafetyBase):
 
 
 class TestTeslaLongitudinalSafety(TestTeslaSafetyBase):
+  SAFETY_PARAM = TeslaSafetyFlags.LONG_CONTROL
+
   RELAY_MALFUNCTION_ADDRS = {0: (MSG_DAS_steeringControl, MSG_APS_eacMonitor, MSG_DAS_Control)}
   FWD_BLACKLISTED_ADDRS = {2: [MSG_DAS_steeringControl, MSG_APS_eacMonitor, MSG_DAS_Control]}
-
-  def setUp(self):
-    super().setUp()
-    self.safety = libsafety_py.libsafety
-    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, TeslaSafetyFlags.LONG_CONTROL)
-    self.safety.init_tests()
 
   def test_no_aeb(self):
     for aeb_event in range(4):
@@ -474,6 +490,35 @@ class TestTeslaLongitudinalSafety(TestTeslaSafetyBase):
     self.assertFalse(self._tx(self._long_control_msg(set_speed=10, accel_limits=(-1.1, -0.6))))
     self.assertFalse(self._tx(self._long_control_msg(set_speed=0, accel_limits=(-0.6, -1.1))))
     self.assertFalse(self._tx(self._long_control_msg(set_speed=0, accel_limits=(-0.1, -0.1))))
+
+
+class TestTeslaIgnition(common.SafetyTestBase):
+  DBC = "tesla_model3_party"
+  SAFETY_MODEL = None
+
+  TX_MSGS: list = []
+
+  def _msg(self, counter, state):
+    return self.packer.make_can_msg_safety("VCFRONT_LVPowerState", 0,
+                                           {"VCFRONT_LVPowerStateCounter": counter,
+                                            "VCFRONT_vehiclePowerState": state})
+
+  # VEHICLE_POWER_STATE_DRIVE=3 (counter-gated)
+  def test_ignition_on(self):
+    for i in range(16):
+      self.safety.init_tests()
+      self.safety.ignition_can_hook(self._msg(i, 3))
+      self.assertFalse(self.safety.get_ignition_can())
+      self.safety.ignition_can_hook(self._msg((i + 1) % 16, 3))
+      self.assertTrue(self.safety.get_ignition_can())
+
+  def test_ignition_off(self):
+    self.safety.ignition_can_hook(self._msg(0, 3))
+    self.safety.ignition_can_hook(self._msg(1, 3))
+    self.assertTrue(self.safety.get_ignition_can())
+    self.safety.ignition_can_hook(self._msg(2, 2))
+    self.safety.ignition_can_hook(self._msg(3, 2))
+    self.assertFalse(self.safety.get_ignition_can())
 
 
 if __name__ == "__main__":

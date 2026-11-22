@@ -1,151 +1,172 @@
-import pytest
+import unittest
 
 from opendbc.can import CANPacker
-from opendbc.car import create_gas_interceptor_command
-from opendbc.car.structs import CarParams
+from opendbc.car import structs
+from opendbc.car.hyundai.ray_pedal import create_ray_pedal_command, pedal_checksum
+from opendbc.car.hyundai.tests.test_ray_pedal import ray_controller
+from opendbc.car.hyundai.values import RAY_PEDAL_SAFETY_PARAM
 from opendbc.safety.tests.libsafety import libsafety_py
 from opendbc.safety.tests.test_hyundai import checksum
 
 
-@pytest.mark.parametrize("param", [0x9405, 0x9C05, 0x9401, 0x1005, 0])
-def test_ray_pedal_tx_isolation_and_limits(param):
-  safety = libsafety_py.libsafety
-  safety.set_safety_hooks(CarParams.SafetyModel.hyundai, param)
-  safety.init_tests()
-  safety.set_controls_allowed(True)
-  packer = CANPacker("hyundai_kia_ray_pedal")
+class TestHyundaiRayPedal(unittest.TestCase):
+  def setUp(self):
+    self.safety = libsafety_py.libsafety
+    self.packer = CANPacker('hyundai_can_generated')
+    self.pedal = CANPacker('hyundai_kia_ray_pedal')
+    self.counter = 0
 
-  def tx(gas):
-    addr, dat, bus = create_gas_interceptor_command(packer, gas, 3)
-    return safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, dat))
+  @staticmethod
+  def packet(frame):
+    return libsafety_py.make_CANPacket(frame[0], frame[2], frame[1])
 
-  has_ray_signature = param in (0x9405, 0x9C05)
-  assert tx(0) is has_ray_signature
-  assert tx(0.55) is has_ray_signature
-  assert tx(0.65) is has_ray_signature
-  assert tx(0.70) is has_ray_signature
-  assert not tx(0.71)
-  assert not tx(1.0)
+  def rx(self, name, values, bus=0):
+    frame = self.packer.make_can_msg(name, bus, values)
+    if frame[0] in (0x260, 0x386, 0x394):
+      frame = checksum(frame)
+    self.assertTrue(self.safety.safety_rx_hook(self.packet(frame)))
+    return frame
 
-  if has_ray_signature:
-    safety.set_controls_allowed(False)
-    assert tx(0)
-    assert not tx(0.1)
-    safety.set_controls_allowed(True)
-    safety.set_gas_pressed_prev(True)
-    assert not tx(0.1)
-    safety.set_gas_pressed_prev(False)
-    addr, dat, bus = create_gas_interceptor_command(packer, 0.1, 3)
-    bad_crc = bytearray(dat)
-    bad_crc[-1] ^= 1
-    assert not safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, bytes(bad_crc)))
+  def sensor(self, state=0, pressed=False):
+    self.counter = (self.counter + 1) & 15
+    frame = self.pedal.make_can_msg('GAS_SENSOR', 0, {'STATE': state, 'COUNTER_PEDAL': self.counter,
+      'INTERCEPTOR_GAS': (310-264)*.672 if pressed else 0, 'INTERCEPTOR_GAS2': (593-497)*.332 if pressed else 0})
+    self.assertTrue(self.safety.safety_rx_hook(self.packet(frame)))
+    return frame
 
+  def arm(self, param=RAY_PEDAL_SAFETY_PARAM):
+    self.safety.set_safety_hooks(structs.CarParams.SafetyModel.hyundai, param)
+    self.safety.init_tests()
+    self.safety.set_timer(1_000_000)
+    self.counter = 0
+    self.rx('E_EMS11', {})
+    self.rx('WHL_SPD11', {'WHL_SPD_FL': 0, 'WHL_SPD_RR': 0})
+    self.rx('TCS13', {'DriverOverride': 0})
+    self.rx('MDPS12', {})
+    self.rx('CLU11', {'CF_Clu_AliveCnt1': 1})
+    self.rx('LABEL11', {'CC_React': 1})
+    self.rx('BCM_PO_11', {})
+    self.sensor()
+    self.safety.safety_tick()
+    self.rx('CLU11', {'CF_Clu_CruiseSwState': 2, 'CF_Clu_AliveCnt1': 2})
+    self.rx('CLU11', {'CF_Clu_CruiseSwState': 0, 'CF_Clu_AliveCnt1': 3})
+    self.assertTrue(self.safety.get_controls_allowed())
 
-def test_ray_pedal_rx_crc_is_checked_only_for_ray_signature():
-  safety = libsafety_py.libsafety
-  safety.set_safety_hooks(CarParams.SafetyModel.hyundai, 0x9405)
-  safety.init_tests()
-  dat = bytes.fromhex("01f403d55de8")
-  assert safety.safety_rx_hook(libsafety_py.make_CANPacket(0x201, 0, dat))
-  bad_crc = bytearray(dat)
-  bad_crc[-1] ^= 1
-  assert not safety.safety_rx_hook(libsafety_py.make_CANPacket(0x201, 0, bytes(bad_crc)))
+  def command(self, gas, bus=0):
+    frame = create_ray_pedal_command(self.pedal, gas, 3)
+    return self.packet((frame[0], frame[1], bus))
 
+  def test_exact_actual_cp_and_near_neighbor_native_admission(self):
+    cp, _, _, _ = ray_controller()
+    self.assertEqual(cp.safetyConfigs[0].safetyParam, RAY_PEDAL_SAFETY_PARAM)
+    self.arm(cp.safetyConfigs[0].safetyParam)
+    self.assertTrue(self.safety.safety_tx_hook(self.command(.55)))
+    self.assertTrue(self.safety.safety_tx_hook(self.command(.65)))
+    self.assertTrue(self.safety.safety_tx_hook(self.command(.70)))
+    self.assertTrue(self.safety.safety_tx_hook(self.command(0)))
+    for param in (0x9405, 0x9801, 0x1805, 0x9804, 0x9807, 0x9885, 0x9825, 0xB805, 0):
+      self.safety.set_safety_hooks(structs.CarParams.SafetyModel.hyundai, param)
+      self.safety.init_tests()
+      self.safety.set_controls_allowed(True)
+      self.assertFalse(self.safety.safety_tx_hook(self.command(0)), hex(param))
+      self.assertFalse(self.safety.safety_tx_hook(self.command(.1)), hex(param))
 
-@pytest.mark.parametrize(("track1", "track2", "allowed"), [
-  (530, 1035, True), (531, 1035, False), (530, 1036, False),
-  (263, 497, False), (264, 496, False), (530, 980, False),
-])
-def test_ray_tuned_command_validates_each_track(track1, track2, allowed):
-  safety = libsafety_py.libsafety
-  safety.set_safety_hooks(CarParams.SafetyModel.hyundai, 0x9405)
-  safety.init_tests()
-  safety.set_controls_allowed(True)
-  packer = CANPacker("hyundai_kia_ray_pedal")
-  addr, dat, bus = packer.make_can_msg("GAS_COMMAND", 0, {
-    "GAS_COMMAND": (track1 - 264) * 0.672,
-    "GAS_COMMAND2": (track2 - 497) * 0.332,
-    "ENABLE": 1, "COUNTER_PEDAL": 1,
-  })
-  assert safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, dat)) is allowed
+  def test_command_limits_channels_checksum_and_buses(self):
+    self.arm()
+    for gas in (.71, 1):
+      self.assertFalse(self.safety.safety_tx_hook(self.command(gas)))
+    for bus in (1, 2):
+      self.assertFalse(self.safety.safety_tx_hook(self.command(.1, bus)))
+    frame = create_ray_pedal_command(self.pedal, .1, 3)
+    for kind in ('checksum', 'track', 'reserved', 'disabled'):
+      data = bytearray(frame[1])
+      if kind == 'checksum':
+        data[-1] ^= 1
+      elif kind == 'track':
+        data[3] += 5
+        data[-1] = pedal_checksum(0, None, data)
+      elif kind == 'reserved':
+        data[4] |= 0x10
+        data[-1] = pedal_checksum(0, None, data)
+      else:
+        data[4] &= ~0x80
+        data[-1] = pedal_checksum(0, None, data)
+      self.assertFalse(self.safety.safety_tx_hook(self.packet((frame[0], bytes(data), 0))), kind)
+    for addr in (0x420, 0x421, 0x50A, 0x389, 0x7D0):
+      self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, 0, bytes(8))))
 
+  def test_generated_channel_rounding_bound_exhaustive(self):
+    self.arm()
+    maximum = 0
+    for step in range(101, 70001):
+      frame = create_ray_pedal_command(self.pedal, step / 100000, step & 15)
+      track1 = int.from_bytes(frame[1][:2], 'big')
+      track2 = int.from_bytes(frame[1][2:4], 'big')
+      error = abs(83*(track2-497)-168*(track1-264))
+      maximum = max(maximum, error)
+      self.assertLessEqual(error, 125)
+      self.assertTrue(self.safety.safety_tx_hook(self.packet(frame)))
+    self.assertEqual(maximum, 125)
 
-def test_ray_native_commanded_gas_does_not_cancel_driver_override_safety():
-  safety = libsafety_py.libsafety
-  safety.set_safety_hooks(CarParams.SafetyModel.hyundai, 0x9405)
-  safety.init_tests()
-  safety.set_controls_allowed(True)
-  packer = CANPacker("hyundai_kia_ray_pedal")
+  def test_fault_driver_brake_stale_restart_and_cancel_gates(self):
+    self.arm()
+    self.assertTrue(self.safety.safety_tx_hook(self.command(.1)))
+    for fault in range(1, 6):
+      self.sensor(state=fault)
+      self.assertFalse(self.safety.safety_tx_hook(self.command(.1)))
+      self.assertTrue(self.safety.safety_tx_hook(self.command(0)))
+    self.sensor()
+    self.assertTrue(self.safety.safety_tx_hook(self.command(.1)))
+    self.sensor(pressed=True)
+    self.assertFalse(self.safety.safety_tx_hook(self.command(.1)))
+    cancel = self.packer.make_can_msg('CLU11', 0, {'CF_Clu_CruiseSwState': 4})
+    self.assertTrue(self.safety.safety_tx_hook(self.packet(cancel)))
+    self.sensor()
+    self.rx('TCS13', {'DriverOverride': 2, 'AliveCounterTCS': 1})
+    self.assertFalse(self.safety.safety_tx_hook(self.command(.1)))
+    self.assertTrue(self.safety.safety_tx_hook(self.command(0)))
+    self.arm()
+    self.safety.set_timer(2_000_001)
+    self.assertFalse(self.safety.safety_tx_hook(self.command(.1)))
+    self.assertTrue(self.safety.safety_tx_hook(self.command(0)))
+    self.arm()
+    self.safety.set_controls_allowed(False)
+    self.assertFalse(self.safety.safety_tx_hook(self.command(.1)))
+    self.safety.set_safety_hooks(structs.CarParams.SafetyModel.hyundai, RAY_PEDAL_SAFETY_PARAM)
+    self.safety.init_tests()
+    self.safety.set_controls_allowed(True)
+    self.assertFalse(self.safety.safety_tx_hook(self.command(.1)))
 
-  physical_rest = bytes.fromhex("010801f30cef")
-  native_gas = bytes.fromhex("004e008000ae0700")
-  assert safety.safety_rx_hook(libsafety_py.make_CANPacket(0x201, 0, physical_rest))
-  assert safety.safety_rx_hook(libsafety_py.make_CANPacket(0x371, 0, native_gas))
-  assert not safety.get_gas_pressed_prev()
-  addr, dat, bus = create_gas_interceptor_command(packer, 0.1, 3)
-  assert safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, dat))
+  def test_actual_buttons_main_off_cancel_and_no_spurious_reenable(self):
+    self.arm()
+    self.assertTrue(self.safety.safety_tx_hook(self.command(.1)))
+    self.rx('CLU11', {'CF_Clu_CruiseSwState': 4, 'CF_Clu_AliveCnt1': 4})
+    self.assertFalse(self.safety.get_controls_allowed())
+    self.assertFalse(self.safety.safety_tx_hook(self.command(.1)))
+    self.assertTrue(self.safety.safety_tx_hook(self.command(0)))
+    self.rx('CLU11', {'CF_Clu_CruiseSwState': 1, 'CF_Clu_AliveCnt1': 5})
+    self.assertFalse(self.safety.get_controls_allowed())
+    self.rx('CLU11', {'CF_Clu_CruiseSwState': 0, 'CF_Clu_AliveCnt1': 6})
+    self.assertTrue(self.safety.get_controls_allowed())
+    self.rx('LABEL11', {'CC_React': 0, 'CC_Engaged': 0})
+    self.assertFalse(self.safety.get_controls_allowed())
+    self.assertFalse(self.safety.safety_tx_hook(self.command(.1)))
+    self.rx('LABEL11', {'CC_React': 1})
+    self.assertFalse(self.safety.get_controls_allowed())
+    self.assertFalse(self.safety.safety_tx_hook(self.command(.1)))
+    self.rx('CLU11', {'CF_Clu_CruiseSwState': 2, 'CF_Clu_AliveCnt1': 7})
+    self.rx('CLU11', {'CF_Clu_CruiseSwState': 0, 'CF_Clu_AliveCnt1': 8})
+    self.assertTrue(self.safety.safety_tx_hook(self.command(.1)))
 
-  physical_press = packer.make_can_msg("GAS_SENSOR", 0, {
-    "INTERCEPTOR_GAS": (310 - 264) * 0.672,
-    "INTERCEPTOR_GAS2": (593 - 497) * 0.332,
-    "STATE": 0, "COUNTER_PEDAL": 13,
-  })
-  press_addr, press_dat, press_bus = physical_press
-  assert safety.safety_rx_hook(libsafety_py.make_CANPacket(press_addr, press_bus, press_dat))
-  assert safety.get_gas_pressed_prev()
-  assert not safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, dat))
-
-
-def test_non_ray_hyundai_ev_keeps_native_driver_gas_detection():
-  safety = libsafety_py.libsafety
-  safety.set_safety_hooks(CarParams.SafetyModel.hyundai, 0x1001)
-  safety.init_tests()
-  native_gas = bytes.fromhex("004e008000ae0700")
-  assert safety.safety_rx_hook(libsafety_py.make_CANPacket(0x371, 0, native_gas))
-  assert safety.get_gas_pressed_prev()
-
-
-@pytest.mark.parametrize("controls_allowed", [False, True])
-def test_ray_native_cruise_cancel_allowed_during_pedal_override(controls_allowed):
-  safety = libsafety_py.libsafety
-  safety.set_safety_hooks(CarParams.SafetyModel.hyundai, 0x9405)
-  safety.init_tests()
-  safety.set_controls_allowed(controls_allowed)
-  safety.set_gas_pressed_prev(True)
-  packer = CANPacker("hyundai_can_refresh_generated")
-  addr, dat, bus = packer.make_can_msg("CLU11", 0, {"CF_Clu_CruiseSwState": 4})
-  assert safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, dat))
-
-  pedal_packer = CANPacker("hyundai_kia_ray_pedal")
-  addr, dat, bus = create_gas_interceptor_command(pedal_packer, 0.1, 3)
-  assert not safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, dat))
-
-
-def test_ray_standstill_launch_obeys_hardware_brake_override():
-  safety = libsafety_py.libsafety
-  safety.set_safety_hooks(CarParams.SafetyModel.hyundai, 0x9405)
-  safety.init_tests()
-  packer = CANPacker("hyundai_can_refresh_generated")
-  pedal_packer = CANPacker("hyundai_kia_ray_pedal")
-
-  def rx(name, values):
-    addr, dat, bus = checksum(packer.make_can_msg(name, 0, values))
-    assert safety.safety_rx_hook(libsafety_py.make_CANPacket(addr, bus, dat))
-
-  def tx(gas):
-    addr, dat, bus = create_gas_interceptor_command(pedal_packer, gas, 0)
-    return safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, dat))
-
-  rx("WHL_SPD11", {"WHL_SPD_FL": 0, "WHL_SPD_RR": 0})
-  assert not safety.get_vehicle_moving()
-  rx("TCS13", {"DriverOverride": 2})
-  safety.set_controls_allowed(True)
-  assert safety.get_brake_pressed_prev()
-  assert tx(0)
-  assert not tx(0.012)
-  rx("TCS13", {"DriverOverride": 0})
-  assert not safety.get_brake_pressed_prev()
-  assert tx(0.012)
-  rx("TCS13", {"DriverOverride": 2})
-  assert not tx(0.012)
-  assert tx(0)
+  def test_host_to_native_and_required_health_loss(self):
+    cp, controller, command, state = ray_controller()
+    self.arm(cp.safetyConfigs[0].safetyParam)
+    for frame in range(40):
+      for message in controller.update(command.as_reader(), state, frame*10_000_000)[1]:
+        self.assertTrue(self.safety.safety_tx_hook(self.packet(message)), message)
+    sensor = self.sensor()
+    bad = bytearray(sensor[1])
+    bad[-1] ^= 1
+    self.assertFalse(self.safety.safety_rx_hook(self.packet((sensor[0], bytes(bad), 0))))
+    self.assertFalse(self.safety.safety_tx_hook(self.command(.1)))
+    self.assertTrue(self.safety.safety_tx_hook(self.command(0)))

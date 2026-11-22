@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, pathlib, signal, struct, json, os, itertools, heapq
+import argparse, pathlib, signal, struct, json, os, itertools, heapq, re
 os.environ["VIZ"] = "0"
 if hasattr(signal, "SIGPIPE"): signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 from typing import Iterator
@@ -7,6 +7,7 @@ from tinygrad.viz import serve as viz
 from tinygrad.viz.serve import fmt_colored
 from tinygrad.uop.ops import RewriteTrace
 from tinygrad.helpers import temp, ansistrip, colored, time_to_str, ansilen, ProfilePointEvent, ProfileRangeEvent, TracingKey, unwrap, NO_COLOR, DEBUG
+from tinygrad.helpers import Context
 
 # profile decoder used in CLI and tests
 def decode_profile(data:bytes) -> dict:
@@ -17,7 +18,8 @@ def decode_profile(data:bytes) -> dict:
     off += struct.calcsize(fmt)
     return vals
   total_dur, global_peak, index_len, layout_len = u("<IQII")
-  strings, dtypes, markers = json.loads(ret[off:off+index_len]).values()
+  index = json.loads(ret[off:off+index_len])
+  strings, markers = index["strings"], index["markers"]
   off += index_len
   layout:dict[str, dict] = {}
   # 0 means None, otherwise it's an enum value
@@ -41,7 +43,7 @@ def decode_profile(data:bytes) -> dict:
           v["events"].append({"event":"freq", "ts":ts, "value":value})
         else:
           alloc, ts, key = u("<BII")
-          if alloc: v["events"].append({"event":"alloc", "ts":ts, "key":key, "arg": {"dtype":strings[u("<I")[0]], "sz":u("<Q")[0]}})
+          if alloc: v["events"].append({"event":"alloc", "ts":ts, "key":key, "arg": {"nbytes":u("<Q")[0]}})
           else: v["events"].append({"event":"free", "ts":ts, "key":key, "arg": {"users":[(k, strings[rep], num, mode) \
               for k,rep,num,mode in [u("<IIIB") for _ in range(u("<I")[0])]]}})
   return {"dur":total_dur, "peak":global_peak, "layout":layout, "markers":markers}
@@ -64,6 +66,8 @@ def get(data:dict, key:str):
   match = difflib.get_close_matches(key, [ansistrip(k) for k in data], n=1, cutoff=0.6)
   raise RuntimeError(f'item "{key}" not found in list'+(f", did you mean {match[0]!r}?" if match else ''))
 
+def matches(name:str, query:str) -> bool: return bool(query) and re.search(query, name, re.IGNORECASE) is not None
+
 def fmt_top(k:dict) -> str:
   return f"{fmt_colored(k['name'])}{' ' * max(0, 38-ansilen(k['name']))} {time_to_str(k['dur_ms']*1e-3, w=9)} {k['count']:7d} {k['pct']:6.2f}%"+\
       (" "*4+fmt_data(k['fmt']) if k['fmt'] else "")
@@ -74,21 +78,17 @@ def fmt_all(k:dict) -> str:
   name = f"*** {k['device'][:7]:7s} "+k["name"]+" "*(46-ansilen(k["name"]))
   return f"{name} tm {ptm}/{k['st_ms']:9.2f}ms"+(f" ({fmt_data(k['fmt'])})" if k["fmt"] else "")
 
+@Context(ALLOW_DEVICE_USAGE=0)
 def main(args) -> None:
   viz.load_rewrites(viz_data:=viz.VizData(viz.load_pickle(args.rewrites_path, default=RewriteTrace([], [], {}))))
 
   def emit(val, to_str=str) -> str: return json.dumps(val if isinstance(val, dict) else {"value":val}) if args.json else to_str(val)
 
-  def print_step(step:dict, print_graph=False, reconstruct_matches=False) -> None:
+  def print_step(step:dict, reconstruct_matches=False) -> None:
     data = viz.get_render(viz_data, step["query"], update_sink=False)
     if isinstance(data.get("value"), Iterator):
       for m in data["value"]:
-        if print_graph and "graph" in m and not args.json:
-          for k,v in m["graph"].items():
-            print(f"[{k}] {' '.join((lines:=v['label'].splitlines())[:5])}{'...' if len(lines) > 5 else ''}"+(f" tag={v['tag']}" if v['tag'] else ''))
-            if v["src"]:
-              print("  src: "+", ".join([f"{i}->[{x}]" for i,x in v["src"]]))
-        elif "uop" in m: print(emit(m["graph"] if print_graph else m["uop"]))
+        if "uop" in m: print(emit(''.join(t["st"] for t in m["uop"])))
         if not reconstruct_matches: return None
         if m.get("diff"):
           loc = pathlib.Path(m["upat"][0][0])
@@ -200,21 +200,23 @@ def main(args) -> None:
             elif not file.startswith("<") and not fxn.startswith("<"): fmt["loc"] = line
         yield {"device":dev, "name":fmt_colored(e["name"]), "dur_ms":e["dur"]*1e-3, "st_ms":e["st"]*1e-3, "fmt":fmt, "ref":e["ref"],
                "ext":"\n".join(ext)}
-    fmt_row = fmt_top if args.t else fmt_all
+    fmt_row, query = fmt_top if args.t else fmt_all, "".join(args.query) if args.query else None
     seen_refs:set[int] = set()
     def render_event(k:dict, ls=args.list) -> None:
-      if len(args.src) > 1 and ansistrip(k["name"]) not in args.src: return None
-      print(emit(k, to_str=fmt_row))
+      if len(args.src) > 1 and ansistrip(k["name"]) not in args.src and query is None: return None
+      if (debug_steps:=query is None or matches(ansistrip(k["name"]), query)): print(emit(k, to_str=fmt_row))
       if k["ref"] is not None and k["ref"] not in seen_refs:
         seen_refs.add(k["ref"])
         for i,s in enumerate(viz_data.ctxs[k["ref"]]["steps"]):
-          if DEBUG >= 3 and s["name"] == "View Base AST": print_step(s)
-          if DEBUG >= 4 and s["name"] == "View Source": print_step(s)
-          if DEBUG >= 5 or ls: print(emit(" "*s["depth"]+s["name"]+(f" - {s['match_count']}" if s.get('match_count', 0) else '')))
-          if DEBUG >= 6 or (DEBUG >= 5 and s["name"] == "View Kernel Graph") or (s["name"] in args.src):
-            print_step(s, print_graph=True, reconstruct_matches=s["name"] in args.src)
-          if DEBUG >= 7: print_step(s, reconstruct_matches=True)
-      elif DEBUG >= 3 and k.get("ext"): print(emit(k["ext"]))
+          if debug_steps:
+            if DEBUG >= 3 and s["name"] == "View Base AST": print_step(s)
+            if DEBUG >= 4 and s["name"] == "View Source": print_step(s)
+            if DEBUG >= 5 or ls: print(emit(" "*s["depth"]+s["name"]+(f" - {s['match_count']}" if s.get('match_count', 0) else '')))
+            if DEBUG >= 6 or (DEBUG >= 5 and s["name"] == "View Kernel Graph") or (s["name"] in args.src):
+              print_step(s, reconstruct_matches=s["name"] in args.src)
+            if DEBUG >= 7: print_step(s, reconstruct_matches=True)
+          elif query is not None and matches(s["name"], query): print_step(s, reconstruct_matches=DEBUG >= 7)
+      elif debug_steps and (DEBUG >= 3 and k.get("ext")): print(emit(k["ext"]))
     for k in (produce_top_kernels if args.t else produce_all_kernels)(): render_event(k)
 
 def get_arg_parser() -> argparse.ArgumentParser:
@@ -223,6 +225,7 @@ def get_arg_parser() -> argparse.ArgumentParser:
   parser.add_argument("--list", "--ls", dest="list", action="store_true", help="List sources")
   parser.add_argument("--interval", nargs="+", metavar=("START", "END"), help="Optional start and end marker")
   parser.add_argument("-t", nargs="?", type=int, const=20, metavar="COUNT", help="Aggregate top kernels (optional count, default 20)")
+  parser.add_argument("-q", "--query", nargs="+", default=[], metavar="REGEX", help="Search query")
   parser.add_argument("--profile-path", type=str, metavar="PATH", help="Optional path to profile.pkl (default: latest profile)",
                       default=temp("profile.pkl", append_user=True))
   parser.add_argument("--rewrites-path", type=str, metavar="PATH", help="Optional path to rewrites.pkl (default: latest rewrites)",

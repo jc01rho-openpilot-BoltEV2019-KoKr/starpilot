@@ -9,8 +9,8 @@ from tinygrad.helpers import fetch
 # ═══════════════════════════════════════════════════════════════════════════════
 
 ARCHS = {
-  "rdna3": {"xml": "amdgpu_isa_rdna3_5.xml", "pdf": "https://docs.amd.com/api/khub/documents/UVVZM22UN7tMUeiW_4ShTQ/content"},
-  "rdna4": {"xml": "amdgpu_isa_rdna4.xml", "pdf": "https://docs.amd.com/api/khub/documents/uQpkEvk3pv~kfAb2x~j4uw/content"},
+  "rdna3": {"xml": "amdgpu_isa_rdna3_5.xml", "pdf": "https://gpuopen.com/download/rdna35_instruction_set_architecture.pdf"},
+  "rdna4": {"xml": "amdgpu_isa_rdna4.xml", "pdf": "https://gpuopen.com/download/rdna4-instruction-set-architecture.pdf"},
   "cdna": {"xml": "amdgpu_isa_cdna4.xml", "pdf": "https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/instruction-set-architectures/amd-instinct-cdna4-instruction-set-architecture.pdf"},
 }
 # Pin the September 2025 XML bundle because newer `latest` changed WMMA format bit sizes across archs and breaks generation.
@@ -25,6 +25,9 @@ FIXES = {"rdna3": {"SOPK": {22: "S_SUBVECTOR_LOOP_BEGIN", 23: "S_SUBVECTOR_LOOP_
                   "VOP3P": {44: "V_MFMA_LD_SCALE_B32", 62: "V_MFMA_F32_16X16X8_XF32", 63: "V_MFMA_F32_32X32X4_XF32"}}}
 # Fields missing from XML but present in hardware (format: {arch: {encoding: [(name, hi, lo), ...]}})
 FIELD_FIXES = {"cdna": {"VOP3P": [("opsel_hi2", 14, 14)]}}
+# Fields variable in XML but fixed in hardware (format: {arch: {encoding: {name: value or (encoding, opcode) of the embedded instruction}}})
+FIXED_FIELDS: dict[str, dict[str, dict[str, int|tuple[str, str]]]] = {
+  "cdna": {"VOP3PX2": {"x2encoding": ("VOP3P", "V_MFMA_LD_SCALE_B32"), "abid": 1}}}
 # Encoding suffixes to strip (variants we don't generate separate classes for)
 _ENC_SUFFIXES = ("_NSA1",)
 # Encoding suffix to class suffix mapping (for variants we DO generate)
@@ -145,7 +148,7 @@ def parse_xml(filename: str):
       for fmt, _, otype in op_info.values():
         if fmt and fmt not in fmts: fmts[fmt] = 0
         if otype: op_types_set.add(otype)
-      if op_info: types[(name, base_enum)] = op_info
+      if op_info or (enc.find("Operands") is not None and not enc.findall("Operands/Operand")): types[(name, base_enum)] = op_info
   # Find opcodes that only exist in a specific variant encoding (no base format version)
   suffix_only_ops: dict[str, dict[str, set[int]]] = {}  # {suffix: {base_fmt: {opcodes}}}
   for base_fmt, opcodes in opcode_encs.items():
@@ -233,12 +236,16 @@ def extract_pcode(pages: list[list[tuple[float, float, str, str]]], name_to_op: 
       sorted_lines = sorted(lines, key=lambda x: (x[0], -x[1]))
       # Stop at large Y gaps (>30) - indicates section break
       filtered = [sorted_lines[0]]
+      depth = sorted_lines[0][2].count("{") - sorted_lines[0][2].count("}")
       for j in range(1, len(sorted_lines)):
         prev_page, prev_y, _ = sorted_lines[j-1]
         curr_page, curr_y, _ = sorted_lines[j]
-        if curr_page == prev_page and prev_y - curr_y > 30: break
-        if curr_page != prev_page and prev_y > 60 and curr_y < 730: break
+        if depth == 0 and ((curr_page == prev_page and prev_y - curr_y > 30) or (curr_page != prev_page and prev_y > 60 and curr_y < 730)):
+          if any(' = ' in t for *_, t in filtered) or not any(' = ' in t for *_, t in sorted_lines[j:]): break
+          filtered = []
         filtered.append(sorted_lines[j])
+        code = sorted_lines[j][2].split("//")[0]
+        depth += code.count("{") - code.count("}")
       pcode_lines = [t.replace('Ê', '').strip() for _, _, t in filtered]
       if pcode_lines: pcode[(name, opcode)] = '\n'.join(pcode_lines)
   return pcode
@@ -290,6 +297,10 @@ def write_ins(encodings, enums, suffix_only_ops, types, arch, path):
     bits = hi - lo + 1
     base_fmt = get_base_fmt(fmt)
     if name == "encoding" and enc_bits: return f"FixedBitField({hi}, {lo}, 0b{enc_bits})"
+    if (fixed := FIXED_FIELDS.get(arch, {}).get(fmt, {}).get(name)) is not None:
+      if isinstance(fixed, int): return f"FixedBitField({hi}, {lo}, {fixed})"
+      fixed_bits, opcode = encodings[fixed[0]][1], next(op for op, n in enums[fixed[0]].items() if n == fixed[1])
+      return f"FixedBitField({hi}, {lo}, 0b{fixed_bits}{opcode:0{bits-len(fixed_bits)}b})"
     if name == "op" and fmt not in ("DPP", "SDWA"): return f"EnumBitField({hi}, {lo}, {base_fmt}Op)"
     if name in ("opx", "opy"): return f"EnumBitField({hi}, {lo}, VOPDOp)"
     if name == "vdsty": return f"VDSTYField({hi}, {lo})"
@@ -452,6 +463,7 @@ def write_ins(encodings, enums, suffix_only_ops, types, arch, path):
   with open(path, "w") as f: f.write("\n".join(lines))
 
 def write_operands(types: dict, enums: dict, arch: str, path: pathlib.Path) -> None:
+  types = {k: v for k, v in types.items() if v}
   valid = {(name, fmt) for fmt, ops in enums.items() for name in ops.values()}
   # only import enums that are actually used as keys in OPERANDS
   used_bases = {eb for (nm, eb) in types if (nm, eb) in valid}
@@ -526,6 +538,9 @@ if __name__ == "__main__":
     pages = extract_pdf_text(cfg["pdf"])
     name_to_op = {name: op for ops in arch_data[arch]["enums"].values() for op, name in ops.items()}
     pcode = extract_pcode(pages, name_to_op)
+    for fmt, ops in arch_data[arch]["enums"].items():
+      for op, name in ops.items():
+        if arch_data[arch]["types"].get((name, fmt)) == {}: pcode.setdefault((name, op), '')
     base = autogen_base / arch
     write_pcode(pcode, arch_data[arch]["enums"], arch, base / "str_pcode.py")
     print(f"  {arch}: {len(pcode)} pcode entries")

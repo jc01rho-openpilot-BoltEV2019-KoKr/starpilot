@@ -8,80 +8,106 @@ if [ -f "$DIR/scripts/branch-migration.json" ]; then
   python3 "$DIR/scripts/branch_migration.py" --repo "$DIR" || echo "Branch migration deferred; keeping installed software."
 fi
 
-export SP_BOOT_TIMING_LOG="${SP_BOOT_TIMING_LOG:-/tmp/starpilot_boot_timing.log}"
-: > "$SP_BOOT_TIMING_LOG" 2>/dev/null || true
-SP_LAUNCH_LAST_SECONDS=$SECONDS
-
-function sp_boot_timing_line {
-  echo "$1"
-  printf '%s\n' "$1" >> "$SP_BOOT_TIMING_LOG" 2>/dev/null || true
-}
-
-function sp_launch_timing {
-  local now=$SECONDS
-  local delta=$((now - SP_LAUNCH_LAST_SECONDS))
-  sp_boot_timing_line "SP_BOOT_TIMING launch $1 +${delta}s total=${now}s"
-  SP_LAUNCH_LAST_SECONDS=$now
+function run_agnos_updater {
+  if python3 -c "import openpilot.system.ui.updater"; then
+    python3 -m openpilot.system.ui.updater "$@"
+  else
+    "$DIR/openpilot/common/hardware/comma/updater" "$@"
+  fi
 }
 
 function agnos_init {
-  sp_launch_timing "agnos_init_start"
+  if [ "${AGNOS_UPDATE_POLICY:-auto}" = "retain" ] && [ "$(< /VERSION)" != "$AGNOS_VERSION" ]; then
+    echo "This StarPilot build retains AGNOS $AGNOS_VERSION; installed OS does not match. No OS update was attempted."
+    return 1
+  fi
 
   # TODO: move this to agnos
   sudo rm -f /data/etc/NetworkManager/system-connections/*.nmmeta
+  rm -f /data/scons_cache/config.lock
 
   # set success flag for current boot slot
   sudo abctl --set_success
-
-  # Restore SSH access after a user-triggered reset if keys were backed up to /cache.
-  SSH_BACKUP_DIR="/cache/reset_backup"
-  if [ -d "$SSH_BACKUP_DIR" ]; then
-    sudo mkdir -p /data/params/d
-    for key in GithubSshKeys SshEnabled; do
-      if [ -f "$SSH_BACKUP_DIR/$key" ]; then
-        sudo cp "$SSH_BACKUP_DIR/$key" "/data/params/d/$key"
-      fi
-    done
-    sudo chown comma:comma /data/params/d/GithubSshKeys /data/params/d/SshEnabled 2>/dev/null || true
-    sudo chmod 600 /data/params/d/GithubSshKeys /data/params/d/SshEnabled 2>/dev/null || true
-    sudo rm -rf "$SSH_BACKUP_DIR"
-  fi
 
   # TODO: do this without udev in AGNOS
   # udev does this, but sometimes we startup faster
   sudo chgrp gpu /dev/adsprpc-smd /dev/ion /dev/kgsl-3d0
   sudo chmod 660 /dev/adsprpc-smd /dev/ion /dev/kgsl-3d0
 
-  # StarPilot variables
-  sudo chmod 0777 /cache
-
   # Check if AGNOS update is required
-  AGNOS_CURRENT_VERSION="$(< /VERSION)"
-  AGNOS_UPDATE_REQUIRED=1
-  for accepted_version in $AGNOS_ACCEPTED_VERSIONS; do
-    if [ "$AGNOS_CURRENT_VERSION" = "$accepted_version" ]; then
-      AGNOS_UPDATE_REQUIRED=0
-      break
-    fi
-  done
-
-  if [ "$AGNOS_UPDATE_REQUIRED" = "1" ]; then
-    AGNOS_PY="$DIR/system/hardware/tici/agnos.py"
-    MANIFEST="$DIR/system/hardware/tici/agnos.json"
-    if $AGNOS_PY --verify $MANIFEST; then
+  if [ "$(< /VERSION)" != "$AGNOS_VERSION" ]; then
+    AGNOS_PY="$DIR/openpilot/common/hardware/comma/agnos.py"
+    MANIFEST="$DIR/openpilot/common/hardware/comma/agnos.json"
+    if "$AGNOS_PY" --verify "$MANIFEST"; then
       sudo reboot
     fi
-    $DIR/system/hardware/tici/updater $AGNOS_PY $MANIFEST
+    while true; do
+      run_agnos_updater "$AGNOS_PY" "$MANIFEST"
+    done
   fi
 
-  sp_launch_timing "agnos_init_done"
+  # Add missing USB rules for C3's internal Panda; C3X/C4 use SPI.
+  if [ "$(tr -d '\0' 2>/dev/null < /sys/firmware/devicetree/base/model)" = "comma tici" ]; then
+    if ! sudo timeout -k 1s 5s sh -ec '
+      mkdir -p /run/udev/rules.d
+      cat > /run/udev/rules.d/99-starpilot-panda.rules <<EOF
+SUBSYSTEM=="usb", ATTRS{idVendor}=="3801", ATTRS{idProduct}=="ddcc", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="3801", ATTRS{idProduct}=="ddee", MODE="0666"
+EOF
+      # Batch AGNOS GPIO permissions so coldplug does not block Panda USB events.
+      if [ -f /etc/udev/rules.d/99-gpio.rules ] && ! mountpoint -q /etc/udev/rules.d/99-gpio.rules; then
+        sed "s/{} \\\\;/{} +/g" /etc/udev/rules.d/99-gpio.rules > /run/udev/rules.d/99-gpio.rules
+        mount --bind /run/udev/rules.d/99-gpio.rules /etc/udev/rules.d/99-gpio.rules
+      fi
+      udevadm control --reload-rules
+      for product in ddcc ddee; do
+        udevadm trigger --subsystem-match=usb --attr-match=idVendor=3801 --attr-match=idProduct="$product"
+      done
+    '; then
+      echo "Panda USB permission setup failed; continuing startup."
+    fi
+  fi
+}
+
+function update_is_ready {
+  [ -f "$1" ] && [ ! -L "$1" ]
+}
+
+# A validated legacy return records the OS it was staged against. Check it on
+# every boot before swapping trees, including manual reboots.
+# Keep this in sync with TRUSTED_LEGACY_RELEASES in updated.py.
+TRUSTED_LEGACY_STARPILOT_COMMIT="c2e5e469ee8fefc3cffb514dc2e1a1fb82a421d6"
+TRUSTED_LEGACY_STABLE_MIGRATION="0b2061df8d2a931feaf34943e3460510d160f99e"
+
+function trusted_legacy_commit {
+  [ "$1" = "$TRUSTED_LEGACY_STARPILOT_COMMIT" ] || [ "$1" = "$TRUSTED_LEGACY_STABLE_MIGRATION" ]
+}
+
+function staged_os_is_compatible {
+  local staged="$1" marker="$1/.git/starpilot-retain-agnos" commit
+  commit="$(git -C "$staged" rev-parse --verify 'HEAD^{commit}')" || return 1
+  if trusted_legacy_commit "$commit"; then
+    [ -f "$marker" ] && [ -s "$marker" ] && [ ! -L "$marker" ] && [ -r /VERSION ] && [ "$(cat "$marker")" = "$(< /VERSION)" ]
+  else
+    [ ! -e "$marker" ] && [ ! -L "$marker" ]
+  fi
+}
+
+function reset_update_os_environment {
+  unset AGNOS_VERSION AGNOS_ACCEPTED_VERSIONS
+}
+
+function maybe_activate_legacy_agnos {
+  local repo="$1" verifier="$2" manifest="$3" commit
+  commit="$(git -C "$repo" rev-parse --verify 'HEAD^{commit}')" || return 1
+  if ! trusted_legacy_commit "$commit" && [ ! -L "$manifest" ]; then
+    "$verifier" --verify "$manifest" && sudo reboot
+  fi
 }
 
 function launch {
-  sp_launch_timing "launch_start"
-
   # Remove orphaned git lock if it exists on boot
-  [ -f "$DIR/.git/index.lock" ] && rm -f $DIR/.git/index.lock
+  [ -f "$DIR/.git/index.lock" ] && rm -f "$DIR/.git/index.lock"
 
   # Check to see if there's a valid overlay-based update available. Conditions
   # are as follows:
@@ -93,21 +119,25 @@ function launch {
   #    that completed successfully and synced to disk.
 
   if [ -f "${DIR}/.overlay_init" ]; then
-    find ${DIR}/.git -newer ${DIR}/.overlay_init | grep -q '.' 2> /dev/null
+    find "${DIR}/.git" -newer "${DIR}/.overlay_init" | grep -q '.' 2> /dev/null
     if [ $? -eq 0 ]; then
       echo "${DIR} has been modified, skipping overlay update installation"
     else
-      if [ -f "${STAGING_ROOT}/finalized/.overlay_consistent" ]; then
-        if [ ! -d /data/safe_staging/old_openpilot ]; then
+      if update_is_ready "${STAGING_ROOT}/finalized/.overlay_consistent"; then
+        if ! staged_os_is_compatible "${STAGING_ROOT}/finalized"; then
+          echo "Staged update requires a different or unverified AGNOS version; skipping installation."
+        elif [ ! -d /data/safe_staging/old_openpilot ]; then
           echo "Valid overlay update found, installing"
           LAUNCHER_LOCATION="${BASH_SOURCE[0]}"
 
-          mv $DIR /data/safe_staging/old_openpilot
-          mv "${STAGING_ROOT}/finalized" $DIR
-          cd $DIR
+          mv "$DIR" /data/safe_staging/old_openpilot
+          mv "${STAGING_ROOT}/finalized" "$DIR"
+          cd "$DIR"
+          # releases before the openpilot/ move can't swap AGNOS on newer AGNOS, use ours
+          maybe_activate_legacy_agnos "$DIR" /data/safe_staging/old_openpilot/openpilot/common/hardware/comma/agnos.py system/hardware/tici/agnos.json
 
           echo "Restarting launch script ${LAUNCHER_LOCATION}"
-          unset AGNOS_VERSION
+          reset_update_os_environment
           exec "${LAUNCHER_LOCATION}"
         else
           echo "openpilot backup found, not updating"
@@ -116,50 +146,36 @@ function launch {
       fi
     fi
   fi
-  sp_launch_timing "overlay_check_done"
 
   # handle pythonpath
-  ln -sfn $(pwd) /data/pythonpath
-  export BASEDIR="$DIR"
-  export PYTHONPATH="$DIR/starpilot/third_party:$PWD"
-  sp_launch_timing "pythonpath_done"
+  ln -sfn "$(pwd)" /data/pythonpath
+  export PYTHONPATH="$PWD"
+
+  # Dependency package symlinks for PYTHONPATH imports on device.
+  # on PC these come from editable installs via pyproject.toml / uv.
+  ln -sfn msgq_repo/msgq msgq
+  ln -sfn opendbc_repo/opendbc opendbc
+  ln -sfn rednose_repo/rednose rednose
+  ln -sfn teleoprtc_repo/teleoprtc teleoprtc
+  ln -sfn tinygrad_repo/tinygrad tinygrad
+  ln -sfn jetlink_repo/jetlink jetlink
 
   # hardware specific init
   if [ -f /AGNOS ]; then
-    agnos_init
+    agnos_init || return $?
+    if ! "$DIR/scripts/install_boot_logo.sh"; then
+      echo "StarPilot boot image update failed; continuing startup."
+    fi
   fi
-  sp_launch_timing "hardware_init_done"
 
   # write tmux scrollback to a file
   tmux capture-pane -pq -S-1000 > /tmp/launch_log
-  sp_launch_timing "capture_launch_log_done"
 
   # start manager
-  cd system/manager
-
-  sp_launch_timing "launch_param_migrations_start"
-  if ! python3 ./launch_param_migrations.py; then
-    echo "Launch param migrations failed; continuing boot."
-  fi
-  sp_launch_timing "launch_param_migrations_done"
-
-  # Bootstrap runtime (e.g. /usr/comma after reset/uninstall) must go straight
-  # to manager/setup flow. Do not run StarPilot prebuilt checks/builds here.
-  if [ "$DIR" = "/usr/comma" ] || [ ! -d "$DIR/.git" ]; then
-    sp_launch_timing "bootstrap_manager_start"
-    ./manager.py
-    while true; do sleep 1; done
-  fi
-
-  sp_launch_timing "prebuilt_decision_done"
-  # Published trees carry this marker and must never compile on-device.
-  # Developers can remove it explicitly when working from a source tree.
+  cd openpilot/system/manager
   if [ ! -f "$DIR/prebuilt" ]; then
-    sp_launch_timing "build_start"
     ./build.py
-    sp_launch_timing "build_done"
   fi
-  sp_launch_timing "manager_start"
   ./manager.py
 
   # if broken, keep on screen error

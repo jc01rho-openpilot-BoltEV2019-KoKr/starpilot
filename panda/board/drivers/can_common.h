@@ -1,4 +1,7 @@
-#include "can_common_declarations.h"
+#pragma once
+
+#include "board/drivers/drivers.h"
+#include "opendbc/safety/ignition.h"
 
 uint32_t safety_tx_blocked = 0;
 uint32_t safety_rx_invalid = 0;
@@ -6,16 +9,6 @@ uint32_t tx_buffer_overflow = 0;
 uint32_t rx_buffer_overflow = 0;
 
 can_health_t can_health[PANDA_CAN_CNT] = {{0}, {0}, {0}};
-
-bool wake_on_can = false;
-uint32_t wake_on_can_cnt = 0U;
-
-bool ignition_can = false;
-uint32_t ignition_can_cnt = 0U;
-#ifdef PANDA_HKG_REMOTE_START
-bool hkg_remote_climate_wake = false;
-uint32_t hkg_remote_climate_wake_cnt = 0U;
-#endif
 
 bool can_silent = true;
 bool can_loopback = false;
@@ -26,12 +19,13 @@ bool can_loopback = false;
   extern can_ring can_##x; \
   can_ring can_##x = { .w_ptr = 0, .r_ptr = 0, .fifo_size = (size), .elems = (CANPacket_t *)&(elems_##x) };
 
-#ifdef STM32H7
-  #define CAN_RX_BUFFER_SIZE 4096U
-  #define CAN_TX_BUFFER_SIZE 416U
+#ifdef STM32F4
+#define CAN_RX_BUFFER_SIZE 1024U
+#define CAN_TX_BUFFER_SIZE 256U
+_Static_assert(sizeof(CANPacket_t) * (CAN_RX_BUFFER_SIZE + (3U * CAN_TX_BUFFER_SIZE)) <= (128U * 1024U), "F4 CAN queues exceed high SRAM1");
 #else
-  #define CAN_RX_BUFFER_SIZE 1024U
-  #define CAN_TX_BUFFER_SIZE 256U
+#define CAN_RX_BUFFER_SIZE 4096U
+#define CAN_TX_BUFFER_SIZE 416U
 #endif
 
 #ifdef STM32H7
@@ -39,20 +33,41 @@ bool can_loopback = false;
 __attribute__((section(".axisram"))) can_buffer(rx_q, CAN_RX_BUFFER_SIZE)
 __attribute__((section(".itcmram"))) can_buffer(tx1_q, CAN_TX_BUFFER_SIZE)
 __attribute__((section(".itcmram"))) can_buffer(tx2_q, CAN_TX_BUFFER_SIZE)
+#elif defined(STM32F4)
+__attribute__((section(".canram"))) can_buffer(rx_q, CAN_RX_BUFFER_SIZE)
+__attribute__((section(".canram"))) can_buffer(tx1_q, CAN_TX_BUFFER_SIZE)
+__attribute__((section(".canram"))) can_buffer(tx2_q, CAN_TX_BUFFER_SIZE)
 #else  // kept for PC
 can_buffer(rx_q, CAN_RX_BUFFER_SIZE)
 can_buffer(tx1_q, CAN_TX_BUFFER_SIZE)
 can_buffer(tx2_q, CAN_TX_BUFFER_SIZE)
 #endif
+#ifdef STM32F4
+__attribute__((section(".canram"))) can_buffer(tx3_q, CAN_TX_BUFFER_SIZE)
+#else
 can_buffer(tx3_q, CAN_TX_BUFFER_SIZE)
+#endif
 
 // FIXME:
 // cppcheck-suppress misra-c2012-9.3
 can_ring *can_queues[PANDA_CAN_CNT] = {&can_tx1_q, &can_tx2_q, &can_tx3_q};
 
+#ifdef STM32F4
+static void can_init_buffers(void) {
+  (void)memset(can_rx_q.elems, 0, can_rx_q.fifo_size * sizeof(CANPacket_t));
+  can_rx_q.w_ptr = 0U;
+  can_rx_q.r_ptr = 0U;
+  for (uint32_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    (void)memset(can_queues[i]->elems, 0, can_queues[i]->fifo_size * sizeof(CANPacket_t));
+    can_queues[i]->w_ptr = 0U;
+    can_queues[i]->r_ptr = 0U;
+  }
+}
+#endif
+
 // ********************* interrupt safe queue *********************
 bool can_pop(can_ring *q, CANPacket_t *elem) {
-  bool ret = 0;
+  bool ret = false;
 
   ENTER_CRITICAL();
   if (q->w_ptr != q->r_ptr) {
@@ -62,7 +77,7 @@ bool can_pop(can_ring *q, CANPacket_t *elem) {
     } else {
       q->r_ptr += 1U;
     }
-    ret = 1;
+    ret = true;
   }
   EXIT_CRITICAL();
 
@@ -86,21 +101,7 @@ bool can_push(can_ring *q, const CANPacket_t *elem) {
   }
   EXIT_CRITICAL();
   if (!ret) {
-    #ifdef DEBUG
-      print("can_push to ");
-      if (q == &can_rx_q) {
-        print("can_rx_q");
-      } else if (q == &can_tx1_q) {
-        print("can_tx1_q");
-      } else if (q == &can_tx2_q) {
-        print("can_tx2_q");
-      } else if (q == &can_tx3_q) {
-        print("can_tx3_q");
-      } else {
-        print("unknown");
-      }
-      print(" failed!\n");
-    #endif
+    print("can_push failed!\n");
   }
   return ret;
 }
@@ -140,9 +141,9 @@ void can_clear(can_ring *q) {
 // Helpers
 // Panda:       Bus 0=CAN1   Bus 1=CAN2   Bus 2=CAN3
 bus_config_t bus_config[PANDA_CAN_CNT] = {
-  { .bus_lookup = 0U, .can_num_lookup = 0U, .forwarding_bus = -1, .can_speed = 5000U, .can_data_speed = 20000U, .canfd_auto = false, .canfd_enabled = false, .brs_enabled = false, .canfd_non_iso = false },
-  { .bus_lookup = 1U, .can_num_lookup = 1U, .forwarding_bus = -1, .can_speed = 5000U, .can_data_speed = 20000U, .canfd_auto = false, .canfd_enabled = false, .brs_enabled = false, .canfd_non_iso = false },
-  { .bus_lookup = 2U, .can_num_lookup = 2U, .forwarding_bus = -1, .can_speed = 5000U, .can_data_speed = 20000U, .canfd_auto = false, .canfd_enabled = false, .brs_enabled = false, .canfd_non_iso = false },
+  { .bus_lookup = 0U, .can_num_lookup = 0U, .can_speed = 5000U, .can_data_speed = 20000U, .canfd_auto = false, .canfd_enabled = false, .brs_enabled = false, .canfd_non_iso = false },
+  { .bus_lookup = 1U, .can_num_lookup = 1U, .can_speed = 5000U, .can_data_speed = 20000U, .canfd_auto = false, .canfd_enabled = false, .brs_enabled = false, .canfd_non_iso = false },
+  { .bus_lookup = 2U, .can_num_lookup = 2U, .can_speed = 5000U, .can_data_speed = 20000U, .canfd_auto = false, .canfd_enabled = false, .brs_enabled = false, .canfd_non_iso = false },
 };
 
 void can_init_all(void) {
@@ -160,130 +161,6 @@ void can_set_orientation(bool flipped) {
   bus_config[2].can_num_lookup = flipped ? 0U : 2U;
 }
 
-#ifdef PANDA_JUNGLE
-void can_set_forwarding(uint8_t from, uint8_t to) {
-  bus_config[from].forwarding_bus = to;
-}
-#endif
-
-void ignition_can_hook(CANPacket_t *msg) {
-  int len = GET_LEN(msg);
-
-  #ifdef PANDA_HKG_REMOTE_START
-  if ((msg->bus == 1U) && (msg->addr == 0x384U) && (len == 8)) {
-    hkg_remote_climate_wake = msg->data[3] != 0U;
-    hkg_remote_climate_wake_cnt = 0U;
-  }
-  #endif
-
-  if (msg->bus == 0U) {
-    // GM exception
-    // Remote-start mode uses 0xC9 bit 4 (SystemPowerMode=Run) for ignition detection.
-    // Stock mode uses 0x1F1 bit 1 (SystemPowerMode=Run/Crank Request).
-    #ifdef PANDA_GM_REMOTE_START_C9
-    if ((msg->addr == 0xC9U) && (len == 8)) {
-      ignition_can = (msg->data[6] & 0x10U) != 0U;
-      ignition_can_cnt = 0U;
-    }
-    #else
-    if (gm_remote_start_boots_comma) {
-      if ((msg->addr == 0xC9U) && (len == 8)) {
-        ignition_can = (msg->data[6] & 0x10U) != 0U;
-        ignition_can_cnt = 0U;
-      }
-    } else {
-      if ((msg->addr == 0x1F1U) && (len == 8)) {
-        // SystemPowerMode (2=Run, 3=Crank Request)
-        ignition_can = (msg->data[0] & 0x2U) != 0U;
-        ignition_can_cnt = 0U;
-      }
-    }
-    #endif
-
-    // Rivian R1S/T GEN1 exception
-    if ((msg->addr == 0x152U) && (len == 8)) {
-      // 0x152 overlaps with Subaru pre-global which has this bit as the high beam
-      int counter = msg->data[1] & 0xFU;  // max is only 14
-
-      static int prev_counter_rivian = -1;
-      if ((counter == ((prev_counter_rivian + 1) % 15)) && (prev_counter_rivian != -1)) {
-        // VDM_OutputSignals->VDM_EpasPowerMode
-        ignition_can = ((msg->data[7] >> 4U) & 0x3U) == 1U;  // VDM_EpasPowerMode_Drive_On=1
-        ignition_can_cnt = 0U;
-      }
-      prev_counter_rivian = counter;
-    }
-
-    // Tesla Model 3/Y exception
-    if ((msg->addr == 0x221U) && (len == 8)) {
-      // 0x221 overlaps with Rivian which has random data on byte 0
-      int counter = msg->data[6] >> 4;
-
-      static int prev_counter_tesla = -1;
-      if ((counter == ((prev_counter_tesla + 1) % 16)) && (prev_counter_tesla != -1)) {
-        // VCFRONT_LVPowerState->VCFRONT_vehiclePowerState
-        int power_state = (msg->data[0] >> 5U) & 0x3U;
-        ignition_can = power_state == 0x3;  // VEHICLE_POWER_STATE_DRIVE=3
-        ignition_can_cnt = 0U;
-      }
-      prev_counter_tesla = counter;
-
-      #ifdef PANDA_TESLA_WAKE_ON_CAN
-      uint32_t checksum = (msg->addr & 0xFFU) + (msg->addr >> 8U);
-      for (uint8_t i = 0U; i < 7U; i++) {
-        checksum += msg->data[i];
-      }
-      static int prev_counter_tesla_wake = -1;
-      if (!msg->extended && (msg->data[7] == (checksum & 0xFFU))) {
-        if ((prev_counter_tesla_wake != -1) && (counter == ((prev_counter_tesla_wake + 1) % 16))) {
-          wake_on_can = ((msg->data[0] >> 5U) & 0x3U) != 0U;
-          wake_on_can_cnt = 0U;
-        }
-        prev_counter_tesla_wake = counter;
-      } else {
-        prev_counter_tesla_wake = -1;
-      }
-      #endif
-    }
-
-    // Tesla Model S pre-AP exception
-    if ((msg->addr == 0x101U) && (len == 3)) {
-      // Validate Tesla checksum/counter to avoid false positives on overlapping frames.
-      int counter = msg->data[1] & 0xFU;
-      int checksum = (((msg->addr & 0xFFU) + ((msg->addr >> 8U) & 0xFFU) + msg->data[0] + msg->data[1]) & 0xFFU);
-
-      static int prev_counter_tesla_preap = -1;
-      if ((msg->data[2] == checksum) && (counter == ((prev_counter_tesla_preap + 1) % 16)) && (prev_counter_tesla_preap != -1)) {
-        // GTW_epasPowerMode=1 is DRIVE_ON, which is the only ignition source on pre-AP cars.
-        int power_mode = (msg->data[0] >> 3U) & 0xFU;
-        ignition_can = power_mode == 0x1U;
-        ignition_can_cnt = 0U;
-      }
-      prev_counter_tesla_preap = counter;
-    }
-
-    // Mazda exception
-    if ((msg->addr == 0x9EU) && (len == 8)) {
-      ignition_can = (msg->data[0] >> 5) == 0x6U;
-      ignition_can_cnt = 0U;
-    }
-
-    // Volkswagen MEB exception
-    if ((msg->addr == 0x3C0U) && (len == 4)) {
-      int counter = msg->data[1] & 0xFU;
-
-      static int prev_counter_vw_meb = -1;
-      if ((counter == ((prev_counter_vw_meb + 1) % 16)) && (prev_counter_vw_meb != -1)) {
-        // Klemmen_Status_01->ZAS_Kl_15
-        ignition_can = ((msg->data[2] >> 1) & 1U) != 0U;
-        ignition_can_cnt = 0U;
-      }
-      prev_counter_vw_meb = counter;
-    }
-
-  }
-}
-
 bool can_tx_check_min_slots_free(uint32_t min) {
   return
     (can_slots_empty(&can_tx1_q) >= min) &&
@@ -291,7 +168,7 @@ bool can_tx_check_min_slots_free(uint32_t min) {
     (can_slots_empty(&can_tx3_q) >= min);
 }
 
-uint8_t calculate_checksum(const uint8_t *dat, uint32_t len) {
+static uint8_t calculate_checksum(const uint8_t *dat, uint32_t len) {
   uint8_t checksum = 0U;
   for (uint32_t i = 0U; i < len; i++) {
     checksum ^= dat[i];
@@ -309,7 +186,17 @@ bool can_check_checksum(CANPacket_t *packet) {
 }
 
 void can_send(CANPacket_t *to_push, uint8_t bus_number, bool skip_tx_hook) {
-  if (skip_tx_hook || safety_tx_hook(to_push) != 0) {
+  bool tx_allowed = skip_tx_hook;
+  if (!tx_allowed) {
+    #ifdef STM32H7
+    mpu_safety_open();
+    #endif
+    tx_allowed = safety_tx_hook(to_push) != 0;
+    #ifdef STM32H7
+    mpu_safety_close();
+    #endif
+  }
+  if (tx_allowed) {
     if (bus_number < PANDA_CAN_CNT) {
       // add CAN packet to send queue
       tx_buffer_overflow += can_push(can_queues[bus_number], to_push) ? 0U : 1U;

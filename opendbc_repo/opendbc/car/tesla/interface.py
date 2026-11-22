@@ -2,9 +2,10 @@ from opendbc.car import Bus, get_safety_config, structs
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.tesla.carcontroller import CarController
 from opendbc.car.tesla.carstate import CarState
-from opendbc.car.tesla.radar_interface import RadarInterface
-from opendbc.car.tesla.values import TeslaFlags, TeslaSafetyFlags, CANBUS, CAR, DBC, LEGACY_CARS
-from opendbc.car.tesla.preap.interface import get_preap_accel_limits, get_preap_params
+from opendbc.car.tesla.preap.stock import get_stock_params
+from opendbc.car.tesla.hw1 import get_hw1_params
+from opendbc.car.tesla.values import TeslaSafetyFlags, TeslaFlags, CANBUS, CAR, DBC
+from opendbc.car.tesla.radar_interface import RadarInterface, RADAR_START_ADDR
 
 
 class CarInterface(CarInterfaceBase):
@@ -13,46 +14,14 @@ class CarInterface(CarInterfaceBase):
   RadarInterface = RadarInterface
 
   @staticmethod
-  def get_pid_accel_limits(CP, current_speed, cruise_speed):
-    if CP.carFingerprint == CAR.TESLA_MODEL_S_PREAP:
-      return get_preap_accel_limits(current_speed)
-    return CarInterfaceBase.get_pid_accel_limits(CP, current_speed, cruise_speed)
-
-  @classmethod
-  def get_params(cls, candidate, fingerprint, car_fw, alpha_long, is_release, docs, starpilot_toggles):
-    ret = super().get_params(candidate, fingerprint, car_fw, alpha_long, is_release, docs, starpilot_toggles)
-    if candidate == CAR.TESLA_MODEL_3 and getattr(starpilot_toggles, "tesla_cooperative_steering", False):
-      ret.safetyConfigs[0].safetyParam |= TeslaSafetyFlags.COOP_STEERING.value
-    if (ret.flags & TeslaFlags.HAS_VEHICLE_BUS and
-        getattr(starpilot_toggles, "tesla_aol_screen_tap_requested", False)):
-      ret.flags |= TeslaFlags.AOL_SCREEN_BUTTON.value
-      ret.safetyConfigs[0].safetyParam |= TeslaSafetyFlags.AOL_SCREEN_BUTTON.value
-      if getattr(starpilot_toggles, "tesla_aol_screen_brake_disengage_requested", False):
-        ret.safetyConfigs[0].safetyParam |= TeslaSafetyFlags.AOL_SCREEN_DISENGAGE_ON_BRAKE.value
-    return ret
-
-  @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
     ret.brand = "tesla"
-
     if candidate == CAR.TESLA_MODEL_S_PREAP:
-      return get_preap_params(ret)
+      return get_stock_params(ret)
+    if candidate == CAR.TESLA_MODEL_S_HW1:
+      return get_hw1_params(ret, fingerprint, alpha_long)
 
-    if candidate in LEGACY_CARS:
-      ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.tesla, TeslaSafetyFlags.FLAG_HW1.value)]
-      ret.steerLimitTimer = 0.4
-      ret.steerActuatorDelay = 0.1
-      ret.steerAtStandstill = True
-      ret.steerControlType = structs.CarParams.SteerControlType.angle
-      ret.radarUnavailable = Bus.radar not in DBC[candidate]
-      ret.radarTimeStepDEPRECATED = 0.125
-      ret.alphaLongitudinalAvailable = True
-
-      if alpha_long:
-        ret.openpilotLongitudinalControl = True
-        ret.safetyConfigs[0].safetyParam |= TeslaSafetyFlags.LONG_CONTROL.value
-      return ret
-
+    ret.flags &= ~int(TeslaFlags.HAS_VEHICLE_BUS | TeslaFlags.AOL_SCREEN_BUTTON)
     ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.tesla)]
 
     if candidate in (CAR.TESLA_MODEL_3, CAR.TESLA_MODEL_Y) and fingerprint[CANBUS.vehicle].get(0x3DF) == 8:
@@ -63,17 +32,32 @@ class CarInterface(CarInterfaceBase):
     ret.steerAtStandstill = True
 
     ret.steerControlType = structs.CarParams.SteerControlType.angle
-    ret.radarUnavailable = True
+
+    # Model X and HW 2.5 vehicles are missing DAS_settings
+    if 0x293 not in fingerprint[CANBUS.autopilot_party]:
+      ret.flags |= TeslaFlags.MISSING_DAS_SETTINGS.value
+
+    # Radar support is intended to work for:
+    # - Tesla Model 3 vehicles built approximately mid-2017 through early-2021
+    # - Tesla Model Y vehicles built approximately mid-2020 through early-2021
+    # - Vehicles equipped with the Continental ARS4-B radar (used on HW2 / HW2.5 / early HW3)
+    # - Radar CAN lines must be tapped and connected to CAN bus 1 (normally not used for tesla vehicles)
+    ret.radarUnavailable = RADAR_START_ADDR not in fingerprint[1] or Bus.radar not in DBC[candidate]
 
     ret.alphaLongitudinalAvailable = True
     if alpha_long:
       ret.openpilotLongitudinalControl = True
       ret.safetyConfigs[0].safetyParam |= TeslaSafetyFlags.LONG_CONTROL.value
 
-      ret.vEgoStopping = 0.1
-      ret.vEgoStarting = 0.1
-      ret.stoppingDecelRate = 0.3
+    # Tesla expanded DAS_steeringControl->DAS_steeringControlType to 3 bits: first in the FSD 14 builds for HW4 around 10-26-2025,
+    # then in the other HW4 builds around 03-02-2026, and for HW3 and HW2.5 with 2026.8.6 around 04-03-2026.
+    # The values were pushed to the right by 1 bit and kept the same definitions, plus 4 = FSD was added.
+    # These messages are only sent by the 3-bit firmware:
+    # - HW3/HW4: DAS_redundantBrakingControl (0x489)
+    # - HW2.5/HW3/HW4: DI_autonomyHealth (0x054)
+    das_steering_3_bit = 0x489 in fingerprint[CANBUS.autopilot_party] or 0x054 in fingerprint[CANBUS.party]
 
-    ret.dashcamOnly = candidate in (CAR.TESLA_MODEL_X) # dashcam only, pending find invalidLkasSetting signal
+    ret.dashcamOnly = (candidate in (CAR.TESLA_MODEL_X,) or  # dashcam only, pending find invalidLkasSetting signal
+                       (not das_steering_3_bit and not docs))  # the car's software needs to be updated
 
     return ret

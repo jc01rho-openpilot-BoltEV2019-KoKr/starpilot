@@ -3,13 +3,14 @@ import unittest
 
 from opendbc.car.chrysler.values import ChryslerSafetyFlags
 from opendbc.car.structs import CarParams
-from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
-from opendbc.safety.tests.common import CANPackerSafety
 
 
 class TestChryslerSafety(common.CarSafetyTest, common.MotorTorqueSteeringSafetyTest):
-  TX_MSGS = [[0x23B, 0], [0x292, 0], [0x2A6, 0], [0x1F4, 0]]
+  DBC = "chrysler_pacifica_2017_hybrid_generated"
+  SAFETY_MODEL = CarParams.SafetyModel.chrysler
+
+  TX_MSGS = [[0x23B, 0], [0x292, 0], [0x2A6, 0]]
   RELAY_MALFUNCTION_ADDRS = {0: (0x292, 0x2A6)}
   FWD_BLACKLISTED_ADDRS = {2: [0x292, 0x2A6]}
 
@@ -23,26 +24,12 @@ class TestChryslerSafety(common.CarSafetyTest, common.MotorTorqueSteeringSafetyT
 
   DAS_BUS = 0
 
-  def setUp(self):
-    self.packer = CANPackerSafety("chrysler_pacifica_2017_hybrid_generated")
-    self.safety = libsafety_py.libsafety
-    self.safety.set_safety_hooks(CarParams.SafetyModel.chrysler, 0)
-    self.safety.init_tests()
-
   def _button_msg(self, cancel=False, resume=False):
     values = {"ACC_Cancel": cancel, "ACC_Resume": resume}
     return self.packer.make_can_msg_safety("CRUISE_BUTTONS", self.DAS_BUS, values)
 
   def _pcm_status_msg(self, enable):
     values = {"ACC_ACTIVE": enable}
-    return self.packer.make_can_msg_safety("DAS_3", self.DAS_BUS, values)
-
-  def _main_on_msg(self, available=True, active=False):
-    values = {"ACC_AVAILABLE": available, "ACC_ACTIVE": active}
-    return self.packer.make_can_msg_panda("DAS_3", self.DAS_BUS, values)
-
-  def _das_3_msg(self):
-    values = {"ACC_AVAILABLE": 1, "ACC_ACTIVE": 1, "ACC_DECEL_REQ": 1, "ACC_DECEL": -2.0}
     return self.packer.make_can_msg_safety("DAS_3", self.DAS_BUS, values)
 
   def _speed_msg(self, speed):
@@ -79,65 +66,12 @@ class TestChryslerSafety(common.CarSafetyTest, common.MotorTorqueSteeringSafetyT
       self.assertFalse(self._tx(self._button_msg(cancel=True, resume=True)))
       self.assertFalse(self._tx(self._button_msg(cancel=False, resume=False)))
 
-  def test_jeep_brake_hold_resume_at_standstill_requires_safety_flag_and_main_on(self):
-    if self.__class__ is not TestChryslerSafety:
-      self.skipTest("Jeep brake hold applies to base Chrysler/Jeep safety only")
-
-    self._rx(self._speed_msg(0))
-    self._rx(self._main_on_msg(True))
-    self.safety.set_controls_allowed(False)
-
-    self.assertFalse(self._tx(self._button_msg(resume=True)))
-
-    self.safety.set_safety_hooks(CarParams.SafetyModel.chrysler, ChryslerSafetyFlags.JEEP_BRAKE_HOLD)
-    self.safety.init_tests()
-    self._rx(self._speed_msg(0))
-    self._rx(self._main_on_msg(True))
-    self.assertTrue(self._tx(self._button_msg(resume=True)))
-
-    self._rx(self._user_gas_msg(1))
-    self.assertFalse(self._tx(self._button_msg(resume=True)))
-    self._rx(self._user_gas_msg(0))
-
-    self._rx(self._user_brake_msg(True))
-    self.assertFalse(self._tx(self._button_msg(resume=True)))
-    self._rx(self._user_brake_msg(False))
-
-    self._rx(self._speed_msg(1))
-    self.assertFalse(self._tx(self._button_msg(resume=True)))
-
-  def test_jeep_brake_hold_das_3_requires_safety_flag_main_on_and_standstill(self):
-    if self.__class__ is not TestChryslerSafety:
-      self.skipTest("Jeep brake hold applies to base Chrysler/Jeep safety only")
-
-    self.assertFalse(self._tx(self._das_3_msg()))
-
-    self.safety.set_safety_hooks(CarParams.SafetyModel.chrysler, ChryslerSafetyFlags.JEEP_BRAKE_HOLD)
-    self.safety.init_tests()
-    self._rx(self._speed_msg(0))
-    self.assertFalse(self._tx(self._das_3_msg()))
-
-    self._rx(self._main_on_msg(True))
-    self.assertTrue(self._tx(self._das_3_msg()))
-
-    self._rx(self._user_gas_msg(1))
-    self.assertFalse(self._tx(self._das_3_msg()))
-    self._rx(self._user_gas_msg(0))
-
-    self._rx(self._user_brake_msg(True))
-    self.assertFalse(self._tx(self._das_3_msg()))
-    self._rx(self._user_brake_msg(False))
-
-    self._rx(self._speed_msg(1))
-    self.assertFalse(self._tx(self._das_3_msg()))
-
-  def _toggle_aol(self, toggle_on):
-    # DAS_3, bit 20 is ACC_AVAILABLE
-    values = {"ACC_AVAILABLE": 1 if toggle_on else 0}
-    return self.packer.make_can_msg_panda("DAS_3", self.DAS_BUS, values)
-
 
 class TestChryslerRamDTSafety(TestChryslerSafety):
+  DBC = "chrysler_ram_dt_generated"
+
+  SAFETY_PARAM = ChryslerSafetyFlags.RAM_DT
+
   TX_MSGS = [[0xB1, 2], [0xA6, 0], [0xFA, 0]]
   RELAY_MALFUNCTION_ADDRS = {0: (0xA6, 0xFA)}
   FWD_BLACKLISTED_ADDRS = {2: [0xA6, 0xFA]}
@@ -150,18 +84,16 @@ class TestChryslerRamDTSafety(TestChryslerSafety):
 
   LKAS_ACTIVE_VALUE = 2
 
-  def setUp(self):
-    self.packer = CANPackerSafety("chrysler_ram_dt_generated")
-    self.safety = libsafety_py.libsafety
-    self.safety.set_safety_hooks(CarParams.SafetyModel.chrysler, ChryslerSafetyFlags.RAM_DT)
-    self.safety.init_tests()
-
   def _speed_msg(self, speed):
     values = {"Vehicle_Speed": speed}
     return self.packer.make_can_msg_safety("ESP_8", 0, values)
 
 
 class TestChryslerRamHDSafety(TestChryslerSafety):
+  DBC = "chrysler_ram_hd_generated"
+
+  SAFETY_PARAM = ChryslerSafetyFlags.RAM_HD
+
   TX_MSGS = [[0x275, 0], [0x276, 0], [0x23A, 2]]
   RELAY_MALFUNCTION_ADDRS = {0: (0x276, 0x275)}
   FWD_BLACKLISTED_ADDRS = {2: [0x275, 0x276]}
@@ -174,12 +106,6 @@ class TestChryslerRamHDSafety(TestChryslerSafety):
   DAS_BUS = 2
 
   LKAS_ACTIVE_VALUE = 2
-
-  def setUp(self):
-    self.packer = CANPackerSafety("chrysler_ram_hd_generated")
-    self.safety = libsafety_py.libsafety
-    self.safety.set_safety_hooks(CarParams.SafetyModel.chrysler, ChryslerSafetyFlags.RAM_HD)
-    self.safety.init_tests()
 
   def _speed_msg(self, speed):
     values = {"Vehicle_Speed": speed}

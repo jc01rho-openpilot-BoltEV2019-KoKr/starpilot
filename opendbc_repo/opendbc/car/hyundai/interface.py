@@ -1,112 +1,33 @@
-import time
-# Provenance: portions of HKG angle integration are adapted from sunnypilot/opendbc's
-# hkg-angle-steering-2025 branch at cc4b08625. See CREDITS.md and THIRD_PARTY_NOTICES.md.
-from opendbc.car import get_safety_config, structs, uds
-from opendbc.car.hyundai import hyundaicanfd
+from opendbc.car import ACCEL_MAX_TAKEOFF
+from opendbc.car.hyundai.ioniq5pe_long_profile import required as pe_long_required, candidate as pe_long_candidate
+from opendbc.car.pedal import supported_pedal_detected
+from opendbc.car.hyundai.classic_scc_aol import CLASSIC_SCC_IDS
+from opendbc.car import Bus, get_safety_config, structs, uds
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags, CAR, CarControllerParams, \
-                                                   CANFD_UNSUPPORTED_LONGITUDINAL_CAR, \
-                                                   CANFD_SECURITYACCESS_CAR, \
-                                                   CANFD_ANGLE_LONGITUDINAL_CAR, \
-                                                   CANFD_RADAR_ECU_KEEPALIVE_CAR, \
-                                                   RADAR_LIVE_LONGITUDINAL_CAR, \
-                                                   UNSUPPORTED_LONGITUDINAL_CAR, HyundaiSafetyFlags, \
-                                                   LEGACY_LONGITUDINAL_CAR, \
-                                                   CAN_CANFD_BLENDED_HDA2_LONGITUDINAL_CAR, \
-                                                   HyundaiStarPilotSafetyFlags, \
-                                                   hyundai_cancel_button_enables_cruise, \
-                                                   kia_ev6_gt_line_longitudinal_tuning, \
-                                                   KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID
-from opendbc.car.hyundai.radar_interface import get_radar_track_config, radar_tracks_available
-from opendbc.car.interfaces import CarInterfaceBase, ACCEL_MIN
-from opendbc.car.disable_ecu import disable_ecu, ecu_log
+from opendbc.car.hyundai.non_scc_aol import NON_SCC_IDS
+from opendbc.car.hyundai.values import (is_blended, is_blended_alpha, HyundaiFlags, CAR, DBC, HyundaiSafetyFlags, CANFD_ANGLE_MODEL_BITS,
+                                        CANFD_ANGLE_OBSERVED_ADAS_BIT, HYUNDAI_MRR35_RADAR_DBC, HYUNDAI_MRR30_RADAR_DBC,
+                                        HYUNDAI_GV70_RADAR_DBC, HYUNDAI_G90_RADAR_DBC, HYUNDAI_MRREVO14F_RADAR_DBC)
+from opendbc.car.hyundai.radar_interface import RADAR_START_ADDR, MRR35_RADAR_START_ADDR, MRR30_RADAR_START_ADDR, radar_bus, \
+                                               stinger_2022_radar_available
+from opendbc.car.interfaces import CarInterfaceBase
+from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.hyundai.carcontroller import CarController
 from opendbc.car.hyundai.carstate import CarState
-from opendbc.car.hyundai.radar_interface import RadarInterface
-from openpilot.starpilot.common.testing_grounds import testing_ground
+from opendbc.car.hyundai.radar_interface import RadarInterface, blended_track_radar
 
 ButtonType = structs.CarState.ButtonEvent.Type
 Ecu = structs.CarParams.Ecu
 
-
-def get_communication_control_request(car_fingerprint):
-  if car_fingerprint in CANFD_RADAR_ECU_KEEPALIVE_CAR:
-    return bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, uds.CONTROL_TYPE.ENABLE_RX_DISABLE_TX,
-                  uds.MESSAGE_TYPE.NORMAL])
-
-  return bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, 0x80 | uds.CONTROL_TYPE.DISABLE_RX_DISABLE_TX,
-                uds.MESSAGE_TYPE.NORMAL])
-
 # Cancel button can sometimes be ACC pause/resume button, main button can also enable on some cars
 ENABLE_BUTTONS = (ButtonType.accelCruise, ButtonType.decelCruise, ButtonType.cancel, ButtonType.mainCruise)
-
-# Track when ECU disable happened - used to permanently suppress CAN errors from disabled ECU
-ECU_DISABLE_TIMESTAMP = 0.0
 KONA_NON_SCC_FCA_RADAR_ADDR = 0x602
-KIA_EV9_ACCEL_MAX = 2.2
-RAY_PEDAL_SENSOR_ADDR = 0x201
-
-
-def apply_platform_longitudinal_params(ret: structs.CarParams) -> None:
-  if not (ret.flags & HyundaiFlags.CANFD):
-    return
-
-  ret.startingState = True
-  ret.startAccel = 1.0
-  ret.longitudinalActuatorDelay = 0.5
-  ret.vEgoStopping = 0.3
-  ret.vEgoStarting = 0.1
-  ret.stoppingDecelRate = 0.4
-
-
-def apply_kia_ev6_gt_line_longitudinal_params(ret: structs.CarParams) -> None:
-  ret.startAccel = 1.4
-  ret.longitudinalActuatorDelay = 0.5
-  ret.vEgoStarting = 0.5
-
-
-def apply_kia_ev9_longitudinal_params(ret: structs.CarParams) -> None:
-  ret.startAccel = 0.2
-  ret.longitudinalActuatorDelay = 0.3
-  ret.vEgoStarting = 0.5
-
-
-def apply_ecu_disable_failure_fallback(CP: structs.CarParams, params) -> None:
-  params.put_bool("EcuDisableFailed", True)
-  CP.safetyConfigs[-1].safetyParam &= ~HyundaiSafetyFlags.LONG.value
-  CP.openpilotLongitudinalControl = False
-  CP.pcmCruise = True
-
-
-def egmp_in_ready_state(can_recv, bus: int, timeout_s: float = 0.5) -> bool:
-  accelerator_addr = 0x35
-  ready_bit_mask = 0x40
-  deadline = time.monotonic() + timeout_s
-
-  while time.monotonic() < deadline:
-    try:
-      can_packets = can_recv(wait_for_one=True)
-    except Exception:
-      break
-
-    for packet in can_packets:
-      for msg in packet:
-        if msg.address == accelerator_addr and msg.src == bus and len(msg.dat) > 3 and msg.dat[3] & ready_bit_mask:
-          return True
-
-  return False
 
 
 def detect_kona_non_scc_radar_fca(candidate, fingerprint, car_fw) -> bool:
-  if candidate != CAR.HYUNDAI_KONA_NON_SCC:
-    return False
-
-  if any(fw.ecu == Ecu.fwdRadar for fw in car_fw):
-    return True
-
-  # Some non-SCC Kona trims have FCA radar tracks without SCC. Use PT FCA11
-  # status on those cars; camera-bus FCA11 is not continuously published.
-  return KONA_NON_SCC_FCA_RADAR_ADDR in fingerprint[1]
+  return candidate == CAR.HYUNDAI_KONA_NON_SCC and (
+    any(fw.ecu == Ecu.fwdRadar for fw in car_fw) or KONA_NON_SCC_FCA_RADAR_ADDR in fingerprint[1]
+  )
 
 
 class CarInterface(CarInterfaceBase):
@@ -115,67 +36,153 @@ class CarInterface(CarInterfaceBase):
   RadarInterface = RadarInterface
 
   @staticmethod
-  def get_pid_accel_limits(CP, current_speed, cruise_speed):
-    accel_max = KIA_EV9_ACCEL_MAX if CP.carFingerprint == CAR.KIA_EV9 else CarControllerParams.ACCEL_MAX
-    return ACCEL_MIN, accel_max
+  def requires_lateral_body_dimensions(cp):
+    # The shared platform identifier does not establish a body/camera envelope.
+    return cp.carFingerprint == CAR.HYUNDAI_IONIQ_6
 
   @staticmethod
-  def apply_post_fingerprint_params(CP: structs.CarParams, candidate, fingerprint, car_fw) -> None:
-    gt_line_testing_ground = testing_ground.use(KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID)
-    if kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, CP.carVin, gt_line_testing_ground):
-      apply_kia_ev6_gt_line_longitudinal_params(CP)
+  def get_lateral_body_dimensions(cp):
+    from opendbc.car.hyundai.lane_body import dimensions
+    return dimensions(cp)
+
+  @staticmethod
+  def startup_required(cp):
+    from opendbc.car.hyundai.g90_startup import required
+    from opendbc.car.hyundai.ev6_startup import required as ev6_required
+    from opendbc.car.hyundai.gv70_startup import required as gv70_required
+    from opendbc.car.hyundai.ev9_startup import required as ev9_required
+    from opendbc.car.hyundai.torque_ev_startup import required as torque_ev_required
+    from opendbc.car.hyundai.blended_longitudinal import startup_required as blended_required
+    from opendbc.car.hyundai.legacy_long_startup import required as legacy_required
+    from opendbc.car.hyundai.ordinary_classic_startup import required as ordinary_classic_required
+    from opendbc.car.hyundai.radar_hda1_startup import required as radar_hda1_required
+    from opendbc.car.hyundai.radar_hda2_startup import required as radar_hda2_required
+    from opendbc.car.hyundai.generic_hda2_startup import required as generic_hda2_required
+    from opendbc.car.hyundai.gv60_startup import required as gv60_required
+    return (gv60_required(cp) or generic_hda2_required(cp) or radar_hda2_required(cp) or radar_hda1_required(cp) or ordinary_classic_required(cp) or
+            pe_long_required(cp) or legacy_required(cp) or blended_required(cp) or required(cp) or
+            ev6_required(cp) or gv70_required(cp) or ev9_required(cp) or torque_ev_required(cp))
+
+  @staticmethod
+  def startup_owner(cp, callbacks, *, requested):
+    from opendbc.car.hyundai.ioniq5pe_startup import PEPendingStartup
+    pe_cp = pe_long_candidate(cp, enabled=requested, is_release=False)
+    if pe_cp is not None:
+      return PEPendingStartup(pe_cp, callbacks, stock_cp=cp)
+    from opendbc.car.hyundai.legacy_long_aol import candidate as legacy_candidate
+    from opendbc.car.hyundai.legacy_long_startup import LegacyLongStartup
+    legacy_cp = legacy_candidate(cp, requested=requested)
+    if legacy_cp is not None:
+      return LegacyLongStartup(legacy_cp, callbacks, stock_cp=cp)
+    from opendbc.car.hyundai.g90_startup import G90Startup, required
+    if required(cp):
+      return G90Startup(cp, callbacks) if requested else None
+    from opendbc.car.hyundai.ordinary_classic_startup import OrdinaryClassicStartup, required as ordinary_classic_required
+    if ordinary_classic_required(cp):
+      return OrdinaryClassicStartup(cp, callbacks) if requested else None
+    from opendbc.car.hyundai.ev6_startup import EV6Startup, required as ev6_required
+    if ev6_required(cp):
+      return EV6Startup(cp, callbacks) if requested else None
+    from opendbc.car.hyundai.gv70_startup import GV70Startup, required as gv70_required
+    if gv70_required(cp):
+      return GV70Startup(cp, callbacks) if requested else None
+    from opendbc.car.hyundai.ev9_longitudinal import candidate as ev9_candidate, qualified as ev9_qualified
+    from opendbc.car.hyundai.ev9_pending_startup import EV9PendingStartup
+    ev9_cp = ev9_candidate(cp, enabled=requested, is_release=False)
+    if ev9_qualified(ev9_cp):
+      return EV9PendingStartup(ev9_cp, callbacks, stock_cp=cp) if requested else None
+    from opendbc.car.hyundai.torque_ev_startup import candidate as torque_ev_candidate, TorqueEVStartup
+    torque_cp = torque_ev_candidate(cp, requested=requested, is_release=False)
+    if torque_cp is not None:
+      return TorqueEVStartup(torque_cp, callbacks, stock_cp=cp)
+    from opendbc.car.hyundai.radar_hda1_startup import RadarHDA1Startup, required as radar_hda1_required
+    if radar_hda1_required(cp):
+      return RadarHDA1Startup(cp, callbacks) if requested else None
+    from opendbc.car.hyundai.radar_hda2_startup import RadarHDA2Startup, required as radar_hda2_required
+    if radar_hda2_required(cp):
+      return RadarHDA2Startup(cp, callbacks) if requested else None
+    from opendbc.car.hyundai.gv60_startup import GV60Startup, required as gv60_required
+    if gv60_required(cp):
+      return GV60Startup(cp, callbacks) if requested else None
+    from opendbc.car.hyundai.generic_hda2_startup import GenericHDA2Startup, required as generic_hda2_required
+    if generic_hda2_required(cp):
+      return GenericHDA2Startup(cp, callbacks) if requested else None
+    from opendbc.car.hyundai.blended_longitudinal import startup_owner
+    return startup_owner(cp, callbacks, requested=requested)
+
+  DRIVABLE_GEARS = (structs.CarState.GearShifter.sport, structs.CarState.GearShifter.manumatic)
+
+  @staticmethod
+  def get_pid_accel_limits(CP, current_speed, cruise_speed, *, faster_takeoffs=False):
+    from opendbc.car.hyundai.ev9_longitudinal import qualified as ev9_long_qualified
+    if ev9_long_qualified(CP):
+      return -3.5, ACCEL_MAX_TAKEOFF if faster_takeoffs else 2.2
+    if is_blended_alpha(CP):
+      return -3.5, 3.5
+    return CarInterfaceBase.get_pid_accel_limits(CP, current_speed, cruise_speed, faster_takeoffs=faster_takeoffs)
 
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
     ret.brand = "hyundai"
 
-    # "LKA steering" if LKAS or LKAS_ALT messages are seen coming from the camera.
-    # Generally means our LKAS message is forwarded to another ECU (commonly ADAS ECU)
-    # that finally retransmits our steering command in LFA or LFA_ALT to the MDPS.
-    # "LFA steering" if camera directly sends LFA to the MDPS
-    cam_can = CanBus(None, fingerprint).CAM
-    lka_steering = 0x50 in fingerprint[cam_can] or 0x110 in fingerprint[cam_can]
-    if ret.flags & HyundaiFlags.CAN_CANFD_BLENDED:
-      lka_steering = Ecu.adas in [fw.ecu for fw in car_fw] or 0x50 in fingerprint[cam_can]
+    if is_blended(ret):
+      cam_can = CanBus(None, fingerprint).CAM
+      lka_steering = any(fw.ecu == Ecu.adas for fw in car_fw) or 0x50 in fingerprint[cam_can]
       if lka_steering:
-        ret.flags |= HyundaiFlags.CANFD_LKA_STEERING.value
-    CAN = CanBus(None, fingerprint, lka_steering)
+        ret.flags |= HyundaiFlags.CANFD_LKA_STEER_MSG.value
 
     if ret.flags & HyundaiFlags.CANFD:
       # Shared configuration for CAN-FD cars
-      ret.alphaLongitudinalAvailable = candidate not in CANFD_UNSUPPORTED_LONGITUDINAL_CAR
-      if lka_steering and Ecu.adas not in [fw.ecu for fw in car_fw] and candidate not in CANFD_SECURITYACCESS_CAR:
+
+      # "LKA steering" if LKAS or LKAS_ALT messages are seen coming from the camera.
+      # Generally means our LKAS message is forwarded to another ECU (commonly ADAS ECU)
+      # that finally retransmits our steering command in LFA or LFA_ALT to the MDPS.
+      # "LFA steering" if camera directly sends LFA to the MDPS
+      cam_can = CanBus(None, fingerprint).CAM
+      lka_steering = 0x50 in fingerprint[cam_can] or 0x110 in fingerprint[cam_can]
+      CAN = CanBus(None, fingerprint, lka_steering)
+
+      ret.alphaLongitudinalAvailable = not (ret.flags & HyundaiFlags.CANFD_NO_RADAR_DISABLE)
+      if (candidate == CAR.HYUNDAI_IONIQ_6 and not lka_steering and
+          fingerprint[CAN.CAM].get(0x1A0) == 32 and fingerprint[CAN.ECAN].get(0x1CF) == 8):
+        ret.alphaLongitudinalAvailable = True
+      if ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
+        # These manual angle profiles retain stock SCC in both builds.
+        ret.alphaLongitudinalAvailable = False
+      if lka_steering and Ecu.adas not in [fw.ecu for fw in car_fw]:
         # this needs to be figured out for cars without an ADAS ECU
-        # Cars in CANFD_SECURITYACCESS_CAR are known to have ADAS ECUs that work with SecurityAccess
-        ret.alphaLongitudinalAvailable = False
-      if lka_steering and ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING and candidate not in CANFD_ANGLE_LONGITUDINAL_CAR:
-        # Most angle-steering LKA platforms still need stock longitudinal validation.
         ret.alphaLongitudinalAvailable = False
 
-      ret.enableBsm = 0x1ba in fingerprint[CAN.ECAN] or candidate == CAR.KIA_EV9
+      ret.deprecated.enableBsm = 0x1ba in fingerprint[CAN.ECAN] or candidate == CAR.KIA_EV9
+      if candidate == CAR.HYUNDAI_IONIQ_6:
+        ret.deprecated.enableBsm = fingerprint[CAN.ECAN].get(0x1ba) == 24
+        ret.steerAtStandstill = True
 
-      # Carnival HEV can fingerprint with too little E-CAN traffic to see 0xFA.
+      # Check if the car is hybrid. Only HEV/PHEV cars have 0xFA on E-CAN.
       if 0xFA in fingerprint[CAN.ECAN] or candidate == CAR.KIA_CARNIVAL_HEV_4TH_GEN:
         ret.flags |= HyundaiFlags.HYBRID.value
 
       if lka_steering:
         # detect LKA steering
-        ret.flags |= HyundaiFlags.CANFD_LKA_STEERING.value
+        ret.flags |= HyundaiFlags.CANFD_LKA_STEER_MSG.value
         if 0x110 in fingerprint[CAN.CAM]:
-          ret.flags |= HyundaiFlags.CANFD_LKA_STEERING_ALT.value
-        # This HDA II Carnival uses the alternate 0x1AA cruise-button frame even
-        # though other LKA-steering platforms use 0x1CF.
-        if candidate in (CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN) and \
-            0x1aa in fingerprint[CAN.ECAN] and 0x1cf not in fingerprint[CAN.ECAN]:
+          ret.flags |= HyundaiFlags.CANFD_LKA_STEER_MSG_ALT.value
+        if (candidate in (CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN) and
+            0x1aa in fingerprint[CAN.ECAN] and 0x1cf not in fingerprint[CAN.ECAN]):
           ret.flags |= HyundaiFlags.CANFD_ALT_BUTTONS.value
       else:
         # no LKA steering
         if 0x1cf not in fingerprint[CAN.ECAN]:
           ret.flags |= HyundaiFlags.CANFD_ALT_BUTTONS.value
-        if not ret.flags & HyundaiFlags.RADAR_SCC:
+        if not ret.flags & HyundaiFlags.CANFD_RADAR_SCC:
           ret.flags |= HyundaiFlags.CANFD_CAMERA_SCC.value
-        if 0xCB in fingerprint[CAN.CAM]:
+        if ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING and candidate != CAR.KIA_EV6_2025 and 0xCB in fingerprint[CAN.CAM]:
           ret.flags |= HyundaiFlags.SEND_LFA.value
+
+      # The Sportage 2026 identity is documented only without HDA II. A
+      # hybrid fuel source belongs to its separate HEV identity.
+      if candidate == CAR.KIA_SPORTAGE_2026 and (lka_steering or 0xFA in fingerprint[CAN.ECAN]):
+        ret.dashcamOnly = True
 
       # Some LKA steering cars have alternative messages for gear checks
       # ICE cars do not have 0x130; GEARS message on 0x40 or 0x70 instead
@@ -185,50 +192,44 @@ class CarInterface(CarInterfaceBase):
         else:
           ret.flags |= HyundaiFlags.CANFD_ALT_GEARS.value
 
+      if candidate in (CAR.KIA_EV6, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN) and CAN.offset >= 8:
+        ret.dashcamOnly = True
       cfgs = [get_safety_config(structs.CarParams.SafetyModel.hyundaiCanfd), ]
       if CAN.ECAN >= 4:
         cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
       ret.safetyConfigs = cfgs
 
-      if ret.flags & HyundaiFlags.CANFD_LKA_STEERING:
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_LKA_STEERING.value
-        if ret.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT:
-          ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_LKA_STEERING_ALT.value
+      if ret.flags & HyundaiFlags.CANFD_LKA_STEER_MSG:
+        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_LKA_STEER_MSG.value
+        if ret.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT:
+          ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_LKA_STEER_MSG_ALT.value
       if ret.flags & HyundaiFlags.CANFD_ALT_BUTTONS:
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_ALT_BUTTONS.value
       if ret.flags & HyundaiFlags.CANFD_CAMERA_SCC:
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CAMERA_SCC.value
+      if ret.flags & HyundaiFlags.CCNC and not lka_steering and not ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
+        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
       if ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
         ret.steerControlType = structs.CarParams.SteerControlType.angle
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_ANGLE_STEERING.value
-        if candidate == CAR.KIA_SPORTAGE_HEV_2026:
-          ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.CANFD_NO_STOCK_LKA.value
-      if candidate == CAR.HYUNDAI_IONIQ_6:
-        # Keep lateral active through stops: zeroing torque at standstill dropped the
-        # stop-turn hold and forced a rate-limit re-ramp from zero on every pull-away
-        # (turn1/turn2 rlogs 2026-07-14). Torque steering has no standstill gate in the
-        # panda safety or the carcontroller; the MDPS tolerating held torque at 0 speed
-        # is being validated on-road.
-        ret.steerAtStandstill = True
-      if candidate == CAR.HYUNDAI_IONIQ_5_PE:
-        ret.steerAtStandstill = True
-      if ret.flags & HyundaiFlags.CCNC and not ret.flags & HyundaiFlags.CANFD_LKA_STEERING:
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
-
+        ret.safetyConfigs[-1].safetyParam |= CANFD_ANGLE_MODEL_BITS[str(candidate)]
+        if ret.flags & HyundaiFlags.SEND_LFA:
+          ret.safetyConfigs[-1].safetyParam |= CANFD_ANGLE_OBSERVED_ADAS_BIT
     else:
       # Shared configuration for non CAN-FD cars
-      ret.alphaLongitudinalAvailable = candidate not in UNSUPPORTED_LONGITUDINAL_CAR or candidate in LEGACY_LONGITUDINAL_CAR
-      if ret.flags & HyundaiFlags.CAN_CANFD_BLENDED and ret.flags & HyundaiFlags.CANFD_LKA_STEERING and \
-          candidate not in CAN_CANFD_BLENDED_HDA2_LONGITUDINAL_CAR:
+      ret.alphaLongitudinalAvailable = not (ret.flags & (HyundaiFlags.LEGACY | HyundaiFlags.UNSUPPORTED_LONGITUDINAL | HyundaiFlags.NON_SCC))
+      if is_blended(ret):
+        # A prepublication owner alone may promote this exact stock CP.
         ret.alphaLongitudinalAvailable = False
-      ret.enableBsm = 0x58b in fingerprint[CAN.ECAN]
+      pt_bus = CanBus(None, fingerprint, bool(ret.flags & HyundaiFlags.CANFD_LKA_STEER_MSG)).ECAN if is_blended(ret) else 0
+      ret.deprecated.enableBsm = 0x58b in fingerprint[pt_bus]
 
       # Send LFA message on cars with HDA
-      if 0x485 in fingerprint[CAN.CAM]:
+      if 0x485 in fingerprint[2]:
         ret.flags |= HyundaiFlags.SEND_LFA.value
 
       # These cars use the FCA11 message for the AEB and FCW signals, all others use SCC12
-      if 0x38d in fingerprint[CAN.ECAN] or 0x38d in fingerprint[CAN.CAM]:
+      if 0x38d in fingerprint[pt_bus] or 0x38d in fingerprint[2]:
         ret.flags |= HyundaiFlags.USE_FCA.value
       if detect_kona_non_scc_radar_fca(candidate, fingerprint, car_fw):
         ret.flags |= HyundaiFlags.NON_SCC_RADAR_FCA.value
@@ -239,28 +240,35 @@ class CarInterface(CarInterfaceBase):
       else:
         ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.hyundai, 0)]
 
-      if candidate == CAR.KIA_RAY_EV and fingerprint[CAN.CAM].get(0x485) == 8:
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CAN_REFRESH_MSGS.value
+      if is_blended(ret):
+        ret.safetyConfigs[0].safetyParam |= HyundaiSafetyFlags.CAN_CANFD_BLENDED.value
+        if lka_steering:
+          ret.safetyConfigs[0].safetyParam |= HyundaiSafetyFlags.CANFD_LKA_STEER_MSG.value
 
       if ret.flags & HyundaiFlags.CAMERA_SCC:
         ret.safetyConfigs[0].safetyParam |= HyundaiSafetyFlags.CAMERA_SCC.value
       if candidate in (CAR.HYUNDAI_ELANTRA_2024, CAR.HYUNDAI_ELANTRA_HEV_2024):
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CAN_REFRESH_MSGS.value
+        ret.safetyConfigs[0].safetyParam |= HyundaiSafetyFlags.CAN_REFRESH_MSGS.value
 
-      # These cars expose an LKAS/LFA steering-wheel button that StarPilot can customize.
-      if 0x391 in fingerprint[0] or 0x50C in fingerprint[0] or ret.flags & HyundaiFlags.CAN_CANFD_BLENDED:
-        ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON.value
-      if ret.flags & HyundaiFlags.CAN_CANFD_BLENDED:
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CAN_CANFD_BLENDED.value
-        if ret.flags & HyundaiFlags.CANFD_LKA_STEERING:
-          ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_LKA_STEERING.value
-      if hyundai_cancel_button_enables_cruise(candidate):
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANCEL_BTN_ENABLE.value
+      # These cars have the LFA button on the steering wheel
+      if 0x391 in fingerprint[0] or (candidate in NON_SCC_IDS | CLASSIC_SCC_IDS and
+                                     0x50c in fingerprint[0]):
+        ret.flags |= HyundaiFlags.HAS_LDA_BUTTON.value
+      if ret.flags & HyundaiFlags.NON_SCC:
+        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.NON_SCC.value
+        if ret.flags & HyundaiFlags.HAS_LDA_BUTTON and (candidate not in NON_SCC_IDS or
+                                                        0x391 in fingerprint[0]):
+          # Ordinary safety still requires its existing BCM source. The AOL
+          # profile alone may select the observed alternative CLU source.
+          ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.HAS_LDA_BUTTON.value
 
-      if 0x2AA in fingerprint[0]:
-        ret.minSteerSpeed = 0.0
-        ret.flags &= ~HyundaiFlags.MIN_STEER_32_MPH.value
-        ret.steerAtStandstill = True
+    if candidate == CAR.KIA_RAY_EV and fingerprint[2].get(0x485) == 8:
+      ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CAN_REFRESH_MSGS.value
+
+    if is_blended(ret) and 0x2AA in fingerprint[0]:
+      ret.minSteerSpeed = 0.0
+      ret.flags &= ~HyundaiFlags.MIN_STEER_32_MPH.value
+      ret.steerAtStandstill = True
 
     # Common lateral control setup
 
@@ -279,26 +287,54 @@ class CarInterface(CarInterfaceBase):
       # see https://github.com/commaai/opendbc/pull/1137/
       ret.dashcamOnly = True
 
-    if ret.flags & HyundaiFlags.NON_SCC:
-      ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.NON_SCC.value
-
     # Common longitudinal control setup
 
-    radar_config = get_radar_track_config(ret.carFingerprint, ret.flags)
-    radar_available = radar_tracks_available(radar_config, fingerprint)
-    ret.radarUnavailable = not radar_available
-    if ret.flags & HyundaiFlags.NON_SCC:
-      ret.alphaLongitudinalAvailable = False
-    ret.openpilotLongitudinalControl = alpha_long and ret.alphaLongitudinalAvailable
-    if ret.openpilotLongitudinalControl and not (candidate in RADAR_LIVE_LONGITUDINAL_CAR and radar_available):
-      ret.radarUnavailable = True
+    radar_start = KONA_NON_SCC_FCA_RADAR_ADDR if candidate == CAR.HYUNDAI_KONA_NON_SCC else RADAR_START_ADDR
+    if DBC[ret.carFingerprint].get(Bus.radar) == HYUNDAI_G90_RADAR_DBC:
+      ret.radarUnavailable = not all(fingerprint[1].get(addr) == 8 for addr in range(0x500, 0x520))
+    elif blended_track_radar(ret) or DBC[ret.carFingerprint].get(Bus.radar) == HYUNDAI_GV70_RADAR_DBC:
+      ret.radarUnavailable = not all(fingerprint[0].get(addr) == 32 for addr in range(0x210, 0x220))
+    elif DBC[ret.carFingerprint].get(Bus.radar) == HYUNDAI_MRREVO14F_RADAR_DBC:
+      ret.radarUnavailable = fingerprint[1].get(KONA_NON_SCC_FCA_RADAR_ADDR) != 8
+    elif DBC[ret.carFingerprint].get(Bus.radar) == HYUNDAI_MRR30_RADAR_DBC:
+      ret.radarUnavailable = fingerprint[radar_bus(ret)].get(MRR30_RADAR_START_ADDR) != 32
+    elif DBC[ret.carFingerprint].get(Bus.radar) == HYUNDAI_MRR35_RADAR_DBC:
+      ret.radarUnavailable = fingerprint[radar_bus(ret)].get(MRR35_RADAR_START_ADDR) != 24
+    elif candidate == CAR.KIA_STINGER_2022:
+      ret.radarUnavailable = not stinger_2022_radar_available(fingerprint)
+    else:
+      ret.radarUnavailable = radar_start not in fingerprint[1] or Bus.radar not in DBC[ret.carFingerprint]
+    from opendbc.car.hyundai.torque_ev_startup import topology_owned as torque_ev_topology
+    if torque_ev_topology(ret):
+      # The prepared owner alone promotes the saved developer choice before CI construction.
+      ret.alphaLongitudinalAvailable = not is_release
+      alpha_long = False
+    from opendbc.car.hyundai.legacy_long_aol import CARS as legacy_long_cars
+    ret.openpilotLongitudinalControl = alpha_long and ret.alphaLongitudinalAvailable and candidate not in legacy_long_cars
+    if (candidate in (CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN) and
+        ret.flags & HyundaiFlags.CANFD_ALT_BUTTONS and 0x1aa in fingerprint[CAN.ECAN] and
+        not ret.openpilotLongitudinalControl):
+      ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CARNIVAL_ALT_RESUME.value
     ret.pcmCruise = not ret.openpilotLongitudinalControl
-    apply_platform_longitudinal_params(ret)
+    ret.longitudinalActuatorDelay = 0.5
+    if candidate in (CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV9):
+      if candidate == CAR.HYUNDAI_IONIQ_5_PE:
+        ret.longitudinalActuatorDelay = 0.35
+        ret.steerAtStandstill = True
+      # Only the source-derived stock-SCC LKA_ALT topology is admitted.
+      if (CAN.ECAN != 1 or CAN.ACAN != 0 or CAN.CAM != 2 or fingerprint[CAN.CAM].get(0x110) != 32 or
+          fingerprint[CAN.CAM].get(0x362) != 32 or fingerprint[CAN.ECAN].get(0x1cf) != 8 or
+          fingerprint[CAN.ECAN].get(0x35) != 32 or fingerprint[CAN.ECAN].get(0x1a0) != 32 or
+          ret.flags & (HyundaiFlags.HYBRID | HyundaiFlags.CANFD_ALT_BUTTONS | HyundaiFlags.CANFD_CAMERA_SCC | HyundaiFlags.SEND_LFA)):
+        ret.dashcamOnly = True
 
     if ret.openpilotLongitudinalControl:
       ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.LONG.value
-      if candidate in CANFD_ANGLE_LONGITUDINAL_CAR and ret.flags & HyundaiFlags.CCNC:
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
+      if (ret.flags & HyundaiFlags.CANFD and ret.flags & HyundaiFlags.CANFD_LKA_STEER_MSG and
+          not ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING and candidate in (
+            CAR.KIA_CARNIVAL_4TH_GEN, CAR.KIA_CARNIVAL_2025,
+            CAR.KIA_CARNIVAL_HEV_4TH_GEN, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN)):
+        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_LKAS_DAMPING_100.value
     if ret.flags & HyundaiFlags.HYBRID:
       ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.HYBRID_GAS.value
     elif ret.flags & HyundaiFlags.EV:
@@ -306,10 +342,9 @@ class CarInterface(CarInterfaceBase):
     elif ret.flags & HyundaiFlags.FCEV:
       ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.FCEV_GAS.value
 
-    if (candidate == CAR.KIA_RAY_EV and fingerprint[0].get(RAY_PEDAL_SENSOR_ADDR) == 6 and
-        ret.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CAN_REFRESH_MSGS and
-        ret.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON):
-      ret.enableGasInterceptorDEPRECATED = True
+    if (supported_pedal_detected(fingerprint, 0, supported=candidate == CAR.KIA_RAY_EV) and
+        ret.safetyConfigs[-1].safetyParam == int(HyundaiSafetyFlags.NON_SCC | HyundaiSafetyFlags.EV_GAS |
+                                               HyundaiSafetyFlags.HAS_LDA_BUTTON | HyundaiSafetyFlags.CAN_REFRESH_MSGS)):
       ret.alphaLongitudinalAvailable = True
       ret.openpilotLongitudinalControl = True
       ret.pcmCruise = False
@@ -317,54 +352,23 @@ class CarInterface(CarInterfaceBase):
       ret.autoResumeSng = False
       ret.minEnableSpeed = -1.0
       ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.LONG.value
-      ret.longitudinalTuning.kpBP = [0.0, 5.0, 15.0, 35.0]
-      ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
       ret.longitudinalTuning.kiBP = [0.0, 3.0, 6.0, 35.0]
       ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
-      ret.longitudinalTuning.kfDEPRECATED = 1.0
+
+    if candidate == CAR.KIA_RAY_EV and not ret.openpilotLongitudinalControl:
+      ret.dashcamOnly = True
 
     # Car specific configuration overrides
-
-    if candidate == CAR.GENESIS_G90:
-      ret.stoppingDecelRate = 0.55
-      ret.vEgoStopping = 0.8
-
-    if candidate == CAR.HYUNDAI_PALISADE_2023:
-      ret.startAccel = 1.3
-      ret.stopAccel = -0.85
-      ret.stoppingDecelRate = 0.35
-      ret.vEgoStarting = 0.5
-      ret.vEgoStopping = 0.35
-
-    if candidate == CAR.HYUNDAI_ELANTRA_2021:
-      ret.longitudinalActuatorDelay = 0.22
-      ret.stopAccel = -1.1
-      ret.stoppingDecelRate = 0.55
 
     if candidate == CAR.HYUNDAI_ELANTRA_HEV_2024:
       ret.longitudinalActuatorDelay = 0.22
 
-    if candidate == CAR.HYUNDAI_IONIQ_6:
-      ret.longitudinalActuatorDelay = 0.6
-
-    if candidate == CAR.HYUNDAI_SANTA_FE_2022:
-      ret.longitudinalActuatorDelay = 0.4
-      ret.longitudinalTuning.kpBP = [0.0, 8.0, 20.0, 35.0]
-      ret.longitudinalTuning.kpV = [0.20, 0.17, 0.12, 0.08]
-      ret.longitudinalTuning.kiBP = [0.0, 8.0, 20.0, 35.0]
-      ret.longitudinalTuning.kiV = [0.02, 0.03, 0.05, 0.07]
-
-    if candidate == CAR.HYUNDAI_IONIQ_5_PE:
-      ret.longitudinalActuatorDelay = 0.35
-      ret.vEgoStarting = 0.4
-
-    if candidate == CAR.KIA_EV9 and ret.openpilotLongitudinalControl:
-      apply_kia_ev9_longitudinal_params(ret)
-
-    if candidate == CAR.KIA_NIRO_PHEV_2022:
-      ret.stopAccel = -1.4
-      ret.stoppingDecelRate = 0.5
-      ret.vEgoStopping = 0.7
+    if is_blended(ret):
+      ret.openpilotLongitudinalControl = False
+      ret.pcmCruise = True
+      ret.stopAccel = -0.85
+      from opendbc.car.hyundai.blended_longitudinal import mixed_startup_qualified
+      ret.alphaLongitudinalAvailable = mixed_startup_qualified(ret, is_release=is_release)
 
     if candidate == CAR.KIA_OPTIMA_G4_FL:
       ret.steerActuatorDelay = 0.2
@@ -374,110 +378,80 @@ class CarInterface(CarInterfaceBase):
     if candidate in (CAR.KIA_OPTIMA_H,):
       ret.dashcamOnly = True
 
+    if candidate == CAR.KIA_EV6_2025 and ret.flags & (HyundaiFlags.CANFD_LKA_STEER_MSG | HyundaiFlags.HYBRID):
+      ret.dashcamOnly = True
+      ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.noOutput)]
+
+    # Advertise only the exact developer stock profile. Startup still owns the
+    # saved-choice promotion, so availability never selects LONG during fingerprinting.
+    if candidate in (CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5_PE):
+      from opendbc.car.hyundai.ccnc_ev_stock import qualified as ev9_stock_qualified
+      ret.alphaLongitudinalAvailable = not is_release and ev9_stock_qualified(ret)
+
+    from opendbc.car.hyundai.legacy_long_aol import CARS as legacy_long_cars, topology_owned
+    if candidate in legacy_long_cars:
+      ret.openpilotLongitudinalControl = False
+      ret.pcmCruise = True
+      ret.alphaLongitudinalAvailable = not is_release and topology_owned(ret)
+
+    from opendbc.car.hyundai.gv60_startup import select_profile as gv60_select_profile
+    gv60_select_profile(ret, is_release=is_release)
+
+    return ret
+
+  def update(self, can_packets):
+    if self.CS.daw.enabled:
+      can_packets = list(can_packets)
+      self.CS.daw.update(can_packets)
+    recovery = getattr(getattr(self, 'CC', None), 'angle_tx_recovery', None)
+    if recovery is not None:
+      can_packets = list(can_packets)
+      recovery.observe(can_packets, self.CC.frame)
+    stock_lkas_damping = getattr(self.CS, "stock_lkas_damping", None)
+    if (self.CS.pe_ready is not None or self.CS.gv70_camera_lead is not None or self.CS.ev9_camera_lead is not None or
+        self.CS.ioniq6_camera_lead is not None or self.CS.torque_ev_camera_lead is not None or
+        self.CS.forte_lkas_sources is not None or self.CS.stock_lfa_status is not None or
+        stock_lkas_damping is not None):
+      # This isolated optional parser must never join required controls health.
+      can_packets = list(can_packets)
+      if self.CS.gv70_camera_lead is not None:
+        self.CS.gv70_camera_lead.update(can_packets)
+      if self.CS.pe_ready is not None:
+        self.CS.pe_ready.observe(can_packets)
+      if self.CS.ev9_camera_lead is not None:
+        self.CS.ev9_camera_lead.update(can_packets)
+      if self.CS.ioniq6_camera_lead is not None:
+        self.CS.ioniq6_camera_lead.update(can_packets)
+      if self.CS.torque_ev_camera_lead is not None:
+        self.CS.torque_ev_camera_lead.update(can_packets)
+      if self.CS.forte_lkas_sources is not None:
+        self.CS.forte_lkas_sources.update(can_packets)
+      if stock_lkas_damping is not None:
+        stock_lkas_damping.update(can_packets)
+      if self.CS.stock_lfa_status is not None:
+        self.CS.stock_lfa_status.update(can_packets)
+        self.CS.stock_cluster_status.update(can_packets)
+    ret = super().update(can_packets)
+    self.CS.finalize_blended_cancel(ret)
     return ret
 
   @staticmethod
   def init(CP, can_recv, can_send, communication_control=None):
-    global ECU_DISABLE_TIMESTAMP
-    from openpilot.common.params import Params
-    params = Params()
-
+    # 0x80 silences response
     if communication_control is None:
-      communication_control = get_communication_control_request(CP.carFingerprint)
+      communication_control = bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, 0x80 | uds.CONTROL_TYPE.DISABLE_RX_DISABLE_TX, uds.MESSAGE_TYPE.NORMAL])
 
-    ecu_log(f"=== init() called: opLong={CP.openpilotLongitudinalControl}, flags=0x{CP.flags:x}, safetyParam={CP.safetyConfigs[-1].safetyParam} ===")
-
-    if CP.openpilotLongitudinalControl and not (CP.flags & (HyundaiFlags.NON_SCC | HyundaiFlags.CANFD_CAMERA_SCC | HyundaiFlags.CAMERA_SCC)):
-      addr, bus = 0x7d0, CanBus(CP).ECAN if CP.flags & (HyundaiFlags.CANFD | HyundaiFlags.CAN_CANFD_BLENDED) else 0
-      if CP.flags & HyundaiFlags.CANFD_LKA_STEERING.value:
+    if CP.openpilotLongitudinalControl and CP.carFingerprint != CAR.KIA_RAY_EV and not (CP.flags & (HyundaiFlags.CANFD_CAMERA_SCC | HyundaiFlags.CAMERA_SCC)):
+      addr, bus = 0x7d0, CanBus(CP).ECAN if CP.flags & HyundaiFlags.CANFD else 0
+      if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG.value:
         addr, bus = 0x730, CanBus(CP).ECAN
-
-      skip_disable_ecu = False
-      if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR and egmp_in_ready_state(can_recv, bus):
-        apply_ecu_disable_failure_fallback(CP, params)
-        ecu_log(f"=== ECU DISABLE SKIPPED - READY detected, safetyParam stripped to {CP.safetyConfigs[-1].safetyParam}, lateral-only mode ===")
-        skip_disable_ecu = True
-
-      if not skip_disable_ecu:
-        disable_can_recv = can_recv
-        if CP.carFingerprint in (CAR.KIA_EV6, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN) and can_recv is not None:
-          hyundaicanfd.cache_adrv_0x51_template(CP.carFingerprint, None)
-          base_can_recv = can_recv
-          adrv_bus = CanBus(CP).ACAN
-
-          def disable_can_recv(*args, **kwargs):
-            packets = base_can_recv(*args, **kwargs)
-            for packet in packets or []:
-              for msg in packet:
-                if msg.src == adrv_bus and msg.address == 0x51:
-                  hyundaicanfd.cache_adrv_0x51_template(CP.carFingerprint, msg.dat)
-            return packets
-
-        # Try ECU disable. If it succeeds (IGN-ON mode), enable longitudinal.
-        # If it fails (READY mode returns NRC 0x22, or timeout), strip LONG safety flag
-        # so panda forwards stock SCC messages normally (lateral-only mode).
-        ecu_log(f"=== ECU DISABLE attempt: addr=0x{addr:x}, bus={bus} ===")
-        ecu_disabled = disable_ecu(disable_can_recv, can_send, bus=bus, addr=addr, com_cont_req=communication_control,
-                                   reset=bool(CP.flags & HyundaiFlags.CAN_CANFD_BLENDED))
-
-        if CP.carFingerprint in (CAR.HYUNDAI_IONIQ_6, CAR.HYUNDAI_IONIQ_5_PE):
-          # Track success/failure to auto-switch between openpilot long and stock ACC
-          if ecu_disabled:
-            ECU_DISABLE_TIMESTAMP = time.monotonic()
-            params.put_bool("EcuDisableFailed", False)
-            params.put_bool("ExperimentalMode", True)
-            ecu_log("=== ECU DISABLE SUCCESS - Longitudinal + Experimental ENABLED ===")
-          else:
-            apply_ecu_disable_failure_fallback(CP, params)
-            ecu_log(f"=== ECU DISABLE FAILED - safetyParam stripped to {CP.safetyConfigs[-1].safetyParam}, lateral-only mode ===")
-        else:
-          if ecu_disabled:
-            params.put_bool("EcuDisableFailed", False)
-            ecu_log("=== ECU DISABLE SUCCESS ===")
-          else:
-            apply_ecu_disable_failure_fallback(CP, params)
-            ecu_log(f"=== ECU DISABLE FAILED - safetyParam stripped to {CP.safetyConfigs[-1].safetyParam}, lateral-only mode ===")
+      disable_ecu(can_recv, can_send, bus=bus, addr=addr, com_cont_req=communication_control)
 
     # for blinkers
-    if CP.flags & HyundaiFlags.ENABLE_BLINKERS:
+    if CP.flags & HyundaiFlags.CANFD_ENABLE_BLINKERS:
       disable_ecu(can_recv, can_send, bus=CanBus(CP).ECAN, addr=0x7B1, com_cont_req=communication_control)
 
   @staticmethod
   def deinit(CP, can_recv, can_send):
     communication_control = bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, 0x80 | uds.CONTROL_TYPE.ENABLE_RX_ENABLE_TX, uds.MESSAGE_TYPE.NORMAL])
     CarInterface.init(CP, can_recv, can_send, communication_control)
-
-  def update(self, can_packets, starpilot_toggles):
-    ret, fp_ret = super().update(can_packets, starpilot_toggles)
-
-    # When ECU disable was skipped (READY mode boot) or failed, suppress CAN timeout errors.
-    # Keep checking param until it's True (init() sets it AFTER first update() call),
-    # then cache to avoid per-frame param reads.
-    if not getattr(self, '_ecu_disable_failed_cached', False):
-      from openpilot.common.params import Params
-      self._ecu_disable_failed_cached = Params().get_bool("EcuDisableFailed")
-    if self._ecu_disable_failed_cached and not ret.canValid:
-      ret.canValid = True
-
-    global ECU_DISABLE_TIMESTAMP
-    if ECU_DISABLE_TIMESTAMP > 0 and not ret.canValid:
-      # Check if any parser has counter/checksum errors (real CAN issues)
-      has_counter_errors = False
-      for cp in self.can_parsers.values():
-        if cp is not None:
-          for state in cp.message_states.values():
-            if state.counter_fail >= 5:  # MAX_BAD_COUNTER from parser.py
-              has_counter_errors = True
-              ecu_log(f"REAL CAN ERROR: {state.name} counter_fail={state.counter_fail}")
-              break
-        if has_counter_errors:
-          break
-
-      if has_counter_errors:
-        # Real CAN error - don't suppress, let it through
-        ecu_log("ECU_DISABLE: NOT suppressing canValid - counter errors detected")
-      else:
-        # Only timeout errors (expected after ECU disable) - suppress silently
-        ret.canValid = True
-
-    return ret, fp_ret

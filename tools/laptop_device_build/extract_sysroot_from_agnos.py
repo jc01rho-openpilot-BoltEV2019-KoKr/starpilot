@@ -35,7 +35,8 @@ ANDROID_SPARSE_MAGIC = 0xED26FF3A
 
 def parse_args() -> argparse.Namespace:
   p = argparse.ArgumentParser(description="Extract TICI sysroot dirs from AGNOS system image")
-  p.add_argument("--manifest", default="system/hardware/tici/agnos.json", help="Path to AGNOS manifest JSON")
+  p.add_argument("--manifest", default="openpilot/system/hardware/tici/agnos.json", help="Path to AGNOS manifest JSON")
+  p.add_argument("--image-path", default=None, help="Use an existing local system image instead of downloading")
   p.add_argument("--output-dir", required=True, help="Destination sysroot directory")
   p.add_argument("--cache-dir", default=".cache/agnos", help="Cache directory for downloaded images")
   p.add_argument("--url", default=None, help="Override AGNOS system image URL")
@@ -226,8 +227,13 @@ def main() -> int:
   cache_dir = Path(args.cache_dir).resolve()
   output_dir.mkdir(parents=True, exist_ok=True)
 
-  url = args.url or get_system_url(manifest_path)
-  image_path = download_and_prepare_image(url, cache_dir, args.force_download)
+  if args.image_path:
+    image_path = Path(args.image_path).resolve()
+    if not image_path.is_file():
+      raise RuntimeError(f"Local AGNOS system image not found: {image_path}")
+  else:
+    url = args.url or get_system_url(manifest_path)
+    image_path = download_and_prepare_image(url, cache_dir, args.force_download)
   image_path = ensure_debugfs_readable_image(image_path, cache_dir)
 
   for rel_dst, src_path in REQUIRED_DIRS:
@@ -247,11 +253,7 @@ def main() -> int:
       continue
 
   if not vendor_ok:
-    print(
-      "WARN: vendor libs not found in AGNOS image at /system/vendor/lib64 or /vendor/lib64; "
-      "falling back to usr/lib/aarch64-linux-gnu",
-      flush=True,
-    )
+    print("WARN: vendor libs not found in AGNOS image at /system/vendor/lib64 or /vendor/lib64; falling back to usr/lib/aarch64-linux-gnu", flush=True)
     if vendor_dst.is_symlink() or vendor_dst.is_file():
       vendor_dst.unlink()
     elif vendor_dst.exists():
@@ -279,4 +281,4 @@ if __name__ == "__main__":
     raise
   except Exception as exc:
     print(f"ERROR: {exc}", file=sys.stderr)
-    raise SystemExit(1)
+    raise SystemExit(1) from exc

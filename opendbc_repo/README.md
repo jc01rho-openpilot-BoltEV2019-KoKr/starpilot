@@ -19,6 +19,19 @@
 [![X Follow](https://img.shields.io/twitter/follow/comma_ai)](https://x.com/comma_ai)
 [![Discord](https://img.shields.io/discord/469524606043160576)](https://discord.comma.ai)
 
+<br>
+<h3><i>How to Port a Car — Jason Young, COMMA_CON 2023</i></h3>
+<a href="https://www.youtube.com/watch?v=XxPS5TpTUnI&t=142s">
+  <img src="https://github.com/user-attachments/assets/ae89198e-561b-4210-a0d4-ccecd917577d" alt="▶ How to Port a Car - Jason Young, COMMA_CON 2023" width="800">
+</a>
+<br>
+
+<h3><i>How Do We Control The Car? — Robbe Derks, COMMA_CON 2021</i></h3>
+<a href="https://www.youtube.com/watch?v=nNU6ipme878">
+  <img src="https://github.com/user-attachments/assets/28c40bc0-7884-47e9-b392-f47f03190497" alt="▶ How Do We Control The Car? - Robbe Derks, COMMA_CON 2021" width="800">
+</a>
+<br>
+
 </div>
 
 ---
@@ -44,9 +57,9 @@ cd opendbc
 ./test.sh
 
 # here are the individual commands it runs
-pip3 install -e .[testing,docs]  # install dependencies
+pip3 install -e .[testing]  # install dependencies
 scons -j8                        # build with 8 cores
-pytest .                         # run the tests
+unittest-parallel                # run the tests
 lefthook run lint                # run the linter
 ```
 
@@ -96,6 +109,10 @@ Start off by recording a route with lots of interesting events: enable LKAS and 
 
 Use the [longitudinal maneuvers](https://github.com/commaai/openpilot/tree/master/tools/longitudinal_maneuvers) report to evaluate your car's longitudinal control and tune it.
 
+### Validation
+
+Before submitting a port, go through the [car porting checklist](docs/CAR_PORTING_CHECKLIST.md).
+
 ## Contributing
 
 All opendbc development is coordinated on GitHub and [Discord](https://discord.comma.ai). Check out the `#dev-opendbc-cars` channel and `Vehicle Specific` section.
@@ -138,7 +155,7 @@ The above tests are themselves tested by:
 * a [mutation test](opendbc/safety/tests/misra/test_mutation.py) on the MISRA coverage
 * 100% line coverage enforced on the safety unit tests
 
-In addition, we run the [ruff linter](https://github.com/astral-sh/ruff) and [mypy](https://mypy-lang.org/) on the car interface library.
+In addition, we run the [ruff linter](https://github.com/astral-sh/ruff) and [ty](https://github.com/astral-sh/ty) on the car interface library.
 
 ### Bounties
 
@@ -147,7 +164,7 @@ Every car port is eligible for a bounty:
 * $250 - [Any car model port](https://github.com/orgs/commaai/projects/26/views/1?pane=issue&itemId=47913790)
 * $300 - [Reverse Engineering a new Actuation Message](https://github.com/orgs/commaai/projects/26/views/1?pane=issue&itemId=73445563)
 
-In addition to the standard bounties, we also offer higher value bounties for more popular cars. See those at [comma.ai/bounties](comma.ai/bounties).
+In addition to the standard bounties, we also offer higher value bounties for more popular cars. See those at [comma.ai/bounties](https://comma.ai/bounties).
 
 ## FAQ
 
@@ -155,7 +172,7 @@ In addition to the standard bounties, we also offer higher value bounties for mo
 
 ***Which cars are supported?*** See the [supported cars list](docs/CARS.md).
 
-***Can I add support for my car?*** Yes, most car support comes from the community. Read the guide [here](https://github.com/commaai/opendbc/blob/docs/README.md#how-to-port-a-car).
+***Can I add support for my car?*** Yes, most car support comes from the community. Read the guide [here](https://github.com/commaai/opendbc/blob/master/README.md#how-to-port-a-car).
 
 ***Which cars can be supported?*** Any car with LKAS and ACC. More info [here](https://github.com/commaai/openpilot/blob/master/docs/CARS.md#dont-see-your-car-here).
 

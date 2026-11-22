@@ -11,7 +11,7 @@ from opendbc.car.fw_query_definitions import AddrType
 class IsoTpParallelQuery:
   def __init__(self, can_send: CanSendCallable, can_recv: CanRecvCallable, bus: int, addrs: list[int] | list[AddrType],
                request: list[bytes], response: list[bytes], response_offset: int = 0x8,
-               functional_addrs: list[int] = None, response_pending_timeout: float = 10) -> None:
+               functional_addrs: list[int] | None = None, response_pending_timeout: float = 10) -> None:
     self.can_send = can_send
     self.can_recv = can_recv
     self.bus = bus
@@ -96,6 +96,8 @@ class IsoTpParallelQuery:
       msg.send(self.request[0], setup_only=len(self.functional_addrs) > 0)
 
     results = {}
+    interrupted_reads = set()
+    retried_reads = set()
     start_time = time.monotonic()
     addrs_responded = set()  # track addresses that have ever sent a valid iso-tp frame for timeout logging
     response_timeouts = {tx_addr: start_time + timeout for tx_addr in self.msg_addrs}
@@ -126,9 +128,15 @@ class IsoTpParallelQuery:
 
         counter = request_counter[tx_addr]
         expected_response = self.response[counter]
+        request = self.request[counter]
+        if (len(request) == 3 and request[0] == uds.SERVICE_TYPE.READ_DATA_BY_IDENTIFIER and
+            not dat.startswith((bytes([request[0] + 0x40]) + request[1:], b'\x7f' + request[:1]))):
+          interrupted_reads.add(tx_addr)
+          continue
         response_valid = dat.startswith(expected_response)
 
         if response_valid:
+          interrupted_reads.discard(tx_addr)
           if counter + 1 < len(self.request):
             response_timeouts[tx_addr] = time.monotonic() + timeout
             msg.send(self.request[counter + 1])
@@ -149,6 +157,11 @@ class IsoTpParallelQuery:
       cur_time = time.monotonic()
       for tx_addr in response_timeouts:
         if cur_time - response_timeouts[tx_addr] > 0:
+          if not request_done[tx_addr] and tx_addr in interrupted_reads and tx_addr not in retried_reads:
+            msgs[tx_addr].send(self.request[request_counter[tx_addr]])
+            response_timeouts[tx_addr] = cur_time + timeout
+            retried_reads.add(tx_addr)
+            continue
           if not request_done[tx_addr]:
             if request_counter[tx_addr] > 0:
               carlog.error(f"iso-tp query timeout after receiving partial response: {tx_addr}")

@@ -78,7 +78,6 @@ class Cable(EnumBase):
   long_obdc_cable = BasePart("long OBD-C cable (9.5 ft)")
   usb_a_2_a_cable = BasePart("USB A-A cable")
   usbc_otg_cable = BasePart("USB C OTG cable")
-  usbc_coupler = BasePart("USB-C coupler")
   obd_c_cable_2ft = BasePart("OBD-C cable (2 ft)")
 
 
@@ -112,7 +111,8 @@ class CarHarness(EnumBase):
   fca = BaseCarHarness("FCA connector")
   ram = BaseCarHarness("Ram connector")
   vw_a = BaseCarHarness("VW A connector")
-  vw_j533 = BaseCarHarness("VW J533 connector", parts=[Accessory.harness_box, Cable.long_obdc_cable, Cable.usbc_coupler])
+  vw_j533 = BaseCarHarness("VW J533 connector", parts=[Accessory.harness_box, Cable.long_obdc_cable])
+  vw_meb = BaseCarHarness("VW MEB connector", parts=[Accessory.harness_box, Cable.long_obdc_cable])
   hyundai_a = BaseCarHarness("Hyundai A connector")
   hyundai_b = BaseCarHarness("Hyundai B connector")
   hyundai_c = BaseCarHarness("Hyundai C connector")
@@ -133,19 +133,19 @@ class CarHarness(EnumBase):
   hyundai_r = BaseCarHarness("Hyundai R connector")
   hyundai_s = BaseCarHarness("Hyundai S connector")
   custom = BaseCarHarness("Developer connector")
-  obd_ii = BaseCarHarness("OBD-II connector", parts=[Cable.long_obdc_cable, Cable.usbc_coupler], has_connector=False)
+  obd_ii = BaseCarHarness("OBD-II connector", parts=[Cable.long_obdc_cable], has_connector=False)
   gm = BaseCarHarness("GM connector", parts=[Accessory.harness_box])
-  gmsdgm = BaseCarHarness("GM SDGM connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable, Cable.usbc_coupler])
-  nissan_a = BaseCarHarness("Nissan A connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable, Cable.usbc_coupler])
-  nissan_b = BaseCarHarness("Nissan B connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable, Cable.usbc_coupler])
+  gmsdgm = BaseCarHarness("GM SDGM connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable])
+  nissan_a = BaseCarHarness("Nissan A connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable])
+  nissan_b = BaseCarHarness("Nissan B connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable])
   mazda = BaseCarHarness("Mazda connector")
   ford_q3 = BaseCarHarness("Ford Q3 connector")
-  ford_q4 = BaseCarHarness("Ford Q4 connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable, Cable.usbc_coupler])
-  rivian = BaseCarHarness("Rivian A connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable, Cable.usbc_coupler])
-  rivian_b = BaseCarHarness("Rivian B connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable, Cable.usbc_coupler])
-  tesla_a = BaseCarHarness("Tesla A connector", parts=[Accessory.harness_box, Cable.long_obdc_cable, Cable.usbc_coupler])
-  tesla_b = BaseCarHarness("Tesla B connector", parts=[Accessory.harness_box, Cable.long_obdc_cable, Cable.usbc_coupler])
-  psa_a = BaseCarHarness("PSA A connector", parts=[Accessory.harness_box, Cable.long_obdc_cable, Cable.usbc_coupler])
+  ford_q4 = BaseCarHarness("Ford Q4 connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable])
+  rivian_a = BaseCarHarness("Rivian A connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable])
+  rivian_b = BaseCarHarness("Rivian B connector", parts=[Accessory.harness_box, Accessory.comma_power, Cable.long_obdc_cable])
+  tesla_a = BaseCarHarness("Tesla A connector", parts=[Accessory.harness_box, Cable.long_obdc_cable])
+  tesla_b = BaseCarHarness("Tesla B connector", parts=[Accessory.harness_box, Cable.long_obdc_cable])
+  psa_a = BaseCarHarness("PSA A connector", parts=[Accessory.harness_box, Cable.long_obdc_cable])
 
 
 class Device(EnumBase):
@@ -172,7 +172,7 @@ class CarParts:
     return copy.deepcopy(self)
 
   @classmethod
-  def common(cls, add: list[EnumBase] = None, remove: list[EnumBase] = None):
+  def common(cls, add: list[EnumBase] | None = None, remove: list[EnumBase] | None = None):
     p = [part for part in (add or []) + DEFAULT_CAR_PARTS if part not in (remove or [])]
     return cls(p)
 
@@ -189,7 +189,7 @@ CarFootnote = namedtuple("CarFootnote", ["text", "column", "docs_only", "setup_n
 class CommonFootnote(Enum):
   EXP_LONG_AVAIL = CarFootnote(
     "openpilot Longitudinal Control (Alpha) is available behind a toggle; " +
-    "the toggle is only available in non-release branches such as `devel` or `nightly-dev`.",
+    "the toggle is only available in non-release branches such as `nightly-dev`.",
     Column.LONGITUDINAL, docs_only=True)
 
 
@@ -243,6 +243,8 @@ class CarDocs:
 
   # all the parts needed for the supported car
   car_parts: CarParts = field(default_factory=CarParts)
+  # Mazda requires comma power
+  requires_comma_power: bool = False
 
   merged: bool = True
   support_type: SupportType = SupportType.UPSTREAM
@@ -258,11 +260,9 @@ class CarDocs:
     self.longitudinal_control = CP.openpilotLongitudinalControl and not CP.alphaLongitudinalAvailable
 
     if self.merged and CP.dashcamOnly:
-      if self.support_type != SupportType.REVIEW:
+      if self.support_type not in (SupportType.CUSTOM, SupportType.REVIEW):
         self.support_type = SupportType.DASHCAM
         self.support_link = "#dashcam"
-      else:
-        self.support_link = "#under-review"
 
     # longitudinal column
     op_long = "Stock"
@@ -361,7 +361,7 @@ class CarDocs:
 
       # experimental mode
       exp_link = "<a href='https://blog.comma.ai/090release/#experimental-mode' target='_blank' class='highlight'>Experimental mode</a>"
-      if CP.openpilotLongitudinalControl and not CP.alphaLongitudinalAvailable:
+      if CP.openpilotLongitudinalControl and not CP.alphaLongitudinalAvailable and CP.autoResumeSng:
         sentence_builder += f" Traffic light and stop sign handling is also available in {exp_link}."
 
       return sentence_builder.format(car_model=f"{self.make} {self.model}", alc=alc, acc=acc)
@@ -398,7 +398,7 @@ class CarDocs:
 
 @dataclass
 class ExtraCarDocs(CarDocs):
-  package: str = "Any"
+  package: str = "All"
   merged: bool = False
   support_type: SupportType = SupportType.INCOMPATIBLE
   support_link: str | None = "#incompatible"

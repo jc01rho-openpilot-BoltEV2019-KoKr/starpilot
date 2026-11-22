@@ -1,108 +1,46 @@
 ---
 name: starpilot-sync
-description: StarPilot 업스트림 동기화 워크플로우 - paddle5에 upstream/StarPilot 머지, paddle5_215-55-17에 paddle5 머지, 두 브랜치 푸시. "starpilot sync", "upstream sync", "동기화", "paddle5 머지" 등에 트리거.
+description: StarPilot 업스트림 동기화 - paddle5에 upstream/stable 머지, paddle5_215-55-17에 paddle5 머지, 검증 후 PR로 두 브랜치 반영. "starpilot sync", "upstream sync", "동기화", "paddle5 머지" 등에 트리거.
 ---
 
-# StarPilot Sync Skill
+# StarPilot Sync Skill (upstream/stable 기준)
 
-## 워크플로우 순서
+2026-11-22부터 두 브랜치는 upstream/stable 위에 다시 올라가 있다. upstream/StarPilot은 0b2061df(Branch-Migration StarPilot -> stable)에서 동결됐고 더 이상 따라가지 않는다. 기존 브랜치 끝은 backup/paddle5-before-stable, backup/paddle5_215-55-17-before-stable 에 남아 있다.
+
+## 레이아웃 요약 (stable)
+- 파이썬 코드는 openpilot/ 패키지 아래(openpilot/cereal, openpilot/common, openpilot/selfdrive, openpilot/starpilot, openpilot/system). import는 openpilot.* 이다.
+- opendbc_repo, panda, msgq_repo 등은 서브모듈이 아닌 일반 폴더다. upstream-sync.json 은 그 출처 기록이며 이 포크에서는 수정하지 않는다(검증기는 형식만 본다).
+- 저장소 어디에도 AGENTS.md(대소문자 무관)나 .gitmodules 를 추적하면 기기 업데이터(openpilot/common/vendor_manifest.py validate_layout)가 업데이트를 거부한다. 절대 커밋하지 않는다.
+- 이 포크는 prebuilt 마커를 추적하지 않는다. 기기는 부팅 때 build.py 로 직접 빌드한다. upstream 머지로 루트의 prebuilt 파일이 다시 생기면 지운다(git rm prebuilt).
+
+## 워크플로우
+작업은 메인 체크아웃이 아니라 전용 워크트리에서 한다.
 
 ### 1. paddle5 동기화
 ```
-git checkout paddle5
-git fetch upstream
-git merge upstream/StarPilot --no-edit
+git fetch upstream stable && git fetch origin
+git worktree add ../wt-sync -b sync/paddle5 origin/paddle5
+cd ../wt-sync
+git merge upstream/stable --no-edit
+git ls-files prebuilt && git rm -q prebuilt   # 다시 생겼으면 제거
 ```
+충돌은 양쪽이 같은 영역을 바꾼 파일에서만 난다. 포크 튜닝 파일은 먼저 upstream이 로컬 변경을 이미 포함했는지 git diff 로 확인하고, 포함했으면 upstream 채택, 아니면 git merge-file 3-way 로 공존시킨다. 보존 가치가 없는 로컬 잔재는 --theirs. 파일 전체 --ours 는 금지.
 
-충돌 파일은 **양쪽(paddle5, upstream)이 같은 영역을 수정한 파일**이다 (upstream만 수정한 파일은 auto-merge되어 이미 최신 반영, 충돌 목록에 안 온다). 파일 유형으로 구분:
-- **로컬 튜닝 파일** (longcontrol.py, opendbc_repo/opendbc/car/gm/carcontroller.py 등 로컬과 upstream이 같은 함수를 수정): 먼저 `git diff`로 upstream이 로컬 변경을 이미 포함(superset)했는지 확인. 포함 시 upstream 버전 채택, 아니면 `git merge-file` 3-way로 upstream 개선과 로컬 튜닝을 공존.
-- **로컬 변경이 보존 가치 없는 파일** (노이즈/구버전 잔재): upstream 최신을 원하므로 `git checkout --theirs`.
-- `--ours`는 로컬 버전을 반드시 지켜야 하는 예외에만. 맹목적 `--ours`는 upstream 개선을 버리므로 금지.
-
-### 1.5 충돌 해결 후 검증 (커밋 전 필수)
-
-충돌 마커를 모두 제거하고 stage하기 전에 반드시 검증한다. `.venv` 부재 시 시스템 `python3`(capnp 설치 확인)로 대체 가능하나, 검증 생략은 금지.
-
-- **마커 잔여 확인**: `grep -rn '^<<<<<<<\|^=======\|^>>>>>>>' --include='*.py' --include='*.capnp' .` → 결과 없어야 함.
-- **py_compile**: 편집·해결한 모든 `.py` 파일을 `python3 -m py_compile <files...>` → 전부 통과해야 함(마커 잔여·union 들여쓰기 오류 탐지).
-- **capnp 스키마 + ordinal + union + round-trip + consumer 검증** (`*.capnp` 변경 시 필수, `cereal/log.capnp` 등). `capnp.load` 성공은 "문법·로딩 가능"만 증명할 뿐, ordinal 중복/갭이나 의미적 누락을 **탐지하지 않는다**. 아래 heredoc을 실행한다:
-  ```bash
-  python3 - <<'PY'
-  import capnp  # pycapnp
-  capnp.remove_import_hook()
-  log = capnp.load('cereal/log.capnp')          # 로드 성공 = 문법·참조 해결 OK (중복/갭 미탐지)
-
-  ev = log.Event.schema
-
-  # (1) 명시 ordinal: 고유 + 연속(0..max). 비-union 필드(logMonoTime@0, valid@67 등)는
-  #     ordinal이 explicit여도 순수 스칼라 필드이므로 반드시 대상에 포함해 함께 검사한다.
-  ords = sorted(f.proto.ordinal.explicit for f in ev.fields_list
-                if f.proto.ordinal.which() == 'explicit')
-  assert len(ords) == len(set(ords)), f'ordinal 중복: {[o for o in ords if ords.count(o)>1]}'
-  assert ords == list(range(min(ords), max(ords)+1)), f'ordinal 갭/불연속: {ords}'
-
-  # (2) union 멤버 식별: discriminant 값이 0xffff(65535)가 아니면 union arm.
-  #     logMonoTime/valid는 비-union 일반 필드이므로 제외된다.
-  members = [f for f in ev.fields_list if f.proto.discriminantValue != 0xffff]
-  assert members, 'Event union 멤버 없음(스키마 파싱 이상)'
-
-  # (3) 모든 union 멤버 init 가능 여부 — 로컬/업스트림 신규 arm 포함 전수 검증.
-  #     list-backed arm은 0-길이 초기화에 실패할 수 있으므로 KjException 시 길이 1로 재시도.
-  for f in members:
-      try:
-          log.Event.new_message().init(f.proto.name)
-      except capnp.lib.capnp.KjException:
-          m = log.Event.new_message()
-          m.init(f.proto.name, 1)
-
-  # (4) round-trip: 변경/신규 필드 + 로컬 보존 union arm(naviData 등) 직렬화→역직렬화.
-  #     list-backed arm을 포함해 KjException 가능하니 동일 폴백. reader는 반드시
-  #     context manager로 열고 닫고, which()로 활성 arm을 재확인한다.
-  #     ⟦필드명 목록은 실제 diff에 맞춰 갱신⟧
-  for name in ('naviData', 'driverMonitoringState'):
-      root = log.Event.new_message()
-      try:
-          root.init(name)
-      except capnp.lib.capnp.KjException:
-          root = log.Event.new_message()
-          root.init(name, 1)
-      wire = root.to_bytes()
-      with log.Event.from_bytes(wire) as reader:
-          assert reader.which() == name, f'{name} round-trip 실패: {reader.which()}'
-
-  print('capnp OK: load, ordinals unique+contiguous, union init, round-trip')
-  PY
-  ```
-  - **신규 params 키 3중 게이트** (2026-09 HomeScreenName 무한 크래시: `params_pyx`는 모르는 키에 `KeyError`가 아니라 `UnknownKeyName`을 던진다. 게다가 2026-09-03~09 빌드 커밋이 옛 헤더로 `.a`/`.so`를 찍어 소스(`.h`)와 산출물(`.a`/`.so`)이 실제로 불일치했음):
-    - **(A) 산출물-헤더 정합 검증**: 머지에 `params_keys.h` 신규 키가 있으면, 커밋된 바이너리에 키 문자열이 실제로 들어있는지 확인한다. `strings -a common/libcommon.a common/params_pyx.so | grep -c '^<신규키>$'` → 0이면 **그 바이너리는 그 키를 모른다**. 원인 수정(해당 헤더로 재빌드) 없이 push 금지.
-    - **(B) UI 시작 경로 감사**: 신규 키마다 `grep -rn '<키>' --include='*.py' selfdrive/ui/ system/ui/ | grep -E 'get\(|get_default_value|get_bool|get_int'` → 호출부 전수 확인. `home.py::_get_version_text`처럼 매 프레임 도는 렌더 경로(`_render`/`_refresh`)에서 읽으면 크래시 = 검은 화면이므로 최우선.
-    - **(C) 수정 규칙**: `params.get`/`get_default_value` 호출을 `try/except Exception`으로 감싸고 상수 폴백(예: `DEFAULT_HOME_SCREEN_NAME`). `except (AttributeError, KeyError)` 한정은 금지.
-    - **테스트**: 신규 키마다 구빌드 더블(`get`/`get_default_value` 모두에서 예외를 던지는 FakeParams)로 폴백 값을 단언하는 테스트 1건 추가 (참조: `selfdrive/ui/lib/tests/test_starpilot_version.py::test_home_screen_name_survives_unknown_key`).
-    - **기존 키도 동일**: `DrivingModelName` 등 `home.py:264`, `mici/layouts/home.py:207`의 기존 `get_default_value` 호출도 머지 시점에 broad-except 여부를 함께 확인한다.
-  - **ordinal 규칙**: union arm은 discriminant ordinal(0..N)을 중복 없이 연속으로 유지해야 한다. 로컬 커스텀 필드(예: `naviData @152`)는 업스트림 신규 필드(예: `driverMonitoringState @151`)와 번호가 겹치지 않도록 다음 빈 번호로 배치한다.
-  - **중첩 struct/enum 변경은 별도 round-trip·consumer 검증이 필요**: `Event` top-level ordinal 검증만으로는 `DriverData.sleepProb`, `DriverMonitoringState.lockoutCount`/`lockoutMinutesRemaining` 같은 중첩 필드 추가·이름 변경을 **기계적으로 탐지할 수 없다**. 변경된 중첩 struct/enum(예: `DriverStateV2`, `DriverMonitoringState.MonitoringPolicy`)은:
-    - **serialize/deserialize round-trip**: 값 채워서 `to_bytes()`→`from_bytes()`→필드 접근 정상 확인.
-    - **consumer 일치**: 추가/이름변경한 enum 값(예: alert, `EventName` 등)이 모든 consumer에서 유일하게 존재하는지 확인. 변경된 스키마를 참조하는 Python consumer 파일(예: `selfdrive/monitoring/policy.py`, `selfdrive/ui/*/driver_state.py`, migration `selfdrive/test/process_replay/migration.py`)을 `py_compile` 또는 타겟 테스트로 검증.
-- **검증 실패 시 커밋·push 금지.** 원인 수정 후 Step 1.5 전체 재실행.
+### 1.5 커밋 전 검증 (필수)
+- 충돌 마커: `git diff --check` 와 `grep -rn '^<<<<<<<\|^>>>>>>>' --include='*.py' --include='*.capnp' openpilot opendbc_repo` 결과가 없어야 한다.
+- py_compile: 바뀐 모든 .py 를 `python3 -m py_compile`.
+- capnp (openpilot/cereal/*.capnp 또는 opendbc_repo/opendbc/car/car.capnp 변경 시): capnp.load, Event 유니온 서수 고유+연속, 모든 유니온 멤버 init, 포크 필드(naviData 등) round-trip. 포크 서수는 upstream 신규 필드와 겹치면 upstream 마지막 번호 다음으로 옮긴다. 현재 포크 배정: Event.naviData, EventName.ndaCameraWarn, AudibleAlert.speedDown (log.capnp 에서 확인). 추적되는 생성물(openpilot/cereal/gen)이 있으면 stable 규칙대로 재생성해 같이 커밋한다.
+- params: openpilot/common/params_keys.h 에 포크 키가 남아 있는지, `python3 -m pytest openpilot/common/tests/test_params_registry_usage.py` 등 params 레지스트리 테스트 통과.
+- 레이아웃: `python3 tools/vendor/check.py --revision HEAD` (커밋 후) 통과, `git ls-files | grep -i 'agents.md$\|\.gitmodules$'` 결과 없음.
+- 포크 기능 테스트: NDA(navi_camera, road_speed_limiter), 저전압 Discord, Bolt 관련 테스트를 기준선과 비교. x86 호스트에서는 aarch64 산출물 때문에 일부 수집 실패가 정상이므로 머지 전 브랜치에서 같은 명령으로 기준선을 먼저 만든다.
+- 실패하면 커밋·푸시 금지.
 
 ### 2. paddle5_215-55-17 동기화
 ```
-git checkout paddle5_215-55-17
-git merge paddle5 --no-edit
+git worktree add ../wt-sync-215 -b sync/215 origin/paddle5_215-55-17
+cd ../wt-sync-215 && git merge sync/paddle5 --no-edit
 ```
+215 전용 변경은 opendbc_repo/opendbc/car/interfaces.py 의 SPEED_CORRECTION = 1.04 (휠속도 +4%) 하나다. 충돌 시 그 hunk만 로컬을 유지한다. 머지 후 215 전용 델타(git diff sync/paddle5 HEAD)가 그 변경뿐인지 확인한다. capnp 가 바뀌었으면 1.5를 다시 통과한다.
 
-충돌 발생 시: 215 전용 변경인 hunk만 로컬(paddle5_215-55-17)을 유지하고 나머지는 paddle5 쪽을 채택한다. 파일 전체 `--ours`는 금지.
-
-> **capnp 변경 병합 시 재게이트**: Step 2 머지 결과에 `*.capnp` 변경이 포함되어 있으면 **병합 완료 직후** Step 1.5를 다시 통과해야 한다. 로컬 `paddle5`에서 통과한 게이트가 `215-55-17` 측 변경과의 충돌 해결로 의미가 달라질 수 있다.
-
-### 3. Push
-```
-git push origin paddle5
-git push origin paddle5_215-55-17
-```
-
-## 원칙
-- Step 1 충돌은 파일 유형별로 superset 확인/3-way 머지 또는 `--theirs`(upstream 최신), `--ours`는 예외에만. Step 2 충돌은 215 전용 변경인 hunk만 로컬을 유지하고 파일 전체 `--ours`는 금지.
-- **충돌 해결 후 커밋 전 반드시 py_compile + capnp load+ordinal+union init+round-trip+consumer + 신규 params 키 UI-안전 게이트(Step 1.5)를 통과해야 한다. 실패 시 push 금지.**
-- merge는 `--no-edit`으로 자동 커밋 메시지 사용.
-- 완료 후 `paddle5` 브랜치에서 대기.
+### 3. 반영
+sync 브랜치를 푸시하고 gh -R jc01rho-openpilot-BoltEV2019-KoKr/starpilot 로 PR(sync/paddle5 -> paddle5, sync/215 -> paddle5_215-55-17)을 만들어 머지한다. 머지 후 원격 브랜치가 upstream/stable 을 포함하는지(git merge-base --is-ancestor) 다시 읽고, 워크트리와 sync 브랜치를 지운다. force push 금지.

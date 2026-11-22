@@ -1,4 +1,89 @@
-#include "usb_declarations.h"
+#pragma once
+
+#include "board/drivers/drivers.h"
+
+// IRQs: OTG_FS
+
+typedef union {
+  uint16_t w;
+  struct BW {
+    uint8_t msb;
+    uint8_t lsb;
+  }
+  bw;
+} uint16_t_uint8_t;
+
+typedef union _USB_Setup {
+  uint32_t d8[2];
+  struct _SetupPkt_Struc
+  {
+    uint8_t           bmRequestType;
+    uint8_t           bRequest;
+    uint16_t_uint8_t  wValue;
+    uint16_t_uint8_t  wIndex;
+    uint16_t_uint8_t  wLength;
+  } b;
+} USB_Setup_TypeDef;
+
+// **** supporting defines ****
+#define  USB_REQ_GET_STATUS                             0x00
+#define  USB_REQ_SET_ADDRESS                            0x05
+#define  USB_REQ_GET_DESCRIPTOR                         0x06
+#define  USB_REQ_SET_CONFIGURATION                      0x09
+#define  USB_REQ_SET_INTERFACE                          0x0B
+
+#define  USB_DESC_TYPE_DEVICE                           0x01
+#define  USB_DESC_TYPE_CONFIGURATION                    0x02
+#define  USB_DESC_TYPE_STRING                           0x03
+#define  USB_DESC_TYPE_INTERFACE                        0x04
+#define  USB_DESC_TYPE_ENDPOINT                         0x05
+#define  USB_DESC_TYPE_DEVICE_QUALIFIER                 0x06
+#define  USB_DESC_TYPE_BINARY_OBJECT_STORE              0x0f
+
+// offsets for configuration strings
+#define  STRING_OFFSET_LANGID                           0x00
+#define  STRING_OFFSET_IMANUFACTURER                    0x01
+#define  STRING_OFFSET_IPRODUCT                         0x02
+#define  STRING_OFFSET_ISERIAL                          0x03
+#define  STRING_OFFSET_ICONFIGURATION                   0x04
+
+// WinUSB requests
+#define  WINUSB_REQ_GET_COMPATID_DESCRIPTOR             0x04
+#define  WINUSB_REQ_GET_EXT_PROPS_OS                    0x05
+#define  WINUSB_REQ_GET_DESCRIPTOR                      0x07
+
+#define STS_DATA_UPDT                          2
+#define STS_SETUP_UPDT                         6
+
+// for the repeating interfaces
+#define DSCR_INTERFACE_LEN 9
+#define DSCR_ENDPOINT_LEN 7
+#define DSCR_CONFIG_LEN 9
+#define DSCR_DEVICE_LEN 18
+
+// endpoint types
+#define ENDPOINT_TYPE_BULK 2
+#define ENDPOINT_TYPE_INT 3
+
+// These are arbitrary values used in bRequest
+#define  MS_VENDOR_CODE 0x20
+#define  WEBUSB_VENDOR_CODE 0x30
+
+// BOS constants
+#define BINARY_OBJECT_STORE_DESCRIPTOR_LENGTH   0x05
+#define BINARY_OBJECT_STORE_DESCRIPTOR          0x0F
+#define WINUSB_PLATFORM_DESCRIPTOR_LENGTH       0x9E
+
+// Convert machine byte order to USB byte order
+#define TOUSBORDER(num)\
+  ((num) & 0xFFU), (((uint16_t)(num) >> 8) & 0xFFU)
+
+// take in string length and return the first 2 bytes of a string descriptor
+#define STRING_DESCRIPTOR_HEADER(size)\
+  (((((size) * 2) + 2) & 0xFF) | 0x0300)
+
+#define ENDPOINT_RCV 0x80
+#define ENDPOINT_SND 0x00
 
 static uint8_t response[USBPACKET_MAX_SIZE];
 
@@ -25,11 +110,6 @@ static void *USB_ReadPacket(void *dest, uint16_t len) {
 }
 
 static void USB_WritePacket(const void *src, uint16_t len, uint32_t ep) {
-  #ifdef DEBUG_USB
-  print("writing ");
-  hexdump(src, len);
-  #endif
-
   uint32_t numpacket = ((uint32_t)len + (USBPACKET_MAX_SIZE - 1U)) / USBPACKET_MAX_SIZE;
   uint32_t count32b = 0;
   count32b = ((uint32_t)len + 3U) / 4U;
@@ -52,11 +132,6 @@ static void USB_WritePacket(const void *src, uint16_t len, uint32_t ep) {
 // IN EP 0 TX FIFO has a max size of 127 bytes (much smaller than the rest)
 // so use TX FIFO empty interrupt to send larger amounts of data
 static void USB_WritePacket_EP0(uint8_t *src, uint16_t len) {
-  #ifdef DEBUG_USB
-  print("writing ");
-  hexdump(src, len);
-  #endif
-
   uint16_t wplen = MIN(len, 0x40);
   USB_WritePacket(src, wplen, 0);
 
@@ -156,7 +231,7 @@ static void usb_setup(void) {
       ENDPOINT_RCV | 1, ENDPOINT_TYPE_BULK, // Endpoint Num/Direction, Type
       TOUSBORDER(0x0040U), // Max Packet (0x0040)
       0x00, // Polling Interval (NA)
-      // endpoint 2, send serial
+      // endpoint 2, bootstub flashing
       DSCR_ENDPOINT_LEN, USB_DESC_TYPE_ENDPOINT, // Length, Type
       ENDPOINT_SND | 2, ENDPOINT_TYPE_BULK, // Endpoint Num/Direction, Type
       TOUSBORDER(0x0040U), // Max Packet (0x0040)
@@ -176,7 +251,7 @@ static void usb_setup(void) {
       ENDPOINT_RCV | 1, ENDPOINT_TYPE_INT, // Endpoint Num/Direction, Type
       TOUSBORDER(0x0040U), // Max Packet (0x0040)
       0x05, // Polling Interval (5 frames)
-      // endpoint 2, send serial
+      // endpoint 2, bootstub flashing
       DSCR_ENDPOINT_LEN, USB_DESC_TYPE_ENDPOINT, // Length, Type
       ENDPOINT_SND | 2, ENDPOINT_TYPE_BULK, // Endpoint Num/Direction, Type
       TOUSBORDER(0x0040U), // Max Packet (0x0040)
@@ -380,10 +455,6 @@ static void usb_setup(void) {
       // set now?
       USBx_DEVICE->DCFG |= ((setup.b.wValue.w & 0x7fU) << 4);
 
-      #ifdef DEBUG_USB
-        print(" set address\n");
-      #endif
-
       USB_WritePacket(0, 0, 0);
       USBx_OUTEP(0U)->DOEPCTL |= USB_OTG_DOEPCTL_CNAK;
 
@@ -502,11 +573,8 @@ static void usb_setup(void) {
       control_req.length = setup.b.wLength.w;
 
       resp_len = comms_control_handler(&control_req, response);
-      // response pending if -1 was returned
-      if (resp_len != -1) {
-        USB_WritePacket(response, MIN(resp_len, setup.b.wLength.w), 0);
-        USBx_OUTEP(0U)->DOEPCTL |= USB_OTG_DOEPCTL_CNAK;
-      }
+      USB_WritePacket(response, MIN(resp_len, setup.b.wLength.w), 0);
+      USBx_OUTEP(0U)->DOEPCTL |= USB_OTG_DOEPCTL_CNAK;
   }
 }
 
@@ -521,46 +589,12 @@ void usb_irqhandler(void) {
   unsigned int gotgint = USBx->GOTGINT;
   unsigned int daint = USBx_DEVICE->DAINT;
 
-  // gintsts SUSPEND? 04008428
-  #ifdef DEBUG_USB
-    puth(gintsts);
-    print(" ");
-    /*puth(USBx->GCCFG);
-    print(" ");*/
-    puth(gotgint);
-    print(" ep ");
-    puth(daint);
-    print(" USB interrupt!\n");
-  #endif
-
   if ((gintsts & USB_OTG_GINTSTS_CIDSCHG) != 0U) {
     print("connector ID status change\n");
   }
 
   if ((gintsts & USB_OTG_GINTSTS_USBRST) != 0U) {
-    #ifdef DEBUG_USB
-      print("USB reset\n");
-    #endif
     usb_reset();
-  }
-
-  if ((gintsts & USB_OTG_GINTSTS_ENUMDNE) != 0U) {
-    #ifdef DEBUG_USB
-      print("enumeration done\n");
-    #endif
-    // Full speed, ENUMSPD
-    //puth(USBx_DEVICE->DSTS);
-  }
-
-  if ((gintsts & USB_OTG_GINTSTS_OTGINT) != 0U) {
-    #ifdef DEBUG_USB
-      print("OTG int:");
-      puth(USBx->GOTGINT);
-      print("\n");
-    #endif
-
-    // getting ADTOCHG
-    //USBx->GOTGINT = USBx->GOTGINT;
   }
 
   // RX FIFO first
@@ -569,27 +603,10 @@ void usb_irqhandler(void) {
     volatile unsigned int rxst = USBx->GRXSTSP;
     int status = (rxst & USB_OTG_GRXSTSP_PKTSTS) >> 17;
 
-    #ifdef DEBUG_USB
-      print(" RX FIFO:");
-      puth(rxst);
-      print(" status: ");
-      puth(status);
-      print(" len: ");
-      puth((rxst & USB_OTG_GRXSTSP_BCNT) >> 4);
-      print("\n");
-    #endif
-
     if (status == STS_DATA_UPDT) {
       int endpoint = (rxst & USB_OTG_GRXSTSP_EPNUM);
       int len = (rxst & USB_OTG_GRXSTSP_BCNT) >> 4;
       (void)USB_ReadPacket(&usbdata, len);
-      #ifdef DEBUG_USB
-        print("  data ");
-        puth(len);
-        print("\n");
-        hexdump(&usbdata, len);
-      #endif
-
       if (endpoint == 2) {
         comms_endpoint2_write((uint8_t *) usbdata, len);
       }
@@ -600,11 +617,6 @@ void usb_irqhandler(void) {
       }
     } else if (status == STS_SETUP_UPDT) {
       (void)USB_ReadPacket(&setup, 8);
-      #ifdef DEBUG_USB
-        print("  setup ");
-        hexdump(&setup, 8);
-        print("\n");
-      #endif
     } else {
       // status is neither STS_DATA_UPDT or STS_SETUP_UPDT, skip
     }
@@ -624,9 +636,6 @@ void usb_irqhandler(void) {
 
   if ((gintsts & USB_OTG_GINTSTS_BOUTNAKEFF) || (gintsts & USB_OTG_GINTSTS_GINAKEFF)) {
     // no global NAK, why is this getting set?
-    #ifdef DEBUG_USB
-      print("GLOBAL NAK\n");
-    #endif
     USBx_DEVICE->DCTL |= USB_OTG_DCTL_CGONAK | USB_OTG_DCTL_CGINAK;
   }
 
@@ -642,51 +651,15 @@ void usb_irqhandler(void) {
 
   // out endpoint hit
   if ((gintsts & USB_OTG_GINTSTS_OEPINT) != 0U) {
-    #ifdef DEBUG_USB
-      print("  0:");
-      puth(USBx_OUTEP(0U)->DOEPINT);
-      print(" 2:");
-      puth(USBx_OUTEP(2U)->DOEPINT);
-      print(" 3:");
-      puth(USBx_OUTEP(3U)->DOEPINT);
-      print(" ");
-      puth(USBx_OUTEP(3U)->DOEPCTL);
-      print(" 4:");
-      puth(USBx_OUTEP(4)->DOEPINT);
-      print(" OUT ENDPOINT\n");
-    #endif
-
     if ((USBx_OUTEP(2U)->DOEPINT & USB_OTG_DOEPINT_XFRC) != 0U) {
-      #ifdef DEBUG_USB
-        print("  OUT2 PACKET XFRC\n");
-      #endif
       USBx_OUTEP(2U)->DOEPTSIZ = (1UL << 19) | 0x40U;
       USBx_OUTEP(2U)->DOEPCTL |= USB_OTG_DOEPCTL_EPENA | USB_OTG_DOEPCTL_CNAK;
     }
 
     if ((USBx_OUTEP(3U)->DOEPINT & USB_OTG_DOEPINT_XFRC) != 0U) {
-      #ifdef DEBUG_USB
-        print("  OUT3 PACKET XFRC\n");
-      #endif
       // NAK cleared by process_can (if tx buffers have room)
       outep3_processing = false;
       refresh_can_tx_slots_available();
-    } else if ((USBx_OUTEP(3U)->DOEPINT & 0x2000U) != 0U) {
-      #ifdef DEBUG_USB
-        print("  OUT3 PACKET WTF\n");
-      #endif
-      // if NAK was set trigger this, unknown interrupt
-      // TODO: why was this here? fires when TX buffers when we can't clear NAK
-      // USBx_OUTEP(3U)->DOEPTSIZ = (1U << 19) | 0x40U;
-      // USBx_OUTEP(3U)->DOEPCTL |= USB_OTG_DOEPCTL_CNAK;
-    } else if ((USBx_OUTEP(3U)->DOEPINT) != 0U) {
-      #ifdef DEBUG_USB
-        print("OUTEP3 error ");
-        puth(USBx_OUTEP(3U)->DOEPINT);
-        print("\n");
-      #endif
-    } else {
-      // USBx_OUTEP(3U)->DOEPINT is 0, ok to skip
     }
 
     if ((USBx_OUTEP(0U)->DOEPINT & USB_OTG_DIEPINT_XFRC) != 0U) {
@@ -706,14 +679,6 @@ void usb_irqhandler(void) {
 
   // interrupt endpoint hit (Page 1221)
   if ((gintsts & USB_OTG_GINTSTS_IEPINT) != 0U) {
-    #ifdef DEBUG_USB
-      print("  ");
-      puth(USBx_INEP(0U)->DIEPINT);
-      print(" ");
-      puth(USBx_INEP(1U)->DIEPINT);
-      print(" IN ENDPOINT\n");
-    #endif
-
     // Should likely check the EP of the IN request even if there is
     // only one IN endpoint.
 
@@ -731,9 +696,6 @@ void usb_irqhandler(void) {
       case 0: ////// Bulk config
         // *** IN token received when TxFIFO is empty
         if ((USBx_INEP(1U)->DIEPINT & USB_OTG_DIEPMSK_ITTXFEMSK) != 0U) {
-          #ifdef DEBUG_USB
-          print("  IN PACKET QUEUE\n");
-          #endif
           // TODO: always assuming max len, can we get the length?
           USB_WritePacket((void *)response, comms_can_read(response, 0x40), 1);
         }
@@ -742,9 +704,6 @@ void usb_irqhandler(void) {
       case 1: ////// Interrupt config
         // *** IN token received when TxFIFO is empty
         if ((USBx_INEP(1U)->DIEPINT & USB_OTG_DIEPMSK_ITTXFEMSK) != 0U) {
-          #ifdef DEBUG_USB
-          print("  IN PACKET QUEUE\n");
-          #endif
           // TODO: always assuming max len, can we get the length?
           int len = comms_can_read(response, 0x40);
           if (len > 0) {
@@ -758,10 +717,6 @@ void usb_irqhandler(void) {
     }
 
     if ((USBx_INEP(0U)->DIEPINT & USB_OTG_DIEPMSK_ITTXFEMSK) != 0U) {
-      #ifdef DEBUG_USB
-      print("  IN PACKET QUEUE\n");
-      #endif
-
       if ((ep0_txlen != 0U) && ((USBx_INEP(0U)->DTXFSTS & USB_OTG_DTXFSTS_INEPTFSAV) >= 0x40U)) {
         uint16_t len = MIN(ep0_txlen, 0x40);
         USB_WritePacket(ep0_txdata, len, 0);

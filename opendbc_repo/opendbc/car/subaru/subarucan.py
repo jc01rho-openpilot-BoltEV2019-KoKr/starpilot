@@ -3,10 +3,6 @@ from opendbc.car.subaru.values import CanBus
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 
-CRUISE_BUTTON_MAIN = 1
-CRUISE_BUTTON_SET = 2
-CRUISE_BUTTON_RESUME = 3
-
 
 def create_steering_control(packer, apply_torque, steer_req):
   values = {
@@ -17,9 +13,9 @@ def create_steering_control(packer, apply_torque, steer_req):
   return packer.make_can_msg("ES_LKAS", 0, values)
 
 
-def create_steering_control_angle(packer, apply_angle, steer_req, bus=CanBus.main):
+def create_steering_control_angle(packer, apply_torque, steer_req, bus=CanBus.main):
   values = {
-    "LKAS_Output": apply_angle,
+    "LKAS_Output": apply_torque,
     "LKAS_Request": steer_req,
     "SET_3": 3
   }
@@ -71,21 +67,7 @@ def create_es_distance(packer, frame, es_distance_msg, bus, pcm_cancel_cmd, long
   return packer.make_can_msg("ES_Distance", bus, values)
 
 
-def create_cruise_buttons(packer, frame, cruise_buttons_msg, button, bus=CanBus.main):
-  values = {s: cruise_buttons_msg[s] for s in [
-    "CHECKSUM",
-    "Signal1",
-    "Signal2",
-  ]}
-  values["COUNTER"] = frame % 0x10
-  values["Main"] = button == CRUISE_BUTTON_MAIN
-  values["Set"] = button == CRUISE_BUTTON_SET
-  values["Resume"] = button == CRUISE_BUTTON_RESUME
-  return packer.make_can_msg("Cruise_Buttons", bus, values)
-
-
-def create_es_lkas_state(packer, frame, es_lkas_state_msg, enabled, visual_alert, left_line, right_line, left_lane_depart, right_lane_depart,
-                         bus=CanBus.main):
+def create_es_lkas_state(packer, frame, es_lkas_state_msg, enabled, visual_alert, left_line, right_line, left_lane_depart, right_lane_depart):
   values = {s: es_lkas_state_msg[s] for s in [
     "CHECKSUM",
     "LKAS_Alert_Msg",
@@ -141,16 +123,15 @@ def create_es_lkas_state(packer, frame, es_lkas_state_msg, enabled, visual_alert
     values["LKAS_ACTIVE"] = 1  # Show LKAS lane lines
     values["LKAS_Dash_State"] = 2  # Green enabled indicator
   else:
-    values["LKAS_ACTIVE"] = 0
     values["LKAS_Dash_State"] = 0  # LKAS Not enabled
 
   values["LKAS_Left_Line_Visible"] = int(left_line)
   values["LKAS_Right_Line_Visible"] = int(right_line)
 
-  return packer.make_can_msg("ES_LKAS_State", bus, values)
+  return packer.make_can_msg("ES_LKAS_State", CanBus.main, values)
 
 
-def create_es_dashstatus(packer, frame, dashstatus_msg, enabled, long_enabled, long_active, lead_visible, bus=CanBus.main):
+def create_es_dashstatus(packer, frame, dashstatus_msg, enabled, long_enabled, long_active, lead_visible):
   values = {s: dashstatus_msg[s] for s in [
     "CHECKSUM",
     "PCB_Off",
@@ -166,8 +147,8 @@ def create_es_dashstatus(packer, frame, dashstatus_msg, enabled, long_enabled, l
     "Signal4",
     "Conventional_Cruise",
     "Signal5",
-    "Cruise_Disengaged",
-    "Cruise_Activated",
+    "Cruise_Disengaged_Dash",
+    "Cruise_Activated_Dash",
     "Signal6",
     "Cruise_Set_Speed",
     "Cruise_Fault",
@@ -184,11 +165,12 @@ def create_es_dashstatus(packer, frame, dashstatus_msg, enabled, long_enabled, l
 
   if long_enabled:
     values["Cruise_State"] = 0
-    values["Cruise_Activated"] = enabled
-    values["Cruise_Disengaged"] = 0
+    # TODO: Cruise_Activated_dash should respect gas pressed and standstill stock behavior
+    values["Cruise_Activated_Dash"] = enabled
+    values["Cruise_Disengaged_Dash"] = 0
     values["Car_Follow"] = int(lead_visible)
 
-    values["PCB_Off"] = 1 # AEB is not presevered, so show the PCB_Off on dash
+    values["PCB_Off"] = 1 # AEB is not preserved, so show the PCB_Off on dash
     values["LDW_Off"] = 0
     values["Cruise_Fault"] = 0
 
@@ -196,36 +178,10 @@ def create_es_dashstatus(packer, frame, dashstatus_msg, enabled, long_enabled, l
   if values["LKAS_State_Msg"] in (2, 3):
     values["LKAS_State_Msg"] = 0
 
-  return packer.make_can_msg("ES_DashStatus", bus, values)
+  return packer.make_can_msg("ES_DashStatus", CanBus.main, values)
 
 
-def create_stop_start_control(packer, dashlights_msg, raw_dat=None, counter=None, bus=CanBus.alt):
-  """Create the supported Subaru momentary Stop/Start button request.
-
-  Dashlights is a stock periodic message, so preserve the live frame and only
-  change the counter, event bit, and checksum. The raw frame is needed because
-  the DBC does not describe every byte in this message.
-  """
-  if raw_dat:
-    dat = bytearray(raw_dat)
-    if len(dat) != 8:
-      raise ValueError(f"Dashlights frame must be 8 bytes, got {len(dat)}")
-    if counter is None:
-      counter = (int(dashlights_msg.get("COUNTER", 0)) + 1) % 0x10
-    dat[1] = (dat[1] & 0xF0) | (counter % 0x10)
-    dat[6] |= 0x40  # STOP_START, big-endian bit 54
-    dat[0] = ((0x390 & 0xFF) + ((0x390 >> 8) & 0xFF) + sum(dat[1:])) & 0xFF
-    return 0x390, bytes(dat), bus
-
-  values = dict(dashlights_msg)
-  if counter is None:
-    counter = (int(values.get("COUNTER", 0)) + 1) % 0x10
-  values["COUNTER"] = counter % 0x10
-  values["STOP_START"] = 1
-  return packer.make_can_msg("Dashlights", bus, values)
-
-
-def create_es_brake(packer, frame, es_brake_msg, long_enabled, long_active, brake_value, bus=CanBus.main):
+def create_es_brake(packer, frame, es_brake_msg, long_enabled, long_active, brake_value):
   values = {s: es_brake_msg[s] for s in [
     "CHECKSUM",
     "Signal1",
@@ -249,10 +205,10 @@ def create_es_brake(packer, frame, es_brake_msg, long_enabled, long_active, brak
     values["Cruise_Brake_Active"] = brake_value > 0
     values["Cruise_Brake_Lights"] = brake_value >= 70
 
-  return packer.make_can_msg("ES_Brake", bus, values)
+  return packer.make_can_msg("ES_Brake", CanBus.main, values)
 
 
-def create_es_status(packer, frame, es_status_msg, long_enabled, long_active, cruise_rpm, bus=CanBus.main):
+def create_es_status(packer, frame, es_status_msg, long_enabled, long_active, cruise_rpm):
   values = {s: es_status_msg[s] for s in [
     "CHECKSUM",
     "Signal1",
@@ -272,10 +228,10 @@ def create_es_status(packer, frame, es_status_msg, long_enabled, long_active, cr
 
     values["Cruise_Activated"] = long_active
 
-  return packer.make_can_msg("ES_Status", bus, values)
+  return packer.make_can_msg("ES_Status", CanBus.main, values)
 
 
-def create_es_infotainment(packer, frame, es_infotainment_msg, visual_alert, bus=CanBus.main):
+def create_es_infotainment(packer, frame, es_infotainment_msg, visual_alert):
   # Filter stock LKAS disabled and Keep hands on steering wheel OFF alerts
   values = {s: es_infotainment_msg[s] for s in [
     "CHECKSUM",
@@ -298,7 +254,7 @@ def create_es_infotainment(packer, frame, es_infotainment_msg, visual_alert, bus
   if visual_alert == VisualAlert.fcw:
     values["LKAS_State_Infotainment"] = 2
 
-  return packer.make_can_msg("ES_Infotainment", bus, values)
+  return packer.make_can_msg("ES_Infotainment", CanBus.main, values)
 
 
 def create_ascent_lkas_alert(raw_dat: bytes, lateral_active: bool, visual_alert):
@@ -391,83 +347,3 @@ def subaru_checksum(address: int, sig, d: bytearray) -> int:
   for i in range(1, len(d)):
     s += d[i]
   return s & 0xFF
-
-
-def create_brake_pedal(packer, frame, brake_pedal_msg, speed_cmd, brake_cmd):
-  values = {s: brake_pedal_msg[s] for s in sorted([
-    "Brake_Lights",
-    "Brake_Pedal",
-    "Signal1",
-    "Signal2",
-    "Signal3",
-    "Signal4",
-    "Speed",
-  ])}
-
-  values["COUNTER"] = frame % 0x10
-
-  if speed_cmd:
-    values["Speed"] = 3
-  if brake_cmd:
-    values["Brake_Pedal"] = 5
-    values["Brake_Lights"] = 1
-
-  return packer.make_can_msg("Brake_Pedal", CanBus.camera, values)
-
-
-def create_preglobal_brake_pedal(packer, brake_pedal_msg, speed_cmd):
-  values = {s: brake_pedal_msg[s] for s in sorted([
-    "Brake_Pedal",
-    "Signal1",
-    "Speed",
-  ])}
-
-  if speed_cmd:
-    values["Speed"] = 1
-
-  return packer.make_can_msg("Brake_Pedal", CanBus.camera, values)
-
-
-def create_throttle(packer, frame, throttle_msg, throttle_cmd):
-  values = {s: throttle_msg[s] for s in sorted([
-    "CHECKSUM",
-    "Engine_RPM",
-    "Off_Accel",
-    "Signal1",
-    "Signal2",
-    "Signal3",
-    "Throttle_Combo",
-    "Throttle_Cruise",
-    "Throttle_Pedal",
-  ])}
-
-  values["COUNTER"] = frame % 0x10
-
-  if throttle_cmd:
-    values["Throttle_Pedal"] = 5
-
-  return packer.make_can_msg("Throttle", 2, values)
-
-
-def create_preglobal_throttle(packer, frame, throttle_msg, throttle_cmd):
-  values = {s: throttle_msg[s] for s in sorted([
-    "Engine_RPM",
-    "Not_Full_Throttle",
-    "Off_Throttle",
-    "Off_Throttle_2",
-    "Signal1",
-    "Signal2",
-    "Signal3",
-    "Signal4",
-    "Throttle_Body",
-    "Throttle_Combo",
-    "Throttle_Cruise",
-    "Throttle_Pedal",
-  ])}
-
-  values["COUNTER"] = frame % 0x10
-
-  if throttle_cmd:
-    values["Throttle_Pedal"] = 5
-
-  return packer.make_can_msg("Throttle", 2, values)

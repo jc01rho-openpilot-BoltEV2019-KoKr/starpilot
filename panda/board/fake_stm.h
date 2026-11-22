@@ -24,10 +24,13 @@ typedef struct {
 
 TIM_TypeDef timer;
 TIM_TypeDef *MICROSECOND_TIMER = &timer;
-uint32_t microsecond_timer_get(void);
 
 uint32_t microsecond_timer_get(void) {
   return MICROSECOND_TIMER->CNT;
 }
 
 typedef uint32_t GPIO_TypeDef;
+typedef uint32_t ADC_TypeDef;
+typedef uint32_t IRQn_Type;
+#define NUM_INTERRUPTS 163U
+#include "stm32h7/lladc_declarations.h"

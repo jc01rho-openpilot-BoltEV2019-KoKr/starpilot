@@ -1,9 +1,10 @@
 import os
+import hashlib
+import base64
 import opendbc
 import subprocess
-
-local_opendbc_path = os.path.abspath(os.path.join(Dir(".").abspath, "..", "opendbc_repo"))
-opendbc_include_path = local_opendbc_path if os.path.isdir(os.path.join(local_opendbc_path, "opendbc")) else opendbc.INCLUDE_PATH
+import json
+from pathlib import Path
 
 PREFIX = "arm-none-eabi-"
 BUILDER = "DEV"
@@ -17,11 +18,17 @@ if os.getenv("RELEASE"):
   assert os.path.exists(cert_fn), 'Certificate file not found. Please specify absolute path'
 else:
   BUILD_TYPE = "DEBUG"
-  cert_fn = File("./certs/debug").srcnode().relpath
+  cert_fn = File("./board/crypto/certs/debug").srcnode().relpath
   common_flags += ["-DALLOW_DEBUG"]
 
-  if os.getenv("DEBUG"):
-    common_flags += ["-DDEBUG"]
+fault_injection = os.getenv("PANDA_FAULT_INJECTION", "0")
+if fault_injection not in ("0", "1"):
+  raise ValueError("PANDA_FAULT_INJECTION must be 0 or 1")
+if fault_injection == "1":
+  if BUILD_TYPE != "DEBUG":
+    raise ValueError("Fault injection requires a dedicated debug bench build")
+  common_flags += ["-DPANDA_FAULT_INJECTION"]
+  BUILD_TYPE += "-FAULTTEST"
 
 def objcopy(source, target, env, for_signature):
     return '$OBJCOPY -O binary %s %s' % (source[0], target[0])
@@ -29,28 +36,39 @@ def objcopy(source, target, env, for_signature):
 def get_version(builder, build_type):
   try:
     git = subprocess.check_output(["git", "rev-parse", "--short=8", "HEAD"], encoding='utf8').strip()
+    source_root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], encoding='utf8').strip())
   except subprocess.CalledProcessError:
-    git = "unknown"
+    return f"{builder}-unknown-{build_type}"
+  manifest = source_root / "upstream-sync.json"
+  if manifest.is_file():
+    dependency = next(d for d in json.loads(manifest.read_text())["dependencies"] if d["path"] == "panda")
+    # The source commit identifies local firmware changes; P identifies its upstream base.
+    git += f"-P{dependency['commit'][:8]}"
   return f"{builder}-{git}-{build_type}"
 
 def get_key_header(name):
-  from Crypto.PublicKey import RSA
+  public_fn = File(f'./board/crypto/certs/{name}.pub').srcnode().get_path()
+  with open(public_fn, "rb") as f:
+    key = base64.b64decode(f.read().split()[1])
+  values = []
+  for _ in range(3):
+    length = int.from_bytes(key[:4], "big")
+    values.append(key[4:4 + length])
+    key = key[4 + length:]
+  _, e, n = values
+  e, n = int.from_bytes(e, "big"), int.from_bytes(n, "big")
+  assert n.bit_length() == 1024
 
-  public_fn = File(f'./certs/{name}.pub').srcnode().get_path()
-  with open(public_fn) as f:
-    rsa = RSA.importKey(f.read())
-  assert(rsa.size_in_bits() == 1024)
-
-  rr = pow(2**1024, 2, rsa.n)
-  n0inv = 2**32 - pow(rsa.n, -1, 2**32)
+  rr = pow(2**1024, 2, n)
+  n0inv = 2**32 - pow(n, -1, 2**32)
 
   r = [
     f"RSAPublicKey {name}_rsa_key = {{",
     f"  .len = 0x20,",
     f"  .n0inv = {n0inv}U,",
-    f"  .n = {to_c_uint32(rsa.n)},",
+    f"  .n = {to_c_uint32(n)},",
     f"  .rr = {to_c_uint32(rr)},",
-    f"  .exponent = {rsa.e},",
+    f"  .exponent = {e},",
     f"}};",
   ]
   return r
@@ -79,6 +97,7 @@ def build_project(project_name, project, main, extra_flags):
     "-fmax-errors=1",
     f"-T{File(project['LINKER_SCRIPT']).srcnode().relpath}",
     "-fsingle-precision-constant",
+    "-fdata-sections",
     "-Os",
     "-g",
   ]
@@ -93,7 +112,7 @@ def build_project(project_name, project, main, extra_flags):
     CFLAGS=flags,
     ASFLAGS=flags,
     LINKFLAGS=flags,
-    CPPPATH=[Dir("./"), "./board/stm32f4/inc", "./board/stm32h7/inc", opendbc_include_path],
+    CPPPATH=[Dir("./"), project["INCLUDE_PATH"], opendbc.INCLUDE_PATH],
     ASCOM="$AS $ASFLAGS -o $TARGET -c $SOURCES",
     BUILDERS={
       'Objcopy': Builder(generator=objcopy, suffix='.bin', src_suffix='.elf')
@@ -108,38 +127,37 @@ def build_project(project_name, project, main, extra_flags):
   bs_env.Append(CFLAGS="-DBOOTSTUB", ASFLAGS="-DBOOTSTUB", LINKFLAGS="-DBOOTSTUB")
   bs_elf = bs_env.Program(f"{project_dir}/bootstub.elf", [
     startup,
-    "./crypto/rsa.c",
-    "./crypto/sha.c",
+    "./board/crypto/rsa.c",
+    "./board/crypto/sha.c",
     "./board/bootstub.c",
   ])
-  bs_env.Objcopy(f"./board/obj/bootstub.{project_name}.bin", bs_elf)
+  bs_bin = bs_env.Objcopy(f"./board/obj/bootstub.{project_name}.bin", bs_elf)
+  # Bootstubs are data images; objcopy must not inherit the ELF executable mode.
+  bs_env.AddPostAction(bs_bin, Chmod("$TARGET", 0o644))
 
   # Build + sign main (aka app)
   main_elf = env.Program(f"{project_dir}/main.elf", [
     startup,
+    *([env.Object("./board/stm32h7/self_test.s")] if "-DSTM32H7" in project["FLAGS"] else []),
     main
   ], LINKFLAGS=[f"-Wl,--section-start,.isr_vector={project['APP_START_ADDRESS']}"] + flags)
   main_bin = env.Objcopy(f"{project_dir}/main.bin", main_elf)
-  sign_py = File(f"./crypto/sign.py").srcnode().relpath
+  sign_py = File(f"./board/crypto/sign.py").srcnode().relpath
   env.Command(f"./board/obj/{project_name}.bin.signed", main_bin, f"SETLEN=1 {sign_py} $SOURCE $TARGET {cert_fn}")
+
 
 
 base_project_f4 = {
   "STARTUP_FILE": "./board/stm32f4/startup_stm32f413xx.s",
   "LINKER_SCRIPT": "./board/stm32f4/stm32f4_flash.ld",
   "APP_START_ADDRESS": "0x8004000",
-  "FLAGS": [
-    "-mcpu=cortex-m4",
-    "-mhard-float",
-    "-DSTM32F4",
-    "-DSTM32F413xx",
-    "-Iboard/stm32f4/inc",
-    "-mfpu=fpv4-sp-d16",
-  ],
+  "INCLUDE_PATH": "./board/stm32f4/inc",
+  "FLAGS": ["-mcpu=cortex-m4", "-mhard-float", "-DSTM32F4", "-DSTM32F413xx", "-mfpu=fpv4-sp-d16"],
 }
 
 base_project_h7 = {
   "STARTUP_FILE": "./board/stm32h7/startup_stm32h7x5xx.s",
+  "INCLUDE_PATH": "./board/stm32h7/inc",
   "LINKER_SCRIPT": "./board/stm32h7/stm32h7x5_flash.ld",
   "APP_START_ADDRESS": "0x8020000",
   "FLAGS": [
@@ -153,50 +171,49 @@ base_project_h7 = {
 }
 
 # Common autogenerated includes
-with open("board/obj/gitversion.h", "w") as f:
-  version = get_version(BUILDER, BUILD_TYPE)
-  version_len = len(version) + 1  # include terminating NUL
-  f.write(f'extern const uint8_t gitversion[{version_len}];\n')
-  f.write(f'const uint8_t gitversion[{version_len}] = "{version}";\n')
-
-with open("board/obj/version", "w") as f:
-  f.write(f'{get_version(BUILDER, BUILD_TYPE)}')
-
+version = get_version(BUILDER, BUILD_TYPE)
+gitversion_header = ("#pragma once\n\n" +
+                     f'extern const uint8_t gitversion[{len(version)+1}];\n' +
+                     f'const uint8_t gitversion[{len(version)+1}] = "{version}";\n')
 certs = [get_key_header(n) for n in ["debug", "release"]]
-with open("board/obj/cert.h", "w") as f:
-  for cert in certs:
-    f.write("\n".join(cert) + "\n")
+cert_header = "#pragma once\n\n" + "".join("\n".join(cert) + "\n" for cert in certs)
+
+
+def write_generated(target, source, env):
+  Path(target[0].abspath).write_text(str(source[0]))
+  return 0
+
+
+generation_env = Environment(tools=[])
+for name, payload in (("gitversion.h", gitversion_header), ("version", version), ("cert.h", cert_header)):
+  generation_env.Command(File(f"./board/obj/{name}"), Value(payload), write_generated)
+
+# Packet version defines: SHA hash of the struct header files
+def version_hash(path):
+  with open(path, "rb") as f:
+    # Normalize line endings on Windows
+    return int.from_bytes(hashlib.sha256(f.read().replace(b'\r', b'')).digest()[:4], 'little')
+hh, ch = version_hash("board/health.h"), version_hash(os.path.join(opendbc.INCLUDE_PATH, "opendbc/safety/can.h"))
+common_flags += [f"-DHEALTH_PACKET_VERSION=0x{hh:08X}U", f"-DCAN_PACKET_VERSION_HASH=0x{ch:08X}U"]
 
 # panda fw
 build_project("panda", base_project_f4, "./board/main.c", [])
 build_project("panda_h7", base_project_h7, "./board/main.c", [])
-build_project("panda_remote", base_project_f4, "./board/main.c", ["-DPANDA_GM_REMOTE_START_C9"])
-build_project("panda_h7_remote", base_project_h7, "./board/main.c", ["-DPANDA_GM_REMOTE_START_C9"])
-build_project("panda_hkg_remote", base_project_f4, "./board/main.c", ["-DPANDA_HKG_REMOTE_START"])
-build_project("panda_h7_hkg_remote", base_project_h7, "./board/main.c", ["-DPANDA_HKG_REMOTE_START"])
-build_project("panda_can_ignition_only", base_project_f4, "./board/main.c", ["-DPANDA_IGNORE_IGNITION_LINE"])
-build_project("panda_h7_can_ignition_only", base_project_h7, "./board/main.c", ["-DPANDA_IGNORE_IGNITION_LINE"])
-build_project("panda_remote_can_ignition_only", base_project_f4, "./board/main.c", ["-DPANDA_GM_REMOTE_START_C9", "-DPANDA_IGNORE_IGNITION_LINE"])
-build_project("panda_h7_remote_can_ignition_only", base_project_h7, "./board/main.c", ["-DPANDA_GM_REMOTE_START_C9", "-DPANDA_IGNORE_IGNITION_LINE"])
-build_project("panda_hkg_remote_can_ignition_only", base_project_f4, "./board/main.c", ["-DPANDA_HKG_REMOTE_START", "-DPANDA_IGNORE_IGNITION_LINE"])
-build_project("panda_h7_hkg_remote_can_ignition_only", base_project_h7, "./board/main.c", ["-DPANDA_HKG_REMOTE_START", "-DPANDA_IGNORE_IGNITION_LINE"])
 
-build_project("panda_tesla_wake", base_project_f4, "./board/main.c", ["-DPANDA_TESLA_WAKE_ON_CAN"])
-build_project("panda_h7_tesla_wake", base_project_h7, "./board/main.c", ["-DPANDA_TESLA_WAKE_ON_CAN"])
-build_project("panda_tesla_wake_can_ignition_only", base_project_f4, "./board/main.c", ["-DPANDA_TESLA_WAKE_ON_CAN", "-DPANDA_IGNORE_IGNITION_LINE"])
-build_project("panda_h7_tesla_wake_can_ignition_only", base_project_h7, "./board/main.c", ["-DPANDA_TESLA_WAKE_ON_CAN", "-DPANDA_IGNORE_IGNITION_LINE"])
-
-# panda jungle fw
-flags = [
-  "-DPANDA_JUNGLE",
-]
-if os.getenv("FINAL_PROVISIONING"):
-  flags += ["-DFINAL_PROVISIONING"]
-build_project("panda_jungle_h7", base_project_h7, "./board/jungle/main.c", flags)
+for variant, flags in (
+  ("remote", ["-DPANDA_GM_REMOTE_START_C9"]),
+  ("hkg_remote", ["-DPANDA_HKG_REMOTE_START"]),
+  ("tesla_wake", ["-DPANDA_TESLA_WAKE_ON_CAN"]),
+  ("can_ignition_only", ["-DPANDA_IGNORE_IGNITION_LINE"]),
+  ("remote_can_ignition_only", ["-DPANDA_GM_REMOTE_START_C9", "-DPANDA_IGNORE_IGNITION_LINE"]),
+  ("hkg_remote_can_ignition_only", ["-DPANDA_HKG_REMOTE_START", "-DPANDA_IGNORE_IGNITION_LINE"]),
+  ("tesla_wake_can_ignition_only", ["-DPANDA_TESLA_WAKE_ON_CAN", "-DPANDA_IGNORE_IGNITION_LINE"]),
+):
+  build_project(f"panda_{variant}", base_project_f4, "./board/main.c", flags)
+  build_project(f"panda_h7_{variant}", base_project_h7, "./board/main.c", flags)
 
 # body fw
 build_project("body_h7", base_project_h7, "./board/body/main.c", ["-DPANDA_BODY"])
 
 # test files
-if GetOption('extras'):
-  SConscript('tests/libpanda/SConscript')
+SConscript('tests/libpanda/SConscript')
