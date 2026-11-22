@@ -3,7 +3,6 @@
 from collections.abc import Callable
 from dataclasses import replace
 
-from openpilot.starpilot.power import discord_report
 from openpilot.starpilot.power.offroad_preferences import KEY, PowerPolicy, SavedPower, decode, read_saved, to_value
 from openpilot.starpilot.ui.feature_settings_state import FeatureRow, FeatureSettingsRequest, FeatureSettingsState, row_change
 
@@ -11,10 +10,9 @@ from openpilot.starpilot.ui.feature_settings_state import FeatureRow, FeatureSet
 ENABLED = "power:enabled"
 HOURS = "power:hours"
 VOLTS = "power:volts"
-DISCORD = "power:discord_report"
 POWER_DESCRIPTION = ("Stock uses the standard shutdown policy. Custom limits use the maximum parked time and voltage cutoff below; " +
                      "other protections can shut down earlier.")
-POWER_KEYS = frozenset((ENABLED, HOURS, VOLTS, DISCORD))
+POWER_KEYS = frozenset((ENABLED, HOURS, VOLTS))
 HOUR_CHOICES = tuple(f"{hour} h" for hour in range(1, 31))
 VOLT_CHOICES = tuple(f"{tenths / 10:.1f} V" for tenths in range(118, 126))
 
@@ -28,9 +26,6 @@ def power_row_change(row: FeatureRow, direction: int = 1) -> FeatureSettingsRequ
 
 
 def confirm_question(request: FeatureSettingsRequest) -> str:
-  if request.key == DISCORD:
-    return ("Send the 12 V battery voltage to your Discord webhook after each drive?" if request.value == "On" else
-            "Stop sending drive-end battery reports to Discord?")
   if request.key == ENABLED:
     if request.value == "Custom limits":
       policy = decode(request.expected) if request.expected is not None else PowerPolicy()
@@ -69,27 +64,8 @@ class PowerOwner:
     initial = PowerPolicy()
     defaults = {ENABLED: 'Stock', HOURS: f'{initial.delay_hours} h', VOLTS: f'{initial.cutoff_tenths / 10:.1f} V'}
     rows = tuple(replace(row, default_value=defaults[row.key]) if row.key in defaults else row for row in rows)
-    if discord_report.owner_is_allowed(self.params):
-      rows += (self._discord_row(),)
     return FeatureSettingsState(page="power", title="Parked Power",
                                 subtitle="Saved limits for automatic offroad shutdown.", rows=rows, parked=parked)
-
-  def _discord_row(self) -> FeatureRow:
-    status = discord_report.webhook_status(self.params)
-    return FeatureRow(DISCORD, "Discord Battery Report", "On" if status["enabled"] else "Off",
-                      source=b"1" if status["enabled"] else b"0", choices=("Off", "On"),
-                      available=status["configured"] or status["enabled"], default_value="Off",
-                      reason=("Sends the Panda 12 V supply voltage to your Discord webhook after each drive." if status["configured"] else
-                              "Add a Discord webhook in Galaxy under Power & Cooling first."))
-
-  def _apply_discord(self, request: FeatureSettingsRequest) -> bool:
-    row = self._discord_row()
-    if not row.available or request.expected != row.source or request.value not in row.choices:
-      return False
-    if request.value == "On" and not discord_report.webhook_status(self.params)["configured"]:
-      return False
-    self.params.put_bool(discord_report.REPORT_KEY, request.value == "On", block=True)
-    return discord_report.webhook_status(self.params)["enabled"] == (request.value == "On")
 
   @staticmethod
   def _desired(saved: SavedPower, request: FeatureSettingsRequest) -> PowerPolicy | None:
@@ -111,8 +87,6 @@ class PowerOwner:
   def apply(self, request: FeatureSettingsRequest) -> bool:
     if request.key not in POWER_KEYS or not request.confirmation:
       return False
-    if request.key == DISCORD:
-      return self._apply_discord(request)
     desired: PowerPolicy | None = None
     for _ in range(2):
       if not self.parked():

@@ -407,8 +407,4 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"JetlinkSpec", {PERSISTENT | DONT_LOG, JSON}},
     {"JetlinkProgress", {CLEAR_ON_MANAGER_START | DONT_LOG, JSON}},
     {"Version", {PERSISTENT, STRING}},
-    {"LowVoltageDiscordLastDrive", {PERSISTENT, STRING}},
-    {"LowVoltageDiscordPendingReport", {PERSISTENT | DONT_LOG, JSON}},
-    {"LowVoltageDiscordReport", {PERSISTENT, BOOL, "0"}},
-    {"LowVoltageDiscordWebhook", {PERSISTENT | DONT_LOG, STRING}},
 };
