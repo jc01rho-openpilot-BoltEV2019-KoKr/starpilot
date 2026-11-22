@@ -12,7 +12,7 @@ from openpilot.starpilot.gps.source import GPS_SERVICES, select_location
 from openpilot.starpilot.analytics.report import ReportClient, build_payload, fetch_branch_commit
 
 SERVICES = ('deviceState', 'carParams', 'carState', 'carControl', 'selfdriveState',
-            'modelV2', 'drivingModelData', 'managerState', 'peripheralState', *GPS_SERVICES)
+            'modelV2', 'drivingModelData', 'managerState', *GPS_SERVICES)
 COUNTERS = ('drives', 'meters', 'seconds', 'current_months_meters', 'total_tracked_seconds',
             'total_lateral_seconds', 'total_longitudinal_seconds', 'total_aol_seconds')
 
@@ -51,14 +51,12 @@ def executed_model(sm, params, now):
 class AnalyticsWorker:
   def __init__(self, params, source, *, metadata=None, identity=executed_model, collector=None,
                client=None, token_reader=None, resolver=None, clock_valid=None, commit_reader=fetch_branch_commit,
-               monotonic=time.monotonic, wall=lambda: datetime.now(UTC).timestamp(), voltage_reporter=None):
+               monotonic=time.monotonic, wall=lambda: datetime.now(UTC).timestamp()):
     from openpilot.common.time_helpers import system_time_valid
     from openpilot.starpilot.analytics.credentials import read_token
     from openpilot.starpilot.analytics.location import resolve_region
     from openpilot.starpilot.analytics.settings import collect_settings
-    from openpilot.starpilot.power.discord_report import DriveVoltageReporter
     self.params, self.source = params, source
-    self.voltage_reporter = voltage_reporter or DriveVoltageReporter(params)
     self.metadata = dict(metadata or {})
     self.identity = identity
     self.collector = collector or collect_settings
@@ -151,7 +149,6 @@ class AnalyticsWorker:
         self.state['month'] = month
         self.counters['current_months_meters'] = 0
     started = bool(self.source['deviceState'].started)
-    self.poll_voltage_report(started, now)
     if started:
       if self.previous_started is not True:
         self.context = {}
@@ -247,17 +244,6 @@ class AnalyticsWorker:
     self.pending = not success
     self.retry_at = now + min(300, 15 * 2 ** self.attempts)
     self.params.put('UsageStatsStatus', {'state': 'sent' if success else 'retrying', 'attempts': self.attempts})
-
-  def poll_voltage_report(self, started, now):
-    # The Discord battery report must never disturb usage reporting.
-    try:
-      if started and self.fresh('peripheralState'):
-        self.voltage_reporter.sample(self.source.logMonoTime['peripheralState'], self.source['peripheralState'])
-      self.voltage_reporter.update_started(started, now, car_fingerprint=str(self.context.get('car_model', '')))
-      self.voltage_reporter.deliver_if_due(now, self.allowed)
-    except Exception:
-      from openpilot.common.swaglog import cloudlog
-      cloudlog.exception('drive-end voltage report failed')
 
   def run(self):
     while not self.stop_event.is_set():
