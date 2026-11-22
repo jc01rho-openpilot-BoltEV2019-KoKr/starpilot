@@ -374,7 +374,8 @@ class SelfdriveD:
 
   def update_nda_camera_warning(self, CS: car.CarState) -> None:
     """Warn while approaching an NDA enforcement camera faster than 85% of its limit. Display/sound only."""
-    navi_recent = self.sm.recv_frame['naviData'] > 0 and (self.sm.frame - self.sm.recv_frame['naviData']) * DT_CTRL < 2.0
+    navi_frame = self.sm.recv_frame.get('naviData', 0)
+    navi_recent = navi_frame > 0 and (self.sm.frame - navi_frame) * DT_CTRL < 2.0
     if not navi_recent:
       return
 
