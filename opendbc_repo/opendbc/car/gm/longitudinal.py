@@ -5,6 +5,7 @@ import math
 
 import numpy as np
 
+from opendbc.car import DT_CTRL
 from opendbc.car.gm.values import (gm_control_word, CAR, GMFlags, GMSafetyFlags, PEDAL_BOLT_CAR, NO_ACC_BOLT_CAR, is_volt_longitudinal,
                                   is_volt_gateway_longitudinal, is_bolt_euv_longitudinal, is_ordinary_ascm_profile, is_ordinary_sdgm_profile)
 from opendbc.car.structs import car
@@ -15,6 +16,13 @@ REGEN_LIMIT = (-0.93, -1.28, -1.98, -2.58, -2.86, -2.95)
 PEDAL_KP_BP = (0.0, 5.0, 15.0, 35.0)
 PEDAL_KP_V = (0.095, 0.085, 0.065, 0.050)
 PEDAL_FEEDFORWARD_GAIN = 0.20
+# Cruise-hold error: near steady state the PID closes on low-pass filtered aEgo so sensor noise
+# does not reach the P/I terms (surging), while the DC residual still lets the integrator trim
+# the steady-state speed offset. The weight fades out for dynamic maneuvers; the decel side
+# fades over a wider band so gentle lead-following decel stays filtered, hard braking is raw.
+CRUISE_HOLD_ERROR_TAU = 0.25
+CRUISE_HOLD_BLEND_BP = (0.20, 0.50)
+CRUISE_DECEL_BLEND_BP = (0.50, 1.20)
 
 
 @dataclass(frozen=True)
@@ -103,6 +111,8 @@ class GMPedalLongitudinalPolicy:
   kp: tuple[tuple[float, ...], tuple[float, ...]] = (PEDAL_KP_BP, PEDAL_KP_V)
   last_a_target: float = field(default=0.0, init=False)
   integrator_hold_frames: int = field(default=0, init=False)
+  cruise_hold_filter: bool = field(default=True, init=False)
+  filtered_a_ego: float | None = field(default=None, init=False)
 
   def stopping_output(self, output: float, target: float, should_stop: bool, cs) -> float:
     return _moving_stop_target_follow(output, target, should_stop, cs)
@@ -110,6 +120,19 @@ class GMPedalLongitudinalPolicy:
   def reset(self) -> None:
     self.last_a_target = 0.0
     self.integrator_hold_frames = 0
+    self.filtered_a_ego = None
+
+  def error(self, target: float, a_ego: float) -> float:
+    if not self.cruise_hold_filter:
+      return target - a_ego
+    if self.filtered_a_ego is None:
+      # Seed from the first sample so re-engaging cannot start from a stale or zero value.
+      self.filtered_a_ego = float(a_ego)
+    else:
+      self.filtered_a_ego += DT_CTRL / (CRUISE_HOLD_ERROR_TAU + DT_CTRL) * (float(a_ego) - self.filtered_a_ego)
+    weight = (_interp(-target, CRUISE_DECEL_BLEND_BP, (1.0, 0.0)) if target < 0.0 else
+              _interp(target, CRUISE_HOLD_BLEND_BP, (1.0, 0.0)))
+    return target - (weight * self.filtered_a_ego + (1.0 - weight) * a_ego)
 
   def prepare_pid(self, pid, target: float, error: float, speed: float,
                   last_output: float, accel_limits: tuple[float, float], *,

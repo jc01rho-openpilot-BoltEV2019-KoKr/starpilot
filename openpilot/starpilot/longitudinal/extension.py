@@ -133,6 +133,10 @@ class LongitudinalExtension:
         return shaped
     return self.vehicle_target(a_target, CS.vEgo, should_stop) if self.vehicle_target is not None else a_target
 
+  def error(self, a_target, CS):
+    shape = getattr(self.vehicle_policy, "error", None)
+    return a_target - CS.aEgo if shape is None else shape(a_target, CS.aEgo)
+
   def prepare_pid(self, pid, a_target, error, CS, last_output, accel_limits, should_stop, context):
     if self.bolt_mode is not None:
       self.bolt_mode.update(context.experimental_mode, DT_CTRL)

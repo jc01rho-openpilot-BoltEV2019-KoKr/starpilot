@@ -15,6 +15,8 @@ def stop_start_speed(malibu: bool) -> float:
 class GMConventionalPedalPolicy(GMPedalLongitudinalPolicy):
   def __init__(self, malibu: bool):
     super().__init__(friction_variant=False)
+    # Cruise-hold error filtering is tuned on the Bolt interceptor only.
+    self.cruise_hold_filter = False
     # The reached original default reads this rate through Float32 CarParams storage.
     self.stopping_decel_rate = float(np.float32(.8))
     self.kp = (((0.0, 5.0, 35.0), (0.06, 0.05, 0.04)) if malibu else
