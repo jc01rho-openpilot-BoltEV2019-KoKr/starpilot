@@ -157,8 +157,12 @@ def fixed_stopping_brake(long_active: bool, near_stop: bool, stopping: bool, res
   return int(min(-100.0 * stop_accel, max_brake))
 
 
-def bolt_pedal_fraction(accel: float, speed: float, paddle_pressed: bool) -> float:
-  """Frozen speed-shaped pedal calibration; physical response still needs vehicle evidence."""
+def bolt_pedal_fraction(accel: float, speed: float, paddle_pressed: bool, *, cruise_trim: bool = False) -> float:
+  """Frozen speed-shaped pedal calibration; physical response still needs vehicle evidence.
+
+  cruise_trim (no-ACC Bolt pedal only) fades the creep deadband out between 8 and 15 m/s so small
+  PID cruise trims reach the pedal continuously instead of stepping at the deadband edge.
+  """
   gain = np.interp(speed,
                    [0.559, 1.678, 2.797, 3.916, 5.035, 6.154, 7.273, 8.392, 9.511, 10.63,
                     11.749, 12.868, 13.987, 15.106, 16.225, 17.344, 18.463, 19.582, 20.701, 21.820,
@@ -169,7 +173,10 @@ def bolt_pedal_fraction(accel: float, speed: float, paddle_pressed: bool) -> flo
   gain *= np.interp(speed, [0.0, 2.0, 4.0, 5.5, 8.0, 12.0], [0.92, 0.92, 0.93, 0.94, 0.96, 1.0])
   accel_gain = np.interp(speed, [0.0, 3.0, 8.0, 20.0], [0.47, 0.52, 0.57, 0.61])
   offset = np.interp(speed, [0.0, 1.0, 3.0, 6.0, 15.0, 30.0], [0.085, 0.11, 0.17, 0.23, 0.235, 0.23])
-  accel = 0.0 if abs(accel) < 0.04 else accel
+  deadbanded = 0.0 if abs(accel) < 0.04 else accel
+  if cruise_trim and speed > 8.0:
+    deadbanded += float(np.interp(speed, [8.0, 15.0], [0.0, 1.0])) * (accel - deadbanded)
+  accel = deadbanded
   scale = np.interp(abs(accel), [0.0, 0.35, 0.8, 1.5, 2.5],
                     [0.58, 0.68, 0.82, 0.93, 1.0] if accel >= 0 else [0.44, 0.54, 0.70, 0.89, 1.0])
   command = float(np.clip(offset + accel * scale * accel_gain / max(gain, 1e-3) if paddle_pressed else
@@ -893,7 +900,8 @@ class CarController(CarControllerBase):
         if fixed_stop:
           pass
         elif active:
-          target = bolt_pedal_fraction(actuators.accel, CS.out.vEgo, paddle_pressed)
+          target = bolt_pedal_fraction(actuators.accel, CS.out.vEgo, paddle_pressed,
+                                       cruise_trim=self.CP.carFingerprint in NO_ACC_BOLT_CAR)
           if self.pedal_active_last and not (paddle_switched and CS.out.vEgo > 1.0):
             self.pedal_steady = bolt_pedal_slew(target, self.pedal_steady, actuators.accel, CS.out.vEgo)
           else:

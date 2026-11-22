@@ -115,7 +115,7 @@ class LongControl:
     else:  # LongCtrlState.pid
       if self.extension is not None:
         a_target = self.extension.target(a_target, CS, should_stop, self.last_output_accel, context)
-      error = a_target - CS.aEgo
+      error = self.extension.error(a_target, CS) if self.extension is not None else a_target - CS.aEgo
       feedforward, freeze_integrator = a_target, False
       if self.extension is not None:
         feedforward, freeze_integrator = self.extension.prepare_pid(
