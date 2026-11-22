@@ -132,6 +132,7 @@ enum class EventName_91f1992a1f77fb03: uint16_t {
   BIG_MODEL_FAILED,
   CAR_NOT_READY,
   USER_BOOKMARK_NOT_PAIRED,
+  NDA_CAMERA_WARN,
 };
 CAPNP_DECLARE_ENUM(EventName, 91f1992a1f77fb03);
 CAPNP_DECLARE_SCHEMA(d692e23d1a247d99);
@@ -390,6 +391,7 @@ enum class AudibleAlert_e9e600c8b9e6b62d: uint16_t {
   PROMPT_DISTRACTED,
   PRE_ALERT,
   COMPLETE,
+  SPEED_DOWN,
 };
 CAPNP_DECLARE_ENUM(AudibleAlert, e9e600c8b9e6b62d);
 CAPNP_DECLARE_SCHEMA(dbe58b96d2d1ac61);
@@ -686,6 +688,8 @@ CAPNP_DECLARE_SCHEMA(dc24138990726023);
 CAPNP_DECLARE_SCHEMA(ef0efc1e7e7ead89);
 CAPNP_DECLARE_SCHEMA(a4e671db37b8ade5);
 CAPNP_DECLARE_SCHEMA(8795cd2944faeab6);
+CAPNP_DECLARE_SCHEMA(e7d899c5ac8de75c);
+CAPNP_DECLARE_SCHEMA(adbc79002b168513);
 CAPNP_DECLARE_SCHEMA(d314cfd957229c11);
 
 }  // namespace schemas
@@ -3182,6 +3186,37 @@ struct Touch {
   };
 };
 
+struct NaviData {
+  NaviData() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+  struct TrafficSignal;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(e7d899c5ac8de75c, 3, 2)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct NaviData::TrafficSignal {
+  TrafficSignal() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(adbc79002b168513, 2, 0)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
 struct Event {
   Event() = delete;
 
@@ -3341,6 +3376,7 @@ struct Event {
     DRIVER_MONITORING_STATE,
     CHESTNUT_STATE,
     CHESTNUT_GPU_STATE,
+    NAVI_DATA,
   };
 
   struct _capnpPrivate {
@@ -22762,6 +22798,274 @@ private:
 };
 #endif  // !CAPNP_LITE
 
+class NaviData::Reader {
+public:
+  typedef NaviData Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline  ::int16_t getActive() const;
+
+  inline  ::int16_t getRoadLimitSpeed() const;
+
+  inline bool getIsHighway() const;
+
+  inline  ::int16_t getCamType() const;
+
+  inline  ::int16_t getCamLimitSpeedLeftDist() const;
+
+  inline  ::int16_t getCamLimitSpeed() const;
+
+  inline  ::int16_t getSectionLimitSpeed() const;
+
+  inline  ::int16_t getSectionLeftDist() const;
+
+  inline  ::int16_t getSectionAvgSpeed() const;
+
+  inline  ::int16_t getSectionLeftTime() const;
+
+  inline bool getSectionAdjustSpeed() const;
+
+  inline float getCamSpeedFactor() const;
+
+  inline bool hasCurrentRoadName() const;
+  inline  ::capnp::Text::Reader getCurrentRoadName() const;
+
+  inline bool getIsNda2() const;
+
+  inline bool hasTs() const;
+  inline  ::cereal::NaviData::TrafficSignal::Reader getTs() const;
+
+  inline bool getCamRearPassed() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class NaviData::Builder {
+public:
+  typedef NaviData Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline  ::int16_t getActive();
+  inline void setActive( ::int16_t value);
+
+  inline  ::int16_t getRoadLimitSpeed();
+  inline void setRoadLimitSpeed( ::int16_t value);
+
+  inline bool getIsHighway();
+  inline void setIsHighway(bool value);
+
+  inline  ::int16_t getCamType();
+  inline void setCamType( ::int16_t value);
+
+  inline  ::int16_t getCamLimitSpeedLeftDist();
+  inline void setCamLimitSpeedLeftDist( ::int16_t value);
+
+  inline  ::int16_t getCamLimitSpeed();
+  inline void setCamLimitSpeed( ::int16_t value);
+
+  inline  ::int16_t getSectionLimitSpeed();
+  inline void setSectionLimitSpeed( ::int16_t value);
+
+  inline  ::int16_t getSectionLeftDist();
+  inline void setSectionLeftDist( ::int16_t value);
+
+  inline  ::int16_t getSectionAvgSpeed();
+  inline void setSectionAvgSpeed( ::int16_t value);
+
+  inline  ::int16_t getSectionLeftTime();
+  inline void setSectionLeftTime( ::int16_t value);
+
+  inline bool getSectionAdjustSpeed();
+  inline void setSectionAdjustSpeed(bool value);
+
+  inline float getCamSpeedFactor();
+  inline void setCamSpeedFactor(float value);
+
+  inline bool hasCurrentRoadName();
+  inline  ::capnp::Text::Builder getCurrentRoadName();
+  inline void setCurrentRoadName( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initCurrentRoadName(unsigned int size);
+  inline void adoptCurrentRoadName(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownCurrentRoadName();
+
+  inline bool getIsNda2();
+  inline void setIsNda2(bool value);
+
+  inline bool hasTs();
+  inline  ::cereal::NaviData::TrafficSignal::Builder getTs();
+  inline void setTs( ::cereal::NaviData::TrafficSignal::Reader value);
+  inline  ::cereal::NaviData::TrafficSignal::Builder initTs();
+  inline void adoptTs(::capnp::Orphan< ::cereal::NaviData::TrafficSignal>&& value);
+  inline ::capnp::Orphan< ::cereal::NaviData::TrafficSignal> disownTs();
+
+  inline bool getCamRearPassed();
+  inline void setCamRearPassed(bool value);
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class NaviData::Pipeline {
+public:
+  typedef NaviData Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+  inline  ::cereal::NaviData::TrafficSignal::Pipeline getTs();
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class NaviData::TrafficSignal::Reader {
+public:
+  typedef TrafficSignal Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline bool getIsGreenLightOn() const;
+
+  inline bool getIsLeftLightOn() const;
+
+  inline bool getIsRedLightOn() const;
+
+  inline  ::int16_t getGreenLightRemainTime() const;
+
+  inline  ::int16_t getLeftLightRemainTime() const;
+
+  inline  ::int16_t getRedLightRemainTime() const;
+
+  inline  ::int16_t getDistance() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class NaviData::TrafficSignal::Builder {
+public:
+  typedef TrafficSignal Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline bool getIsGreenLightOn();
+  inline void setIsGreenLightOn(bool value);
+
+  inline bool getIsLeftLightOn();
+  inline void setIsLeftLightOn(bool value);
+
+  inline bool getIsRedLightOn();
+  inline void setIsRedLightOn(bool value);
+
+  inline  ::int16_t getGreenLightRemainTime();
+  inline void setGreenLightRemainTime( ::int16_t value);
+
+  inline  ::int16_t getLeftLightRemainTime();
+  inline void setLeftLightRemainTime( ::int16_t value);
+
+  inline  ::int16_t getRedLightRemainTime();
+  inline void setRedLightRemainTime( ::int16_t value);
+
+  inline  ::int16_t getDistance();
+  inline void setDistance( ::int16_t value);
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class NaviData::TrafficSignal::Pipeline {
+public:
+  typedef TrafficSignal Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
 class Event::Reader {
 public:
   typedef Event Reads;
@@ -23391,6 +23695,10 @@ public:
   inline bool isChestnutGpuState() const;
   inline bool hasChestnutGpuState() const;
   inline  ::cereal::ChestnutState::Reader getChestnutGpuState() const;
+
+  inline bool isNaviData() const;
+  inline bool hasNaviData() const;
+  inline  ::cereal::NaviData::Reader getNaviData() const;
 
 private:
   ::capnp::_::StructReader _reader;
@@ -24642,6 +24950,14 @@ public:
   inline  ::cereal::ChestnutState::Builder initChestnutGpuState();
   inline void adoptChestnutGpuState(::capnp::Orphan< ::cereal::ChestnutState>&& value);
   inline ::capnp::Orphan< ::cereal::ChestnutState> disownChestnutGpuState();
+
+  inline bool isNaviData();
+  inline bool hasNaviData();
+  inline  ::cereal::NaviData::Builder getNaviData();
+  inline void setNaviData( ::cereal::NaviData::Reader value);
+  inline  ::cereal::NaviData::Builder initNaviData();
+  inline void adoptNaviData(::capnp::Orphan< ::cereal::NaviData>&& value);
+  inline ::capnp::Orphan< ::cereal::NaviData> disownNaviData();
 
 private:
   ::capnp::_::StructBuilder _builder;
@@ -51753,6 +52069,373 @@ inline void Touch::Builder::setValue( ::int32_t value) {
       ::capnp::bounded<6>() * ::capnp::ELEMENTS, value);
 }
 
+inline  ::int16_t NaviData::Reader::getActive() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::Builder::getActive() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setActive( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::Reader::getRoadLimitSpeed() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::Builder::getRoadLimitSpeed() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setRoadLimitSpeed( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool NaviData::Reader::getIsHighway() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<32>() * ::capnp::ELEMENTS);
+}
+
+inline bool NaviData::Builder::getIsHighway() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<32>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setIsHighway(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<32>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::Reader::getCamType() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::Builder::getCamType() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setCamType( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::Reader::getCamLimitSpeedLeftDist() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::Builder::getCamLimitSpeedLeftDist() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setCamLimitSpeedLeftDist( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::Reader::getCamLimitSpeed() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::Builder::getCamLimitSpeed() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setCamLimitSpeed( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::Reader::getSectionLimitSpeed() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::Builder::getSectionLimitSpeed() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setSectionLimitSpeed( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::Reader::getSectionLeftDist() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<7>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::Builder::getSectionLeftDist() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<7>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setSectionLeftDist( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<7>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::Reader::getSectionAvgSpeed() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<8>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::Builder::getSectionAvgSpeed() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<8>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setSectionAvgSpeed( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<8>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::Reader::getSectionLeftTime() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<9>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::Builder::getSectionLeftTime() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<9>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setSectionLeftTime( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<9>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool NaviData::Reader::getSectionAdjustSpeed() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<33>() * ::capnp::ELEMENTS);
+}
+
+inline bool NaviData::Builder::getSectionAdjustSpeed() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<33>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setSectionAdjustSpeed(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<33>() * ::capnp::ELEMENTS, value);
+}
+
+inline float NaviData::Reader::getCamSpeedFactor() const {
+  return _reader.getDataField<float>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+
+inline float NaviData::Builder::getCamSpeedFactor() {
+  return _builder.getDataField<float>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setCamSpeedFactor(float value) {
+  _builder.setDataField<float>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool NaviData::Reader::hasCurrentRoadName() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool NaviData::Builder::hasCurrentRoadName() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader NaviData::Reader::getCurrentRoadName() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder NaviData::Builder::getCurrentRoadName() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void NaviData::Builder::setCurrentRoadName( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder NaviData::Builder::initCurrentRoadName(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), size);
+}
+inline void NaviData::Builder::adoptCurrentRoadName(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> NaviData::Builder::disownCurrentRoadName() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline bool NaviData::Reader::getIsNda2() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<34>() * ::capnp::ELEMENTS);
+}
+
+inline bool NaviData::Builder::getIsNda2() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<34>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setIsNda2(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<34>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool NaviData::Reader::hasTs() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline bool NaviData::Builder::hasTs() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::NaviData::TrafficSignal::Reader NaviData::Reader::getTs() const {
+  return ::capnp::_::PointerHelpers< ::cereal::NaviData::TrafficSignal>::get(_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline  ::cereal::NaviData::TrafficSignal::Builder NaviData::Builder::getTs() {
+  return ::capnp::_::PointerHelpers< ::cereal::NaviData::TrafficSignal>::get(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::NaviData::TrafficSignal::Pipeline NaviData::Pipeline::getTs() {
+  return  ::cereal::NaviData::TrafficSignal::Pipeline(_typeless.getPointerField(1));
+}
+#endif  // !CAPNP_LITE
+inline void NaviData::Builder::setTs( ::cereal::NaviData::TrafficSignal::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::NaviData::TrafficSignal>::set(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::NaviData::TrafficSignal::Builder NaviData::Builder::initTs() {
+  return ::capnp::_::PointerHelpers< ::cereal::NaviData::TrafficSignal>::init(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline void NaviData::Builder::adoptTs(
+    ::capnp::Orphan< ::cereal::NaviData::TrafficSignal>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::NaviData::TrafficSignal>::adopt(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::NaviData::TrafficSignal> NaviData::Builder::disownTs() {
+  return ::capnp::_::PointerHelpers< ::cereal::NaviData::TrafficSignal>::disown(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+
+inline bool NaviData::Reader::getCamRearPassed() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<35>() * ::capnp::ELEMENTS);
+}
+
+inline bool NaviData::Builder::getCamRearPassed() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<35>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::Builder::setCamRearPassed(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<35>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool NaviData::TrafficSignal::Reader::getIsGreenLightOn() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline bool NaviData::TrafficSignal::Builder::getIsGreenLightOn() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::TrafficSignal::Builder::setIsGreenLightOn(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool NaviData::TrafficSignal::Reader::getIsLeftLightOn() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline bool NaviData::TrafficSignal::Builder::getIsLeftLightOn() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::TrafficSignal::Builder::setIsLeftLightOn(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool NaviData::TrafficSignal::Reader::getIsRedLightOn() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+
+inline bool NaviData::TrafficSignal::Builder::getIsRedLightOn() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::TrafficSignal::Builder::setIsRedLightOn(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::TrafficSignal::Reader::getGreenLightRemainTime() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::TrafficSignal::Builder::getGreenLightRemainTime() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::TrafficSignal::Builder::setGreenLightRemainTime( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::TrafficSignal::Reader::getLeftLightRemainTime() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::TrafficSignal::Builder::getLeftLightRemainTime() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::TrafficSignal::Builder::setLeftLightRemainTime( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::TrafficSignal::Reader::getRedLightRemainTime() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::TrafficSignal::Builder::getRedLightRemainTime() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::TrafficSignal::Builder::setRedLightRemainTime( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int16_t NaviData::TrafficSignal::Reader::getDistance() const {
+  return _reader.getDataField< ::int16_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int16_t NaviData::TrafficSignal::Builder::getDistance() {
+  return _builder.getDataField< ::int16_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+inline void NaviData::TrafficSignal::Builder::setDistance( ::int16_t value) {
+  _builder.setDataField< ::int16_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, value);
+}
+
 inline  ::cereal::Event::Which Event::Reader::which() const {
   return _reader.getDataField<Which>(
       ::capnp::bounded<4>() * ::capnp::ELEMENTS);
@@ -59995,6 +60678,60 @@ inline ::capnp::Orphan< ::cereal::ChestnutState> Event::Builder::disownChestnutG
   KJ_IREQUIRE((which() == Event::CHESTNUT_GPU_STATE),
               "Must check which() before get()ing a union member.");
   return ::capnp::_::PointerHelpers< ::cereal::ChestnutState>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline bool Event::Reader::isNaviData() const {
+  return which() == Event::NAVI_DATA;
+}
+inline bool Event::Builder::isNaviData() {
+  return which() == Event::NAVI_DATA;
+}
+inline bool Event::Reader::hasNaviData() const {
+  if (which() != Event::NAVI_DATA) return false;
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool Event::Builder::hasNaviData() {
+  if (which() != Event::NAVI_DATA) return false;
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::NaviData::Reader Event::Reader::getNaviData() const {
+  KJ_IREQUIRE((which() == Event::NAVI_DATA),
+              "Must check which() before get()ing a union member.");
+  return ::capnp::_::PointerHelpers< ::cereal::NaviData>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::cereal::NaviData::Builder Event::Builder::getNaviData() {
+  KJ_IREQUIRE((which() == Event::NAVI_DATA),
+              "Must check which() before get()ing a union member.");
+  return ::capnp::_::PointerHelpers< ::cereal::NaviData>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void Event::Builder::setNaviData( ::cereal::NaviData::Reader value) {
+  _builder.setDataField<Event::Which>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAVI_DATA);
+  ::capnp::_::PointerHelpers< ::cereal::NaviData>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::NaviData::Builder Event::Builder::initNaviData() {
+  _builder.setDataField<Event::Which>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAVI_DATA);
+  return ::capnp::_::PointerHelpers< ::cereal::NaviData>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void Event::Builder::adoptNaviData(
+    ::capnp::Orphan< ::cereal::NaviData>&& value) {
+  _builder.setDataField<Event::Which>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAVI_DATA);
+  ::capnp::_::PointerHelpers< ::cereal::NaviData>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::NaviData> Event::Builder::disownNaviData() {
+  KJ_IREQUIRE((which() == Event::NAVI_DATA),
+              "Must check which() before get()ing a union member.");
+  return ::capnp::_::PointerHelpers< ::cereal::NaviData>::disown(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
 }
 

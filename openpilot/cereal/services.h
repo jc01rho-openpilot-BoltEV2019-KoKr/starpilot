@@ -100,6 +100,7 @@ static std::map<std::string, service> services = {
   { "livestreamWideRoadEncodeData", {"livestreamWideRoadEncodeData", false, 20.000000, -1, 2097152}},
   { "livestreamNarrowRoadEncodeData", {"livestreamNarrowRoadEncodeData", false, 20.000000, -1, 2097152}},
   { "livestreamCabinEncodeData", {"livestreamCabinEncodeData", false, 20.000000, -1, 2097152}},
+  { "naviData", {"naviData", false, 0.000000, -1, 256000}},
 };
 #endif
 

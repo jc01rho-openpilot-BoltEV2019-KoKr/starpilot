@@ -132,6 +132,7 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     excessiveActuation @96;
     bigModelLoading @100;
     bigModelFailed @102;
+    ndaCameraWarn @105;
 
     lowBatteryDEPRECATED @40;
     soundsUnavailableDEPRECATED @47;
@@ -844,6 +845,7 @@ struct SelfdriveState {
 
     preAlert @9;
     complete @10;
+    speedDown @11;
   }
 
   enum OpenpilotState @0xdbe58b96d2d1ac61 {
@@ -2528,6 +2530,36 @@ struct Touch {
   value @4 :Int32;
 }
 
+# NDA (road-limit v2) data received from a phone navigation app over UDP.
+struct NaviData {
+  active @0 :Int16;
+  roadLimitSpeed @1 :Int16;
+  isHighway @2 :Bool;
+  camType @3 :Int16;
+  camLimitSpeedLeftDist @4 :Int16;
+  camLimitSpeed @5 :Int16;
+  sectionLimitSpeed @6 :Int16;
+  sectionLeftDist @7 :Int16;
+  sectionAvgSpeed @8 :Int16;
+  sectionLeftTime @9 :Int16;
+  sectionAdjustSpeed @10 :Bool;
+  camSpeedFactor @11 :Float32;
+  currentRoadName @12 :Text;
+  isNda2 @13 :Bool;
+  ts @14 :TrafficSignal;
+  camRearPassed @15 :Bool;
+
+  struct TrafficSignal {
+    isGreenLightOn @0 :Bool;
+    isLeftLightOn @1 :Bool;
+    isRedLightOn @2 :Bool;
+    greenLightRemainTime @3 :Int16;
+    leftLightRemainTime @4 :Int16;
+    redLightRemainTime @5 :Int16;
+    distance @6 :Int16;
+  }
+}
+
 struct Event {
   logMonoTime @0 :UInt64;  # nanoseconds
   valid @67 :Bool = true;
@@ -2664,6 +2696,7 @@ struct Event {
     mapdExtendedOut @143 :Custom.MapdExtendedOut;
     mapdIn @144 :Custom.MapdIn;
     mapdOut @145 :Custom.MapdOut;
+    naviData @154 :NaviData;
 
     # *********** legacy + deprecated ***********
     model @9 :Deprecated.ModelData; # TODO: rename modelV2 and mark this as deprecated
