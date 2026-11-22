@@ -1,34 +1,14 @@
-from types import SimpleNamespace
+import unittest
+from typing import cast
 
-import pytest
-from hypothesis import given, settings, strategies as st
-
-from opendbc.car import Bus, structs
-from opendbc.can import CANPacker, CANParser
+from opendbc.car import Bus
 from opendbc.car.structs import CarParams
-from opendbc.car.lateral import common_fault_avoidance
-from opendbc.car.fw_versions import build_fw_dict, match_fw_to_car
-from opendbc.car.toyota import toyotacan
-from opendbc.car.toyota.carcontroller import CarController, get_camry_hybrid_feedforward, get_long_tune, get_prius_feedforward, \
-                                             get_prius_positive_feedforward_scale, \
-                                             get_rav4_interceptor_pedal_scale, \
-                                             get_toyota_lat_active, get_toyota_steer_rate_limit, \
-                                             MAX_STEER_RATE, MAX_STEER_RATE_FRAMES, MAX_USER_TORQUE, \
-                                             limit_interceptor_pcm_accel, \
-                                             limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
-                                             limit_prius_stopping_accel, should_bypass_toyota_long_pid, supports_toyota_auto_hold, \
-                                             update_permit_braking
-from opendbc.car.toyota.carstate import CarState, LKAS_BUTTON_CAR, calculate_interceptor_gas_pressed, create_lkas_button_events
+from opendbc.car.fw_query_definitions import OfflineFwVersions
+from opendbc.car.fw_versions import build_fw_dict
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
-from opendbc.car.toyota.interface import CarInterface
-from opendbc.car.toyota.radar_interface import RadarInterface, TSSP_RADAR_EGO_SPEED_SCALE
-from opendbc.car.toyota.values import CAR, DBC, MIN_ACC_SPEED, TSS2_CAR, ANGLE_CONTROL_CAR, RADAR_ACC_CAR, SECOC_CAR, \
-                                                  FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, FUZZY_EXCLUDED_PLATFORMS, \
-                                                  ToyotaFlags, ToyotaSafetyFlags, ToyotaStarPilotFlags, TOYOTA_AUTO_HOLD_CARS, \
-                                                  uses_toyota_auto_hold_aeb, \
-                                                  get_platform_codes
-from opendbc.safety import ALTERNATIVE_EXPERIENCE
-from openpilot.common.params import Params
+from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, \
+                                                  FUZZY_EXCLUDED_PLATFORMS, get_platform_codes
+from opendbc.testing import fuzzy_test
 
 Ecu = CarParams.Ecu
 
@@ -38,615 +18,125 @@ def check_fw_version(fw_version: bytes) -> bool:
   return b'?' not in fw_version and b'!' not in fw_version
 
 
-class TestToyotaInterfaces:
-  def test_car_sets(self):
-    assert len(ANGLE_CONTROL_CAR - TSS2_CAR) == 0
-    assert len(RADAR_ACC_CAR - TSS2_CAR) == 0
+def cars_with(flags):
+  return {c for c in CAR if c.config.flags & flags}
+
+
+class TestToyotaInterfaces(unittest.TestCase):
+  def test_dashboard_lanes_follow_applied_lateral_axis(self):
+    from opendbc.car import structs
+    from opendbc.car.toyota.tests.test_auto_hold import setup_hold, step_hold, decode
+
+    for car in (CAR.TOYOTA_PRIUS_RETROFIT, CAR.TOYOTA_COROLLA_TSS2, CAR.TOYOTA_RAV4_TSS2):
+      cp, controller, command, state = setup_hold(car, enabled=False)
+      state.out.standstill = state.out.brakePressed = False
+      command.actuators.torque = 0.2
+      command.cruiseControl.cancel = True
+      command.hudControl.visualAlert = structs.CarControl.HUDControl.VisualAlert.steerRequired
+      command.hudControl.leftLaneVisible = True
+      command.hudControl.rightLaneDepart = True
+      state.lkas_hud = {'LANE_SWAY_FLD': 5, 'LANE_SWAY_BUZZER': 1, 'LANE_SWAY_WARNING': 1,
+                        'LANE_SWAY_SENSITIVITY': 1, 'LANE_SWAY_TOGGLE': 0}
+      cases = ((True, False, 0, False), (False, True, 0, True), (True, True, 499, True),
+               (True, True, 500, False), (True, True, -500, False), (True, True, 0, True),
+               (True, False, 0, False))
+      for enabled, requested, driver_torque, applied in cases:
+        with self.subTest(car=car, enabled=enabled, requested=requested, driver_torque=driver_torque):
+          command.enabled, command.latActive = enabled, requested
+          state.out.steeringTorque = driver_torque
+          frames = step_hold(controller, command, state)
+          hud = decode(cp, next(frame for frame in frames if frame[0] == 0x412), 'LKAS_HUD')
+          steering = decode(cp, next(frame for frame in frames if frame[0] == 0x2E4), 'STEERING_LKA')
+          self.assertEqual((hud['LEFT_LINE'], hud['RIGHT_LINE'], hud['BARRIERS']),
+                           (1, 3, 1) if applied else (0, 0, 0))
+          self.assertEqual(steering['STEER_REQUEST'], int(applied))
+          self.assertEqual(steering['STEER_TORQUE_CMD'] != 0, applied)
+          self.assertEqual((hud['LKAS_STATUS'], hud['LDA_SA_TOGGLE'], hud['LDA_ALERT'], hud['TWO_BEEPS']), (1, 1, 1, 1))
+          for signal, value in state.lkas_hud.items():
+            self.assertEqual(hud[signal], value)
+
+  def test_distance_command_matches_hud_bars_until_pcm_acknowledges(self):
+    from opendbc.car.toyota.tests.test_auto_hold import setup_hold, step_hold, decode
+
+    for bars in (1, 2, 3):
+      with self.subTest(bars=bars):
+        cp, controller, command, state = setup_hold(CAR.TOYOTA_COROLLA_TSS2, enabled=False)
+        command.enabled = command.longActive = True
+        command.hudControl.leadDistanceBars = bars
+        state.out.cruiseState.enabled = True
+        state.out.standstill = state.out.brakePressed = False
+        state.pcm_follow_distance = 0
+        requests = []
+        for _ in range(13):
+          for frame in step_hold(controller, command, state):
+            if frame[0] == 0x343:
+              requests.append(int(decode(cp, frame, 'ACC_CONTROL')['DISTANCE']))
+        self.assertEqual(requests, [1, 1, 0, 0, 1])
+        state.pcm_follow_distance = 4 - bars
+        for _ in range(6):
+          frames = step_hold(controller, command, state)
+        frame = next(frame for frame in frames if frame[0] == 0x343)
+        self.assertEqual(decode(cp, frame, 'ACC_CONTROL')['DISTANCE'], 0)
+
+    cp, controller, command, state = setup_hold(CAR.TOYOTA_PRIUS, enabled=False)
+    self.assertFalse(cp.openpilotLongitudinalControl)
+    command.enabled = True
+    command.hudControl.leadDistanceBars = 1
+    state.out.cruiseState.enabled = True
+    state.pcm_follow_distance = 0
+    for _ in range(13):
+      self.assertFalse(any(frame[0] == 0x343 for frame in step_hold(controller, command, state)))
+    command.cruiseControl.cancel = True
+    frame = next(frame for frame in step_hold(controller, command, state) if frame[0] == 0x343)
+    self.assertEqual(decode(cp, frame, 'ACC_CONTROL')['DISTANCE'], 0)
+
+  def test_corolla_rate_cut_is_decoded_and_preserves_sibling_boundary(self):
+    from opendbc.car.toyota.tests.test_auto_hold import setup_hold, step_hold, decode
+
+    for car, rate, cuts in ((CAR.TOYOTA_COROLLA_TSS2, 79.9, False),
+                            (CAR.TOYOTA_COROLLA_TSS2, 80.0, True),
+                            (CAR.TOYOTA_COROLLA_TSS2, -80.0, True),
+                            (CAR.TOYOTA_HIGHLANDER_TSS2, 80.0, False),
+                            (CAR.TOYOTA_HIGHLANDER_TSS2, 99.9, False),
+                            (CAR.TOYOTA_HIGHLANDER_TSS2, 100.0, True)):
+      with self.subTest(car=car, rate=rate):
+        cp, controller, command, state = setup_hold(car, enabled=False)
+        command.latActive = True
+        command.actuators.torque = 0.2
+        state.out.steeringRateDeg = rate
+        requests = []
+        for _ in range(19):
+          frame = next(frame for frame in step_hold(controller, command, state) if frame[0] == 0x2E4)
+          requests.append(int(decode(cp, frame, 'STEERING_LKA')['STEER_REQUEST']))
+        self.assertEqual(requests, [1] * 17 + ([0, 1] if cuts else [1, 1]))
+        command.latActive = False
+        frame = next(frame for frame in step_hold(controller, command, state) if frame[0] == 0x2E4)
+        self.assertEqual(decode(cp, frame, 'STEERING_LKA')['STEER_REQUEST'], 0)
+        command.latActive = True
+        state.out.steeringRateDeg = 0.0
+        frame = next(frame for frame in step_hold(controller, command, state) if frame[0] == 0x2E4)
+        self.assertEqual(decode(cp, frame, 'STEERING_LKA')['STEER_REQUEST'], 1)
+
+  def test_car_flags(self):
+    # Angle and radar-ACC cars are always TSS2 cars
+    assert not (cars_with(ToyotaFlags.ANGLE_CONTROL | ToyotaFlags.RADAR_ACC) - cars_with(ToyotaFlags.TSS2))
 
   def test_lta_platforms(self):
     # At this time, only RAV4 2023 is expected to use LTA/angle control
-    assert ANGLE_CONTROL_CAR == {CAR.TOYOTA_RAV4_TSS2_2023}
-
-  @pytest.mark.parametrize("candidate", [CAR.TOYOTA_RAV4_TSS2, CAR.TOYOTA_RAV4_TSS2_2023])
-  def test_rav4_can_filter_is_optional(self, candidate):
-    def get_params(has_can_filter):
-      fingerprint = {bus: {} for bus in range(8)}
-      if has_can_filter:
-        fingerprint[0][0x2AA] = 8
-
-      car_params = CarInterface.get_params(
-        candidate,
-        fingerprint,
-        [],
-        alpha_long=False,
-        is_release=False,
-        docs=False,
-        starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-      )
-      return CarInterface.get_starpilot_params(candidate, fingerprint, [], car_params, SimpleNamespace())
-
-    without_filter = get_params(False)
-    with_filter = get_params(True)
-
-    assert not without_filter.flags & ToyotaStarPilotFlags.RADAR_CAN_FILTER.value
-    assert not without_filter.flags & ToyotaStarPilotFlags.SMART_DSU.value
-    assert with_filter.flags & ToyotaStarPilotFlags.RADAR_CAN_FILTER.value
-    assert with_filter.flags & ToyotaStarPilotFlags.SMART_DSU.value
-
-  def test_rav4_prime_force_torque_controller(self):
-    fingerprint = {bus: {} for bus in range(8)}
-
-    default_params = CarInterface.get_params(
-      CAR.TOYOTA_RAV4_PRIME, fingerprint, [], False, False, False,
-      SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-    )
-    forced_params = CarInterface.get_params(
-      CAR.TOYOTA_RAV4_PRIME, fingerprint, [], False, False, False,
-      SimpleNamespace(force_torque_controller=True, nnff=False, nnff_lite=False),
-    )
-
-    assert default_params.lateralTuning.which() == "torque"
-    assert forced_params.lateralTuning.which() == "torque"
-    assert default_params.lateralTuning.to_dict() == forced_params.lateralTuning.to_dict()
-    assert forced_params.lateralTuning.torque.latAccelFactor == pytest.approx(1.7)
-    assert forced_params.lateralTuning.torque.friction == pytest.approx(0.14)
-
-  @pytest.mark.parametrize("candidate", list(CAR))
-  def test_toyota_default_controller_preserves_native_angle_path(self, candidate):
-    fingerprint = {bus: {} for bus in range(8)}
-    default_params = CarInterface.get_params(
-      candidate, fingerprint, [], False, False, False,
-      SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-    )
-    forced_params = CarInterface.get_params(
-      candidate, fingerprint, [], False, False, False,
-      SimpleNamespace(force_torque_controller=True, nnff=False, nnff_lite=False),
-    )
-
-    if candidate in ANGLE_CONTROL_CAR:
-      assert default_params.steerControlType == CarParams.SteerControlType.angle
-      assert default_params.lateralTuning.which() == "pid"
-      assert default_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.LTA.value
-    else:
-      assert default_params.steerControlType == CarParams.SteerControlType.torque
-      assert default_params.lateralTuning.which() == "torque"
-      assert not default_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.LTA.value
-
-    assert default_params.to_dict() == forced_params.to_dict()
-
-  @pytest.mark.parametrize("candidate", [CAR.TOYOTA_RAV4_TSS2, CAR.TOYOTA_RAV4_TSS2_2022, CAR.TOYOTA_RAV4_PRIME])
-  @pytest.mark.parametrize("eps_version", [b'\x028965B0R01400', b'8965B42181\x00\x00\x00\x00\x00\x00', b'8965B0R01200'])
-  def test_rav4_rack_variants_default_to_torque(self, candidate, eps_version):
-    params = CarInterface.get_params(
-      candidate, {bus: {} for bus in range(8)}, [CarParams.CarFw(ecu=Ecu.eps, fwVersion=eps_version)],
-      False, False, False,
-      SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-    )
-
-    assert params.lateralTuning.which() == "torque"
-    assert params.steerActuatorDelay == pytest.approx(0.12)
-    assert params.steerControlType == CarParams.SteerControlType.torque
-
-  def test_prius_force_torque_controller_preserves_vehicle_tune(self):
-    fingerprint = {bus: {} for bus in range(8)}
-    car_fw = [CarParams.CarFw(ecu=Ecu.eps, fwVersion=b'8965B47050\x00\x00\x00\x00\x00\x00')]
-
-    default_params = CarInterface.get_params(
-      CAR.TOYOTA_PRIUS, fingerprint, car_fw, False, False, False,
-      SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-    )
-    forced_params = CarInterface.get_params(
-      CAR.TOYOTA_PRIUS, fingerprint, car_fw, False, False, False,
-      SimpleNamespace(force_torque_controller=True, nnff=False, nnff_lite=False),
-    )
-
-    assert default_params.lateralTuning.which() == "torque"
-    assert forced_params.lateralTuning.which() == "torque"
-    assert default_params.lateralTuning.torque.steeringAngleDeadzoneDeg == pytest.approx(0.3)
-    assert forced_params.lateralTuning.torque.steeringAngleDeadzoneDeg == pytest.approx(0.3)
-
-  def test_prius_tss2_eps_retrofit_uses_legacy_body_and_eps_scale(self):
-    params = CarInterface.get_params(
-      CAR.TOYOTA_PRIUS_RETROFIT,
-      {bus: {} for bus in range(8)},
-      [],
-      False,
-      False,
-      False,
-      SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-    )
-
-    assert params.lateralTuning.which() == "torque"
-    assert params.safetyConfigs[0].safetyParam & 0xFF == 73
-    assert params.flags & ToyotaFlags.TSS2.value == 0
-    assert params.steerRatio == pytest.approx(15.74)
-
-  def test_sienna_4th_gen_uses_torque_controller(self):
-    params = CarInterface.get_params(
-      CAR.TOYOTA_SIENNA_4TH_GEN,
-      {bus: {} for bus in range(8)},
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-    )
-
-    assert params.lateralTuning.which() == "torque"
-    assert params.lateralTuning.torque.latAccelFactor == pytest.approx(1.7)
-    assert params.lateralTuning.torque.friction == pytest.approx(0.14)
-
-  def test_sienna_4th_gen_parses_distance_button(self):
-    params = CarInterface.get_params(
-      CAR.TOYOTA_SIENNA_4TH_GEN,
-      {bus: {} for bus in range(8)},
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-    )
-    parser = CarState.get_can_parsers(params)[Bus.pt]
-
-    assert "PCM_CRUISE_4" in parser.vl
-
-    other_params = CarInterface.get_params(
-      CAR.TOYOTA_RAV4_PRIME,
-      {bus: {} for bus in range(8)},
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-    )
-    assert "PCM_CRUISE_4" not in CarState.get_can_parsers(other_params)[Bus.pt].vl
-
-  def test_sienna_distance_button_rate_does_not_invalidate_can(self):
-    params = CarInterface.get_params(
-      CAR.TOYOTA_SIENNA_4TH_GEN,
-      {bus: {} for bus in range(8)},
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-    )
-    parser = CarState.get_can_parsers(params)[Bus.pt]
-    packer = CANPacker(DBC[CAR.TOYOTA_SIENNA_4TH_GEN][Bus.pt])
-
-    for frame in range(1, 4):
-      msg = packer.make_can_msg("PCM_CRUISE_4", 0, {"COUNTER": frame, "DISTANCE": frame % 2})
-      parser.update([(frame * 1_000_000_000, [msg])])
-      assert parser.can_valid
-
-      # The 1 Hz message must not make the whole car state invalid between frames.
-      parser.update([(frame * 1_000_000_000 + 500_000_000, [])])
-      assert parser.can_valid
+    assert cars_with(ToyotaFlags.ANGLE_CONTROL) == {CAR.TOYOTA_RAV4_TSS2_2023}
 
   def test_tss2_dbc(self):
     # We make some assumptions about TSS2 platforms,
     # like looking up certain signals only in this DBC
     for car_model, dbc in DBC.items():
-      if car_model in TSS2_CAR and car_model not in SECOC_CAR:
+      if car_model.config.flags & ToyotaFlags.TSS2 and not (car_model.config.flags & ToyotaFlags.SECOC):
         assert dbc[Bus.pt] == "toyota_nodsu_pt_generated"
 
-  @pytest.mark.parametrize("candidate,hybrid", [
-    (CAR.TOYOTA_CAMRY_TSS2, False),
-    (CAR.TOYOTA_RAV4, False),
-    (CAR.TOYOTA_RAV4H, True),
-    (CAR.TOYOTA_RAV4_TSS2, False),
-    (CAR.TOYOTA_RAV4_TSS2, True),
-    (CAR.TOYOTA_COROLLA_TSS2, True),
-  ])
-  def test_auto_hold_sets_flag_on_supported_toyota(self, candidate, hybrid):
-    params = Params()
-    try:
-      params.put_bool("ToyotaAutoHold", True)
-      car_params = CarInterface.get_params(
-        candidate,
-        {bus: ({0x2FF: 8} if candidate in (CAR.TOYOTA_RAV4, CAR.TOYOTA_RAV4H) and bus == 0 else {})
-         for bus in range(8)},
-        [CarParams.CarFw(ecu=Ecu.hybrid, address=0x7D2, fwVersion=b"test")] if hybrid else [],
-        alpha_long=False,
-        is_release=False,
-        docs=False,
-        starpilot_toggles=SimpleNamespace(),
-      )
-    finally:
-      params.remove("ToyotaAutoHold")
-
-    assert car_params.flags & ToyotaFlags.AUTO_BRAKE_HOLD.value
-    legacy_hold = candidate == CAR.TOYOTA_CAMRY_TSS2 or (candidate == CAR.TOYOTA_RAV4_TSS2 and hybrid)
-    assert uses_toyota_auto_hold_aeb(car_params) == legacy_hold
-    if legacy_hold:
-      assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALLOW_AEB
-      assert not car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.TOYOTA_AUTO_HOLD
-    else:
-      assert car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.TOYOTA_AUTO_HOLD
-      assert not car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALLOW_AEB
-
-    can_parsers = CarState.get_can_parsers(car_params)
-    car_state = CarState(car_params, SimpleNamespace(flags=0))
-    car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
-    assert (0x344 in can_parsers[Bus.cam].vl) == legacy_hold
-    assert car_state.auto_brake_hold == legacy_hold
-
-  @pytest.mark.parametrize("candidate,hybrid", [
-    (CAR.TOYOTA_CAMRY_TSS2, False),
-    (CAR.TOYOTA_RAV4, False),
-    (CAR.TOYOTA_RAV4H, True),
-    (CAR.TOYOTA_RAV4_TSS2, False),
-    (CAR.TOYOTA_RAV4_TSS2, True),
-    (CAR.TOYOTA_RAV4_TSS2_2022, True),
-  ])
-  def test_auto_hold_is_disabled_by_default(self, candidate, hybrid):
-    params = Params()
-    params.remove("ToyotaAutoHold")
-    car_params = CarInterface.get_params(
-      candidate,
-      {bus: {} for bus in range(8)},
-      [CarParams.CarFw(ecu=Ecu.hybrid, address=0x7D2, fwVersion=b"test")] if hybrid else [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert not car_params.flags & ToyotaFlags.AUTO_BRAKE_HOLD.value
-    assert not car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.TOYOTA_AUTO_HOLD
-    assert not car_params.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALLOW_AEB
-    assert 0x344 not in CarState.get_can_parsers(car_params)[Bus.cam].vl
-
-  def test_prius_openpilot_long_uses_hybrid_long_defaults(self):
-    car_params = CarInterface.get_params(
-      CAR.TOYOTA_PRIUS,
-      {0: {0x2FF: 8}},
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert car_params.openpilotLongitudinalControl
-    assert car_params.flags & ToyotaFlags.HYBRID.value
-    assert car_params.flags & ToyotaFlags.RAISED_ACCEL_LIMIT.value
-    assert abs(car_params.longitudinalActuatorDelay - 0.05) < 1e-6
-    assert abs(car_params.vEgoStopping - 0.25) < 1e-6
-    assert abs(car_params.vEgoStarting - 0.25) < 1e-6
-
-  def test_highlander_ice_openpilot_long_uses_measured_actuator_delay(self):
-    stock_params = CarInterface.get_params(
-      CAR.TOYOTA_HIGHLANDER,
-      {bus: {} for bus in range(8)},
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-    long_params = CarInterface.get_params(
-      CAR.TOYOTA_HIGHLANDER,
-      {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)},
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert not stock_params.openpilotLongitudinalControl
-    assert stock_params.longitudinalActuatorDelay == pytest.approx(0.15)
-    assert long_params.openpilotLongitudinalControl
-    assert not long_params.flags & ToyotaFlags.HYBRID.value
-    assert long_params.longitudinalActuatorDelay == pytest.approx(0.4)
-
-  def test_sienna_openpilot_long_uses_measured_actuator_delay(self):
-    stock_params = CarInterface.get_params(
-      CAR.TOYOTA_SIENNA,
-      {bus: {} for bus in range(8)},
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-    long_params = CarInterface.get_params(
-      CAR.TOYOTA_SIENNA,
-      {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)},
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert not stock_params.openpilotLongitudinalControl
-    assert stock_params.longitudinalActuatorDelay == pytest.approx(0.15)
-    assert long_params.openpilotLongitudinalControl
-    assert not long_params.flags & ToyotaFlags.HYBRID.value
-    assert long_params.longitudinalActuatorDelay == pytest.approx(0.5)
-
-  @pytest.mark.parametrize("camera_message", [0x343, 0x4CB])
-  def test_dsu_bypass_enables_longitudinal(self, camera_message):
-    fingerprint = {bus: {} for bus in range(8)}
-    fingerprint[2][camera_message] = 8
-
-    car_params = CarInterface.get_params(
-      CAR.TOYOTA_COROLLA,
-      fingerprint,
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert car_params.flags & ToyotaFlags.DSU_BYPASS.value
-    assert car_params.openpilotLongitudinalControl
-    assert not car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
-
-    starpilot_params = CarInterface.get_starpilot_params(
-      CAR.TOYOTA_COROLLA, fingerprint, [], car_params, SimpleNamespace(),
-    )
-    car_state = CarState(car_params, starpilot_params)
-    can_parsers = car_state.get_can_parsers(car_params)
-    car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
-
-    for message in ("ACC_CONTROL", "PRE_COLLISION", "PCS_HUD"):
-      assert message not in can_parsers[Bus.pt].vl
-      assert message in can_parsers[Bus.cam].vl
-
-  @pytest.mark.parametrize(("native_bus", "message"), [(1, 0x343), (0, 0x4CB)])
-  def test_dsu_bypass_ignores_startup_bus_mirror(self, native_bus, message):
-    fingerprint = {bus: {} for bus in range(8)}
-    fingerprint[native_bus][message] = 8
-    fingerprint[2][message] = 8
-
-    car_params = CarInterface.get_params(
-      CAR.LEXUS_IS,
-      fingerprint,
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert not car_params.flags & ToyotaFlags.DSU_BYPASS.value
-    assert not car_params.openpilotLongitudinalControl
-    assert car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
-    assert car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.ALT_CRUISE.value
-
-  def test_camry_ignores_startup_acc_bus_mirror(self):
-    fingerprint = {bus: {} for bus in range(8)}
-    fingerprint[0][0x343] = 8
-    fingerprint[2][0x343] = 8
-
-    car_params = CarInterface.get_params(
-      CAR.TOYOTA_CAMRY,
-      fingerprint,
-      [CarParams.CarFw(ecu=Ecu.hybrid, address=0x7D2, fwVersion=b"test")],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert car_params.flags & ToyotaFlags.HYBRID.value
-    assert not car_params.flags & ToyotaFlags.DSU_BYPASS.value
-    assert not car_params.openpilotLongitudinalControl
-    assert car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
-
-    starpilot_params = CarInterface.get_starpilot_params(
-      CAR.TOYOTA_CAMRY, fingerprint, [], car_params, SimpleNamespace(),
-    )
-    car_state = CarState(car_params, starpilot_params)
-    can_parsers = car_state.get_can_parsers(car_params)
-    car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
-    assert "PRE_COLLISION" in can_parsers[Bus.pt].vl
-    for message in ("ACC_CONTROL", "PRE_COLLISION"):
-      assert message not in can_parsers[Bus.cam].vl
-
-  @pytest.mark.parametrize(("native_bus", "message"), [(1, 0x343), (0, 0x4CB)])
-  def test_prius_dsu_bypass_allows_native_bus_message(self, native_bus, message):
-    fingerprint = {bus: {} for bus in range(8)}
-    fingerprint[native_bus][message] = 8
-    fingerprint[2][message] = 8
-
-    car_params = CarInterface.get_params(
-      CAR.TOYOTA_PRIUS,
-      fingerprint,
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert car_params.flags & ToyotaFlags.DSU_BYPASS.value
-    assert car_params.openpilotLongitudinalControl
-    assert not car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
-    assert not car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.ALT_CRUISE.value
-
-  @pytest.mark.parametrize(("native_bus", "message"), [(1, 0x343), (0, 0x4CB)])
-  def test_late_prius_ignores_startup_bus_mirror(self, native_bus, message):
-    fingerprint = {bus: {} for bus in range(8)}
-    fingerprint[native_bus][message] = 8
-    fingerprint[2][message] = 8
-    car_fw = [CarParams.CarFw(
-      ecu=Ecu.fwdCamera,
-      address=0x750,
-      subAddress=0x6D,
-      fwVersion=b'8646F4705200\x00\x00\x00\x00',
-    )]
-
-    car_params = CarInterface.get_params(
-      CAR.TOYOTA_PRIUS,
-      fingerprint,
-      car_fw,
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert not car_params.flags & ToyotaFlags.DSU_BYPASS.value
-    assert not car_params.openpilotLongitudinalControl
-    assert car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
-
-    starpilot_params = CarInterface.get_starpilot_params(
-      CAR.TOYOTA_PRIUS, fingerprint, car_fw, car_params, SimpleNamespace(),
-    )
-    car_state = CarState(car_params, starpilot_params)
-    can_parsers = car_state.get_can_parsers(car_params)
-    car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
-
-    assert "PRE_COLLISION" in can_parsers[Bus.pt].vl
-    for acc_message in ("ACC_CONTROL", "PRE_COLLISION", "PCS_HUD"):
-      assert acc_message not in can_parsers[Bus.cam].vl
-
-  def test_dsu_bypass_does_not_change_tss2_or_smart_dsu(self):
-    fingerprint = {bus: {} for bus in range(8)}
-    fingerprint[0][0x2FF] = 8
-    fingerprint[2][0x343] = 8
-
-    smart_dsu_params = CarInterface.get_params(
-      CAR.TOYOTA_COROLLA,
-      fingerprint,
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-    tss2_params = CarInterface.get_params(
-      CAR.TOYOTA_CAMRY_TSS2,
-      fingerprint,
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert not smart_dsu_params.flags & ToyotaFlags.DSU_BYPASS.value
-    assert not tss2_params.flags & ToyotaFlags.DSU_BYPASS.value
-
-  def test_camry_hybrid_continental_radar_uses_ths_longitudinal_tune(self):
-    fingerprint = {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)}
-    hybrid_fw = [CarParams.CarFw(ecu=Ecu.hybrid, address=0x7D2, fwVersion=b"test")]
-    car_params = CarInterface.get_params(
-      CAR.TOYOTA_CAMRY,
-      fingerprint,
-      hybrid_fw,
-      alpha_long=True,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert car_params.openpilotLongitudinalControl
-    assert not car_params.radarUnavailable
-    assert abs(car_params.radarTimeStepDEPRECATED - 0.1) < 1e-6
-    assert abs(car_params.longitudinalActuatorDelay - 0.05) < 1e-6
-    assert abs(car_params.vEgoStopping - 0.25) < 1e-6
-    assert abs(car_params.vEgoStarting - 0.25) < 1e-6
-    assert abs(car_params.stoppingDecelRate - 0.3) < 1e-6
-    assert not car_params.flags & ToyotaFlags.NO_STOP_TIMER.value
-
-    controller = get_long_tune(car_params, SimpleNamespace(ACCEL_MIN=-3.5, ACCEL_MAX=2.0))
-    controller.speed = 0.0
-    assert controller.k_i == pytest.approx(0.5)
-    assert controller.k_f == pytest.approx(1.0)
-
-    radar_interface = RadarInterface(car_params)
-    assert radar_interface.radar_acc_tssp
-    assert radar_interface.rcp is not None
-    assert radar_interface.pt_cp is not None
-
-  def test_camry_ice_keeps_legacy_longitudinal_tune(self):
-    fingerprint = {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)}
-    car_params = CarInterface.get_params(
-      CAR.TOYOTA_CAMRY,
-      fingerprint,
-      [],
-      alpha_long=True,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert not car_params.flags & ToyotaFlags.HYBRID.value
-    assert car_params.longitudinalActuatorDelay == pytest.approx(0.15)
-    assert car_params.vEgoStopping == pytest.approx(0.5)
-    assert car_params.stoppingDecelRate == pytest.approx(0.8)
-
-    controller = get_long_tune(car_params, SimpleNamespace(ACCEL_MIN=-3.5, ACCEL_MAX=2.0))
-    controller.speed = 0.0
-    assert controller.k_i == pytest.approx(3.6)
-    assert controller.k_f == pytest.approx(1.0)
-    assert should_bypass_toyota_long_pid(car_params)
-
-  def test_camry_hybrid_keeps_toyota_longitudinal_pid(self):
-    fingerprint = {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)}
-    hybrid_fw = [CarParams.CarFw(ecu=Ecu.hybrid, address=0x7D2, fwVersion=b"test")]
-    car_params = CarInterface.get_params(
-      CAR.TOYOTA_CAMRY,
-      fingerprint,
-      hybrid_fw,
-      alpha_long=True,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(),
-    )
-
-    assert not should_bypass_toyota_long_pid(car_params)
-
-  def test_highlander_sdsu_bypasses_toyota_longitudinal_pid(self):
-    car_params = SimpleNamespace(
-      carFingerprint=CAR.TOYOTA_HIGHLANDER,
-      enableGasInterceptorDEPRECATED=False,
-    )
-
-    assert should_bypass_toyota_long_pid(car_params, SimpleNamespace(has_sdsu=True))
-    assert not should_bypass_toyota_long_pid(car_params, SimpleNamespace(has_sdsu=False))
-
-  def test_camry_continental_radar_converts_absolute_target_speed(self):
-    radar_interface = RadarInterface.__new__(RadarInterface)
-    radar_interface.CP = SimpleNamespace(wheelSpeedFactor=1.0)
-    radar_interface.pts = {}
-    radar_interface.track_id = 0
-    radar_interface.RADAR_MSGS = [0x680]
-    radar_interface.pt_cp = SimpleNamespace(vl={
-      "WHEEL_SPEEDS": {
-        "WHEEL_SPEED_FL": 36.0,
-        "WHEEL_SPEED_FR": 36.0,
-        "WHEEL_SPEED_RL": 36.0,
-        "WHEEL_SPEED_RR": 36.0,
-      },
-    })
-    radar_interface.rcp = SimpleNamespace(can_valid=True, vl={
-      0x680: {
-        "ID": 7,
-        "LONG_DIST": 40.0,
-        "LAT_DIST": -0.2,
-        "SPEED": 11.0,
-        "LAT_SPEED": 0.1,
-      },
-    })
-
-    radar_data = radar_interface._update_tssp({0x680})
-
-    assert len(radar_data.points) == 1
-    assert radar_data.points[0].dRel == 40.0
-    assert radar_data.points[0].vRel == pytest.approx(11.0 - 10.0 * TSSP_RADAR_EGO_SPEED_SCALE)
-
-  def test_essential_ecus(self, subtests):
+  def test_essential_ecus(self):
     # Asserts standard ECUs exist for each platform
     common_ecus = {Ecu.fwdRadar, Ecu.fwdCamera}
     for car_model, ecus in FW_VERSIONS.items():
-      with subtests.test(car_model=car_model.value):
+      with self.subTest(car_model=car_model.value):
         present_ecus = {ecu[0] for ecu in ecus}
         missing_ecus = common_ecus - present_ecus
         assert len(missing_ecus) == 0
@@ -662,57 +152,33 @@ class TestToyotaInterfaces:
           assert Ecu.eps in present_ecus
 
 
-class TestToyotaFingerprint:
-  def test_sienna_2025_route_fw_exact_match(self):
-    route_fw = {
-      (Ecu.engine, 0x700, None): b'\x01896630869000\x00\x00\x00\x00',
-      (Ecu.abs, 0x7b0, None): b'\x01F15260823000\x00\x00\x00\x00',
-      (Ecu.eps, 0x7a1, None): b'\x018965B4514000\x00\x00\x00\x00',
-      (Ecu.hybrid, 0x7d2, None): b'\x02899830812000\x00\x00\x00\x00899850813000\x00\x00\x00\x00',
-      (Ecu.srs, 0x780, None): b'\x028917F0815200\x00\x00\x00\x008917H0801200\x00\x00\x00\x00',
-      (Ecu.fwdRadar, 0x750, 0xf): b'\x018821F3301500\x00\x00\x00\x00',
-      (Ecu.fwdCamera, 0x750, 0x6d): b'\x028646F0802500\x00\x00\x00\x008646G4202100\x00\x00\x00\x00',
-    }
-    car_fw = [
-      CarParams.CarFw(ecu=ecu, address=address, subAddress=0 if sub_address is None else sub_address,
-                      fwVersion=version, brand="toyota")
-      for (ecu, address, sub_address), version in route_fw.items()
-    ]
-
-    exact, matches = match_fw_to_car(car_fw, "5TDESKFC4SS158497", allow_fuzzy=False, log=False)
-
-    assert exact
-    assert matches == {CAR.TOYOTA_SIENNA_4TH_GEN}
-
-  def test_non_essential_ecus(self, subtests):
+class TestToyotaFingerprint(unittest.TestCase):
+  def test_non_essential_ecus(self):
     # Ensures only the cars that have multiple engine ECUs are in the engine non-essential ECU list
     for car_model, ecus in FW_VERSIONS.items():
-      with subtests.test(car_model=car_model.value):
+      with self.subTest(car_model=car_model.value):
         engine_ecus = {ecu for ecu in ecus if ecu[0] == Ecu.engine}
         assert (len(engine_ecus) > 1) == (car_model in FW_QUERY_CONFIG.non_essential_ecus[Ecu.engine]), \
           f"Car model unexpectedly {'not ' if len(engine_ecus) > 1 else ''}in non-essential list"
 
-  def test_valid_fw_versions(self, subtests):
+  def test_valid_fw_versions(self):
     # Asserts all FW versions are valid
     for car_model, ecus in FW_VERSIONS.items():
-      with subtests.test(car_model=car_model.value):
+      with self.subTest(car_model=car_model.value):
         for fws in ecus.values():
           for fw in fws:
             assert check_fw_version(fw), fw
 
   # Tests for part numbers, platform codes, and sub-versions which Toyota will use to fuzzy
   # fingerprint in the absence of full FW matches:
-  @settings(max_examples=100)
-  @given(data=st.data())
-  def test_platform_codes_fuzzy_fw(self, data):
-    fw_strategy = st.lists(st.binary())
-    fws = data.draw(fw_strategy)
-    get_platform_codes(fws)
+  @fuzzy_test(max_examples=100)
+  def test_platform_codes_fuzzy_fw(self, fuzzy):
+    get_platform_codes(fuzzy.list(fuzzy.binary))
 
-  def test_platform_code_ecus_available(self, subtests):
+  def test_platform_code_ecus_available(self):
     # Asserts ECU keys essential for fuzzy fingerprinting are available on all platforms
     for car_model, ecus in FW_VERSIONS.items():
-      with subtests.test(car_model=car_model.value):
+      with self.subTest(car_model=car_model.value):
         for platform_code_ecu in PLATFORM_CODE_ECUS:
           if platform_code_ecu == Ecu.eps and car_model in (CAR.TOYOTA_PRIUS_V, CAR.LEXUS_CTH,):
             continue
@@ -720,14 +186,14 @@ class TestToyotaFingerprint:
             continue
           assert platform_code_ecu in [e[0] for e in ecus]
 
-  def test_fw_format(self, subtests):
+  def test_fw_format(self):
     # Asserts:
     # - every supported ECU FW version returns one platform code
     # - every supported ECU FW version has a part number
     # - expected parsing of ECU sub-versions
 
     for car_model, ecus in FW_VERSIONS.items():
-      with subtests.test(car_model=car_model.value):
+      with self.subTest(car_model=car_model.value):
         for ecu, fws in ecus.items():
           if ecu[0] not in PLATFORM_CODE_ECUS:
             continue
@@ -741,6 +207,7 @@ class TestToyotaFingerprint:
             codes |= result
 
           # Toyota places the ECU part number in their FW versions, assert all parsable
+          # Note that there is only one unique part number per ECU across the fleet, so this
           # is not important for identification, just a sanity check.
           assert all(code.count(b"-") > 1 for code in codes), f"FW does not have part number: {fw} {codes}"
 
@@ -777,6 +244,8 @@ class TestToyotaFingerprint:
 
   def test_fuzzy_excluded_platforms(self):
     # Asserts a list of platforms that will not fuzzy fingerprint with platform codes due to them being shared.
+    matcher = FW_QUERY_CONFIG.match_fw_to_car_fuzzy
+    assert matcher is not None
     platforms_with_shared_codes = set()
     for platform, fw_by_addr in FW_VERSIONS.items():
       car_fw = []
@@ -787,7 +256,7 @@ class TestToyotaFingerprint:
                                         subAddress=0 if sub_addr is None else sub_addr))
 
       CP = CarParams(carFw=car_fw)
-      matches = FW_QUERY_CONFIG.match_fw_to_car_fuzzy(build_fw_dict(CP.carFw), CP.carVin, FW_VERSIONS)
+      matches = matcher(build_fw_dict(CP.carFw), CP.carVin, cast(OfflineFwVersions, FW_VERSIONS))
       if len(matches) == 1:
         assert list(matches)[0] == platform
       else:
@@ -795,835 +264,3 @@ class TestToyotaFingerprint:
         platforms_with_shared_codes |= {str(platform), *matches}
 
     assert platforms_with_shared_codes == FUZZY_EXCLUDED_PLATFORMS, (len(platforms_with_shared_codes), len(FW_VERSIONS))
-
-
-class TestToyotaCarController:
-  @pytest.mark.parametrize("driver_torque", [-191, -117, -99, 99, 117, 191])
-  def test_toyota_assisting_driver_keeps_lateral_active(self, driver_torque):
-    assert get_toyota_lat_active(True, driver_torque)
-
-  @pytest.mark.parametrize("driver_torque", [-MAX_USER_TORQUE, MAX_USER_TORQUE, MAX_USER_TORQUE + 1])
-  def test_toyota_high_driver_torque_still_disables_lateral(self, driver_torque):
-    assert not get_toyota_lat_active(True, driver_torque)
-
-  def test_toyota_inactive_request_stays_inactive(self):
-    assert not get_toyota_lat_active(False, 0)
-
-  def test_toyota_assisting_driver_retains_rate_fault_protection(self):
-    counter = 0
-    requests = []
-    for _ in range(36):
-      counter, request = common_fault_avoidance(
-        150 >= MAX_STEER_RATE, get_toyota_lat_active(True, 117), counter, MAX_STEER_RATE_FRAMES,
-      )
-      requests.append(request)
-    assert requests == ([True] * 17 + [False]) * 2
-
-  @pytest.mark.parametrize("candidate", list(CAR))
-  def test_steer_rate_margin_is_corolla_only(self, candidate):
-    expected = 80 if candidate == CAR.TOYOTA_COROLLA_TSS2 else MAX_STEER_RATE
-    assert get_toyota_steer_rate_limit(candidate) == expected
-
-  @pytest.mark.parametrize("direction", [-1, 1])
-  def test_corolla_rate_margin_preserves_request_spacing(self, direction):
-    counter = 0
-    requests = []
-    for rate in [0] * 30 + [90 * direction] * 36 + [0] * 30:
-      counter, request = common_fault_avoidance(
-        abs(rate) >= get_toyota_steer_rate_limit(CAR.TOYOTA_COROLLA_TSS2),
-        get_toyota_lat_active(True, 117 * direction), counter, MAX_STEER_RATE_FRAMES,
-      )
-      requests.append(request)
-    assert requests == [True] * 30 + ([True] * 17 + [False]) * 2 + [True] * 30
-
-  @staticmethod
-  def _make_controller(*, standstill_req=False, last_standstill=False):
-    controller = CarController.__new__(CarController)
-    controller.CP = SimpleNamespace(
-      carFingerprint=CAR.TOYOTA_PRIUS,
-      enableGasInterceptorDEPRECATED=False,
-      openpilotLongitudinalControl=True,
-      minEnableSpeed=-1.0,
-    )
-    controller.standstill_req = standstill_req
-    controller.last_standstill = last_standstill
-    controller.accel = 0.0
-    controller.brake_hold_active = False
-    controller._brake_hold_counter = 0
-    return controller
-
-  @staticmethod
-  def _make_cc(*, resume=False):
-    return SimpleNamespace(cruiseControl=SimpleNamespace(resume=resume))
-
-  @staticmethod
-  def _make_cs(*, standstill=True, cruise_standstill=True, pcm_acc_status=8):
-    return SimpleNamespace(
-      out=SimpleNamespace(
-        standstill=standstill,
-        cruiseState=SimpleNamespace(standstill=cruise_standstill),
-      ),
-      pcm_acc_status=pcm_acc_status,
-    )
-
-  @staticmethod
-  def _make_toggles(*, sng_hack=False):
-    return SimpleNamespace(sng_hack=sng_hack)
-
-  def test_prius_standstill_request_latches_on_entry(self):
-    controller = self._make_controller()
-
-    controller._update_standstill_request(
-      self._make_cc(),
-      self._make_cs(),
-      SimpleNamespace(accel=0.0),
-      self._make_toggles(),
-    )
-
-    assert controller.standstill_req is True
-
-  def test_toyota_auto_hold_requires_toggle_supported_car_and_capability(self):
-    CP = SimpleNamespace(
-      carFingerprint=CAR.TOYOTA_CAMRY_TSS2,
-      flags=ToyotaFlags.AUTO_BRAKE_HOLD.value,
-    )
-
-    assert supports_toyota_auto_hold(CP, True)
-    assert supports_toyota_auto_hold(SimpleNamespace(
-      carFingerprint=CAR.TOYOTA_RAV4,
-      flags=ToyotaFlags.AUTO_BRAKE_HOLD.value,
-    ), True)
-    assert supports_toyota_auto_hold(SimpleNamespace(
-      carFingerprint=CAR.TOYOTA_RAV4H,
-      flags=ToyotaFlags.AUTO_BRAKE_HOLD.value,
-    ), True)
-    assert not supports_toyota_auto_hold(CP, False)
-    assert not supports_toyota_auto_hold(SimpleNamespace(
-      carFingerprint=CAR.TOYOTA_CAMRY_TSS2,
-      flags=0,
-    ), True)
-    assert not supports_toyota_auto_hold(SimpleNamespace(
-      carFingerprint=CAR.TOYOTA_CAMRY,
-      flags=ToyotaFlags.AUTO_BRAKE_HOLD.value,
-    ), True)
-
-    assert TOYOTA_AUTO_HOLD_CARS >= {CAR.TOYOTA_RAV4, CAR.TOYOTA_RAV4H}
-
-  def test_toyota_auto_hold_latches_after_brake_press_until_gas(self):
-    controller = self._make_controller()
-    controller.packer = CANPacker(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt])
-
-    cs = SimpleNamespace(
-      out=SimpleNamespace(
-        standstill=True,
-        cruiseState=SimpleNamespace(available=True, enabled=False),
-        gasPressed=False,
-        brakePressed=True,
-        gearShifter=structs.CarState.GearShifter.drive,
-      ),
-    )
-
-    controller.update_auto_hold_state(cs, activation_frames=0)
-    assert controller.brake_hold_active
-
-    cs.out.brakePressed = False
-    controller.update_auto_hold_state(cs, activation_frames=0)
-    assert controller.brake_hold_active
-
-    cs.out.gasPressed = True
-    controller.update_auto_hold_state(cs, activation_frames=0)
-    assert not controller.brake_hold_active
-
-  def test_toyota_auto_hold_does_not_trigger_without_brake_press(self):
-    controller = self._make_controller()
-    controller.packer = CANPacker(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt])
-    cs = SimpleNamespace(
-      out=SimpleNamespace(
-        standstill=True,
-        cruiseState=SimpleNamespace(available=True, enabled=False),
-        gasPressed=False,
-        brakePressed=False,
-        gearShifter=structs.CarState.GearShifter.drive,
-      ),
-    )
-
-    controller.update_auto_hold_state(cs, activation_frames=0)
-    assert not controller.brake_hold_active
-
-  def test_camry_auto_hold_uses_legacy_aeb_brake_path(self):
-    controller = self._make_controller()
-    controller.CP.carFingerprint = CAR.TOYOTA_CAMRY_TSS2
-    controller.packer = CANPacker(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt])
-    controller.frame = 0
-
-    cs = SimpleNamespace(
-      out=SimpleNamespace(
-        standstill=True,
-        cruiseState=SimpleNamespace(available=True, enabled=False),
-        gasPressed=False,
-        brakePressed=True,
-        gearShifter=structs.CarState.GearShifter.drive,
-      ),
-      pre_collision_2={},
-    )
-
-    can_sends = controller.create_auto_brake_hold_messages(cs, brake_hold_allowed_timer=0)
-    parser = CANParser(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt], [("PRE_COLLISION_2", 0)], 0)
-    parser.update([(1, can_sends)])
-
-    assert controller.brake_hold_active
-    assert parser.vl["PRE_COLLISION_2"]["DSS1GDRV"] == -1.0
-    assert parser.vl["PRE_COLLISION_2"]["PBRTRGR"] == 1
-
-  def test_prius_resume_request_releases_standstill_latch(self):
-    controller = self._make_controller(standstill_req=True, last_standstill=True)
-
-    controller._update_standstill_request(
-      self._make_cc(resume=True),
-      self._make_cs(),
-      SimpleNamespace(accel=0.0),
-      self._make_toggles(),
-    )
-
-    assert controller.standstill_req is False
-
-  def test_permit_braking_high_speed_coasts_for_tiny_decel(self):
-    assert update_permit_braking(True, -0.05, False, True, 25.0, True) is False
-    assert update_permit_braking(False, -0.05, False, True, 25.0, True) is False
-
-  def test_permit_braking_high_speed_brakes_for_meaningful_decel_with_lead(self):
-    assert update_permit_braking(False, -0.15, False, True, 25.0, True) is True
-
-  def test_permit_braking_high_speed_no_lead_coasts_for_mild_decel(self):
-    assert update_permit_braking(True, -0.25, False, True, 25.0, False) is False
-    assert update_permit_braking(False, -0.25, False, True, 25.0, False) is False
-
-  def test_permit_braking_high_speed_no_lead_brakes_for_stronger_decel(self):
-    assert update_permit_braking(False, -0.35, False, True, 25.0, False) is True
-
-  def test_permit_braking_low_speed_keeps_legacy_behavior(self):
-    assert update_permit_braking(False, -0.05, False, True, 10.0, False) is True
-
-  def test_permit_braking_forces_on_when_stopping_or_inactive(self):
-    assert update_permit_braking(False, 0.10, True, True, 25.0, False) is True
-    assert update_permit_braking(False, 0.10, False, False, 25.0, False) is True
-
-  def test_no_lead_cruise_sign_flip_clamps_negative_pulse_when_set_speed_is_ahead(self):
-    limited = limit_no_lead_cruise_sign_flip(-0.44, 0.0, False, 23.3, 25.0, False)
-    assert limited == 0.0
-
-  def test_no_lead_cruise_sign_flip_keeps_real_decel_requests(self):
-    limited = limit_no_lead_cruise_sign_flip(-0.44, -0.15, False, 23.3, 25.0, False)
-    assert limited == -0.44
-
-  def test_no_lead_cruise_sign_flip_keeps_lead_follow_brake(self):
-    limited = limit_no_lead_cruise_sign_flip(-0.44, 0.0, False, 23.3, 25.0, True)
-    assert limited == -0.44
-
-  def test_prius_stopping_accel_unwinds_stale_stop_hold(self):
-    limited = limit_prius_stopping_accel(-3.28, -0.05, True, 0.0, True)
-    assert -1.5 < limited < 0.0
-
-  def test_prius_stopping_accel_keeps_hard_stop_commands(self):
-    limited = limit_prius_stopping_accel(-3.28, -2.0, True, 0.0, True)
-    assert limited == -3.28
-
-  def test_prius_positive_feedforward_scale_stays_soft_at_launch_speed(self):
-    assert abs(get_prius_positive_feedforward_scale(0.0) - 0.7) < 1e-6
-    assert abs(get_prius_positive_feedforward_scale(8.0) - 0.7) < 1e-6
-
-  def test_prius_positive_feedforward_scale_restores_cruise_authority(self):
-    assert get_prius_positive_feedforward_scale(20.0) > get_prius_positive_feedforward_scale(8.0)
-    assert abs(get_prius_positive_feedforward_scale(20.0) - 1.0) < 1e-6
-
-  def test_prius_feedforward_adds_braking_authority_without_changing_acceleration(self):
-    assert get_prius_feedforward(-2.0, 8.0) == pytest.approx(-2.25)
-    assert get_prius_feedforward(1.0, 8.0) == pytest.approx(0.7)
-
-  def test_camry_hybrid_feedforward_only_softens_acceleration(self):
-    assert get_camry_hybrid_feedforward(1.0) == pytest.approx(0.8)
-    assert get_camry_hybrid_feedforward(-2.0) == pytest.approx(-2.0)
-
-  def test_sng_hack_clears_existing_standstill_latch(self):
-    controller = self._make_controller(standstill_req=True, last_standstill=True)
-
-    controller._update_standstill_request(
-      self._make_cc(),
-      self._make_cs(),
-      SimpleNamespace(accel=0.0),
-      self._make_toggles(sng_hack=True),
-    )
-
-    assert controller.standstill_req is False
-
-  def test_ui_command_shows_aol_bars_when_lateral_active(self):
-    packer = CANPacker(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt])
-    parser = CANParser(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt], [("LKAS_HUD", 0)], 0)
-
-    msg = toyotacan.create_ui_command(packer, False, False, True, True, False, False, {}, True)
-    parser.update([(1, [msg])])
-
-    assert parser.can_valid
-    assert parser.vl["LKAS_HUD"]["BARRIERS"] == 1
-    assert parser.vl["LKAS_HUD"]["LEFT_LINE"] == 1
-    assert parser.vl["LKAS_HUD"]["RIGHT_LINE"] == 1
-
-  def test_ui_command_hides_lane_markers_when_lateral_inactive(self):
-    packer = CANPacker(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt])
-    parser = CANParser(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt], [("LKAS_HUD", 0)], 0)
-
-    msg = toyotacan.create_ui_command(packer, False, False, True, True, False, False, {}, False)
-    parser.update([(1, [msg])])
-
-    assert parser.can_valid
-    assert parser.vl["LKAS_HUD"]["BARRIERS"] == 0
-    assert parser.vl["LKAS_HUD"]["LEFT_LINE"] == 0
-    assert parser.vl["LKAS_HUD"]["RIGHT_LINE"] == 0
-
-  def test_acc_control_uses_valid_long_press_modes(self):
-    packer = CANPacker(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt])
-    parser = CANParser(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt], [("ACC_CONTROL", 0)], 0)
-
-    normal_msg = toyotacan.create_accel_command(
-      packer, 0.0, False, True, False, False, 1, False, 0, False,
-    )
-    parser.update([(1, [normal_msg])])
-    assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 1
-
-    reverse_msg = toyotacan.create_accel_command(
-      packer, 0.0, False, True, False, False, 1, False, 0, True,
-    )
-    parser.update([(1, [reverse_msg])])
-    assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 2
-
-  def test_acc_control_accepts_toggle_namespace_without_reverse_cruise_option(self):
-    # Older or partially refreshed toggle broadcasts do not include this optional field.
-    toggles = SimpleNamespace()
-    assert getattr(toggles, "reverse_cruise_increase", False) is False
-
-    packer = CANPacker(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt])
-    msg = toyotacan.create_accel_command(
-      packer, 0.0, False, True, False, False, 1, False, 0,
-      getattr(toggles, "reverse_cruise_increase", False),
-    )
-    parser = CANParser(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt], [("ACC_CONTROL", 0)], 0)
-    parser.update([(1, [msg])])
-
-    assert parser.can_valid
-    assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 1
-
-  def test_auto_hold_uses_acc_control_brake_path(self):
-    controller = self._make_controller()
-    controller.packer = CANPacker(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt])
-    cs = SimpleNamespace(
-      out=SimpleNamespace(
-        standstill=True,
-        cruiseState=SimpleNamespace(available=True, enabled=False),
-        gasPressed=False,
-        brakePressed=True,
-        gearShifter=structs.CarState.GearShifter.drive,
-      ),
-    )
-
-    controller.update_auto_hold_state(cs, activation_frames=0)
-    can_sends = [toyotacan.create_accel_command(
-      controller.packer, -1.0, False, True, True, False, 1, False, 0, False,
-    )]
-
-    parser = CANParser(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt], [("ACC_CONTROL", 0)], 0)
-    parser.update([(1, can_sends)])
-    assert controller.brake_hold_active
-    assert parser.vl["ACC_CONTROL"]["ACCEL_CMD"] == -1.0
-    assert parser.vl["ACC_CONTROL"]["PERMIT_BRAKING"] == 1
-    assert parser.vl["ACC_CONTROL"]["RELEASE_STANDSTILL"] == 0
-
-  def test_interceptor_stop_and_go_holds_small_launch_at_standstill(self):
-    controller = self._make_controller()
-    controller.CP.enableGasInterceptorDEPRECATED = True
-    controller.accel = 0.3
-
-    gas_cmd = controller._compute_interceptor_gas_cmd(
-      SimpleNamespace(longActive=True),
-      SimpleNamespace(out=SimpleNamespace(standstill=True, vEgo=0.0)),
-    )
-
-    assert gas_cmd == 0.12
-
-  def test_interceptor_does_not_apply_gas_during_auto_hold(self):
-    controller = self._make_controller()
-    controller.CP.enableGasInterceptorDEPRECATED = True
-    controller.accel = 1.5
-    controller.brake_hold_active = True
-
-    assert controller._compute_interceptor_gas_cmd(
-      SimpleNamespace(longActive=True),
-      SimpleNamespace(out=SimpleNamespace(standstill=True, vEgo=0.0)),
-    ) == 0.0
-
-  def test_interceptor_non_stop_and_go_scales_with_accel_request(self):
-    controller = self._make_controller()
-    controller.CP.enableGasInterceptorDEPRECATED = True
-    controller.CP.carFingerprint = CAR.TOYOTA_AVALON_2019
-    controller.CP.minEnableSpeed = 8.5
-    controller.accel = 0.8
-
-    gas_cmd = controller._compute_interceptor_gas_cmd(
-      SimpleNamespace(longActive=True),
-      SimpleNamespace(out=SimpleNamespace(standstill=False, vEgo=8.0)),
-    )
-
-    assert 0.0 < gas_cmd <= 0.5
-
-  def test_rav4_interceptor_launch_mapping_is_softer_than_generic_mapping(self):
-    controller = self._make_controller()
-    controller.CP.enableGasInterceptorDEPRECATED = True
-    controller.CP.carFingerprint = CAR.TOYOTA_RAV4
-    controller.accel = 1.5
-
-    rav4_gas = controller._compute_interceptor_gas_cmd(
-      SimpleNamespace(longActive=True),
-      SimpleNamespace(out=SimpleNamespace(standstill=False, vEgo=1.0)),
-    )
-
-    controller.CP.carFingerprint = CAR.TOYOTA_AVALON_2019
-    generic_gas = controller._compute_interceptor_gas_cmd(
-      SimpleNamespace(longActive=True),
-      SimpleNamespace(out=SimpleNamespace(standstill=False, vEgo=1.0)),
-    )
-
-    assert rav4_gas < generic_gas
-    assert get_rav4_interceptor_pedal_scale(5.0) == pytest.approx(0.23)
-    assert get_rav4_interceptor_pedal_scale(MIN_ACC_SPEED) == pytest.approx(0.3)
-
-  def test_interceptor_corolla_scales_with_accel_request_when_pedal_enables_sng(self):
-    controller = self._make_controller()
-    controller.CP.enableGasInterceptorDEPRECATED = True
-    controller.CP.carFingerprint = CAR.TOYOTA_COROLLA
-    controller.CP.minEnableSpeed = -1.0
-    controller.accel = 0.8
-
-    gas_cmd = controller._compute_interceptor_gas_cmd(
-      SimpleNamespace(longActive=True),
-      SimpleNamespace(out=SimpleNamespace(standstill=False, vEgo=8.0)),
-    )
-
-    assert 0.0 < gas_cmd <= 0.5
-
-  def test_interceptor_disabled_returns_zero(self):
-    controller = self._make_controller()
-    controller.accel = 1.0
-
-    gas_cmd = controller._compute_interceptor_gas_cmd(
-      SimpleNamespace(longActive=True),
-      SimpleNamespace(out=SimpleNamespace(standstill=False, vEgo=8.0)),
-    )
-
-    assert gas_cmd == 0.0
-
-  def test_interceptor_comfort_limit_keeps_positive_target_out_of_coast(self):
-    limited = limit_interceptor_pcm_accel(-0.30, 0.70, False, 8.5)
-
-    assert limited > 0.0
-    assert limited < 0.70
-
-  def test_interceptor_comfort_limit_keeps_mild_brake_request_negative(self):
-    limited = limit_interceptor_pcm_accel(0.25, -0.35, False, 8.5)
-
-    assert limited < 0.0
-    assert limited > -0.35
-
-  def test_interceptor_comfort_limit_bypasses_harder_braking(self):
-    original = -1.80
-    limited = limit_interceptor_pcm_accel(original, -1.80, False, 8.5)
-
-    assert limited == original
-
-  def test_interceptor_comfort_limit_prevents_positive_target_from_crossing_negative(self):
-    limited = limit_interceptor_pcm_accel(-2.0, 1.7, False, 7.5)
-
-    assert limited >= 0.0
-
-  def test_interceptor_comfort_limit_prevents_negative_target_from_crossing_positive(self):
-    limited = limit_interceptor_pcm_accel(0.8, -0.7, False, 7.5)
-
-    assert limited <= 0.0
-
-  def test_interceptor_stopping_limit_softens_no_lead_final_crawl(self):
-    limited = limit_interceptor_stopping_accel(-1.48, -1.48, True, 0.5, False)
-
-    assert limited > -1.48
-    assert limited == -0.82
-
-  def test_interceptor_stopping_limit_tracks_softer_target_near_standstill(self):
-    limited = limit_interceptor_stopping_accel(-1.86, -0.63, True, 0.5, False)
-
-    assert limited > -1.0
-    assert limited == -0.73
-
-  def test_interceptor_stopping_limit_keeps_visible_lead_stop_untouched(self):
-    limited = limit_interceptor_stopping_accel(-1.48, -0.63, True, 0.5, True)
-
-    assert limited == -1.48
-
-  def test_interceptor_stopping_limit_keeps_higher_speed_stop_untouched(self):
-    limited = limit_interceptor_stopping_accel(-1.48, -0.63, True, 3.0, False)
-
-    assert limited == -1.48
-
-  def test_interceptor_stopping_limit_softens_low_speed_no_lead_stop_before_final_crawl(self):
-    limited = limit_interceptor_stopping_accel(-1.55, -0.66, True, 1.45, False)
-
-    assert abs(limited - (-0.8075)) < 1e-6
-
-  def test_avalon_pedal_params_raise_delay_and_soften_stop(self):
-    CP = CarInterface.get_params(
-      CAR.TOYOTA_AVALON_2019,
-      {0: {0x2FF: 8, 0x201: 8}},
-      [],
-      True,
-      False,
-      False,
-      None,
-    )
-
-    assert CP.enableGasInterceptorDEPRECATED
-    assert CP.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.GAS_INTERCEPTOR
-    assert abs(CP.longitudinalActuatorDelay - 0.2) < 1e-6
-    assert CP.stopAccel == -1.5
-
-
-class TestToyotaAutoHoldCruise:
-  @staticmethod
-  def _make_car(*, candidate=CAR.TOYOTA_RAV4_TSS2, hybrid=False, enabled=True, capability=True):
-    cp = CarInterface.get_non_essential_params(candidate)
-    cp.openpilotLongitudinalControl = True
-    cp.flags &= ~(ToyotaFlags.AUTO_BRAKE_HOLD.value | ToyotaFlags.HYBRID.value)
-    if capability:
-      cp.flags |= ToyotaFlags.AUTO_BRAKE_HOLD.value
-    if hybrid:
-      cp.flags |= ToyotaFlags.HYBRID.value
-    controller = CarController(DBC[candidate], cp)
-    cc = structs.CarControl(enabled=True, longActive=True)
-    cc.actuators.accel = -0.7
-    cc.actuators.longControlState = structs.CarControl.Actuators.LongControlState.stopping
-    cc.hudControl.leadDistanceBars = 3
-    cs = SimpleNamespace(
-      out=structs.CarState(
-        standstill=True,
-        gearShifter=structs.CarState.GearShifter.drive,
-        cruiseState=structs.CarState.CruiseState(available=True, enabled=True, standstill=True),
-      ),
-      gvc=0.0,
-      acc_type=1,
-      pcm_acc_status=7,
-      pcm_follow_distance=1,
-      lkas_hud={},
-      pre_collision_2={},
-    )
-    toggles = SimpleNamespace(toyota_auto_hold=enabled, sng_hack=False, lock_doors=False, unlock_doors=False)
-    parser = CANParser(DBC[candidate][Bus.pt], [("ACC_CONTROL", 0), ("PRE_COLLISION_2", 0)], 0)
-    return SimpleNamespace(controller=controller, cc=cc, cs=cs, toggles=toggles, parser=parser)
-
-  @staticmethod
-  def _tick(car):
-    # Run through a complete ACC_CONTROL send interval and decode the actual
-    # controller output, including the ordinary standstill and PID paths.
-    car.can_sends = []
-    for _ in range(3):
-      now_nanos = car.controller.frame * 10_000_000
-      _, messages = car.controller.update(car.cc.as_reader(), car.cs, now_nanos, car.toggles)
-      car.can_sends.extend(messages)
-      car.parser.update([(now_nanos, messages)])
-    return car.parser.vl["ACC_CONTROL"]
-
-  @pytest.mark.parametrize("candidate,hybrid", [
-    (CAR.TOYOTA_RAV4, False),
-    (CAR.TOYOTA_RAV4H, True),
-    (CAR.TOYOTA_RAV4_TSS2, False),
-    (CAR.TOYOTA_RAV4_TSS2, True),
-    (CAR.TOYOTA_CAMRY_TSS2, False),
-  ])
-  @pytest.mark.parametrize("sng_hack", [False, True])
-  def test_auto_hold_does_not_change_cruise_stop_and_go(self, candidate, hybrid, sng_hack):
-    car = self._make_car(candidate=candidate, hybrid=hybrid)
-    baseline = self._make_car(candidate=candidate, hybrid=hybrid, enabled=False)
-    car.toggles.sng_hack = baseline.toggles.sng_hack = sng_hack
-
-    for _ in range(50):
-      command = self._tick(car)
-      expected = self._tick(baseline)
-      assert not car.controller.brake_hold_active
-      assert dict(command) == dict(expected)
-      assert car.parser.vl["PRE_COLLISION_2"]["PBRTRGR"] == 0
-
-    for vehicle in (car, baseline):
-      vehicle.cc.actuators.accel = 1.5
-      vehicle.cc.actuators.longControlState = structs.CarControl.Actuators.LongControlState.starting
-      vehicle.cc.cruiseControl.resume = True
-    for _ in range(30):
-      command = self._tick(car)
-      expected = self._tick(baseline)
-      assert not car.controller.brake_hold_active
-      assert dict(command) == dict(expected)
-      assert not car.cs.out.gasPressed
-    assert command["ACCEL_CMD"] > 0
-    assert command["RELEASE_STANDSTILL"] == 1
-
-  def test_manual_stop_still_holds_with_only_aol_active(self):
-    car = self._make_car()
-    car.cc.enabled = False
-    car.cc.longActive = False
-    car.cc.latActive = True
-    car.cc.actuators.accel = 0.0
-    car.cs.out.cruiseState.enabled = False
-    car.cs.out.brakePressed = True
-    # Include the first ACC_CONTROL transmission after the one-second latch.
-    for _ in range(35):
-      command = self._tick(car)
-    assert car.controller.brake_hold_active
-    assert command["ACCEL_CMD"] == -1.0
-    assert command["RELEASE_STANDSTILL"] == 0
-
-    car.cs.out.brakePressed = False
-    command = self._tick(car)
-    assert car.controller.brake_hold_active
-    assert command["ACCEL_CMD"] == -1.0
-
-    car.cs.out.gasPressed = True
-    command = self._tick(car)
-    assert not car.controller.brake_hold_active
-    assert command["ACCEL_CMD"] == 0.0
-    assert command["RELEASE_STANDSTILL"] == 1
-
-    car.cs.out.gasPressed = False
-    for _ in range(50):
-      self._tick(car)
-      assert not car.controller.brake_hold_active
-
-    car.cs.out.brakePressed = True
-    for _ in range(35):
-      command = self._tick(car)
-    assert car.controller.brake_hold_active
-    assert command["ACCEL_CMD"] == -1.0
-
-  @pytest.mark.parametrize("long_state", ["off", "pid", "starting", "stopping"])
-  @pytest.mark.parametrize("brake_pressed", [False, True])
-  def test_engaged_cruise_never_activates_auto_hold(self, long_state, brake_pressed):
-    car = self._make_car()
-    car.cc.actuators.longControlState = getattr(structs.CarControl.Actuators.LongControlState, long_state)
-    car.cs.out.brakePressed = brake_pressed
-    for _ in range(50):
-      self._tick(car)
-      assert not car.controller.brake_hold_active
-
-  @pytest.mark.parametrize("enabled,capability,candidate", [
-    (False, True, CAR.TOYOTA_RAV4_TSS2),
-    (True, False, CAR.TOYOTA_RAV4_TSS2),
-  ])
-  def test_manual_hold_requires_toggle_and_capability(self, enabled, capability, candidate):
-    car = self._make_car(candidate=candidate, enabled=enabled, capability=capability)
-    car.cc.longActive = False
-    car.cc.actuators.accel = 0.0
-    car.cs.out.cruiseState.enabled = False
-    car.cs.out.brakePressed = True
-    for _ in range(50):
-      command = self._tick(car)
-      assert not car.controller.brake_hold_active
-    assert command["ACCEL_CMD"] == 0.0
-
-  @pytest.mark.parametrize("release", ["toggle", "cancel", "main", "park", "reverse", "moving", "cruise"])
-  def test_manual_hold_releases_when_conditions_change(self, release):
-    car = self._make_car()
-    car.cc.longActive = False
-    car.cc.actuators.accel = 0.0
-    car.cs.out.cruiseState.enabled = False
-    car.cs.out.brakePressed = True
-    for _ in range(35):
-      self._tick(car)
-    assert car.controller.brake_hold_active
-
-    if release == "toggle":
-      car.toggles.toyota_auto_hold = False
-    elif release == "cancel":
-      car.cc.cruiseControl.cancel = True
-    elif release == "main":
-      car.cs.out.cruiseState.available = False
-    elif release in ("park", "reverse"):
-      car.cs.out.gearShifter = getattr(structs.CarState.GearShifter, release)
-    elif release == "moving":
-      car.cs.out.standstill = False
-    else:
-      car.cs.out.cruiseState.enabled = True
-      car.cc.longActive = True
-
-    self._tick(car)
-    assert not car.controller.brake_hold_active
-
-    if release == "cruise":
-      car.cs.out.brakePressed = False
-      car.cc.actuators.accel = 1.5
-      car.cc.actuators.longControlState = structs.CarControl.Actuators.LongControlState.starting
-      car.cc.cruiseControl.resume = True
-      for _ in range(20):
-        command = self._tick(car)
-        assert not car.controller.brake_hold_active
-      assert command["ACCEL_CMD"] > 0
-      assert command["RELEASE_STANDSTILL"] == 1
-
-
-class TestToyotaAutoHoldAeb:
-  _make_car = staticmethod(TestToyotaAutoHoldCruise._make_car)
-  _tick = staticmethod(TestToyotaAutoHoldCruise._tick)
-
-  @pytest.mark.parametrize("candidate", list(CAR))
-  @pytest.mark.parametrize("hybrid", [False, True])
-  def test_legacy_path_is_scoped_to_camry_and_early_rav4_hybrid(self, candidate, hybrid):
-    cp = SimpleNamespace(carFingerprint=candidate, flags=ToyotaFlags.HYBRID.value if hybrid else 0)
-    expected = candidate == CAR.TOYOTA_CAMRY_TSS2 or (candidate == CAR.TOYOTA_RAV4_TSS2 and hybrid)
-    assert uses_toyota_auto_hold_aeb(cp) == expected
-
-  @pytest.mark.parametrize("candidate,hybrid", [(CAR.TOYOTA_CAMRY_TSS2, False), (CAR.TOYOTA_RAV4_TSS2, True)])
-  def test_manual_stop_uses_legacy_hold_and_releases_on_gas(self, candidate, hybrid):
-    car = self._make_car(candidate=candidate, hybrid=hybrid)
-    car.cc.enabled = False
-    car.cc.longActive = False
-    car.cc.latActive = True
-    car.cc.actuators.accel = 0.0
-    car.cs.out.cruiseState.enabled = False
-    car.cs.out.cruiseState.standstill = False
-    car.cs.out.brakePressed = True
-    car.cs.pre_collision_2 = {"DSS1GDRV": -0.1, "PBRTRGR": 0}
-
-    # Pass through the camera message until the pedal has been held at a stop.
-    command = self._tick(car)
-    assert not car.controller.brake_hold_active
-    assert car.parser.vl["PRE_COLLISION_2"]["DSS1GDRV"] == -0.1
-    for _ in range(34):
-      command = self._tick(car)
-    assert car.controller.brake_hold_active
-    assert any(msg[0] == 0x344 for msg in car.can_sends)
-    assert car.parser.vl["PRE_COLLISION_2"]["DSS1GDRV"] == -1.0
-    assert car.parser.vl["PRE_COLLISION_2"]["PBRTRGR"] == 1
-    # Do not simultaneously inject an ACC_CONTROL hold on legacy-path cars.
-    assert command["ACCEL_CMD"] == 0.0
-    assert command["RELEASE_STANDSTILL"] == 1
-
-    car.cs.out.brakePressed = False
-    for _ in range(50):
-      self._tick(car)
-      assert car.controller.brake_hold_active
-      assert car.parser.vl["PRE_COLLISION_2"]["DSS1GDRV"] == -1.0
-
-    car.cs.out.gasPressed = True
-    self._tick(car)
-    assert not car.controller.brake_hold_active
-    assert car.parser.vl["PRE_COLLISION_2"]["DSS1GDRV"] == -0.1
-    assert car.parser.vl["PRE_COLLISION_2"]["PBRTRGR"] == 0
-
-  @pytest.mark.parametrize("enabled,capability", [(False, True), (True, False)])
-  def test_rav4_hybrid_does_not_inject_legacy_messages_without_opt_in(self, enabled, capability):
-    car = self._make_car(hybrid=True, enabled=enabled, capability=capability)
-    car.cc.longActive = False
-    car.cc.actuators.accel = 0.0
-    car.cs.out.cruiseState.enabled = False
-    car.cs.out.brakePressed = True
-    for _ in range(50):
-      self._tick(car)
-      assert not car.controller.brake_hold_active
-      assert all(msg[0] != 0x344 for msg in car.can_sends)
-
-  @pytest.mark.parametrize("release", ["toggle", "main", "park", "reverse", "moving", "cruise"])
-  def test_rav4_hybrid_legacy_hold_releases_when_conditions_change(self, release):
-    car = self._make_car(hybrid=True)
-    car.cc.longActive = False
-    car.cc.actuators.accel = 0.0
-    car.cs.out.cruiseState.enabled = False
-    car.cs.out.brakePressed = True
-    for _ in range(35):
-      self._tick(car)
-    assert car.controller.brake_hold_active
-
-    if release == "toggle":
-      car.toggles.toyota_auto_hold = False
-    elif release == "main":
-      car.cs.out.cruiseState.available = False
-    elif release in ("park", "reverse"):
-      car.cs.out.gearShifter = getattr(structs.CarState.GearShifter, release)
-    elif release == "moving":
-      car.cs.out.standstill = False
-    else:
-      car.cs.out.cruiseState.enabled = True
-    self._tick(car)
-    assert not car.controller.brake_hold_active
-
-
-class TestToyotaCarState:
-  @pytest.mark.parametrize("candidate", [CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT])
-  def test_legacy_prius_distance_button_generates_events(self, candidate):
-    params = CarInterface.get_params(
-      candidate,
-      {bus: {} for bus in range(8)},
-      [],
-      alpha_long=False,
-      is_release=False,
-      docs=False,
-      starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
-    )
-    starpilot_params = CarInterface.get_starpilot_params(candidate, {bus: {} for bus in range(8)}, [], params, SimpleNamespace())
-    car_state = CarState(params, starpilot_params)
-    can_parsers = car_state.get_can_parsers(params)
-
-    assert "ACC_CONTROL" in can_parsers[Bus.pt].vl
-    assert ("ACC_CONTROL" in can_parsers[Bus.cam].vl) == bool(params.flags & ToyotaFlags.DSU_BYPASS.value)
-
-    can_parsers[Bus.pt].vl["ACC_CONTROL"]["DISTANCE"] = 1
-    ret, _ = car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
-    assert [(event.type, event.pressed) for event in ret.buttonEvents] == [
-      (structs.CarState.ButtonEvent.Type.gapAdjustCruise, True),
-    ]
-
-    can_parsers[Bus.pt].vl["ACC_CONTROL"]["DISTANCE"] = 0
-    ret, _ = car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
-    assert [(event.type, event.pressed) for event in ret.buttonEvents] == [
-      (structs.CarState.ButtonEvent.Type.gapAdjustCruise, False),
-    ]
-
-  def test_lkas_button_platforms(self):
-    assert CAR.TOYOTA_PRIUS in LKAS_BUTTON_CAR
-    assert TSS2_CAR <= LKAS_BUTTON_CAR
-    assert CAR.TOYOTA_CAMRY not in LKAS_BUTTON_CAR
-    assert CAR.LEXUS_RX not in LKAS_BUTTON_CAR
-
-  @pytest.mark.parametrize("lkas_button,prev_lkas_button,event_count", [
-    (0, 0, 0),
-    (1, 0, 2),
-    (1, 1, 0),
-    (0, 1, 0),
-    (2, 1, 2),
-  ])
-  def test_lkas_button_events(self, lkas_button, prev_lkas_button, event_count):
-    events = create_lkas_button_events(lkas_button, prev_lkas_button)
-
-    assert len(events) == event_count
-    if events:
-      assert [(event.type, event.pressed) for event in events] == [
-        (structs.CarState.ButtonEvent.Type.lkas, True),
-        (structs.CarState.ButtonEvent.Type.lkas, False),
-      ]
-
-  def test_interceptor_gas_pressed_threshold(self):
-    cp = SimpleNamespace(vl={
-      "GAS_SENSOR": {
-        "INTERCEPTOR_GAS": 900,
-        "INTERCEPTOR_GAS2": 910,
-      }
-    })
-    assert calculate_interceptor_gas_pressed(cp) is True
-
-    cp = SimpleNamespace(vl={
-      "GAS_SENSOR": {
-        "INTERCEPTOR_GAS": 700,
-        "INTERCEPTOR_GAS2": 710,
-      }
-    })
-    assert calculate_interceptor_gas_pressed(cp) is False

@@ -16,11 +16,11 @@ def glsl_type(t:DType): return {
   **{d:g(f"glsl_type_builtin_{'u' * (d in dtypes.uints)}int{str(d.bitsize)+'_t' if d.itemsize != 4 else ''}") for d in dtypes.ints}}[t]
 
 # alu ops, aop[<dtype>][<op>]
-u_aop = { Ops.ADD: "iadd", Ops.MUL: "imul", Ops.CDIV: "udiv", Ops.CMOD: "umod", Ops.CMPLT: "ult", Ops.CMPNE: "ine", Ops.CMPEQ: "ieq", Ops.OR: "ior",
-          Ops.AND: "iand", Ops.XOR: "ixor", Ops.WHERE: "bcsel", Ops.MAX: "umax", Ops.SHL: "ishl", Ops.SHR: "ushr"}
-s_aop = {**u_aop, Ops.CMPLT: "ilt", Ops.CDIV: "idiv", Ops.CMOD: "irem", Ops.MAX: "imax", Ops.SHR: "ishr"}
-f_aop = { Ops.ADD: "fadd", Ops.MUL: "fmul", Ops.CMPLT: "flt", Ops.CMPNE: "fneu", Ops.CMPEQ: "feq", Ops.FDIV: "fdiv", Ops.RECIPROCAL: "frcp",
-          Ops.MAX: "fmax", Ops.TRUNC: "ftrunc", Ops.SIN: "fsin", Ops.EXP2: "fexp2", Ops.LOG2: "flog2"}
+u_aop = { Ops.ADD: "iadd", Ops.MUL: "imul", Ops.TRUNCDIV: "udiv", Ops.TRUNCMOD: "umod", Ops.CMPLT: "ult", Ops.CMPNE: "ine", Ops.CMPEQ: "ieq",
+          Ops.OR: "ior", Ops.AND: "iand", Ops.XOR: "ixor", Ops.WHERE: "bcsel", Ops.MAX: "umax", Ops.SHL: "ishl", Ops.SHR: "ushr"}
+s_aop = {**u_aop, Ops.CMPLT: "ilt", Ops.TRUNCDIV: "idiv", Ops.TRUNCMOD: "irem", Ops.MAX: "imax", Ops.SHR: "ishr"}
+f_aop = { Ops.ADD: "fadd", Ops.MUL: "fmul", Ops.CMPLT: "flt", Ops.CMPNE: "fneu", Ops.CMPEQ: "feq", Ops.FDIV: "fdiv", Ops.RECIP: "frcp",
+          Ops.MAX: "fmax", Ops.TRUNC: "ftrunc", Ops.SIN: "fsin", Ops.EXP2: "fexp2", Ops.LOG2: "flog2", Ops.SQRT: "fsqrt"}
 aop = {**{x:u_aop for x in (dtypes.bool,)+dtypes.uints}, **{x:s_aop for x in dtypes.sints}, **{x:f_aop for x in dtypes.floats}}
 
 def c(t:DType, u:bool=True) -> str: return "u" if t in dtypes.uints and u else ("i" if t in dtypes.ints else ("f" if t in dtypes.floats else "b"))
@@ -116,7 +116,7 @@ class NIRRenderer(Renderer):
   suffix = "NIR"
   nir_options: bytes
   global_max, local_max, shared_max = CUDARenderer.global_max, CUDARenderer.local_max, CUDARenderer.shared_max
-  code_for_op = {**{k:lambda:None for k in u_aop.keys()}, **{k:lambda:None for k in s_aop.keys()}, **{k:lambda:None for k in f_aop.keys()}}
+  code_for_op = {**{k:lambda:None for k in s_aop.keys()}, **{k:lambda:None for k in f_aop.keys()}}
 
   extra_matcher = PatternMatcher([
     # from ptx
@@ -158,7 +158,7 @@ class NIRRenderer(Renderer):
     (UPat(Ops.STACK, name="x"), lambda ctx,x: nalu(ctx.b, f"vec{x.max_numel()}", *[ctx.r[src] for src in x.src])),
     (UPat(GroupOp.ALU, name="x"), lambda ctx,x: nalu(ctx.b, aop[x.src[0].dtype][x.op], *[ctx.r[src] for src in x.src])),
     (UPat(Ops.CAST, name="x"), lambda ctx,x: ncast(ctx.b, ctx.r[x.src[0]], x.src[0].dtype, x.dtype)),
-    (UPat(Ops.BITCAST, src=(UPat.var("a"),), allow_any_len=True), lambda ctx,a: ctx.r[a]),
+    (UPat(Ops.BITCAST, src=(UPat.var("a"),)), lambda ctx,a: ctx.r[a]),
     (UPat(Ops.BUFFER, name="x"), lambda ctx,x: mesa.nir_local_variable_create(ctx.b.impl,
       mesa.glsl_array_type(glsl_type(x.dtype), x.max_numel(), 0).contents, f"acc{x.arg.slot}".encode()).contents),
     (UPat(Ops.BARRIER), lambda ctx: nbarrier(ctx.b)),
@@ -190,12 +190,12 @@ class NIRRenderer(Renderer):
     ranges: list[mesa.nir_def|None] = []
 
     for u in uops:
-      if u.op in {Ops.NOOP, Ops.GROUP, Ops.CONST} or (u.op is Ops.STACK and len(u.src) == 0): pass
+      if u.op in {Ops.NOOP, Ops.CONST} or (u.op is Ops.STACK and len(u.src) == 0): pass
       elif u.op in {Ops.INDEX, Ops.SHRINK}:
         # INDEX on a register value picks the element, memory INDEX is handled in the LOAD/STORE patterns
         if u.src[0].op not in {Ops.PARAM, Ops.BUFFER, Ops.AFTER}: self.r[u] = nchannel(self.b, self.r[u.src[0]], u.src[1].src[0].val)
       elif u.op is Ops.AFTER:
-        self.r[u] = self.r[u.src[0]]
+        if u.dtype is not dtypes.void: self.r[u] = self.r[u.src[0]]
       elif u.op == Ops.SINK:
         if u.arg is not None:
           self.b.shader.contents.info.name = ctypes.cast(ctypes.create_string_buffer(u.arg.function_name.encode()), POINTER[ctypes.c_char])
@@ -204,7 +204,7 @@ class NIRRenderer(Renderer):
         self.b.shader.contents.info.shared_size += u.max_numel()*u.dtype.itemsize
       elif u.op == Ops.RANGE:
         if u.dtype == dtypes.void:
-          # a RANGE with no bound is a loop header: just open the loop, the END adds the conditional backedge
+          # a RANGE with no bound is a loop header: just open the loop, BACKEDGE supplies its condition
           ranges.append(None)
           mesa.nir_push_loop(self.b)
         else:
@@ -213,19 +213,17 @@ class NIRRenderer(Renderer):
           mesa.nir_push_loop(self.b)
           self.r[u] = nload(self.b, AddrSpace.REG, i, u)
           nif(self.b, nalu(self.b, "ilt", self.r[u], self.r[u.src[0]]), lambda: None, lambda: njump(self.b, mesa.nir_jump_break))
+      elif u.op == Ops.BACKEDGE:
+        nif(self.b, self.r[u.src[2]], lambda: None, lambda: njump(self.b, mesa.nir_jump_break))
+        ranges.pop()
+        mesa.nir_pop_loop(self.b, None)
       elif u.op == Ops.END:
         r = u.src[1]
-        if r.dtype == dtypes.void:
-          # loop again while the condition is true
-          nif(self.b, self.r[u.src[2]], lambda: None, lambda: njump(self.b, mesa.nir_jump_break))
-          ranges.pop()
-          mesa.nir_pop_loop(self.b, None)
-        else:
-          next_i = nalu(self.b, "iadd", self.r[r], nimm(self.b, 1, r.dtype))
-          # TODO: this nif should be removable ... but TestMultiTensor.test_double_matmul_shard_W_0 segfaults with it gone
-          nif(self.b, nalu(self.b, "ilt", next_i, self.r[r.src[0]]), lambda: None, lambda: njump(self.b, mesa.nir_jump_break))
-          nstore(self.b, AddrSpace.REG, ranges.pop(), next_i),
-          mesa.nir_pop_loop(self.b, None)
+        next_i = nalu(self.b, "iadd", self.r[r], nimm(self.b, 1, r.dtype))
+        # TODO: this nif should be removable ... but TestMultiTensor.test_double_matmul_shard_W_0 segfaults with it gone
+        nif(self.b, nalu(self.b, "ilt", next_i, self.r[r.src[0]]), lambda: None, lambda: njump(self.b, mesa.nir_jump_break))
+        nstore(self.b, AddrSpace.REG, ranges.pop(), next_i),
+        mesa.nir_pop_loop(self.b, None)
       else:
         d: mesa.nir_def|None = self.def_rewrite.rewrite(u, ctx=self)
         if d is None: raise RuntimeError(f"failed to render {u.op} srcs {[x.dtype for x in u.src]}")

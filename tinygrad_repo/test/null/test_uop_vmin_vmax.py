@@ -9,6 +9,20 @@ class TestVminVmaxProperties(unittest.TestCase):
     self.assertEqual(uop.vmin, 42)
     self.assertEqual(uop.vmax, 42)
 
+  def test_vmin_vmax_copy(self):
+    src = UOp.placeholder((4,), dtypes.int32) & 3
+    for copy in (src.contiguous(), src.copy_to_device("NULL")):
+      self.assertEqual((copy.vmin, copy.vmax), (0, 3))
+
+  def test_vmin_vmax_cmpeq(self):
+    x = UOp.variable('x', 10, 20)
+    for y, bounds in [(9, (False, False)), (21, (False, False)), (10, (False, True)),
+                      (UOp.variable('y', 15, 25), (False, True))]:
+      cmp = x.eq(y)
+      self.assertEqual((cmp.vmin, cmp.vmax), bounds)
+    cmp = UOp.const(42).eq(42)
+    self.assertEqual((cmp.vmin, cmp.vmax), (True, True))
+
   def test_vmin_vmax_cmpne(self):
     uop = UOp.const(42)
     def test_bool(u, x):
@@ -44,10 +58,17 @@ class TestVminVmaxProperties(unittest.TestCase):
     self.assertEqual(uop.vmin, 0)
     self.assertEqual(uop.vmax, 15)
 
-    # TODO: this can be improved
     uop = x & 32
     self.assertEqual(uop.vmin, 0)
-    self.assertEqual(uop.vmax, 20) # shoud be 0
+    self.assertEqual(uop.vmax, 0)
+
+    uop = x & 48
+    self.assertEqual(uop.vmin, 0)
+    self.assertEqual(uop.vmax, 16)
+
+    uop = x & -4
+    self.assertEqual(uop.vmin, 0)
+    self.assertEqual(uop.vmax, 20)
 
   def test_vmin_vmax_and_with_negative_variable(self):
     # when mask doesn't have sign bit set, result is always non-negative
@@ -134,6 +155,10 @@ class TestVminVmaxProperties(unittest.TestCase):
     self.assertEqual(UOp.variable('x', -1, 10).cast(dtypes.uint8)._min_max, (0, 255))
     self.assertEqual(UOp.variable('x', 250, 260).cast(dtypes.uint8)._min_max, (0, 255))
 
+  def test_vmin_vmax_unsigned_sub(self):
+    x = UOp.variable('x', 0, 1, dtypes.uint32)
+    self.assertEqual(x.alu(Ops.SUB, x.const_like(1))._min_max, (0, dtypes.uint32.max))
+
   def test_vmin_vmax_xor_neg1(self):
     x = UOp.variable('x', 3, 7)
     uop = x ^ -1
@@ -149,6 +174,14 @@ class TestVminVmaxProperties(unittest.TestCase):
     uop3 = z ^ -1
     self.assertEqual(uop3.vmin, ~6)
     self.assertEqual(uop3.vmax, ~(-5))
+
+  def test_vmin_vmax_xor_nonneg(self):
+    # non-negative operands stay below the wider operand's next power of two
+    self.assertEqual((UOp.variable('x', 0, 31) ^ 16)._min_max, (0, 31))
+    self.assertEqual((UOp.variable('x', 3, 10) ^ UOp.variable('y', 0, 40))._min_max, (0, 63))
+    self.assertEqual((UOp.variable('x', 0, 200, dtypes.uint8) ^ UOp.variable('y', 0, 3, dtypes.uint8))._min_max, (0, 255))
+    # a possibly-negative operand is not bounded
+    self.assertEqual((UOp.variable('x', -1, 10) ^ 16)._min_max, (dtypes.weakint.min, dtypes.weakint.max))
 
   def test_vmin_vmax_cast(self):
     x = UOp.variable('x', -10, 10, dtypes.int)
@@ -167,6 +200,17 @@ class TestVminVmaxProperties(unittest.TestCase):
     self.assertEqual(UOp.const(4.5).cast(dtypes.float).cast(dtypes.int)._min_max, (4, 4))
     x = UOp.const(4.5).cast(dtypes.float)
     self.assertIs(x.ne(x.cast(dtypes.int).cast(dtypes.float)).simplify().arg, True)
+    # a source reaching past the destination clamps to its edge
+    self.assertEqual(UOp.variable('x', 2e9, 3e9, dtypes.float).cast(dtypes.int)._min_max, (2000000000, dtypes.int.max))
+    # a source entirely past the destination has no value in it
+    self.assertEqual(UOp.variable('x', 3e9, 4e9, dtypes.float).cast(dtypes.int)._min_max, (dtypes.int.min, dtypes.int.max))
+    self.assertEqual(UOp.variable('x', -4e9, -3e9, dtypes.float).cast(dtypes.int)._min_max, (dtypes.int.min, dtypes.int.max))
+    self.assertEqual(UOp.variable('x', 200, 300, dtypes.int).cast(dtypes.char)._min_max, (dtypes.char.min, dtypes.char.max))
+    self.assertEqual(UOp.const(300, dtypes.char)._min_max, (44, 44))
+    self.assertEqual(UOp.const(math.inf).cast(dtypes.int)._min_max, (dtypes.int.min, dtypes.int.max))
+    self.assertEqual(UOp.const(math.nan, dtypes.float)._min_max, (-math.inf, math.inf))
+    # a weak destination has no width to clamp to
+    self.assertEqual(UOp.variable('x', 5, 7, dtypes.int).cast(dtypes.weakfloat)._min_max, (5, 7))
 
   def test_vmin_vmax_cast_int_to_float_grid(self):
     # a cast to float only takes values on the float grid, so its bounds are the source bounds rounded at the destination
@@ -208,14 +252,14 @@ class TestVminVmaxDivMod(unittest.TestCase):
 
   def test_vmin_vmax_floordiv_floormod(self):
     x = UOp.variable('x', -7, 7)
-    floordiv = x.alu(Ops.FLOORDIV, UOp.const(3))
+    floordiv = x.alu(Ops.DIV, UOp.const(3))
     self.assertEqual(floordiv.vmin, -3)
     self.assertEqual(floordiv.vmax, 2)
-    floormod = x.alu(Ops.FLOORMOD, UOp.const(3))
+    floormod = x.alu(Ops.MOD, UOp.const(3))
     self.assertEqual(floormod.vmin, 0)
     self.assertEqual(floormod.vmax, 2)
     # negative const divisor: floormod range is [c+1, 0]
-    floormod_neg = x.alu(Ops.FLOORMOD, UOp.const(-3))
+    floormod_neg = x.alu(Ops.MOD, UOp.const(-3))
     self.assertEqual(floormod_neg.vmin, -2)
     self.assertEqual(floormod_neg.vmax, 0)
 
@@ -380,10 +424,6 @@ class TestConstFactor(unittest.TestCase):
     uop = (x * 3) * 5
     self.assertEqual(uop.const_factor(), 15)  # Constant multipliers are combined (3 * 5 = 15)
 
-  def test_const_factor_variable_multiple_of(self):
-    x = UOp.variable('x', 16, 32, multiple_of=4)
-    self.assertEqual(x.const_factor(), 4)
-
 class TestDivides(unittest.TestCase):
   def test_divides_constant_exact(self):
     # Divides a constant by an exact divisor
@@ -421,16 +461,6 @@ class TestDivides(unittest.TestCase):
     uop = x * 4
     result = uop.divides(3)
     self.assertIsNone(result)  # Cannot divide by 3, since 4 is not divisible by 3
-
-  def test_divides_variable_multiple_of_exact(self):
-    x = UOp.variable('x', 16, 32, multiple_of=4)
-    result = x.divides(4)
-    self.assertIsNotNone(result)
-
-  def test_divides_variable_multiple_of_factor(self):
-    x = UOp.variable('x', 16, 32, multiple_of=4)
-    result = x.divides(2)
-    self.assertIsNotNone(result)
 
 if __name__ == '__main__':
   unittest.main()

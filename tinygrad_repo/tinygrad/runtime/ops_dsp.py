@@ -1,7 +1,6 @@
 from __future__ import annotations
-import ctypes, os, mmap, tempfile, pathlib, array, threading, contextlib, sys, subprocess, struct
-assert sys.platform != 'win32'
-from tinygrad.device import BufferSpec, Compiled, Allocator, Compiler, Program, TinyELF
+import ctypes, os, mmap, tempfile, pathlib, array, threading, contextlib, subprocess, struct
+from tinygrad.device import BufferStorage, MMIOInterface, BufferSpec, Compiled, Allocator, Compiler, Program, TinyELF
 from tinygrad.dtype import dtypes, AddrSpace
 from tinygrad.uop.ops import Ops, UOp
 from tinygrad.helpers import getenv, round_up, mv_address, to_mv, cpu_objdump, system, DEBUG, suppress_finalizing, Target, unwrap
@@ -12,6 +11,7 @@ if getenv("IOCTL"): import extra.dsp.run # noqa: F401 # pylint: disable=unused-i
 class DSPRenderer(ClangRenderer):
   buffer_suffix = " restrict __attribute__((align_value(128)))"
   kernel_typedef = "__attribute__((noinline)) void"
+  packed_args = False
   type_map = { **ClangRenderer.type_map, dtypes.uint64: "unsigned long long", dtypes.int64: "long long" }
   code_for_op = {k:v for k,v in ClangRenderer.code_for_op.items() if k != Ops.SQRT}
 
@@ -32,9 +32,9 @@ class DSPRenderer(ClangRenderer):
     msrc += [f'{self._render_dtype(b[1][0].dtype) if b[1][0].addrspace == AddrSpace.ALU else "int"} sz_or_val_{i} = '
              f'*({self._render_dtype(b[1][0].dtype) if b[1][0].addrspace == AddrSpace.ALU else "int"}*)((char*)pra[0].buf.pv+{i*8});'
              for i,b in enumerate(bufs)]
-    msrc += [f'int off{i} = ((int*)pra[1].buf.pv)[{i}];' for i,b in enumerate(bufs) if b[1][0].addrspace == AddrSpace.GLOBAL]
-    msrc += [f'void *buf_{i} = HAP_mmap(0,sz_or_val_{i},3,0,pra[{i+3}].dma.fd,0)+off{i};'
-             for i,b in enumerate(bufs) if b[1][0].addrspace == AddrSpace.GLOBAL]
+    gbufs = [i for i,b in enumerate(bufs) if b[1][0].addrspace == AddrSpace.GLOBAL]
+    msrc += [f'int off{i} = ((int*)pra[1].buf.pv)[{j}];' for j,i in enumerate(gbufs)]
+    msrc += [f'void *buf_{i} = HAP_mmap(0,sz_or_val_{i},3,0,pra[{j+3}].dma.fd,0)+off{i};' for j,i in enumerate(gbufs)]
     msrc += ["unsigned long long start = HAP_perf_get_time_us();"]
     fbufs = [(f'buf_{i}' if b[1][0].addrspace == AddrSpace.GLOBAL else f'sz_or_val_{i}') for i,b in enumerate(bufs)]
     msrc += [f"{function_name}({', '.join(fbufs)});"]
@@ -57,15 +57,16 @@ def rpc_prep_args(ins=None, outs=None, in_fds=None):
   return pra, fds, attrs, (ins, outs)
 
 class DSPProgram(Program['DSPDevice']):
-  def __init__(self, dev:DSPDevice, obj:TinyELF): self.dev, self.lib, self.signature = dev, obj.lib, obj.signature
+  def __init__(self, dev:DSPDevice, obj:TinyELF, links=None): self.dev, self.lib, self.signature = dev, obj.lib, obj.signature
 
-  def __call__(self, *bufs, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1), vals:tuple[int, ...]=(), wait=False, **kw):
+  def __call__(self, *args, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1), wait=False, **kw):
+    bufs = [b for b,(_,a,_,_) in zip(args, self.signature) if a is not AddrSpace.ALU]
     if len(bufs) >= 16: raise RuntimeError(f"Too many buffers to execute: {len(bufs)}")
 
-    pra, fds, attrs, _ = rpc_prep_args(ins=[var_vals_mv:=memoryview(bytearray((len(bufs)+len(vals))*8)), off_mv:=memoryview(bytearray(len(bufs)*4))],
+    pra, fds, attrs, _ = rpc_prep_args(ins=[var_vals_mv:=memoryview(bytearray(len(args)*8)), off_mv:=memoryview(bytearray(len(bufs)*4))],
                                        outs=[timer:=memoryview(bytearray(8)).cast('Q')], in_fds=[b.share_info.fd for b in bufs])
-    for i,b in enumerate(bufs): struct.pack_into('i', var_vals_mv, i*8, b.size)
-    for i,(v,(_,_,dt,_)) in enumerate(zip(vals, self.signature[len(bufs):]), start=len(bufs)): struct.pack_into(unwrap(dt.fmt), var_vals_mv, i*8, v)
+    for i,(b,(_,a,dt,_)) in enumerate(zip(args, self.signature)):
+      struct.pack_into(unwrap(dt.fmt) if a is AddrSpace.ALU else 'i', var_vals_mv, i*8, b if a is AddrSpace.ALU else b.size)
     off_mv.cast('I')[:] = array.array('I', tuple(b.offset for b in bufs))
     self.dev.exec_lib(self.lib, rpc_sc(method=2, ins=2, outs=1, fds=len(bufs)), pra, fds, attrs)
     return timer[0] / 1e6
@@ -75,19 +76,20 @@ class DSPBuffer:
     self.va_addr, self.size, self.share_info, self.offset = va_addr, size, share_info, offset
 
 class DSPAllocator(Allocator['DSPDevice']):
-  def _alloc(self, size:int, options:BufferSpec):
+  def _alloc(self, size:int, options:BufferSpec) -> BufferStorage:
     if getenv("MOCKDSP"): fd, share_info, flags = -1, None, mmap.MAP_SHARED|mmap.MAP_ANONYMOUS
     else:
       b = qcom_dsp.ION_IOC_ALLOC(self.dev.ion_fd, len=size, align=0x200, heap_id_mask=1<<qcom_dsp.ION_SYSTEM_HEAP_ID, flags=qcom_dsp.ION_FLAG_CACHED)
       fd, flags = (share_info:=qcom_dsp.ION_IOC_SHARE(self.dev.ion_fd, handle=b.handle)).fd, mmap.MAP_SHARED
-    return DSPBuffer(libc.mmap(0, size, mmap.PROT_READ|mmap.PROT_WRITE, flags, fd, 0), size, share_info, offset=0)
+    opaque = DSPBuffer(libc.mmap(0, size, mmap.PROT_READ|mmap.PROT_WRITE, flags, fd, 0), size, share_info, offset=0)
+    return BufferStorage(opaque, opaque.share_info, MMIOInterface(opaque.va_addr, size))
 
   @suppress_finalizing
-  def _free(self, opaque:DSPBuffer, options:BufferSpec):
-    libc.munmap(opaque.va_addr, opaque.size)
-    if opaque.share_info is not None:
-      os.close(opaque.share_info.fd)
-      qcom_dsp.ION_IOC_FREE(self.dev.ion_fd, handle=opaque.share_info.handle)
+  def _free(self, storage:BufferStorage, options:BufferSpec):
+    libc.munmap(storage.buf.va_addr, storage.buf.size)
+    if storage.buf.share_info is not None:
+      os.close(storage.buf.share_info.fd)
+      qcom_dsp.ION_IOC_FREE(self.dev.ion_fd, handle=storage.buf.share_info.handle)
 
   def _as_buffer(self, src:DSPBuffer) -> memoryview: return to_mv(src.va_addr, src.size)
   def _copyin(self, dest:DSPBuffer, src:memoryview): ctypes.memmove(dest.va_addr, mv_address(src), src.nbytes)
@@ -131,7 +133,7 @@ class DSPDevice(Compiled):
       self.ion_fd = os.open('/dev/ion', os.O_RDONLY)
       super().__init__(device, DSPAllocator(self), [DSPRenderer], DSPProgram)
       fastrpc_shell = memoryview(bytearray(pathlib.Path('/dsp/cdsp/fastrpc_shell_3').read_bytes()))
-      self.shell_buf = self.allocator.alloc(round_up(fastrpc_shell.nbytes, 0x1000), BufferSpec(nolru=True))
+      self.shell_buf = self.allocator.alloc(round_up(fastrpc_shell.nbytes, 0x1000), BufferSpec(nolru=True)).buf
       ctypes.memmove(self.shell_buf.va_addr, mv_address(fastrpc_shell), fastrpc_shell.nbytes)
 
       self.init_dsp()
@@ -273,18 +275,18 @@ class MockDSPRenderer(DSPRenderer):
     return '\n'.join(msrc)
 
 class MockDSPProgram(Program[DSPDevice]):
-  def __init__(self, dev:DSPDevice, obj:TinyELF): self.lib, self.signature = obj.lib, obj.signature
-  def __call__(self, *bufs, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1), vals:tuple[int, ...]=(), wait=False, **kw):
+  def __init__(self, dev:DSPDevice, obj:TinyELF, links=None): self.lib, self.signature = obj.lib, obj.signature
+  def __call__(self, *args, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1), wait=False, **kw):
     with tempfile.NamedTemporaryFile(suffix=".out") as dsp_lib:
       dsp_lib.write(self.lib)
       dsp_lib.flush()
       os.chmod(dsp_lib.name, 0o0777)
       proc = subprocess.run(["qemu-hexagon-static", *(['-strace'] if DEBUG >= 5 else []), dsp_lib.name],
-        input=b''.join([bytes(to_mv(x.va_addr, x.size)) for x in bufs] +
-                       [struct.pack(unwrap(dt.fmt), x) for x,(_,_,dt,_) in zip(vals, self.signature[len(bufs):])]),
+        input=b''.join(struct.pack(unwrap(dt.fmt), x) if a is AddrSpace.ALU else bytes(to_mv(x.va_addr, x.size))
+                       for x,(_,a,dt,_) in zip(args, self.signature)),
         stdout=subprocess.PIPE, check=True)
     offset = 4
-    for x in bufs:
+    for x in (x for x,(_,a,_,_) in zip(args, self.signature) if a is not AddrSpace.ALU):
       to_mv(x.va_addr, x.size)[:] = proc.stdout[offset:offset+x.size]
       offset += x.size
     assert offset == len(proc.stdout)

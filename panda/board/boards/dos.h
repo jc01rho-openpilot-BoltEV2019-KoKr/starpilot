@@ -102,7 +102,7 @@ static void dos_init(void) {
   dos_set_ir_power(0U);
 
   // Bootkick
-  dos_set_bootkick(true);
+  dos_set_bootkick(BOOT_BOOTKICK);
 
   // Init clock source (camera strobe) using PWM
   clock_source_init(false);
@@ -129,7 +129,6 @@ board board_dos = {
   .fan_stall_recovery = true,
   .fan_enable_cooldown_time = 3U,
   .init = dos_init,
-  .init_bootloader = unused_init_bootloader,
   .enable_can_transceiver = dos_enable_can_transceiver,
   .led_GPIO = {GPIOC, GPIOC, GPIOC},
   .led_pin = {9, 7, 6},

@@ -20,7 +20,7 @@ bool can_set_speed(uint8_t can_number) {
     CANx,
     bus_config[bus_number].can_speed,
     can_loopback,
-    (unsigned int)(can_silent) & (1U << can_number)
+    can_silent
   );
   return ret;
 }
@@ -109,7 +109,9 @@ void process_can(uint8_t can_number) {
       }
 
       if (can_pop(can_queues[bus_number], &to_send)) {
-        if (can_check_checksum(&to_send)) {
+        if ((to_send.fd != 0U) || (to_send.data_len_code > 8U)) {
+          can_health[can_number].total_tx_lost_cnt += 1U;
+        } else if (can_check_checksum(&to_send)) {
           can_health[can_number].total_tx_cnt += 1U;
           // only send if we have received a packet
           CANx->sTxMailBox[0].TIR = ((to_send.extended != 0U) ? (to_send.addr << 3) : (to_send.addr << 21)) | (to_send.extended << 2);
@@ -148,13 +150,18 @@ void can_rx(uint8_t can_number) {
     to_push.extended = (CANx->sFIFOMailBox[0].RIR >> 2) & 0x1U;
     to_push.addr = (to_push.extended != 0U) ? (CANx->sFIFOMailBox[0].RIR >> 3) : (CANx->sFIFOMailBox[0].RIR >> 21);
     to_push.data_len_code = CANx->sFIFOMailBox[0].RDTR & 0xFU;
+    if (to_push.data_len_code > 8U) {
+      can_health[can_number].total_rx_lost_cnt += 1U;
+      CANx->RF0R |= CAN_RF0R_RFOM0;
+      continue;
+    }
     to_push.bus = bus_number;
     WORD_TO_BYTE_ARRAY(&to_push.data[0], CANx->sFIFOMailBox[0].RDLR);
     WORD_TO_BYTE_ARRAY(&to_push.data[4], CANx->sFIFOMailBox[0].RDHR);
     can_set_checksum(&to_push);
 
     // forwarding (panda only)
-    int bus_fwd_num = safety_fwd_hook(bus_number, to_push.addr);
+    int bus_fwd_num = safety_fwd_packet_hook(&to_push);
     if (bus_fwd_num != -1) {
       CANPacket_t to_send;
 
@@ -212,6 +219,12 @@ bool can_init(uint8_t can_number) {
     CAN_TypeDef *CANx = CANIF_FROM_CAN_NUM(can_number);
     ret &= can_set_speed(can_number);
     ret &= llcan_init(CANx);
+    #ifndef PANDA_BODY
+    // Reinitialization must not leave IRQs running on powered-down transceivers.
+    if (power_save_enabled) {
+      set_power_save_state(true);
+    }
+    #endif
     // in case there are queued up messages
     process_can(can_number);
   }

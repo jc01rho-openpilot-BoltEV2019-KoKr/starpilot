@@ -1,3 +1,5 @@
+#pragma once
+
 #define SOUND_RX_BUF_SIZE 1000U
 #define SOUND_TX_BUF_SIZE (SOUND_RX_BUF_SIZE/2U)
 #define MIC_RX_BUF_SIZE 512U
@@ -12,6 +14,7 @@ __attribute__((section(".sram4"))) static uint16_t mic_tx_buf[2][MIC_TX_BUF_SIZE
 static uint8_t sound_idle_count;
 static uint8_t mic_idle_count;
 static uint8_t mic_buffer_count;
+uint16_t sound_output_level;
 
 void sound_tick(void) {
   if (sound_idle_count > 0U) {
@@ -19,6 +22,7 @@ void sound_tick(void) {
     if (sound_idle_count == 0U) {
       current_board->set_amp_enabled(false);
       register_clear_bits(&DMA1_Stream1->CR, DMA_SxCR_EN);
+      sound_output_level = 0U;
     }
   }
 
@@ -27,6 +31,7 @@ void sound_tick(void) {
     if (mic_idle_count == 0U) {
       register_clear_bits(&DFSDM1_Channel0->CHCFGR1, DFSDM_CHCFGR1_DFSDMEN);
       mic_buffer_count = 0U;
+      (void)memset(mic_tx_buf, 0, sizeof(mic_tx_buf));
     }
   }
 }
@@ -72,13 +77,30 @@ static void BDMA_Channel0_IRQ_Handler(void) {
 
   // process samples (shift to 12b and bias to be unsigned)
   bool sound_playing = false;
+  uint32_t abs_sum = 0U;
+
   for (uint16_t i=0U; i < SOUND_RX_BUF_SIZE; i += 2U) {
     // since we are playing mono and receiving stereo, we take every other sample
-    sound_tx_buf[playback_buf][i/2U] = ((sound_rx_buf[rx_buf_idx][i] + (1UL << 14)) >> 3);
+    uint16_t sample = ((sound_rx_buf[rx_buf_idx][i] + (1UL << 14)) >> 3) & 0xFFFU;
+    sound_tx_buf[playback_buf][i/2U] = sample;
     if (sound_rx_buf[rx_buf_idx][i] > 0U) {
       sound_playing = true;
     }
+
+    // this assumes all audio is "zero" centered
+    if (sample > 0x7FFU) {
+      abs_sum += (uint32_t)sample - 0x7FFU;
+    } else {
+      abs_sum += 0x7FFU - (uint32_t)sample;
+    }
   }
+
+  // VU meter: fast attack, slow decay (~460ms half-life at ~96Hz ISR rate)
+  uint16_t level = (uint16_t)(abs_sum / (SOUND_RX_BUF_SIZE / 2U));
+  if (level >= sound_output_level) {
+    sound_output_level = level;
+  }
+  sound_output_level -= (sound_output_level >> 6U);
 
   // manage amp state
   if (sound_playing) {
@@ -102,8 +124,6 @@ static void BDMA_Channel0_IRQ_Handler(void) {
     DFSDM1_Filter0->FLTCR1 |= DFSDM_FLTCR1_RSWSTART;
   }
   mic_idle_count = SOUND_IDLE_TIMEOUT;
-
-  sound_tick();
 }
 
 void sound_init_dac(void) {
@@ -172,6 +192,9 @@ void sound_init(void) {
   register_set(&DMAMUX2_Channel0->CCR, 16U, DMAMUX_CxCR_DMAREQ_ID_Msk); // SAI4_B_DMA
   register_set_bits(&BDMA_Channel0->CCR, BDMA_CCR_EN);
 
+  // SRAM4 is not cleared at startup; transmit silence until capture is ready
+  (void)memset(mic_tx_buf, 0, sizeof(mic_tx_buf));
+
   // mic output
   register_set(&SAI4_Block_A->CR1, SAI_xCR1_DMAEN | (0b01UL << SAI_xCR1_SYNCEN_Pos) | (0b100UL << SAI_xCR1_DS_Pos) | (0b10UL << SAI_xCR1_MODE_Pos), 0x0FFB3FEFU);
   register_set(&SAI4_Block_A->CR2, 0U, 0xFFFBU);
@@ -179,9 +202,9 @@ void sound_init(void) {
   register_set(&SAI4_Block_A->SLOTR, (0b11UL << SAI_xSLOTR_SLOTEN_Pos) | (1UL << SAI_xSLOTR_NBSLOT_Pos) | (0b01U << SAI_xSLOTR_SLOTSZ_Pos), 0xFFFF0FDFU); // NBSLOT definition is vague
 
   // init DFSDM for PDM mic
-  register_set(&DFSDM1_Channel0->CHCFGR1, (76UL << DFSDM_CHCFGR1_CKOUTDIV_Pos) | DFSDM_CHCFGR1_CHEN, 0xC0FFF1EFU); // CH0 controls the clock
+  register_set(&DFSDM1_Channel0->CHCFGR1, (90UL << DFSDM_CHCFGR1_CKOUTDIV_Pos) | DFSDM_CHCFGR1_CHEN, 0xC0FFF1EFU); // CH0 controls the clock
   register_set(&DFSDM1_Channel3->CHCFGR1, (0b01UL << DFSDM_CHCFGR1_SPICKSEL_Pos) | (0b00U << DFSDM_CHCFGR1_SITP_Pos) | DFSDM_CHCFGR1_CHEN, 0x0000F1EFU); // SITP determines sample edge
-  register_set(&DFSDM1_Filter0->FLTFCR, (0U << DFSDM_FLTFCR_IOSR_Pos) | (64UL << DFSDM_FLTFCR_FOSR_Pos) | (4UL << DFSDM_FLTFCR_FORD_Pos), 0xE3FF00FFU);
+  register_set(&DFSDM1_Filter0->FLTFCR, (0U << DFSDM_FLTFCR_IOSR_Pos) | (54UL << DFSDM_FLTFCR_FOSR_Pos) | (4UL << DFSDM_FLTFCR_FORD_Pos), 0xE3FF00FFU);
   register_set(&DFSDM1_Filter0->FLTCR1, DFSDM_FLTCR1_FAST | (3UL << DFSDM_FLTCR1_RCH_Pos) | DFSDM_FLTCR1_RDMAEN | DFSDM_FLTCR1_RCONT | DFSDM_FLTCR1_DFEN, 0x672E7F3BU);
 
   // DMA (DFSDM1 -> memory)
@@ -206,6 +229,6 @@ void sound_init(void) {
   // enable all initted blocks
   register_set_bits(&SAI4_Block_A->CR1, SAI_xCR1_SAIEN);
   register_set_bits(&SAI4_Block_B->CR1, SAI_xCR1_SAIEN);
-  NVIC_EnableIRQ(BDMA_Channel0_IRQn);
-  NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  nvic_enable(BDMA_Channel0_IRQn);
+  nvic_enable(DMA1_Stream0_IRQn);
 }

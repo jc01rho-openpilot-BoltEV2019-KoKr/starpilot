@@ -1,25 +1,27 @@
 import os
 import time
 
-from types import SimpleNamespace
-
-from cereal import custom
-from opendbc.car import gen_empty_fingerprint
+from opendbc.car import gen_empty_fingerprint, fw_versions
 from opendbc.car.can_definitions import CanRecvCallable, CanSendCallable
 from opendbc.car.carlog import carlog
 from opendbc.car.structs import CarParams, CarParamsT
 from opendbc.car.fingerprints import eliminate_incompatible_cars, all_legacy_fingerprint_cars
-from opendbc.car.fw_versions import ObdCallback, get_fw_versions_ordered, get_present_ecus, match_fw_to_car
-from opendbc.car.hyundai.values import kia_ray_ev_vin
+from opendbc.car.fw_versions import (ObdCallback, get_fw_versions, get_fw_versions_ordered,
+                                     get_present_ecus, match_fw_to_car)
 from opendbc.car.mock.values import CAR as MOCK
-from opendbc.car.toyota.values import ToyotaSafetyFlags
+from opendbc.car.gm.pedal_capability import automatic_bolt_candidate
+from opendbc.car.gm.discovery import automatic_trax_candidate, automatic_volt_candidate, normal_bus0_topology as gm_normal_bus0_topology
+from opendbc.car.ford.discovery import (normal_bus0_selection as ford_normal_bus0_selection,
+                                       normal_bus0_queries as ford_normal_bus0_queries, normal_bus_query_brand)
+from opendbc.car.volvo.discovery import normal_bus_topology as volvo_normal_bus_topology
+from opendbc.car.hyundai.discovery import normal_bus_topology
+from opendbc.car.honda.discovery import normal_bus_topology as honda_normal_bus_topology
+from opendbc.car.chrysler.discovery import normal_bus_topology as chrysler_normal_bus_topology
+from opendbc.car.tesla.discovery import normal_bus0_topology as tesla_normal_bus0_topology
 from opendbc.car.values import BRANDS
 from opendbc.car.vin import get_vin, is_valid_vin, VIN_UNKNOWN
-from openpilot.common.params import Params
 
 FRAME_FINGERPRINT = 100  # 1s
-
-StarPilotCarParams = custom.StarPilotCarParams
 
 
 def load_interfaces(brand_names):
@@ -46,182 +48,25 @@ def _get_interface_names() -> dict[str, list[str]]:
 interface_names = _get_interface_names()
 interfaces = load_interfaces(interface_names)
 
-# Legacy Bolt rename migration. Keep here to prevent force-fingerprint
-# params from selecting a removed platform name and crashing detection.
-LEGACY_FORCED_CANDIDATE_MAP = {
-  "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
-}
 
-GM_CANDIDATE_PREFIXES = ("CHEVROLET_", "GMC_", "CADILLAC_", "BUICK_", "HOLDEN_")
-GM_CORE_FINGERPRINT_MSGS = frozenset((190, 201, 209, 211, 241))
-GM_CAMERA_BUS = 2
-GM_VOLT_CAMERA_MSG = 0x320
-GM_SUBURBAN_CAMERA_VIN_PREFIX = "1GNSKJKJ"
-GM_SUBURBAN_CAMERA_PT_SIGNATURE = {
-  190: 6,
-  201: 8,
-  209: 7,
-  211: 2,
-  241: 6,
-  304: 1,
-  320: 3,
-}
-GM_CAMERA_DIAGNOSTIC_MESSAGES = {
-  0x24b: 8,
-  0x64b: 8,
-}
-
-
-def _normalize_forced_candidate(candidate: str | None) -> str | None:
-  if candidate is None:
-    return None
-  if isinstance(candidate, (bytes, bytearray)):
-    candidate = candidate.decode("utf-8", errors="ignore")
-  candidate = str(candidate)
-  return LEGACY_FORCED_CANDIDATE_MAP.get(candidate, candidate)
-
-
-def _normalize_gm_bolt_candidate(candidate: str | None, fingerprints: dict[int, dict], vin: str | None = None) -> str | None:
-  """
-  Normalize ambiguous/mismatched Bolt candidates using robust PT message signatures.
-  This guards against occasional wrong variant selection causing persistent canError.
-  """
-  pt = fingerprints.get(0, {})
-  if not pt:
-    return candidate
-
-  msg_211_len = pt.get(211)  # 2 on Gen1 Bolt, 3 on 2022+ Bolt
-  msg_304_len = pt.get(304)  # 8 on 2017 Gen1, 1 on 2018-2021 Gen1
-  has_pedal = 513 in pt
-
-  # The 2022-23 Bolt ACC, pedal, and CC variants share the same FPv1
-  # fingerprint. Recover an ambiguous match when the observed traffic
-  # matches the Bolt family and the VIN confirms model year 2022/2023.
-  bolt_2022_2023_signature = (
-    pt.get(190) == 7 and
-    msg_211_len == 3 and
-    pt.get(566) == 8 and
-    pt.get(458) == 5
-  )
-  vin_year = vin[9] if isinstance(vin, str) and len(vin) > 9 else None
-
-  # VIN model-year codes: N=2022, P=2023.
-  if candidate is None and bolt_2022_2023_signature and vin_year in ("N", "P"):
-    return "CHEVROLET_BOLT_ACC_2022_2023_PEDAL" if has_pedal else "CHEVROLET_BOLT_ACC_2022_2023"
-  # If detection failed entirely but the signature is clearly Bolt, recover to a sane default.
-
-  if candidate is None and 170 in pt and 188 in pt and msg_211_len in (2, 3):
-    if msg_211_len == 3:
-      return "CHEVROLET_BOLT_ACC_2022_2023_PEDAL" if has_pedal else "CHEVROLET_BOLT_ACC_2022_2023"
-    if msg_304_len == 8:
-      return "CHEVROLET_BOLT_CC_2017"
-    return "CHEVROLET_BOLT_CC_2018_2021"
-
-  if not isinstance(candidate, str) or not candidate.startswith("CHEVROLET_BOLT_"):
-    return candidate
-
-  # Gen split based on stable message lengths.
-  if msg_211_len == 2:
-    # Gen1 Bolt. Keep 2017 distinct by 0x130 length when available.
-    if msg_304_len == 8:
-      return "CHEVROLET_BOLT_CC_2017"
-    return "CHEVROLET_BOLT_CC_2018_2021"
-
-  if msg_211_len == 3:
-    # 2022+ Bolt family. Preserve pedal path when seen on bus.
-    if has_pedal:
-      return "CHEVROLET_BOLT_ACC_2022_2023_PEDAL"
-    # Preserve CC-specific 2022 path if already selected; otherwise default ACC variant.
-    if candidate == "CHEVROLET_BOLT_CC_2022_2023":
-      return candidate
-    return "CHEVROLET_BOLT_ACC_2022_2023"
-
-  return candidate
-
-
-def _apply_disable_openpilot_long(CP: CarParams, FPCP: StarPilotCarParams) -> None:
-  CP.openpilotLongitudinalControl = False
-  CP.pcmCruise = True
-  FPCP.openpilotLongitudinalControlDisabled = True
-
-  if CP.brand == "toyota":
-    # Toyota stock longitudinal safety changes the forwarding rules so the
-    # camera's ACC_CONTROL message can reach the PT bus again.
-    for cfg in CP.safetyConfigs:
-      cfg.safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
-    for cfg in FPCP.safetyConfigs:
-      cfg.safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
-
-
-def _normalize_gm_volt_candidate(candidate: str | None, fingerprints: dict[int, dict]) -> str | None:
-  cam = fingerprints.get(GM_CAMERA_BUS, {})
-  has_live_camera_msg = GM_VOLT_CAMERA_MSG in cam
-
-  if candidate == "CHEVROLET_VOLT_CAMERA" and not has_live_camera_msg:
-    return "CHEVROLET_VOLT"
-
-  if candidate == "CHEVROLET_VOLT" and has_live_camera_msg:
-    return "CHEVROLET_VOLT_CAMERA"
-
-  return candidate
-
-
-def _normalize_gm_suburban_camera_candidate(candidate: str | None, fingerprints: dict[int, dict], vin: str | None) -> str | None:
-  """Resolve the 2019 Suburban camera-harness variant when CAN is shared with Yukon."""
-  if candidate not in (None, "GMC_YUKON", "GMC_YUKON_CC"):
-    return candidate
-
-  if not isinstance(vin, str) or not vin.startswith(GM_SUBURBAN_CAMERA_VIN_PREFIX):
-    return candidate
-
-  powertrain = fingerprints.get(0, {})
-  camera = fingerprints.get(GM_CAMERA_BUS, {})
-  if not all(powertrain.get(address) == length for address, length in GM_SUBURBAN_CAMERA_PT_SIGNATURE.items()):
-    return candidate
-  if not all(camera.get(address) == length for address, length in GM_CAMERA_DIAGNOSTIC_MESSAGES.items()):
-    return candidate
-
-  return "CHEVROLET_SUBURBAN_CAMERA"
-
-
-def _is_gm_candidate(candidate: str | None) -> bool:
-  return isinstance(candidate, str) and candidate.startswith(GM_CANDIDATE_PREFIXES)
-
-
-def _get_gm_stored_candidate_fallback(fingerprints: dict[int, dict], stored_candidate: str | None,
-                                      cached_candidate: str | None) -> str | None:
-  pt = fingerprints.get(0, {})
-  # Several GM variants intentionally share FPv1 signatures. If live matching
-  # can't resolve them, reuse the last known GM platform instead of dropping to MOCK.
-  if len(GM_CORE_FINGERPRINT_MSGS.intersection(pt.keys())) < 4:
-    return None
-
-  for candidate in (_normalize_forced_candidate(stored_candidate), _normalize_forced_candidate(cached_candidate)):
-    candidate = _normalize_gm_volt_candidate(candidate, fingerprints)
-    if _is_gm_candidate(candidate) and candidate != MOCK.MOCK and candidate in interfaces:
-      return candidate
-
-  return None
-
-
-def _apply_starpilot_access_policy(candidate: str, starpilot_toggles: SimpleNamespace | None) -> str:
-  # Branch-based dashcam gating was removed. Keep the resolved candidate even if
-  # an older serialized toggle payload still contains block_user=True.
-  return candidate
-
-
-def can_fingerprint(can_recv: CanRecvCallable) -> tuple[str | None, dict[int, dict]]:
+def can_fingerprint(can_recv: CanRecvCallable, *, vin: str = VIN_UNKNOWN,
+                    camera_cruise_messages: set[bytes] | None = None) -> tuple[str | None, dict[int, dict]]:
   finger = gen_empty_fingerprint()
   candidate_cars = {i: all_legacy_fingerprint_cars() for i in [0, 1]}  # attempt fingerprint on both bus 0 and 1
   frame = 0
   car_fingerprint = None
   done = False
+  if camera_cruise_messages is None:
+    camera_cruise_messages = set()
 
   while not done:
     # can_recv(wait_for_one=True) may return zero or multiple packets, so we increment frame for each one we receive
     can_packets = can_recv(wait_for_one=True)
     for can_packet in can_packets:
       for can in can_packet:
+        # Stock camera only: host echoes and malformed DLCs are not capability evidence.
+        if can.src == 2 and can.address == 0x370 and len(can.dat) == 6:
+          camera_cruise_messages.add(bytes(can.dat))
         # The fingerprint dict is generated for all buses, this way the car interface
         # can use it to detect a (valid) multipanda setup and initialize accordingly
         if can.src < 128:
@@ -248,44 +93,114 @@ def can_fingerprint(can_recv: CanRecvCallable) -> tuple[str | None, dict[int, di
 
       frame += 1
 
-  return car_fingerprint, finger
+  car_fingerprint = automatic_volt_candidate(car_fingerprint, finger, candidate_cars)
+  car_fingerprint = automatic_trax_candidate(car_fingerprint, finger, candidate_cars, vin)
+  return automatic_bolt_candidate(car_fingerprint, finger, camera_cruise_messages, vin), finger
+
+
+def _gm_fw_uses_normal_bus0() -> bool:
+  configured = fw_versions.FW_QUERY_CONFIGS['gm'].requests
+  effective = [request for brand, _, request in fw_versions.REQUESTS if brand == 'gm']
+  return bool(configured) and bool(effective) and all(request.bus == 0 for request in (*configured, *effective))
+
+
+def _tesla_fw_uses_normal_bus0() -> bool:
+  configured = fw_versions.FW_QUERY_CONFIGS['tesla'].requests
+  effective = [request for brand, _, request in fw_versions.REQUESTS if brand == 'tesla']
+  return bool(configured) and bool(effective) and all(request.bus == 0 for request in (*configured, *effective))
 
 
 # **** for use live only ****
-def fingerprint(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multiplexing: ObdCallback, num_pandas: int,
-                cached_params: CarParamsT | None) -> tuple[str | None, dict, str, list[CarParams.CarFw], CarParams.FingerprintSource, bool]:
+def fingerprint(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multiplexing: ObdCallback,
+                cached_params: CarParamsT | None, *, known_gm_bus0: bool = False, known_ford_bus0: bool = False,
+                known_tesla_bus0: bool = False
+                ) -> tuple[str | None, dict, str, list[CarParams.CarFw], CarParams.FingerprintSource, bool]:
+  if known_ford_bus0 and (known_gm_bus0 or not ford_normal_bus0_queries()):
+    raise ValueError('Ford discovery topology no longer uses normal bus 0')
+  if known_gm_bus0 and not _gm_fw_uses_normal_bus0():
+    raise ValueError('GM discovery topology no longer uses normal bus 0')
+  if known_tesla_bus0 and (known_gm_bus0 or known_ford_bus0 or not _tesla_fw_uses_normal_bus0()):
+    raise ValueError('Tesla discovery topology no longer uses normal bus 0')
   fixed_fingerprint = os.environ.get('FINGERPRINT', "")
   skip_fw_query = os.environ.get('SKIP_FW_QUERY', False)
   disable_fw_cache = os.environ.get('DISABLE_FW_CACHE', False)
   ecu_rx_addrs = set()
 
-  if not fixed_fingerprint and Params().get_bool("NAPForcePreAP"):
-    fixed_fingerprint = "TESLA_MODEL_S_PREAP"
-    skip_fw_query = True
-    carlog.warning("NAPForcePreAP enabled; forcing TESLA_MODEL_S_PREAP fingerprint")
+  normal_bus_packets = []
+
+  def observe_normal_bus(**kwargs):
+    packets = can_recv(**kwargs)
+    normal_bus_packets.extend(packets)
+    return packets
 
   start_time = time.monotonic()
   if not skip_fw_query:
     if cached_params is not None and cached_params.brand != "mock" and len(cached_params.carFw) > 0 and \
-       cached_params.carVin is not VIN_UNKNOWN and not disable_fw_cache:
+       ((is_valid_vin(cached_params.carVin) and cached_params.carVin != VIN_UNKNOWN) or os.environ.get("REPLAY")) and not disable_fw_cache:
       carlog.warning("Using cached CarParams")
       vin_rx_addr, vin_rx_bus, vin = -1, -1, cached_params.carVin
       car_fw = list(cached_params.carFw)
       cached = True
     else:
       carlog.warning("Getting VIN & FW versions")
-      # enable OBD multiplexing for VIN query
-      # NOTE: this takes ~0.1s and is relied on to allow sendcan subscriber to connect in time
-      set_obd_multiplexing(True)
-      # VIN query only reliably works through OBDII
-      vin_rx_addr, vin_rx_bus, vin = get_vin(can_recv, can_send, (0, 1))
-      skip_fw_buses = {1} if kia_ray_ev_vin(vin) else set()
-      if skip_fw_buses:
-        carlog.warning("Kia Ray EV: skipping CAN1 firmware queries")
-      ecu_rx_addrs = get_present_ecus(can_recv, can_send, set_obd_multiplexing,
-                                      num_pandas=num_pandas, skip_buses=skip_fw_buses)
-      car_fw = get_fw_versions_ordered(can_recv, can_send, set_obd_multiplexing, vin, ecu_rx_addrs,
-                                       num_pandas=num_pandas, skip_buses=skip_fw_buses)
+      if known_gm_bus0:
+        # An explicit registered GM selection already identifies the query family.
+        # Current GM requests use normal bus 0. Keep live VIN/FW collection and
+        # the subsequent live CAN layout; scope queries to its declared normal bus.
+        set_obd_multiplexing(False)
+        # Preserve the sendcan subscriber connection warmup of the normal OBD path.
+        warmup_remaining = 0.1 - (time.monotonic() - start_time)
+        if warmup_remaining > 0:
+          time.sleep(warmup_remaining)
+        vin_rx_addr, vin_rx_bus, vin = get_vin(can_recv, can_send, (0,))
+        car_fw = get_fw_versions(can_recv, can_send, set_obd_multiplexing, query_brand='gm')
+        ecu_rx_addrs = {(fw.responseAddress, fw.subAddress or None, fw.bus) for fw in car_fw if fw.responseAddress > 0}
+      elif known_ford_bus0:
+        # A registered CAN-FD selection identifies Ford's query family, not live
+        # ECU authority. Keep normal CAN2 wiring during discovery: the unrelated
+        # all-brand OBD mux scan can produce a CAN2 error/interrupt storm.
+        set_obd_multiplexing(False)
+        warmup_remaining = 0.1 - (time.monotonic() - start_time)
+        if warmup_remaining > 0:
+          time.sleep(warmup_remaining)
+        vin_rx_addr, vin_rx_bus, vin = get_vin(can_recv, can_send, (0,))
+        car_fw = get_fw_versions(can_recv, can_send, set_obd_multiplexing,
+                                 query_brand='ford', normal_bus_only=True)
+        ecu_rx_addrs = {(fw.responseAddress, fw.subAddress or None, fw.bus) for fw in car_fw if fw.responseAddress > 0}
+      elif known_tesla_bus0:
+        # A selected Tesla needs only its declared bus0 queries, not an all-brand OBD sweep.
+        set_obd_multiplexing(False)
+        warmup_remaining = 0.1 - (time.monotonic() - start_time)
+        if warmup_remaining > 0:
+          time.sleep(warmup_remaining)
+        vin_rx_addr, vin_rx_bus, vin = get_vin(can_recv, can_send, (0,))
+        car_fw = get_fw_versions(can_recv, can_send, set_obd_multiplexing, query_brand='tesla')
+        ecu_rx_addrs = {(fw.responseAddress, fw.subAddress or None, fw.bus) for fw in car_fw if fw.responseAddress > 0}
+      elif (normal_brand := normal_bus_query_brand(
+          observe_normal_bus, normal_bus_topology,
+          gm_probe=gm_normal_bus0_topology if _gm_fw_uses_normal_bus0() else None,
+          volvo_probe=volvo_normal_bus_topology if not fw_versions.FW_QUERY_CONFIGS['volvo'].requests else None,
+          tesla_probe=tesla_normal_bus0_topology if _tesla_fw_uses_normal_bus0() else None) or
+          ('honda' if honda_normal_bus_topology(normal_bus_packets) else None) or
+          ('chrysler' if chrysler_normal_bus_topology(normal_bus_packets) else None)) is not None:
+
+        set_obd_multiplexing(False)
+        warmup_remaining = 0.1 - (time.monotonic() - start_time)
+        if warmup_remaining > 0:
+          time.sleep(warmup_remaining)
+        vin_buses = (0,) if normal_brand in ('ford', 'gm', 'volvo', 'tesla', 'chrysler') else (0, 1)
+        vin_rx_addr, vin_rx_bus, vin = get_vin(can_recv, can_send, vin_buses)
+        car_fw = get_fw_versions(can_recv, can_send, set_obd_multiplexing,
+                                 query_brand=normal_brand, normal_bus_only=True)
+        ecu_rx_addrs = {(fw.responseAddress, fw.subAddress or None, fw.bus) for fw in car_fw if fw.responseAddress > 0}
+      else:
+        # enable OBD multiplexing for VIN query
+        # NOTE: this takes ~0.1s and is relied on to allow sendcan subscriber to connect in time
+        set_obd_multiplexing(True)
+        # VIN query only reliably works through OBDII
+        vin_rx_addr, vin_rx_bus, vin = get_vin(can_recv, can_send, (0, 1))
+        ecu_rx_addrs = get_present_ecus(can_recv, can_send, set_obd_multiplexing)
+        car_fw = get_fw_versions_ordered(can_recv, can_send, set_obd_multiplexing, vin, ecu_rx_addrs)
       cached = False
 
     exact_fw_match, fw_candidates = match_fw_to_car(car_fw, vin)
@@ -307,7 +222,8 @@ def fingerprint(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_mu
   # CAN fingerprint
   # drain CAN socket so we get the latest messages
   can_recv()
-  car_fingerprint, finger = can_fingerprint(can_recv)
+  camera_cruise_messages: set[bytes] = set()
+  car_fingerprint, finger = can_fingerprint(can_recv, vin=vin, camera_cruise_messages=camera_cruise_messages)
 
   exact_match = True
   source = CarParams.FingerprintSource.can
@@ -317,6 +233,11 @@ def fingerprint(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_mu
     car_fingerprint = list(fw_candidates)[0]
     source = CarParams.FingerprintSource.fw
     exact_match = exact_fw_match
+
+  # Firmware catalogues can use the same broad Bolt aliases as legacy CAN.
+  # Refine after both automatic sources, before the explicit override below.
+  if not fixed_fingerprint:
+    car_fingerprint = automatic_bolt_candidate(car_fingerprint, finger, camera_cruise_messages, vin)
 
   if fixed_fingerprint:
     car_fingerprint = fixed_fingerprint
@@ -330,77 +251,62 @@ def fingerprint(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_mu
 
 
 def get_car(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multiplexing: ObdCallback, alpha_long_allowed: bool,
-            is_release: bool, params: Params, num_pandas: int = 1, cached_params: CarParamsT | None = None, starpilot_toggles: SimpleNamespace = None):
-  candidate, fingerprints, vin, car_fw, source, exact_match = fingerprint(can_recv, can_send, set_obd_multiplexing, num_pandas, cached_params)
-  candidate = _normalize_gm_bolt_candidate(candidate, fingerprints, vin)
-  candidate = _normalize_gm_volt_candidate(candidate, fingerprints)
-  candidate = _normalize_forced_candidate(candidate)
-  fingerprinted_candidate = candidate
-  stored_candidate = _normalize_forced_candidate(params.get("CarModel"))
-  cached_candidate = _normalize_forced_candidate(getattr(cached_params, "carFingerprint", None))
+            is_release: bool, cached_params: CarParamsT | None = None, pre_create_hook=None,
+            forced_candidate: str | None = None):
+  if forced_candidate is not None and forced_candidate not in interfaces:
+    raise ValueError('forced vehicle is not registered')
+  if forced_candidate is not None and cached_params is not None and cached_params.carFingerprint != forced_candidate:
+    cached_params = None
+  explicit_candidate = forced_candidate if forced_candidate is not None else os.environ.get('FINGERPRINT', '')
+  known_gm_bus0 = (explicit_candidate in interface_names['gm'] and _gm_fw_uses_normal_bus0())
+  known_ford_bus0 = ford_normal_bus0_selection(explicit_candidate)
+  known_tesla_bus0 = explicit_candidate in interface_names['tesla'] and _tesla_fw_uses_normal_bus0()
+  if known_gm_bus0 and cached_params is not None and (
+      cached_params.brand != 'gm' or cached_params.carFingerprint != explicit_candidate):
+    cached_params = None
+  if known_ford_bus0 and cached_params is not None and (
+      cached_params.brand != 'ford' or cached_params.carFingerprint != explicit_candidate):
+    cached_params = None
+  if known_tesla_bus0 and cached_params is not None and (
+      cached_params.brand != 'tesla' or cached_params.carFingerprint != explicit_candidate):
+    cached_params = None
+  if known_gm_bus0:
+    candidate, fingerprints, vin, car_fw, source, exact_match = fingerprint(
+      can_recv, can_send, set_obd_multiplexing, cached_params, known_gm_bus0=True)
+  elif known_ford_bus0:
+    candidate, fingerprints, vin, car_fw, source, exact_match = fingerprint(
+      can_recv, can_send, set_obd_multiplexing, cached_params, known_ford_bus0=True)
+  elif known_tesla_bus0:
+    candidate, fingerprints, vin, car_fw, source, exact_match = fingerprint(
+      can_recv, can_send, set_obd_multiplexing, cached_params, known_tesla_bus0=True)
+  else:
+    candidate, fingerprints, vin, car_fw, source, exact_match = fingerprint(can_recv, can_send, set_obd_multiplexing, cached_params)
 
-  if candidate is None and stored_candidate is None and cached_candidate is None:
-    candidate = _normalize_gm_suburban_camera_candidate(candidate, fingerprints, vin)
-    fingerprinted_candidate = candidate
+  if forced_candidate is not None:
+    candidate = forced_candidate
+    source = CarParams.FingerprintSource.fixed
+    exact_match = True
 
   if candidate is None:
-    gm_fallback_candidate = _get_gm_stored_candidate_fallback(fingerprints, stored_candidate, cached_candidate)
-    if gm_fallback_candidate is not None:
-      carlog.error({
-        "event": "using stored GM candidate after ambiguous live fingerprint",
-        "candidate": gm_fallback_candidate,
-        "stored_candidate": stored_candidate,
-        "cached_candidate": cached_candidate,
-      })
-      candidate = gm_fallback_candidate
+    carlog.error({"event": "car doesn't match any fingerprints", "fingerprints": repr(fingerprints)})
+    candidate = "MOCK"
 
-  if candidate is None or starpilot_toggles.force_fingerprint:
-    if starpilot_toggles.force_fingerprint:
-      forced_candidate = _normalize_forced_candidate(starpilot_toggles.car_model)
-      candidate = forced_candidate
-      if candidate not in interfaces and fingerprinted_candidate in interfaces:
-        carlog.error({
-          "event": "forced fingerprint unavailable; using live candidate",
-          "forced_candidate": candidate,
-          "live_candidate": fingerprinted_candidate,
-        })
-        candidate = fingerprinted_candidate
-    else:
-      carlog.error({"event": "car doesn't match any fingerprints", "fingerprints": repr(fingerprints)})
-      candidate = "MOCK"
-  else:
-    params.put_nonblocking("CarMake", candidate.split('_')[0].title())
-    params.put_nonblocking("CarModel", str(candidate))
-
-  candidate = _apply_starpilot_access_policy(candidate, starpilot_toggles)
-
-  # Legacy branch migration guard: normalize stale platform names from any source
-  # (forced params, cached CarParams, fixed fingerprint env) before interface lookup.
-  candidate = _normalize_forced_candidate(candidate)
-  if candidate not in interfaces and fingerprinted_candidate in interfaces:
-    carlog.error({
-      "event": "normalized candidate unavailable; using live candidate",
-      "candidate": candidate,
-      "live_candidate": fingerprinted_candidate,
-    })
-    candidate = fingerprinted_candidate
+  if source != CarParams.FingerprintSource.fixed and candidate == 'TOYOTA_PRIUS':
+    from opendbc.car.toyota.values import automatic_prius_candidate
+    candidate = automatic_prius_candidate(candidate, car_fw)
 
   CarInterface = interfaces[candidate]
-  CP: CarParams = CarInterface.get_params(candidate, fingerprints, car_fw, alpha_long_allowed, is_release, docs=False, starpilot_toggles=starpilot_toggles)
+  params_options = {'auto_pedal': False} if source == CarParams.FingerprintSource.fixed and candidate in interface_names['gm'] else {}
+  CP: CarParams = CarInterface.get_params(candidate, fingerprints, car_fw, alpha_long_allowed, is_release, docs=False, **params_options)
   CP.carVin = vin
   CP.carFw = car_fw
   CP.fingerprintSource = source
   CP.fuzzyFingerprint = not exact_match
-  post_fingerprint_params = getattr(CarInterface, "apply_post_fingerprint_params", None)
-  if post_fingerprint_params is not None:
-    post_fingerprint_params(CP, candidate, fingerprints, car_fw)
 
-  FPCP: StarPilotCarParams = CarInterface.get_starpilot_params(candidate, fingerprints, car_fw, CP, starpilot_toggles)
+  if pre_create_hook is not None:
+    CP = pre_create_hook(CP, candidate, fingerprints, car_fw)
 
-  if not CP.alphaLongitudinalAvailable and starpilot_toggles.disable_openpilot_long:
-    _apply_disable_openpilot_long(CP, FPCP)
-
-  return interfaces[CP.carFingerprint](CP, FPCP)
+  return interfaces[CP.carFingerprint](CP)
 
 
 def get_demo_car_params():

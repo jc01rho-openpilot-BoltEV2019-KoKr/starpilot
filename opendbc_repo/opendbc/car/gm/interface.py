@@ -1,148 +1,36 @@
+from opendbc.car import ACCEL_MAX_TAKEOFF
 #!/usr/bin/env python3
 from math import fabs, exp
 import numpy as np
 
-from opendbc.car import get_safety_config, structs
+from opendbc.car import Bus, get_safety_config, structs
+from opendbc.car.pedal import supported_pedal_detected
+from opendbc.car.gm.pedal_capability import pedal_candidate
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.carcontroller import CarController
 from opendbc.car.gm.carstate import CarState
 from opendbc.car.gm.radar_interface import RadarInterface, RADAR_HEADER_MSG, CAMERA_DATA_HEADER_MSG
-from opendbc.car.gm.values import (
-  ALT_ACCS,
-  ASCM_INT,
-  CAMERA_ACC_CAR,
-  CAR,
-  CC_ONLY_CAR,
-  CC_REGEN_PADDLE_CAR,
-  EV_CAR,
-  GM_AUTO_HOLD_CARS,
-  SDGM_CAR,
-  CarControllerParams,
-  CanBus,
-  GMFlags,
-  GMSafetyFlags,
-)
+from opendbc.car.gm.values import (volt_cc_pedal_profile, CAR, CarControllerParams, EV_CAR, CAMERA_ACC_CAR, SDGM_CAR, ALT_ACCS,
+                                   CanBus, GMSafetyFlags, GMFlags, PEDAL_BOLT_CAR, NO_ACC_BOLT_CAR, ASCM_INTERCEPT_CAR,
+                                   SDGM_STOCK_CAR, SDGM_CANCEL_PT_CAR, ORDINARY_SDGM_CAR, CC_GATEWAY_STOCK_CAR,
+                                   SILVERADO_CC_STOCK_SOURCES, MALIBU_CC_F1_SOURCES, MALIBU_CC_F1_WORD,
+                                   ORDINARY_CC_CAR, ORDINARY_CC_WORD, SILVERADO_CC_PEDAL_WORDS,
+                                   is_silverado_cc_pedal_profile, is_conventional_cc_pedal_profile,
+                                   CAMERA_STOCK_CAR, ORDINARY_CAMERA_CAR, ORDINARY_CAMERA_ALPHA_CAR, camera_acc_pedal_profile,
+                                       VOLT_BSM_CAR, VOLT_CC_F1_WORD, BOLT_CC_WORDS, is_bolt_cc_profile, BOLT_PEDAL_REMOVED_WORDS,
+                                   is_bolt_pedal_removed_profile, is_bolt_present_no_acc_pedal_profile)
+from opendbc.car.gm.values import (malibu_hybrid_profile, MALIBU_HYBRID_SOURCES,
+                                   is_volt_sdgm_accepted_envelope, volt_sdgm_accepted_accel_max)
 from opendbc.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, LateralAccelFromTorqueCallbackType
-from opendbc.safety import ALTERNATIVE_EXPERIENCE
-from openpilot.common.params import Params, UnknownKeyName
-from openpilot.starpilot.common.testing_grounds import testing_ground
 
 TransmissionType = structs.CarParams.TransmissionType
 NetworkLocation = structs.CarParams.NetworkLocation
 
 NON_LINEAR_TORQUE_PARAMS = {
-  CAR.CHEVROLET_BOLT_ACC_2022_2023: {
-    "left": [2.6531724862969748, 1.1, 0.1919764879840985, 0.0],
-    "right": [2.7031724862969748, 1.0, 0.1469764879840985, 0.0],
-  },
-  CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL: {
-    "left": [2.6531724862969748, 1.1, 0.1919764879840985, 0.0],
-    "right": [2.7031724862969748, 1.0, 0.1469764879840985, 0.0],
-  },
-  CAR.CHEVROLET_BOLT_CC_2022_2023: {
-    "left": [2.6531724862969748, 1.1, 0.1919764879840985, 0.0],
-    "right": [2.7031724862969748, 1.0, 0.1469764879840985, 0.0],
-  },
-  CAR.CHEVROLET_BOLT_CC_2018_2021: {
-    "left": [1.8, 1.1, 0.27, 0.0],
-    "right": [2.0, 1.0, 0.205, 0.0],
-  },
-  CAR.CHEVROLET_BOLT_CC_2017: {
-    "left": [2.15, 1.00, 0.129, 0.0],
-    "right": [2.15, 1.00, 0.145, 0.0],
-  },
-  CAR.GMC_ACADIA: {
-    "left": [4.78003305, 1.0, 0.3122, 0.05591772],
-    "right": [4.78003305, 1.0, 0.3122, 0.05591772],
-  },
-  CAR.CHEVROLET_SILVERADO: {
-    "left": [3.8, 0.81, 0.24, 0.0465122],
-    "right": [3.8, 0.81, 0.24, 0.0465122],
-  },
-  CAR.CHEVROLET_SILVERADO_CC: {
-    "left": [3.8, 0.81, 0.24, 0.0465122],
-    "right": [3.8, 0.81, 0.24, 0.0465122],
-  },
-  CAR.CADILLAC_XT4: {
-    "left": [2.4, 0.95, 0.28, 0.0],
-    "right": [2.4, 0.95, 0.28, 0.0],
-  },
-  CAR.CHEVROLET_VOLT: {
-    "left": [1.525, 1.05, 0.155, 0.0],
-    "right": [1.525, 0.95, 0.150, 0.0],
-  },
-  CAR.CHEVROLET_TRAX: {
-    "left": [3.8060, 0.8282, 0.1702, 0],
-    "right": [3.8060, 0.8282, 0.1702, 0],
-  },
-  CAR.BUICK_ENVISION_SDGM: {
-    "left": [2.4, 1.05, 0.20, 0.0],
-    "right": [2.4, 1.05, 0.20, 0.0],
-  },
-}
-
-NON_LINEAR_TORQUE_PARAM_ALIASES = {
-  CAR.CHEVROLET_VOLT_ASCM: CAR.CHEVROLET_VOLT,
-  CAR.CHEVROLET_VOLT_CAMERA: CAR.CHEVROLET_VOLT,
-  CAR.CHEVROLET_VOLT_CC: CAR.CHEVROLET_VOLT,
-  CAR.CHEVROLET_VOLT_2019: CAR.CHEVROLET_VOLT,
-}
-
-
-def get_nonlinear_torque_params(car_fingerprint):
-  source_fingerprint = NON_LINEAR_TORQUE_PARAM_ALIASES.get(car_fingerprint, car_fingerprint)
-  return NON_LINEAR_TORQUE_PARAMS.get(source_fingerprint)
-
-PEDAL_MSG = 0x201
-CAM_MSG = 0x320
-ACCELERATOR_POS_MSG = 0xBE
-
-VOLT_LIKE_CARS = {
-  CAR.CHEVROLET_VOLT,
-  CAR.CHEVROLET_VOLT_2019,
-  CAR.CHEVROLET_VOLT_ASCM,
-  CAR.CHEVROLET_VOLT_CAMERA,
-  CAR.CHEVROLET_VOLT_CC,
-  CAR.CHEVROLET_MALIBU,
-  CAR.CHEVROLET_MALIBU_ASCM,
-  CAR.CHEVROLET_MALIBU_SDGM,
-  CAR.CHEVROLET_MALIBU_CC,
-  CAR.CHEVROLET_MALIBU_HYBRID_CC,
-}
-
-VOLT_LONG_TEST_TUNE_CARS = {
-  CAR.CHEVROLET_VOLT,
-  CAR.CHEVROLET_VOLT_2019,
-  CAR.CHEVROLET_VOLT_ASCM,
-  CAR.CHEVROLET_VOLT_CAMERA,
-  CAR.CHEVROLET_VOLT_CC,
-}
-
-VOLT_BSM_CARS = {
-  CAR.CHEVROLET_VOLT,
-  CAR.CHEVROLET_VOLT_2019,
-  CAR.CHEVROLET_VOLT_ASCM,
-  CAR.CHEVROLET_VOLT_CAMERA,
-  CAR.CHEVROLET_VOLT_CC,
-}
-
-BOLT_PEDAL_LONG_CARS = {
-  CAR.CHEVROLET_BOLT_CC_2017,
-  CAR.CHEVROLET_BOLT_CC_2018_2021,
-  CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
-  CAR.CHEVROLET_BOLT_CC_2022_2023,
-  CAR.CHEVROLET_MALIBU_HYBRID_CC,
-}
-
-# Cancel-button remap support uses the same safety path on all pedal-long Bolts,
-# but only gen1 needs extra LKAS suppression in CarState.
-BOLT_GEN1_CANCEL_PERSONALITY_CARS = {
-  CAR.CHEVROLET_BOLT_CC_2017,
-  CAR.CHEVROLET_BOLT_CC_2018_2021,
-}
-CANCEL_REMAP_DISTANCE_CARS = BOLT_GEN1_CANCEL_PERSONALITY_CARS | {
-  CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
-  CAR.CHEVROLET_BOLT_CC_2022_2023,
+  CAR.BUICK_ENVISION_SDGM: [2.4, 1.05, 0.20, 0.0],
+  CAR.CHEVROLET_BOLT_EUV: [2.6531724862969748, 1.0, 0.1919764879840985, 0.009054123646805178],
+  CAR.GMC_ACADIA: [4.78003305, 1.0, 0.3122, 0.05591772],
+  CAR.CHEVROLET_SILVERADO: [3.29974374, 1.0, 0.25571356, 0.0465122]
 }
 
 
@@ -151,32 +39,134 @@ class CarInterface(CarInterfaceBase):
   CarController = CarController
   RadarInterface = RadarInterface
 
-  def __init__(self, CP, FPCP):
-    super().__init__(CP, FPCP)
-    self.steer_offset = 0.0
+  DRIVABLE_GEARS = (structs.CarState.GearShifter.sport, structs.CarState.GearShifter.low,
+                    structs.CarState.GearShifter.eco, structs.CarState.GearShifter.manumatic)
 
-  def update(self, can_packets, starpilot_toggles):
-    self.steer_offset = float(getattr(starpilot_toggles, "steer_offset", 0.0))
-    return super().update(can_packets, starpilot_toggles)
+  @classmethod
+  def get_params(cls, candidate, fingerprint, car_fw, alpha_long, is_release, docs, *, auto_pedal=True):
+    selected = pedal_candidate(candidate, fingerprint) if auto_pedal else candidate
+    return super().get_params(selected, fingerprint, car_fw, alpha_long, is_release, docs)
+
+  def apply(self, c, now_nanos=None, *, startup_keepalive=False):
+    if startup_keepalive:
+      return self.CC.update(c, self.CS, now_nanos, startup_keepalive=True)
+    return super().apply(c, now_nanos)
+
+  def update(self, can_packets):
+    if self.CC.bolt_pedal_recovery:
+      self.CC.observe_pedal_rejections(can_packets)
+    if self.CC.bolt_steering_ack_counter:
+      self.CC.observe_steering_receipts(can_packets)
+      self.CS.bolt_steering_pending = self.CC.bolt_steering_pending
+    self.CS.steering_authority.observe(can_packets)
+    if malibu_hybrid_profile(self.CP) is not None:
+      self.CS.hybrid_buttons.observe_packets(can_packets)
+    if (is_bolt_pedal_removed_profile(self.CP) or is_bolt_pedal_removed_profile(self.CP, stock_only=True)):
+      self.CS.conventional_cancel_credit.observe(
+        can_packets, clear_on_main_off=True,
+        clear_on_driver_override=is_bolt_pedal_removed_profile(self.CP, stock_only=True))
+    if (is_bolt_present_no_acc_pedal_profile(self.CP) or is_bolt_present_no_acc_pedal_profile(self.CP, stock_only=True)):
+      self.CS.conventional_cancel_credit.observe(can_packets, clear_on_main_off=True, observe_gear=True)
+    if volt_cc_pedal_profile(self.CP) is not None:
+      self.CS.conventional_cancel_credit.observe(can_packets)
+    if is_conventional_cc_pedal_profile(self.CP):
+      self.CS.conventional_cancel_credit.observe(can_packets)
+    if not is_bolt_cc_profile(self.CP):
+      ret = super().update(can_packets)
+      self.CS.steering_authority.update(ret, self.can_parsers[Bus.pt]._last_update_nanos)
+      return ret
+    adaptive = (self.CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL and
+                self.CP.safetyConfigs[0].safetyParam == 0xC140)
+    camera_source = getattr(self, "bolt_cc_camera_observed", (0, b""))
+    camera_taint = getattr(self, "bolt_cc_camera_taint", 0)
+    if adaptive:
+      malformed = any(bus == 2 and address == 0x370 and (stamp <= 0 or len(raw) != 6)
+                      for stamp, packets in can_packets for address, raw, bus in packets)
+      if malformed:
+        camera_source = (0, b"")
+        camera_taint = max((stamp for stamp, packets in can_packets
+                            if any(bus == 2 and address == 0x370 for address, raw, bus in packets)), default=0)
+      filtered_camera = []
+      for stamp, packets in can_packets:
+        accepted = []
+        for address, raw, bus in packets:
+          if bus == 2 and address == 0x370:
+            if malformed or stamp <= camera_taint:
+              continue
+            if stamp > camera_source[0]:
+              camera_source = (stamp, bytes(raw))
+              camera_taint = 0
+          accepted.append((address, raw, bus))
+        filtered_camera.append((stamp, accepted))
+      can_packets = filtered_camera
+      self.bolt_cc_camera_observed = camera_source
+      self.bolt_cc_camera_taint = camera_taint
+    lengths = {0x184: 8, 0x3D1: 8, 0x1E1: 7, 0xC9: 8, 0x1C4: 8, 0x1F5: 8, 0x34A: 5, 0xBD: 7}
+    observed = getattr(self, "bolt_cc_observed", {})
+    tainted = getattr(self, "bolt_cc_tainted", {})
+    invalid = {address for stamp, packets in can_packets for address, raw, bus in packets
+               if bus == 0 and address in lengths and (stamp <= 0 or len(raw) != lengths[address])}
+    # A malformed selected source poisons its entire receive burst, even if
+    # a later packet in the same update could be repacked into valid fields.
+    for address in invalid:
+      observed.pop(address, None)
+      tainted[address] = max((stamp for stamp, packets in can_packets
+                              if any(bus == 0 and observed_address == address for observed_address, raw, bus in packets)), default=0)
+    filtered = []
+    for stamp, packets in can_packets:
+      accepted = []
+      for address, raw, bus in packets:
+        if bus == 0 and address in lengths:
+          if address in invalid:
+            continue
+          if address in tainted:
+            if stamp <= tainted[address]:
+              continue
+            tainted.pop(address)
+          previous = observed.get(address)
+          if previous is None or stamp > previous[0]:
+            observed[address] = (stamp, bytes(raw))
+        accepted.append((address, raw, bus))
+      filtered.append((stamp, accepted))
+    self.bolt_cc_observed = observed
+    self.bolt_cc_tainted = tainted
+    ret = super().update(filtered)
+    self.CS.bolt_cc_sources = tuple(observed.get(address, (0, b"")) for address in
+                                     (0x184, 0x3D1, 0x1E1, 0xC9, 0x1C4, 0x1F5, 0x34A))
+    self.CS.bolt_cc_camera_source = camera_source
+    if (adaptive and (camera_taint or camera_source[0] <= 0)) or tainted or any(stamp <= 0 for stamp, raw in self.CS.bolt_cc_sources):
+      ret.canValid = False
+    return ret
 
   @staticmethod
-  def get_pid_accel_limits(CP, current_speed, cruise_speed):
-    if CP.enableGasInterceptorDEPRECATED and bool(CP.flags & GMFlags.PEDAL_LONG.value):
-      if CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
-        accel_min = CarControllerParams.ACCEL_MIN
-        accel_max = np.interp(current_speed, [0.0, 1.5, 4.0, 8.0, 15.0],
-                              [0.54, 0.74, 1.03, 1.46, CarControllerParams.ACCEL_MAX])
-      elif CP.carFingerprint in BOLT_PEDAL_LONG_CARS:
-        accel_min = np.interp(current_speed, [0.0, 1.5, 4.0, 8.0, 15.0, 30.0],
-                              [-0.93, -1.28, -1.98, -2.58, -2.86, -2.95])
-        accel_max = np.interp(current_speed, [0.0, 1.5, 4.0, 8.0, 15.0],
-                              [0.54, 0.74, 1.03, 1.46, CarControllerParams.ACCEL_MAX])
-      else:
-        accel_min = np.interp(current_speed, [0.0, 1.5, 4.0, 8.0, 15.0, 30.0],
-                              [-0.95, -1.3, -1.85, -2.3, -2.6, -2.8])
-        accel_max = np.interp(current_speed, [0.0, 1.5, 4.0, 8.0, 15.0],
-                              [0.60, 0.85, 1.15, 1.60, CarControllerParams.ACCEL_MAX])
-      return float(accel_min), float(accel_max)
+  def get_pid_accel_limits(CP, current_speed, cruise_speed, *, faster_takeoffs=False):
+    if faster_takeoffs:
+      lower, _ = CarInterface.get_pid_accel_limits(CP, current_speed, cruise_speed)
+      return lower, ACCEL_MAX_TAKEOFF
+    if is_volt_sdgm_accepted_envelope(CP):
+      return CarControllerParams.ACCEL_MIN, volt_sdgm_accepted_accel_max(CP, current_speed)
+    profile = camera_acc_pedal_profile(CP)
+    if profile is not None and profile.longitudinal and profile.topology in ("gateway", "ascm", "sdgm"):
+      return CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX
+    if (profile is not None and profile.longitudinal) or (volt_cc_pedal_profile(CP) is not None and CP.openpilotLongitudinalControl):
+      return (float(np.interp(current_speed, [0., 1.5, 4., 8., 15., 30.], [-.95, -1.3, -1.85, -2.3, -2.6, -2.8])),
+              float(np.interp(current_speed, [0., 1.5, 4., 8., 15.], [.60, .85, 1.15, 1.60, 2.])))
+    hybrid = malibu_hybrid_profile(CP)
+    if is_silverado_cc_pedal_profile(CP) or hybrid is not None and hybrid.pedal and hybrid.longitudinal:
+      return (float(np.interp(current_speed, [0., 1.5, 4., 8., 15., 30.], [-.95, -1.3, -1.85, -2.3, -2.6, -2.8])),
+              float(np.interp(current_speed, [0., 1.5, 4., 8., 15.], [.60, .85, 1.15, 1.60, 2.])))
+    if CP.flags & GMFlags.PEDAL_LONG.value:
+      if CP.carFingerprint in PEDAL_BOLT_CAR:
+        ceiling = float(np.interp(current_speed, [0., 1.5, 4., 8., 15.],
+                                 [0.54, 0.74, 1.03, 1.46, CarControllerParams.ACCEL_MAX]))
+        if CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
+          return CarControllerParams.ACCEL_MIN, ceiling
+        floor = float(np.interp(current_speed, [0., 1.5, 4., 8., 15., 30.],
+                                [-0.93, -1.28, -1.98, -2.58, -2.86, -2.95]))
+        return floor, ceiling
+      floor = float(np.interp(current_speed, [0., 1.5, 4., 8., 15., 30.],
+                              [-0.93, -1.28, -1.98, -2.58, -2.86, -2.95]))
+      return floor, CarControllerParams.ACCEL_MAX
     return CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX
 
   # Determined by iteratively plotting and minimizing error for f(angle, speed) = steer.
@@ -187,24 +177,20 @@ class CarInterface(CarInterfaceBase):
     return 0.10006696 * sigmoid * (v_ego + 3.12485927)
 
   def get_steer_feedforward_function(self):
-    if self.CP.carFingerprint in VOLT_LIKE_CARS:
+    if self.CP.carFingerprint in (CAR.CHEVROLET_VOLT, CAR.CHEVROLET_VOLT_ASCM, CAR.CHEVROLET_VOLT_CAMERA, CAR.CHEVROLET_VOLT_CC):
       return self.get_steer_feedforward_volt
     else:
       return CarInterfaceBase.get_steer_feedforward_default
 
-  def get_lataccel_torque_siglin(self) -> float:
+  def get_lataccel_torque_siglin(self) -> tuple[list[float], np.ndarray]:
 
     def torque_from_lateral_accel_siglin_func(lateral_acceleration: float) -> float:
       # The "lat_accel vs torque" relationship is assumed to be the sum of "sigmoid + linear" curves
       # An important thing to consider is that the slope at 0 should be > 0 (ideally >1)
       # This has big effect on the stability about 0 (noise when going straight)
-      non_linear_torque_params = get_nonlinear_torque_params(self.CP.carFingerprint)
+      non_linear_torque_params = NON_LINEAR_TORQUE_PARAMS.get(self.CP.carFingerprint)
       assert non_linear_torque_params, "The params are not defined"
-      if isinstance(non_linear_torque_params, dict):
-        side_key = "left" if lateral_acceleration >= 0 else "right"
-        a, b, c, d = non_linear_torque_params[side_key]
-      else:
-        a, b, c, d = non_linear_torque_params
+      a, b, c, d = non_linear_torque_params
       sig_input = a * lateral_acceleration
       sig = np.sign(sig_input) * (1 / (1 + exp(-fabs(sig_input))) - 0.5)
       steer_torque = (sig * b) + (lateral_acceleration * c) + d
@@ -216,207 +202,282 @@ class CarInterface(CarInterfaceBase):
     return torque_values, lataccel_values
 
   def torque_from_lateral_accel(self) -> TorqueFromLateralAccelCallbackType:
-    if get_nonlinear_torque_params(self.CP.carFingerprint) is not None:
+    if self.CP.carFingerprint in NON_LINEAR_TORQUE_PARAMS:
       torque_values, lataccel_values = self.get_lataccel_torque_siglin()
 
       def torque_from_lateral_accel_siglin(lateral_acceleration: float, torque_params: structs.CarParams.LateralTorqueTuning):
-        return float(np.interp(lateral_acceleration, lataccel_values, torque_values) + self.steer_offset)
+        return np.interp(lateral_acceleration, lataccel_values, torque_values)
       return torque_from_lateral_accel_siglin
     else:
-      def torque_from_lateral_accel_linear(lateral_acceleration: float, torque_params: structs.CarParams.LateralTorqueTuning):
-        return self.torque_from_lateral_accel_linear(lateral_acceleration, torque_params) + self.steer_offset
-      return torque_from_lateral_accel_linear
+      return self.torque_from_lateral_accel_linear
 
   def lateral_accel_from_torque(self) -> LateralAccelFromTorqueCallbackType:
-    if get_nonlinear_torque_params(self.CP.carFingerprint) is not None:
+    if self.CP.carFingerprint in NON_LINEAR_TORQUE_PARAMS:
       torque_values, lataccel_values = self.get_lataccel_torque_siglin()
 
       def lateral_accel_from_torque_siglin(torque: float, torque_params: structs.CarParams.LateralTorqueTuning):
-        return np.interp(torque - self.steer_offset, torque_values, lataccel_values)
+        return np.interp(torque, torque_values, lataccel_values)
       return lateral_accel_from_torque_siglin
     else:
-      def lateral_accel_from_torque_linear(torque: float, torque_params: structs.CarParams.LateralTorqueTuning):
-        return self.lateral_accel_from_torque_linear(torque - self.steer_offset, torque_params)
-      return lateral_accel_from_torque_linear
+      return self.lateral_accel_from_torque_linear
 
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
-    params = Params()
-    try:
-      gm_pedal_longitudinal = params.get_bool("GMPedalLongitudinal")
-    except UnknownKeyName:
-      gm_pedal_longitudinal = True
-    try:
-      disable_openpilot_long = params.get_bool("DisableOpenpilotLongitudinal")
-    except UnknownKeyName:
-      disable_openpilot_long = False
-    try:
-      gm_auto_hold = params.get_bool("GMAutoHold")
-    except UnknownKeyName:
-      gm_auto_hold = False
-    try:
-      volt_one_pedal_mode = params.get_bool("VoltOnePedalMode")
-    except UnknownKeyName:
-      volt_one_pedal_mode = False
-
     ret.brand = "gm"
     ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.gm)]
     ret.autoResumeSng = False
-    # Some Volt installs don't expose the BSM frame during startup fingerprinting.
-    ret.enableBsm = 0x142 in fingerprint[CanBus.POWERTRAIN] or candidate in VOLT_BSM_CARS
-    has_sascm = 0x2FF in fingerprint[CanBus.POWERTRAIN]
-    if has_sascm:
-      ret.flags |= GMFlags.SASCM.value
+    if 0x142 in fingerprint[CanBus.POWERTRAIN] or candidate in VOLT_BSM_CAR:
+      ret.flags |= GMFlags.HAS_BSM.value
 
     if candidate in EV_CAR:
       ret.transmissionType = TransmissionType.direct
+      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.EV.value
     else:
       ret.transmissionType = TransmissionType.automatic
 
-    pedal_detected = PEDAL_MSG in fingerprint[CanBus.POWERTRAIN]
-    pedal_long_enabled = pedal_detected and gm_pedal_longitudinal
-    if pedal_long_enabled:
-      ret.enableGasInterceptorDEPRECATED = True
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_GAS_INTERCEPTOR.value
-      if candidate == CAR.CHEVROLET_BOLT_ACC_2022_2023:
-        # Keep ACC Bolts on stock ACC path even if a pedal frame appears.
-        ret.enableGasInterceptorDEPRECATED = False
-        ret.safetyConfigs[0].safetyParam &= ~GMSafetyFlags.FLAG_GM_GAS_INTERCEPTOR.value
+    ret.longitudinalTuning.kiBP = [5., 35.]
+    ret.longitudinalActuatorDelay = 0.5
 
-    kaofui_cars = SDGM_CAR | ASCM_INT | VOLT_LIKE_CARS | {CAR.CHEVROLET_MALIBU_HYBRID_CC}
-    ret.longitudinalTuning.kiBP = [5., 35.] if candidate in kaofui_cars else [5., 35., 60.]
-
-    is_bolt_2022_2023_pedal = candidate == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL and ret.enableGasInterceptorDEPRECATED
-
-    kaofui_camera_cars = {
-      CAR.CHEVROLET_VOLT_CAMERA,
-      CAR.CHEVROLET_MALIBU_HYBRID_CC,
-    }
-    bolt_cc_camera_cars = {
-      CAR.CHEVROLET_BOLT_CC_2017,
-      CAR.CHEVROLET_BOLT_CC_2018_2021,
-      CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
-      CAR.CHEVROLET_BOLT_CC_2022_2023,
-    }
-    is_camera_acc = candidate in CAMERA_ACC_CAR and candidate not in kaofui_cars and \
-                    (candidate not in CC_ONLY_CAR or candidate in bolt_cc_camera_cars)
-
-    if candidate in kaofui_camera_cars:
-      ret.alphaLongitudinalAvailable = candidate not in (CC_ONLY_CAR | ASCM_INT | SDGM_CAR) or has_sascm
-      ret.networkLocation = NetworkLocation.fwdCamera
-      ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and not docs
-      ret.pcmCruise = True
-      ret.minEnableSpeed = 5 * CV.KPH_TO_MS
-      ret.minSteerSpeed = 10 * CV.KPH_TO_MS
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM.value
-
-      ret.longitudinalTuning.kiV = [0.5, 0.5]
-      ret.stoppingDecelRate = 1.0
-      ret.vEgoStopping = 0.25
-      ret.vEgoStarting = 0.25
-      ret.stopAccel = -0.25
-
-      if ret.alphaLongitudinalAvailable and alpha_long:
-        ret.pcmCruise = False
-        ret.openpilotLongitudinalControl = True
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM_LONG.value
-
-    elif is_camera_acc:
-      ret.alphaLongitudinalAvailable = candidate not in (CC_ONLY_CAR | ALT_ACCS) and not ret.enableGasInterceptorDEPRECATED
-      ret.networkLocation = NetworkLocation.fwdCamera
+    if candidate == CAR.CHEVROLET_VOLT_CC:
+      # Require the complete source layout for either automatic or manual identity.
+      pt = fingerprint[CanBus.POWERTRAIN]
+      f1 = 0xBE not in pt and pt.get(0xF1) == 6
+      required = {0xF1 if f1 else 0xBE: 6, 0x3d1: 8, 0xc9: 8, 0x1e1: 7, 0x1f5: 8, 0x34a: 5, 0x1c4: 8, 0xbd: 7}
+      if f1:
+        # Admit the recorded no-ACC source graph, never a broken pedal/camera graph.
+        required.update({0x184: 8, 0xD3: 2, 0x130: 1, 0x17D: 6, 0x210: 4, 0x236: 5})
+      f1_layout = (not any(address in pt for address in (0x201, 0x2FF, 0x320)) and
+                   not any(address in fingerprint[CanBus.CAMERA] for address in (0x180, 0x320, 0x370)) and
+                   not fingerprint[CanBus.OBSTACLE])
+      admitted = (not is_release and (not f1 or f1_layout) and
+                  all(fingerprint[CanBus.POWERTRAIN].get(addr) == size for addr, size in required.items()))
+      ret.networkLocation = NetworkLocation.gateway
       ret.radarUnavailable = True
-      ret.pcmCruise = not ret.enableGasInterceptorDEPRECATED
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM.value
-      ret.minEnableSpeed = 5 * CV.KPH_TO_MS
-      ret.minSteerSpeed = 10 * CV.KPH_TO_MS
+      ret.alphaLongitudinalAvailable = False
+      ret.openpilotLongitudinalControl = admitted
+      ret.pcmCruise = not admitted
+      ret.flags = int(GMFlags.CC_LONG | (GMFlags.NO_ACCELERATOR_POS_MSG if f1 else 0)) if admitted else 0
+      ret.minEnableSpeed = 24 * CV.MPH_TO_MS
+      ret.minSteerSpeed = 7 * CV.MPH_TO_MS
+      ret.longitudinalActuatorDelay = 1.0
+      ret.longitudinalTuning.kiBP, ret.longitudinalTuning.kiV = [0.], [0.1]
+      ret.stopAccel = -1.5
+      if not admitted:
+        ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.noOutput)]
+      else:
+        ret.safetyConfigs[0].safetyParam = VOLT_CC_F1_WORD if f1 else int(GMSafetyFlags.EV | GMSafetyFlags.NO_ACC)
 
-      ret.longitudinalTuning.kiV = [0.5, 0.5, 0.5]
-      ret.stoppingDecelRate = 1.0
-      ret.vEgoStopping = 0.25
-      ret.vEgoStarting = 0.25
-      ret.stopAccel = -0.25
-
-      if ret.alphaLongitudinalAvailable and alpha_long:
-        ret.pcmCruise = False
-        ret.openpilotLongitudinalControl = True
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM_LONG.value
-
-    elif candidate in SDGM_CAR:
-      ret.alphaLongitudinalAvailable = candidate not in (CC_ONLY_CAR | ASCM_INT | SDGM_CAR) or has_sascm
-      ret.networkLocation = NetworkLocation.fwdCamera
-      ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and not docs
+    elif candidate in CC_GATEWAY_STOCK_CAR:
+      # Start with stock PCM ownership; qualified button-control owners override below.
+      ret.networkLocation = NetworkLocation.gateway
+      ret.radarUnavailable = True
       ret.pcmCruise = True
+      ret.alphaLongitudinalAvailable = False
+      ret.openpilotLongitudinalControl = False
+      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.NO_ACC.value
       ret.minEnableSpeed = -1.
       ret.minSteerSpeed = 7 * CV.MPH_TO_MS
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_SDGM.value
-
-      if ACCELERATOR_POS_MSG not in fingerprint[CanBus.POWERTRAIN]:
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_FORCE_BRAKE_C9.value
-        ret.flags |= GMFlags.FORCE_BRAKE_C9.value
-
-      ret.longitudinalTuning.kiV = [0.5, 0.5] if candidate in kaofui_cars else [0.5, 0.5, 0.5]
-      ret.stoppingDecelRate = 1.0
-      ret.vEgoStopping = 0.25
-      ret.vEgoStarting = 0.25
-      ret.stopAccel = -0.25
-
-      if ret.alphaLongitudinalAvailable and alpha_long:
-        ret.pcmCruise = False
+      ret.longitudinalTuning.kiV = [2.4, 1.5]
+      if candidate in ORDINARY_CC_CAR:
         ret.openpilotLongitudinalControl = True
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM_LONG.value
-      if is_bolt_2022_2023_pedal:
-        ret.alphaLongitudinalAvailable = False
         ret.pcmCruise = False
+        ret.flags = int(GMFlags.CC_LONG)
+        ret.safetyConfigs[0].safetyParam = ORDINARY_CC_WORD
+        ret.minEnableSpeed = 24 * CV.MPH_TO_MS
+        ret.longitudinalActuatorDelay = 1.0
+        ret.longitudinalTuning.kiBP = [0.0]
+        ret.longitudinalTuning.kiV = [0.1]
+        ret.stopAccel = -1.5 if candidate == CAR.CHEVROLET_MALIBU_CC else -2.0
 
-    elif candidate in ASCM_INT:
-      ret.alphaLongitudinalAvailable = candidate not in (CC_ONLY_CAR | ASCM_INT | SDGM_CAR) or has_sascm
+    elif candidate in ASCM_INTERCEPT_CAR:
+      has_sascm = 0x2ff in fingerprint[CanBus.POWERTRAIN]
+      has_accelerator_pos = 0xbe in fingerprint[CanBus.POWERTRAIN]
       ret.networkLocation = NetworkLocation.fwdCamera
-      ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and not docs
+      ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE]
       ret.pcmCruise = True
       ret.minEnableSpeed = 5 * CV.KPH_TO_MS
       ret.minSteerSpeed = 7 * CV.MPH_TO_MS
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM.value
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_ASCM_INT.value
-      if ACCELERATOR_POS_MSG not in fingerprint[CanBus.POWERTRAIN]:
-        ret.flags |= GMFlags.FORCE_BRAKE_C9.value
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_FORCE_BRAKE_C9.value
-
-      ret.longitudinalTuning.kiV = [0.5, 0.5] if candidate in kaofui_cars else [0.5, 0.5, 0.5]
-      ret.stoppingDecelRate = 1.0
-      ret.vEgoStopping = 0.25
-      ret.vEgoStarting = 0.25
+      ret.alphaLongitudinalAvailable = has_sascm and not is_release
+      ret.openpilotLongitudinalControl = ret.alphaLongitudinalAvailable and alpha_long
+      ret.pcmCruise = not ret.openpilotLongitudinalControl
+      ret.safetyConfigs[0].safetyParam |= (GMSafetyFlags.HW_CAM | GMSafetyFlags.ASCM_INTERCEPT).value
+      if not has_accelerator_pos:
+        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.ASCM_BRAKE_C9.value
+      if not ret.radarUnavailable:
+        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.ASCM_RADAR.value
+      if ret.openpilotLongitudinalControl:
+        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM_LONG.value
+        if candidate == CAR.CHEVROLET_VOLT_ASCM:
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.VOLT_LONG.value
+      ret.longitudinalTuning.kiV = [0.5, 0.5]
       ret.stopAccel = -0.25
 
-      if ret.alphaLongitudinalAvailable and alpha_long:
+    elif candidate == CAR.CHEVROLET_VOLT_2019:
+      has_sascm = 0x2ff in fingerprint[CanBus.POWERTRAIN]
+      ret.networkLocation = NetworkLocation.fwdCamera
+      ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE]
+      ret.alphaLongitudinalAvailable = has_sascm and not is_release
+      ret.openpilotLongitudinalControl = ret.alphaLongitudinalAvailable and alpha_long
+      ret.pcmCruise = not ret.openpilotLongitudinalControl
+      ret.safetyConfigs[0].safetyParam |= (GMSafetyFlags.HW_CAM | GMSafetyFlags.SDGM).value
+      if 0xbe not in fingerprint[CanBus.POWERTRAIN]:
+        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.BRAKE_C9.value
+      if ret.openpilotLongitudinalControl:
+        ret.safetyConfigs[0].safetyParam |= (GMSafetyFlags.HW_CAM_LONG | GMSafetyFlags.VOLT_LONG).value
+      ret.minEnableSpeed = -1.
+      ret.minSteerSpeed = 7 * CV.MPH_TO_MS
+      ret.longitudinalTuning.kiV = [0.5, 0.5]
+      ret.stopAccel = -0.25
+
+    elif candidate in (CAMERA_ACC_CAR | SDGM_CAR):
+      ret.alphaLongitudinalAvailable = (candidate not in (SDGM_CAR | CAMERA_STOCK_CAR) and
+                                        (candidate not in (CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_BOLT_ACC_2022_2023) or not is_release))
+      ret.networkLocation = NetworkLocation.fwdCamera
+      ret.radarUnavailable = True  # no radar
+      ret.pcmCruise = True
+      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM.value
+      if candidate in SDGM_STOCK_CAR:
+        # Manual identity only: these fingerprints collide with existing GM platforms.
+        # The observed SDGM path keeps longitudinal control with stock ACC.
+        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.SDGM.value
+        if candidate in SDGM_CANCEL_PT_CAR:
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.SDGM_CANCEL_PT.value
+        if 0xbe not in fingerprint[CanBus.POWERTRAIN]:
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.BRAKE_C9.value
+        ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and not docs
+      if candidate in ORDINARY_SDGM_CAR:
+        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.SDGM.value
+        if candidate in SDGM_CANCEL_PT_CAR:
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.SDGM_CANCEL_PT.value
+        if 0xbe not in fingerprint[CanBus.POWERTRAIN]:
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.BRAKE_C9.value
+        ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and not docs
+        ret.alphaLongitudinalAvailable = 0x2ff in fingerprint[CanBus.POWERTRAIN] and not is_release
+        ret.longitudinalTuning.kiBP = [5.0, 35.0]
+        ret.longitudinalTuning.kiV = [0.5, 0.5]
+        ret.stopAccel = -0.25
+        if alpha_long and ret.alphaLongitudinalAvailable:
+          ret.openpilotLongitudinalControl = True
+          ret.pcmCruise = False
+          ret.safetyConfigs[0].safetyParam &= ~GMSafetyFlags.SDGM_CANCEL_PT.value
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM_LONG.value
+
+      ret.minEnableSpeed = -1 if candidate in SDGM_CAR else 5 * CV.KPH_TO_MS
+      ret.minSteerSpeed = 10 * CV.KPH_TO_MS
+      if candidate in ORDINARY_SDGM_CAR:
+        ret.minSteerSpeed = 7 * CV.MPH_TO_MS
+
+      # Tuning for experimental long
+      if candidate not in ORDINARY_SDGM_CAR:
+        ret.longitudinalTuning.kiV = [2.0, 1.5]
+
+      if alpha_long and ret.alphaLongitudinalAvailable and candidate not in (SDGM_STOCK_CAR | CAMERA_STOCK_CAR):
         ret.pcmCruise = False
         ret.openpilotLongitudinalControl = True
         ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM_LONG.value
-      if is_bolt_2022_2023_pedal:
+
+      if (candidate == CAR.CHEVROLET_BOLT_ACC_2022_2023 or
+          candidate == CAR.CHEVROLET_BOLT_EUV and ret.openpilotLongitudinalControl):
+        ret.longitudinalTuning.kiBP = [5.0, 35.0, 60.0]
+        ret.longitudinalTuning.kiV = [0.5, 0.5, 0.5]
+        ret.stopAccel = -0.25
+
+      if candidate in ALT_ACCS:
         ret.alphaLongitudinalAvailable = False
-        ret.pcmCruise = False
+        ret.openpilotLongitudinalControl = False
+        ret.minEnableSpeed = -1.  # engage speed is decided by PCM
+
+      if candidate in CAMERA_STOCK_CAR:
+        # These explicit camera identities keep ACC with the OEM in both builds.
+        ret.longitudinalTuning.kiBP = [5., 35.] if candidate == CAR.CHEVROLET_VOLT_CAMERA else [5., 35., 60.]
+        ret.longitudinalTuning.kiV = [0.5, 0.5] if candidate == CAR.CHEVROLET_VOLT_CAMERA else [0.5, 0.5, 0.5]
+        if candidate == CAR.CHEVROLET_VOLT_CAMERA:
+          ret.minEnableSpeed = -1.
+          ret.minSteerSpeed = 7 * CV.MPH_TO_MS
+
+      if candidate in PEDAL_BOLT_CAR:
+        ret.openpilotLongitudinalControl = False
+        ret.safetyConfigs[0].safetyParam &= ~GMSafetyFlags.HW_CAM_LONG.value
+        pedal_long = supported_pedal_detected(fingerprint, CanBus.POWERTRAIN, supported=True)
+        if candidate in NO_ACC_BOLT_CAR:
+          ret.pcmCruise = False
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.NO_ACC.value
+        if candidate == CAR.CHEVROLET_BOLT_CC_2017:
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.BOLT_2017.value
+        if candidate in (CAR.CHEVROLET_BOLT_CC_2022_2023, CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL):
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.BOLT_GEN2.value
+        if pedal_long:
+          ret.flags |= GMFlags.PEDAL_LONG.value
+          ret.openpilotLongitudinalControl = True
+          ret.pcmCruise = False
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.PEDAL_LONG.value
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.PADDLE_SCHED.value
+          if candidate == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
+            ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.BOLT_ACC_PEDAL.value
+          ret.longitudinalTuning.kiBP = [0., 3., 6., 35.]
+          ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
+          ret.longitudinalActuatorDelay = 0.6
+          ret.stopAccel = -0.25
+        elif candidate in NO_ACC_BOLT_CAR:
+          # Ordinary cruise permits lateral control, but has no stock ACC.
+          ret.openpilotLongitudinalControl = False
+        ret.alphaLongitudinalAvailable = False
+        ret.radarUnavailable = True
+        ret.minEnableSpeed = -1.
 
     else:  # ASCM, OBD-II harness
-      ret.openpilotLongitudinalControl = not disable_openpilot_long
+      ret.openpilotLongitudinalControl = True
       ret.networkLocation = NetworkLocation.gateway
+      # LRR messages can take up to a few seconds to start sending after ignition, check camera data as well which starts earlier
       ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and CAMERA_DATA_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and not docs
-      ret.pcmCruise = False
+      ret.pcmCruise = False  # stock non-adaptive cruise control is kept off
+      # supports stop and go, but initial engage must (conservatively) be above 18mph
       ret.minEnableSpeed = 18 * CV.MPH_TO_MS
       ret.minSteerSpeed = 7 * CV.MPH_TO_MS
 
-      ret.longitudinalTuning.kiV = [0.5, 0.5] if candidate in kaofui_cars else [0.5, 0.5, 0.5]
-      if candidate in kaofui_cars:
-        ret.stoppingDecelRate = 3
-        ret.vEgoStopping = 0.75
-        ret.vEgoStarting = 0.75
+      # Tuning
+      ret.longitudinalTuning.kiV = [2.4, 1.5]
+      if candidate in ORDINARY_CC_CAR:
+        ret.openpilotLongitudinalControl = True
+        ret.pcmCruise = False
+        ret.flags = int(GMFlags.CC_LONG)
+        ret.safetyConfigs[0].safetyParam = ORDINARY_CC_WORD
+        ret.minEnableSpeed = 24 * CV.MPH_TO_MS
+        ret.longitudinalActuatorDelay = 1.0
+        ret.longitudinalTuning.kiBP = [0.0]
+        ret.longitudinalTuning.kiV = [0.1]
+        ret.stopAccel = -1.5 if candidate == CAR.CHEVROLET_MALIBU_CC else -2.0
+      if candidate == CAR.CHEVROLET_VOLT:
+        ret.minEnableSpeed = -1.
+        ret.longitudinalTuning.kiV = [0.5, 0.5]
         ret.stopAccel = -1.5
+        if not ret.radarUnavailable:
+          ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.VOLT_GATEWAY_LONG.value
+          if 0xbe not in fingerprint[CanBus.POWERTRAIN]:
+            ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.VOLT_GATEWAY_ALT_BRAKE.value
 
-      if ret.enableGasInterceptorDEPRECATED:
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_ASCM_LONG.value
+    flashed_volt = False
+    if candidate == CAR.CHEVROLET_VOLT and ret.radarUnavailable and not docs:
+      pt, camera = fingerprint[CanBus.POWERTRAIN], fingerprint[CanBus.CAMERA]
+      required = {0x184: 8, 0x34A: 5, 0x348: 5, 0x1C4: 8, 0xC9: 8, 0x1E1: 7,
+                  0x1F5: 8, 0xBD: 7, 0xF1: 6, 0x232: 8}
+      flashed_volt = (not is_release and all(pt.get(a) == length for a, length in required.items()) and
+                      not any(a in pt for a in (0xBE, 0x201, 0x2FF, 0x320)) and
+                      not any(a in camera for a in (0x180, 0x320, 0x370)) and not fingerprint[CanBus.OBSTACLE])
+      if flashed_volt:
+        # Reuse the plain OBD/F1 wire protocol; this is not stock cruise or a camera owner.
+        ret.flags = int(ret.flags) & int(GMFlags.HAS_BSM)
+        ret.alphaLongitudinalAvailable = True
+        ret.openpilotLongitudinalControl = bool(alpha_long)
+        ret.pcmCruise = False
+        ret.safetyConfigs[0].safetyParam = int(GMSafetyFlags.EV | GMSafetyFlags.VOLT_GATEWAY_LONG |
+                                             GMSafetyFlags.VOLT_GATEWAY_ALT_BRAKE)
 
-    if candidate in ALT_ACCS:
-      ret.alphaLongitudinalAvailable = False
-      ret.openpilotLongitudinalControl = False
-      ret.minEnableSpeed = -1.
+    # These cars have been put into dashcam only due to both a lack of users and test coverage.
+    # These cars likely still work fine. Once a user confirms each car works and a test route is
+    # added to opendbc/car/tests/routes.py, we can remove it from this list.
+    ret.dashcamOnly = candidate in {CAR.CADILLAC_ATS, CAR.HOLDEN_ASTRA, CAR.CHEVROLET_MALIBU, CAR.BUICK_REGAL} or \
+                      (ret.networkLocation == NetworkLocation.gateway and ret.radarUnavailable and not flashed_volt)
 
     # Start with a baseline tuning for all GM vehicles. Override tuning as needed in each model section below.
     ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kpBP = [[0.], [0.]]
@@ -425,29 +486,10 @@ class CarInterface(CarInterfaceBase):
     ret.steerActuatorDelay = 0.1  # Default delay, not measured yet
 
     ret.steerLimitTimer = 0.4
-    ret.radarTimeStepDEPRECATED = 0.15 if candidate == CAR.BUICK_LACROSSE else 0.0667
-    ret.longitudinalActuatorDelay = 0.5  # large delay to initially start braking
 
-    if candidate in (
-      CAR.CHEVROLET_VOLT,
-      CAR.CHEVROLET_VOLT_2019,
-      CAR.CHEVROLET_VOLT_ASCM,
-      CAR.CHEVROLET_VOLT_CAMERA,
-      CAR.CHEVROLET_VOLT_CC,
-    ):
-      ret.minSteerSpeed = 7 * CV.MPH_TO_MS
-
-    if candidate in (CAR.CHEVROLET_VOLT, CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_VOLT_CAMERA):
-      ret.minEnableSpeed = -1
-
-    if candidate == CAR.CHEVROLET_VOLT_2019 and not ret.openpilotLongitudinalControl:
-      ret.minEnableSpeed = -1
-
-    if candidate in VOLT_LIKE_CARS:
+    if candidate in (CAR.CHEVROLET_VOLT, CAR.CHEVROLET_VOLT_ASCM, CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_MALIBU_ASCM):
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
       ret.steerActuatorDelay = 0.2
-      if candidate == CAR.CHEVROLET_MALIBU_HYBRID_CC and ret.enableGasInterceptorDEPRECATED:
-        ret.flags |= GMFlags.PEDAL_LONG.value
 
     elif candidate == CAR.GMC_ACADIA:
       ret.minEnableSpeed = -1.  # engage speed is decided by pcm
@@ -455,21 +497,23 @@ class CarInterface(CarInterfaceBase):
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
     elif candidate == CAR.BUICK_ENVISION_SDGM:
-      ret.minEnableSpeed = -1.  # engage speed is decided by pcm
+      ret.minEnableSpeed = -1.
       ret.steerActuatorDelay = 0.2
+      ret.alphaLongitudinalAvailable = False
+      ret.openpilotLongitudinalControl = False
+      ret.pcmCruise = True
+      ret.safetyConfigs[0].safetyParam = 0xE900
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
     elif candidate in (CAR.BUICK_LACROSSE, CAR.BUICK_LACROSSE_ASCM, CAR.BUICK_LACROSSE_ASCM_19US):
-      CarInterfaceBase.configure_torque_tune(CAR.BUICK_LACROSSE, ret.lateralTuning)
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
       if candidate == CAR.BUICK_LACROSSE_ASCM_19US:
         ret.minSteerSpeed = 28 * CV.MPH_TO_MS
 
-    elif candidate == CAR.CADILLAC_ESCALADE:
-      ret.minEnableSpeed = -1.  # engage speed is decided by pcm
+    elif candidate in (CAR.CADILLAC_ESCALADE, CAR.CADILLAC_ESCALADE_ASCM):
+      if candidate == CAR.CADILLAC_ESCALADE:
+        ret.minEnableSpeed = -1.  # engage speed is decided by pcm
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-
-    elif candidate == CAR.CADILLAC_ESCALADE_ASCM:
-      CarInterfaceBase.configure_torque_tune(CAR.CADILLAC_ESCALADE, ret.lateralTuning)
 
     elif candidate in (CAR.CADILLAC_ESCALADE_ESV, CAR.CADILLAC_ESCALADE_ESV_2019, CAR.CADILLAC_ESCALADE_ESV_2019_ASCM):
       ret.minEnableSpeed = -1.  # engage speed is decided by pcm
@@ -480,62 +524,29 @@ class CarInterface(CarInterfaceBase):
         ret.lateralTuning.pid.kf = 0.000045
       else:
         ret.steerActuatorDelay = 0.2
-        torque_candidate = CAR.CADILLAC_ESCALADE_ESV_2019 if candidate == CAR.CADILLAC_ESCALADE_ESV_2019_ASCM else candidate
-        CarInterfaceBase.configure_torque_tune(torque_candidate, ret.lateralTuning)
+        CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    elif candidate in (
-      CAR.CHEVROLET_BOLT_ACC_2022_2023,
-      CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
-      CAR.CHEVROLET_BOLT_CC_2022_2023,
-      CAR.CHEVROLET_BOLT_CC_2018_2021,
-      CAR.CHEVROLET_BOLT_CC_2017,
-    ):
+    elif candidate in (CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_BOLT_ACC_2022_2023) or candidate in PEDAL_BOLT_CAR:
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-      # Bolt-only lateral tuning overrides
-      ret.lateralTuning.torque.kpDEPRECATED = 1.03
-      ret.lateralTuning.torque.kiDEPRECATED = 1.07
-      ret.lateralTuning.torque.kdDEPRECATED = 0.93
-      ret.lateralTuning.torque.kfDEPRECATED = 0.02
-
-      if candidate in (
-        CAR.CHEVROLET_BOLT_CC_2018_2021,
-        CAR.CHEVROLET_BOLT_ACC_2022_2023,
-        CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
-        CAR.CHEVROLET_BOLT_CC_2022_2023,
-      ):
-        # Apply 2018+/2022 generation-specific FF and Ki/Kd tweaks.
-        ret.lateralTuning.torque.kiDEPRECATED *= 1.07
-        ret.lateralTuning.torque.kdDEPRECATED *= 0.93
-        ret.lateralTuning.torque.kfDEPRECATED *= 0.75
-
-      if candidate == CAR.CHEVROLET_BOLT_CC_2017:
-        ret.lateralTuning.torque.kpDEPRECATED *= 1.0
-        ret.lateralTuning.torque.kiDEPRECATED *= 0.9
-        ret.lateralTuning.torque.kdDEPRECATED *= 0.9
-        ret.lateralTuning.torque.kfDEPRECATED = 0.026
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_BOLT_2017.value
-
-      if ret.enableGasInterceptorDEPRECATED:
-        # ACC Bolts use pedal for full longitudinal control, not just SNG.
-        ret.flags |= GMFlags.PEDAL_LONG.value
-
-    elif candidate in (CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_SILVERADO_CC):
-      ret.minEnableSpeed = 0.
-      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-
-    elif candidate in (CAR.CHEVROLET_EQUINOX, CAR.CHEVROLET_EQUINOX_CC):
-      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-
-    elif candidate in (CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAILBLAZER_CC):
-      ret.steerActuatorDelay = 0.2
-      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-
-    elif candidate in (CAR.CADILLAC_XT4, CAR.CADILLAC_XT4_CC):
-      ret.steerActuatorDelay = 0.2
-      if not ret.openpilotLongitudinalControl:
+    elif candidate == CAR.CHEVROLET_SILVERADO:
+      # On the Bolt, the ECM and camera independently check that you are either above 5 kph or at a stop
+      # with foot on brake to allow engagement, but this platform only has that check in the camera.
+      # TODO: check if this is split by EV/ICE with more platforms in the future
+      if ret.openpilotLongitudinalControl:
         ret.minEnableSpeed = -1.
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+
+    elif candidate == CAR.CHEVROLET_EQUINOX:
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+
+    elif candidate == CAR.CHEVROLET_TRAILBLAZER:
+      ret.steerActuatorDelay = 0.2
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+
+    elif candidate == CAR.CADILLAC_XT4:
+      ret.steerActuatorDelay = 0.2
       ret.minSteerSpeed = 30 * CV.MPH_TO_MS
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
@@ -543,276 +554,379 @@ class CarInterface(CarInterfaceBase):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    elif candidate in (CAR.CHEVROLET_SUBURBAN, CAR.CHEVROLET_SUBURBAN_ASCM, CAR.CHEVROLET_SUBURBAN_CAMERA, CAR.CHEVROLET_SUBURBAN_CC):
+    elif candidate == CAR.CHEVROLET_TRAVERSE:
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    elif candidate == CAR.GMC_YUKON_CC:
+    elif candidate in SDGM_STOCK_CAR:
       ret.steerActuatorDelay = 0.2
-      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-
-    elif candidate == CAR.CADILLAC_XT6:
-      ret.steerActuatorDelay = 0.2
-      ret.minSteerSpeed = 7 * CV.MPH_TO_MS
-      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-
-    elif candidate in (CAR.CADILLAC_XT5, CAR.CADILLAC_XT5_CC):
-      ret.steerActuatorDelay = 0.2
-      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-
-    elif candidate in (CAR.CHEVROLET_TRAVERSE, CAR.CHEVROLET_BLAZER):
-      ret.steerActuatorDelay = 0.2
-      if not ret.openpilotLongitudinalControl:
-        ret.minEnableSpeed = -1.
       if candidate == CAR.CHEVROLET_BLAZER:
-        # The Blazer builds brake torque noticeably later than the rest of the GM set.
-        # A slightly larger planner delay estimate starts the request earlier and keeps
-        # stopped-lead approaches from turning into a late, harsh max-brake catch-up.
+        ret.minEnableSpeed = 5 * CV.KPH_TO_MS
         ret.longitudinalActuatorDelay = 0.7
-        ret.longitudinalTuning.kpBP = [0.0, 4.0, 12.0, 35.0]
-        ret.longitudinalTuning.kpV = [0.09, 0.075, 0.055, 0.040]
         ret.longitudinalTuning.kiBP = [0.0, 4.0, 12.0, 35.0]
         ret.longitudinalTuning.kiV = [0.03, 0.04, 0.055, 0.07]
-        ret.minEnableSpeed = 5 * CV.KPH_TO_MS
-        ret.stoppingDecelRate = 1.0
-        ret.vEgoStopping = 0.35
-        ret.vEgoStarting = 0.35
         ret.stopAccel = -0.30
-      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-
-    elif candidate == CAR.BUICK_BABYENCLAVE:
-      ret.steerActuatorDelay = 0.2
-      if not ret.openpilotLongitudinalControl:
-        ret.minEnableSpeed = -1.
-      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-
-    elif candidate == CAR.CADILLAC_CT6_CC:
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
     elif candidate == CAR.GMC_YUKON:
       ret.steerActuatorDelay = 0.5
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+      ret.dashcamOnly = True  # Needs steerRatio, tireStiffness, and lat accel factor tuning
 
-    elif candidate in (CAR.CHEVROLET_MALIBU, CAR.CHEVROLET_MALIBU_CC, CAR.CHEVROLET_MALIBU_HYBRID_CC):
+    elif candidate in (CAR.CHEVROLET_SUBURBAN, CAR.CHEVROLET_SUBURBAN_CAMERA, CAR.CHEVROLET_SUBURBAN_ASCM):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    if ret.enableGasInterceptorDEPRECATED:
-      ret.autoResumeSng = True
-      ret.minEnableSpeed = -1
-      ret.networkLocation = NetworkLocation.fwdCamera
-      ret.openpilotLongitudinalControl = not disable_openpilot_long
-      ret.pcmCruise = False
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.HW_CAM.value
+    elif candidate == CAR.CHEVROLET_VOLT_CAMERA:
+      ret.steerActuatorDelay = 0.2
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    if ret.enableGasInterceptorDEPRECATED and (candidate in CC_ONLY_CAR or candidate in CAMERA_ACC_CAR):
-      # Pedal-long path: only entered when pedal interceptor was actually enabled.
-      ret.flags |= GMFlags.PEDAL_LONG.value
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PEDAL_LONG.value
-
-      if candidate == CAR.CHEVROLET_MALIBU_CC:
-        ret.longitudinalTuning.kpBP = [0.0, 5.0, 35.0]
-        ret.longitudinalTuning.kpV = [0.06, 0.05, 0.04]
-        ret.longitudinalTuning.kiBP = [0.0, 5.0, 35.0]
-        ret.longitudinalTuning.kiV = [0.0, 0.30, 0.45]
-        ret.longitudinalTuning.kfDEPRECATED = 0.15
-      else:
-        ret.longitudinalTuning.kpBP = [0.0, 5.0, 15.0, 35.0]
-        ret.longitudinalTuning.kpV = [0.09, 0.08, 0.06, 0.045]
-        ret.longitudinalTuning.kiBP = [0.0, 3.0, 6.0, 35.0]
-        ret.longitudinalTuning.kiV = [0.09, 0.13, 0.19, 0.28]
-
-      if candidate in BOLT_PEDAL_LONG_CARS:
-        ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
-        ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
-        ret.longitudinalTuning.kfDEPRECATED = 0.20
-        # D-term for Bolt pedal-long (547d162901, softened in 1b5464a9ed); lost in the Dom sync conflict fix.
-        ret.longitudinalTuning.kdBP = [0.0, 5.0, 15.0, 35.0]
-        ret.longitudinalTuning.kdV = [0.015, 0.011, 0.008, 0.004]
-        ret.longitudinalActuatorDelay = 0.6
-      else:
-        ret.longitudinalTuning.kfDEPRECATED = 0.25
-
-      if is_bolt_2022_2023_pedal:
-        # Gen2 Bolt pedal-long should follow the no-ACC panda path.
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_NO_ACC.value
-        ret.startingState = True
-        ret.startAccel = 0.55
-        ret.vEgoStarting = max(ret.vEgoStarting, 0.35)
-
-      if candidate in (CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL, CAR.CHEVROLET_MALIBU_HYBRID_CC):
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_BOLT_2022_PEDAL.value
-
-      ret.stoppingDecelRate = 0.8
-
-    if ret.enableGasInterceptorDEPRECATED and candidate == CAR.CHEVROLET_MALIBU_HYBRID_CC:
-      # Keep Malibu Hybrid pedal on the same path as Bolt pedal-long behavior.
-      ret.flags |= GMFlags.PEDAL_LONG.value
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PEDAL_LONG.value
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_BOLT_2022_PEDAL.value
-      ret.longitudinalTuning.kpBP = [0.0, 5.0, 15.0, 35.0]
-      ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
-      ret.longitudinalTuning.kiBP = [0.0, 3.0, 6.0, 35.0]
-      ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
-      ret.longitudinalTuning.kfDEPRECATED = 0.20
-      ret.longitudinalTuning.kdBP = [0.0, 5.0, 15.0, 35.0]
-      ret.longitudinalTuning.kdV = [0.015, 0.011, 0.008, 0.004]
-      ret.stoppingDecelRate = 0.8
-      ret.minEnableSpeed = -1
-      ret.pcmCruise = False
-      ret.openpilotLongitudinalControl = not disable_openpilot_long
-
-    volt_test_tune_active = (
-      testing_ground.use_2 and
-      ret.openpilotLongitudinalControl and
-      candidate in VOLT_LONG_TEST_TUNE_CARS
-    )
-    if volt_test_tune_active:
-      # Volt long can still fall back to an all-I tune on both the interceptor and
-      # ASCM-int paths. The test-ground tune adds a modest P term, trims
-      # mid/high-speed I memory, and uses a dedicated starting state so
-      # stop-and-go launches do not wind up the PID.
-      ret.longitudinalTuning.kpBP = [0.0, 4.0, 12.0, 35.0]
-      ret.longitudinalTuning.kpV = [0.10, 0.072, 0.050, 0.040]
-      ret.longitudinalTuning.kiBP = [0.0, 4.0, 12.0, 35.0]
-      ret.longitudinalTuning.kiV = [0.025, 0.030, 0.040, 0.055]
-      ret.startingState = True
-      ret.startAccel = 1.15
-      ret.vEgoStarting = max(ret.vEgoStarting, 0.35)
-
-    if ret.openpilotLongitudinalControl and candidate in (CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_SILVERADO_CC) and not ret.enableGasInterceptorDEPRECATED:
-      ret.longitudinalTuning.kpBP = [0.0, 5.0, 15.0, 35.0]
-      ret.longitudinalTuning.kpV = [0.02, 0.03, 0.028, 0.022]
-      ret.longitudinalTuning.kiBP = [0.0, 5.0, 15.0, 35.0]
-      ret.longitudinalTuning.kiV = [0.20, 0.18, 0.13, 0.08]
-
-    elif candidate in CC_ONLY_CAR and not ret.enableGasInterceptorDEPRECATED:
-      ret.flags |= GMFlags.CC_LONG.value
-      ret.alphaLongitudinalAvailable = False
-      ret.openpilotLongitudinalControl = not disable_openpilot_long
-      ret.pcmCruise = False
-      if candidate not in (CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_SILVERADO_CC):
-        ret.minEnableSpeed = 24 * CV.MPH_TO_MS
-      ret.radarUnavailable = True
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_CC_LONG.value
-
-      if candidate != CAR.CHEVROLET_MALIBU_HYBRID_CC:
-        ret.longitudinalTuning.kpBP = [10.7, 10.8, 28.]  # 10.7 m/s == 24 mph
-        ret.longitudinalTuning.kpV = [0., 5., 2.]
-        ret.longitudinalTuning.deadzoneBPDEPRECATED = [0., 1.]
-        ret.longitudinalTuning.deadzoneVDEPRECATED = [0.9, 0.9]
-        ret.longitudinalActuatorDelay = 1.
-        if candidate == CAR.CHEVROLET_MALIBU_CC:
-          ret.longitudinalTuning.kpV = [0., 20., 20.]
-        ret.longitudinalTuning.kiBP = [0.]
-        ret.longitudinalTuning.kiV = [0.1]
-        ret.stoppingDecelRate = 11.18  # == 25 mph/s (.04 rate)
-
-    if candidate in CC_ONLY_CAR:
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_NO_ACC.value
-      if candidate == CAR.CHEVROLET_VOLT_CC and ret.networkLocation == NetworkLocation.gateway:
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_VOLT_CC_GATEWAY.value
-
-    if candidate in SDGM_CAR and ACCELERATOR_POS_MSG not in fingerprint[CanBus.POWERTRAIN]:
-      ret.flags |= GMFlags.FORCE_BRAKE_C9.value
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_FORCE_BRAKE_C9.value
-
-    # Exception for flashed cars, or cars whose camera was removed.
-    missing_camera_msg = CAM_MSG not in fingerprint.get(CanBus.CAMERA, {})
-    if (ret.networkLocation == NetworkLocation.fwdCamera or candidate in CC_ONLY_CAR) and missing_camera_msg and candidate not in (ASCM_INT | SDGM_CAR):
-      ret.flags |= GMFlags.NO_CAMERA.value
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_NO_CAMERA.value
-
-    if ACCELERATOR_POS_MSG not in fingerprint[CanBus.POWERTRAIN]:
-      ret.flags |= GMFlags.NO_ACCELERATOR_POS_MSG.value
-      if candidate in (CAR.CHEVROLET_VOLT, CAR.CHEVROLET_VOLT_CC) and ret.networkLocation == NetworkLocation.gateway:
-        # Reuse the no-camera safety bit as an ASCM Volt selector for the alternate EBCM brake path.
-        ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_NO_CAMERA.value
-
-    try:
-      remote_start_boots_comma = params.get_bool("RemoteStartBootsComma")
-    except UnknownKeyName:
-      remote_start_boots_comma = False
-
-    if remote_start_boots_comma:
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_REMOTE_START_BOOTS_COMMA.value
-
-    gm_stock_friction_brake_safety = (
-      ret.openpilotLongitudinalControl and
-      (
-        (gm_auto_hold and candidate in GM_AUTO_HOLD_CARS) or
-        (volt_one_pedal_mode and candidate in {
-          CAR.CHEVROLET_VOLT,
-          CAR.CHEVROLET_VOLT_2019,
-          CAR.CHEVROLET_VOLT_ASCM,
-          CAR.CHEVROLET_VOLT_CAMERA,
-        })
-      )
-    )
-    if gm_stock_friction_brake_safety:
-      # marker on non-pedal paths. Auto hold and one-pedal can run while OP
-      # longitudinal is configured but not currently active, so the bit must
-      # be present regardless of the current long-control mode. Do not expose
-      # the path at all when OP long is disabled in CarParams.
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
-
-    volt_stock_one_pedal_safety = (
-      ret.openpilotLongitudinalControl and
-      volt_one_pedal_mode and
-      candidate in {
-        CAR.CHEVROLET_VOLT,
-        CAR.CHEVROLET_VOLT_2019,
-        CAR.CHEVROLET_VOLT_ASCM,
-        CAR.CHEVROLET_VOLT_CAMERA,
-      }
-    )
-    if volt_stock_one_pedal_safety:
-      # Reuse the 3D1 scheduler bit as a Volt one-pedal marker on non-pedal
-      # ACC paths. The bit is ignored by the actual 3D1 scheduler unless the
-      # car is on a pedal-long CC-only path, so this stays isolated from Bolt.
-      # Do not expose the path at all when OP long is disabled in CarParams.
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PANDA_3D1_SCHED.value
-
-    use_panda_3d1_sched = (
-      ret.openpilotLongitudinalControl and
-      ret.enableGasInterceptorDEPRECATED and
-      bool(ret.flags & GMFlags.PEDAL_LONG.value) and
-      candidate in CC_ONLY_CAR and
-      candidate != CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL
-    )
-    if use_panda_3d1_sched:
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PANDA_3D1_SCHED.value
-
-    use_panda_paddle_sched = (
-      ret.openpilotLongitudinalControl and
-      ret.enableGasInterceptorDEPRECATED and
-      bool(ret.flags & GMFlags.PEDAL_LONG.value) and
-      candidate in CC_REGEN_PADDLE_CAR
-    )
-    if use_panda_paddle_sched:
-      ret.safetyConfigs[0].safetyParam |= GMSafetyFlags.FLAG_GM_PANDA_PADDLE_SCHED.value
-
-    try:
-      remap_cancel_to_distance_toggle = params.get_bool("RemapCancelToDistance")
-    except UnknownKeyName:
-      remap_cancel_to_distance_toggle = False
-
-    remap_cancel_to_distance = (
-      remap_cancel_to_distance_toggle and
-      ret.openpilotLongitudinalControl and
-      bool(ret.flags & GMFlags.PEDAL_LONG.value) and
-      candidate in CANCEL_REMAP_DISTANCE_CARS
-    )
-    malibu_cancel_passthrough = (
-      candidate == CAR.CHEVROLET_MALIBU_HYBRID_CC and
-      ret.openpilotLongitudinalControl and
-      bool(ret.flags & GMFlags.PEDAL_LONG.value)
-    )
-    if remap_cancel_to_distance or malibu_cancel_passthrough:
-      ret.alternativeExperience |= ALTERNATIVE_EXPERIENCE.GM_REMAP_CANCEL_TO_DISTANCE
-
-    if candidate == CAR.CHEVROLET_TRAX:
+    elif candidate == CAR.CHEVROLET_TRAX:
       ret.steerActuatorDelay = 0.46
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
+    elif candidate in CC_GATEWAY_STOCK_CAR:
+      if candidate == CAR.CADILLAC_XT4_CC:
+        ret.minSteerSpeed = 30 * CV.MPH_TO_MS
+      if candidate not in (CAR.CADILLAC_CT6_CC, CAR.CHEVROLET_EQUINOX_CC, CAR.CHEVROLET_SILVERADO_CC):
+        ret.steerActuatorDelay = 0.2
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+      ret.dashcamOnly = candidate not in ORDINARY_CC_CAR
+      if candidate == CAR.CHEVROLET_SILVERADO_CC:
+        pt = fingerprint.get(CanBus.POWERTRAIN, {})
+        cam = fingerprint.get(CanBus.CAMERA, {})
+        cc_long = (all(pt.get(address) == (8 if address == 0x17D else length)
+                       for address, length in SILVERADO_CC_STOCK_SOURCES.items()) and
+                   pt.get(0xBE) == 6 and 0x201 not in pt and
+                   all(cam.get(address) == length for address, length in ((0x180, 4), (0x320, 6), (0x370, 6))) and
+                   RADAR_HEADER_MSG not in fingerprint.get(CanBus.OBSTACLE, {}) and
+                   CAMERA_DATA_HEADER_MSG not in fingerprint.get(CanBus.OBSTACLE, {}) and not docs)
+        ret.dashcamOnly = not (cc_long or (
+          all(pt.get(address) == length for address, length in SILVERADO_CC_STOCK_SOURCES.items()) and
+          pt.get(0xBE) in (6, 7, 8) and 0x201 not in pt and
+          0x320 not in fingerprint.get(CanBus.CAMERA, {}) and
+          RADAR_HEADER_MSG not in fingerprint.get(CanBus.OBSTACLE, {}) and
+          CAMERA_DATA_HEADER_MSG not in fingerprint.get(CanBus.OBSTACLE, {}) and not docs))
+        if cc_long:
+          # Retain StarPilot's conventional-cruise button owner for this complete source layout.
+          ret.openpilotLongitudinalControl, ret.pcmCruise = True, False
+          ret.flags |= int(GMFlags.CC_LONG)
+          ret.safetyConfigs[0].safetyParam = ORDINARY_CC_WORD
+          ret.minEnableSpeed = 24 * CV.MPH_TO_MS
+          ret.longitudinalActuatorDelay = 1.
+          ret.longitudinalTuning.kiBP, ret.longitudinalTuning.kiV = [0.], [.1]
+          ret.stopAccel = -2.
+
+    if candidate in CAMERA_STOCK_CAR:
+      ret.dashcamOnly = True  # Require a recognized camera layout for manual identities.
+    if candidate == CAR.CHEVROLET_VOLT_CAMERA and fingerprint[CanBus.CAMERA].get(0x320) == 6:
+      # The camera-present layout is identified by its observed AEB message.
+      ret.dashcamOnly = False
+      ret.alphaLongitudinalAvailable = not is_release
+      ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE]
+      if alpha_long and not is_release:
+        ret.openpilotLongitudinalControl = True
+        ret.pcmCruise = False
+        ret.safetyConfigs[0].safetyParam = int(GMSafetyFlags.EV | GMSafetyFlags.HW_CAM |
+                                             GMSafetyFlags.HW_CAM_LONG | GMSafetyFlags.VOLT_LONG)
+        ret.longitudinalTuning.kiBP = [5., 35.]
+        ret.longitudinalTuning.kiV = [0.5, 0.5]
+        ret.stopAccel = -0.25
+
+    if candidate == CAR.CHEVROLET_VOLT_CAMERA and 0x320 not in fingerprint[CanBus.CAMERA]:
+      pt = fingerprint[CanBus.POWERTRAIN]
+      required = {0x184: 8, 0x34A: 5, 0x1C4: 8, 0xC9: 8, 0x1E1: 7}
+      analog_present = pt.get(0xBE) == 6
+      analog_alternate = 0xBE not in pt and pt.get(0xF1) == 6
+      if all(pt.get(address) == length for address, length in required.items()) and (analog_present or analog_alternate):
+        ret.flags = int(GMFlags.VOLT_CAMERA_REMOVED)
+        if analog_alternate:
+          ret.flags |= int(GMFlags.VOLT_CAMERA_NO_ACCEL_POS)
+        ret.dashcamOnly = False
+        ret.alphaLongitudinalAvailable = not is_release
+        ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE]
+        ret.openpilotLongitudinalControl = bool(alpha_long and not is_release)
+        ret.pcmCruise = not ret.openpilotLongitudinalControl
+        ret.safetyConfigs[0].safetyParam = 0xC151 if ret.openpilotLongitudinalControl else 0xC150
+        if ret.openpilotLongitudinalControl:
+          ret.longitudinalTuning.kiBP = [5., 35.]
+          ret.longitudinalTuning.kiV = [0.5, 0.5]
+          ret.stopAccel = -0.25
+
+    if candidate in ORDINARY_CAMERA_CAR:
+      camera_present = fingerprint.get(CanBus.CAMERA, {}).get(0x320) == 6
+      f1_present = fingerprint.get(CanBus.POWERTRAIN, {}).get(0xF1) == 6
+      be_length = fingerprint.get(CanBus.POWERTRAIN, {}).get(0xBE)
+      source_present = f1_present and (be_length is None or be_length in (6, 7, 8))
+      if be_length is None:
+        ret.flags |= int(GMFlags.NO_ACCELERATOR_POS_MSG)
+      camera_removed = 0x320 not in fingerprint.get(CanBus.CAMERA, {})
+      required_pt = {0x184: 8, 0x34A: 5, 0x1C4: 8, 0xC9: 8, 0x1E1: 7}
+      removed_sources = camera_removed and all(fingerprint.get(CanBus.POWERTRAIN, {}).get(a) == n
+                                               for a, n in required_pt.items())
+      layout_supported = camera_present or removed_sources
+      if camera_removed:
+        ret.flags |= int(GMFlags.NO_CAMERA)
+      ret.dashcamOnly = not (layout_supported and source_present)
+      ret.alphaLongitudinalAvailable = layout_supported and source_present and candidate in ORDINARY_CAMERA_ALPHA_CAR and not is_release
+      ret.openpilotLongitudinalControl = bool(alpha_long and ret.alphaLongitudinalAvailable)
+      ret.pcmCruise = not ret.openpilotLongitudinalControl
+      ret.safetyConfigs[0].safetyParam = ((0xC173 if ret.openpilotLongitudinalControl else 0xC172) if camera_removed else
+                                         (0xC170 if ret.openpilotLongitudinalControl else 0xC171))
+      ret.minSteerSpeed = 10 * CV.KPH_TO_MS
+      ret.minEnableSpeed = (0. if candidate == CAR.CHEVROLET_SILVERADO and ret.openpilotLongitudinalControl else
+                            -1. if candidate in ALT_ACCS else 5 * CV.KPH_TO_MS)
+      ret.longitudinalTuning.kiBP = [5., 35., 60.]
+      ret.longitudinalTuning.kiV = [.5, .5, .5]
+      ret.stopAccel = -.25
+      if candidate == CAR.CHEVROLET_SILVERADO and ret.openpilotLongitudinalControl:
+        ret.longitudinalTuning.kiBP = [0., 5., 15., 35.]
+        ret.longitudinalTuning.kiV = [.20, .18, .13, .08]
+
+    if candidate in ORDINARY_CAMERA_CAR and supported_pedal_detected(fingerprint, CanBus.POWERTRAIN, supported=True):
+      pt = fingerprint.get(CanBus.POWERTRAIN, {})
+      camera_length = fingerprint.get(CanBus.CAMERA, {}).get(0x320)
+      removed = camera_length is None
+      be = pt.get(0xBE) == 6
+      f1 = 0xBE not in pt and pt.get(0xF1) == 6
+      required = {0x184: 8, 0x34A: 5, 0x1E1: 7, 0x1C4: 8, 0xC9: 8}
+      sources = all(pt.get(address) == length for address, length in required.items()) and (be or f1)
+      ret.flags = int(GMFlags.PEDAL_LONG | (GMFlags.NO_CAMERA if removed else 0) |
+                      (GMFlags.NO_ACCELERATOR_POS_MSG if f1 else 0))
+      ret.dashcamOnly = not sources or camera_length not in (None, 6)
+      ret.radarUnavailable = True
+      ret.alphaLongitudinalAvailable = not ret.dashcamOnly and not is_release and pt.get(0x1F5) == 8
+      ret.openpilotLongitudinalControl = ret.alphaLongitudinalAvailable
+      ret.pcmCruise = not ret.openpilotLongitudinalControl
+      words = {(False, False): (0xE100, 0xE110), (False, True): (0xE101, 0xE111),
+               (True, False): (0xE102, 0xE112), (True, True): (0xE103, 0xE113)}
+      ret.safetyConfigs[0].safetyParam = words[removed, f1][not ret.openpilotLongitudinalControl]
+      ret.minEnableSpeed = -1. if ret.openpilotLongitudinalControl else (-1. if candidate in ALT_ACCS else 5 * CV.KPH_TO_MS)
+      ret.autoResumeSng = ret.openpilotLongitudinalControl
+      ret.longitudinalTuning.kiBP = [0., 3., 6., 35.]
+      ret.longitudinalTuning.kiV = [.09, .13, .19, .28]
+      ret.stopAccel = -.25
+
+    if candidate == CAR.CHEVROLET_VOLT_2019 and supported_pedal_detected(fingerprint, CanBus.POWERTRAIN, supported=True):
+      pt = fingerprint.get(CanBus.POWERTRAIN, {})
+      be = pt.get(0xBE) in (6, 7, 8)
+      f1 = 0xBE not in pt and pt.get(0xF1) == 6
+      required = {0x184: 8, 0x34A: 5, 0x1E1: 7, 0x1C4: 8, 0xC9: 8, 0xBD: 7}
+      sources = all(pt.get(address) == length for address, length in required.items()) and (be or f1)
+      camera = fingerprint.get(CanBus.CAMERA, {})
+      ret.flags = int(GMFlags.PEDAL_LONG | (GMFlags.NO_ACCELERATOR_POS_MSG if f1 else 0)) | (int(ret.flags) & int(GMFlags.HAS_BSM))
+      ret.dashcamOnly = not sources or camera.get(0x180) != 4 or camera.get(0x370) != 6
+      ret.alphaLongitudinalAvailable = has_sascm
+      ret.openpilotLongitudinalControl = not ret.dashcamOnly and not is_release and pt.get(0x1F5) == 8
+      ret.pcmCruise = False
+      index = int(not ret.radarUnavailable) * 2 + int(f1)
+      ret.safetyConfigs[0].safetyParam = (0xE500 if ret.openpilotLongitudinalControl else 0xE510) + index
+      ret.minEnableSpeed = -1.
+      ret.autoResumeSng = ret.openpilotLongitudinalControl
+      ret.longitudinalTuning.kiBP, ret.longitudinalTuning.kiV = [5., 35.], [.5, .5]
+
+    if candidate == CAR.CHEVROLET_VOLT_ASCM and supported_pedal_detected(fingerprint, CanBus.POWERTRAIN, supported=True):
+      pt = fingerprint.get(CanBus.POWERTRAIN, {})
+      be = pt.get(0xBE) in (6, 7, 8)
+      f1 = 0xBE not in pt and pt.get(0xF1) == 6
+      required = {0x184: 8, 0x34A: 5, 0x1E1: 7, 0x1C4: 8, 0xC9: 8, 0xBD: 7}
+      sources = all(pt.get(address) == length for address, length in required.items()) and (be or f1)
+      camera = fingerprint.get(CanBus.CAMERA, {})
+      ret.flags = int(GMFlags.PEDAL_LONG | (GMFlags.NO_ACCELERATOR_POS_MSG if f1 else 0)) | (int(ret.flags) & int(GMFlags.HAS_BSM))
+      ret.dashcamOnly = not sources or camera.get(0x180) != 4 or camera.get(0x370) != 6
+      ret.alphaLongitudinalAvailable = has_sascm
+      ret.openpilotLongitudinalControl = not ret.dashcamOnly and not is_release and pt.get(0x1F5) == 8
+      ret.pcmCruise = False
+      index = int(not ret.radarUnavailable) * 2 + int(f1)
+      ret.safetyConfigs[0].safetyParam = (0xE400 if ret.openpilotLongitudinalControl else 0xE410) + index
+      ret.minEnableSpeed = -1.
+      ret.autoResumeSng = ret.openpilotLongitudinalControl
+      ret.longitudinalTuning.kiBP, ret.longitudinalTuning.kiV = [5., 35.], [.5, .5]
+
+    if candidate == CAR.CHEVROLET_VOLT and supported_pedal_detected(fingerprint, CanBus.POWERTRAIN, supported=True):
+      pt = fingerprint.get(CanBus.POWERTRAIN, {})
+      camera_length = fingerprint.get(CanBus.CAMERA, {}).get(0x320)
+      removed = camera_length is None
+      be = pt.get(0xBE) == 6
+      f1 = 0xBE not in pt and pt.get(0xF1) == 6
+      required = {0x184: 8, 0x34A: 5, 0x1E1: 7, 0x1C4: 8, 0xC9: 8, 0xBD: 7}
+      sources = all(pt.get(address) == length for address, length in required.items()) and (be or f1)
+      ret.flags = int(GMFlags.PEDAL_LONG | (GMFlags.NO_CAMERA if removed else 0) |
+                      (GMFlags.NO_ACCELERATOR_POS_MSG if f1 else 0)) | (int(ret.flags) & int(GMFlags.HAS_BSM))
+      ret.networkLocation = NetworkLocation.fwdCamera
+      ret.dashcamOnly = ret.dashcamOnly or not sources or camera_length not in (None, 6)
+      ret.alphaLongitudinalAvailable = not ret.dashcamOnly and not is_release and pt.get(0x1F5) == 8
+      ret.openpilotLongitudinalControl = ret.alphaLongitudinalAvailable
+      ret.pcmCruise = False
+      index = int(removed) * 2 + int(f1)
+      ret.safetyConfigs[0].safetyParam = (0xE300 if ret.openpilotLongitudinalControl else 0xE310) + index
+      ret.minEnableSpeed = -1.
+      ret.autoResumeSng = ret.openpilotLongitudinalControl
+      ret.longitudinalTuning.kiBP, ret.longitudinalTuning.kiV = [5., 35.], [.5, .5]
+
+    if candidate == CAR.CHEVROLET_VOLT_CAMERA and supported_pedal_detected(fingerprint, CanBus.POWERTRAIN, supported=True):
+      pt = fingerprint.get(CanBus.POWERTRAIN, {})
+      camera_length = fingerprint.get(CanBus.CAMERA, {}).get(0x320)
+      removed = camera_length is None
+      be = pt.get(0xBE) == 6
+      f1 = 0xBE not in pt and pt.get(0xF1) == 6
+      required = {0x184: 8, 0x34A: 5, 0x1E1: 7, 0x1C4: 8, 0xC9: 8, 0xBD: 7}
+      sources = all(pt.get(address) == length for address, length in required.items()) and (be or f1)
+      ret.flags = int(GMFlags.PEDAL_LONG | (GMFlags.NO_CAMERA if removed else 0) |
+                      (GMFlags.NO_ACCELERATOR_POS_MSG if f1 else 0))
+      ret.dashcamOnly = not sources or camera_length not in (None, 6)
+      ret.alphaLongitudinalAvailable = not ret.dashcamOnly and not is_release and pt.get(0x1F5) == 8
+      ret.openpilotLongitudinalControl = ret.alphaLongitudinalAvailable
+      ret.pcmCruise = not ret.openpilotLongitudinalControl
+      index = int(removed) * 2 + int(f1)
+      ret.safetyConfigs[0].safetyParam = (0xE200 if ret.openpilotLongitudinalControl else 0xE210) + index
+      ret.minEnableSpeed = -1.
+      ret.autoResumeSng = ret.openpilotLongitudinalControl
+      ret.longitudinalTuning.kiBP = [0., 3., 6., 35.]
+      ret.longitudinalTuning.kiV = [.09, .13, .19, .28]
+      ret.stopAccel = -.25
+
+    if candidate in (CAR.CHEVROLET_VOLT, CAR.CHEVROLET_VOLT_ASCM, CAR.CHEVROLET_VOLT_CAMERA,
+                     CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_VOLT_2019):
+      ret.minSteerSpeed = 7 * CV.MPH_TO_MS
+    if candidate == CAR.CHEVROLET_VOLT_CC and supported_pedal_detected(fingerprint, CanBus.POWERTRAIN, supported=True):
+      pt = fingerprint.get(CanBus.POWERTRAIN, {})
+      cam = fingerprint.get(CanBus.CAMERA, {})
+      be = pt.get(0xBE) in (6, 7, 8)
+      f1 = 0xBE not in pt and pt.get(0xF1) == 6
+      # Any known camera-owner frame rules out the removed-camera topology.
+      removed = not any(address in cam for address in (0x180, 0x320, 0x370))
+      camera_layout = removed or (cam.get(0x180) == 4 and cam.get(0x320) == 6 and
+                                  cam.get(0x370, 6) == 6)
+      required = {0x184: 8, 0x34A: 5, 0x1E1: 7, 0x1C4: 8, 0xC9: 8, 0x3D1: 8, 0xBD: 7}
+      sources = (be or f1) and all(pt.get(a) == n for a, n in required.items())
+      ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and CAMERA_DATA_HEADER_MSG not in fingerprint[CanBus.OBSTACLE]
+      ret.flags = int(GMFlags.PEDAL_LONG | (GMFlags.NO_CAMERA if removed else 0) |
+                      (GMFlags.NO_ACCELERATOR_POS_MSG if f1 else 0)) | (int(ret.flags) & int(GMFlags.HAS_BSM))
+      ret.networkLocation = NetworkLocation.fwdCamera
+      ret.dashcamOnly = not sources or not camera_layout
+      ret.alphaLongitudinalAvailable = not ret.dashcamOnly and not is_release and pt.get(0x1F5) == 8
+      ret.openpilotLongitudinalControl = ret.alphaLongitudinalAvailable
+      ret.pcmCruise = False
+      if not ret.dashcamOnly:
+        ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.gm)]
+        ret.safetyConfigs[0].safetyParam = ((0xE600 if ret.openpilotLongitudinalControl else 0xE610) +
+                                            4 * int(not ret.radarUnavailable) + 2 * int(removed) + int(f1))
+      else:
+        ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.noOutput)]
+      ret.autoResumeSng = ret.openpilotLongitudinalControl
+      ret.minEnableSpeed = -1.
+      ret.stopAccel = -1.5
+      ret.longitudinalTuning.kiBP, ret.longitudinalTuning.kiV = [0., 3., 6., 35.], [.09, .13, .19, .28]
+    elif candidate == CAR.CHEVROLET_VOLT_CC:
+      ret.dashcamOnly = not ret.openpilotLongitudinalControl
+    if candidate in BOLT_CC_WORDS and not ret.flags & GMFlags.PEDAL_LONG.value:
+      camera_removed = 0x180 not in fingerprint.get(CanBus.CAMERA, {})
+      ret.flags |= GMFlags.CC_LONG.value
+      ret.openpilotLongitudinalControl = True
+      ret.alphaLongitudinalAvailable = False
+      ret.pcmCruise = False
+      ret.radarUnavailable = True
+      ret.minEnableSpeed = 24 * CV.MPH_TO_MS
+      ret.longitudinalActuatorDelay = 1.
+      ret.longitudinalTuning.kiBP = [0.]
+      ret.longitudinalTuning.kiV = [.1]
+      ret.safetyConfigs[0].safetyParam = BOLT_CC_WORDS[candidate][camera_removed]
+      ret.stopAccel = -0.25
+    if candidate in ORDINARY_CC_CAR or candidate == CAR.CHEVROLET_SILVERADO_CC:
+      if supported_pedal_detected(fingerprint, CanBus.POWERTRAIN, supported=True):
+        camera_length = fingerprint.get(CanBus.CAMERA, {}).get(0x320)
+        removed = camera_length is None
+        be_length = fingerprint.get(CanBus.POWERTRAIN, {}).get(0xBE)
+        sources = (fingerprint.get(CanBus.POWERTRAIN, {}).get(0xF1) == 6 and
+                   (be_length is None or be_length in (6, 7, 8)))
+        if candidate == CAR.CHEVROLET_SILVERADO_CC:
+          pt = fingerprint.get(CanBus.POWERTRAIN, {})
+          required = {0x184: 8, 0x34A: 5, 0xC9: 8, 0x3D1: 8, 0x1E1: 7, 0x1C4: 8, 0x1F5: 8}
+          sources = (all(pt.get(address) == length for address, length in required.items()) and
+                     (be_length in (6, 7, 8) or be_length is None and pt.get(0xF1) == 6) and
+                     RADAR_HEADER_MSG not in fingerprint.get(CanBus.OBSTACLE, {}) and
+                     CAMERA_DATA_HEADER_MSG not in fingerprint.get(CanBus.OBSTACLE, {}) and not docs)
+        ret.flags = int(GMFlags.PEDAL_LONG | (GMFlags.NO_CAMERA if removed else 0) |
+                        (GMFlags.NO_ACCELERATOR_POS_MSG if be_length is None else 0))
+        ret.networkLocation = NetworkLocation.fwdCamera
+        ret.radarUnavailable = True
+        ret.dashcamOnly = not sources or camera_length not in (None, 6)
+        ret.openpilotLongitudinalControl = not ret.dashcamOnly
+        ret.pcmCruise = False
+        ret.alphaLongitudinalAvailable = False
+        ret.safetyConfigs[0].safetyParam = (SILVERADO_CC_PEDAL_WORDS[0][removed] if candidate == CAR.CHEVROLET_SILVERADO_CC else
+                                           0xC181 if removed else 0xC180)
+        ret.minEnableSpeed = -1.
+        ret.autoResumeSng = True
+        ret.longitudinalActuatorDelay = .5
+        if candidate == CAR.CHEVROLET_SILVERADO_CC:
+          ret.stopAccel = -2.
+        if candidate == CAR.CHEVROLET_MALIBU_CC:
+          ret.longitudinalTuning.kiBP = [0., 5., 35.]
+          ret.longitudinalTuning.kiV = [0., .30, .45]
+        else:
+          ret.longitudinalTuning.kiBP = [0., 3., 6., 35.]
+          ret.longitudinalTuning.kiV = [.09, .13, .19, .28]
+
+    if candidate == CAR.CHEVROLET_SUBURBAN:
+      ret.longitudinalTuning.kiBP = [5., 35., 60.]
+      ret.longitudinalTuning.kiV = [0.5, 0.5, 0.5]
+    if (candidate in BOLT_PEDAL_REMOVED_WORDS and supported_pedal_detected(fingerprint, CanBus.POWERTRAIN, supported=True) and
+        0x320 not in fingerprint.get(CanBus.CAMERA, {})):
+      pt = fingerprint.get(CanBus.POWERTRAIN, {})
+      required = {0x184: 8, 0x34A: 5, 0x348: 5, 0xC9: 8, 0x1C4: 8, 0x1E1: 7,
+                  0x1F5: 8, 0xBD: 7, 0x232: 8, 0x3D1: 8}
+      sources = all(pt.get(address) == length for address, length in required.items()) and pt.get(0xBE) in (6, 7, 8)
+      ret.flags = int(GMFlags.PEDAL_LONG | GMFlags.NO_CAMERA) | (int(ret.flags) & int(GMFlags.HAS_BSM))
+      ret.dashcamOnly = not sources
+      ret.openpilotLongitudinalControl = sources
+      ret.pcmCruise = False
+      ret.alphaLongitudinalAvailable = False
+      if sources:
+        ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.gm)]
+        ret.safetyConfigs[0].safetyParam = BOLT_PEDAL_REMOVED_WORDS[candidate]
+      else:
+        ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.noOutput)]
+    if (candidate == CAR.CHEVROLET_MALIBU_CC and 0x201 not in fingerprint[CanBus.POWERTRAIN] and
+        0xBE not in fingerprint[CanBus.POWERTRAIN]):
+      pt = fingerprint[CanBus.POWERTRAIN]
+      admitted = (all(pt.get(address) == length for address, length in MALIBU_CC_F1_SOURCES.items()) and
+                  RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and
+                  CAMERA_DATA_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and not docs)
+      ret.flags = int(GMFlags.CC_LONG | GMFlags.NO_ACCELERATOR_POS_MSG)
+      ret.openpilotLongitudinalControl = admitted
+      ret.pcmCruise = not admitted
+      ret.dashcamOnly = not admitted
+      ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.gm if admitted else structs.CarParams.SafetyModel.noOutput)]
+      if admitted:
+        ret.safetyConfigs[0].safetyParam = MALIBU_CC_F1_WORD
+    if candidate == CAR.CHEVROLET_MALIBU_HYBRID_CC:
+      pt, cam = fingerprint[CanBus.POWERTRAIN], fingerprint[CanBus.CAMERA]
+      pedal, removed, alternate = 0x201 in pt, 0x320 not in cam, 0xBE not in pt
+      admitted = (not docs and all(pt.get(address) == length for address, length in MALIBU_HYBRID_SOURCES.items()) and
+                  (pt.get(0xF1) == 6 if alternate else pt.get(0xBE) in (6, 7, 8)) and
+                  (not pedal or pt.get(0x201) == 6) and (removed or cam.get(0x180) == 4 and cam.get(0x320) == 6))
+      ret.networkLocation = NetworkLocation.fwdCamera
+      ret.transmissionType = TransmissionType.direct
+      ret.alphaLongitudinalAvailable = False
+      ret.radarUnavailable = not pedal or RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE]
+      ret.flags = int(GMFlags.CC_LONG | (GMFlags.PEDAL_LONG if pedal else 0) |
+                      (GMFlags.NO_CAMERA if removed else 0) | (GMFlags.NO_ACCELERATOR_POS_MSG if alternate else 0))
+      ret.openpilotLongitudinalControl, ret.pcmCruise = admitted, not admitted
+      ret.dashcamOnly = not admitted
+      ret.autoResumeSng = pedal and admitted
+      ret.minEnableSpeed = -1. if pedal else 24 * CV.MPH_TO_MS
+      ret.minSteerSpeed = 10 * CV.KPH_TO_MS
+      ret.steerActuatorDelay = .2
+      ret.longitudinalActuatorDelay = .5
+      ret.stopAccel = -.25
+      ret.longitudinalTuning.kiBP, ret.longitudinalTuning.kiV = [5., 35.], [.5, .5]
+      if pedal:
+        ret.longitudinalTuning.kiBP, ret.longitudinalTuning.kiV = [0., 3., 6., 35.], [.07, .10, .15, .24]
+      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+      ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.gm if admitted else structs.CarParams.SafetyModel.noOutput,
+                                           0xE800 + 2 * int(pedal) + int(removed) if admitted else 0)]
+    if 0x142 in fingerprint[CanBus.POWERTRAIN] or candidate in VOLT_BSM_CAR:
+      ret.flags |= GMFlags.HAS_BSM.value
     return ret

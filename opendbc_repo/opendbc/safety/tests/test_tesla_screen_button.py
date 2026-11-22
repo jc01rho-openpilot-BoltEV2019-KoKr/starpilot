@@ -1,257 +1,320 @@
+import os
 import unittest
 
-from opendbc.car.structs import CarParams
-from opendbc.car.tesla.values import TeslaSafetyFlags
-from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from opendbc.safety.tests.common import CANPackerSafety, make_msg
-from opendbc.safety.tests import test_tesla
+from opendbc.safety.tests.libsafety import libsafety_py
 
 
 class TestTeslaScreenButton(unittest.TestCase):
-  TX_MSGS = None
-
   def setUp(self):
-    self.helper = test_tesla.TestTeslaStockSafety()
-    self.helper.setUp()
-    self.safety = self.helper.safety
-    self.vehicle_packer = CANPackerSafety("tesla_model3_vehicle")
-    self.init_safety()
+    self.lib = libsafety_py.libsafety
+    self.packer = CANPackerSafety('tesla_model3_party')
+    self.start(512)
 
-  def init_safety(self, flag=True, aol=True, long_control=False, disengage_on_brake=False, cooperative=False):
-    param = (TeslaSafetyFlags.AOL_SCREEN_BUTTON if flag else 0) | (TeslaSafetyFlags.LONG_CONTROL if long_control else 0)
-    if cooperative:
-      param |= TeslaSafetyFlags.COOP_STEERING
-    if disengage_on_brake:
-      param |= TeslaSafetyFlags.AOL_SCREEN_DISENGAGE_ON_BRAKE
-    self.assertEqual(self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, param), 0)
-    self.safety.init_tests()
-    self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL if aol else 0)
-    self.helper._rx(self.helper._pcm_status_msg(False))
-    self.safety.set_angle_meas(0, 0)
-    self.safety.set_desired_angle_last(0)
+  def tearDown(self):
+    self.lib.init_tests()
+    self.lib.set_alternative_experience(0)
+    self.lib.set_safety_hooks(0, 0)
 
-  def touch(self, fingers, bus=1):
-    self.helper._rx(self.vehicle_packer.make_can_msg_safety("UI_status2", bus, {"UI_activeTouchPoints": fingers}))
+  def start(self, word):
+    self.lib.init_tests()
+    self.lib.set_alternative_experience(32)
+    self.assertEqual(self.lib.set_safety_hooks(10, word), 0)
+    self.time = 1_000_000
+    self.lib.set_timer(self.time)
+    self.lib.set_aol_test_heartbeat(True)
+    for _ in range(12):
+      self.feed()
+    self.lib.aol_set_host_request(1)
 
-  def gesture(self):
+  def feed(self, state=0, brake=False, hands=0, gear=4, door=False, belt=True, eps=1, autopark=0, stock_type=0):
+    values = (
+      ('DAS_control', 2, {}),
+      ('DAS_steeringControl', 2, {'DAS_steeringControlType': stock_type}),
+      ('DI_speed', 0, {'DI_vehicleSpeed': 0}),
+      ('ESP_B', 0, {'ESP_vehicleSpeed': 0, 'ESP_wheelSpeedsQF': 1, 'ESP_vehicleStandstillSts': 1}),
+      ('EPAS3S_sysStatus', 0, {'EPAS3S_internalSAS': 0, 'EPAS3S_eacStatus': eps, 'EPAS3S_handsOnLevel': hands,
+                             'EPAS3S_torsionBarTorque': 0}),
+      ('DI_systemStatus', 0, {'DI_gear': gear, 'DI_accelPedalPos': 0}),
+      ('ESP_status', 0, {'ESP_driverBrakeApply': 2 if brake else 1}),
+      ('UI_warning', 0, {'anyDoorOpen': int(door), 'buckleStatus': int(belt)}),
+      ('DI_state', 0, {'DI_cruiseState': state, 'DI_autoparkState': autopark}),
+    )
+    for name, bus, signals in values:
+      self.assertTrue(self.lib.safety_rx_hook(self.packer.make_can_msg_safety(name, bus, signals)))
+    self.lib.safety_tick()
+
+  def touch(self, count, bus=1, length=8):
+    data = bytearray(length)
+    if length > 3:
+      data[3] = count
+    self.lib.safety_rx_hook(make_msg(bus, 0x3DF, dat=bytes(data)))
+
+  def permission(self, mask=1):
+    self.lib.aol_set_host_request(mask)
+    return self.lib.aol_get_permission_mask()
+
+  def arm(self):
     self.touch(0)
     self.touch(3)
+    self.assertEqual(self.permission(), 1)
 
-  def stalk(self, status, bus=1):
-    self.helper._rx(self.vehicle_packer.make_can_msg_safety("SCCM_rightStalk", bus, {"SCCM_rightStalkStatus": status}))
-
-  def test_low_speed_acc_availability_does_not_clear_gesture(self):
-    for cooperative in (False, True):
-      for initial_available in (False, True):
-        with self.subTest(cooperative=cooperative, initial_available=initial_available):
-          self.init_safety(cooperative=cooperative)
-          msg = self.helper.packer.make_can_msg_safety("DI_state", 0, {"DI_cruiseState": 1 if initial_available else 0})
-          self.helper._rx(msg)
-          self.assertFalse(self.safety.get_aol_allowed())
-          self.gesture()
-          for available in (True, False) * 20:
-            self.helper._rx(self.helper._speed_msg(3.0))
-            self.helper._rx(self.helper._speed_msg_2(3.0))
-            msg = self.helper.packer.make_can_msg_safety("DI_state", 0, {"DI_cruiseState": 1 if available else 0})
-            self.helper._rx(msg)
-            self.assertTrue(self.safety.get_lkas_on())
-            self.assertTrue(self.safety.get_aol_allowed())
-            self.assertFalse(self.safety.get_controls_allowed())
-            self.assertTrue(self.helper._tx(self.helper._angle_cmd_msg(0)))
-          self.gesture()
-          for available in (True, False) * 20:
-            msg = self.helper.packer.make_can_msg_safety("DI_state", 0, {"DI_cruiseState": 1 if available else 0})
-            self.helper._rx(msg)
-            self.assertFalse(self.safety.get_lkas_on())
-            self.assertFalse(self.safety.get_aol_allowed())
-            self.assertFalse(self.helper._tx(self.helper._angle_cmd_msg(0)))
-
-  def test_cruise_engagement_arms_lateral_and_brake_respects_option(self):
-    for disengage_on_brake in (False, True):
-      with self.subTest(disengage_on_brake=disengage_on_brake):
-        self.init_safety(disengage_on_brake=disengage_on_brake)
-        self.helper._rx(self.helper._pcm_status_msg(True))
-        self.assertTrue(self.safety.get_lkas_on())
-        self.assertTrue(self.safety.get_aol_allowed())
-        self.helper._rx(self.helper._user_brake_msg(True))
-        self.helper._rx(self.helper._pcm_status_msg(False))
-        self.helper._rx(self.helper._user_brake_msg(False))
-        self.assertEqual(self.safety.get_lkas_on(), not disengage_on_brake)
-        self.assertEqual(self.safety.get_aol_allowed(), not disengage_on_brake)
-        self.assertFalse(self.safety.get_controls_allowed())
-
-  def test_cruise_engagement_does_not_override_screen_disengagement_inputs(self):
-    for blocked_by in ("brake", "steering", "cancel"):
-      with self.subTest(blocked_by=blocked_by):
-        self.init_safety(disengage_on_brake=True)
-        if blocked_by == "brake":
-          self.helper._rx(self.helper._user_brake_msg(True))
-        elif blocked_by == "steering":
-          self.helper._rx(self.helper._angle_meas_msg(0, hands_on_level=3))
-        else:
-          self.stalk(1)
-        self.helper._rx(self.helper._pcm_status_msg(True))
-        self.assertFalse(self.safety.get_lkas_on())
-        self.assertFalse(self.safety.get_aol_allowed())
-
-  def test_stalk_cancel_clears_gesture_and_blocks_tap_while_held(self):
-    for status in (1, 2):
-      with self.subTest(status=status):
-        self.init_safety()
-        self.gesture()
-        self.stalk(status)
-        self.assertFalse(self.safety.get_lkas_on())
-        self.assertFalse(self.safety.get_aol_allowed())
-        self.assertFalse(self.helper._tx(self.helper._angle_cmd_msg(0)))
-        self.gesture()
-        self.assertFalse(self.safety.get_lkas_on())
-        self.stalk(0)
-        self.assertFalse(self.safety.get_lkas_on())
-        self.gesture()
-        self.assertTrue(self.safety.get_lkas_on())
-
-  def test_non_cancel_stalk_positions_do_not_clear_gesture(self):
-    self.gesture()
-    for status in (0, 3, 4, 5, 6, 7):
-      self.stalk(status)
-      self.assertTrue(self.safety.get_lkas_on())
-
-  def test_stalk_cancel_is_addon_only(self):
-    self.gesture()
-    for bus in (0, 2, 3):
-      self.stalk(1, bus)
-      self.assertTrue(self.safety.get_lkas_on())
-    for length in (0, 1, 2, 4, 5, 8):
-      msg = make_msg(1, 0x229, length)
-      if length > 1:
-        msg[0].data[1] = 0x10
-      self.helper._rx(msg)
-      self.assertTrue(self.safety.get_lkas_on())
-    self.init_safety(flag=False)
-    self.helper._rx(self.helper._pcm_status_msg(True))
-    self.stalk(1)
-    self.assertTrue(self.safety.get_controls_allowed())
-
-  def test_gesture_enables_only_lateral(self):
-    self.assertFalse(self.helper._tx(self.helper._angle_cmd_msg(0)))
-    self.gesture()
-    self.assertTrue(self.safety.get_aol_allowed())
-    self.assertTrue(self.safety.get_lkas_on())
-    self.assertFalse(self.safety.get_controls_allowed())
-    self.assertTrue(self.helper._tx(self.helper._angle_cmd_msg(0)))
-    self.assertFalse(self.helper._tx(self.helper._long_control_msg(10, acc_state=2, accel_limits=(0, 1))))
-    self.gesture()
-    self.assertFalse(self.safety.get_aol_allowed())
-    self.assertFalse(self.helper._tx(self.helper._angle_cmd_msg(0)))
-
-  def test_does_not_enable_alpha_long_actuation(self):
-    self.init_safety(long_control=True)
-    self.gesture()
-    self.assertTrue(self.safety.get_aol_allowed())
-    self.assertFalse(self.safety.get_controls_allowed())
-    self.assertFalse(self.helper._tx(self.helper._long_control_msg(10, acc_state=2, accel_limits=(0, 1))))
-
-  def test_flag_and_aol_are_required(self):
-    for flag, aol in ((False, False), (False, True), (True, False)):
-      with self.subTest(flag=flag, aol=aol):
-        self.init_safety(flag=flag, aol=aol)
-        self.gesture()
-        self.assertFalse(self.safety.get_aol_allowed())
-        self.assertFalse(self.helper._tx(self.helper._angle_cmd_msg(0)))
-
-  def test_wrong_bus_and_length_do_not_toggle(self):
-    for bus in (0, 2, 3):
-      self.gesture_on_wrong_bus(bus)
-      self.assertFalse(self.safety.get_lkas_on())
-    self.touch(0)
-    for length in (0, 3, 4, 5, 6, 7):
-      msg = make_msg(1, 0x3DF, length)
-      if length > 3:
-        msg[0].data[3] = 3
-      self.helper._rx(msg)
-      self.assertFalse(self.safety.get_lkas_on())
-
-  def gesture_on_wrong_bus(self, bus):
-    self.touch(0, bus)
-    self.touch(3, bus)
-
-  def test_held_touch_and_other_finger_counts(self):
-    for fingers in (3, 3, 0, 1, 2, 4, 5, 255, 0):
-      self.touch(fingers)
-      self.assertFalse(self.safety.get_lkas_on())
+  def test_first_touch_baseline_exact_optional_ingress_and_toggle(self):
     self.touch(3)
-    for _ in range(20):
-      self.touch(3)
-      self.assertTrue(self.safety.get_lkas_on())
+    self.assertEqual(self.permission(), 0)
+    self.touch(3)
+    self.assertEqual(self.permission(), 0)
+    self.touch(0)
+    for bus, length in ((0, 8), (2, 8), (1, 7), (1, 6)):
+      self.touch(3, bus, length)
+      self.assertEqual(self.permission(), 0)
+    self.touch(3)
+    self.assertEqual(self.permission(), 1)
+    self.touch(3)
+    self.assertEqual(self.permission(), 1)
+    self.touch(2)
+    self.touch(3)
+    self.assertEqual(self.permission(), 0)
+
+  def test_cruise_baseline_screen_override_and_real_engagement(self):
+    self.feed(state=1)
+    self.assertEqual(self.permission(), 1)
     self.touch(0)
     self.touch(3)
-    self.assertFalse(self.safety.get_lkas_on())
-
-  def test_brake_disables_long_but_not_gesture_lateral(self):
-    self.gesture()
-    self.helper._rx(self.helper._user_brake_msg(True))
-    self.assertTrue(self.safety.get_aol_allowed())
-    self.assertFalse(self.safety.get_controls_allowed())
-    self.assertTrue(self.helper._tx(self.helper._angle_cmd_msg(0)))
-
-  def test_opt_in_brake_disengage_needs_brake_release_and_new_gesture(self):
-    self.init_safety(disengage_on_brake=True)
-    self.gesture()
-    self.helper._rx(self.helper._user_brake_msg(True))
-    self.assertFalse(self.safety.get_aol_allowed())
-    self.gesture()
-    self.assertFalse(self.safety.get_aol_allowed())
-    self.helper._rx(self.helper._user_brake_msg(False))
-    self.assertFalse(self.safety.get_aol_allowed())
-    self.gesture()
-    self.assertTrue(self.safety.get_aol_allowed())
-
-  def test_steering_override_requires_a_new_gesture(self):
-    self.gesture()
-    self.helper._rx(self.helper._angle_meas_msg(0, hands_on_level=3))
-    self.assertFalse(self.safety.get_aol_allowed())
-    self.gesture()
-    self.assertFalse(self.safety.get_aol_allowed())
-    self.helper._rx(self.helper._angle_meas_msg(0))
-    self.assertFalse(self.safety.get_aol_allowed())
-    self.gesture()
-    self.assertTrue(self.safety.get_aol_allowed())
-
-  def test_cancelled_cruise_clears_gesture_latch(self):
-    self.gesture()
-    self.helper._rx(self.helper._pcm_status_msg(True))
-    self.helper._rx(self.helper._pcm_status_msg(False))
-    self.assertFalse(self.safety.get_aol_allowed())
-    self.assertFalse(self.safety.get_lkas_on())
-
-  def test_safety_reinitialization_clears_touch_latch(self):
-    self.gesture()
-    self.init_safety()
+    self.assertEqual(self.permission(), 0)
+    self.feed(state=2)
+    self.assertEqual(self.permission(), 1)
+    self.touch(0)
     self.touch(3)
-    self.assertFalse(self.safety.get_aol_allowed())
+    self.assertEqual(self.permission(), 0)
+    self.feed(state=0)
+    self.feed(state=1)
+    self.assertEqual(self.permission(), 0, 'availability is not a new driver engagement')
+    self.feed(state=2)
+    self.assertEqual(self.permission(), 1)
 
-  def test_stock_lkas_does_not_block_authorized_gesture_steering(self):
-    self.gesture()
-    self.helper._rx(self.helper._angle_cmd_msg(0, state=2, bus=2))
-    self.assertTrue(self.helper._tx(self.helper._angle_cmd_msg(0)))
+  def test_availability_cycles_cannot_rearm_a_cleared_permission(self):
+    for word in (512, 1536):
+      for fault in ({'door': True}, {'eps': 3}, {'hands': 3}, {'gear': 0}):
+        with self.subTest(word=word, fault=fault):
+          self.start(word)
+          self.arm()
+          self.feed(state=1)
+          self.feed(state=1, **fault)
+          self.assertEqual(self.permission(), 0)
+          for state in (0, 1, 0, 1):
+            self.feed(state=state)
+            self.assertEqual(self.permission(), 0)
+          self.arm()
 
-  def test_stock_lkas_still_blocks_when_not_authorized(self):
-    self.helper._rx(self.helper._angle_cmd_msg(0, state=2, bus=2))
-    self.gesture()
-    self.assertFalse(self.helper._tx(self.helper._angle_cmd_msg(0)))
+  def test_availability_loss_preserves_only_explicit_screen_arm(self):
+    tx_packer = CANPackerSafety('tesla_model3_party')
+    for word in (512, 768, 1536, 1792):
+      with self.subTest(word=word):
+        self.start(word)
+        self.arm()
+        self.touch(0)
+        for state in (1, 0, 1, 0, 1):
+          self.feed(state=state)
+          self.assertEqual(self.permission(3), 1)
+          positive = tx_packer.make_can_msg_safety('DAS_control', 0, {'DAS_accelMin': 1, 'DAS_accelMax': 1})
+          self.assertFalse(self.lib.safety_tx_hook(positive))
+        self.touch(3)
+        self.assertEqual(self.permission(), 0)
+        for state in (0, 1, 0, 1):
+          self.feed(state=state)
+          self.assertEqual(self.permission(), 0)
 
-  def test_autopark_still_blocks_steering(self):
-    self.helper._rx(self.helper._pcm_status_msg(False, autopark_state=3))
-    self.gesture()
-    self.assertFalse(self.helper._tx(self.helper._angle_cmd_msg(0)))
+        self.start(word)
+        self.feed(state=1)
+        self.assertEqual(self.permission(), 1)
+        self.feed(state=0)
+        self.assertEqual(self.permission(), 0)
+        self.feed(state=1)
+        self.assertEqual(self.permission(), 0)
 
-  def test_aeb_still_blocks_longitudinal_and_is_forwarded(self):
-    self.init_safety(long_control=True)
-    self.gesture()
-    self.helper._rx(self.helper._long_control_msg(0, aeb_event=1, bus=2))
-    self.assertFalse(self.helper._tx(self.helper._long_control_msg(0, acc_state=13)))
-    self.assertEqual(self.safety.safety_fwd_hook(2, 0x2B9), 0)
+  def test_cruise_fault_clears_screen_arm_and_blocks_gestures(self):
+    for word in (512, 768, 1536, 1792):
+      with self.subTest(word=word):
+        self.start(word)
+        self.arm()
+        self.feed(state=1)
+        self.feed(state=5)
+        self.assertEqual(self.permission(), 0)
+        self.touch(0)
+        self.touch(3)
+        self.assertEqual(self.permission(), 0)
+        for state in (0, 1):
+          self.feed(state=state)
+          self.assertEqual(self.permission(), 0)
+        self.arm()
 
+  def test_availability_loss_cannot_hide_physical_fault_or_brake(self):
+    for word in (512, 768, 1536, 1792):
+      faults = [{'door': True}, {'eps': 3}, {'hands': 3}, {'gear': 0}, {'autopark': 3}]
+      if word & 1024:
+        faults.append({'brake': True})
+      for fault in faults:
+        with self.subTest(word=word, fault=fault):
+          self.start(word)
+          self.arm()
+          self.feed(state=1)
+          self.feed(state=0, **fault)
+          self.assertEqual(self.permission(), 0)
+          for state in (0, 1, 0, 1):
+            self.feed(state=state)
+            self.assertEqual(self.permission(), 0)
 
-if __name__ == "__main__":
-  unittest.main()
+  def test_brake_disengagement_cannot_be_undone_by_availability(self):
+    self.start(1536)
+    self.arm()
+    self.feed(state=1, brake=True)
+    self.assertEqual(self.permission(), 0)
+    for state in (0, 1, 0, 1):
+      self.feed(state=state)
+      self.assertEqual(self.permission(), 0)
+    self.arm()
+
+  def test_brake_word_and_physical_faults_withdraw(self):
+    for word in (512, 1536):
+      self.start(word)
+      self.arm()
+      self.feed(brake=True)
+      self.assertEqual(self.permission(), 1 if word == 512 else 0)
+    for fault in ({'hands': 3}, {'gear': 0}, {'gear': 1}, {'gear': 7}, {'door': True}, {'eps': 3}, {'autopark': 3}):
+      self.start(512)
+      self.arm()
+      self.feed(**fault)
+      self.assertEqual(self.permission(), 0, fault)
+      self.feed()
+      self.assertEqual(self.permission(), 0, fault)
+      self.arm()
+
+  def test_known_gear_and_temporary_eps_pause_preserve_only_existing_arm(self):
+    for pause in ({'gear': 2}, {'gear': 3}, {'eps': 0}):
+      with self.subTest(pause=pause):
+        self.start(512)
+        self.arm()
+        self.touch(0)
+        self.feed(**pause)
+        self.assertEqual(self.permission(), 0)
+        self.feed()
+        self.assertEqual(self.permission(), 1)
+        self.touch(3)
+        self.assertEqual(self.permission(), 0)
+        self.feed(**pause)
+        self.feed()
+        self.assertEqual(self.permission(), 0, 'an explicit OFF must remain OFF')
+
+  def test_screen_press_during_pause_cannot_create_an_arm(self):
+    for pause in ({'gear': 2}, {'gear': 3}, {'eps': 0}):
+      with self.subTest(pause=pause):
+        self.start(512)
+        self.touch(0)
+        self.feed(**pause)
+        self.touch(3)
+        self.assertEqual(self.permission(), 0)
+        self.feed()
+        self.touch(3)
+        self.assertEqual(self.permission(), 0, 'held input cannot arm on recovery')
+        self.touch(0)
+        self.touch(3)
+        self.assertEqual(self.permission(), 1)
+
+  def test_normal_off_heartbeat_permits_only_a_fresh_neutral_then_press(self):
+    self.arm()
+    self.lib.set_aol_test_heartbeat(False)
+    self.assertEqual(self.permission(0), 0)
+    self.touch(3)
+    self.assertEqual(self.permission(0), 0)
+    self.touch(3)
+    self.assertEqual(self.permission(0), 0)
+    self.touch(0)
+    self.assertEqual(self.permission(0), 0)
+    self.touch(3)
+    self.assertEqual(self.permission(0), 0)
+    self.lib.set_aol_test_heartbeat(True)
+    self.assertEqual(self.permission(), 1)
+
+  def test_unbuckled_screen_lateral_keeps_longitudinal_blocked(self):
+    words = (512, 1536) if os.environ.get('TESLA_SCREEN_NATIVE_RELEASE') == '1' else (512, 1536, 513, 1537)
+    for word in words:
+      self.start(word)
+      self.feed(belt=False)
+      self.arm()
+      self.assertEqual(self.permission(3), 1)
+      steering = self.packer.make_can_msg_safety('DAS_steeringControl', 0,
+                                                {'DAS_steeringAngleRequest': 0, 'DAS_steeringControlType': 1})
+      self.assertTrue(self.lib.safety_tx_hook(steering))
+      self.feed(state=2, belt=False)
+      self.assertEqual(self.permission(3), 1)
+      positive = self.packer.make_can_msg_safety('DAS_control', 0, {'DAS_accelMin': 1, 'DAS_accelMax': 1})
+      self.assertFalse(self.lib.safety_tx_hook(positive))
+      self.feed(state=0, belt=False)
+      self.arm()
+      self.feed(state=0, belt=True)
+      self.assertEqual(self.permission(3), 1)
+      self.assertFalse(self.lib.safety_tx_hook(positive))
+      self.time += 1_100_000
+      self.lib.set_timer(self.time)
+      self.assertEqual(self.permission(3), 0)
+
+  def test_expired_request_and_unhealthy_sources_require_new_gesture(self):
+    self.arm()
+    self.time += 1_100_000
+    self.lib.set_timer(self.time)
+    self.assertEqual(self.lib.aol_get_permission_mask(), 0)
+    self.feed()
+    self.assertEqual(self.permission(), 0)
+    self.arm()
+    self.lib.set_aol_test_heartbeat(False)
+    self.assertEqual(self.permission(), 0)
+    self.lib.set_aol_test_heartbeat(True)
+    self.assertEqual(self.permission(), 0)
+
+  def test_typed_lateral_does_not_grant_longitudinal(self):
+    self.arm()
+    self.assertEqual(self.permission(3), 1)
+    positive = self.packer.make_can_msg_safety('DAS_control', 0, {'DAS_accelMin': 1, 'DAS_accelMax': 1})
+    self.assertFalse(self.lib.safety_tx_hook(positive))
+    steering = self.packer.make_can_msg_safety('DAS_steeringControl', 0,
+                                              {'DAS_steeringAngleRequest': 0, 'DAS_steeringControlType': 1})
+    self.assertTrue(self.lib.safety_tx_hook(steering))
+    self.touch(0)
+    self.touch(3)
+    self.assertFalse(self.lib.safety_tx_hook(steering))
+
+  def test_screen_namespace_excludes_hw1_neighbors_and_unknown_flags(self):
+    for word in (16 | 512, 1024, 514, 1538, 512 | 2048, 16 | 256, 0xFFFF):
+      self.assertEqual(self.lib.set_safety_hooks(10, word), -1, hex(word))
+
+  def test_exact_long_words_debug_authority_and_release_rejection(self):
+    for word in (513, 1537):
+      if os.environ.get('TESLA_SCREEN_NATIVE_RELEASE') == '1':
+        self.assertEqual(self.lib.set_safety_hooks(10, word), -1)
+        positive = self.packer.make_can_msg_safety('DAS_control', 0, {'DAS_accelMin': 1, 'DAS_accelMax': 1})
+        self.assertFalse(self.lib.safety_tx_hook(positive))
+      else:
+        self.start(word)
+        self.feed(state=2)
+        self.assertEqual(self.permission(3), 3)
+        positive = self.packer.make_can_msg_safety('DAS_control', 0, {'DAS_accelMin': 1, 'DAS_accelMax': 1})
+        self.assertTrue(self.lib.safety_tx_hook(positive))
+        self.feed(state=0)
+        self.assertEqual(self.permission(3), 0)
+        self.arm()
+        self.assertEqual(self.permission(3), 1)
+        self.assertFalse(self.lib.safety_tx_hook(positive))
+
+  def test_stock_lkas_ownership_and_bus_one_remain_separate(self):
+    self.arm()
+    self.feed(stock_type=2)
+    self.assertEqual(self.permission(), 1)
+    self.assertEqual(self.lib.safety_fwd_hook(2, 0x488), -1)
+    self.assertEqual(self.lib.safety_fwd_hook(1, 0x3DF), -1)
+    self.touch(0)
+    self.touch(3)
+    self.feed(stock_type=0)
+    self.feed(stock_type=2)
+    self.assertEqual(self.permission(), 0)
+    self.assertEqual(self.lib.safety_fwd_hook(2, 0x488), 0)

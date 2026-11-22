@@ -1,6 +1,12 @@
 #pragma once
 
 #include "opendbc/safety/declarations.h"
+#include "opendbc/safety/modes/subaru_stock_aol.h"
+#include "opendbc/safety/modes/subaru_software_cruise.h"
+#include "opendbc/safety/modes/subaru_sng.h"
+#include "opendbc/safety/modes/subaru_stop_start.h"
+#include "opendbc/safety/modes/subaru_avh.h"
+#include "opendbc/safety/modes/subaru_jacobw.h"
 
 #define SUBARU_STEERING_LIMITS_GENERATOR(steer_max, rate_up, rate_down)               \
   {                                                                                   \
@@ -22,28 +28,18 @@
 #define MSG_SUBARU_Brake_Status          0x13cU
 #define MSG_SUBARU_CruiseControl         0x240U
 #define MSG_SUBARU_Throttle              0x40U
-#define MSG_SUBARU_Steering_2            0x11aU
 #define MSG_SUBARU_Steering_Torque       0x119U
+#define MSG_SUBARU_Steering_2            0x11aU
 #define MSG_SUBARU_Wheel_Speeds          0x13aU
-#define MSG_SUBARU_Brake_Pedal           0x139U
 
 #define MSG_SUBARU_ES_LKAS               0x122U
 #define MSG_SUBARU_ES_LKAS_ANGLE         0x124U
-#define MSG_SUBARU_ES_Brake              0x220U
 #define MSG_SUBARU_ES_Distance           0x221U
 #define MSG_SUBARU_ES_Status             0x222U
 #define MSG_SUBARU_ES_DashStatus         0x321U
 #define MSG_SUBARU_ES_LKAS_State         0x322U
 #define MSG_SUBARU_ES_Infotainment       0x323U
 #define MSG_SUBARU_ES_LKAS_Alert         0x3C4U
-#define MSG_SUBARU_Cruise_Buttons        0x146U
-
-#define MSG_SUBARU_ES_UDS_Request        0x787U
-
-#define MSG_SUBARU_ES_HighBeamAssist     0x121U
-#define MSG_SUBARU_ES_STATIC_1           0x22aU
-#define MSG_SUBARU_ES_STATIC_2           0x325U
-#define MSG_SUBARU_Dashlights            0x390U
 
 #define SUBARU_MAIN_BUS 0U
 #define SUBARU_ALT_BUS  1U
@@ -58,32 +54,12 @@
 #define SUBARU_COMMON_TX_MSGS(alt_bus) \
   {MSG_SUBARU_ES_Distance, alt_bus, 8, .check_relay = false}, \
 
-#define SUBARU_REDNECK_TX_MSGS() \
-  {MSG_SUBARU_Cruise_Buttons, SUBARU_MAIN_BUS, 8, .check_relay = false}, \
-
-#define SUBARU_D_PLATFORM_ANGLE_TX_MSGS(bus) \
-  {MSG_SUBARU_ES_LKAS_ANGLE,   bus, 8, .check_relay = true}, \
-  {MSG_SUBARU_ES_DashStatus,   bus, 8, .check_relay = true}, \
-  {MSG_SUBARU_ES_LKAS_State,   bus, 8, .check_relay = true}, \
-  {MSG_SUBARU_ES_Infotainment, bus, 8, .check_relay = true}, \
-
-#define SUBARU_STOP_START_TX_MSGS(bus) \
-  {MSG_SUBARU_Dashlights, bus, 8, .check_relay = false}, \
-
-#define SUBARU_COMMON_LONG_TX_MSGS(alt_bus) \
-  {MSG_SUBARU_ES_Distance,       alt_bus,         8, .check_relay = true}, \
-  {MSG_SUBARU_ES_Brake,          alt_bus,         8, .check_relay = true}, \
-  {MSG_SUBARU_ES_Status,         alt_bus,         8, .check_relay = true}, \
-
-#define SUBARU_GEN2_LONG_ADDITIONAL_TX_MSGS() \
-  {MSG_SUBARU_ES_UDS_Request,    SUBARU_CAM_BUS,  8, .check_relay = false}, \
-  {MSG_SUBARU_ES_HighBeamAssist, SUBARU_MAIN_BUS, 8, .check_relay = false}, \
-  {MSG_SUBARU_ES_STATIC_1,       SUBARU_MAIN_BUS, 8, .check_relay = false}, \
-  {MSG_SUBARU_ES_STATIC_2,       SUBARU_MAIN_BUS, 8, .check_relay = false}, \
-
-#define SUBARU_STOP_AND_GO_ADDITIONAL_TX_MSGS() \
-  {MSG_SUBARU_Throttle,          SUBARU_CAM_BUS,  8, .check_relay = true}, \
-  {MSG_SUBARU_Brake_Pedal,       SUBARU_CAM_BUS,  8, .check_relay = true}, \
+#define SUBARU_GEN2_ANGLE_TX_MSGS(angle_bus) \
+  {MSG_SUBARU_ES_LKAS_ANGLE, angle_bus, 8, .check_relay = true}, \
+  {MSG_SUBARU_ES_DashStatus, SUBARU_MAIN_BUS, 8, .check_relay = true}, \
+  {MSG_SUBARU_ES_LKAS_State, SUBARU_MAIN_BUS, 8, .check_relay = true}, \
+  {MSG_SUBARU_ES_Infotainment, SUBARU_MAIN_BUS, 8, .check_relay = true}, \
+  SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
 
 #define SUBARU_COMMON_RX_CHECKS(alt_bus)                                                                                                         \
   {.msg = {{MSG_SUBARU_Throttle,        SUBARU_MAIN_BUS, 8, 100U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
@@ -92,33 +68,22 @@
   {.msg = {{MSG_SUBARU_Brake_Status,    alt_bus,         8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
   {.msg = {{MSG_SUBARU_CruiseControl,   alt_bus,         8, 20U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
 
-#define SUBARU_LKAS_ANGLE_RX_CHECKS(alt_bus, status_bus)                                                                                         \
+#define SUBARU_GEN2_ANGLE_RX_CHECKS()                                                                                                           \
   {.msg = {{MSG_SUBARU_Throttle,        SUBARU_MAIN_BUS, 8, 100U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
-  {.msg = {{MSG_SUBARU_Steering_Torque, SUBARU_MAIN_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
-  {.msg = {{MSG_SUBARU_Steering_2,      SUBARU_MAIN_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
-  {.msg = {{MSG_SUBARU_Wheel_Speeds,    alt_bus,         8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
-  {.msg = {{MSG_SUBARU_Brake_Status,    alt_bus,         8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
-  {.msg = {{MSG_SUBARU_ES_Status,       status_bus,      8, 20U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
-  {.msg = {{MSG_SUBARU_ES_DashStatus,   SUBARU_CAM_BUS,  8, 10U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
-
-#define SUBARU_D_PLATFORM_ANGLE_RX_CHECKS() \
-  {.msg = {{MSG_SUBARU_Throttle,        SUBARU_ALT_BUS, 8, 100U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
   {.msg = {{MSG_SUBARU_Steering_Torque, SUBARU_MAIN_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
   {.msg = {{MSG_SUBARU_Steering_2,      SUBARU_MAIN_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
-  {.msg = {{MSG_SUBARU_Wheel_Speeds,    SUBARU_ALT_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
-  {.msg = {{MSG_SUBARU_Brake_Status,    SUBARU_ALT_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
-  {.msg = {{MSG_SUBARU_ES_Brake,        SUBARU_ALT_BUS, 8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
-  {.msg = {{MSG_SUBARU_ES_Status,       SUBARU_ALT_BUS, 8, 20U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
-  {.msg = {{MSG_SUBARU_ES_DashStatus,   SUBARU_CAM_BUS, 8, 10U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_Wheel_Speeds,    SUBARU_ALT_BUS,  8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_Brake_Status,    SUBARU_ALT_BUS,  8, 50U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_ES_Status,       SUBARU_ALT_BUS,  8, 20U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+  {.msg = {{MSG_SUBARU_ES_DashStatus,   SUBARU_CAM_BUS,  8, 10U,  .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
 
 static bool subaru_gen2 = false;
-static bool subaru_longitudinal = false;
-static bool subaru_stop_and_go = false;
-static bool subaru_lkas_angle = false;
+static bool subaru_forester_angle = false;
 static bool subaru_d_platform = false;
+static bool subaru_lkas_angle = false;
 static bool subaru_fixed_angle_limits = false;
-static bool subaru_stop_start_button = false;
-static bool subaru_redneck_cruise = false;
+static bool subaru_angle_main_bus = false;
+static bool subaru_angle_invalid = false;
 
 static uint32_t subaru_get_checksum(const CANPacket_t *msg) {
   return (uint8_t)msg->data[0];
@@ -137,367 +102,399 @@ static uint32_t subaru_compute_checksum(const CANPacket_t *msg) {
   return checksum;
 }
 
-#include "opendbc/safety/modes/subaru_avh.h"
-
 static void subaru_rx_hook(const CANPacket_t *msg) {
   const unsigned int alt_main_bus = subaru_gen2 ? SUBARU_ALT_BUS : SUBARU_MAIN_BUS;
-  const unsigned int status_bus = subaru_gen2 ? SUBARU_ALT_BUS : SUBARU_CAM_BUS;
-  const unsigned int steering_bus = SUBARU_MAIN_BUS;
-  const unsigned int main_bus = subaru_d_platform ? SUBARU_ALT_BUS : SUBARU_MAIN_BUS;
 
-  if ((msg->addr == MSG_SUBARU_Steering_Torque) && (msg->bus == steering_bus)) {
+  if (msg_matches(msg, MSG_SUBARU_Steering_Torque, SUBARU_MAIN_BUS)) {
+    subaru_software_fault = GET_BIT(msg, 12U) || GET_BIT(msg, 29U);
     int torque_driver_new;
-    torque_driver_new = ((GET_BYTES(msg, 0, 4) >> 16) & 0x7FFU);
+    torque_driver_new = ((GET_BYTES_LE(msg, 0, 4) >> 16) & 0x7FFU);
     torque_driver_new = -1 * to_signed(torque_driver_new, 11);
     update_sample(&torque_driver, torque_driver_new);
+    if (subaru_aol_enabled) {
+      subaru_aol_permanent = GET_BIT(msg, 12U);
+      subaru_aol_temporary = GET_BIT(msg, 29U);
+      if (subaru_aol_permanent) {
+        subaru_aol_clear();
+      }
+    }
   }
 
-  if (subaru_lkas_angle && (msg->addr == MSG_SUBARU_Steering_2) && (msg->bus == steering_bus)) {
-    int angle_meas_new = GET_BYTES(msg, 3, 3) & 0x1FFFFU;
+  if (subaru_lkas_angle && (msg->addr == MSG_SUBARU_Steering_2) && (msg->bus == SUBARU_MAIN_BUS)) {
+    int angle_meas_new = GET_BYTES_LE(msg, 3, 3) & 0x1FFFFU;
     angle_meas_new = -1 * to_signed(angle_meas_new, 17);
     update_sample(&angle_meas, angle_meas_new);
   }
 
-  if (subaru_lkas_angle && (msg->addr == MSG_SUBARU_ES_Status) && (msg->bus == status_bus)) {
-    bool cruise_engaged = GET_BIT(msg, 29U);
-    pcm_cruise_check(cruise_engaged);
+  if (subaru_lkas_angle && (msg->addr == MSG_SUBARU_ES_Status) && (msg->bus == (subaru_forester_angle ? SUBARU_CAM_BUS : SUBARU_ALT_BUS))) {
+    pcm_cruise_check(GET_BIT(msg, 29U));
+    subaru_aol_grant(GET_BIT(msg, 29U));
   }
-
   if (subaru_lkas_angle && (msg->addr == MSG_SUBARU_ES_DashStatus) && (msg->bus == SUBARU_CAM_BUS)) {
     acc_main_on = GET_BIT(msg, 49U);
+    subaru_aol_observe_main(acc_main_on);
   }
 
-  if (!subaru_lkas_angle && (msg->addr == MSG_SUBARU_CruiseControl) && (msg->bus == alt_main_bus)) {
+  if (subaru_aol_main_arm && msg_matches(msg, MSG_SUBARU_ES_Distance, subaru_lkas_angle ? SUBARU_ALT_BUS : SUBARU_CAM_BUS)) {
+    subaru_aol_acc_fault = GET_BIT(msg, 15U);
+    if (subaru_aol_acc_fault) {
+      subaru_aol_clear();
+    }
+  }
+
+  // enter controls on rising edge of ACC, exit controls on ACC off
+  if (!subaru_lkas_angle && msg_matches(msg, MSG_SUBARU_CruiseControl, alt_main_bus)) {
     bool cruise_engaged = (msg->data[5] >> 1) & 1U;
     pcm_cruise_check(cruise_engaged);
-
-    acc_main_on = GET_BIT(msg, 40U);
+    subaru_software_main = GET_BIT(msg, 40U);
+    if (subaru_aol_enabled) {
+      subaru_aol_grant(cruise_engaged);
+      subaru_aol_observe_main(GET_BIT(msg, 40U));
+    }
   }
 
   // update vehicle moving with any non-zero wheel speed
-  if ((msg->addr == MSG_SUBARU_Wheel_Speeds) && (msg->bus == alt_main_bus)) {
-    uint32_t fr = (GET_BYTES(msg, 1, 3) >> 4) & 0x1FFFU;
-    uint32_t rr = (GET_BYTES(msg, 3, 3) >> 1) & 0x1FFFU;
-    uint32_t rl = (GET_BYTES(msg, 4, 3) >> 6) & 0x1FFFU;
-    uint32_t fl = (GET_BYTES(msg, 6, 2) >> 3) & 0x1FFFU;
+  if (msg_matches(msg, MSG_SUBARU_Wheel_Speeds, alt_main_bus)) {
+    uint32_t fr = (GET_BYTES_LE(msg, 1, 3) >> 4) & 0x1FFFU;
+    uint32_t rr = (GET_BYTES_LE(msg, 3, 3) >> 1) & 0x1FFFU;
+    uint32_t rl = (GET_BYTES_LE(msg, 4, 3) >> 6) & 0x1FFFU;
+    uint32_t fl = (GET_BYTES_LE(msg, 6, 2) >> 3) & 0x1FFFU;
 
-    vehicle_moving = (fr > 0U) || (rr > 0U) || (rl > 0U) || (fl > 0U);
+    vehicle_moving = (fr | rr | rl | fl) != 0U;
 
     UPDATE_VEHICLE_SPEED((fr + rr + rl + fl) / 4.0 * 0.057 * KPH_TO_MS);
   }
 
-  if ((msg->addr == MSG_SUBARU_Brake_Status) && (msg->bus == alt_main_bus)) {
+  if (msg_matches(msg, MSG_SUBARU_Brake_Status, alt_main_bus)) {
     brake_pressed = (msg->data[7] >> 6) & 1U;
   }
 
-  if ((msg->addr == MSG_SUBARU_Throttle) && (msg->bus == main_bus)) {
+  if (msg_matches(msg, MSG_SUBARU_Throttle, subaru_d_platform ? SUBARU_ALT_BUS : SUBARU_MAIN_BUS)) {
     gas_pressed = msg->data[4] != 0U;
   }
+  subaru_sng_rx(msg);
+  subaru_stop_start_rx(msg);
+  subaru_avh_rx(msg);
 }
 
 static bool subaru_tx_hook(const CANPacket_t *msg) {
-  const TorqueSteeringLimits SUBARU_STEERING_LIMITS      = SUBARU_STEERING_LIMITS_GENERATOR(3071, 50, 70);
-  const TorqueSteeringLimits SUBARU_GEN2_STEERING_LIMITS = SUBARU_STEERING_LIMITS_GENERATOR(1500, 35, 50);
-
+  const TorqueSteeringLimits SUBARU_STEERING_LIMITS      = SUBARU_STEERING_LIMITS_GENERATOR(2047, 50, 70);
+  const TorqueSteeringLimits SUBARU_GEN2_STEERING_LIMITS = SUBARU_STEERING_LIMITS_GENERATOR(1000, 40, 40);
   const AngleSteeringLimits SUBARU_ANGLE_STEERING_LIMITS = {
-    .max_angle = 650 * 100,
+    .max_angle = (subaru_forester_angle ? 650 : SUBARU_JACOBW_MAX_ANGLE) * 100,
     .angle_deg_to_can = 100.,
     .frequency = 50U,
   };
-
   const AngleSteeringLimits SUBARU_FIXED_ANGLE_STEERING_LIMITS = {
     .max_angle = 545 * 100,
     .angle_deg_to_can = 100.,
-    .angle_rate_up_lookup = {
-      {0.0, 5.0, 35.0},
-      {5.0, 0.8, 0.15},
-    },
-    .angle_rate_down_lookup = {
-      {0.0, 5.0, 35.0},
-      {5.0, 0.8, 0.15},
-    },
+    .angle_rate_up_lookup = {{0.0, 5.0, 35.0}, {5.0, 0.8, 0.15}},
+    .angle_rate_down_lookup = {{0.0, 5.0, 35.0}, {5.0, 0.8, 0.15}},
     .frequency = 50U,
   };
+  // Only Crosstrek 2025 selects this VM profile. Match the host CarParams
+  // vehicle model instead of the frozen generic angle example's Ascent geometry.
+  const AngleSteeringParams SUBARU_CROSSTREK_2025_ANGLE_PARAMS = {
+    .slip_factor = -0.0006281955319491566,
+    .steer_ratio = 13.0,
+    .wheelbase = 2.6700000762939453,
+  };
 
-  const AngleSteeringParams SUBARU_ANGLE_STEERING_PARAMS = {
-    .slip_factor = -0.000580374471400815,
-    .steer_ratio = 13.5,
-    .wheelbase = 2.890000104904175,
+  const AngleSteeringParams SUBARU_FORESTER_2022_ANGLE_PARAMS = {
+    .slip_factor = -0.0006281956135115129,
+    .steer_ratio = 17.0,
+    .wheelbase = 2.6700000762939453,
   };
 
   const LongitudinalLimits SUBARU_LONG_LIMITS = {
     .min_gas = 808,       // appears to be engine braking
     .max_gas = 3400,      // approx  2 m/s^2 when maxing cruise_rpm and cruise_throttle
-    .inactive_gas = 1818, // this is zero acceleration
+    .inactive_gas = 1818,  // this is zero acceleration
     .max_brake = 600,     // approx -3.5 m/s^2
 
     .min_transmission_rpm = 0,
     .max_transmission_rpm = 3600,
   };
 
-  bool tx = true;
-  bool violation = false;
+  bool tx = false;
+  if (!subaru_angle_invalid) {
+    tx = true;
+    bool violation = false;
 
-  // steer cmd checks
-  if (msg->addr == MSG_SUBARU_ES_LKAS) {
-    int desired_torque = ((GET_BYTES(msg, 0, 4) >> 16) & 0x1FFFU);
-    desired_torque = -1 * to_signed(desired_torque, 13);
-
-    bool steer_req = (msg->data[3] >> 5) & 1U;
-
-    const TorqueSteeringLimits limits = subaru_gen2 ? SUBARU_GEN2_STEERING_LIMITS : SUBARU_STEERING_LIMITS;
-    violation |= steer_torque_cmd_checks(desired_torque, steer_req, limits);
-  }
-
-  if (msg->addr == MSG_SUBARU_ES_LKAS_ANGLE) {
-    int desired_angle = GET_BYTES(msg, 5, 3) & 0x1FFFFU;
-    desired_angle = -1 * to_signed(desired_angle, 17);
-    bool lkas_request = GET_BIT(msg, 12U);
-
-    if (subaru_fixed_angle_limits) {
-      violation |= steer_angle_cmd_checks(desired_angle, lkas_request, SUBARU_FIXED_ANGLE_STEERING_LIMITS);
-    } else {
-      violation |= steer_angle_cmd_checks_vm(desired_angle, lkas_request, SUBARU_ANGLE_STEERING_LIMITS, SUBARU_ANGLE_STEERING_PARAMS);
+    if (msg->addr == 0x390U) {
+      violation |= !subaru_stop_start_tx(msg);
     }
-  }
 
-  // check es_brake brake_pressure limits
-  if (msg->addr == MSG_SUBARU_ES_Brake) {
-    int es_brake_pressure = GET_BYTES(msg, 2, 2);
-    violation |= longitudinal_brake_checks(es_brake_pressure, SUBARU_LONG_LIMITS);
-  }
+    if (msg->addr == 0x6BBU) {
+      violation |= !subaru_avh_tx(msg);
+    }
 
-  // check es_distance cruise_throttle limits
-  if (msg->addr == MSG_SUBARU_ES_Distance) {
-    int cruise_throttle = (GET_BYTES(msg, 2, 2) & 0x1FFFU);
-    bool cruise_cancel = (msg->data[7] >> 0) & 1U;
+    // steer cmd checks
+    if (msg->addr == MSG_SUBARU_ES_LKAS) {
+      int desired_torque = ((GET_BYTES_LE(msg, 0, 4) >> 16) & 0x1FFFU);
+      desired_torque = -1 * to_signed(desired_torque, 13);
 
-    if (subaru_longitudinal) {
-      violation |= longitudinal_gas_checks(cruise_throttle, SUBARU_LONG_LIMITS);
-    } else {
+      bool steer_req = (msg->data[3] >> 5) & 1U;
+
+      const TorqueSteeringLimits limits = subaru_gen2 ? SUBARU_GEN2_STEERING_LIMITS : SUBARU_STEERING_LIMITS;
+      violation |= steer_torque_cmd_checks(desired_torque, steer_req, limits);
+    }
+    if (msg->addr == MSG_SUBARU_ES_LKAS_ANGLE) {
+      int desired_angle = GET_BYTES_LE(msg, 5, 3) & 0x1FFFFU;
+      desired_angle = -1 * to_signed(desired_angle, 17);
+      bool lkas_request = GET_BIT(msg, 12U);
+      violation |= lkas_request && !acc_main_on;
+      if (subaru_angle_main_bus) {
+        violation |= SAFETY_ABS(desired_angle) > SUBARU_FIXED_ANGLE_STEERING_LIMITS.max_angle;
+      }
+      if (subaru_fixed_angle_limits) {
+        violation |= steer_angle_cmd_checks(desired_angle, lkas_request, SUBARU_FIXED_ANGLE_STEERING_LIMITS);
+      } else {
+        if (!subaru_forester_angle) {
+          violation |= SAFETY_ABS(desired_angle) > SUBARU_ANGLE_STEERING_LIMITS.max_angle;
+        }
+        violation |= steer_angle_cmd_checks_vm(desired_angle, lkas_request, SUBARU_ANGLE_STEERING_LIMITS, subaru_forester_angle ? SUBARU_FORESTER_2022_ANGLE_PARAMS : SUBARU_CROSSTREK_2025_ANGLE_PARAMS);
+      }
+    }
+
+    if (msg->addr == MSG_SUBARU_ES_LKAS_Alert) {
+      violation |= subaru_get_checksum(msg) != subaru_compute_checksum(msg);
+    }
+
+    // check es_distance cruise_throttle limits
+    if (msg->addr == MSG_SUBARU_ES_Distance) {
+      int cruise_throttle = (GET_BYTES_LE(msg, 2, 2) & 0x1FFFU);
+      bool cruise_cancel = (msg->data[7] >> 0) & 1U;
+
       // If openpilot is not controlling long, only allow ES_Distance for cruise cancel requests,
       // (when Cruise_Cancel is true, and Cruise_Throttle is inactive)
       violation |= (cruise_throttle != SUBARU_LONG_LIMITS.inactive_gas);
       violation |= (!cruise_cancel);
     }
+
+    if (violation){
+      tx = false;
+    }
   }
 
-  // check es_status transmission_rpm limits
-  if (msg->addr == MSG_SUBARU_ES_Status) {
-    int transmission_rpm = (GET_BYTES(msg, 2, 2) & 0x1FFFU);
-    violation |= longitudinal_transmission_rpm_checks(transmission_rpm, SUBARU_LONG_LIMITS);
+  if ((msg->addr == 0x40U) || (msg->addr == 0x139U)) {
+    tx = subaru_sng_tx(msg);
   }
-
-  if (msg->addr == MSG_SUBARU_ES_UDS_Request) {
-    // tester present ('\x02\x3E\x80\x00\x00\x00\x00\x00') is allowed for gen2 longitudinal to keep eyesight disabled
-    bool is_tester_present = (GET_BYTES(msg, 0, 4) == 0x00803E02U) && (GET_BYTES(msg, 4, 4) == 0x0U);
-
-    // reading ES button data by identifier (b'\x03\x22\x11\x30\x00\x00\x00\x00') is also allowed (DID 0x1130)
-    bool is_button_rdbi = (GET_BYTES(msg, 0, 4) == 0x30112203U) && (GET_BYTES(msg, 4, 4) == 0x0U);
-
-    violation |= !(is_tester_present || is_button_rdbi);
-  }
-
-  if (msg->addr == MSG_SUBARU_Dashlights) {
-    violation |= !subaru_stop_start_button;
-    violation |= msg->bus != (subaru_gen2 ? SUBARU_ALT_BUS : SUBARU_MAIN_BUS);
-    violation |= !GET_BIT(msg, 54U);
-    violation |= subaru_get_checksum(msg) != subaru_compute_checksum(msg);
-  }
-
-  if (msg->addr == MSG_SUBARU_ES_LKAS_Alert) {
-    violation |= subaru_get_checksum(msg) != subaru_compute_checksum(msg);
-  }
-
-  if (msg->addr == MSG_SUBARU_Cruise_Buttons) {
-    violation |= !subaru_redneck_cruise;
-    violation |= msg->bus != SUBARU_MAIN_BUS;
-    violation |= subaru_get_checksum(msg) != subaru_compute_checksum(msg);
-  }
-
-  if (msg->addr == 0x6BBU) {
-    violation |= !subaru_avh_tx(msg);
-  }
-
-  if (violation){
-    tx = false;
+  if (msg->addr == 0x146U) {
+    tx = subaru_software_tx(msg);
   }
   return tx;
 }
 
-static safety_config subaru_init(uint16_t param) {
-  static const CanMsg SUBARU_LEGACY_AVH_TX_MSGS[] = {
-    SUBARU_BASE_TX_MSGS(SUBARU_ALT_BUS, MSG_SUBARU_ES_LKAS_ANGLE)
-    SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
-    SUBARU_STOP_START_TX_MSGS(SUBARU_ALT_BUS)
-    {0x6BBU, SUBARU_ALT_BUS, 8, .check_relay = false},
-  };
+static safety_config subaru_init(uint16_t raw_param) {
+  uint16_t param = raw_param;
+  const bool impreza_main = (param == 4096U) || (param == 4104U) || (param == 4608U) || (param == 4616U);
+  if (impreza_main) {
+    param &= ~4096U;
+  }
+#ifdef ALLOW_DEBUG
+  const bool avh = ((param == 1169U) || (param == 1425U)) &&
+    (((unsigned int)alternative_experience == 0U) || ((unsigned int)alternative_experience == 32U));
+#else
+  const bool avh = false;
+#endif
+  const bool stop_start = ((param == 401U) || (param == 465U) || (avh && (param == 1425U))) &&
+    (((unsigned int)alternative_experience == 0U) || ((unsigned int)alternative_experience == 32U));
+  const uint16_t base_param = stop_start ? ((param == 465U) ? 209U : 145U) : (avh ? 145U : param);
   static const CanMsg SUBARU_TX_MSGS[] = {
     SUBARU_BASE_TX_MSGS(SUBARU_MAIN_BUS, MSG_SUBARU_ES_LKAS)
     SUBARU_COMMON_TX_MSGS(SUBARU_MAIN_BUS)
   };
 
-  static const CanMsg SUBARU_REDNECK_TX_MSGS_CONFIG[] = {
+  static const CanMsg SUBARU_SOFTWARE_TX_MSGS[] = {
     SUBARU_BASE_TX_MSGS(SUBARU_MAIN_BUS, MSG_SUBARU_ES_LKAS)
     SUBARU_COMMON_TX_MSGS(SUBARU_MAIN_BUS)
-    SUBARU_REDNECK_TX_MSGS()
+    {0x146U, SUBARU_MAIN_BUS, 8, .check_relay = false},
   };
 
-  static const CanMsg SUBARU_REDNECK_STOP_AND_GO_TX_MSGS_CONFIG[] = {
+  static const CanMsg SUBARU_SNG_TX_MSGS[] = {
     SUBARU_BASE_TX_MSGS(SUBARU_MAIN_BUS, MSG_SUBARU_ES_LKAS)
     SUBARU_COMMON_TX_MSGS(SUBARU_MAIN_BUS)
-    SUBARU_REDNECK_TX_MSGS()
-    SUBARU_STOP_AND_GO_ADDITIONAL_TX_MSGS()
+    {0x40U, SUBARU_CAM_BUS, 8, .check_relay = true, .disable_static_blocking = true},
+    {0x139U, SUBARU_CAM_BUS, 8, .check_relay = true, .disable_static_blocking = true},
   };
-
-  static const CanMsg SUBARU_LONG_TX_MSGS[] = {
+  static const CanMsg SUBARU_SNG_SOFTWARE_TX_MSGS[] = {
     SUBARU_BASE_TX_MSGS(SUBARU_MAIN_BUS, MSG_SUBARU_ES_LKAS)
-    SUBARU_COMMON_LONG_TX_MSGS(SUBARU_MAIN_BUS)
+    SUBARU_COMMON_TX_MSGS(SUBARU_MAIN_BUS)
+    {0x146U, SUBARU_MAIN_BUS, 8, .check_relay = false},
+    {0x40U, SUBARU_CAM_BUS, 8, .check_relay = true, .disable_static_blocking = true},
+    {0x139U, SUBARU_CAM_BUS, 8, .check_relay = true, .disable_static_blocking = true},
   };
 
   static const CanMsg SUBARU_GEN2_TX_MSGS[] = {
     SUBARU_BASE_TX_MSGS(SUBARU_ALT_BUS, MSG_SUBARU_ES_LKAS)
     SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
   };
-
-  static const CanMsg SUBARU_GEN2_LONG_TX_MSGS[] = {
-    SUBARU_BASE_TX_MSGS(SUBARU_ALT_BUS, MSG_SUBARU_ES_LKAS)
-    SUBARU_COMMON_LONG_TX_MSGS(SUBARU_ALT_BUS)
-    SUBARU_GEN2_LONG_ADDITIONAL_TX_MSGS()
+  static const CanMsg SUBARU_GEN2_ANGLE_TX_MSGS_LIST[] = {
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
   };
 
-  static const CanMsg SUBARU_STOP_AND_GO_TX_MSGS[] = {
-    SUBARU_BASE_TX_MSGS(SUBARU_MAIN_BUS, MSG_SUBARU_ES_LKAS)
-    SUBARU_COMMON_TX_MSGS(SUBARU_MAIN_BUS)
-    SUBARU_STOP_AND_GO_ADDITIONAL_TX_MSGS()
+  static const CanMsg SUBARU_ASCENT_ANGLE_TX_MSGS_LIST[] = {
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
   };
 
-  static const CanMsg SUBARU_LKAS_ANGLE_TX_MSGS[] = {
+  static const CanMsg SUBARU_ASCENT_ALERT_TX_MSGS[] = {
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
+    {MSG_SUBARU_ES_LKAS_Alert, SUBARU_MAIN_BUS, 8, .check_relay = true},
+  };
+
+  static const CanMsg SUBARU_STOP_START_TX_MSGS[] = {
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
+    {0x390U, SUBARU_ALT_BUS, 8, .check_relay = false},
+  };
+
+  static const CanMsg SUBARU_AVH_TX_MSGS[] = {
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
+    {0x6BBU, SUBARU_ALT_BUS, 8, .check_relay = false},
+  };
+  static const CanMsg SUBARU_AVH_STOP_START_TX_MSGS[] = {
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
+    {0x6BBU, SUBARU_ALT_BUS, 8, .check_relay = false},
+    {0x390U, SUBARU_ALT_BUS, 8, .check_relay = false},
+  };
+
+  static const CanMsg SUBARU_FORESTER_ANGLE_TX_MSGS[] = {
     SUBARU_BASE_TX_MSGS(SUBARU_MAIN_BUS, MSG_SUBARU_ES_LKAS_ANGLE)
     SUBARU_COMMON_TX_MSGS(SUBARU_MAIN_BUS)
   };
 
-  static const CanMsg SUBARU_GEN2_LKAS_ANGLE_TX_MSGS[] = {
-    SUBARU_BASE_TX_MSGS(SUBARU_ALT_BUS, MSG_SUBARU_ES_LKAS_ANGLE)
-    SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
+  static const CanMsg SUBARU_OUTBACK_STOP_START_TX_MSGS[] = {
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
+    {0x390U, SUBARU_ALT_BUS, 8, .check_relay = false},
   };
 
-  static const CanMsg SUBARU_ASCENT_LKAS_ALERT_TX_MSGS[] = {
-    SUBARU_BASE_TX_MSGS(SUBARU_ALT_BUS, MSG_SUBARU_ES_LKAS_ANGLE)
-    SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
-    {MSG_SUBARU_ES_LKAS_Alert, SUBARU_MAIN_BUS, 8, .check_relay = true},
-  };
-
-  static const CanMsg SUBARU_GEN2_LKAS_ANGLE_STOP_START_TX_MSGS[] = {
-    SUBARU_BASE_TX_MSGS(SUBARU_ALT_BUS, MSG_SUBARU_ES_LKAS_ANGLE)
-    SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
-    SUBARU_STOP_START_TX_MSGS(SUBARU_ALT_BUS)
-  };
-
-  static const CanMsg SUBARU_D_PLATFORM_ANGLE_MAIN_TX_MSGS[] = {
-    SUBARU_D_PLATFORM_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
-    SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
-  };
-
-  static const CanMsg SUBARU_D_PLATFORM_ANGLE_STOP_START_MAIN_TX_MSGS[] = {
-    SUBARU_D_PLATFORM_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
-    SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
-    SUBARU_STOP_START_TX_MSGS(SUBARU_ALT_BUS)
-  };
-
-  static const CanMsg SUBARU_D_PLATFORM_ANGLE_CAMERA_TX_MSGS[] = {
-    SUBARU_D_PLATFORM_ANGLE_TX_MSGS(SUBARU_CAM_BUS)
-    SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
-  };
-
-  static RxCheck subaru_rx_checks[] = {
-    SUBARU_COMMON_RX_CHECKS(SUBARU_MAIN_BUS)
-  };
-
-  static RxCheck subaru_gen2_rx_checks[] = {
-    SUBARU_COMMON_RX_CHECKS(SUBARU_ALT_BUS)
-  };
-
-  static RxCheck subaru_lkas_angle_rx_checks[] = {
-    SUBARU_LKAS_ANGLE_RX_CHECKS(SUBARU_MAIN_BUS, SUBARU_CAM_BUS)
-  };
-
-  static RxCheck subaru_gen2_lkas_angle_rx_checks[] = {
-    SUBARU_LKAS_ANGLE_RX_CHECKS(SUBARU_ALT_BUS, SUBARU_ALT_BUS)
-  };
-
-  static RxCheck subaru_d_platform_angle_rx_checks[] = {
-    SUBARU_D_PLATFORM_ANGLE_RX_CHECKS()
-  };
-
+  const uint16_t SUBARU_PARAM_ASCENT_ALERT = 2048;
+  const bool ascent_alert = param == (1U | 16U | 128U | 32U | SUBARU_PARAM_ASCENT_ALERT);
   const uint16_t SUBARU_PARAM_GEN2 = 1;
-
-  subaru_gen2 = GET_FLAG(param, SUBARU_PARAM_GEN2);
-
-  const uint16_t SUBARU_PARAM_STOP_AND_GO = 8;
-  subaru_stop_and_go = GET_FLAG(param, SUBARU_PARAM_STOP_AND_GO);
-
   const uint16_t SUBARU_PARAM_LKAS_ANGLE = 16;
+  const uint16_t SUBARU_PARAM_FIXED_ANGLE = 128;
+
+  const uint16_t SUBARU_PARAM_ANGLE_MAIN_BUS = 32;
+  subaru_d_platform = (base_param == 209U) &&
+    (((unsigned int)alternative_experience == 0U) || ((unsigned int)alternative_experience == 32U));
+  subaru_angle_main_bus = GET_FLAG(param, SUBARU_PARAM_ANGLE_MAIN_BUS) || subaru_d_platform;
+
+  subaru_forester_angle = (param == 16U) &&
+    (((unsigned int)alternative_experience == 0U) || ((unsigned int)alternative_experience == 32U));
+  subaru_gen2 = GET_FLAG(param, SUBARU_PARAM_GEN2);
   subaru_lkas_angle = GET_FLAG(param, SUBARU_PARAM_LKAS_ANGLE);
+  subaru_fixed_angle_limits = GET_FLAG(param, SUBARU_PARAM_FIXED_ANGLE);
+  subaru_angle_invalid = (subaru_lkas_angle && (base_param != (SUBARU_PARAM_GEN2 | SUBARU_PARAM_LKAS_ANGLE)) &&
+                          (base_param != (SUBARU_PARAM_GEN2 | SUBARU_PARAM_LKAS_ANGLE | SUBARU_PARAM_FIXED_ANGLE)) &&
+                          (base_param != (SUBARU_PARAM_GEN2 | SUBARU_PARAM_LKAS_ANGLE | SUBARU_PARAM_FIXED_ANGLE | SUBARU_PARAM_ANGLE_MAIN_BUS)) && !ascent_alert && !subaru_forester_angle && !subaru_d_platform) ||
+                         ((subaru_fixed_angle_limits || subaru_angle_main_bus) && !subaru_lkas_angle);
 
-  const uint16_t SUBARU_PARAM_D_PLATFORM = 32;
-  subaru_d_platform = GET_FLAG(param, SUBARU_PARAM_D_PLATFORM);
+  // TODO: re-enable once more work is done on the limits
+  // revert this in the PR that re-enables Subaru longitudinal: https://github.com/commaai/opendbc/pull/3689
 
-  const uint16_t SUBARU_PARAM_D_PLATFORM_CAMERA = 64;
-  const bool subaru_d_platform_camera = GET_FLAG(param, SUBARU_PARAM_D_PLATFORM_CAMERA);
-
-  const uint16_t SUBARU_PARAM_FIXED_ANGLE_LIMITS = 128;
-  subaru_fixed_angle_limits = GET_FLAG(param, SUBARU_PARAM_FIXED_ANGLE_LIMITS);
-
-  const uint16_t SUBARU_PARAM_STOP_START_BUTTON = 256;
-  subaru_stop_start_button = GET_FLAG(param, SUBARU_PARAM_STOP_START_BUTTON);
-
-  const uint16_t SUBARU_PARAM_REDNECK_CRUISE = 512;
-  subaru_redneck_cruise = GET_FLAG(param, SUBARU_PARAM_REDNECK_CRUISE);
-
-  const uint16_t SUBARU_PARAM_ASCENT_LKAS_ALERT = 2048;
-  const bool subaru_ascent_lkas_alert = GET_FLAG(param, SUBARU_PARAM_ASCENT_LKAS_ALERT);
-
-#ifdef ALLOW_DEBUG
-  const uint16_t SUBARU_PARAM_LONGITUDINAL = 2;
-  subaru_longitudinal = GET_FLAG(param, SUBARU_PARAM_LONGITUDINAL);
-#endif
+  subaru_avh_init(avh);
+  subaru_stop_start_init(stop_start, (uint8_t)(subaru_d_platform ? SUBARU_ALT_BUS : SUBARU_MAIN_BUS), param == 465U);
+  subaru_sng_reset(((param == 8U) || (param == 520U)) &&
+    (((unsigned int)alternative_experience == 0U) || ((unsigned int)alternative_experience == 32U)));
+  subaru_software_reset(((param == 512U) || (param == 520U)) && (((unsigned int)alternative_experience == 0U) ||
+    ((unsigned int)alternative_experience == 32U)));
+  subaru_aol_reset();
+  subaru_aol_gear_bus = (uint8_t)(subaru_d_platform ? SUBARU_ALT_BUS : SUBARU_MAIN_BUS);
+  subaru_aol_enabled = ((unsigned int)alternative_experience == 32U) &&
+    ((param == 209U) || (param == 465U) || (param == 16U) || (param == 0U) || (param == 1U) || (param == 17U) || (param == 145U) ||
+     avh || (param == 177U) || (param == 401U) || (param == 8U) || (param == 520U) || (param == 512U) || (param == 2225U));
+  subaru_aol_main_arm = subaru_aol_enabled && ((param == 17U) || impreza_main || subaru_d_platform);
+  if (subaru_aol_enabled) {
+    static const AolSafetyPolicy policy = {
+      .reset = subaru_aol_reset,
+      .host_request = subaru_aol_host_request,
+      .request_mask = subaru_aol_request,
+      .permission_mask = subaru_aol_permission,
+      .rx_invalid = subaru_aol_clear,
+    };
+    aol_policy = &policy;
+  }
 
   safety_config ret;
+  // Only one Subaru profile is active; share its mutable RX workspace.
+  static RxCheck subaru_rx_workspace[8];
+  int rx_count;
   if (subaru_lkas_angle) {
-    ret = subaru_d_platform ? (subaru_stop_start_button ? BUILD_SAFETY_CFG(subaru_d_platform_angle_rx_checks, SUBARU_D_PLATFORM_ANGLE_STOP_START_MAIN_TX_MSGS) : \
-                              (subaru_d_platform_camera ? BUILD_SAFETY_CFG(subaru_d_platform_angle_rx_checks, SUBARU_D_PLATFORM_ANGLE_CAMERA_TX_MSGS) : \
-                              BUILD_SAFETY_CFG(subaru_d_platform_angle_rx_checks, SUBARU_D_PLATFORM_ANGLE_MAIN_TX_MSGS))) : \
-          subaru_gen2 ? (subaru_ascent_lkas_alert ? BUILD_SAFETY_CFG(subaru_gen2_lkas_angle_rx_checks, SUBARU_ASCENT_LKAS_ALERT_TX_MSGS) : \
-                        subaru_stop_start_button ? BUILD_SAFETY_CFG(subaru_gen2_lkas_angle_rx_checks, SUBARU_GEN2_LKAS_ANGLE_STOP_START_TX_MSGS) : \
-                         BUILD_SAFETY_CFG(subaru_gen2_lkas_angle_rx_checks, SUBARU_GEN2_LKAS_ANGLE_TX_MSGS)) : \
-                        BUILD_SAFETY_CFG(subaru_lkas_angle_rx_checks, SUBARU_LKAS_ANGLE_TX_MSGS);
+    static const RxCheck subaru_gen2_angle_rx_checks[] = {
+      SUBARU_GEN2_ANGLE_RX_CHECKS()
+      {.msg = {{MSG_SUBARU_ES_Distance, SUBARU_ALT_BUS, 8, 20U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    };
+    rx_count = sizeof(subaru_gen2_angle_rx_checks) / sizeof(subaru_gen2_angle_rx_checks[0]);
+    for (int i = 0; i < rx_count; i++) {
+      subaru_rx_workspace[i] = subaru_gen2_angle_rx_checks[i];
+    }
+    // Only one Subaru angle profile is active. Rebind the complete topology
+    // on every init; the safety selector resets every selected RX status afterward.
+    subaru_rx_workspace[0].msg[0].bus = subaru_d_platform ? SUBARU_ALT_BUS : SUBARU_MAIN_BUS;
+    subaru_rx_workspace[3].msg[0].bus = subaru_forester_angle ? SUBARU_MAIN_BUS : SUBARU_ALT_BUS;
+    subaru_rx_workspace[4].msg[0].bus = subaru_forester_angle ? SUBARU_MAIN_BUS : SUBARU_ALT_BUS;
+    subaru_rx_workspace[5].msg[0].bus = subaru_forester_angle ? SUBARU_CAM_BUS : SUBARU_ALT_BUS;
+    ret = subaru_d_platform ? (stop_start ? BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_OUTBACK_STOP_START_TX_MSGS) :
+                                          BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_ASCENT_ANGLE_TX_MSGS_LIST)) :
+          subaru_forester_angle ? BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_FORESTER_ANGLE_TX_MSGS) :
+          avh ? (stop_start ? BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_AVH_STOP_START_TX_MSGS) :
+                              BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_AVH_TX_MSGS)) :
+          stop_start ? BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_STOP_START_TX_MSGS) :
+          ascent_alert ? BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_ASCENT_ALERT_TX_MSGS) :
+          subaru_angle_main_bus ? BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_ASCENT_ANGLE_TX_MSGS_LIST) :
+                                  BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_GEN2_ANGLE_TX_MSGS_LIST);
+    // Keep the original seven checks on other profiles; only MAIN arming needs ACC health.
+    if (!subaru_aol_main_arm) {
+      rx_count--;
+    }
   } else if (subaru_gen2) {
-    ret = subaru_longitudinal ? BUILD_SAFETY_CFG(subaru_gen2_rx_checks, SUBARU_GEN2_LONG_TX_MSGS) : \
-                                BUILD_SAFETY_CFG(subaru_gen2_rx_checks, SUBARU_GEN2_TX_MSGS);
+    static const RxCheck subaru_gen2_rx_checks[] = {
+      SUBARU_COMMON_RX_CHECKS(SUBARU_ALT_BUS)
+    };
+    rx_count = sizeof(subaru_gen2_rx_checks) / sizeof(subaru_gen2_rx_checks[0]);
+    for (int i = 0; i < rx_count; i++) {
+      subaru_rx_workspace[i] = subaru_gen2_rx_checks[i];
+    }
+    ret = BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_GEN2_TX_MSGS);
   } else {
-    ret = subaru_redneck_cruise ? (subaru_stop_and_go ? BUILD_SAFETY_CFG(subaru_rx_checks, SUBARU_REDNECK_STOP_AND_GO_TX_MSGS_CONFIG) : \
-                                   BUILD_SAFETY_CFG(subaru_rx_checks, SUBARU_REDNECK_TX_MSGS_CONFIG)) : \
-          subaru_longitudinal ? BUILD_SAFETY_CFG(subaru_rx_checks, SUBARU_LONG_TX_MSGS) : \
-          subaru_stop_and_go  ? BUILD_SAFETY_CFG(subaru_rx_checks, SUBARU_STOP_AND_GO_TX_MSGS) : \
-                                BUILD_SAFETY_CFG(subaru_rx_checks, SUBARU_TX_MSGS);
+    static const RxCheck subaru_rx_checks[] = {
+      SUBARU_COMMON_RX_CHECKS(SUBARU_MAIN_BUS)
+      {.msg = {{MSG_SUBARU_ES_Distance, SUBARU_CAM_BUS, 8, 20U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    };
+    rx_count = sizeof(subaru_rx_checks) / sizeof(subaru_rx_checks[0]);
+    for (int i = 0; i < rx_count; i++) {
+      subaru_rx_workspace[i] = subaru_rx_checks[i];
+    }
+    if (!subaru_aol_main_arm) {
+      rx_count--;
+    }
+    ret = subaru_sng_enabled ? (subaru_software_enabled ?
+      BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_SNG_SOFTWARE_TX_MSGS) : BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_SNG_TX_MSGS)) :
+      subaru_software_enabled ? BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_SOFTWARE_TX_MSGS) :
+                                   BUILD_SAFETY_CFG(subaru_rx_workspace, SUBARU_TX_MSGS);
   }
-  bool avh_enabled = false;
-#ifdef ALLOW_DEBUG
-  avh_enabled = GET_FLAG(param, 1024U) && subaru_gen2 && subaru_lkas_angle && subaru_fixed_angle_limits &&
-                subaru_stop_start_button && !subaru_d_platform && !GET_FLAG(param, 2U) && !subaru_redneck_cruise;
-#endif
-  subaru_avh_init(avh_enabled);
-  if (avh_enabled) {
-    ret = BUILD_SAFETY_CFG(subaru_gen2_lkas_angle_rx_checks, SUBARU_LEGACY_AVH_TX_MSGS);
+  ret.rx_checks_len = rx_count;
+  if ((((unsigned int)alternative_experience == 32U) && !subaru_aol_enabled) ||
+      (impreza_main && ((unsigned int)alternative_experience != 32U))) {
+    ret.tx_msgs = NULL;
+    ret.tx_msgs_len = 0;
   }
   return ret;
+}
+
+static void subaru_optional_rx(const CANPacket_t *msg) {
+  subaru_aol_optional_rx(msg);
+  subaru_software_optional_rx(msg);
+  subaru_sng_rx(msg);
+  subaru_stop_start_rx(msg);
+  subaru_avh_rx(msg);
 }
 
 const safety_hooks subaru_hooks = {
   .init = subaru_init,
   .rx = subaru_rx_hook,
-  .rx_all = subaru_avh_rx,
+  .optional_rx = subaru_optional_rx,
+  .fwd = subaru_sng_fwd,
   .tx = subaru_tx_hook,
   .get_counter = subaru_get_counter,
   .get_checksum = subaru_get_checksum,

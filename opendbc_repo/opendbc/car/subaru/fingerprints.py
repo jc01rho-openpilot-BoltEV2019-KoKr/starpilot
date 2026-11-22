@@ -41,13 +41,12 @@ FW_VERSIONS = {
     ],
     (Ecu.eps, 0x746, None): [
       b'%\xc0\xd0\x11',
-      b'\x55\xc0\xd0\x10',
+      b'U\xc0\xd0\x10',
     ],
     (Ecu.fwdCamera, 0x787, None): [
       b'\x05!\x08\x1dK\x05!\x08\x01/',
       b'\x17!\x08\x01A\x12!\x08\x00;',
       b'\x17!\x08\x01A\x00\x00\x00\x00\x00',
-      b'\x20\x02\x0e',
     ],
     (Ecu.engine, 0x7a2, None): [
       b'\xe5,\xa0P\x07',
@@ -64,6 +63,7 @@ FW_VERSIONS = {
       b'\xa1  \x02\x02',
       b'\xa1  \x03\x02',
       b'\xa1  \x03\x03',
+      b'\xa1  \x04\x00',
       b'\xa1  \x04\x01',
       b'\xa1  \x04\x02',
     ],
@@ -72,10 +72,12 @@ FW_VERSIONS = {
       b'\x9b\xc0\x11\x02',
     ],
     (Ecu.fwdCamera, 0x787, None): [
+      b'\x00\x00eJ\x00\x1f@ \x19\x00',
       b'\x00\x00e\x80\x00\x1f@ \x19\x00',
       b'\x00\x00e\x9a\x00\x00\x00\x00\x00\x00',
     ],
     (Ecu.engine, 0x7e0, None): [
+      b'\xbc"a@\x07',
       b'\xde"a0\x07',
       b'\xde,\xa0@\x07',
       b'\xe2"a0\x07',
@@ -104,6 +106,7 @@ FW_VERSIONS = {
       b'\xa2 \x193\x00',
       b'\xa2 \x194\x00',
       b'\xa2 \x19`\x00',
+      b'\xa2  5\x00',
     ],
     (Ecu.eps, 0x746, None): [
       b'z\xc0\x00\x00',
@@ -113,6 +116,7 @@ FW_VERSIONS = {
       b'z\xc0\x0c\x00',
       b'\x8a\xc0\x00\x00',
       b'\x8a\xc0\x10\x00',
+      b'\x9a\xc0\x08\x00',
     ],
     (Ecu.fwdCamera, 0x787, None): [
       b'\x00\x00c\xf4\x00\x00\x00\x00',
@@ -129,6 +133,7 @@ FW_VERSIONS = {
       b'\x00\x00e\x1c\x1f@ \x14',
       b'\x00\x00e+\x00\x00\x00\x00',
       b'\x00\x00e+\x1f@ \x14',
+      b'\x00\x00eq\x1f@ "',
     ],
     (Ecu.engine, 0x7e0, None): [
       b'\xaa\x00Bu\x07',
@@ -150,8 +155,10 @@ FW_VERSIONS = {
       b'\xc5!ap\x07',
       b'\xc5!ar\x07',
       b'\xc5!as\x07',
+      b'\xc5!au\x07',
       b'\xc5!dr\x07',
       b'\xc5!ds\x07',
+      b'\xca\x01b0\x07',
     ],
     (Ecu.transmission, 0x7e1, None): [
       b'\xe3\xd0\x081\x00',
@@ -170,6 +177,7 @@ FW_VERSIONS = {
       b'\xe5\xf5\x04\x00\x00',
       b'\xe5\xf5$\x00\x00',
       b'\xe5\xf5B\x00\x00',
+      b'\xe6\xd5\x041\x00',
     ],
   },
   CAR.SUBARU_IMPREZA_2020: {
@@ -249,20 +257,6 @@ FW_VERSIONS = {
       b'\xd7!`@\x07',
       b'\xd7!`p\x07',
       b'\xf4!`0\x07',
-    ],
-  },
-  CAR.SUBARU_CROSSTREK_2025: {
-    (Ecu.abs, 0x7b0, None): [
-      b'\xa2 $\x15\x05',
-      b'\xa2 $\x17\x06',
-    ],
-    (Ecu.fwdCamera, 0x787, None): [
-      b'\x1d!\x08\x00F\x14!\x08\x00=',
-      b'\x1b!\x08\x00D\x11!\x08\x01;',
-    ],
-    (Ecu.engine, 0x7a2, None): [
-      b'\x04"cP\x07',
-      b'\xe8!cp\x07',
     ],
   },
   CAR.SUBARU_FORESTER: {
@@ -528,6 +522,7 @@ FW_VERSIONS = {
       b'\xe2"`q\x07',
       b'\xe2"`t\x07',
       b'\xe2,\xa0p\x07',
+      b'\xe2,\xa0@\x07',
       b'\xe3,\xa0@\x07',
     ],
     (Ecu.transmission, 0x7e1, None): [
@@ -589,6 +584,7 @@ FW_VERSIONS = {
     ],
     (Ecu.fwdCamera, 0x787, None): [
       b'\t!\x08\x046\x05!\x08\x01/',
+      b'\t!\x08\x046\x00\x00\x00\x00\x00',
     ],
     (Ecu.engine, 0x7a2, None): [
       b'\xed,\xa0q\x07',
@@ -601,6 +597,38 @@ FW_VERSIONS = {
       b'\xa9\x17w!r',
     ],
   },
+
+  CAR.SUBARU_CROSSTREK_2025: {
+    (Ecu.abs, 0x7b0, None): [
+      b'\xa2 $\x15\x05',
+      b'\xa2 $\x17\x06',
+    ],
+    (Ecu.fwdCamera, 0x787, None): [
+      b'\x1d!\x08\x00F\x14!\x08\x00=',
+      b'\x1b!\x08\x00D\x11!\x08\x01;',
+    ],
+    (Ecu.engine, 0x7a2, None): [
+      b'\x04"cP\x07',
+      b'\xe8!cp\x07',
+    ],
+  },
+
+  CAR.SUBARU_IMPREZA_2025: {
+    (Ecu.abs, 0x7b0, None): [
+      b'\xa2 $\x07\x05',
+    ],
+    (Ecu.eps, 0x746, None): [
+      b'\xc2 $\x01\x01',
+    ],
+    (Ecu.fwdCamera, 0x787, None): [
+      b'\x1d!\x08\x00F\x00\x00\x00\x00\x00',
+      b'\x1d!\x08\x00F\x14!\x08\x00=',
+    ],
+    (Ecu.engine, 0x7a2, None): [
+      b'\x04"ep\x07',
+    ],
+  },
+
   CAR.SUBARU_LEGACY_2025: {
     (Ecu.abs, 0x7b0, None): [
       b'\xa1 $\x11\x00',
@@ -610,7 +638,6 @@ FW_VERSIONS = {
     ],
     (Ecu.fwdCamera, 0x787, None): [
       b'\x1a!\x08\x00C\x0e!\x08\x018',
-      b'\x20\x02\x0e',
     ],
     (Ecu.engine, 0x7a2, None): [
       b'\x08,\xa0p\x07',

@@ -1,15 +1,15 @@
+#pragma once
+
 // from the linker script
-#ifdef STM32H7
-  #define APP_START_ADDRESS 0x8020000U
-#elif defined(STM32F4)
-  #define APP_START_ADDRESS 0x8004000U
+#ifdef STM32F4
+#define APP_START_ADDRESS 0x8004000U
+#else
+#define APP_START_ADDRESS 0x8020000U
 #endif
 
 // flasher state variables
 uint32_t *prog_ptr = NULL;
 bool unlocked = false;
-
-void spi_init(void);
 
 int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
   int resp_len = 0;
@@ -87,7 +87,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case 0xd6:
       COMPILE_TIME_ASSERT(sizeof(gitversion) <= USBPACKET_MAX_SIZE);
       memcpy(resp, gitversion, sizeof(gitversion));
-      resp_len = sizeof(gitversion);
+      resp_len = sizeof(gitversion) - 1U;
       break;
     // **** 0xd8: reset ST
     case 0xd8:
@@ -125,12 +125,12 @@ void comms_endpoint2_write(const uint8_t *data, uint32_t len) {
 
 void soft_flasher_start(void) {
   print("\n\n\n************************ FLASHER START ************************\n");
+  print("MCU UID: "); hexdump((const uint8_t *)UID_BASE, 12);
 
   enter_bootloader_mode = 0;
 
   flasher_peripherals_init();
 
-  gpio_usart2_init();
   gpio_usb_init();
   led_init();
 

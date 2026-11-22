@@ -1,9 +1,10 @@
-#include "bootkick_declarations.h"
+#pragma once
+
+#include "board/drivers/drivers.h"
 
 bool bootkick_reset_triggered = false;
 
 void bootkick_tick(bool ignition, bool recent_heartbeat, bool wake) {
-  static uint16_t bootkick_last_serial_ptr = 0;
   static uint8_t waiting_to_boot_countdown = 0;
   static uint8_t boot_reset_countdown = 0;
   static uint8_t bootkick_harness_status_prev = HARNESS_STATUS_NC;
@@ -14,6 +15,7 @@ void bootkick_tick(bool ignition, bool recent_heartbeat, bool wake) {
   const bool harness_inserted = (harness.status != bootkick_harness_status_prev) && (harness.status != HARNESS_STATUS_NC);
 
   if ((ignition && !bootkick_ign_prev) || harness_inserted || (wake && !bootkick_wake_prev && !ignition)) {
+    // bootkick on rising edge of ignition or harness insertion
     boot_state = BOOT_BOOTKICK;
   } else if (recent_heartbeat) {
     // disable bootkick once openpilot is up
@@ -33,8 +35,7 @@ void bootkick_tick(bool ignition, bool recent_heartbeat, bool wake) {
     waiting_to_boot_countdown = 20U;
   }
   if (waiting_to_boot_countdown > 0U) {
-    bool serial_activity = uart_ring_som_debug.w_ptr_tx != bootkick_last_serial_ptr;
-    if (serial_activity || current_board->read_som_gpio() || (boot_state != BOOT_BOOTKICK)) {
+    if (current_board->read_som_gpio() || (boot_state != BOOT_BOOTKICK)) {
       waiting_to_boot_countdown = 0U;
     } else {
       // try a reset
@@ -58,7 +59,6 @@ void bootkick_tick(bool ignition, bool recent_heartbeat, bool wake) {
   bootkick_ign_prev = ignition;
   bootkick_wake_prev = wake;
   bootkick_harness_status_prev = harness.status;
-  bootkick_last_serial_ptr = uart_ring_som_debug.w_ptr_tx;
   if (waiting_to_boot_countdown > 0U) {
     waiting_to_boot_countdown--;
   }

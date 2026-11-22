@@ -1,8 +1,5 @@
 import math
-
-from opendbc.car import CanBusBase, structs
-
-HUDControl = structs.CarControl.HUDControl
+from opendbc.car import CanBusBase
 
 
 class CanBus(CanBusBase):
@@ -22,48 +19,29 @@ class CanBus(CanBusBase):
     return self.offset + 2
 
 
-def calculate_lat_ctl2_checksum(mode: int, counter: int, dat: bytearray) -> int:
-  curvature = (dat[2] << 3) | ((dat[3]) >> 5)
-  curvature_rate = (dat[6] << 3) | ((dat[7]) >> 5)
-  path_angle = ((dat[3] & 0x1F) << 6) | ((dat[4]) >> 2)
-  path_offset = ((dat[4] & 0x3) << 8) | dat[5]
-
-  checksum = mode + counter
-  for sig_val in (curvature, curvature_rate, path_angle, path_offset):
-    checksum += sig_val + (sig_val >> 8)
-
-  return 0xFF - (checksum & 0xFF)
-
-
-def create_lka_msg(packer, CAN: CanBus, active: bool = False, apply_angle: float = 0.0,
-                   direction: int = 0, ramp_type: int = 0, curvature: float = 0.0):
+def create_lka_msg(packer, CAN: CanBus, active=False, apply_angle=0., direction=0, curvature=0., transit=False):
   """
-  Creates a CAN message for the Ford LKA Command.
+  Creates an empty CAN message for the Ford LKA Command.
 
-  On LKA-steering platforms, this command applies Lane Keeping Aid maneuvers through the PSCM.
+  This command can apply "Lane Keeping Aid" maneuvers, which are subject to the PSCM lockout.
 
   Frequency is 33Hz.
   """
 
+  values = {}
+  if transit:
+    values = {"LaRefAng_No_Req": 0., "LaCurvature_No_Calc": 0., "LdwActvIntns_D_Req": 3}
   if active:
-    mrad = math.radians(max(-5.8, min(5.8, apply_angle))) * 1000.0
-    mrad = max(-102.4, min(102.3, mrad))
-    curvature = max(-0.01023, min(0.01023, curvature))
-  else:
-    mrad = 0.0
-    direction = 0
-    ramp_type = 0
-    curvature = 0.0
-
-  values = {
-    "LkaDrvOvrrd_D_Rq": 0,
-    "LkaActvStats_D2_Req": direction if active else 0,
-    "LaRefAng_No_Req": mrad,
-    "LaRampType_B_Req": ramp_type,
-    "LaCurvature_No_Calc": curvature,
-    "LdwActvStats_D_Req": 0,
-    "LdwActvIntns_D_Req": 3,
-  }
+    # 5.8 degrees rounds outside native raw 24..4072 at 0.05 mrad/count.
+    values = {
+      "LkaDrvOvrrd_D_Rq": 0,
+      "LkaActvStats_D2_Req": direction,
+      "LaRefAng_No_Req": max(-101.2, min(101.2, math.radians(max(-5.8, min(5.8, apply_angle))) * 1000.)),
+      "LaRampType_B_Req": int(abs(apply_angle) >= 5.),
+      "LaCurvature_No_Calc": max(-0.01023, min(0.01023, curvature)),
+      "LdwActvStats_D_Req": 0,
+      "LdwActvIntns_D_Req": 3,
+    }
   return packer.make_can_msg("Lane_Assist_Data1", CAN.main, values)
 
 
@@ -90,33 +68,25 @@ def create_lat_ctl_msg(packer, CAN: CanBus, lat_active: bool, path_offset: float
   Frequency is 20Hz.
   """
 
+  values = {
+    "LatCtlRng_L_Max": 0,                       # Unknown [0|126] meter
+    "HandsOffCnfm_B_Rq": 0,                     # Unknown: 0=Inactive, 1=Active [0|1]
+    "LatCtl_D_Rq": 1 if lat_active else 0,      # Mode: 0=None, 1=ContinuousPathFollowing, 2=InterventionLeft,
+                                                #       3=InterventionRight, 4-7=NotUsed [0|7]
+    "LatCtlRampType_D_Rq": 0,                   # Ramp speed: 0=Slow, 1=Medium, 2=Fast, 3=Immediate [0|3]
+                                                #             Makes no difference with curvature control
+    "LatCtlPrecision_D_Rq": 1,                  # Precision: 0=Comfortable, 1=Precise, 2/3=NotUsed [0|3]
+                                                #            The stock system always uses comfortable
+    "LatCtlPathOffst_L_Actl": path_offset,      # Path offset [-5.12|5.11] meter
+    "LatCtlPath_An_Actl": path_angle,           # Path angle [-0.5|0.5235] radians
+    "LatCtlCurv_NoRate_Actl": curvature_rate,   # Curvature rate [-0.001024|0.00102375] 1/meter^2
+    "LatCtlCurv_No_Actl": curvature,            # Curvature [-0.02|0.02094] 1/meter
+  }
   if stock_lmc is not None:
-    values = {
-      "LatCtlRng_L_Max": stock_lmc["LatCtlRng_L_Max"],
-      "HandsOffCnfm_B_Rq": stock_lmc["HandsOffCnfm_B_Rq"],
-      "LatCtl_D_Rq": 0,
-      "LatCtlRampType_D_Rq": stock_lmc["LatCtlRampType_D_Rq"],
-      "LatCtlPrecision_D_Rq": stock_lmc["LatCtlPrecision_D_Rq"],
-      "LatCtlPathOffst_L_Actl": stock_lmc["LatCtlPathOffst_L_Actl"],
-      "LatCtlPath_An_Actl": stock_lmc["LatCtlPath_An_Actl"],
-      "LatCtlCurv_NoRate_Actl": stock_lmc["LatCtlCurv_NoRate_Actl"],
-      "LatCtlCurv_No_Actl": stock_lmc["LatCtlCurv_No_Actl"],
-    }
-  else:
-    values = {
-      "LatCtlRng_L_Max": 0,                       # Unknown [0|126] meter
-      "HandsOffCnfm_B_Rq": 0,                     # Unknown: 0=Inactive, 1=Active [0|1]
-      "LatCtl_D_Rq": 1 if lat_active else 0,      # Mode: 0=None, 1=ContinuousPathFollowing, 2=InterventionLeft,
-                                                  #       3=InterventionRight, 4-7=NotUsed [0|7]
-      "LatCtlRampType_D_Rq": 0,                   # Ramp speed: 0=Slow, 1=Medium, 2=Fast, 3=Immediate [0|3]
-                                                  #             Makes no difference with curvature control
-      "LatCtlPrecision_D_Rq": 1,                  # Precision: 0=Comfortable, 1=Precise, 2/3=NotUsed [0|3]
-                                                  #            The stock system always uses comfortable
-      "LatCtlPathOffst_L_Actl": path_offset,      # Path offset [-5.12|5.11] meter
-      "LatCtlPath_An_Actl": path_angle,           # Path angle [-0.5|0.5235] radians
-      "LatCtlCurv_NoRate_Actl": curvature_rate,   # Curvature rate [-0.001024|0.00102375] 1/meter^2
-      "LatCtlCurv_No_Actl": curvature,            # Curvature [-0.02|0.02094] 1/meter
-    }
+    values = {key: stock_lmc[key] for key in values}
+    values.update({"LatCtl_D_Rq": 0, "HandsOffCnfm_B_Rq": 0,
+                   "LatCtlPathOffst_L_Actl": 0., "LatCtlPath_An_Actl": 0.,
+                   "LatCtlCurv_NoRate_Actl": 0., "LatCtlCurv_No_Actl": 0.})
   return packer.make_can_msg("LateralMotionControl", CAN.main, values)
 
 
@@ -142,12 +112,7 @@ def create_lat_ctl2_msg(packer, CAN: CanBus, mode: int, path_offset: float, path
     "LatCtlCrv_NoRate2_Actl": curvature_rate,   # [-0.001024|0.001023] 1/meter^2
     "HandsOffCnfm_B_Rq": 0,                     # 0=Inactive, 1=Active [0|1]
     "LatCtlPath_No_Cnt": counter,               # [0|15]
-    "LatCtlPath_No_Cs": 0,                      # [0|255]
   }
-
-  # calculate checksum
-  dat = packer.make_can_msg("LateralMotionControl2", 0, values)[1]
-  values["LatCtlPath_No_Cs"] = calculate_lat_ctl2_checksum(mode, counter, dat)
 
   return packer.make_can_msg("LateralMotionControl2", CAN.main, values)
 
@@ -377,3 +342,26 @@ def create_button_msg(packer, bus: int, stock_values: dict, cancel=False, resume
     "TjaButtnOnOffPress": 1 if tja_toggle else 0,   # LCA/TJA toggle button
   })
   return packer.make_can_msg("Steering_Data_FD1", bus, values)
+
+
+FORD_CHECKSUM_FIELDS = {
+  0x7d: ("BrkTot_Tq_RqArb", "BrkTotTqRqArb_No_Cnt"),
+  0x91: ("VehRol_W_Actl", "VehYaw_W_Actl", "VehRollYaw_No_Cnt", "VehRolWActl_D_Qf", "VehYawWActl_D_Qf"),
+  0x92: ("VehLat2_A_Actl", "VehLong2_A_Actl", "VehVert2_A_Actl",
+         "VehLatAActl_D_Qf", "VehLongAActl_D_Qf", "VehVertAActl_D_Qf", "VehLatLongVert_No_Cnt"),
+  0x202: ("Veh_V_ActlEng", "VehVActlEng_No_Cnt", "VehVActlEng_D_Qf"),
+  0x214: ("PrplWhlTot_Tq_RqMn", "PrplWhlTqRqMn_No_Cnt"),
+  0x3d6: ("LatCtl_D2_Rq", "LatCtlPath_No_Cnt", "LatCtlCurv_No_Actl", "LatCtlCrv_NoRate2_Actl", "LatCtlPath_An_Actl", "LatCtlPathOffst_L_Actl"),
+  0x414: ("StePinOffst_An_Est", "StePinOffst_No_Cnt", "StePinOffst_D_Stat"),
+  0x415: ("Veh_V_ActlBrk", "VehVActlBrk_No_Cnt", "VehVActlBrk_D_Qf"),
+  0x450: ("DrvEngageLevel_D_Stat", "DrvEngLvlConfid_D_Stat", "DrvEngageLevel_No_Cnt"),
+  0x4b0: ("BrkHold_D_Stat", "BrkTot_Tq_RqDrv", "BrkTotTqRqDrv_No_Cnt"),
+}
+
+
+def ford_checksum(address: int, sig, d: bytearray) -> int:
+  checksum = 0
+  for field in sig.checksum_fields:
+    value = field.get_raw_value(d)
+    checksum += value + (value >> 8)
+  return ~checksum & 0xFF

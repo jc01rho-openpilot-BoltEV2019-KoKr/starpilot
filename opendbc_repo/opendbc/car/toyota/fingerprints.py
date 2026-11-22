@@ -4,10 +4,9 @@ from opendbc.car.toyota.values import CAR
 
 Ecu = CarParams.Ecu
 
-FINGERPRINTS = {
-  CAR.TOYOTA_MATRIX_RETROFIT: [{}],
-  CAR.TOYOTA_PRIUS_RETROFIT: [{}],
-}
+# Retrofit selection is explicit; no observed CAN fingerprint distinguishes
+# its changed EPS hardware. An empty dictionary is not an automatic identity.
+FINGERPRINTS = {}
 
 FW_VERSIONS = {
   CAR.TOYOTA_AVALON: {
@@ -1309,6 +1308,7 @@ FW_VERSIONS = {
     (Ecu.engine, 0x700, None): [
       b'\x01896630841000\x00\x00\x00\x00',
       b'\x01896630857101\x00\x00\x00\x00',
+      b'\x01896630862000\x00\x00\x00\x00',
       b'\x01896630864000\x00\x00\x00\x00',
       b'\x01896630869000\x00\x00\x00\x00',
     ],
@@ -1874,6 +1874,26 @@ FW_VERSIONS = {
     (Ecu.fwdCamera, 0x750, 0x6d): [
       b'\x028646F0W04100\x00\x00\x00\x008646G0W04100\x00\x00\x00\x00',
       b'\x028646F5205200\x00\x00\x00\x008646G5202200\x00\x00\x00\x00',
+    ],
+  },
+  CAR.LEXUS_LS: {
+    (Ecu.abs, 0x7b0, None): [
+      b'F152650290\x00\x00\x00\x00\x00\x00',
+    ],
+    (Ecu.dsu, 0x791, None): [
+      b'881515003400\x00\x00\x00\x00',
+    ],
+    (Ecu.eps, 0x7a1, None): [
+      b'8965B50022\x00\x00\x00\x00\x00\x00',
+    ],
+    (Ecu.engine, 0x700, None): [
+      b'\x028966350K7200\x00\x00\x00\x00896655066200\x00\x00\x00\x00',
+    ],
+    (Ecu.fwdRadar, 0x750, 0xf): [
+      b'8821F4702300\x00\x00\x00\x00',
+    ],
+    (Ecu.fwdCamera, 0x750, 0x6d): [
+      b'8646F5001200\x00\x00\x00\x00',
     ],
   },
 }

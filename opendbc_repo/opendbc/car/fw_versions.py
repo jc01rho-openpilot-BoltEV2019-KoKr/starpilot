@@ -10,12 +10,15 @@ from opendbc.car.carlog import carlog
 from opendbc.car.structs import CarParams
 from opendbc.car.ecu_addrs import get_ecu_addrs
 from opendbc.car.fingerprints import FW_VERSIONS
+from opendbc.car.ford.values import CAR as FORD
 from opendbc.car.fw_query_definitions import ESSENTIAL_ECUS, AddrType, EcuAddrBusType, FwQueryConfig, LiveFwVersions, OfflineFwVersions
 from opendbc.car.interfaces import get_interface_attr
 from opendbc.car.isotp_parallel_query import IsoTpParallelQuery
+from opendbc.car.vin import is_valid_vin
 
 Ecu = CarParams.Ecu
 FUZZY_EXCLUDE_ECUS = [Ecu.fwdCamera, Ecu.fwdRadar, Ecu.eps, Ecu.debug]
+STRICT_FORD_FUZZY_CANDIDATES = frozenset((FORD.FORD_EDGE_MK2, FORD.FORD_MONDEO_MK5, FORD.FORD_TRANSIT_MK5))
 
 FW_QUERY_CONFIGS: dict[str, FwQueryConfig] = get_interface_attr('FW_QUERY_CONFIG', ignore_none=True)
 VERSIONS = get_interface_attr('FW_VERSIONS', ignore_none=True)
@@ -37,7 +40,7 @@ def is_brand(brand: str, filter_brand: str | None) -> bool:
   return filter_brand is None or brand == filter_brand
 
 
-def build_fw_dict(fw_versions: list[CarParams.CarFw], filter_brand: str = None) -> dict[AddrType, set[bytes]]:
+def build_fw_dict(fw_versions: list[CarParams.CarFw], filter_brand: str | None = None) -> dict[AddrType, set[bytes]]:
   fw_versions_dict: defaultdict[AddrType, set[bytes]] = defaultdict(set)
   for fw in fw_versions:
     if is_brand(fw.brand, filter_brand) and not fw.logging:
@@ -47,11 +50,11 @@ def build_fw_dict(fw_versions: list[CarParams.CarFw], filter_brand: str = None) 
 
 
 class MatchFwToCar(Protocol):
-  def __call__(self, live_fw_versions: LiveFwVersions, match_brand: str = None, log: bool = True) -> set[str]:
+  def __call__(self, live_fw_versions: LiveFwVersions, match_brand: str | None = None, log: bool = True) -> set[str]:
     ...
 
 
-def match_fw_to_car_fuzzy(live_fw_versions: LiveFwVersions, match_brand: str = None, log: bool = True, exclude: str = None) -> set[str]:
+def match_fw_to_car_fuzzy(live_fw_versions: LiveFwVersions, match_brand: str | None = None, log: bool = True, exclude: str | None = None) -> set[str]:
   """Do a fuzzy FW match. This function will return a match, and the number of firmware version
   that were matched uniquely to that specific car. If multiple ECUs uniquely match to different cars
   the match is rejected."""
@@ -93,6 +96,10 @@ def match_fw_to_car_fuzzy(live_fw_versions: LiveFwVersions, match_brand: str = N
 
   # Note that it is possible to match to a candidate without all its ECUs being present
   # if there are enough matches. FIXME: parameterize this or require all ECUs to exist like exact matching
+  # These ports require Ford's four-ECU platform matcher. Keep their firmware in
+  # the lookup above so shared versions cannot make another model appear unique.
+  if match in STRICT_FORD_FUZZY_CANDIDATES:
+    return set()
   if match and len(matched_ecus) >= 2:
     if log:
       carlog.error(f"Fingerprinted {match} using fuzzy match. {len(matched_ecus)} matching ECUs")
@@ -101,7 +108,8 @@ def match_fw_to_car_fuzzy(live_fw_versions: LiveFwVersions, match_brand: str = N
     return set()
 
 
-def match_fw_to_car_exact(live_fw_versions: LiveFwVersions, match_brand: str = None, log: bool = True, extra_fw_versions: dict = None) -> set[str]:
+def match_fw_to_car_exact(live_fw_versions: LiveFwVersions, match_brand: str | None = None,
+                          log: bool = True, extra_fw_versions: dict | None = None) -> set[str]:
   """Do an exact FW match. Returns all cars that match the given
   FW versions for a list of "essential" ECUs. If an ECU is not considered
   essential the FW version can be missing to get a fingerprint, but if it's present it
@@ -111,8 +119,7 @@ def match_fw_to_car_exact(live_fw_versions: LiveFwVersions, match_brand: str = N
 
   invalid = set()
   candidates = {c: f for c, f in FW_VERSIONS.items() if
-                is_brand(MODEL_TO_BRAND[c], match_brand) and
-                c not in FW_QUERY_CONFIGS[MODEL_TO_BRAND[c]].fuzzy_only_platforms}
+                is_brand(MODEL_TO_BRAND[c], match_brand)}
 
   for candidate, fws in candidates.items():
     config = FW_QUERY_CONFIGS[MODEL_TO_BRAND[candidate]]
@@ -164,29 +171,37 @@ def match_fw_to_car(fw_versions: list[CarParams.CarFw], vin: str, allow_exact: b
       if not exact_match and not len(matches) and config.match_fw_to_car_fuzzy is not None:
         matches |= config.match_fw_to_car_fuzzy(fw_versions_dict, vin, VERSIONS[brand])
 
+      if config.validate_fw_match is not None:
+        matches = {candidate for candidate in matches if MODEL_TO_BRAND[candidate] != brand or
+                   config.validate_fw_match(candidate, fw_versions_dict, VERSIONS[brand])}
+
+    if exact_match and allow_fuzzy and len(matches) > 1 and is_valid_vin(vin):
+      # A shared ECU firmware version may identify a family but not a chassis.
+      # Refine only within one brand's exact candidates; a VIN can narrow an
+      # ambiguous match, never add a new candidate or decide between brands.
+      brands = {MODEL_TO_BRAND[candidate] for candidate in matches}
+      if len(brands) == 1:
+        brand = next(iter(brands))
+        custom_match = FW_QUERY_CONFIGS[brand].match_fw_to_car_fuzzy
+        if custom_match is not None:
+          vin_matches = custom_match(build_fw_dict(fw_versions, filter_brand=brand), vin, VERSIONS[brand]) & matches
+          if len(vin_matches) == 1:
+            return False, vin_matches
+
     if len(matches):
       return exact_match, matches
 
   return True, set()
 
 
-def get_present_ecus(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multiplexing: ObdCallback,
-                     num_pandas: int = 1, skip_buses: set[int] | None = None) -> set[EcuAddrBusType]:
-  skip_buses = skip_buses or set()
+def get_present_ecus(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multiplexing: ObdCallback) -> set[EcuAddrBusType]:
   # queries are split by OBD multiplexing mode
   queries: dict[bool, list[list[EcuAddrBusType]]] = {True: [], False: []}
   parallel_queries: dict[bool, list[EcuAddrBusType]] = {True: [], False: []}
   responses: set[EcuAddrBusType] = set()
 
   for brand, config, r in REQUESTS:
-    # Skip query if no panda available
-    if r.bus > num_pandas * 4 - 1 or r.bus in skip_buses:
-      continue
-
     for ecu_type, addr, sub_addr in config.get_all_ecus(VERSIONS[brand]):
-      if ecu_type in config.non_tester_present_ecus:
-        continue
-
       # Only query ecus in whitelist if whitelist is not empty
       if len(r.whitelist_ecus) == 0 or ecu_type in r.whitelist_ecus:
         a = (addr, sub_addr, r.bus)
@@ -222,9 +237,6 @@ def get_brand_ecu_matches(ecu_rx_addrs: set[EcuAddrBusType]) -> dict[str, list[b
   # Since we can't know what request an ecu responded to, add matches for all possible rx offsets
   for brand, config, r in REQUESTS:
     for ecu in config.get_all_ecus(VERSIONS[brand]):
-      if ecu[0] in config.non_tester_present_ecus:
-        continue
-
       if len(r.whitelist_ecus) == 0 or ecu[0] in r.whitelist_ecus:
         brand_rx_addrs[brand].add((uds.get_rx_addr_for_tx_addr(ecu[1], r.rx_offset), ecu[2]))
 
@@ -237,8 +249,7 @@ def get_brand_ecu_matches(ecu_rx_addrs: set[EcuAddrBusType]) -> dict[str, list[b
 
 
 def get_fw_versions_ordered(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multiplexing: ObdCallback, vin: str,
-                            ecu_rx_addrs: set[EcuAddrBusType], timeout: float = 0.1, num_pandas: int = 1,
-                            progress: bool = False, skip_buses: set[int] | None = None) -> list[CarParams.CarFw]:
+                            ecu_rx_addrs: set[EcuAddrBusType], timeout: float = 0.1, progress: bool = False) -> list[CarParams.CarFw]:
   """Queries for FW versions ordering brands by likelihood, breaks when exact match is found"""
 
   all_car_fw = []
@@ -251,8 +262,7 @@ def get_fw_versions_ordered(can_recv: CanRecvCallable, can_send: CanSendCallable
     if True not in brand_matches[brand]:
       continue
 
-    car_fw = get_fw_versions(can_recv, can_send, set_obd_multiplexing, query_brand=brand, timeout=timeout,
-                              num_pandas=num_pandas, progress=progress, skip_buses=skip_buses)
+    car_fw = get_fw_versions(can_recv, can_send, set_obd_multiplexing, query_brand=brand, timeout=timeout, progress=progress)
     all_car_fw.extend(car_fw)
 
     # If there is a match using this brand's FW alone, finish querying early
@@ -263,10 +273,9 @@ def get_fw_versions_ordered(can_recv: CanRecvCallable, can_send: CanSendCallable
   return all_car_fw
 
 
-def get_fw_versions(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multiplexing: ObdCallback, query_brand: str = None,
-                    extra: OfflineFwVersions = None, timeout: float = 0.1, num_pandas: int = 1, progress: bool = False,
-                    skip_buses: set[int] | None = None) -> list[CarParams.CarFw]:
-  skip_buses = skip_buses or set()
+def get_fw_versions(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multiplexing: ObdCallback, query_brand: str | None = None,
+                    extra: OfflineFwVersions | None = None, timeout: float = 0.1, progress: bool = False,
+                    *, normal_bus_only: bool = False) -> list[CarParams.CarFw]:
   versions = VERSIONS.copy()
 
   if query_brand is not None:
@@ -299,14 +308,11 @@ def get_fw_versions(can_recv: CanRecvCallable, can_send: CanSendCallable, set_ob
 
   # Get versions and build capnp list to put into CarParams
   car_fw = []
-  requests = [(brand, config, r) for brand, config, r in REQUESTS if is_brand(brand, query_brand)]
+  requests = [(brand, config, r) for brand, config, r in REQUESTS if is_brand(brand, query_brand) and
+              not (normal_bus_only and r.bus % 4 == 1 and r.obd_multiplexing)]
   for addr_group in tqdm(addrs, disable=not progress):  # split by subaddr, if any
     for addr_chunk in chunks(addr_group):
       for brand, config, r in requests:
-        # Skip query if no panda available
-        if r.bus > num_pandas * 4 - 1 or r.bus in skip_buses:
-          continue
-
         # Toggle OBD multiplexing for each request
         if r.bus % 4 == 1:
           set_obd_multiplexing(r.obd_multiplexing)

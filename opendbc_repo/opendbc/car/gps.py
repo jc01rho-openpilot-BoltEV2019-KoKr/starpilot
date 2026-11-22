@@ -6,9 +6,10 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.ford.values import CAR as FORD_CAR
-from opendbc.car.gm.values import CAR as GM_CAR
-from opendbc.car.volkswagen.values import CAR as VOLKSWAGEN_CAR
+from opendbc.car import Bus
+from opendbc.car.ford.values import DBC as FORD_DBC
+from opendbc.car.gm.values import DBC as GM_DBC
+from opendbc.car.volkswagen.values import DBC as VW_DBC, VolkswagenFlags
 
 
 CarGpsSample = dict[str, Any]
@@ -58,7 +59,8 @@ def parse_ford_can_gps(nav1: Mapping[str, float], nav2: Mapping[str, float], nav
   longitude = (1.0 if longitude_direction == 1 else -1.0) * (longitude_degrees + longitude_minutes / 60.0) if coordinates_valid else 0.0
 
   dimension = int(nav3["GPS_dimension"])
-  has_fix = coordinates_valid and dimension in (1, 2) and int(nav2["Gps_B_Falt"]) == 0
+  has_fix = (coordinates_valid and -90. <= latitude <= 90. and -180. <= longitude <= 180. and
+             dimension in (1, 2) and int(nav2["Gps_B_Falt"]) == 0)
 
   speed_mph = float(nav3["GPS_Speed"])
   speed_mps = speed_mph * CV.MPH_TO_MS
@@ -74,18 +76,24 @@ def parse_ford_can_gps(nav1: Mapping[str, float], nav2: Mapping[str, float], nav
   if not 0 <= satellite_count < 30:  # 30 and 31 are Ford's unknown/invalid values.
     satellite_count = 0
 
+  motion_valid = has_fix and speed_mph not in (254., 255.) and 0. <= float(nav3["GPS_Speed"]) * CV.MPH_TO_MS <= 200.
+  motion_valid = motion_valid and math.isfinite(float(nav3["GPS_Heading"])) and 0. <= float(nav3["GPS_Heading"]) < 360.
+  if not motion_valid:
+    speed_mps = 0.
+  altitude = float(nav3["GPS_MSL_altitude"]) * .3048
+  altitude_valid = math.isfinite(altitude)
   heading_rad = math.radians(heading)
   return {
     "latitude": latitude,
     "longitude": longitude,
-    "altitude": (float(nav3["GPS_MSL_altitude"]) * 0.3048) if has_fix else 0.0,
+    "altitude": altitude if has_fix and altitude_valid else 0.0,
     "speed": speed_mps,
     "bearingDeg": heading,
     "horizontalAccuracy": horizontal_accuracy,
     "unixTimestampMillis": timestamp_ms,
-    "verticalAccuracy": vertical_accuracy,
+    "verticalAccuracy": vertical_accuracy if altitude_valid else 500.,
     "bearingAccuracyDeg": max(5.0, horizontal_accuracy * 2.0) if speed_mps > 1.0 else 180.0,
-    "speedAccuracy": max(0.5, horizontal_accuracy),
+    "speedAccuracy": max(0.5, horizontal_accuracy) if motion_valid else 100.,
     "hasFix": has_fix,
     "satelliteCount": satellite_count,
     "vNED": [speed_mps * math.cos(heading_rad), speed_mps * math.sin(heading_rad), 0.0],
@@ -115,7 +123,7 @@ def parse_chevrolet_bolt_can_gps(position: Mapping[str, float]) -> CarGpsSample 
     "speed": 0.0,
     "bearingDeg": 0.0,
     "horizontalAccuracy": 6.0,
-    "unixTimestampMillis": int(datetime.now(UTC).timestamp() * 1000),
+    "unixTimestampMillis": 0,
     "verticalAccuracy": 10.0,
     "bearingAccuracyDeg": 180.0,
     "speedAccuracy": 0.5,
@@ -148,7 +156,8 @@ def parse_volkswagen_taos_can_gps(position: Mapping[str, float], motion: Mapping
 
   satellite_count = int(status["GNSS_Genutzte_Satelliten"])
   hemisphere_validated = position["GNSS_LatitudeSouth"] == 0 and position["GNSS_LongitudeWest"] == 1
-  has_fix = (coordinates_valid and hemisphere_validated and position["GNSS_PositionStatus"] == 3 and status["GNSS_Empfaenger_Status"] == 1 and
+  has_fix = (coordinates_valid and hemisphere_validated and position["GNSS_PositionStatus"] == 3 and
+             status["GNSS_Empfaenger_Status"] == 1 and
              bool(status["GNSS_GPS_in_Nutzung"] or status["GNSS_GLONASS_in_Nutzung"]) and 4 <= satellite_count <= 31)
 
   speed = float(motion["GNSS_Speed"])
@@ -186,41 +195,90 @@ FORD_MACH_E_GPS_MESSAGES = (
 CHEVROLET_BOLT_GPS_MESSAGES = ("TCICOnStarGPSPosition",)
 VOLKSWAGEN_TAOS_GPS_MESSAGES = ("GNSS_01", "GNSS_02", "GNSS_04", "GNSS_05")
 
-CHEVROLET_BOLT_GPS_CARS = (
-  GM_CAR.CHEVROLET_BOLT_ACC_2022_2023,
-  GM_CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
-  GM_CAR.CHEVROLET_BOLT_CC_2022_2023,
-  GM_CAR.CHEVROLET_BOLT_CC_2018_2021,
-  GM_CAR.CHEVROLET_BOLT_CC_2017,
-)
-
-
-CAR_GPS_CONFIGS: dict[str, CarGpsConfig] = {
-  VOLKSWAGEN_CAR.VOLKSWAGEN_TAOS_MK1: CarGpsConfig(
-    brand="volkswagen",
-    messages=VOLKSWAGEN_TAOS_GPS_MESSAGES,
-    decoder=parse_volkswagen_taos_can_gps,
-  ),
-  FORD_CAR.FORD_MUSTANG_MACH_E_MK1: CarGpsConfig(
-    brand="ford",
-    messages=FORD_MACH_E_GPS_MESSAGES,
-    decoder=parse_ford_can_gps,
-  ),
-  **{
-    car: CarGpsConfig(
-      brand="gm",
-      messages=CHEVROLET_BOLT_GPS_MESSAGES,
-      decoder=parse_chevrolet_bolt_can_gps,
-    )
-    for car in CHEVROLET_BOLT_GPS_CARS
-  },
-}
-
-
 def get_car_gps_config(CP) -> CarGpsConfig | None:
-  config = CAR_GPS_CONFIGS.get(CP.carFingerprint)
-  return config if config is not None and config.brand == CP.brand else None
+  # These are optional decode candidates, not proof that a vehicle broadcasts GPS.
+  mappings = {"gm": GM_DBC, "ford": FORD_DBC, "volkswagen": VW_DBC}
+  dbc = mappings.get(CP.brand, {}).get(CP.carFingerprint, {}).get(Bus.pt)
+  if CP.brand == "gm" and dbc in ("gm_global_a_powertrain_generated", "cadillac_ct6_powertrain"):
+    return CarGpsConfig("gm", CHEVROLET_BOLT_GPS_MESSAGES, parse_chevrolet_bolt_can_gps)
+  if CP.brand == "ford" and dbc == "ford_lincoln_base_pt":
+    return CarGpsConfig("ford", FORD_MACH_E_GPS_MESSAGES, parse_ford_can_gps)
+  if CP.brand == "volkswagen" and dbc == "vw_mqb" and not CP.flags & (
+      VolkswagenFlags.PQ | VolkswagenFlags.MLB | VolkswagenFlags.MEB):
+    return CarGpsConfig("volkswagen", VOLKSWAGEN_TAOS_GPS_MESSAGES, parse_volkswagen_taos_can_gps)
+  return None
 
 
-def car_gps_available(CP) -> bool:
-  return get_car_gps_config(CP) is not None
+class CarGpsTracker:
+  MAX_AGE_NS = 2_500_000_000
+  MAX_SKEW_NS = 2_000_000_000
+
+  def __init__(self, CP):
+    self.config = get_car_gps_config(CP)
+    self.sample: CarGpsSample | None = None
+    self.timestamps: tuple[int, ...] = ()
+    self.now_ns = 0
+    self.previous_position: tuple[float, float] | None = None
+    self.bearing: float | None = None
+    self.bearing_ns = 0
+    self.vw_fix_utc_ms = 0
+
+  def update(self, parser, *, speed: float = 0., backward: bool = False) -> None:
+    now = parser._last_update_nanos
+    if now < self.now_ns:
+      self.sample = None
+      self.previous_position = self.bearing = None
+      return
+    self.now_ns = now
+    if self.config is None:
+      return
+    stamps = tuple(max(parser.ts_nanos[name].values(), default=0) for name in self.config.messages)
+    current = (all(0 < stamp <= now and now - stamp <= self.MAX_AGE_NS for stamp in stamps) and
+               max(stamps) - min(stamps) <= self.MAX_SKEW_NS)
+    if not current:
+      self.sample = None
+      self.previous_position = self.bearing = None
+      return
+    if self.timestamps and not all(a > b for a, b in zip(stamps, self.timestamps, strict=True)):
+      return
+    self.timestamps = stamps
+    try:
+      sample = self.config.decoder(*(parser.vl[name] for name in self.config.messages))
+    except (KeyError, TypeError, ValueError, OverflowError):
+      sample = None
+    if sample is None:
+      self.sample = None
+      self.previous_position = self.bearing = None
+      return
+    if self.config.brand == "volkswagen" and sample["hasFix"]:
+      if sample["unixTimestampMillis"] <= self.vw_fix_utc_ms:
+        return
+      self.vw_fix_utc_ms = sample["unixTimestampMillis"]
+    sample["timestamp_nanos"] = min(stamps)
+    if self.config.brand == "gm":
+      sample.update(altitude=0., verticalAccuracy=500., speed=0., speedAccuracy=100.,
+                    bearingDeg=0., bearingAccuracyDeg=180., vNED=[0., 0., 0.])
+      if sample["hasFix"]:
+        position = sample["latitude"], sample["longitude"]
+        if backward or now - self.bearing_ns > self.MAX_AGE_NS:
+          self.bearing = None
+        moving = math.isfinite(speed) and 1. < speed <= 100. and not backward
+        if self.previous_position is not None and moving:
+          dy = (position[0] - self.previous_position[0]) * 111139.
+          dx = (position[1] - self.previous_position[1]) * 111139. * math.cos(math.radians(position[0]))
+          if math.hypot(dx, dy) > 1.5:
+            self.bearing = math.degrees(math.atan2(dx, dy)) % 360.
+            self.bearing_ns = now
+        self.previous_position = position
+        if self.bearing is not None and moving:
+          angle = math.radians(self.bearing)
+          sample.update(speed=speed, speedAccuracy=1.5, bearingDeg=self.bearing, bearingAccuracyDeg=10.,
+                        vNED=[speed * math.cos(angle), speed * math.sin(angle), 0.])
+      else:
+        self.previous_position = self.bearing = None
+    self.sample = sample
+
+  def get(self) -> CarGpsSample | None:
+    if self.sample is None or not 0 <= self.now_ns - self.sample["timestamp_nanos"] <= self.MAX_AGE_NS:
+      return None
+    return self.sample

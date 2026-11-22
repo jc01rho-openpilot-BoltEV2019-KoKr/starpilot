@@ -1,17 +1,14 @@
-import pytest
-import time
+import unittest
 import msgq
 import concurrent.futures
 
 SERVICE_NAME = 'myService'
 
 def poller():
-  context = msgq.Context()
-
   p = msgq.Poller()
 
   sub = msgq.SubSocket()
-  sub.connect(context, SERVICE_NAME)
+  sub.connect(SERVICE_NAME)
   p.registerSocket(sub)
 
   socks = p.poll(10000)
@@ -20,17 +17,15 @@ def poller():
   return r
 
 
-class TestPoller:
+class TestPoller(unittest.TestCase):
   def test_poll_once(self):
-    context = msgq.Context()
-
     pub = msgq.PubSocket()
-    pub.connect(context, SERVICE_NAME)
+    pub.connect(SERVICE_NAME)
 
     with concurrent.futures.ThreadPoolExecutor() as e:
       poll = e.submit(poller)
 
-      time.sleep(0.1)  # Slow joiner syndrome
+      pub.wait_for_readers()
 
       # Send message
       pub.send(b"a")
@@ -39,25 +34,19 @@ class TestPoller:
       result = poll.result()
 
     del pub
-    context.term()
 
     assert result == [b"a"]
 
   def test_poll_and_create_many_subscribers(self):
-    context = msgq.Context()
-
     pub = msgq.PubSocket()
-    pub.connect(context, SERVICE_NAME)
+    pub.connect(SERVICE_NAME)
 
     with concurrent.futures.ThreadPoolExecutor() as e:
       poll = e.submit(poller)
 
-      time.sleep(0.1)  # Slow joiner syndrome
-      c = msgq.Context()
+      pub.wait_for_readers()
       for _ in range(10):
-        msgq.SubSocket().connect(c, SERVICE_NAME)
-
-      time.sleep(0.1)
+        msgq.SubSocket().connect(SERVICE_NAME)
 
       # Send message
       pub.send(b"a")
@@ -66,36 +55,30 @@ class TestPoller:
       result = poll.result()
 
     del pub
-    context.term()
 
     assert result == [b"a"]
 
   def test_multiple_publishers_exception(self):
-    context = msgq.Context()
-
-    with pytest.raises(msgq.MultiplePublishersError):
+    with self.assertRaises(msgq.MultiplePublishersError):
       pub1 = msgq.PubSocket()
-      pub1.connect(context, SERVICE_NAME)
+      pub1.connect(SERVICE_NAME)
 
       pub2 = msgq.PubSocket()
-      pub2.connect(context, SERVICE_NAME)
+      pub2.connect(SERVICE_NAME)
 
       pub1.send(b"a")
 
     del pub1
     del pub2
-    context.term()
 
   def test_multiple_messages(self):
-    context = msgq.Context()
-
     pub = msgq.PubSocket()
-    pub.connect(context, SERVICE_NAME)
+    pub.connect(SERVICE_NAME)
 
     sub = msgq.SubSocket()
-    sub.connect(context, SERVICE_NAME)
+    sub.connect(SERVICE_NAME)
 
-    time.sleep(0.1)  # Slow joiner
+    pub.wait_for_readers()
 
     for i in range(1, 100):
       pub.send(b'a'*i)
@@ -111,23 +94,20 @@ class TestPoller:
         msg_seen = True
         i += 1
 
-      if r is None and msg_seen:  # ZMQ sometimes receives nothing on the first receive
+      if r is None and msg_seen:
         break
 
     del pub
     del sub
-    context.term()
 
   def test_conflate(self):
-    context = msgq.Context()
-
     pub = msgq.PubSocket()
-    pub.connect(context, SERVICE_NAME)
+    pub.connect(SERVICE_NAME)
 
     sub = msgq.SubSocket()
-    sub.connect(context, SERVICE_NAME, conflate=True)
+    sub.connect(SERVICE_NAME, conflate=True)
 
-    time.sleep(0.1)  # Slow joiner
+    pub.wait_for_readers()
     pub.send(b'a')
     pub.send(b'b')
 
@@ -135,4 +115,3 @@ class TestPoller:
 
     del pub
     del sub
-    context.term()

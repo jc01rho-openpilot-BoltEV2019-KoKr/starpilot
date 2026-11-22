@@ -6,11 +6,13 @@ __pycache__
 .*.swo
 *.os
 *.so
-!msgq/ipc_pyx.so
 *.o
 *.a
 uv.lock
 catch2/
+*.egg-info/
+/build/
+/dist/
 
 test_runner
 
@@ -18,3 +20,6 @@ libmessaging.*
 libmessaging_shared.*
 .sconsign.dblite
 .mypy_cache/
+
+/msgq/_ipc.pyi
+/msgq/visionipc/_visionipc.pyi

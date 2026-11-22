@@ -1,36 +1,52 @@
-// When changing these structs, python/__init__.py needs to be kept up to date!
+#pragma once
 
-#define HEALTH_PACKET_VERSION 17
+#define HEALTH_FLAG_IGNITION_LINE            (1U << 0)
+#define HEALTH_FLAG_IGNITION_CAN             (1U << 1)
+#define HEALTH_FLAG_CONTROLS_ALLOWED         (1U << 2)
+#define HEALTH_FLAG_POWER_SAVE_ENABLED       (1U << 3)
+#define HEALTH_FLAG_HEARTBEAT_LOST           (1U << 4)
+#define HEALTH_FLAG_SAFETY_RX_CHECKS_INVALID (1U << 5)
+#define HEALTH_FLAG_SOM_RESET_TRIGGERED      (1U << 6)
+#define HEALTH_FLAG_NMI_RESET                (1U << 7)
+#define HEALTH_FLAG_HARDFAULT_RESET          ((uint16_t)1U << 8)
+#define HEALTH_FLAG_HEARTBEAT_DISABLED       ((uint16_t)1U << 9)
+
+#define AOL_SAFETY_PROTOCOL_MAGIC 0x314C4F41U  // "AOL1", little endian
+#define AOL_SAFETY_PROTOCOL_VERSION 1U
+typedef struct __attribute__((packed)) {
+  uint32_t magic;
+  uint8_t version;
+  uint8_t request_mask;
+  uint8_t permission_mask;
+  uint8_t safety_mode;
+  uint16_t safety_param;
+  uint8_t capability_flags;
+} aol_safety_health_t;
+
 struct __attribute__((packed)) health_t {
   uint32_t uptime_pkt;
-  uint32_t voltage_pkt;
-  uint32_t current_pkt;
+  uint16_t voltage_pkt;
+  uint16_t current_pkt;
   uint32_t safety_tx_blocked_pkt;
   uint32_t safety_rx_invalid_pkt;
   uint32_t tx_buffer_overflow_pkt;
   uint32_t rx_buffer_overflow_pkt;
   uint32_t faults_pkt;
-  uint8_t ignition_line_pkt;
-  uint8_t ignition_can_pkt;
-  uint8_t controls_allowed_pkt;
+  uint16_t flags_pkt;
   uint8_t car_harness_status_pkt;
   uint8_t safety_mode_pkt;
   uint16_t safety_param_pkt;
   uint8_t fault_status_pkt;
-  uint8_t power_save_enabled_pkt;
-  uint8_t heartbeat_lost_pkt;
   uint16_t alternative_experience_pkt;
-  float interrupt_load_pkt;
+  uint8_t interrupt_load_pkt;
   uint8_t fan_power;
-  uint8_t safety_rx_checks_invalid_pkt;
   uint16_t spi_error_count_pkt;
-  uint8_t fan_stall_count;
   uint16_t sbu1_voltage_mV;
   uint16_t sbu2_voltage_mV;
-  uint8_t som_reset_triggered;
+  uint16_t sound_output_level_pkt;
+  uint8_t temperature_pkt;
 };
 
-#define CAN_HEALTH_PACKET_VERSION 5
 typedef struct __attribute__((packed)) {
   uint8_t bus_off;
   uint32_t bus_off_cnt;

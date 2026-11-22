@@ -21,7 +21,7 @@ class LLVMCompiler(Compiler):
                                                        llvm.LLVMCodeGenLevelDefault, llvm.LLVMRelocPIC, llvm.LLVMCodeModelDefault)
 
     self.pbo = llvm.LLVMCreatePassBuilderOptions()
-    if (opt:=bool(getenv("LLVMOPT", "1"))):
+    if (opt:=getenv("LLVMOPT", 1)):
       self.passes = b'default<O2>'
       llvm.LLVMPassBuilderOptionsSetLoopUnrolling(self.pbo, True)
       llvm.LLVMPassBuilderOptionsSetLoopVectorization(self.pbo, True)
@@ -51,6 +51,9 @@ class LLVMCompiler(Compiler):
     self.diag_msgs.clear()
     src_buf = llvm.LLVMCreateMemoryBufferWithMemoryRangeCopy(ctypes.create_string_buffer(src_bytes:=src.encode()), len(src_bytes), b'src')
     mod = expect(llvm.LLVMParseIRInContext(self.context, src_buf, ctypes.pointer(m:=llvm.LLVMModuleRef()), err:=cerr()), err, m)
+    layout = llvm.LLVMCreateTargetDataLayout(self.target_machine)
+    llvm.LLVMSetModuleDataLayout(mod, layout)
+    llvm.LLVMDisposeTargetData(layout)
     expect(llvm.LLVMVerifyModule(mod, llvm.LLVMReturnStatusAction, err:=cerr()), err)
     expect(llvm.LLVMRunPasses(mod, self.passes, self.target_machine, self.pbo), 'failed to run passes')
     if DEBUG >= 7: print(ctypes.string_at(llvm.LLVMPrintModuleToString(mod)).decode())

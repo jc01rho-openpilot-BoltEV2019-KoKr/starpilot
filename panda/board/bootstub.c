@@ -11,8 +11,8 @@
 #include "board/early_init.h"
 #include "board/provision.h"
 
-#include "crypto/rsa.h"
-#include "crypto/sha.h"
+#include "board/crypto/rsa.h"
+#include "board/crypto/sha.h"
 
 #include "board/obj/cert.h"
 #include "board/obj/gitversion.h"
@@ -21,6 +21,10 @@
 // cppcheck-suppress unusedFunction ; used in headers not included in cppcheck
 void __initialize_hardware_early(void) {
   early_initialization();
+}
+
+// no CAN or safety mode in the bootstub
+void fault_safe_state(void) {
 }
 
 void fail(void) {
@@ -38,9 +42,6 @@ int main(void) {
   clock_init();
   detect_board_type();
 
-#ifdef PANDA_JUNGLE
-  current_board->set_panda_power(true);
-#endif
 
   if (enter_bootloader_mode == ENTER_SOFTLOADER_MAGIC) {
     enter_bootloader_mode = 0;

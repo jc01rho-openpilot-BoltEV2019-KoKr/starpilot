@@ -1,3 +1,5 @@
+#pragma once
+
 #include "stm32h7xx.h"
 #include "stm32h7xx_hal_gpio_ex.h"
 #define MCU_IDCODE 0x483U
@@ -53,25 +55,24 @@ separate IRQs for RX and TX.
 #endif
 
 #include "board/libc.h"
-#include "board/critical.h"
-#include "board/faults.h"
+#include "board/sys/critical.h"
+#include "board/sys/faults.h"
 #include "board/utils.h"
 
 #include "board/drivers/registers.h"
 #include "board/drivers/interrupts.h"
+
 #include "board/drivers/gpio.h"
 #include "board/stm32h7/peripherals.h"
 #include "board/stm32h7/interrupt_handlers.h"
 #include "board/drivers/timers.h"
 
 #if !defined(BOOTSTUB)
-  #include "board/drivers/uart.h"
-  #include "board/stm32h7/lluart.h"
+  #include "board/drivers/debug.h"
+  #include "board/stm32h7/llmpu.h"
 #endif
 
-#ifdef PANDA_JUNGLE
-#include "board/jungle/stm32h7/board.h"
-#elif defined(PANDA_BODY)
+#ifdef PANDA_BODY
 #include "board/body/stm32h7/board.h"
 #else
 #include "board/stm32h7/board.h"

@@ -1,0 +1,102 @@
+"""The compact Bluetooth glyph follows a fresh adapter state: off, on, or a device connected."""
+
+from concurrent.futures import Future
+import unittest
+from unittest.mock import patch
+
+from openpilot.starpilot.ui.bluetooth_status import BluetoothStatusSource, read_bluetooth_details, read_bluetooth_state
+
+MODULE = "openpilot.starpilot.ui.bluetooth_status"
+
+class FakeExecutor:
+  def __init__(self):
+    self.future = Future()
+    self.calls = 0
+    self.closed = False
+
+  def submit(self, _fn):
+    self.calls += 1
+    return self.future
+
+  def shutdown(self, *, wait, cancel_futures):
+    self.closed = True
+
+
+class TestBluetoothStatus(unittest.TestCase):
+  def test_bluez_objects_give_off_on_or_connected(self):
+    def objects(powered, connected, powered_type="b"):
+      return {"/org/bluez/hci0": {"org.bluez.Adapter1": {"Powered": (powered_type, powered)}},
+              "/org/bluez/hci0/dev_AA": {"org.bluez.Device1": {"Connected": ("b", connected)}}}
+    for reply, expected in ((objects(True, True), "connected"), (objects(True, False), "on"), (objects(False, True), "off"),
+                            (objects("true", True, "s"), "off"), ({}, "off"), ([], "off")):
+      with self.subTest(reply=reply), patch(f"{MODULE}._managed_objects", return_value=reply):
+        self.assertEqual(read_bluetooth_state(), expected)
+    for error in (OSError("no bus"), TimeoutError(), ValueError("bad reply")):
+      with self.subTest(error=error), patch(f"{MODULE}._managed_objects", side_effect=error):
+        self.assertEqual(read_bluetooth_state(), "off")
+
+  def test_manufacturer_data_on_a_paired_phone_does_not_hide_the_adapter(self):
+    reply = {
+      "/org/bluez/hci0": {"org.bluez.Adapter1": {"Powered": ("b", True)}},
+      "/org/bluez/hci0/dev_AA": {"org.bluez.Device1": {"Connected": ("b", False), "Name": ("s", "iPhone"),
+                                                       "ManufacturerData": ("a{qv}", {76: ("ay", b"\x01\x00")})}},
+    }
+    with patch(f"{MODULE}._managed_objects", return_value=reply):
+      self.assertEqual(read_bluetooth_details(), ("on", ()))
+
+  def test_bluez_details_return_connected_device_names(self):
+    reply = {
+      "/org/bluez/hci0": {"org.bluez.Adapter1": {"Powered": ("b", True)}},
+      "/org/bluez/hci0/dev_AA": {"org.bluez.Device1": {"Connected": ("b", True), "Name": ("s", "iPhone 15")}},
+      "/org/bluez/hci0/dev_BB": {"org.bluez.Device1": {"Connected": ("b", True), "Alias": ("s", "AirPods")}},
+      "/org/bluez/hci0/dev_CC": {"org.bluez.Device1": {"Connected": ("b", False), "Name": ("s", "Old Phone")}},
+    }
+    with patch(f"{MODULE}._managed_objects", return_value=reply):
+      self.assertEqual(read_bluetooth_details(), ("connected", ("iPhone 15", "AirPods")))
+
+  def test_bluez_details_count_distinct_devices_with_identical_names(self):
+    for name in ("Headphones", None):
+      props = {"Connected": ("b", True), "Name": ("s", name)}
+      reply = {
+        "/org/bluez/hci0": {"org.bluez.Adapter1": {"Powered": ("b", True)}},
+        "/org/bluez/hci0/dev_AA": {"org.bluez.Device1": props},
+        "/org/bluez/hci0/dev_BB": {"org.bluez.Device1": props},
+      }
+      with self.subTest(name=name), patch(f"{MODULE}._managed_objects", return_value=reply):
+        self.assertEqual(read_bluetooth_details(), ("connected", (name or "Bluetooth",) * 2))
+
+  def test_pending_failure_and_stale_result_never_show_icon(self):
+    clock = [10_000_000_000]
+    source = BluetoothStatusSource(clock=lambda: clock[0])
+    source.executor.shutdown(wait=False, cancel_futures=True)
+    executor = FakeExecutor()
+    self.enterContext(patch.object(source, "executor", executor))
+    try:
+      self.assertEqual(source.snapshot(), "off")  # schedules work without blocking the render
+      self.assertEqual(executor.calls, 1)
+      executor.future.set_result(("connected", clock[0]))
+      self.assertEqual(source.snapshot(), "connected")
+      clock[0] += source.MAX_AGE_NS + 1
+      self.assertEqual(source.snapshot(), "off")
+      self.assertEqual(executor.calls, 2)
+      source.close()
+      self.assertEqual(source.snapshot(), "off")
+      self.assertTrue(executor.closed)
+    finally:
+      source.close()
+
+  def test_worker_rejects_failed_query(self):
+    source = BluetoothStatusSource(request=lambda: (_ for _ in ()).throw(OSError("no adapter")), clock=lambda: 3)
+    try:
+      self.assertEqual(source._poll(), ("off", 3))
+    finally:
+      source.close()
+    unknown = BluetoothStatusSource(request=lambda: True, clock=lambda: 3)  # ty: ignore[invalid-argument-type]  # unexpected reply type
+    try:
+      self.assertEqual(unknown._poll(), ("off", 3))
+    finally:
+      unknown.close()
+
+
+if __name__ == "__main__":
+  unittest.main()
