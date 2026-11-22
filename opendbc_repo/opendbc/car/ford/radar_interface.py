@@ -1,16 +1,13 @@
-# Ford-specific additions first imported in StarPilot 3f6ccd104e substantially adapt BluePilot
-# bp-7.0 radar work. See the repository root CREDITS.md and THIRD_PARTY_NOTICES.md.
 import numpy as np
-from collections import deque
 from typing import cast
-from collections import defaultdict
+from collections import defaultdict, deque
 from math import cos, sin
 from dataclasses import dataclass
 from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.ford.fordcan import CanBus
-from opendbc.car.ford.values import DBC, RADAR
+from opendbc.car.ford.values import DBC, FORD_CANFD_CARS, FordFlags, RADAR
 from opendbc.car.interfaces import RadarInterfaceBase
 
 DELPHI_ESR_RADAR_MSGS = list(range(0x500, 0x540))
@@ -103,10 +100,11 @@ class RadarInterface(RadarInterfaceBase):
 
     self.points: list[list[float]] = []
     self.clusters: list[Cluster] = []
+    self.generic_canfd_lead = (CP.carFingerprint in FORD_CANFD_CARS and bool(CP.flags & FordFlags.CANFD) and
+                               not CP.flags & ~int(FordFlags.CANFD | FordFlags.HAS_BSM))
     self.v_rel_history = deque(maxlen=20)
 
     self.updated_messages = set()
-    self.track_id = 0
     self.radar = DBC[CP.carFingerprint].get(Bus.radar)
     self.scan_index_invalid_cnt = 0
     self.radar_unavailable_cnt = 0
@@ -154,37 +152,47 @@ class RadarInterface(RadarInterfaceBase):
     return ret
 
   def _update_steer_assist(self):
+    if self.generic_canfd_lead:
+      self._update_generic_steer_assist()
+      return
     msg = self.rcp.vl["Steer_Assist_Data"]
-    confidence = msg["CmbbObjConfdnc_D_Stat"]
-    if confidence <= 0:
+    if not self.rcp.can_valid or msg["CmbbObjConfdnc_D_Stat"] <= 0 or msg["CmbbObjDistLong_L_Actl"] <= 0:
+      self.pts.pop(0, None)
+      return
+    if 0 not in self.pts:
+      self.pts[0] = structs.RadarData.RadarPoint()
+      self.pts[0].trackId = self.track_id
+      self.track_id += 1
+    self.pts[0].dRel = msg["CmbbObjDistLong_L_Actl"]
+    self.pts[0].yRel = 0.
+    self.pts[0].vRel = msg["CmbbObjRelLong_V_Actl"]
+
+  def _update_generic_steer_assist(self):
+    # Preserve source-owned camera leads with current health and distance gates.
+    msg = self.rcp.vl["Steer_Assist_Data"]
+    if not self.rcp.can_valid or msg["CmbbObjConfdnc_D_Stat"] <= 0 or msg["CmbbObjDistLong_L_Actl"] <= 0:
       self.pts.pop(0, None)
       self.v_rel_history.clear()
       return
-
-    d_rel = msg["CmbbObjDistLong_L_Actl"]
-    v_rel = msg["CmbbObjRelLong_V_Actl"]
+    distance = msg["CmbbObjDistLong_L_Actl"]
+    velocity = msg["CmbbObjRelLong_V_Actl"]
     new_track = 0 not in self.pts
     if new_track:
       self.pts[0] = structs.RadarData.RadarPoint()
       self.pts[0].trackId = self.track_id
       self.track_id += 1
-    elif abs(v_rel) < 1e-2:
-      self.v_rel_history.append(d_rel - self.pts[0].dRel)
-      v_rel = sum(self.v_rel_history)
+    elif abs(velocity) < 1e-2:
+      self.v_rel_history.append(distance - self.pts[0].dRel)
+      velocity = sum(self.v_rel_history)
     else:
       self.v_rel_history.clear()
-
-    if not new_track and (abs(self.pts[0].vRel - v_rel) > 2.0 or abs(self.pts[0].dRel - d_rel) > 5.0):
+    if not new_track and (abs(self.pts[0].vRel - velocity) > 2.0 or abs(self.pts[0].dRel - distance) > 5.0):
       self.pts[0].trackId = self.track_id
       self.track_id += 1
       self.v_rel_history.clear()
-
-    self.pts[0].dRel = d_rel
+    self.pts[0].dRel = distance
     self.pts[0].yRel = msg["CmbbObjDistLat_L_Actl"]
-    self.pts[0].vRel = v_rel
-    self.pts[0].aRel = float('nan')
-    self.pts[0].yvRel = msg["CmbbObjRelLat_V_Actl"]
-    self.pts[0].measured = True
+    self.pts[0].vRel = velocity
 
   def _update_delphi_esr(self):
     for ii in sorted(self.updated_messages):
@@ -208,9 +216,6 @@ class RadarInterface(RadarInterfaceBase):
         self.pts[ii].dRel = cpt['X_Rel']  # from front of car
         self.pts[ii].yRel = cpt['X_Rel'] * cpt['Angle'] * CV.DEG_TO_RAD  # in car frame's y axis, left is positive
         self.pts[ii].vRel = cpt['V_Rel']
-        self.pts[ii].aRel = float('nan')
-        self.pts[ii].yvRel = float('nan')
-        self.pts[ii].measured = True
       else:
         if ii in self.pts:
           del self.pts[ii]
@@ -304,7 +309,7 @@ class RadarInterface(RadarInterfaceBase):
       self.clusters.append(Cluster(dRel=dRel, yRel=yRel, vRel=vRel, trackId=track_id))
 
       if idx not in self.pts:
-        self.pts[idx] = structs.RadarData.RadarPoint(measured=True, aRel=float('nan'), yvRel=float('nan'))
+        self.pts[idx] = structs.RadarData.RadarPoint()
 
       self.pts[idx].dRel = min_dRel
       self.pts[idx].yRel = yRel

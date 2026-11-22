@@ -1,9 +1,12 @@
 # StarPilot
 
+
 [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-blue?logo=readthedocs&logoColor=white)](https://deepwiki.com/StarPilotHQ/StarPilot)
 [![Discord](https://img.shields.io/discord/1387432184121393333?label=Discord)](https://firestar.link/discord)
-[![Last Updated](https://img.shields.io/github/last-commit/StarPilotHQ/StarPilot/StarPilot)](https://github.com/StarPilotHQ/StarPilot)
+[![Last Updated](https://img.shields.io/github/last-commit/StarPilotHQ/StarPilot)](https://github.com/StarPilotHQ/StarPilot)
 [![Wiki](https://img.shields.io/badge/Wiki-StarPilot-blue?logo=wiki)](https://wiki.firestar.link)
+[![App Store](https://img.shields.io/badge/App_Store-black?logo=apple&logoColor=white)](https://firestar.link/ios)
+[![Google Play](https://img.shields.io/badge/Google_Play-green?logo=googleplay&logoColor=white)](https://firestar.link/android)
 
 **StarPilot** is a custom fork of [comma.ai's openpilot](https://comma.ai/openpilot),
 an open source driver assistance system.
@@ -26,7 +29,7 @@ Hyundai, Kia, and Genesis angle steering and related vehicle support include sub
 from [sunnypilot](https://github.com/sunnypilot/sunnypilot/tree/hkg-angle-steering-2025) and its
 [opendbc angle-steering branch](https://github.com/sunnypilot/opendbc/tree/hkg-angle-steering-2025).
 StarPilot's implementation has diverged significantly; the upstream contributors do not maintain
-this adaptation. Detailed code lineage is recorded in [CREDITS.md](CREDITS.md#hyundai-kia-and-genesis-support-adapted-from-sunnypilot).
+this adaptation. Detailed code lineage is recorded in [CREDITS.md](CREDITS.md).
 
 StarPilot has a vibrant, welcoming community [discord](https://firestar.link/discord).
 Stop by to chat or ask questions!
@@ -49,7 +52,11 @@ installation guides, and software configuration.
 Auto tuning system to adapt openpilot to *your* car's unique lateral characteristics.
 * Galaxy: StarPilot's portal to configure your comma device using your phone from anywhere.
 Download models, change settings, update software, diagnostics, manage dashcam video, and more.
-* Navigation - Display routes and give the driving model hints on taking exits and turns.
+* Android and iOS companion apps - Access Galaxy over Wi-Fi, Firestar Link (HTTPS), or Bluetooth.
+* StarPort - Project StarPilot onto compatible Android Auto head units for a larger driving display.
+* Customizable driving display - Driving map and navigation widgets, plus music controls and Jetlink status in StarPort.
+* Spotify Connect and phone audio - Play through compatible car speakers over StarPort or Bluetooth.
+* Navigation - Mapbox or Google maps and routing, with route guidance for exits and turns.
 * Always On Lateral (full time steering assist)
 * Lane Centering - Enable to center between detected lane lines,
 with graceful fallback to model E2E lateral outputs and safety breakout
@@ -80,18 +87,29 @@ with graceful fallback to model E2E lateral outputs and safety breakout
 * Extra steering wheel button functionality for vehicles with pedal interceptor
 * Optional toggle to boot comma when remote starting your vehicle
 
-## Developer Features
+## Development
 
-* Native and cross compilation for Windows, Mac, and Ubuntu
-* Custom AGNOS to support C3, C3X, and C4
-* Raylib UI on C3, C3X, and C4
-* To run UI on PC:
-  * `./c3` for large UI
-  * `./c4` for small UI
-* `./build` to produce cross compiled binaries for comma devices.
-Uses your comma's sysroot/toolchain
-* Toggle: "Use Precompiled Binaries" to allow switching between fast boot / editable builds
-* Custom long maneuver tests, specifically designed for regen-only vehicles
+Dependencies are included as ordinary source folders. No recursive submodule checkout is needed. [upstream-sync.json](upstream-sync.json) records the openpilot baseline and the source revisions used for vendored dependencies.
+
+The familiar development entry points are retained:
+
+| Command | Purpose |
+| --- | --- |
+| `./build` | Build the device software using the matching AGNOS environment |
+| `./build --panda` | Build the supported Panda firmware targets |
+| `./c3` | Open the comma 3 interface on a development host |
+| `./c4` | Open the comma four interface on a development host |
+| `./onroad` | Open the onroad development view |
+| `./dev` | Use the isolated host development environment |
+| `./test` | Run local pre-push regression checks without changing device artifacts |
+
+See the [build guide](docs/how-to/laptop-device-build.md) for setup, prerequisites, and target-specific behavior. The [UI guide](openpilot/starpilot/ui/README.md) describes desktop previews and their limits.
+
+## Testing and vehicle support
+
+StarPilot retains upstream vehicle and Panda safety interfaces and adds regression coverage for its custom behavior. The [safety workflow](.github/workflows/safety.yaml) and feature tests cover distinct parts of the system. A passing interface test, model comparison, or bench run does not establish driving support for every configuration.
+
+Support depends on the vehicle configuration and enabled feature. An existing vehicle identifier or settings page does not by itself establish driving support. Model Laboratory currently exposes management controls, but paired driving inference remains unavailable pending integration and Chestnut validation.
 
 ## Third-Party Notices
 

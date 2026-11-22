@@ -1,218 +1,144 @@
-# StarPilot Development
-
-This branch uses a split development flow:
-
-- `./build` keeps producing device-target (`larch64`) artifacts for comma runtime compatibility.
-- `./dev`, `./tool`, `./tools/host`, `./c3`, and `./c4` use an isolated host cache under `.host_runtime/` for native macOS/Linux tooling.
-
-The goal is simple: keep the device build intact, keep host tools consistent with runtime behavior, and stop polluting the repo with host-only `.so`, `.o`, and desktop UI artifacts.
-
-## Prerequisites
-
-- On Ubuntu/Linux, run `tools/install_ubuntu_dependencies.sh`
-  - `tools/ubuntu_setup.sh` runs both the Ubuntu and Python dependency installers
-- Run `tools/install_python_dependencies.sh`
-- Have `uv` available in your shell
-- For device-target builds, install Docker Desktop or Podman with Linux/aarch64 support
-
-## One-time device build setup
-
-Fast path:
-
-```bash
-scripts/laptop_device_build.sh setup
-```
-
-Equivalent wrapper:
-
-```bash
-scripts/starpilot_build_flow.sh laptop-setup
-```
-
-If you need the manual sysroot flow instead:
-
-```bash
-scripts/laptop_device_build.sh build-image
-scripts/laptop_device_build.sh setup-sysroot-agnos
-```
-
-Or from a physical comma:
-
-```bash
-scripts/laptop_device_build.sh setup-sysroot <device-ip> comma 22
-scripts/laptop_device_build.sh build-image
-```
-
-## Device-target build flow
-
-This stays the same:
-
-```bash
-./build
-```
-
-Equivalent long form:
-
-```bash
-scripts/laptop_device_build.sh build
-```
-
-This is the path you use for the actual comma/device-compatible build. It writes the normal device artifacts and does not depend on `.host_runtime`.
-
-## Host tooling flow
-
-Use the shorthand launchers for host-native tools:
-
-```bash
-./dev <command> [args...]
-./tool <command> [args...]
-./tools/host <command> [args...]
-```
-
-All three entrypoints do the same thing. `./dev` is the shortest general-purpose form.
-
-### Available host commands
-
-- `./dev replay [args...]`
-- `./onroad [jobs] (--c3 | --c4 | --all | --replay-only) <route-or-replay-args...>`
-- `./dev cabana [args...]`
-- `./dev plotjuggler [args...]`
-- `./dev juggle [args...]`
-- `./dev sync`
-- `./dev shell`
-
-`./onroad` replays a route into a desktop UI to watch live. To record one to an mp4 instead of
-watching it in real time, use `tools/clip/run.py` (see [tools/clip/README.md](clip/README.md)).
-
-### Desktop UI shorthands
-
-- `./c3 [jobs] [args...]`
-- `./c4 [jobs] [args...]`
-
-These are wrappers around the same isolated host runner used by `./dev`.
-
-Examples:
-
-```bash
-./dev replay
-./onroad --c3 f08912a233c1584f/2022-08-11--18-02-41/1
-./onroad --c4 f08912a233c1584f/2022-08-11--18-02-41/1 --start 30
-./onroad --all f08912a233c1584f/2022-08-11--18-02-41/1
-./dev plotjuggler --help
-./dev cabana
-./c3 8
-./c4 8
-./dev shell
-```
-
-## What gets isolated
-
-Host-native artifacts live under:
-
-```bash
-.host_runtime/<platform>/
-```
-
-That host area contains:
-
-- `worktree/` and `venv/` for the shared bucket used by UI, replay, and PlotJuggler
-- `cabana/worktree/` and `cabana/venv/` for Cabana
-- host-built binaries, static libs, objects, and Python extensions for each bucket
-
-Because `.host_runtime/` is git-ignored, running host tools no longer churns tracked files in the main repo.
-
-## Build and rebuild behavior
-
-Expected behavior:
-
-- First run builds whatever the host tool needs
-- Later runs reuse the cached host artifacts
-- Source changes or branch changes trigger a resync into `.host_runtime/.../worktree`
-- SCons rebuilds only the host artifacts that are out of date
-- Deleting `.host_runtime/` forces a clean rebuild of the host cache
-
-In other words, the host-side shorthand commands should not fully recompile every time unless something actually changed.
-
-## Concurrency rule
-
-Host shorthand commands are isolated by bucket.
-
-That means:
-
-- `./dev cabana` and `./dev plotjuggler` can run at the same time
-- `./build` is separate from all host buckets and can run at the same time as host tools
-- commands that share the same bucket still wait on that bucket's lock
-- long-running UI sessions hold the shared bucket lock until they exit
-
-Current bucket split:
-
-- shared bucket: `./c3`, `./c4`, `./dev replay`, `./dev plotjuggler`, `./dev juggle`, `./dev shell`
-- cabana bucket: `./dev cabana`
-
-This prevents one command from syncing or rebuilding over another live host session while still allowing the common Cabana + PlotJuggler pairing.
-
-## Choosing the right command
-
-Use `./build` when:
-
-- you want device-target artifacts
-- you care about matching the comma runtime build path
-- you are preparing binaries for deployment/runtime validation
-
-Use `./dev ...` when:
-
-- you want host-native tools like replay, cabana, or PlotJuggler
-- you want host-native `.so` files separated from the main repo
-- you do not want AI tools or git status confused by temporary build churn
-
-Use `./onroad ...` when:
-
-- you want a recorded route to drive the desktop UI(s) on PC
-- you need replay and UI to share the same isolated host runtime and messaging prefix
-- you want the default side-by-side desktop UI launch without running separate replay/UI commands
-
-Use `./c3` or `./c4` when:
-
-- you want the desktop UI variants
-- you want them to build/run from the isolated host cache instead of touching tracked files
-
-## Troubleshooting
-
-If a shorthand command fails immediately:
-
-- make sure `.venv` exists
-- run `tools/install_python_dependencies.sh`
-- confirm `uv` is installed
-
-If device builds fail:
-
-- run `scripts/laptop_device_build.sh doctor`
-- finish the sysroot/container setup before retrying `./build`
-
-If you want to reset the host cache:
-
-```bash
-rm -rf .host_runtime
-```
-
-Then rerun the shorthand command you need.
-
-To refresh all buckets without deleting them:
-
-```bash
-./dev sync
-```
-
-To refresh one bucket only:
-
-```bash
-./dev sync cabana
-./dev sync shared
-```
-
-## Recommended day-to-day workflow
-
-1. Use `./build` when you need the real device-target build.
-2. Use `./dev replay`, `./dev cabana`, or `./dev plotjuggler` for host-side tooling.
-3. Use `./c3` or `./c4` for desktop UI work.
-4. Let `.host_runtime` keep host artifacts out of the repo.
+# StarPilot developer commands
+
+The root commands are a supported developer interface. `./build` produces
+device artifacts. `./dev` builds and runs desktop tools in a separate source
+cache. The UI remains the custom large and compact Raylib UI.
+
+| Command | Purpose |
+| --- | --- |
+| `./build [jobs] [SCons arguments]` | Complete Linux ARM64 device build |
+| `./build --panda [jobs]` | Build the currently supported signed H7 firmware targets |
+| `./build --params [jobs]` | Build the device Params library |
+| `./build --cereal [jobs]` | Build the current schema, messaging libraries and bridge |
+| `./c3 [jobs]`, `./c4 [jobs]` | Large and compact custom desktop UI |
+| `./onroad [jobs] [--c3\|--c4\|--all\|--replay-only] <route>` | Route replay with selected desktop UI(s) |
+| `./dev replay [jobs] <replay arguments>` | Native replay and its terminal controls |
+| `./dev cabana [jobs] <arguments>` | Native Cabana in an independent cache |
+| `./dev plotjuggler [jobs] <arguments>` | Current PlotJuggler helper; `juggle` is an alias |
+| `./dev galaxy [jobs] [--live [--no-autoreload]] [--port N]` | Authenticated local Galaxy server; `--live` follows Galaxy edits |
+| `./dev python <arguments>` | Python with host native libraries and current source |
+| `./dev pytest <arguments>` | pytest, including its xdist and mock plugins |
+| `./dev shell` | Shell with host imports and private settings |
+| `./dev sync [shared\|cabana]` | Refresh source and dependencies without launching a tool |
+| `./heatdeath --help` | Joined Controls replay benchmark and CPU-placement experiments; [setup](heatdeath/README.md) |
+| `./test` | Run lint, packaging, startup, control, model, UI and selected vehicle regressions |
+| `./test --full` | Run the complete Linux pre-deployment suite, including recorded routes and replay |
+
+`./tool` and `./tools/host` are aliases for `./dev`. The `c3`, `c4`, and
+`onroad` commands can also be written as `./dev c3`, etc. Run `./dev help`,
+`./c3 --help`, `./c4 --help`, or `./onroad --help` without installing or
+building anything. Scripts resolve paths relative to the checkout, so invoking
+an absolute launcher path from another directory also works.
+
+## Setup and build separation
+
+Run `./test` before pushing local changes. It checks the current files, including
+uncommitted edits, in the existing shared host cache. Native dependencies are
+built incrementally there; device binaries and the source checkout are preserved.
+Each run prints its report directory, saves individual logs and test results,
+and returns a nonzero status on failure. First-time dependency setup takes longer
+than subsequent runs. Run `./test --help` without preparing an environment.
+The updater shell checks require GNU timeout; on macOS install it with
+`brew install coreutils`. Standard Homebrew locations are detected automatically.
+
+The default is a focused regression check, not every CI job. `./test --full`
+uses the existing Linux pre-deployment runner for the full host build, unit,
+vehicle, native protocol, recorded-route and process-replay checks. It requires
+the [CI prerequisites](ci/README.md); `--download` permits pinned route downloads,
+and process replay may fetch its own logs. Neither command replaces the device
+build or physical vehicle validation. Logs default to a new temporary directory;
+use `--output /path/to/new-directory` to choose a persistent location.
+
+Desktop tools require macOS or Linux, Git, uv, and a working native C/C++
+compiler. Run `tools/setup_dependencies.sh` in this checkout for prerequisites. The first
+desktop command installs the locked Python 3.12 environment and selected
+developer dependencies in its own cache. It does not reuse a device venv.
+Native bindings are built with the current SCons graph before launching.
+Python, pytest and shell also build the generated longitudinal MPC and location
+filter libraries. There is no automatic manager launch, firmware flash, or
+vehicle connection in these host commands.
+
+Device build setup and sysroot instructions are in
+[laptop-device-build.md](../docs/how-to/laptop-device-build.md).
+`./build --panda` builds the targets present in this branch: `panda_h7` and
+`body_h7`. Other historical firmware variants are not implemented by this
+branch's Panda graph; their migration is a separate vehicle/platform obligation.
+Compilation alone does not qualify a vehicle port or a road-test candidate.
+
+## Incremental source and state
+
+Host runtime files live under `.host_runtime/<system>-<architecture>/shared/`.
+Cabana uses the adjacent `cabana/` bucket, allowing it to run alongside
+PlotJuggler or replay. Commands in one bucket wait for the current session to
+exit before changing its source or native libraries. The lock is held until
+the launched command exits and is released by the OS after a crash.
+
+Each launch copies current tracked source and unignored new files, including
+uncommitted edits. Deleted source is removed from the cache; ignored native
+build outputs are not copied from the main checkout. Unchanged host build
+outputs stay available for incremental builds. The cache has its own Git index
+and refs, with read-only access to source objects; it never shares the source
+index or runs checkout/reset cleanup against the developer's tree. Cache pushes
+are disabled. Make source edits in the main checkout, since the next sync
+replaces cached source edits.
+
+The host venv and Params live in the bucket. Messaging uses a stable, unique
+checkout-and-bucket prefix. PC runtime support files, including Galaxy's local
+credentials, use the corresponding `~/.commastarpilot-dev-<id>/` directory;
+ordinary `~/.comma` settings are not reused. Keeping the user's normal HOME
+also preserves route authentication. Download caches are separate from Params.
+Onroad sessions use disposable Params and a dedicated `replay-...` namespace.
+
+To force a clean desktop rebuild, stop the relevant command and remove only
+that bucket under `.host_runtime`. This does not delete the main checkout's
+device artifacts. Deleting a bucket removes its private Params; the separately
+prefixed home directory holds the local Galaxy credentials described above.
+
+## UI assets and replay compatibility
+
+The preserved bitmap UI requires its exact reviewed font bundle. Set
+`STARPILOT_UI_FONT_DIR` to that complete local directory. Inter and Unifont
+bitmaps and their notices are bundled; Como Heavy is still externally
+provisioned. An incomplete or changed bundle produces an explicit error rather
+than silently substituting fonts and changing UI metrics.
+
+`./onroad` forwards current replay options such as `--start`, `--playback`,
+`--data_dir`, `--no-loop`, `--no-vipc`, and `--demo`. An explicit UI choice avoids
+automatic selection from logged device metadata. `--prefix replay-NAME` selects
+a private session name. Playback uses the current native terminal controls.
+Route access may require authentication or download the route the developer
+requests. This is log playback; it does not run a driving manager or send CAN.
+
+The UI uses the route's recorded device type, registered saved settings and
+compatible versioned caches. Message freshness follows recorded time, including
+playback speed, pause and seeking; recorded messages are not rewritten. Seeking
+clears the previous display observations. A dead replay publisher invalidates
+the display clock even while paused. Recorded wheel actions are not executed.
+An explicit `--c3`, `--c4` or `--all` overrides the screen format while retaining
+the recorded device identity.
+
+Some preferences, including custom layouts, may be absent from the log. Supply
+`--params /absolute/path/to/saved/params` to supplement them with a flat saved
+Params snapshot. The snapshot is read only; credentials and unqualified binary
+caches are excluded. Without that snapshot, missing settings use defaults, so
+the preview cannot reproduce unlogged preferences. Displays requiring both
+recorded monotonic and boot clocks remain unavailable until a recorded clock
+pair establishes their relationship.
+
+`./onroad -alert` previews a synthetic critical visual alert in the private
+replay session; it never publishes car control. `./onroad --cem` and `--csc`
+show labeled synthetic CEM and curve visuals in that private UI session. They
+change presentation only; they do not create driving acknowledgments or qualify
+the current control features. The legacy navigation and combined Galaxy replay
+demo switches still need adapters for this branch's current services. They fail
+explicitly while absent. `./dev galaxy` starts the implemented local Galaxy
+server independently; set its local password in the desktop UI first. Galaxy
+continues to use its existing authenticated loopback interface. Add `--live` to
+release the shared lock after building and follow edits under
+`openpilot/starpilot/galaxy`; see its README.
+
+Developer compatibility remains a release requirement. Launcher/parser tests,
+native desktop builds, UI/replay smoke checks, complete device builds, and the
+existing safety/vehicle suites provide different evidence; none substitutes
+for the others. Remaining demo and firmware variants must not be counted as
+full compatibility just because the root command exists.

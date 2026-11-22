@@ -1,100 +1,157 @@
-import os
-import time
-import random
-import numpy as np
-from msgq.visionipc import VisionIpcServer, VisionIpcClient, VisionStreamType
-
-def zmq_sleep(t=1):
-  if "ZMQ" in os.environ:
-    time.sleep(t)
+import gc
+import uuid
+import struct
+import unittest
+from typing import Optional
+from msgq.visionipc import VisionIpcServer, VisionIpcClient
 
 
-class TestVisionIpc:
+class TestVisionIpc(unittest.TestCase):
+  server: Optional[VisionIpcServer]
+  client: Optional[VisionIpcClient]
 
-  def setup_vipc(self, name, *stream_types, num_buffers=1, width=100, height=100, conflate=False):
-    self.server = VisionIpcServer(name)
-    for stream_type in stream_types:
-      self.server.create_buffers(stream_type, num_buffers, width, height)
-    self.server.start_listener()
+  def setUp(self):
+    self.name = f"test_{uuid.uuid4().hex}"
+    self.server = None
+    self.client = None
 
-    if len(stream_types):
-      self.client = VisionIpcClient(name, stream_types[0], conflate)
-      assert self.client.connect(True)
-    else:
-      self.client = None
+  def tearDown(self):
+    self.client = None
+    self.server = None
 
-    zmq_sleep()
-    return self.server, self.client
+  def setup_vipc(
+    self, name: str, stream_type: int, *other_stream_types: int,
+    num_buffers: int = 1, width: int = 100, height: int = 100, conflate: bool = False,
+  ) -> tuple[VisionIpcServer, VisionIpcClient, int]:
+    self.server = server = VisionIpcServer(self.name)
+    for stream in (stream_type, *other_stream_types):
+      server.create_buffers(stream, num_buffers, width, height)
+    server.start_listener()
+
+    self.client = client = VisionIpcClient(self.name, stream_type, conflate)
+    assert client.connect(True)
+    buffer_len = client.buffer_len
+    assert buffer_len is not None
+    return server, client, buffer_len
 
   def test_connect(self):
-    self.setup_vipc("camerad", VisionStreamType.VISION_STREAM_ROAD)
-    assert self.client.is_connected
-    del self.client
-    del self.server
+    _, client, _ = self.setup_vipc("camerad", 0)
+    assert client.is_connected()
 
   def test_available_streams(self):
-    for k in range(4):
-      stream_types = set(random.choices([x.value for x in VisionStreamType], k=k))
-      self.setup_vipc("camerad", *stream_types)
-      available_streams = VisionIpcClient.available_streams("camerad", True)
-      assert available_streams == stream_types
-      del self.client
-      del self.server
+    stream_types = (0, 2)
+    self.setup_vipc("camerad", *stream_types)
+    available_streams = VisionIpcClient.available_streams(self.name, True)
+    assert available_streams == set(stream_types)
 
   def test_buffers(self):
     width, height, num_buffers = 100, 200, 5
-    self.setup_vipc("camerad", VisionStreamType.VISION_STREAM_ROAD, num_buffers=num_buffers, width=width, height=height)
-    assert self.client.width == width
-    assert self.client.height == height
-    assert self.client.buffer_len > 0
-    assert self.client.num_buffers == num_buffers
-    del self.client
-    del self.server
+    _, client, buffer_len = self.setup_vipc("camerad", 0, num_buffers=num_buffers, width=width, height=height)
+    assert client.width == width
+    assert client.height == height
+    assert buffer_len > 0
+    assert client.num_buffers == num_buffers
 
   def test_send_single_buffer(self):
-    self.setup_vipc("camerad", VisionStreamType.VISION_STREAM_ROAD)
+    server, client, buffer_len = self.setup_vipc("camerad", 0)
+    buf = bytearray(buffer_len)
+    struct.pack_into("<Q", buf, 0, 1234)
+    server.send(0, buf, frame_id=1337)
 
-    buf = np.zeros(self.client.buffer_len, dtype=np.uint8)
-    buf.view('<i4')[0] = 1234
-    self.server.send(VisionStreamType.VISION_STREAM_ROAD, buf, frame_id=1337)
-
-    recv_buf = self.client.recv()
+    recv_buf = client.recv()
     assert recv_buf is not None
-    assert recv_buf.data.view('<i4')[0] == 1234
+    data = recv_buf.data
+    assert isinstance(data, memoryview)
+    assert struct.unpack_from("<Q", data, 0)[0] == 1234
+    assert len(data) == buffer_len
+    assert data[8:].nbytes == buffer_len - 8
+    assert client.frame_id == 1337
     assert recv_buf.frame_id == 1337
-    assert self.client.frame_id == 1337
-    del self.client
-    del self.server
 
   def test_no_conflate(self):
-    self.setup_vipc("camerad", VisionStreamType.VISION_STREAM_ROAD)
+    server, client, buffer_len = self.setup_vipc("camerad", 0)
+    buf = bytearray(buffer_len)
+    server.send(0, buf, frame_id=1)
+    server.send(0, buf, frame_id=2)
 
-    buf = np.zeros(self.client.buffer_len, dtype=np.uint8)
-    self.server.send(VisionStreamType.VISION_STREAM_ROAD, buf, frame_id=1)
-    self.server.send(VisionStreamType.VISION_STREAM_ROAD, buf, frame_id=2)
-
-    recv_buf = self.client.recv()
+    recv_buf = client.recv()
     assert recv_buf is not None
-    assert self.client.frame_id == 1
+    assert client.frame_id == 1
 
-    recv_buf = self.client.recv()
+    recv_buf = client.recv()
     assert recv_buf is not None
-    assert self.client.frame_id == 2
-    del self.client
-    del self.server
+    assert client.frame_id == 2
 
   def test_conflate(self):
-    self.setup_vipc("camerad", VisionStreamType.VISION_STREAM_ROAD, conflate=True)
+    server, client, buffer_len = self.setup_vipc("camerad", 0, conflate=True)
+    buf = bytearray(buffer_len)
+    server.send(0, buf, frame_id=1)
+    server.send(0, buf, frame_id=2)
 
-    buf = np.zeros(self.client.buffer_len, dtype=np.uint8)
-    self.server.send(VisionStreamType.VISION_STREAM_ROAD, buf, frame_id=1)
-    self.server.send(VisionStreamType.VISION_STREAM_ROAD, buf, frame_id=2)
-
-    recv_buf = self.client.recv()
+    recv_buf = client.recv()
     assert recv_buf is not None
-    assert self.client.frame_id == 2
+    assert client.frame_id == 2
 
-    recv_buf = self.client.recv()
+    recv_buf = client.recv(timeout_ms=5)
     assert recv_buf is None
-    del self.client
-    del self.server
+
+  def test_send_buffer_types(self):
+    server, client, buffer_len = self.setup_vipc("camerad", 0)
+    data = bytes(i % 256 for i in range(buffer_len))
+    strided = bytearray(len(data) * 2)
+    strided[::2] = data
+    for payload in (data, bytearray(data), memoryview(data), memoryview(strided)[::2], memoryview(data[::-1])[::-1]):
+      with self.subTest(type=type(payload)):
+        server.send(0, payload, frame_id=42, timestamp_sof=123, timestamp_eof=456)
+        buf = client.recv()
+        assert buf is not None
+        self.assertEqual(bytes(buf.data), data)
+        self.assertEqual(buf.frame_id, 42)
+        self.assertEqual(client.timestamp_sof, 123)
+        self.assertEqual(client.timestamp_eof, 456)
+        self.assertFalse(client.valid)
+
+  def test_send_wrong_size(self):
+    server, _, _ = self.setup_vipc("camerad", 0)
+    with self.assertRaises(AssertionError):
+      server.send(0, b"short")
+
+  def test_buffer_keeps_client_alive(self):
+    server, client, buffer_len = self.setup_vipc("camerad", 0)
+    data = b"a" * buffer_len
+    server.send(0, data, frame_id=42)
+    buf = client.recv()
+    assert buf is not None
+    self.client = None
+    del client
+    gc.collect()
+    self.assertEqual(buf.frame_id, 42)
+    view = buf.data
+    del buf
+    gc.collect()
+    self.assertEqual(bytes(view), data)
+    self.assertFalse(view.readonly)
+    view[0] = ord("b")
+    self.assertEqual(view[0], ord("b"))
+
+  def test_unconnected_properties(self):
+    client = VisionIpcClient("unconnected", 0, False)
+    for value in (client.width, client.height, client.stride, client.uv_offset, client.buffer_len):
+      self.assertIsNone(value)
+    self.assertEqual(client.num_buffers, 0)
+    self.assertFalse(client.is_connected())
+    self.assertFalse(client.connect(False))
+    self.assertIsNone(client.recv(timeout_ms=0))
+
+  def test_exact_uint64_timestamps_survive_receive_and_timeout(self):
+    server, client, size = self.setup_vipc("clock", 0, width=32, height=18)
+    payload = bytes(size)
+    for frame, sof, eof in ((0, 0, 0), (1, 2**53 + 1, 2**53 + 19),
+                            (2**32 - 1, 2**63 + 17, 2**64 - 1)):
+      with self.subTest(frame=frame, sof=sof, eof=eof):
+        server.send(0, payload, frame_id=frame, timestamp_sof=sof, timestamp_eof=eof)
+        buffer = client.recv(timeout_ms=1000)
+        assert buffer is not None
+        assert (client.frame_id, client.timestamp_sof, client.timestamp_eof) == (frame, sof, eof)
+        assert client.recv(timeout_ms=0) is None
+        assert (client.frame_id, client.timestamp_sof, client.timestamp_eof) == (frame, sof, eof)

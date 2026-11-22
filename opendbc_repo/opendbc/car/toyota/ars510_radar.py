@@ -12,6 +12,7 @@ is withheld.
 Adapted from ds-sebastian/ars510-radar at fb5b29c2b5999f34afeb6f7ac494a73949d66c67.
 Copyright (c) 2026 ARS510 radar contributors. MIT license; see THIRD_PARTY_NOTICES.md.
 """
+
 import zlib
 from math import isfinite, nan, pi
 
@@ -48,6 +49,7 @@ def be_bits(b: bytes, start: int, length: int) -> int:
 
 class Ars510Radar:
   """Raw CAN frames in, points (trackId, dRel, yRel, vRel) out once per 0x80 record."""
+
   def __init__(self):
     self.chunks, self.record_t, self.last_frame_t = [], 0.0, None
     self.v_ego = self.yaw = None  # (time, m/s), (time, rad/s left positive)
@@ -108,15 +110,23 @@ class Ars510Radar:
     v_ego = self.v_ego[1] if self.v_ego is not None and abs(t - self.v_ego[0]) <= EGO_MAX_AGE_S else None
     objs = []
     for slot in range(SLOTS):
-      s = record[SLOT_START + SLOT_LEN * slot:SLOT_START + SLOT_LEN * (slot + 1)]
+      s = record[SLOT_START + SLOT_LEN * slot : SLOT_START + SLOT_LEN * (slot + 1)]
       if s == IDLE_SLOT:
         continue
       age, lat = bits(s, 24, 7), bits(s, 44, 12) - 2048
       init_template = age == 1 and bits(s, 56, 7) == 0 and bits(s, 216, 6) == 0
       # over-ground speed: 0.149 m/s per code against 0xB4 ego speed (DBC factor 0.15)
-      objs.append(dict(tid=self.track_id(t, slot, age), age=age, d=(bits(s, 32, 12) - 160) / 16, y=lat * 0.015,
-                       vg=(bits(s, 64, 10) - 510.5) * 0.149, unc=bits(s, 240, 7),
-                       valid=age >= 1 and not init_template and abs(lat) < 2000))
+      objs.append(
+        dict(
+          tid=self.track_id(t, slot, age),
+          age=age,
+          d=(bits(s, 32, 12) - 160) / 16,
+          y=lat * 0.015,
+          vg=(bits(s, 64, 10) - 510.5) * 0.149,
+          unc=bits(s, 240, 7),
+          valid=age >= 1 and not init_template and abs(lat) < 2000,
+        )
+      )
     tracks = {o["tid"]: o for o in objs if o["valid"]}
     acc_tid = self.acc_match(t, tracks)
     yaw = self.yaw[1] if self.yaw is not None and abs(t - self.yaw[0]) <= EGO_MAX_AGE_S else None
@@ -133,8 +143,14 @@ class Ars510Radar:
       if o["age"] < PUBLISH_AGE or (tid not in self.published and std > PUBLISH_STD) or not isfinite(vrel):
         continue  # a point needs a fresh ego speed: one NaN would poison radard's filter
       still = abs(speed) < STILL and d_rel <= PATH_GATE_MIN_RANGE
-      if tid != acc_tid and (d_rel > FAR_ACC_ONLY or (yaw is not None and (d_rel > PATH_GATE_MIN_RANGE or still) and abs(
-          o["y"] - yaw / max(v_ego, 2.0 if still else 5.0) * d_rel * d_rel / 2) > (STILL_GATE if still else PATH_GATE))):
+      if tid != acc_tid and (
+        d_rel > FAR_ACC_ONLY
+        or (
+          yaw is not None
+          and (d_rel > PATH_GATE_MIN_RANGE or still)
+          and abs(o["y"] - yaw / max(v_ego, 2.0 if still else 5.0) * d_rel * d_rel / 2) > (STILL_GATE if still else PATH_GATE)
+        )
+      ):
         continue  # far: only the car the radar's ACC follows is published (the camera covers the rest); closer in: an object off the path is another lane's
       self.published.add(tid)
       out.append((tid, d_rel, o["y"], vrel))
@@ -154,10 +170,10 @@ class Ars510Radar:
     p += (LEAD_ACCEL * (t - prev[0])) ** 2
     for z, r in [(o["vg"], sig)] + readings:
       s = p + r * r
-      innov = max(min(z - v, GATE_SIGMA * s ** 0.5), -GATE_SIGMA * s ** 0.5)
+      innov = max(min(z - v, GATE_SIGMA * s**0.5), -GATE_SIGMA * s**0.5)
       v, p = v + p / s * innov, p * (1.0 - p / s)
     self.kf[tid] = (t, v, p)
-    return v, p ** 0.5
+    return v, p**0.5
 
   def fused_range(self, tid, t, d, vrel):
     prev = self.rng.get(tid)
@@ -223,8 +239,8 @@ class RadarInterface(RadarInterfaceBase):
     for track_id, d_rel, y_rel, v_rel in points:
       pt = structs.RadarData.RadarPoint()
       pt.trackId, pt.dRel, pt.yRel, pt.vRel = track_id, d_rel, y_rel, v_rel
-      pt.aRel = pt.yvRel = nan
-      pt.measured = True
+      pt.deprecated.aRel = pt.deprecated.yvRel = nan
+      pt.deprecated.measured = True
       pts.append(pt)
     ret.points = pts
     return ret

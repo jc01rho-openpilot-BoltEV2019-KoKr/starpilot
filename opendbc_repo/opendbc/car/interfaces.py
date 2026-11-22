@@ -7,39 +7,25 @@ from enum import StrEnum
 from typing import Any
 from collections.abc import Callable
 from functools import cache
-from types import SimpleNamespace
 
-from cereal import custom
-from opendbc.car import DT_CTRL, apply_hysteresis, create_button_events, gen_empty_fingerprint, scale_rot_inertia, scale_tire_stiffness, STD_CARGO_KG
-from opendbc.car import structs
+from opendbc.car import DT_CTRL, apply_hysteresis, gen_empty_fingerprint, scale_rot_inertia, scale_tire_stiffness, STD_CARGO_KG
+from opendbc.car import structs, ACCEL_MAX_TAKEOFF
 from opendbc.car.can_definitions import CanData, CanRecvCallable, CanSendCallable
-from opendbc.car.chrysler.values import CAR as CHRYSLER, ChryslerStarPilotFlags
 from opendbc.car.common.basedir import BASEDIR
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.common.simple_kalman import KF1D, get_kalman_gain
-from opendbc.car.gm.values import CAR as GM
-from opendbc.car.honda.values import CAR as HONDA, HONDA_BOSCH, HondaFlags, HondaSafetyFlags, HondaStarPilotFlags
-from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import CAR as HYUNDAI, CANFD_CAR, HyundaiFlags, HyundaiStarPilotFlags, HyundaiStarPilotSafetyFlags, ALT_BUS_LDA_BUTTON_CARS
-from opendbc.car.mock.values import CAR as MOCK
-from opendbc.car.subaru.values import CAR as SUBARU, SUBARU_REDNECK_CRUISE_CARS, SubaruSafetyFlags
-from opendbc.car.toyota.values import CAR as TOYOTA, NO_DSU_CAR, TSS2_CAR, UNSUPPORTED_DSU_CAR, ToyotaStarPilotFlags, ToyotaSafetyFlags
 from opendbc.car.values import PLATFORMS
 from opendbc.can import CANParser
-from openpilot.common.params import Params
-from openpilot.starpilot.common.testing_grounds import testing_ground
 
 GearShifter = structs.CarState.GearShifter
 ButtonType = structs.CarState.ButtonEvent.Type
-
-Ecu = structs.CarParams.Ecu
 
 V_CRUISE_MAX = 145
 MAX_CTRL_SPEED = (V_CRUISE_MAX + 4) * CV.KPH_TO_MS
 ACCEL_MAX = 2.0
 ACCEL_MIN = -3.5
 
-SPEED_CORRECTION = 1.04  # +4% for 215-55-17
+SPEED_CORRECTION = 1.04  # +4% for 215-55-17 tires
 
 TORQUE_PARAMS_PATH = os.path.join(BASEDIR, 'torque_data/params.toml')
 TORQUE_OVERRIDE_PATH = os.path.join(BASEDIR, 'torque_data/override.toml')
@@ -54,12 +40,11 @@ GEAR_SHIFTER_MAP: dict[str, structs.CarState.GearShifter] = {
   'D': GearShifter.drive, 'DRIVE': GearShifter.drive,
   'S': GearShifter.sport, 'SPORT': GearShifter.sport,
   'L': GearShifter.low, 'LOW': GearShifter.low,
-  'L2': GearShifter.low, 'L3': GearShifter.low,
   'B': GearShifter.brake, 'BRAKE': GearShifter.brake,
 }
 
-TorqueFromLateralAccelCallbackType = Callable[[float, structs.CarParams.LateralTorqueTuning, bool], float]
-LateralAccelFromTorqueCallbackType = Callable[[float, structs.CarParams.LateralTorqueTuning, bool], float]
+TorqueFromLateralAccelCallbackType = Callable[[float, structs.CarParams.LateralTorqueTuning], float]
+LateralAccelFromTorqueCallbackType = Callable[[float, structs.CarParams.LateralTorqueTuning], float]
 
 
 @cache
@@ -71,24 +56,12 @@ def get_torque_params():
   with open(TORQUE_OVERRIDE_PATH, 'rb') as f:
     override = tomllib.load(f)
 
-  def resolve_sub_candidate(candidate: str) -> str:
-    chain: list[str] = []
-    seen: set[str] = set()
-    out = candidate
-    while out in sub:
-      if out in seen:
-        raise RuntimeError(f"Found cycle in torque substitute config: {' -> '.join(chain + [out])}")
-      chain.append(out)
-      seen.add(out)
-      out = sub[out]
-    return out
-
   torque_params = {}
   for candidate in (sub.keys() | params.keys() | override.keys()) - {'legend'}:
     if sum([candidate in x for x in [sub, params, override]]) > 1:
       raise RuntimeError(f'{candidate} is defined twice in torque config')
 
-    sub_candidate = resolve_sub_candidate(candidate)
+    sub_candidate = sub.get(candidate, candidate)
 
     if sub_candidate in override:
       out = override[sub_candidate]
@@ -122,49 +95,43 @@ class RadarInterfaceBase(ABC):
 
 
 class CarInterfaceBase(ABC):
-  CarState: 'CarStateBase'
-  CarController: 'CarControllerBase'
-  RadarInterface: 'RadarInterfaceBase' = RadarInterfaceBase
+  CarState: type['CarStateBase']
+  CarController: type['CarControllerBase']
+  RadarInterface: type['RadarInterfaceBase'] = RadarInterfaceBase
 
-  def __init__(self, CP: structs.CarParams, FPCP: custom.StarPilotCarParams):
+  DRIVABLE_GEARS: tuple[structs.CarState.GearShifter, ...] = ()
+
+  def __init__(self, CP: structs.CarParams):
     self.CP = CP
 
     self.frame = 0
     self.v_ego_cluster_seen = False
 
-    self.CS: CarStateBase = self.CarState(CP, FPCP)
+    self.CS: CarStateBase = self.CarState(CP)
     self.can_parsers: dict[StrEnum, CANParser] = self.CS.get_can_parsers(CP)
 
     dbc_names = {bus: cp.dbc_name for bus, cp in self.can_parsers.items()}
     self.CC: CarControllerBase = self.CarController(dbc_names, CP)
-    self.CC.FPCP = FPCP
 
-    self.FPCP = FPCP
-
-    self.params_memory = Params(memory=True)
-
-    self.onroad_distance_button = False
-    self.physical_distance_button = False
-
-  def apply(self, c: structs.CarControl, now_nanos: int | None = None, starpilot_toggles: SimpleNamespace = None) -> tuple[structs.CarControl.Actuators, list[CanData]]:
+  def apply(self, c: structs.CarControl, now_nanos: int | None = None) -> tuple[structs.CarControl.Actuators, list[CanData]]:
     if now_nanos is None:
       now_nanos = int(time.monotonic() * 1e9)
-    return self.CC.update(c, self.CS, now_nanos, starpilot_toggles)
+    return self.CC.update(c, self.CS, now_nanos)
 
   @staticmethod
-  def get_pid_accel_limits(CP, current_speed, cruise_speed):
-    return ACCEL_MIN, ACCEL_MAX
+  def get_pid_accel_limits(CP, current_speed, cruise_speed, *, faster_takeoffs=False):
+    return ACCEL_MIN, ACCEL_MAX_TAKEOFF if faster_takeoffs else ACCEL_MAX
 
   @classmethod
   def get_non_essential_params(cls, candidate: str) -> structs.CarParams:
     """
     Parameters essential to controlling the car may be incomplete or wrong without FW versions or fingerprints.
     """
-    return cls.get_params(candidate, gen_empty_fingerprint(), list(), False, False, False, None)
+    return cls.get_params(candidate, gen_empty_fingerprint(), list(), False, False, False)
 
   @classmethod
   def get_params(cls, candidate: str, fingerprint: dict[int, dict[int, int]], car_fw: list[structs.CarParams.CarFw],
-                 alpha_long: bool, is_release: bool, docs: bool, starpilot_toggles: SimpleNamespace) -> structs.CarParams:
+                 alpha_long: bool, is_release: bool, docs: bool) -> structs.CarParams:
     ret = CarInterfaceBase.get_std_params(candidate)
 
     platform = PLATFORMS[candidate]
@@ -179,160 +146,15 @@ class CarInterfaceBase(ABC):
 
     ret = cls._get_params(ret, candidate, fingerprint, car_fw, alpha_long, is_release, docs)
 
-    trailer_load_kg = float(np.clip(getattr(starpilot_toggles, "trailer_load_kg", 0.0) or 0.0, 0.0, 15000.0 * CV.LB_TO_KG))
-
     # Vehicle mass is published curb weight plus assumed payload such as a human driver; notCars have no assumed payload
     if not ret.notCar:
-      ret.mass = ret.mass + trailer_load_kg
       ret.mass = ret.mass + STD_CARGO_KG
 
     # Set params dependent on values set by the car interface
     ret.rotationalInertia = scale_rot_inertia(ret.mass, ret.wheelbase)
     ret.tireStiffnessFront, ret.tireStiffnessRear = scale_tire_stiffness(ret.mass, ret.wheelbase, ret.centerToFront, ret.tireStiffnessFactor)
 
-    force_torque_controller = bool(getattr(starpilot_toggles, "force_torque_controller", False))
-    toggles_to_check = ("nnff", "nnff_lite")
-    modified_civic_force_torque = (
-      candidate == HONDA.HONDA_CIVIC_BOSCH and
-      bool(ret.flags & HondaFlags.EPS_MODIFIED)
-    )
-    # ForceTorqueController converts PID-based paths to torque control. It must
-    # not reinitialize cars that already selected torque control: those paths
-    # may have vehicle-specific torque tuning applied in their interface.
-    force_torque_conversion = force_torque_controller and ret.lateralTuning.which() != "torque"
-    if ret.steerControlType != structs.CarParams.SteerControlType.angle and (
-      force_torque_conversion or
-      any(getattr(starpilot_toggles, toggle, False) for toggle in toggles_to_check) or
-      modified_civic_force_torque
-    ):
-      CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
-
     return ret
-
-  @classmethod
-  def get_starpilot_params(cls, candidate: str, fingerprint: dict[int, dict[int, int]], car_fw: list[structs.CarParams.CarFw], CP: structs.CarParams, starpilot_toggles: SimpleNamespace):
-    fp_ret = custom.StarPilotCarParams.new_message()
-    fp_ret.pcmCruiseSpeed = True
-    params = Params(return_defaults=True)
-
-    platform = PLATFORMS[candidate]
-
-    fp_ret.flags |= int(platform.config.flags)
-    fp_ret.safetyConfigs = [custom.StarPilotCarParams.SafetyConfig.new_message(safetyParam=config.safetyParam) for config in CP.safetyConfigs]
-
-    if platform not in MOCK:
-      if platform in CHRYSLER:
-        if 0x4FF in fingerprint[0]:
-          fp_ret.flags |= ChryslerStarPilotFlags.NO_MIN_STEERING_SPEED.value
-          CP.minSteerSpeed = 0.
-
-      elif platform in GM:
-        fp_ret.canUsePedal = True
-
-      elif platform in HONDA:
-        fp_ret.canUsePedal = candidate not in HONDA_BOSCH
-        if any(0x35E in bus_fingerprint for bus_fingerprint in fingerprint.values()):
-          fp_ret.flags |= int(HondaStarPilotFlags.HAS_CAMERA_MESSAGES)
-
-      elif platform in HYUNDAI:
-        if candidate == HYUNDAI.KIA_RAY_EV and CP.enableGasInterceptorDEPRECATED:
-          fp_ret.canUsePedal = True
-          fp_ret.pcmCruiseSpeed = False
-        if candidate in CANFD_CAR:
-          hda2 = Ecu.adas in [fw.ecu for fw in car_fw]
-          CAN = CanBus(None, fingerprint, bool(CP.flags & HyundaiFlags.CANFD_LKA_STEERING))
-
-          fp_ret.isHDA2 = hda2
-          if 0x1FA in fingerprint[CAN.ECAN]:
-            fp_ret.flags |= HyundaiStarPilotFlags.SPEED_LIMIT_AVAILABLE.value
-
-        if candidate != HYUNDAI.KIA_RAY_EV and not (CP.flags & HyundaiFlags.CANFD) and 0x53E in fingerprint[2] and \
-            (candidate != HYUNDAI.KIA_STINGER_2022 or fingerprint[2][0x53E] == 6):
-          fp_ret.flags |= HyundaiStarPilotFlags.HAS_LKAS12.value
-
-        sportage_stock_scc_buttons = (
-          candidate == HYUNDAI.KIA_SPORTAGE_HEV_2026 and
-          not CP.openpilotLongitudinalControl and
-          bool(CP.flags & HyundaiFlags.CANFD_LKA_STEERING) and
-          not bool(CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS) and
-          fingerprint[CAN.ECAN].get(0x1CF) == 8 and
-          0x1AA not in fingerprint[CAN.ECAN]
-        )
-        fp_ret.redneckCruiseAvailable = (
-          (bool(CP.flags & HyundaiFlags.NON_SCC) and
-           not bool(CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS) and
-           not (candidate == HYUNDAI.KIA_RAY_EV and CP.enableGasInterceptorDEPRECATED)) or
-          sportage_stock_scc_buttons
-        )
-        if fp_ret.redneckCruiseAvailable and params.get_bool("RedneckCruise"):
-          fp_ret.pcmCruiseSpeed = False
-          if CP.flags & HyundaiFlags.NON_SCC:
-            CP.openpilotLongitudinalControl = True
-
-        if candidate == HYUNDAI.HYUNDAI_ELANTRA_HEV_2024 and CP.openpilotLongitudinalControl:
-          fp_ret.flags |= HyundaiStarPilotFlags.MAIN_CRUISE_STATE_TRACKING.value
-
-        hyundai_has_lda_button = not (CP.flags & HyundaiFlags.CANFD) and (
-          0x391 in fingerprint[0] or
-          0x50C in fingerprint[0] or
-          candidate in ALT_BUS_LDA_BUTTON_CARS or
-          bool(CP.flags & HyundaiFlags.CAN_CANFD_BLENDED)
-        )
-        if hyundai_has_lda_button:
-          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON.value
-
-        if getattr(starpilot_toggles, "always_on_lateral_lkas", False):
-          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
-
-        if candidate in (HYUNDAI.HYUNDAI_ELANTRA_HEV_2024, HYUNDAI.HYUNDAI_SONATA_HYBRID) and \
-            getattr(starpilot_toggles, "always_on_lateral_main", False):
-          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_ON_ENGAGE.value
-          if candidate == HYUNDAI.HYUNDAI_SONATA_HYBRID:
-            fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
-
-        if candidate == HYUNDAI.KIA_STINGER_2022 and CP.openpilotLongitudinalControl:
-          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
-
-        # The refresh Elantra's safety mapping comes from the resolved Galaxy
-        # toggle above, not from this legacy persisted-parameter fallback.
-        if candidate != HYUNDAI.HYUNDAI_ELANTRA_HEV_2024 and \
-            params.get_bool("AlwaysOnLateral") and params.get_int("LKASButtonControl") == 9:
-          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
-
-        if candidate == HYUNDAI.HYUNDAI_SONATA_HYBRID and getattr(starpilot_toggles, "always_on_lateral_lkas", False) and \
-            getattr(starpilot_toggles, "main_cruise_aol_toggle", False):
-          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_SYNC.value
-
-      elif platform in TOYOTA:
-        fp_ret.canUsePedal = not CP.autoResumeSng
-        fp_ret.canUseSDSU = candidate not in UNSUPPORTED_DSU_CAR and candidate not in TSS2_CAR
-
-        if 0x2AA in fingerprint[0] and candidate in NO_DSU_CAR:
-          fp_ret.flags |= ToyotaStarPilotFlags.RADAR_CAN_FILTER.value
-
-        if 0x2FF in fingerprint[0] or (0x2AA in fingerprint[0] and candidate in NO_DSU_CAR):
-          fp_ret.flags |= ToyotaStarPilotFlags.SMART_DSU.value
-
-        if candidate in (TOYOTA.TOYOTA_PRIUS, TOYOTA.TOYOTA_PRIUS_RETROFIT):
-          if 0x23 in fingerprint[0]:
-            fp_ret.flags |= ToyotaStarPilotFlags.ZSS.value
-
-      elif platform.config.platform_str == "TESLA_MODEL_S_PREAP":
-        fp_ret.canUsePedal = True
-
-      elif platform in SUBARU:
-        if getattr(starpilot_toggles, "subaru_sng", False):
-          fp_ret.safetyConfigs[-1].safetyParam |= SubaruSafetyFlags.STOP_AND_GO.value
-
-        fp_ret.redneckCruiseAvailable = candidate in SUBARU_REDNECK_CRUISE_CARS
-        if fp_ret.redneckCruiseAvailable and params.get_bool("SubaruRedneckCruise") and \
-            not CP.openpilotLongitudinalControl:
-          fp_ret.pcmCruiseSpeed = False
-          CP.openpilotLongitudinalControl = True
-          CP.safetyConfigs[-1].safetyParam |= SubaruSafetyFlags.REDNECK_CRUISE.value
-          fp_ret.safetyConfigs[-1].safetyParam |= SubaruSafetyFlags.REDNECK_CRUISE.value
-
-    return fp_ret
 
   @staticmethod
   @abstractmethod
@@ -390,11 +212,6 @@ class CarInterfaceBase(ABC):
     ret.steerRatioRear = 0.  # no rear steering, at least on the listed cars aboveA
     ret.openpilotLongitudinalControl = False
     ret.stopAccel = -2.0
-    ret.stoppingDecelRate = 0.8 # brake_travel/s while trying to stop
-    ret.vEgoStopping = 0.5
-    ret.vEgoStarting = 0.5
-    ret.longitudinalTuning.kpBP = [0.]
-    ret.longitudinalTuning.kpV = [0.]
     ret.longitudinalTuning.kiBP = [0.]
     ret.longitudinalTuning.kiV = [0.]
     # TODO estimate car specific lag, use .15s for now
@@ -412,14 +229,14 @@ class CarInterfaceBase(ABC):
     tune.torque.latAccelOffset = 0.0
     tune.torque.steeringAngleDeadzoneDeg = steering_angle_deadzone_deg
 
-  def update(self, can_packets: list[tuple[int, list[CanData]]], starpilot_toggles: SimpleNamespace) -> structs.CarState:
+  def update(self, can_packets: list[tuple[int, list[CanData]]]) -> structs.CarState:
     # parse can
     for cp in self.can_parsers.values():
       if cp is not None:
         cp.update(can_packets)
 
     # get CarState
-    ret, fp_ret = self.CS.update(self.can_parsers, starpilot_toggles)
+    ret = self.CS.update(self.can_parsers)
 
     ret.canValid = all(cp.can_valid for cp in self.can_parsers.values())
     ret.canTimeout = any(cp.bus_timeout for cp in self.can_parsers.values())
@@ -442,27 +259,11 @@ class CarInterfaceBase(ABC):
     # save for next iteration
     self.CS.out = ret
 
-    for be in ret.buttonEvents:
-      if be.type == ButtonType.gapAdjustCruise:
-        self.physical_distance_button = be.pressed
-
-    prev_distance_button = self.onroad_distance_button
-    self.onroad_distance_button = self.params_memory.get_bool("OnroadDistanceButtonPressed")
-    if self.onroad_distance_button != prev_distance_button:
-      onroad_distance_events = create_button_events(self.onroad_distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
-      ret.buttonEvents = [*(be.to_dict() for be in ret.buttonEvents), *(be.to_dict() for be in onroad_distance_events)]
-
-    # Preserve brand-specific injections (e.g. GM cancel->distance remap hold) while
-    # still honoring the onroad virtual distance button and native distance button.
-    fp_ret.distancePressed = bool(fp_ret.distancePressed) or self.onroad_distance_button or self.physical_distance_button or bool(self.CS.distance_button)
-    fp_ret.ecoGear |= ret.gearShifter == GearShifter.eco
-    fp_ret.sportGear |= ret.gearShifter == GearShifter.sport
-
-    return ret, fp_ret
+    return ret
 
 
 class CarStateBase(ABC):
-  def __init__(self, CP: structs.CarParams, FPCP: custom.StarPilotCarParams):
+  def __init__(self, CP: structs.CarParams):
     self.CP = CP
     self.car_fingerprint = CP.carFingerprint
     self.out = structs.CarState()
@@ -486,14 +287,8 @@ class CarStateBase(ABC):
     K = get_kalman_gain(DT_CTRL, np.array(A), np.array(C), np.array(Q), R)
     self.v_ego_kf = KF1D(x0=x0, A=A, C=C[0], K=K)
 
-    self.FPCP = FPCP
-
-    self.CC: structs.CarControl = structs.CarControl.new_message()
-
-    self.distance_button = False
-
   @abstractmethod
-  def update(self, can_parsers, starpilot_toggles) -> structs.CarState:
+  def update(self, can_parsers) -> structs.CarState:
     pass
 
   def parse_wheel_speeds(self, cs, fl, fr, rl, rr, unit=CV.KPH_TO_MS):
@@ -566,9 +361,14 @@ class CarStateBase(ABC):
 class CarControllerBase(ABC):
   def __init__(self, dbc_names: dict[StrEnum, str], CP: structs.CarParams):
     self.CP = CP
-    self.FPCP: custom.StarPilotCarParams | None = None
     self.frame = 0
     self.secoc_key: bytes = b"00" * 16
+    self.learning_projection_observer: Any = None
+
+  @property
+  def learning_projection(self):
+    observer = self.learning_projection_observer
+    return None if observer is None else observer.current
 
   @abstractmethod
   def update(self, CC: structs.CarControl, CS: CarStateBase, now_nanos: int) -> tuple[structs.CarControl.Actuators, list[CanData]]:

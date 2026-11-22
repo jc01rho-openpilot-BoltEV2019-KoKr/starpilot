@@ -1,6 +1,7 @@
 import math
 import numbers
 from collections import defaultdict, deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from opendbc.car.carlog import carlog
@@ -9,21 +10,6 @@ from opendbc.can.dbc import DBC, Signal
 
 MAX_BAD_COUNTER = 5
 CAN_INVALID_CNT = 5
-
-
-def get_raw_value(dat: bytes | bytearray, sig: Signal) -> int:
-  ret = 0
-  i = sig.msb // 8
-  bits = sig.size
-  while 0 <= i < len(dat) and bits > 0:
-    lsb = sig.lsb if (sig.lsb // 8) == i else i * 8
-    msb = sig.msb if (sig.msb // 8) == i else (i + 1) * 8 - 1
-    size = msb - lsb + 1
-    d = (dat[i] >> (lsb - (i * 8))) & ((1 << size) - 1)
-    ret |= d << (bits - size)
-    bits -= size
-    i = i - 1 if sig.is_little_endian else i + 1
-  return ret
 
 
 @dataclass
@@ -59,7 +45,7 @@ class MessageState:
       self.first_seen_nanos = nanos
 
     for i, sig in enumerate(self.signals):
-      tmp = get_raw_value(dat, sig)
+      tmp = sig.get_raw_value(dat)
       if sig.is_signed:
         tmp -= ((tmp >> (sig.size - 1)) & 0x1) * (1 << sig.size)
 
@@ -91,7 +77,7 @@ class MessageState:
 
     if self.frequency < 1e-5 and len(self.timestamps) >= 3:
       dt = (self.timestamps[-1] - self.timestamps[0]) * 1e-9
-      if (dt > 1.0 or len(self.timestamps) >= self.timestamps.maxlen) and dt != 0:
+      if (dt > 1.0 or (self.timestamps.maxlen is not None and len(self.timestamps) >= self.timestamps.maxlen)) and dt != 0:
         self.frequency = min(len(self.timestamps) / dt, 100.0)
         self.timeout_threshold = (1_000_000_000 / self.frequency) * 10
     return True
@@ -126,13 +112,20 @@ class VLDict(dict):
 
 
 class CANParser:
-  def __init__(self, dbc_name: str, messages: list[tuple[str | int, int]], bus: int):
+  def __init__(self, dbc_name: str, messages: Sequence[tuple[str | int, float]], bus: int, *, signals: dict[str | int, Sequence[str]] | None = None):
     self.dbc_name: str = dbc_name
     self.bus: int = bus
-    self.dbc: DBC = DBC(dbc_name)
+    self.dbc = DBC(dbc_name)
+    self._signal_selection: dict[int, frozenset[str]] = {}
+    for key, names in (signals or {}).items():
+      message = self.dbc.addr_to_msg.get(int(key)) if isinstance(key, numbers.Number) else self.dbc.name_to_msg.get(key)
+      if message is None or not set(names).issubset(message.sigs):
+        raise ValueError(f"Unknown signal selection for {key!r} in DBC {dbc_name}")
+      if message.address in self._signal_selection:
+        raise ValueError(f"Duplicate signal selection for {key!r}")
+      self._signal_selection[message.address] = frozenset(names)
 
     self.vl: dict[int | str, dict[str, float]] = VLDict(self)
-    self.vl_raw: dict[int | str, bytes] = {}
     self.vl_all: dict[int | str, dict[str, list[float]]] = {}
     self.ts_nanos: dict[int | str, dict[str, int]] = {}
     self.addresses: set[int] = set()
@@ -153,8 +146,9 @@ class CANParser:
     self.can_invalid_cnt: int = CAN_INVALID_CNT
     self.last_nonempty_nanos: int = 0
     self._last_update_nanos: int = 0
+    self._last_invalid_log_nanos: int | None = None
 
-  def _add_message(self, name_or_addr: str | int, freq: int = None) -> None:
+  def _add_message(self, name_or_addr: str | int, freq: float | None = None) -> None:
     if isinstance(name_or_addr, numbers.Number):
       msg = self.dbc.addr_to_msg.get(int(name_or_addr))
     else:
@@ -163,26 +157,27 @@ class CANParser:
     assert msg.address not in self.addresses
 
     self.addresses.add(msg.address)
-    signal_names = list(msg.sigs.keys())
+    selected = self._signal_selection.get(msg.address)
+    # Projection only: counters and checksum fields still use the original
+    # decoder, validation, rejection and freshness path on every message.
+    decoded_signals = [sig for sig in msg.sigs.values() if selected is None or sig.name in selected or
+                       sig.type != 0 or sig.calc_checksum is not None or
+                       'COUNTER' in sig.name or 'CHECKSUM' in sig.name]
+    signal_names = [sig.name for sig in decoded_signals]
     signals_dict = {s: 0.0 for s in signal_names}
     dict.__setitem__(self.vl, msg.address, signals_dict)
     dict.__setitem__(self.vl, msg.name, signals_dict)
-    self.vl_raw[msg.address] = bytes(msg.size)
-    self.vl_raw[msg.name] = bytes(msg.size)
     self.vl_all[msg.address] = defaultdict(list)
     self.vl_all[msg.name] = self.vl_all[msg.address]
     self.ts_nanos[msg.address] = {s: 0 for s in signal_names}
     self.ts_nanos[msg.name] = self.ts_nanos[msg.address]
 
-    # Legacy compatibility: many car ports use freq=0 for optional/asynchronous messages.
-    # In this parser, those should not participate in alive timeout validity checks.
-    optional_msg = freq is not None and (math.isnan(freq) or freq <= 0)
     state = MessageState(
       address=msg.address,
       name=msg.name,
       size=msg.size,
-      signals=list(msg.sigs.values()),
-      ignore_alive=optional_msg,
+      signals=decoded_signals,
+      ignore_alive=freq is not None and math.isnan(freq),
     )
     if freq is not None and freq > 0:
       state.frequency = freq
@@ -207,13 +202,20 @@ class CANParser:
     valid = True
     counters_valid = True
     bus_timeout = self.bus_timeout
+    invalid_messages = set()
     for state in self.message_states.values():
       if state.counter_fail >= MAX_BAD_COUNTER:
         counters_valid = False
         state.rate_limited_log(self._last_update_nanos, f"counter invalid, {state.counter_fail=} {MAX_BAD_COUNTER=}")
       if not state.valid(self._last_update_nanos, bus_timeout):
         valid = False
-        state.rate_limited_log(self._last_update_nanos, "not valid (timeout or missing)")
+        invalid_messages.add(state.address)
+
+    if invalid_messages and (self._last_invalid_log_nanos is None or
+                             self._last_update_nanos - self._last_invalid_log_nanos >= 10_000_000_000):
+      messages = ', '.join(f"{hex(addr)} {self.message_states[addr].name}" for addr in sorted(invalid_messages))
+      carlog.warning(f"CANParser: bus {self.bus} not valid (timeout or missing): {messages}")
+      self._last_invalid_log_nanos = self._last_update_nanos
 
     # TODO: probably only want to increment this once per update() call
     self.can_invalid_cnt = 0 if valid else min(self.can_invalid_cnt + 1, CAN_INVALID_CNT)
@@ -224,8 +226,8 @@ class CANParser:
       strings = [strings]
 
     for addr in self.addresses:
-      for k in self.vl_all[addr]:
-        self.vl_all[addr][k].clear()
+      for values in self.vl_all[addr].values():
+        values.clear()
 
     updated_addrs: set[int] = set()
     for entry in strings:
@@ -250,8 +252,6 @@ class CANParser:
             vl_addr[sig.name] = state.vals[i]
             vl_all_addr[sig.name] = state.all_vals[i]
             ts_addr[sig.name] = state.timestamps[-1]
-          self.vl_raw[address] = bytes(dat)
-          self.vl_raw[state.name] = bytes(dat)
 
       if not bus_empty:
         self.last_nonempty_nanos = t

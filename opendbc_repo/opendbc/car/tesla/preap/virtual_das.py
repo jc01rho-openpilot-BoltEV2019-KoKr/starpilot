@@ -4,7 +4,7 @@ from numpy import clip, interp
 
 from opendbc.car.common.filter_simple import FirstOrderFilter, HighPassFilter
 from opendbc.car.common.pid import PIDController
-from opendbc.car.tesla.pedal.controller import PEDAL_RAMP_RATE_DOWN, PEDAL_RAMP_RATE_UP, get_zero_torque
+from opendbc.car.tesla.preap.pedal_dynamics import PEDAL_RAMP_RATE_DOWN, PEDAL_RAMP_RATE_UP, PedalZeroTorque
 from opendbc.car.tesla.preap.constants import (
   VDAS_AEGO_FILTER_RC,
   VDAS_FUTURE_T_BP,
@@ -14,7 +14,7 @@ from opendbc.car.tesla.preap.constants import (
   VDAS_INNER_KP_V,
 )
 from opendbc.car.tesla.preap.ff_table_default import ACCEL_BP, DEFAULT_TABLE, SPEED_BP
-from opendbc.car.tesla.preap.nap_conf import ACCEL_MAX, PEDAL_BP, PEDAL_DI_MIN, PEDAL_MAX_VALUES, REGEN_MAX
+from opendbc.car.tesla.preap.pedal_dynamics import ACCEL_MAX, PEDAL_BP, PEDAL_DI_MIN, PEDAL_MAX_VALUES, REGEN_MAX
 
 PID_ERROR_DEADBAND = 0.1
 GRAVITY = 9.81
@@ -84,8 +84,9 @@ class FeedforwardModel:
 
 
 class VirtualDAS:
-  def __init__(self, dt: float = 0.02):
+  def __init__(self, dt: float = 0.02, zero_torque=None):
     self.dt = dt
+    self.zero_torque = zero_torque if zero_torque is not None else PedalZeroTorque()
     self.jerk_limiter = JerkLimiter(dt=dt)
     self.ff_model = FeedforwardModel()
     self.grade_estimator = GradeEstimator(dt=dt)
@@ -133,7 +134,6 @@ class VirtualDAS:
     self.prev_pedal_di = pedal_di_init
 
   def _feedforward(self, a_cmd: float, v_ego: float) -> float:
-    zero_torque_di = get_zero_torque().get(v_ego)
+    zero_torque_di = self.zero_torque.get(v_ego)
     max_pedal_value = float(interp(v_ego, PEDAL_BP, PEDAL_MAX_VALUES))
     return float(clip(self.ff_model.get(a_cmd, v_ego, zero_torque_di), PEDAL_DI_MIN, max_pedal_value))
-

@@ -1,11 +1,8 @@
 from opendbc.car import structs
-from opendbc.car.carlog import carlog
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.tesla.values import CruiseButtons
+from opendbc.car.tesla.preap.buttons import CruiseButtons
 
 ButtonType = structs.CarState.ButtonEvent.Type
-CANCEL_ECHO_WINDOW_MS = 600
-SPOOF_ECHO_WINDOW_MS = 300
 
 
 class PreAPEngagement:
@@ -122,25 +119,23 @@ class PreAPEngagement:
       if be.pressed:
         self.last_stalk_non_cancel_ms = curr_time_ms
     elif state == CruiseButtons.CANCEL:
-      is_echo = (self.cruiseEnabled and (curr_time_ms - self.last_stalk_non_cancel_ms) < CANCEL_ECHO_WINDOW_MS) or \
-                ((curr_time_ms - self.preap_last_cc_spoof_ms) < SPOOF_ECHO_WINDOW_MS)
-      be.type = ButtonType.unknown if is_echo else ButtonType.cancel
-      if not is_echo:
-        self.lateralEnabled = False
-        self.lateralRearmRequired = True
-        self.cruiseEnabled = False
-        self.enableLongControl = False
-        self.enableJustCC = False
-        self.pending_enable = False
-        self.pedal_speed_kph = 0.0
-        self.stalk_pull_time_ms = 0
-        self.prev_stalk_pull_time_ms = -1000
+      be.type = ButtonType.cancel
+      self.lateralEnabled = False
+      self.lateralRearmRequired = True
+      self.cruiseEnabled = False
+      self.enableLongControl = False
+      self.enableJustCC = False
+      self.pending_enable = False
+      self.pedal_speed_kph = 0.0
+      self.stalk_pull_time_ms = 0
+      self.prev_stalk_pull_time_ms = -1000
     elif CruiseButtons.is_accel(state):
       be.type = ButtonType.accelCruise
       if be.pressed and use_pedal and self.enableLongControl:
         speed_uom_kph = CV.MPH_TO_KPH if speed_units == "MPH" else 1.0
         actual_kph = int(v_ego * CV.MS_TO_KPH / speed_uom_kph + 0.5) * speed_uom_kph
-        self.pedal_speed_kph = min(max(self.pedal_speed_kph, actual_kph) + (5 * speed_uom_kph if state == CruiseButtons.RES_ACCEL_2ND else speed_uom_kph), 270.0)
+        self.pedal_speed_kph = min(max(self.pedal_speed_kph, actual_kph) +
+                                   (5 * speed_uom_kph if state == CruiseButtons.RES_ACCEL_2ND else speed_uom_kph), 270.0)
     elif CruiseButtons.is_decel(state):
       be.type = ButtonType.decelCruise
       if be.pressed and use_pedal and self.enableLongControl:

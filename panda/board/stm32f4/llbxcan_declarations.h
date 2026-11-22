@@ -13,8 +13,6 @@
 
 #define CAN_NAME_FROM_CANIF(CAN_DEV) (((CAN_DEV)==CAN1) ? "CAN1" : (((CAN_DEV) == CAN2) ? "CAN2" : "CAN3"))
 
-void print(const char *a);
-
 // kbps multiplied by 10
 #define SPEEDS_ARRAY_SIZE 8
 extern const uint32_t speeds[SPEEDS_ARRAY_SIZE];

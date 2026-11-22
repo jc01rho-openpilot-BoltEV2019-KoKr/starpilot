@@ -1,6 +1,7 @@
 #pragma once
 
 #include "opendbc/safety/declarations.h"
+#include "opendbc/safety/modes/mazda_stock_aol.h"
 
 // CAN msgs we care about
 #define MAZDA_LKAS          0x243U
@@ -17,34 +18,33 @@
 
 // track msgs coming from OP so that we know what CAM msgs to drop and what to forward
 static void mazda_rx_hook(const CANPacket_t *msg) {
-  if ((int)msg->bus == MAZDA_MAIN) {
-    if (msg->addr == MAZDA_ENGINE_DATA) {
-      // sample speed: scale by 0.01 to get kph
-      int speed = (msg->data[2] << 8) | msg->data[3];
-      vehicle_moving = speed > 10; // moving when speed > 0.1 kph
-    }
+  mazda_aol_rx(msg);
+  if (msg_matches(msg, MAZDA_ENGINE_DATA, MAZDA_MAIN)) {
+    // sample speed: scale by 0.01 to get kph
+    int speed = (msg->data[2] << 8) | msg->data[3];
+    vehicle_moving = speed > 10;  // moving when speed > 0.1 kph
+  }
 
-    if (msg->addr == MAZDA_STEER_TORQUE) {
-      int torque_driver_new = msg->data[0] - 127U;
-      // update array of samples
-      update_sample(&torque_driver, torque_driver_new);
-    }
+  if (msg_matches(msg, MAZDA_STEER_TORQUE, MAZDA_MAIN)) {
+    int torque_driver_new = msg->data[0] - 127U;
+    // update array of samples
+    update_sample(&torque_driver, torque_driver_new);
+  }
 
-    // enter controls on rising edge of ACC, exit controls on ACC off
-    if (msg->addr == MAZDA_CRZ_CTRL) {
-      bool cruise_engaged = msg->data[0] & 0x8U;
-      pcm_cruise_check(cruise_engaged);
+  // enter controls on rising edge of ACC, exit controls on ACC off
+  if (msg_matches(msg, MAZDA_CRZ_CTRL, MAZDA_MAIN)) {
+    bool cruise_engaged = msg->data[0] & 0x8U;
+    const bool was_allowed = controls_allowed;
+    pcm_cruise_check(cruise_engaged);
+    mazda_aol_engagement(msg, cruise_engaged, !was_allowed && controls_allowed);
+  }
 
-      acc_main_on = GET_BIT(msg, 17U);
-    }
+  if (msg_matches(msg, MAZDA_ENGINE_DATA, MAZDA_MAIN)) {
+    gas_pressed = (msg->data[4] | (msg->data[5] & 0xF0U)) != 0U;
+  }
 
-    if (msg->addr == MAZDA_ENGINE_DATA) {
-      gas_pressed = (msg->data[4] || (msg->data[5] & 0xF0U));
-    }
-
-    if (msg->addr == MAZDA_PEDALS) {
-      brake_pressed = (msg->data[0] & 0x10U);
-    }
+  if (msg_matches(msg, MAZDA_PEDALS, MAZDA_MAIN)) {
+    brake_pressed = (msg->data[0] & 0x10U);
   }
 }
 
@@ -61,34 +61,37 @@ static bool mazda_tx_hook(const CANPacket_t *msg) {
 
   bool tx = true;
   // Check if msg is sent on the main BUS
-  if (msg->bus == (unsigned char)MAZDA_MAIN) {
-    // steer cmd checks
-    if (msg->addr == MAZDA_LKAS) {
-      int desired_torque = (((msg->data[0] & 0x0FU) << 8) | msg->data[1]) - 2048U;
+  // steer cmd checks
+  if (msg_matches(msg, MAZDA_LKAS, MAZDA_MAIN)) {
+    int desired_torque = (((msg->data[0] & 0x0FU) << 8) | msg->data[1]) - 2048U;
 
-      if (steer_torque_cmd_checks(desired_torque, -1, MAZDA_STEERING_LIMITS)) {
-        tx = false;
-      }
-    }
-
-    // cruise buttons check
-    if (msg->addr == MAZDA_CRZ_BTNS) {
-      // allow resume spamming while controls allowed, but
-      // only allow cancel while controls not allowed
-      bool cancel_cmd = (msg->data[0] == 0x1U);
-      if (!controls_allowed && !cancel_cmd) {
-        tx = false;
-      }
+    if (steer_torque_cmd_checks(desired_torque, -1, MAZDA_STEERING_LIMITS)) {
+      tx = false;
     }
   }
 
+  // cruise buttons check
+  if (msg_matches(msg, MAZDA_CRZ_BTNS, MAZDA_MAIN)) {
+    // allow resume spamming while controls allowed, but
+    // only allow cancel while controls not allowed
+    bool cancel_cmd = (msg->data[0] == 0x1U);
+    if (!controls_allowed && !cancel_cmd) {
+      tx = false;
+    }
+  }
+
+  mazda_aol_tx_commit(msg, tx && !relay_malfunction);
   return tx;
 }
 
 static safety_config mazda_init(uint16_t param) {
-  static const CanMsg MAZDA_TX_MSGS[] = {{MAZDA_LKAS, 0, 8, .check_relay = true}, {MAZDA_CRZ_BTNS, 0, 8, .check_relay = false}, {MAZDA_LKAS_HUD, 0, 8, .check_relay = true}};
+  static CanMsg MAZDA_TX_MSGS[] = {
+    {MAZDA_LKAS, 0, 8, .check_relay = true},
+    {MAZDA_CRZ_BTNS, 0, 8, .check_relay = false},
+    {MAZDA_LKAS_HUD, 0, 8, .check_relay = true},
+  };
 
-  static RxCheck mazda_rx_checks[] = {
+  static const RxCheck mazda_rx_checks[] = {
     {.msg = {{MAZDA_CRZ_CTRL,     0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{MAZDA_CRZ_BTNS,     0, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{MAZDA_STEER_TORQUE, 0, 8, 83U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
@@ -96,12 +99,32 @@ static safety_config mazda_init(uint16_t param) {
     {.msg = {{MAZDA_PEDALS,       0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
   };
 
-  SAFETY_UNUSED(param);
-  return BUILD_SAFETY_CFG(mazda_rx_checks, MAZDA_TX_MSGS);
+  mazda_aol_reset();
+  mazda_aol_enabled = (param == 0U) && ((unsigned int)alternative_experience == 32U);
+  MAZDA_TX_MSGS[0].check_relay = !mazda_aol_enabled;
+  MAZDA_TX_MSGS[2].check_relay = !mazda_aol_enabled;
+  if (mazda_aol_enabled) {
+    static const AolSafetyPolicy policy = {
+      .reset = mazda_aol_reset,
+      .host_request = mazda_aol_request,
+      .request_mask = mazda_aol_request_mask,
+      .permission_mask = mazda_aol_permission,
+      .rx_invalid = mazda_aol_clear,
+    };
+    aol_policy = &policy;
+  }
+  safety_config ret = BUILD_SAFETY_CFG(mazda_rx_checks, MAZDA_TX_MSGS);
+  if (((unsigned int)alternative_experience == 32U) && (param != 0U)) {
+    ret.tx_msgs = NULL;
+    ret.tx_msgs_len = 0;
+  }
+  return ret;
 }
 
 const safety_hooks mazda_hooks = {
   .init = mazda_init,
   .rx = mazda_rx_hook,
   .tx = mazda_tx_hook,
+  .optional_rx = mazda_aol_optional_rx,
+  .fwd = mazda_aol_fwd,
 };

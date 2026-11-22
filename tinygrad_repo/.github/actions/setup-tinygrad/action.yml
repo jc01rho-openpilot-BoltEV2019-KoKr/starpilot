@@ -49,6 +49,10 @@ inputs:
     description: "Install ninja?"
     required: false
     default: 'false'
+  autogen:
+    description: "Install autogen support packages?"
+    required: false
+    default: 'false'
 runs:
   using: "composite"
   steps:
@@ -59,29 +63,33 @@ runs:
         echo "OMP_NUM_THREADS=1" >> "$GITHUB_ENV"
         # no buffers should be over 300MB in CI
         echo "MAX_BUFFER_SIZE=300000000" >> "$GITHUB_ENV"
-        if [[ "$RUNNER_OS" == "Linux" ]]; then
-          echo "VIRTUAL_ENV=/opt/venv/${{ inputs.python-version }}" >> "$GITHUB_ENV"
-          echo "UV_PYTHON_INSTALL_DIR=/opt/python" >> "$GITHUB_ENV"
-        else
-          echo "VIRTUAL_ENV=${{ github.workspace }}/.venv" >> "$GITHUB_ENV"
+        if [[ "$RUNNER_OS" == "macOS" ]]; then
+          sudo install -d -o "$USER" /opt/venv /opt/python
         fi
+        echo "VIRTUAL_ENV=/opt/venv/${{ inputs.python-version }}" >> "$GITHUB_ENV"
+        echo "UV_PYTHON_INSTALL_DIR=/opt/python" >> "$GITHUB_ENV"
 
     - name: Set up uv
       uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
       with:
         enable-cache: 'false' # see below for manual caching
 
-    # **** Caching packages ****
+    # **** Caching ****
+    # NOTE: self-hosted CI (ie. collaborator PRs) should never cache anything, instead, either:
+    #   * bake into the CI image: https://git.tinygrad.win/tinygrad/images, OR
+    #   * handle in CI runner HTTP cache
+    # Because CI for master and non-collaborator PRs are github-hosted, they need caching to workaround the flaky internet.
+    # Additionally, the actions/cache/restore pattern should be used to avoid PRs polluting the limited github cache storage.
 
     - name: Cache Python packages (PR)
-      if: github.event_name == 'pull_request'
+      if: github.event_name == 'pull_request' && runner.environment == 'github-hosted'
       id: restore-venv-pr
       uses: actions/cache/restore@v5
       with:
         path: /tmp/.uv-cache
         key: uv-${{ runner.os }}-${{ runner.arch }}-python-${{ inputs.python-version }}-${{ inputs.deps }}-${{ inputs.pydeps }}-${{ env.CACHE_VERSION }}
     - name: Cache Python packages
-      if: github.event_name != 'pull_request'
+      if: github.event_name != 'pull_request' && runner.environment == 'github-hosted'
       id: restore-venv
       uses: actions/cache@v5
       with:
@@ -91,13 +99,13 @@ runs:
     # **** Caching downloads ****
 
     - name: Cache downloads (PR)
-      if: inputs.key != '' && github.event_name == 'pull_request'
+      if: inputs.key != '' && github.event_name == 'pull_request' && runner.environment == 'github-hosted'
       uses: actions/cache/restore@v5
       with:
         path: ${{ runner.os == 'Linux' && '~/.cache/tinygrad/downloads/' || '~/Library/Caches/tinygrad/downloads/' }}
         key: downloads-${{ github.job }}-${{ inputs.key }}-${{ env.CACHE_VERSION }}
     - name: Cache downloads
-      if: inputs.key != '' && github.event_name != 'pull_request'
+      if: inputs.key != '' && github.event_name != 'pull_request' && runner.environment == 'github-hosted'
       uses: actions/cache@v5
       with:
         path: ${{ runner.os == 'Linux' && '~/.cache/tinygrad/downloads/' || '~/Library/Caches/tinygrad/downloads/' }}
@@ -111,7 +119,7 @@ runs:
       run: |
         uv venv --allow-existing --python ${{ inputs.python-version }} "$VIRTUAL_ENV"
         DEPS="${{ inputs.deps }}"
-        uv pip install --python "$VIRTUAL_ENV" -e ".[${DEPS// /,}]" ${{ inputs.pydeps }} --torch-backend cpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/Triton-Nightly/pypi/simple/
+        uv pip install --python "$VIRTUAL_ENV" -e ".[${DEPS// /,}]" ${{ inputs.pydeps }} --torch-backend cpu
     - name: Install dependencies in venv (without extra)
       if: inputs.deps == ''
       shell: bash
@@ -124,16 +132,11 @@ runs:
       run: uv cache prune --ci
     - name: Configure venv
       shell: bash
-      run: |
-        if [[ "$RUNNER_OS" == "Windows" ]]; then
-          echo "$VIRTUAL_ENV/Scripts" >> "$GITHUB_PATH"
-        else
-          echo "$VIRTUAL_ENV/bin" >> "$GITHUB_PATH"
-        fi
+      run: echo "$VIRTUAL_ENV/bin" >> "$GITHUB_PATH"
 
     # ******************* apt *******************
     - name: Setup apt
-      if: runner.os == 'Linux' && (inputs.opencl == 'true' || inputs.amd == 'true' || inputs.webgpu == 'true' || inputs.llvm == 'true' || inputs.qemu == 'true' || inputs.ninja == 'true')
+      if: runner.os == 'Linux' && (inputs.opencl == 'true' || inputs.amd == 'true' || inputs.webgpu == 'true' || inputs.llvm == 'true' || inputs.qemu == 'true' || inputs.ninja == 'true' || inputs.autogen == 'true')
       shell: bash
       run: |
         sudo mkdir -p /var/cache/apt/archives
@@ -154,14 +157,14 @@ runs:
         echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' | sudo tee /etc/apt/preferences.d/rocm-pin-600
 
     - name: Add LLVM Repo (Linux)
-      if: inputs.llvm == 'true' && runner.os == 'Linux'
+      if: (inputs.llvm == 'true' || inputs.autogen == 'true') && runner.os == 'Linux'
       shell: bash
       run: |
         wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
         echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
 
     - name: Compute Package List + Hash
-      if: runner.os == 'Linux' && (inputs.opencl == 'true' || inputs.amd == 'true' || inputs.webgpu == 'true' || inputs.llvm == 'true' || inputs.qemu == 'true' || inputs.ninja == 'true')
+      if: runner.os == 'Linux' && (inputs.opencl == 'true' || inputs.amd == 'true' || inputs.webgpu == 'true' || inputs.llvm == 'true' || inputs.qemu == 'true' || inputs.ninja == 'true' || inputs.autogen == 'true')
       id: apt-pkgs
       shell: bash
       run: |
@@ -190,6 +193,10 @@ runs:
         if [[ "${{ inputs.ninja }}" == "true" ]]; then
           pkgs+=" ninja-build"
         fi
+        # **** autogen ****
+        if [[ "${{ inputs.autogen }}" == "true" ]]; then
+          pkgs+=" libclang-20-dev llvm-20-dev hip-dev libusb-1.0-0-dev libdrm-dev liburing-dev"
+        fi
 
         echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
         echo "hash=$(echo -n "$pkgs" | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
@@ -203,20 +210,20 @@ runs:
         echo "installed=$installed" >> "$GITHUB_OUTPUT"
 
     - name: Cache apt (PR)
-      if: runner.os == 'Linux' && (inputs.opencl == 'true' || inputs.amd == 'true' || inputs.webgpu == 'true' || inputs.llvm == 'true' || inputs.qemu == 'true' || inputs.ninja == 'true') && github.event_name == 'pull_request' && steps.apt-pkgs.outputs.installed == 'false'
+      if: runner.os == 'Linux' && (inputs.opencl == 'true' || inputs.amd == 'true' || inputs.webgpu == 'true' || inputs.llvm == 'true' || inputs.qemu == 'true' || inputs.ninja == 'true' || inputs.autogen == 'true') && github.event_name == 'pull_request' && steps.apt-pkgs.outputs.installed == 'false' && runner.environment == 'github-hosted'
       uses: actions/cache/restore@v5
       with:
         path: /var/cache/apt/archives/
         key: ${{ runner.os }}-${{ runner.arch }}-apt-${{ steps.apt-pkgs.outputs.hash }}-${{ env.CACHE_VERSION }}
     - name: Cache apt
-      if: runner.os == 'Linux' && (inputs.opencl == 'true' || inputs.amd == 'true' || inputs.webgpu == 'true' || inputs.llvm == 'true' || inputs.qemu == 'true' || inputs.ninja == 'true') && github.event_name != 'pull_request' && steps.apt-pkgs.outputs.installed == 'false'
+      if: runner.os == 'Linux' && (inputs.opencl == 'true' || inputs.amd == 'true' || inputs.webgpu == 'true' || inputs.llvm == 'true' || inputs.qemu == 'true' || inputs.ninja == 'true' || inputs.autogen == 'true') && github.event_name != 'pull_request' && steps.apt-pkgs.outputs.installed == 'false' && runner.environment == 'github-hosted'
       uses: actions/cache@v5
       with:
         path: /var/cache/apt/archives/
         key: ${{ runner.os }}-${{ runner.arch }}-apt-${{ steps.apt-pkgs.outputs.hash }}-${{ env.CACHE_VERSION }}
 
     - name: Run apt Update + Install
-      if: runner.os == 'Linux' && (inputs.opencl == 'true' || inputs.amd == 'true' || inputs.webgpu == 'true' || inputs.llvm == 'true' || inputs.qemu == 'true' || inputs.ninja == 'true') && steps.apt-pkgs.outputs.installed == 'false'
+      if: runner.os == 'Linux' && (inputs.opencl == 'true' || inputs.amd == 'true' || inputs.webgpu == 'true' || inputs.llvm == 'true' || inputs.qemu == 'true' || inputs.ninja == 'true' || inputs.autogen == 'true') && steps.apt-pkgs.outputs.installed == 'false'
       shell: bash
       run: |
         sudo apt -qq update || true
@@ -230,9 +237,12 @@ runs:
         sudo chown -R $USER:$USER /var/cache/apt/archives/
 
     - name: Add clang to PATH (Linux)
-      if: inputs.llvm == 'true' && runner.os == 'Linux'
+      if: runner.os == 'Linux'
       shell: bash
-      run: echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+      run: |
+        if [ -d /usr/lib/llvm-20/bin ]; then
+          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+        fi
 
     # **** AMD ****
     - name: Setup AMD (Linux)
@@ -249,19 +259,18 @@ runs:
       shell: bash
       run: |
         sudo mkdir -p /usr/local/lib
-        curl -s -H "Authorization: token $GH_TOKEN" curl -s https://api.github.com/repos/tinygrad/amdcomgr_dylib/releases/latest | \
-          jq -r '.assets[] | select(.name == "libamd_comgr.dylib").browser_download_url' | \
-          sudo xargs curl -fL -o /usr/local/lib/libamd_comgr.dylib
+        sudo curl --output-dir /usr/local/lib -fLO https://github.com/tinygrad/amdcomgr_dylib/releases/download/v7.2.0/libamd_comgr.dylib
 
     # **** CUDA ****
     - name: Install CUDA
       if: inputs.cuda == 'true'
       shell: bash
       run: |
-        sudo mkdir -p /usr/local/cuda/targets/x86_64-linux
+        sudo mkdir -p /usr/local/cuda-11.5/targets/x86_64-linux
         curl -fL https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvrtc/linux-x86_64/cuda_nvrtc-linux-x86_64-11.5.119-archive.tar.xz \
-          | sudo tar -xJ -C /usr/local/cuda/targets/x86_64-linux --strip-components=1
-        echo /usr/local/cuda/targets/x86_64-linux/lib | sudo tee /etc/ld.so.conf.d/cuda-nvrtc.conf
+          | sudo tar -xJ -C /usr/local/cuda-11.5/targets/x86_64-linux --strip-components=1
+        sudo ln -sfnT /usr/local/cuda-11.5 /usr/local/cuda
+        echo /usr/local/cuda-11.5/targets/x86_64-linux/lib | sudo tee /etc/ld.so.conf.d/cuda-11.5.conf
         sudo ldconfig
 
     # **** gpuocelot ****

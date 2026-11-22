@@ -1,58 +1,12 @@
-import copy
-# Provenance: portions of HKG angle-command construction are adapted from sunnypilot/opendbc's
-# hkg-angle-steering-2025 branch at cc4b08625. See CREDITS.md and THIRD_PARTY_NOTICES.md.
+import math
+from binascii import crc_hqx
+from typing import cast
+
 import numpy as np
 from opendbc.car import CanBusBase, CanData
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.crc import CRC16_XMODEM
-from opendbc.car.hyundai.values import HyundaiFlags, CAR, CANFD_ALT_BUTTONS_RESUME_CAR
-
-
-_adrv_0x51_templates: dict[CAR, bytes] = {}
-
-
-def cache_adrv_0x51_template(car_fingerprint: CAR, dat: bytes | None) -> None:
-  if car_fingerprint not in (CAR.KIA_EV6, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN):
-    return
-
-  if dat is None:
-    _adrv_0x51_templates.pop(car_fingerprint, None)
-  elif len(dat) == 32 and any(dat[3:]):
-    _adrv_0x51_templates[car_fingerprint] = bytes(dat)
-
-
-def create_adrv_0x51(packer, CAN, frame: int, car_fingerprint: CAR | None = None, drive_gear: bool = False,
-                     v_ego: float | None = None):
-  template = _adrv_0x51_templates.get(car_fingerprint)
-  if template is None:
-    return packer.make_can_msg("ADRV_0x51", CAN.ACAN, {})
-
-  dat = bytearray(template)
-  dat[2] = (template[2] + frame + 1) & 0xFF
-  dat[3] = (dat[3] & ~0x1) | int(drive_gear)
-  if car_fingerprint == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN and v_ego is not None and np.isfinite(v_ego):
-    speed_raw = int(np.clip(round(v_ego * 100.0), 0, 65534))
-    dat[8:10] = speed_raw.to_bytes(2, "little")
-  crc = hkg_can_fd_checksum(0x51, None, dat)
-  dat[0] = crc & 0xFF
-  dat[1] = (crc >> 8) & 0xFF
-  return CanData(0x51, bytes(dat), CAN.ACAN)
-
-
-def _set_value(msg: bytearray, sig, ival: int) -> None:
-  i = sig.lsb // 8
-  bits = sig.size
-  if sig.size < 64:
-    ival &= (1 << sig.size) - 1
-  while 0 <= i < len(msg) and bits > 0:
-    shift = sig.lsb % 8 if (sig.lsb // 8) == i else 0
-    size = min(bits, 8 - shift)
-    mask = ((1 << size) - 1) << shift
-    msg[i] &= ~mask
-    msg[i] |= (ival & ((1 << size) - 1)) << shift
-    bits -= size
-    ival >>= size
-    i = i + 1 if sig.is_little_endian else i - 1
+from opendbc.car.hyundai.ioniq6_bsm import BlindspotStatus, FRONT_NEUTRAL_BODY, rear_body
+from opendbc.car.hyundai.values import CAR, HyundaiFlags
 
 
 class CanBus(CanBusBase):
@@ -60,7 +14,7 @@ class CanBus(CanBusBase):
     super().__init__(CP, fingerprint)
 
     if lka_steering is None:
-      lka_steering = CP.flags & HyundaiFlags.CANFD_LKA_STEERING.value if CP is not None else False
+      lka_steering = CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG.value if CP is not None else False
 
     # On the CAN-FD platforms, the LKAS camera is on both A-CAN and E-CAN. LKA steering cars
     # have a different harness than the LFA steering variants in order to split
@@ -86,203 +40,119 @@ class CanBus(CanBusBase):
     return self._cam
 
 
-def _update_checksum(packer, address: int, dat: bytearray) -> None:
-  msg = packer.dbc.addr_to_msg[address]
-  sig_checksum = next((s for s in msg.sigs.values() if s.calc_checksum is not None), None)
-  if sig_checksum is None:
-    return
-
-  checksum = sig_checksum.calc_checksum(address, sig_checksum, dat)
-  _set_value(dat, sig_checksum, checksum)
+LFA_CONTROL_MASK = bytes.fromhex("ffffff3fc0ff3f000000000000000000")
+LFA_FAULT_MASK = bytes.fromhex("00000000c001c0f00000000000000000")
 
 
-def _create_angle_lfa_msg(packer, CAN, values, apply_angle: float, lat_active: bool, torque_reduction_gain: float):
-  address = packer.dbc.name_to_msg["LFA"].address
-  dat = packer.pack(address, values)
-
-  desired_angle = int(round(np.clip(apply_angle, -819.1, 819.1) * 10.0))
-  if desired_angle < 0:
-    desired_angle += 1 << 14
-
-  dat[9] = (dat[9] & ~0x30) | (((2 if lat_active else 1) & 0x3) << 4)
-  dat[10] = (dat[10] & 0x03) | ((desired_angle & 0x3F) << 2)
-  dat[11] = (desired_angle >> 6) & 0xFF
-  dat[12] = int(np.clip(round(torque_reduction_gain / 0.004), 0, 250))
-  _update_checksum(packer, address, dat)
-
-  return address, bytes(dat), CAN.ECAN
-
-
-def _create_angle_adas_cmd_msg(packer, CAN, apply_angle: float, lat_active: bool, torque_reduction_gain: float):
+def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque, *, stock_lfa=None, stock_lfa_faults=None,
+                             stock_lkas_damping=None, stock_lfa_owned_status=False):
   values = {
-    "ADAS_ActvACISta": 0,
-    "ADAS_ActvACILvl2Sta": 2 if lat_active else 1,
-    "ADAS_StrAnglReqVal": apply_angle,
-    "ADAS_ACIAnglTqRedcGainVal": torque_reduction_gain if lat_active else 0.0,
-    "FCA_ESA_ActvSta": 0,
-    "FCA_ESA_TqBstGainVal": 0.0,
+    "LKA_OptUsmSta": 2,
+    "LKA_SysIndReq": 2 if enabled else 1,
+    "StrTqReqVal": apply_torque,
+    "LKA_SysWrn": 0,
+    "ActToiSta": 1 if lat_active else 0,
+    "LKA_UsmMod": 0,  # hide LKAS settings
+    "LKA_RcgSta": 0,
+    "Damping_Gain": 100,  # can potentially tuned for better perf [3, 200]
   }
-  return packer.make_can_msg("ADAS_CMD_35_10ms", CAN.ECAN, values)
-
-
-def create_angle_adas_cmd(packer, CAN, apply_angle: float, lat_active: bool, torque_reduction_gain: float):
-  return _create_angle_adas_cmd_msg(packer, CAN, apply_angle, lat_active, torque_reduction_gain)
-
-
-def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque, apply_angle,
-                             lfa_base_values=None, lkas_base_values=None, lka_icon=None,
-                             longitudinal_active=None):
-  if lka_icon is None:
-    lka_icon = 2 if enabled else 1
-  if longitudinal_active is None:
-    longitudinal_active = CP.openpilotLongitudinalControl
-
-  angle_lkas_alt = CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT
-
-  control_values = {
-    "LKA_MODE": 2,
-    "LKA_ICON": lka_icon,
-    "TORQUE_REQUEST": 0 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else apply_torque,
-    "LKA_ASSIST": 0,
-    "STEER_REQ": 0 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else (1 if lat_active else 0),
-    "STEER_MODE": 0,
-  }
-
-  if lkas_base_values:
-    lkas_values = {k: v for k, v in lkas_base_values.items() if k not in ("CHECKSUM", "COUNTER")}
-    lkas_values.update(control_values)
-  else:
-    lkas_values = copy.copy(control_values)
-    lkas_values["LKA_AVAILABLE"] = 0
-    if CP.carFingerprint in (
-      CAR.KIA_CARNIVAL_4TH_GEN,
-      CAR.KIA_CARNIVAL_2025,
-      CAR.KIA_CARNIVAL_HEV_4TH_GEN,
-      CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN,
-    ):
-      lkas_values["DAMP_FACTOR"] = 100
-
-  if lfa_base_values:
-    # Preserve stock UI/status fields and only override the actuation-relevant signals.
-    lfa_values = {k: v for k, v in lfa_base_values.items() if k not in ("CHECKSUM", "COUNTER")}
-    lfa_values.update(control_values)
-  else:
-    lfa_values = copy.copy(control_values)
-    lfa_values["HAS_LANE_SAFETY"] = 0  # hide LKAS settings
-    lfa_values["NEW_SIGNAL_1"] = 0
-    lfa_values["NEW_SIGNAL_2"] = 0
-    lfa_values["DAMP_FACTOR"] = 100  # can potentially tuned for better perf [3, 200]
-
-  if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT:
-    lkas_values["ADAS_StrAnglReqVal"] = apply_angle
-    lkas_values["LKAS_ANGLE_ACTIVE"] = 2 if lat_active else 1
-    lkas_values["ADAS_ACIAnglTqRedcGainVal"] = apply_torque if lat_active else 0.0
-    if angle_lkas_alt:
-      if CP.carFingerprint == CAR.KIA_SPORTAGE_HEV_2026:
-        lkas_values = {
-          "LKA_OptUsmSta": 0,
-          "LKA_SysIndReq": 2 if enabled else 1,
-          "StrTqReqVal": 0,
-          "LKA_SysWrn": 0,
-          "ActToiSta": 0,
-          "LKA_UsmMod": 0,
-          "LKA_RcgSta": 3 if lat_active else 0,
-          "Damping_Gain": 100,
-          "ADAS_StrAnglReqVal": apply_angle,
-          "LKAS_ANGLE_ACTIVE": 2 if lat_active else 1,
-          "ADAS_ACIAnglTqRedcGainVal": apply_torque if lat_active else 0.0,
-        }
-      elif lat_active:
-        lkas_values = {
-          "LKA_OptUsmSta": 0,
-          "LKA_RcgSta": 3,
-          "LKA_LHLnWrnSta": 0,
-          "LKA_RHLnWrnSta": 0,
-          "LKA_HndsoffSnd": 0,
-          "LKA_StrSnd": 0,
-          "LKA_SysIndReq": 2,
-          "StrTqReqVal": 0,
-          "ActToiSta": 0,
-          "ToiFltSta": 0,
-          "LFA_BUTTON": 0,
-          "LKA_SysWrn": 0,
-          "Damping_Gain": 100,
-          "LKAS_ANGLE_ACTIVE": 2,
-          "LKA_UsmMod": 0,
-          "ADAS_StrAnglReqVal": apply_angle,
-          "ADAS_ACIAnglTqRedcGainVal": apply_torque,
-        }
-      else:
-        lkas_values.update({
-          "LKA_OptUsmSta": 0,
-          "LKA_MODE": 0,
-          "LKA_RcgSta": 0,
-          "LKA_AVAILABLE": 0,
-          "LKA_LHLnWrnSta": 0,
-          "LKA_RHLnWrnSta": 0,
-          "LKA_WARNING": 0,
-          "LKA_HndsoffSnd": 0,
-          "LKA_StrSnd": 2,
-          "LKA_SysIndReq": 1,
-          "LKA_ICON": 1,
-          "FCA_SYSWARN": 0,
-          "StrTqReqVal": 0,
-          "TORQUE_REQUEST": 0,
-          "ActToiSta": 0,
-          "STEER_REQ": 0,
-          "ToiFltSta": 0,
-          "LFA_BUTTON": 0,
-          "LKA_SysWrn": 0,
-          "LKA_ASSIST": 0,
-          "Damping_Gain": 0,
-          "STEER_MODE": 0,
-          "NEW_SIGNAL_2": 0,
-          "LKAS_ANGLE_ACTIVE": 1,
-          "LKA_UsmMod": 0,
-          "HAS_LANE_SAFETY": 0,
-          "ADAS_ACIAnglTqRedcGainVal": 0.0,
-          "DAMP_FACTOR": 0,
-        })
-        lkas_values["ADAS_StrAnglReqVal"] = lkas_base_values.get("ADAS_StrAnglReqVal", apply_angle) if lkas_base_values else apply_angle
 
   ret = []
-  if CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
-    lkas_msg = "LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT else "LKAS"
-    if longitudinal_active and not CP.flags & HyundaiFlags.CAN_CANFD_BLENDED:
-      ret.append(packer.make_can_msg("LFA", CAN.ECAN, lfa_values))
+  if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG:
+    lkas_msg = "LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT else "LKAS"
+    if CP.openpilotLongitudinalControl:
+      ret.append(packer.make_can_msg("LFA", CAN.ECAN, values))
+    # Dom uses separate damping values for camera LKAS and ADAS LFA torque commands.
+    # Preserve the explicit Carnival/GV70 LKAS calibration in either longitudinal mode.
+    lkas_values = values
+    if (not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and CP.carFingerprint not in (
+        CAR.KIA_CARNIVAL_4TH_GEN, CAR.KIA_CARNIVAL_2025,
+        CAR.KIA_CARNIVAL_HEV_4TH_GEN, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN)):
+      damping = (stock_lkas_damping if not CP.openpilotLongitudinalControl and
+                 type(stock_lkas_damping) is int and 0 <= stock_lkas_damping <= 255 else 0)
+      lkas_values = {**values, "Damping_Gain": damping}
     ret.append(packer.make_can_msg(lkas_msg, CAN.ACAN, lkas_values))
   else:
-    if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
-      if CP.flags & HyundaiFlags.SEND_LFA:
-        # Some CAN-FD angle-steering trims still expect the stock-style LFA status/UI
-        # message to remain present even though angle actuation comes through ADAS_CMD.
-        ret.append(packer.make_can_msg("LFA", CAN.ECAN, lfa_values))
-        ret.append(_create_angle_adas_cmd_msg(packer, CAN, apply_angle, lat_active, apply_torque))
-      else:
-        ret.append(_create_angle_lfa_msg(packer, CAN, lfa_values, apply_angle, lat_active, apply_torque))
-    else:
-      ret.append(packer.make_can_msg("LFA", CAN.ECAN, lfa_values))
+    message = packer.make_can_msg("LFA", CAN.ECAN, values)
+    source = stock_lfa if stock_lfa is not None else stock_lfa_faults
+    if source is not None:
+      # Stale samples retain only faults; a fresh healthy camera sample clears them.
+      mask = LFA_CONTROL_MASK if stock_lfa is not None else bytes(value ^ 0xFF for value in LFA_FAULT_MASK)
+      stock_indication = (source[4] >> 6) | ((source[5] & 1) << 2)
+      owned_status = (stock_lfa is not None and stock_lfa_owned_status and stock_indication == 4 and
+                      source[7] >> 4 == 15 and not source[6] & 0xF0)
+      if owned_status:
+        mask = bytearray(mask)
+        mask[7] |= 0xF0
+      elif stock_indication >= 4:
+        mask = bytearray(mask)
+        mask[4], mask[5] = mask[4] & 0x3F, mask[5] & 0xFE
+      elif stock_lfa is None:
+        mask = bytearray(mask)
+        mask[4], mask[5] = mask[4] | 0xC0, mask[5] | 1
+      data = bytearray((old & ~owned) | (new & owned) for old, new, owned in zip(source, message[1], mask, strict=True))
+      if owned_status and not lat_active:
+        data[4], data[5] = (data[4] & 0x3F) | 0x40, data[5] & 0xFE
+      data[:2] = hkg_can_fd_checksum(0x12A, None, data).to_bytes(2, "little")
+      message = (message[0], bytes(data), message[2])
+    ret.append(message)
 
   return ret
 
 
-def create_inactive_angle_steering_messages(packer, CAN, steering_angle: float):
-  lfa_values = {
-    "LKA_MODE": 2,
-    "LKA_ICON": 1,
-    "TORQUE_REQUEST": 0,
-    "LKA_ASSIST": 0,
-    "STEER_REQ": 0,
-    "STEER_MODE": 0,
-    "HAS_LANE_SAFETY": 0,
-    "NEW_SIGNAL_1": 0,
-    "NEW_SIGNAL_2": 0,
-    "DAMP_FACTOR": 100,
-  }
-  return [
-    packer.make_can_msg("LFA", CAN.ECAN, lfa_values),
-    create_angle_adas_cmd(packer, CAN, steering_angle, False, 0.0),
-  ]
+def _create_angle_frame(packer, name, bus, enabled, lat_active, apply_angle, reduction_gain,
+                        stock_values=None, original_ccnc_ev_wire=False):
+  # Frozen angle protocol stores a signed 0.1-degree request in bits 82..95
+  # on LKAS/LKAS_ALT/LFA, including the variants whose current DBC names only
+  # the torque fields. Keep the original status fields where they are observed.
+  # The original CCNC EV active command replaces stock warning/fault/UI fields.
+  # Other angle profiles retain their existing status-preservation behavior.
+  source_status = {} if original_ccnc_ev_wire and lat_active else (stock_values or {})
+  values = {key: value for key, value in source_status.items() if key not in ("CHECKSUM", "COUNTER")}
+  values.update({
+    "LKA_OptUsmSta": 0,
+    "LKA_SysIndReq": 2 if enabled else 1,
+    "StrTqReqVal": 0,
+    "ActToiSta": 0,
+    "LKA_SysWrn": 0,
+    "LKA_RcgSta": 3 if lat_active else 0,
+    "Damping_Gain": 100,
+  })
+  address, packed, _ = packer.make_can_msg(name, bus, values)
+  data = bytearray(packed)
+  angle = float(np.clip(apply_angle, -360.0, 360.0))
+  # Match the original DBC packer's signed 0.1-degree quantization for the exact CCNC EV stock identities.
+  angle_raw = (int(math.floor(angle / 0.1 + 0.5)) if original_ccnc_ev_wire else int(round(angle * 10.0))) & 0x3FFF
+  data[9] = (data[9] & ~0x30) | ((2 if lat_active else 1) << 4)
+  data[10] = (data[10] & 0x03) | ((angle_raw & 0x3F) << 2)
+  data[11] = (angle_raw >> 6) & 0xFF
+  data[12] = int(np.clip(round(reduction_gain / 0.004), 0, 250)) if lat_active else 0
+  data[0:2] = hkg_can_fd_checksum(address, None, data).to_bytes(2, "little")
+  return address, bytes(data), bus
+
+
+def create_angle_steering_messages(packer, CP, CAN, enabled, lat_active, apply_angle, reduction_gain,
+                                   stock_lkas_status=None, measured_angle=0.0):
+  if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG:
+    lkas = "LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT else "LKAS"
+    return [_create_angle_frame(packer, lkas, CAN.ACAN, enabled, lat_active, apply_angle,
+                                reduction_gain, stock_lkas_status, CP.carFingerprint in (CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV9))]
+
+  if CP.flags & HyundaiFlags.SEND_LFA:
+    # Camera 0xCB topology retains a neutral LFA status frame; angle actuation
+    # uses the same 24-byte 0xCB payload that current DBC calls LFA_ALT.
+    status = _create_angle_frame(packer, "LFA", CAN.ECAN, enabled, False, measured_angle, 0.0)
+    command = packer.make_can_msg("LFA_ALT", CAN.ECAN, {
+      "ADAS_ActvACISta": 0,
+      "ADAS_ActvACILvl2Sta": 2 if lat_active else 1,
+      "ADAS_StrAnglReqVal": apply_angle,
+      "ADAS_ACIAnglTqRedcGainVal": reduction_gain if lat_active else 0.0,
+      "FCA_ESA_ActvSta": 0,
+      "FCA_ESA_TqBstGainVal": 0.0,
+    })
+    return [status, command]
+
+  return [_create_angle_frame(packer, "LFA", CAN.ECAN, enabled, lat_active, apply_angle, reduction_gain)]
 
 
 def create_suppress_lfa(packer, CAN, lfa_block_msg, lka_steering_alt):
@@ -298,33 +168,32 @@ def create_suppress_lfa(packer, CAN, lfa_block_msg, lka_steering_alt):
   return packer.make_can_msg(suppress_msg, CAN.ACAN, values)
 
 
-def create_buttons(packer, CP, CAN, cnt, btn=0, base_values=None, left_paddle=False, right_paddle=False):
-  values = {k: v for k, v in base_values.items() if k not in ("CHECKSUM", "_CHECKSUM", "COUNTER")} if base_values else {}
-  values.update({
+def create_buttons(packer, CP, CAN, cnt, btn):
+  values = {
     "COUNTER": cnt,
     "SET_ME_1": 1,
     "CRUISE_BUTTONS": btn,
-  })
-  if not (CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS and CP.carFingerprint in CANFD_ALT_BUTTONS_RESUME_CAR):
-    values.update({
-      "LEFT_PADDLE": int(left_paddle),
-      "RIGHT_PADDLE": int(right_paddle),
-    })
+  }
 
-  bus = CAN.ECAN if CP.flags & HyundaiFlags.CANFD_LKA_STEERING else CAN.CAM
-  if CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS and CP.carFingerprint in CANFD_ALT_BUTTONS_RESUME_CAR:
-    address, dat, bus = packer.make_can_msg("CRUISE_BUTTONS_ALT", bus, values)
-    dat = bytearray(dat)
-    checksum = hkg_can_fd_checksum(address, None, dat)
-    dat[0] = checksum & 0xFF
-    dat[1] = (checksum >> 8) & 0xFF
-    return address, bytes(dat), bus
-
+  bus = CAN.ECAN if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG else CAN.CAM
   return packer.make_can_msg("CRUISE_BUTTONS", bus, values)
 
 
+def create_carnival_alt_resume(packer, CP, CAN, source):
+  values = {name: value for name, value in source.items() if name not in ("CHECKSUM", "COUNTER")}
+  values.update({"COUNTER": (int(source["COUNTER"]) + 1) % 256, "SET_ME_1": 1, "CRUISE_BUTTONS": 1})
+  bus = CAN.ECAN if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG else CAN.CAM
+  address, data, bus = packer.make_can_msg("CRUISE_BUTTONS_ALT", bus, values)
+  data = bytearray(data)
+  checksum = hkg_can_fd_checksum(address, None, data)
+  data[0:2] = checksum.to_bytes(2, "little")
+  return address, bytes(data), bus
+
+
 def create_acc_cancel(packer, CP, CAN, cruise_info_copy):
-  # TODO: why do we copy different values here?
+  # CAN FD camera-based SCC requires additional signals to be preserved
+  # verbatim from the previous SCC_CONTROL frame to avoid checksum or
+  # state validation faults. Classic CAN SCC only validates a subset.
   if CP.flags & HyundaiFlags.CANFD_CAMERA_SCC.value:
     values = {s: cruise_info_copy[s] for s in [
       "COUNTER",
@@ -354,95 +223,184 @@ def create_acc_cancel(packer, CP, CAN, cruise_info_copy):
   return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)
 
 
-def create_lfahda_cluster(packer, CAN, enabled, base_values=None, lfa_icon=None):
-  if lfa_icon is None:
-    lfa_icon = 2 if enabled else 0
+CLUSTER_CONTROL_MASK = bytes.fromhex("ffffff80008001000000000000000000")
 
-  values = {k: v for k, v in base_values.items() if k not in ("CHECKSUM", "COUNTER")} if base_values else {}
-  values.update({
+
+def create_lfahda_cluster(packer, CAN, enabled, *, lfa_icon=None, stock_cluster=None, owned_lfa_status=False):
+  values = {
     "HDA_ICON": 1 if enabled else 0,
-    "LFA_ICON": lfa_icon,
-  })
-  return packer.make_can_msg("LFAHDA_CLUSTER", CAN.ECAN, values)
+    "LFA_ICON": (2 if enabled else 0) if lfa_icon is None else lfa_icon,
+  }
+  message = packer.make_can_msg("LFAHDA_CLUSTER", CAN.ECAN, values)
+  if stock_cluster is not None:
+    data = bytearray((old & ~owned) | (new & owned)
+                     for old, new, owned in zip(stock_cluster, message[1], CLUSTER_CONTROL_MASK, strict=True))
+    if owned_lfa_status and stock_cluster[4] & 7 == 3:
+      data[4] &= 0xF8
+    data[:2] = hkg_can_fd_checksum(message[0], None, data).to_bytes(2, "little")
+    message = (message[0], bytes(data), message[2])
+  return message
 
 
+def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_override, set_speed, hud_control,
+                       *, direct_accel=False, main_mode_acc=1, jerk_upper=3.0, jerk_lower=None, raw_accel=None,
+                       lead_distance=None, lead_rel_speed=None, lead_visible=None):
+  jerk = 5
+  jn = jerk / 50
+  if not enabled or gas_override:
+    a_val, a_raw = 0, 0
+  else:
+    a_raw = accel if not direct_accel or raw_accel is None else raw_accel
+    a_val = accel if direct_accel else np.clip(accel, accel_last - jn, accel_last + jn)
+
+  if lead_distance is None and lead_rel_speed is None and lead_visible is None:
+    object_distance, object_relative, object_valid, object_status = 1., 0., 0, 2
+  else:
+    visible = bool(lead_visible)
+    object_distance = float(np.clip(cast(float, lead_distance) if visible else 0., 0., 204.7))
+    object_relative = float(np.clip(cast(float, lead_rel_speed) if visible else 0., -16.4, 34.7))
+    object_valid = int(not visible)
+    object_status = 0 if not (enabled and visible) else 1 if gas_override else 2
+
+  values = {
+    "ACCMode": 0 if not enabled else (2 if gas_override else 1),
+    "MainMode_ACC": main_mode_acc,
+    "StopReq": 1 if stopping else 0,
+    "aReqValue": a_val,
+    "aReqRaw": a_raw,
+    "VSetDis": set_speed,
+    "JerkLowerLimit": (jerk if enabled else 1) if jerk_lower is None else jerk_lower,
+    "JerkUpperLimit": jerk_upper,
+
+    "ACC_ObjDist": object_distance,
+    "ObjValid": object_valid,
+    "OBJ_STATUS": object_status,
+    "SET_ME_2": 0x4,
+    "SET_ME_3": 0x3,
+    "SET_ME_TMP_64": 0x64,
+    "DISTANCE_SETTING": hud_control.leadDistanceBars,
+  }
+
+  if lead_distance is not None or lead_rel_speed is not None or lead_visible is not None:
+    values["ACC_ObjRelSpd"] = object_relative
+  return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)
+
+
+def create_ioniq6_radar_heartbeat(counter: int, brake_pressed: bool, gas_pressed: bool, *, bus: int = 0) -> CanData:
+  """Recorded Ioniq 6 ADAS replacement heartbeat, 24 bytes on A-CAN.
+
+  Preserve the observed non-pedal body; this is not the 32-byte ICE message
+  sharing address 0x100. Only rolling integrity and actual pedal state vary.
+  """
+  if type(bus) is not int or bus not in (0, 4):
+    raise ValueError("reviewed Ioniq 6 A-CAN bus required")
+  data = bytearray.fromhex("000000020000fcff000000000020000055ff000068000000")
+  data[2] = counter & 0xff
+  data[4] = int(brake_pressed)
+  data[22] = int(gas_pressed)
+  data[:2] = hkg_can_fd_checksum(0x100, None, data).to_bytes(2, 'little')
+  return CanData(0x100, bytes(data), bus)
+
+
+def create_gv60_radar_heartbeat(counter: int, brake_pressed: bool, gas_pressed: bool) -> CanData:
+  """Frozen GV60 24-byte A-CAN heartbeat; CRC, counter and current pedals vary."""
+  data = bytearray.fromhex("000000020000fcff000000000020000055ff000068000000")
+  data[2] = counter & 0xff
+  data[4] = int(brake_pressed)
+  data[22] = int(gas_pressed)
+  data[:2] = hkg_can_fd_checksum(0x100, None, data).to_bytes(2, 'little')
+  return CanData(0x100, bytes(data), 0)
+
+
+def create_ioniq6_blindspot_status(counter: int, status: BlindspotStatus, *, bus: int = 1) -> list[CanData]:
+  """Paired HDA-II dashboard status from the frozen Ioniq 6 indicator layout."""
+  if type(bus) is not int or bus not in (1, 5):
+    raise ValueError("reviewed Ioniq 6 E-CAN bus required")
+  frames = []
+  for address, body in ((0x1BA, rear_body(status)), (0x1E5, FRONT_NEUTRAL_BODY)):
+    data = bytearray(body)
+    data[2] = counter & 0xff
+    data[:2] = hkg_can_fd_checksum(address, None, data).to_bytes(2, 'little')
+    frames.append(CanData(address, bytes(data), bus))
+  return frames
+
+
+# Source-derived CCNC camera display transform; the repository MIT notice applies.
 def create_ccnc(packer, CAN, openpilot_longitudinal, enabled, hud, left_blinker, right_blinker, msg_161, msg_162, msg_1b5,
-                is_metric, out, main_cruise_enabled, lfa_icon):
-  for fault in ("FAULT_LSS", "FAULT_HDA", "FAULT_DAS", "FAULT_LFA", "FAULT_DAW", "FAULT_ESS"):
-    msg_162[fault] = 0
+                is_metric, out, main_cruise_enabled, lfa_icon, *, owned_lfa_status=None):
+  if owned_lfa_status or (owned_lfa_status is None and lfa_icon):
+    # The host owns lateral; keep unrelated faults and obstruction warnings.
+    for field in ("FAULT_LSS", "FAULT_HDA", "FAULT_DAS", "FAULT_LFA", "FAULT_DAW"):
+      if msg_162.get(field) == 1:
+        msg_162[field] = 0
+  if lfa_icon:
+    if msg_161.get("ALERTS_2") == 5:
+      msg_161.update({"ALERTS_2": 0, "SOUNDS_2": 0})
+    if msg_161.get("ALERTS_3") == 17:
+      msg_161["ALERTS_3"] = 0
+    if msg_161.get("ALERTS_5") in (2, 5):
+      msg_161["ALERTS_5"] = 0
+    msg_161["DAW_ICON"] = 0
+    lane_change_speed_min = 8.9408
+    any_blinker = left_blinker or right_blinker
+    curvature = {i: (31 if i == -1 else 13 - abs(i + 15)) if i < 0 else 15 + i for i in range(-15, 16)}
 
-  if msg_161["ALERTS_2"] == 5:
-    msg_161.update({"ALERTS_2": 0, "SOUNDS_2": 0})
-  if msg_161["ALERTS_3"] == 17:
-    msg_161["ALERTS_3"] = 0
-  if msg_161["ALERTS_5"] in (2, 5):
-    msg_161["ALERTS_5"] = 0
-  if msg_161["SOUNDS_4"] == 2 and msg_161["LFA_ICON"] in (3, 0):
-    msg_161["SOUNDS_4"] = 0
+    msg_161.update({
+      "LKA_ICON": 0,
+      "LFA_ICON": 2 if lfa_icon else 0,
+      "CENTERLINE": 1 if lfa_icon else 0,
+      "LANELINE_CURVATURE": curvature.get(max(-15, min(int(out.steeringAngleDeg / 4.5), 15)), 14) if lfa_icon and not any_blinker else 15,
+      "LANELINE_LEFT": 0 if not lfa_icon else 1 if not hud.leftLaneVisible else 4 if hud.leftLaneDepart else 6 if any_blinker else 2,
+      "LANELINE_RIGHT": 0 if not lfa_icon else 1 if not hud.rightLaneVisible else 4 if hud.rightLaneDepart else 6 if any_blinker else 2,
+      "LCA_LEFT_ICON": 0 if not lfa_icon or out.vEgo < lane_change_speed_min else 1 if out.leftBlindspot else 2 if any_blinker else 4,
+      "LCA_RIGHT_ICON": 0 if not lfa_icon or out.vEgo < lane_change_speed_min else 1 if out.rightBlindspot else 2 if any_blinker else 4,
+      "LCA_LEFT_ARROW": 2 if left_blinker else 0,
+      "LCA_RIGHT_ARROW": 2 if right_blinker else 0,
+    })
 
-  lane_change_speed_min = 8.9408
-  any_blinker = left_blinker or right_blinker
-  curvature = {i: (31 if i == -1 else 13 - abs(i + 15)) if i < 0 else 15 + i for i in range(-15, 16)}
+    if any_blinker and msg_1b5 is not None:
+      left_lane_raw = msg_1b5["Info_LftLnPosVal"]
+      right_lane_raw = msg_1b5["Info_RtLnPosVal"]
+      scale_per_m = 15 / 1.7
+      left_lane = abs(int(round(15 + (left_lane_raw - 1.7) * scale_per_m)))
+      right_lane = abs(int(round(15 + (right_lane_raw - 1.7) * scale_per_m)))
 
-  msg_161.update({
-    "DAW_ICON": 0,
-    "LKA_ICON": 0,
-    "LFA_ICON": 2 if lfa_icon else 0,
-    "CENTERLINE": 1 if lfa_icon else 0,
-    "LANELINE_CURVATURE": curvature.get(max(-15, min(int(out.steeringAngleDeg / 4.5), 15)), 14) if lfa_icon and not any_blinker else 15,
-    "LANELINE_LEFT": 0 if not lfa_icon else 1 if not hud.leftLaneVisible else 4 if hud.leftLaneDepart else 6 if any_blinker else 2,
-    "LANELINE_RIGHT": 0 if not lfa_icon else 1 if not hud.rightLaneVisible else 4 if hud.rightLaneDepart else 6 if any_blinker else 2,
-    "LCA_LEFT_ICON": 0 if not lfa_icon or out.vEgo < lane_change_speed_min else 1 if out.leftBlindspot else 2 if any_blinker else 4,
-    "LCA_RIGHT_ICON": 0 if not lfa_icon or out.vEgo < lane_change_speed_min else 1 if out.rightBlindspot else 2 if any_blinker else 4,
-    "LCA_LEFT_ARROW": 2 if left_blinker else 0,
-    "LCA_RIGHT_ARROW": 2 if right_blinker else 0,
-  })
+      if msg_1b5["Info_LftLnQualSta"] not in (2, 3):
+        left_lane = 0
+      if msg_1b5["Info_RtLnQualSta"] not in (2, 3):
+        right_lane = 0
 
-  if lfa_icon and any_blinker:
-    left_lane_raw = msg_1b5["Info_LftLnPosVal"]
-    right_lane_raw = msg_1b5["Info_RtLnPosVal"]
-    scale_per_m = 15 / 1.7
-    left_lane = abs(int(round(15 + (left_lane_raw - 1.7) * scale_per_m)))
-    right_lane = abs(int(round(15 + (right_lane_raw - 1.7) * scale_per_m)))
+      if left_lane_raw == -2.0248375:
+        left_lane = 30 - right_lane
+      if right_lane_raw == 2.0248375:
+        right_lane = 30 - left_lane
 
-    if msg_1b5["Info_LftLnQualSta"] not in (2, 3):
-      left_lane = 0
-    if msg_1b5["Info_RtLnQualSta"] not in (2, 3):
-      right_lane = 0
+      if left_lane_raw == right_lane_raw == 0:
+        left_lane = right_lane = 15
+      elif left_lane_raw == 0:
+        left_lane = 30 - right_lane
+      elif right_lane_raw == 0:
+        right_lane = 30 - left_lane
 
-    if left_lane_raw == -2.0248375:
-      left_lane = 30 - right_lane
-    if right_lane_raw == 2.0248375:
-      right_lane = 30 - left_lane
+      total = left_lane + right_lane
+      if total == 0:
+        left_lane = right_lane = 15
+      else:
+        left_lane = round((left_lane / total) * 30)
+        right_lane = 30 - left_lane
 
-    if left_lane_raw == right_lane_raw == 0:
-      left_lane = right_lane = 15
-    elif left_lane_raw == 0:
-      left_lane = 30 - right_lane
-    elif right_lane_raw == 0:
-      right_lane = 30 - left_lane
+      msg_161["LANELINE_LEFT_POSITION"] = left_lane
+      msg_161["LANELINE_RIGHT_POSITION"] = right_lane
 
-    total = left_lane + right_lane
-    if total == 0:
-      left_lane = right_lane = 15
-    else:
-      left_lane = round((left_lane / total) * 30)
-      right_lane = 30 - left_lane
-
-    msg_161["LANELINE_LEFT_POSITION"] = left_lane
-    msg_161["LANELINE_RIGHT_POSITION"] = right_lane
-
-  if hud.leftLaneDepart or hud.rightLaneDepart:
-    msg_162["VIBRATE"] = 1
+    if hud.leftLaneDepart or hud.rightLaneDepart:
+      msg_162["VIBRATE"] = 1
+  else:
+    # Stock steering commands are suppressed in this topology. Its active
+    # lane indicators cannot describe the host's inactive lateral command.
+    msg_161.update({"LKA_ICON": 0, "LFA_ICON": 0, "CENTERLINE": 0, "LANELINE_LEFT": 0, "LANELINE_RIGHT": 0,
+                    "LCA_LEFT_ICON": 0, "LCA_RIGHT_ICON": 0, "LCA_LEFT_ARROW": 0, "LCA_RIGHT_ARROW": 0})
 
   if openpilot_longitudinal:
-    if msg_161["ALERTS_3"] in (1, 2, 3, 4, 7, 8, 9, 10):
-      msg_161["ALERTS_3"] = 0
-    if msg_161["ALERTS_5"] == 4:
-      msg_161["ALERTS_5"] = 0
-    if msg_161["SOUNDS_3"] == 5:
-      msg_161["SOUNDS_3"] = 0
-
     cruise_speed = round(out.vCruiseCluster * (1 if is_metric else CV.KPH_TO_MPH))
     msg_161.update({
       "SETSPEED": 3 if enabled else 1,
@@ -452,336 +410,12 @@ def create_ccnc(packer, CAN, openpilot_longitudinal, enabled, hud, left_blinker,
       "DISTANCE_SPACING": 0 if not main_cruise_enabled else 1 if enabled else 3,
       "DISTANCE_LEAD": 0 if not main_cruise_enabled else 2 if enabled and hud.leadVisible else 1 if hud.leadVisible else 0,
       "DISTANCE_CAR": 0 if not main_cruise_enabled else 2 if enabled else 1,
-      "SLA_ICON": 0,
-      "NAV_ICON": 0,
-      "TARGET": 0,
     })
     msg_162["LEAD"] = 0 if not main_cruise_enabled else 2 if enabled else 1
-    msg_162["LEAD_DISTANCE"] = msg_1b5["Longitudinal_Distance"]
+    if msg_1b5 is not None:
+      msg_162["LEAD_DISTANCE"] = msg_1b5["Longitudinal_Distance"]
 
   return [packer.make_can_msg(msg, CAN.ECAN, values) for msg, values in (("CCNC_0x161", msg_161), ("CCNC_0x162", msg_162))]
-
-
-def create_blindspot_status_messages(packer, CAN, rear_values, front_corner_values,
-                                     left_blindspot=False, right_blindspot=False,
-                                     left_blinker=False, right_blinker=False):
-  # Reuse the last known-good payload but regenerate the rolling counter/checksum.
-  rear = {k: v for k, v in rear_values.items() if k not in ("CHECKSUM", "COUNTER")}
-  front = {k: v for k, v in front_corner_values.items() if k not in ("CHECKSUM", "COUNTER")}
-  left_state = 2 if left_blindspot and left_blinker else (1 if left_blindspot else 0)
-  right_state = 2 if right_blindspot and right_blinker else (1 if right_blindspot else 0)
-
-  rear["BCW_Sta"] = int(left_blindspot or right_blindspot)
-  rear["BCW_LtIndSta"] = left_state
-  rear["BCW_RtIndSta"] = right_state
-  rear["BCW_IndSta"] = max(left_state, right_state)
-  rear["OSMrrLamp_LtIndSta"] = left_state
-  rear["OSMrrLamp_RtIndSta"] = right_state
-  # Keep the older fields aligned where they still correlate on some platforms.
-  rear["FL_INDICATOR"] = left_state
-  rear["FR_INDICATOR"] = right_state
-  if "NEW_SIGNAL_3" not in front:
-    front["NEW_SIGNAL_3"] = 1
-
-  return [
-    packer.make_can_msg("BLINDSPOTS_REAR_CORNERS", CAN.ECAN, rear),
-    packer.make_can_msg("BLINDSPOTS_FRONT_CORNER_1", CAN.ECAN, front),
-  ]
-
-
-def create_ccnc_blindspot_status_messages(packer, CP, CAN, counter, left_blindspot=False, right_blindspot=False,
-                                           left_escalated=False, right_escalated=False, drive_gear=False,
-                                           left_warning_lamp=False, right_warning_lamp=False,
-                                           left_sound_active=False, right_sound_active=False):
-  left_state = 2 if left_blindspot and left_escalated else (1 if left_blindspot else 0)
-  right_state = 2 if right_blindspot and right_escalated else (1 if right_blindspot else 0)
-  left_osm_state = 2 if left_warning_lamp else 1 if left_state == 1 else 0
-  right_osm_state = 2 if right_warning_lamp else 1 if right_state == 1 else 0
-  desired_fields = {
-    "BCW_IndSta": 1,
-    "BCA_OnOffEquip2Sta": 2,
-    "BCA_Sta": int(drive_gear),
-    "BCW_LtIndSta": left_state,
-    "BCW_RtIndSta": right_state,
-    "BCW_LtSndWrngSta": int(left_sound_active),
-    "BCW_RtSndWrngSta": int(right_sound_active),
-    "OSMrrLamp_LtIndSta": left_osm_state,
-    "OSMrrLamp_RtIndSta": right_osm_state,
-  }
-
-  return [
-    _create_ccnc_adrv_message_with_signals(
-      packer, CP, CAN, 0x1BA, counter, "BLINDSPOTS_REAR_CORNERS", desired_fields,
-    ),
-    # No retained radar input reproduces the stock RCTA target decision across routes.
-    _create_ccnc_adrv_message(CP.carFingerprint, 0x1E5, CAN.ECAN, counter),
-  ]
-
-
-IONIQ_6_CLUSTER_BLINDSPOT_31A = {
-  "right": (
-    bytes.fromhex("fa7c10f0f0ffff03898aff0b0a8678ff000000007e0055550000000000000000"),
-    bytes.fromhex("ac0e11f0f0ffff03898aff0c0a8678ff000000007e0055550000000000000000"),
-    bytes.fromhex("76ce12f0f0ffff03898aff0b0a8678ff000000007e0055550000000000000000"),
-    bytes.fromhex("309713f0f0ffff03898aff0b0a8678ff000000007e0055550000000000000000"),
-    bytes.fromhex("d32214f0f0ffff03898aff0c0a8678ff000000007e0055550000000000000000"),
-    bytes.fromhex("957b15f0f0ffff03898aff0c0a8678ff000000007e0055550000000000000000"),
-  ),
-  "left": (
-    bytes.fromhex("851828f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("c34129f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("09aa2af0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("4ff32bf0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("bc6d2cf0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("fa342df0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-  ),
-}
-
-IONIQ_6_CLUSTER_BLINDSPOT_3B5 = {
-  "right": (
-    bytes.fromhex("caa95c00000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("8cf05d00000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("461b5e00000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("00425f00000000464600000000000000d7020000000069070000000000000000"),
-  ),
-  "left": (
-    bytes.fromhex("2c69c500000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("e682c600000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("21afc800000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("67f6c900000000464600000000000000da020000000069070000000000000000"),
-  ),
-}
-
-
-IONIQ_6_CLUSTER_LANE_CHANGE_3C1 = {
-  "right": {
-    "trigger": bytes.fromhex("e910300041000000"),
-    "steady": bytes.fromhex("ab20300001000000"),
-  },
-  "left": {
-    "trigger": bytes.fromhex("3d40304010000000"),
-    "steady": bytes.fromhex("3e50300000000000"),
-  },
-}
-
-# Captured from a stock Ioniq 6 route that shows the cluster lane-change animation
-# on ECAN after the trigger/hold 0x3C1 states above.
-IONIQ_6_CLUSTER_LANE_CHANGE_3B5 = {
-  "right": (
-    bytes.fromhex("9f687600000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("d9317700000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("58457800000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("1e1c7900000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("d4f77a00000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("92ae7b00000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("61307c00000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("27697d00000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("ed827e00000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("abdb7f00000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("dd978000000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("9bce8100000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("51258200000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("177c8300000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("e4e28400000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("18ba8500000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("68508600000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("94088700000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("157c8800000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("53258900000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("99ce8a00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("df978b00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("2c098c00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("6a508d00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("a0bb8e00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("e6e28f00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("a2529000000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("e40b9100000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("2ee09200000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("d2b89300000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("9b279400000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("677f9500000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("17959600000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("ebcd9700000000464600000000000000d7020000000069070000000000000000"),
-    bytes.fromhex("d0b89800000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("96e19900000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("5c0a9a00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("1a539b00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("e9cd9c00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("af949d00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("657f9e00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("23269f00000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("cc0fa000000000464600000000000000d8020000000069070000000000000000"),
-    bytes.fromhex("bba6a100000000464600000000000000d9020000000069070000000000000000"),
-    bytes.fromhex("714da200000000464600000000000000d9020000000069070000000000000000"),
-    bytes.fromhex("3714a300000000464600000000000000d9020000000069070000000000000000"),
-  ),
-  "left": (
-    bytes.fromhex("e682c600000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("d2dbc700000000464600000000000000d9020000000069070000000000000000"),
-    bytes.fromhex("21afc800000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("67f6c900000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("ad1dca00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("eb44cb00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("18dacc00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("5e83cd00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("9468ce00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("d231cf00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("9681d000000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("d0d8d100000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("1a33d200000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("5c6ad300000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("ddf4d400000000464600000000000000d9020000000069070000000000000000"),
-    bytes.fromhex("e9add500000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("2346d600000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("651fd700000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("e46bd800000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("d032d900000000464600000000000000d9020000000069070000000000000000"),
-    bytes.fromhex("68d9da00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("2e80db00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("dd1edc00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("9b47dd00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("51acde00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("17f5df00000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("f8dce000000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("be85e100000000464600000000000000da020000000069070000000000000000"),
-    bytes.fromhex("746ee200000000464600000000000000da020000000069070000000000000000"),
-  ),
-}
-
-IONIQ_6_CLUSTER_LANE_CHANGE_31A = {
-  "right": (
-    bytes.fromhex("eb4518f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("757119f0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
-    bytes.fromhex("bf9a1af0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
-    bytes.fromhex("f9c31bf0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
-    bytes.fromhex("0a5d1cf0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
-    bytes.fromhex("4c041df0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
-    bytes.fromhex("86ef1ef0f0ffff03898aff0a088678ff000000007e0055550000000000000000"),
-    bytes.fromhex("18db1ff0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("f7f220f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-  ),
-  "left": (
-    bytes.fromhex("851828f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("c34129f0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("09aa2af0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("4ff32bf0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("bc6d2cf0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-    bytes.fromhex("fa342df0f0ffff03898aff0a098678ff000000007e0055550000000000000000"),
-  ),
-}
-
-IONIQ_6_CLUSTER_LANE_CHANGE_3C1_BURST = {
-  0: "trigger",
-  4: "trigger",
-  7: "steady",
-  10: "steady",
-  13: "steady",
-  16: "steady",
-}
-
-IONIQ_6_CLUSTER_LANE_CHANGE_3C1_STEADY_START = 34
-IONIQ_6_CLUSTER_LANE_CHANGE_3B5_START = 4
-IONIQ_6_CLUSTER_LANE_CHANGE_31A_START = 30
-
-
-def create_ioniq_6_cluster_blindspot_messages(CAN, frame, left_blindspot=False, right_blindspot=False,
-                                              left_blinker=False, right_blinker=False):
-  side = None
-  if left_blindspot and not right_blindspot:
-    side = "left"
-  elif right_blindspot and not left_blindspot:
-    side = "right"
-  elif left_blindspot and right_blindspot:
-    if left_blinker and not right_blinker:
-      side = "left"
-    elif right_blinker and not left_blinker:
-      side = "right"
-
-  if side is None:
-    return []
-
-  ret = []
-  if frame % 20 == 0:
-    seq_3b5 = IONIQ_6_CLUSTER_BLINDSPOT_3B5[side]
-    ret.append((0x3B5, seq_3b5[(frame // 20) % len(seq_3b5)], CAN.ECAN))
-  if frame % 100 == 0:
-    seq_31a = IONIQ_6_CLUSTER_BLINDSPOT_31A[side]
-    ret.append((0x31A, seq_31a[(frame // 100) % len(seq_31a)], CAN.ECAN))
-
-  return ret
-
-
-def create_ioniq_6_cluster_lane_change_messages(CAN, frame, side=None):
-  if side not in IONIQ_6_CLUSTER_LANE_CHANGE_3C1:
-    return []
-
-  ret = []
-  frame_phase = IONIQ_6_CLUSTER_LANE_CHANGE_3C1_BURST.get(frame)
-  if frame_phase is None and frame >= IONIQ_6_CLUSTER_LANE_CHANGE_3C1_STEADY_START and \
-     (frame - IONIQ_6_CLUSTER_LANE_CHANGE_3C1_STEADY_START) % 20 == 0:
-    frame_phase = "steady"
-  if frame_phase is not None:
-    ret.append((0x3C1, IONIQ_6_CLUSTER_LANE_CHANGE_3C1[side][frame_phase], CAN.ECAN))
-
-  if frame >= IONIQ_6_CLUSTER_LANE_CHANGE_3B5_START and (frame - IONIQ_6_CLUSTER_LANE_CHANGE_3B5_START) % 20 == 0:
-    seq_3b5 = IONIQ_6_CLUSTER_LANE_CHANGE_3B5[side]
-    ret.append((0x3B5, seq_3b5[((frame - IONIQ_6_CLUSTER_LANE_CHANGE_3B5_START) // 20) % len(seq_3b5)], CAN.ECAN))
-  if frame >= IONIQ_6_CLUSTER_LANE_CHANGE_31A_START and (frame - IONIQ_6_CLUSTER_LANE_CHANGE_31A_START) % 100 == 0:
-    seq_31a = IONIQ_6_CLUSTER_LANE_CHANGE_31A[side]
-    ret.append((0x31A, seq_31a[((frame - IONIQ_6_CLUSTER_LANE_CHANGE_31A_START) // 100) % len(seq_31a)], CAN.ECAN))
-
-  return ret
-
-
-def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_override, set_speed, hud_control,
-                       main_mode_acc=1, jerk_lower=None, jerk_upper=None, direct_accel=False,
-                       lead_distance=None, lead_rel_speed=None, lead_visible=None, cruise_info=None, raw_accel=None):
-  jerk = 5
-  jn = jerk / 50
-  if not enabled or gas_override:
-    a_val, a_raw = 0, 0
-  elif direct_accel:
-    a_raw = accel if raw_accel is None else raw_accel
-    a_val = accel
-  else:
-    a_raw = accel
-    a_val = np.clip(accel, accel_last - jn, accel_last + jn)
-
-  if lead_distance is None and lead_rel_speed is None and lead_visible is None:
-    acc_obj_dist = 1.0
-    acc_obj_rel_spd = 0.0
-    obj_valid = 0
-    obj_status = 2
-  else:
-    lead_visible = bool(lead_visible)
-    acc_obj_dist = float(np.clip(lead_distance if lead_visible else 0.0, 0.0, 204.7))
-    acc_obj_rel_spd = float(np.clip(lead_rel_speed if lead_visible else 0.0, -16.4, 34.7))
-    obj_valid = int(not lead_visible)
-    obj_status = 0 if not (enabled and lead_visible) else (1 if gas_override else 2)
-
-  values = {
-    "ACCMode": 0 if not enabled else (2 if gas_override else 1),
-    "MainMode_ACC": main_mode_acc,
-    "StopReq": 1 if stopping else 0,
-    "aReqValue": a_val,
-    "aReqRaw": a_raw,
-    "VSetDis": set_speed,
-    "JerkLowerLimit": jerk_lower if jerk_lower is not None else (jerk if enabled else 1),
-    "JerkUpperLimit": jerk_upper if jerk_upper is not None else 3.0,
-
-    "ACC_ObjDist": acc_obj_dist,
-    "ACC_ObjRelSpd": acc_obj_rel_spd,
-    "ObjValid": obj_valid,
-    "OBJ_STATUS": obj_status,
-    "SET_ME_2": 0x4,
-    "SET_ME_3": 0x3,
-    "SET_ME_TMP_64": 0x64,
-    "DISTANCE_SETTING": hud_control.leadDistanceBars,
-  }
-  if cruise_info:
-    values.update({s: cruise_info[s] for s in ("ACC_ObjDist", "ACC_ObjRelSpd")})
-
-  return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)
 
 
 def create_spas_messages(packer, CAN, left_blink, right_blink):
@@ -819,17 +453,24 @@ def create_fca_warning_light(packer, CAN, frame):
   return ret
 
 
-def create_adrv_messages(packer, CAN, frame, blended_hda2=False, car_fingerprint=None, drive_gear=False,
-                         v_ego=None):
+def create_adrv_messages(packer, CAN, frame, *, template=None, drive_gear=False, speed=None):
   # messages needed to car happy after disabling
   # the ADAS Driving ECU to do longitudinal control
 
   ret = []
 
-  ret.append(create_adrv_0x51(packer, CAN, frame, car_fingerprint, drive_gear, v_ego))
-
-  if blended_hda2:
-    return ret
+  values = {
+  }
+  from opendbc.car.hyundai.gv70_template import GV70Template
+  if template is not None:
+    if type(CAN.ACAN) is not int or type(CAN.offset) is not int:
+      raise ValueError('Captured ADRV requires integer CAN routing')
+    local_bus = CAN.ACAN - CAN.offset
+    packet = (template.frame(frame, drive_gear, local_bus, speed=speed) if isinstance(template, GV70Template) else
+              template.frame(frame, drive_gear, local_bus))
+    ret.append(CanData(packet.address, packet.dat, CAN.ACAN))
+  else:
+    ret.append(packer.make_can_msg("ADRV_0x51", CAN.ACAN, values))
 
   ret.extend(create_fca_warning_light(packer, CAN, frame))
 
@@ -864,36 +505,8 @@ def create_adrv_messages(packer, CAN, frame, blended_hda2=False, car_fingerprint
   return ret
 
 
-def create_ccnc_adrv_messages(packer, CP, CAN, frame, enabled, main_cruise_enabled, hud, out, is_metric,
-                              steering_available, steering_active, left_blindspot, right_blindspot,
-                              drive_gear=False,
-                              hba_icon=0,
-                              left_escalated=False, right_escalated=False,
-                              left_warning_lamp=False, right_warning_lamp=False,
-                              left_sound_active=False, right_sound_active=False):
-  ret = [
-    _create_ccnc_adrv_message(CP.carFingerprint, address, CAN.ECAN, frame // period)
-    for address, period in _CCNC_ADRV_PERIODS[CP.carFingerprint].items() if frame % period == 0
-  ]
-  if frame % 5 == 0:
-    ret.extend(create_ccnc_angle_long_status_messages(
-      packer, CP, CAN, frame // 5, enabled, main_cruise_enabled, hud, out, is_metric,
-      steering_available, steering_active, hba_icon,
-    ))
-    ret.extend(create_ccnc_blindspot_status_messages(
-      packer, CP, CAN, frame // 5, left_blindspot, right_blindspot, left_escalated, right_escalated,
-      drive_gear,
-      left_warning_lamp, right_warning_lamp, left_sound_active, right_sound_active,
-    ))
-  return ret
-
-
 def hkg_can_fd_checksum(address: int, sig, d: bytearray) -> int:
-  crc = 0
-  for i in range(2, len(d)):
-    crc = ((crc << 8) ^ CRC16_XMODEM[(crc >> 8) ^ d[i]]) & 0xFFFF
-  crc = ((crc << 8) ^ CRC16_XMODEM[(crc >> 8) ^ ((address >> 0) & 0xFF)]) & 0xFFFF
-  crc = ((crc << 8) ^ CRC16_XMODEM[(crc >> 8) ^ ((address >> 8) & 0xFF)]) & 0xFFFF
+  crc = crc_hqx(d[2:] + (address & 0xFFFF).to_bytes(2, "little"), 0)
   if len(d) == 8:
     crc ^= 0x5F29
   elif len(d) == 16:
@@ -903,191 +516,3 @@ def hkg_can_fd_checksum(address: int, sig, d: bytearray) -> int:
   elif len(d) == 32:
     crc ^= 0x9F5B
   return crc
-
-
-# Ioniq 5/6 / HKG LKA-steering: ADAS_DRV broadcasts ACCELERATOR_BRAKE_ALT (0x100) on bus 0.
-# The front radar uses this as its "host alive" heartbeat. When we disable ADAS_DRV the
-# radar stops publishing real object tracks. Spoof this message ourselves with valid CRC
-# and current pedal state so the radar keeps tracking.
-# Length is 24 bytes on Ioniq 6 (DBC declares 32 for ICE Hyundais, but EV firmware uses 24).
-# Byte templates captured from real ADAS broadcasts; only checksum, counter,
-# brake, and accelerator bits are updated for the radar heartbeat.
-_ACCEL_BRAKE_ALT_TEMPLATE = bytes.fromhex("000000020000fcff000000000020000055ff000068000000")
-_KIA_EV9_ACCEL_BRAKE_ALT_TEMPLATE = bytes.fromhex("00000000ff006f00e80400001201030055ffff0000000000")
-_HYUNDAI_IONIQ_5_PE_ACCEL_BRAKE_ALT_TEMPLATE = bytes.fromhex("000000000000000000000000ff1fffff55ffff00a8000000")
-# Neutral bodies verified across stock and successful suppression routes. Only
-# rolling integrity fields and the decoded state above are changed at runtime.
-_CCNC_ADRV_TEMPLATES = {
-  CAR.KIA_EV9: {
-    0x160: bytes.fromhex("0000000100000000fffc0100a8001000"),
-    0x1DA: bytes.fromhex("0000002200110000000000000000000000000000000000000000000000000000"),
-    0x1EA: bytes.fromhex("000000080000000000000000000000ff000000000000000000000000000f0f00"),
-    0x200: bytes.fromhex("00000014801a0000"),
-    0x345: bytes.fromhex("0000001500560000"),
-    0x161: bytes.fromhex("0000000000000000c0fff0c003000040000000000000000000ff000000000000"),
-    0x162: bytes.fromhex("0000002700000000000000000000000000000000000000000000000000000000"),
-    0x1BA: bytes.fromhex("00000000000000880200000000000000000100000000000f"),
-    0x1E5: bytes.fromhex("00000000000000000000220300000080"),
-    0x1E0: bytes.fromhex("00000002000000000000000000000000"),
-    0x38C: bytes.fromhex("000000f71f000000000000000000000000000000000000000000000000000000"),
-  },
-  CAR.HYUNDAI_IONIQ_5_PE: {
-    0x160: bytes.fromhex("0000000000000000fffc0100a8001000"),
-    0x1DA: bytes.fromhex("0000002200010000000000000000000000000000000000000000000000000000"),
-    0x1EA: bytes.fromhex("000000080000000000000000000000ff000000000000000000000000000f0f00"),
-    0x200: bytes.fromhex("00000014401b0000"),
-    0x345: bytes.fromhex("0000001500560000"),
-    0x161: bytes.fromhex("0000000000000000c0fff0c003000040000000000000000000ff000000000000"),
-    0x162: bytes.fromhex("0000002700000000c0ff00000000000000000000000000000000000000000000"),
-    0x1BA: bytes.fromhex("00000000000000880200000000000000000100000000000f"),
-    0x1E5: bytes.fromhex("00000000000000000000220200000080"),
-    0x1E0: bytes.fromhex("00000002000000000000000000000000"),
-    0x38C: bytes.fromhex("000000f79f000000000000000000000000000000000000000000000000000000"),
-  },
-}
-_CCNC_ADRV_PERIODS = {
-  CAR.KIA_EV9: {
-    0x160: 2,
-    0x1DA: 100,
-    0x1EA: 5,
-    0x200: 5,
-    0x345: 20,
-    0x1E0: 5,
-    0x38C: 20,
-  },
-  CAR.HYUNDAI_IONIQ_5_PE: {
-    0x160: 2,
-    0x1DA: 100,
-    0x1EA: 5,
-    0x200: 5,
-    0x345: 20,
-    0x1E0: 5,
-    0x38C: 20,
-  },
-}
-
-
-def create_accelerator_brake_alt_spoof(bus: int, counter: int, brake_pressed: bool, accelerator_pressed: bool,
-                                       car_fingerprint=None) -> CanData:
-  if car_fingerprint == CAR.KIA_EV9:
-    template = _KIA_EV9_ACCEL_BRAKE_ALT_TEMPLATE
-  elif car_fingerprint == CAR.HYUNDAI_IONIQ_5_PE:
-    template = _HYUNDAI_IONIQ_5_PE_ACCEL_BRAKE_ALT_TEMPLATE
-  else:
-    template = _ACCEL_BRAKE_ALT_TEMPLATE
-  d = bytearray(template)
-  d[2] = counter & 0xFF                              # COUNTER (bit 16, 8-bit)
-  d[4] = (d[4] & ~0x01) | (0x01 if brake_pressed else 0x00)         # BRAKE_PRESSED (bit 32)
-  d[22] = (d[22] & ~0x01) | (0x01 if accelerator_pressed else 0x00) # ACCELERATOR_PEDAL_PRESSED (bit 176)
-  crc = hkg_can_fd_checksum(0x100, None, d)
-  d[0] = crc & 0xFF
-  d[1] = (crc >> 8) & 0xFF
-  return CanData(0x100, bytes(d), bus)
-
-
-def _create_ccnc_adrv_message(car_fingerprint, address: int, bus: int, counter: int) -> CanData:
-  d = bytearray(_CCNC_ADRV_TEMPLATES[car_fingerprint][address])
-  d[2] = counter & 0xFF
-  crc = hkg_can_fd_checksum(address, None, d)
-  d[0] = crc & 0xFF
-  d[1] = (crc >> 8) & 0xFF
-  return CanData(address, bytes(d), bus)
-
-
-def _set_ccnc_message_signals(packer, message_name: str, dat: bytearray, values: dict) -> None:
-  dbc_msg = packer.dbc.name_to_msg[message_name]
-  for name, value in values.items():
-    sig = dbc_msg.sigs[name]
-    ival = int(np.floor((value - sig.offset) / sig.factor + 0.5))
-    if ival < 0:
-      ival = (1 << sig.size) + ival
-    _set_value(dat, sig, ival)
-
-
-def _create_ccnc_adrv_message_with_signals(packer, CP, CAN, address: int, counter: int,
-                                            message_name: str, values: dict) -> CanData:
-  msg = _create_ccnc_adrv_message(CP.carFingerprint, address, CAN.ECAN, counter)
-  dat = bytearray(msg.dat)
-  # Update decoded fields in the verified neutral payload.
-  _set_ccnc_message_signals(packer, message_name, dat, values)
-  crc = hkg_can_fd_checksum(address, None, dat)
-  dat[0] = crc & 0xFF
-  dat[1] = (crc >> 8) & 0xFF
-  return CanData(address, bytes(dat), CAN.ECAN)
-
-
-def create_ccnc_acc_control(packer, CAN, enabled: bool, accel: float,
-                            stop_request: bool, cruise_standstill: bool, gas_override: bool, set_speed: float,
-                            main_mode_acc: int, lead_distance: float, lead_rel_speed: float, lead_visible: bool,
-                            v_ego: float, jerk_lower: float = 0.7, jerk_upper: float = 0.7):
-  if not enabled or gas_override or stop_request:
-    accel = 0.0
-
-  lead_visible = bool(enabled and lead_visible)
-  desired_headway = min(max(round(1.625 * max(v_ego, 0.0), 1), 3.5), 204.6) if enabled else 204.6
-  values = {
-    "ACCMode": 0 if not enabled else (2 if gas_override else 1),
-    "MainMode_ACC": int(bool(main_mode_acc)),
-    "StopReq": 1 if stop_request and enabled else 0,
-    "CRUISE_STANDSTILL": 1 if cruise_standstill and stop_request and enabled else 0,
-    "aReqValue": accel,
-    "aReqRaw": accel,
-    "VSetDis": set_speed,
-    "JerkLowerLimit": jerk_lower if enabled else 1.0,
-    "JerkUpperLimit": jerk_upper if enabled else 3.0,
-    "ACC_ObjDist": float(np.clip(lead_distance, 0.0, 204.7)) if lead_visible else 204.6,
-    "ACC_ObjRelSpd": float(np.clip(lead_rel_speed, -16.4, 34.7)) if lead_visible else 34.6,
-    "ObjValid": 0 if lead_visible else 1,
-    "OBJ_STATUS": 2 if enabled and lead_visible else 0,
-    "NEW_SIGNAL_3": 2 if lead_visible else 0,
-    "NEW_SIGNAL_15": desired_headway,
-    "SET_ME_2": 4,
-    "SET_ME_3": 3,
-    "SET_ME_TMP_64": 0x64,
-    # Stock CCNC LKA-long routes use raw 7. The DBC's physical range is stale.
-    "DISTANCE_SETTING": 7 if enabled else 0,
-  }
-
-  return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)
-
-
-def create_ccnc_angle_long_status_messages(packer, CP, CAN, counter: int, enabled: bool = False,
-                                         main_cruise_enabled: bool = False, hud=None, out=None,
-                                         is_metric: bool = True, steering_available: bool = False,
-                                         steering_active: bool = False, hba_icon: int = 0) -> list[CanData]:
-  cruise_speed = round(out.vCruiseCluster * (1 if is_metric else CV.KPH_TO_MPH)) if out is not None else 0
-  display_speed = (40 if is_metric else 25) if cruise_speed > (145 if is_metric else 90) else max(cruise_speed, 0)
-  main_standby = bool(main_cruise_enabled and not enabled)
-  values_161 = {
-    "FCA_ICON": 1,       # orange: FCA unavailable
-    "FCA_ALT_ICON": 0,
-    "FCA_IMAGE": 0,
-    "ALERTS_1": 0,
-    "ALERTS_2": 0,
-    "ALERTS_3": 0,
-    "ALERTS_4": 0,
-    "ALERTS_5": 0,
-    "SOUNDS_1": 0,
-    "SOUNDS_2": 0,
-    "SOUNDS_3": 0,
-    "SOUNDS_4": 0,
-    "LFA_ICON": (2 if steering_active else 1) if steering_available else 0,
-    "HBA_ICON": hba_icon if hba_icon in (1, 2) else 0,
-    "HDA_ICON": 2 if enabled else 1 if main_standby else 0,
-    "TARGET": 3 if enabled else 0,
-    "SETSPEED": 3 if enabled else 1 if main_standby else 0,
-    "SETSPEED_HUD": 2 if enabled else 1 if main_standby else 0,
-    "SETSPEED_SPEED": display_speed if enabled or main_standby else 255,
-    "DISTANCE": hud.leadDistanceBars if enabled and hud is not None else 0,
-    "DISTANCE_SPACING": 3 if enabled or main_standby else 0,
-    "DISTANCE_CAR": 2 if enabled else 1 if main_standby else 0,
-  }
-  values_162 = {fault: 0 for fault in (
-    "FAULT_FSS", "FAULT_FCA", "FAULT_LSS", "FAULT_SLA", "FAULT_HDA", "FAULT_DAS", "FAULT_LFA", "FAULT_DAW",
-    "FAULT_HBA", "FAULT_ESS",
-  )}
-  values_162["VIBRATE"] = 0
-  return [
-    _create_ccnc_adrv_message_with_signals(packer, CP, CAN, 0x161, counter, "CCNC_0x161", values_161),
-    _create_ccnc_adrv_message_with_signals(packer, CP, CAN, 0x162, counter, "CCNC_0x162", values_162),
-  ]

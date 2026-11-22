@@ -1,3 +1,5 @@
+#pragma once
+
 #ifdef BOOTSTUB
 void gpio_usb_init(void) {
 #else
@@ -15,20 +17,6 @@ void gpio_spi_init(void) {
   set_gpio_alternate(GPIOE, 13, GPIO_AF5_SPI4);
   set_gpio_alternate(GPIOE, 14, GPIO_AF5_SPI4);
   register_set_bits(&(GPIOE->OSPEEDR), GPIO_OSPEEDR_OSPEED11 | GPIO_OSPEEDR_OSPEED12 | GPIO_OSPEEDR_OSPEED13 | GPIO_OSPEEDR_OSPEED14);
-}
-
-#ifdef BOOTSTUB
-void gpio_usart2_init(void) {
-  // A2,A3: USART 2 for debugging
-  set_gpio_alternate(GPIOA, 2, GPIO_AF7_USART2);
-  set_gpio_alternate(GPIOA, 3, GPIO_AF7_USART2);
-}
-#endif
-
-void gpio_uart7_init(void) {
-  // E7,E8: UART 7 for debugging
-  set_gpio_alternate(GPIOE, 7, GPIO_AF7_UART7);
-  set_gpio_alternate(GPIOE, 8, GPIO_AF7_UART7);
 }
 
 // Common GPIO initialization
@@ -77,6 +65,27 @@ void flasher_peripherals_init(void) {
 }
 #endif
 
+// FFI_SM_0, FFI_SM_1: hold everything without a clock enable in reset, RST and EN bits share positions
+// all RST bits per stm32h725xx.h, except CPURST and the H73x only CRYP, HASH, OTFDEC
+static void hold_unused_in_reset(void) {
+  static const struct { volatile uint32_t *enr; volatile uint32_t *rstr; uint32_t rst_bits; } regs[] = {
+    {&(RCC->AHB1ENR), &(RCC->AHB1RSTR), 0x02008023U},
+    {&(RCC->AHB2ENR), &(RCC->AHB2RSTR), 0x00030241U},
+    {&(RCC->AHB3ENR), &(RCC->AHB3RSTR), 0x00295011U},
+    {&(RCC->AHB4ENR), &(RCC->AHB4RSTR), 0x032806FFU},
+    {&(RCC->APB1LENR), &(RCC->APB1LRSTR), 0xEAFFC3FFU},
+    {&(RCC->APB1HENR), &(RCC->APB1HRSTR), 0x03000136U},
+    {&(RCC->APB2ENR), &(RCC->APB2RSTR), 0x405730F3U},
+    {&(RCC->APB3ENR), &(RCC->APB3RSTR), 0x00000008U},
+    {&(RCC->APB4ENR), &(RCC->APB4RSTR), 0x0420DEAAU},
+  };
+  for (uint8_t i = 0U; i < (sizeof(regs) / sizeof(regs[0])); i++) {
+    uint32_t en = *regs[i].enr;
+    register_set(regs[i].rstr, regs[i].rst_bits & ~en, 0xFFFFFFFFU);
+    register_set(regs[i].enr, en, 0xFFFFFFFFU);
+  }
+}
+
 // Peripheral initialization
 void peripherals_init(void) {
   // enable GPIO(A,B,C,D,E,F,G,H)
@@ -96,6 +105,7 @@ void peripherals_init(void) {
   RCC->AHB1ENR |= RCC_AHB1ENR_DMA2EN;  // SPI DMA
   RCC->APB4ENR |= RCC_APB4ENR_SYSCFGEN;
   RCC->AHB4ENR |= RCC_AHB4ENR_BDMAEN; // Audio DMA
+  RCC->APB4ENR |= RCC_APB4ENR_DTSEN; // Digital Temperature Sensor
 
   // Connectivity
   RCC->APB2ENR |= RCC_APB2ENR_SPI4EN;  // SPI
@@ -103,7 +113,6 @@ void peripherals_init(void) {
   RCC->AHB1ENR |= RCC_AHB1ENR_USB1OTGHSEN; // USB
   RCC->AHB1LPENR |= RCC_AHB1LPENR_USB1OTGHSLPEN; // USB LP needed for CSleep state(__WFI())
   RCC->AHB1LPENR &= ~(RCC_AHB1LPENR_USB1OTGHSULPILPEN); // disable USB ULPI
-  RCC->APB1LENR |= RCC_APB1LENR_UART7EN;  // SOM uart
   RCC->APB1HENR |= RCC_APB1HENR_FDCANEN; // FDCAN core enable
 
   // Analog
@@ -122,14 +131,22 @@ void peripherals_init(void) {
   RCC->APB1LENR |= RCC_APB1LENR_TIM6EN;  // interrupt timer
   RCC->APB1LENR |= RCC_APB1LENR_TIM7EN;  // DMA trigger timer
   RCC->APB2ENR |= RCC_APB2ENR_TIM8EN;  // tick timer
+  RCC->APB2ENR |= RCC_APB2ENR_TIM16EN;  // clock check
   RCC->APB1LENR |= RCC_APB1LENR_TIM12EN;  // slow loop
   RCC->APB1LENR |= RCC_APB1LENR_TIM5EN; // sound trigger timer
 
-#ifdef PANDA_JUNGLE
-  RCC->AHB3ENR |= RCC_AHB3ENR_SDMMC1EN; // SDMMC
-#endif
+  hold_unused_in_reset();
 }
 
 void enable_interrupt_timer(void) {
   register_set_bits(&(RCC->APB1LENR), RCC_APB1LENR_TIM6EN); // Enable interrupt timer peripheral
+}
+
+// FLASH_SM_3: nothing unlocks the option bytes, and they boot from 0x08000000 when BOOT0 is low
+void check_option_bytes(void) {
+  uint32_t optlock = FLASH->OPTCR & FLASH_OPTCR_OPTLOCK;
+  uint32_t boot = FLASH->BOOT_CUR & FLASH_BOOT_ADD0;
+  if ((optlock == 0U) || (boot != 0x0800U)) {
+    fault_occurred_value(FAULT_REGISTER_DIVERGENT, (boot << 16) | optlock);
+  }
 }

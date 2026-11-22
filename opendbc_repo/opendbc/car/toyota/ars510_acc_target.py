@@ -3,6 +3,7 @@
 Adapted from ds-sebastian/ars510-radar at fb5b29c2b5999f34afeb6f7ac494a73949d66c67.
 Copyright (c) 2026 ARS510 radar contributors. MIT license; see THIRD_PARTY_NOTICES.md.
 """
+
 from math import nan
 
 from opendbc.can import CANParser
@@ -24,8 +25,7 @@ class RadarInterface(RadarInterfaceBase):
 
   def update(self, can_strings):
     self.frame += 1
-    packets = [(nanos, [(addr, dat, src) for addr, dat, src in frames if addr not in TARGET_ADDRS or len(dat) == 8])
-               for nanos, frames in can_strings]
+    packets = [(nanos, [(addr, dat, src) for addr, dat, src in frames if addr not in TARGET_ADDRS or len(dat) == 8]) for nanos, frames in can_strings]
     self.updated_messages.update(self.rcp.update(packets))
     t = can_strings[-1][0] * 1e-9 if can_strings else None
     cycle = self.rcp.vl["ACC_TARGET_3"]["TIMESTAMP"]
@@ -53,7 +53,7 @@ class RadarInterface(RadarInterfaceBase):
       pt.dRel = position["LONG_DIST"]
       pt.yRel = position["LAT_DIST"]
       pt.vRel = target["REL_SPEED"]
-      pt.aRel = pt.yvRel = nan
-      pt.measured = True
+      pt.deprecated.aRel = pt.deprecated.yvRel = nan
+      pt.deprecated.measured = True
       ret.points = [pt]
     return ret

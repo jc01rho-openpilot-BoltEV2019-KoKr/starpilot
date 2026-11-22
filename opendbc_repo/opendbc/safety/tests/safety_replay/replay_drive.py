@@ -5,7 +5,10 @@ from tqdm import tqdm
 
 from opendbc.car.carlog import carlog
 from opendbc.safety.tests.libsafety import libsafety_py
-from opendbc.safety.tests.safety_replay.helpers import package_can_msg, init_segment
+
+
+def package_can_msg(msg):
+  return libsafety_py.make_CANPacket(msg.address, msg.src % 4, msg.dat)
 
 
 # replay a drive to check for safety violations
@@ -17,10 +20,10 @@ def replay_drive(msgs, safety_mode, param, alternative_experience):
   assert err == 0, "invalid safety mode: %d" % safety_mode
   safety.set_alternative_experience(alternative_experience)
 
-  init_segment(safety, msgs, safety_mode, param)
+  if not any(m.which() == "sentinel" and m.sentinel.type == "startOfRoute" for m in msgs):
+    print("WARNING: Replay starts mid-route; missing prior safety state may cause safety violations that did not appear in the route.")
 
   rx_tot, rx_invalid, tx_tot, tx_blocked, tx_controls, tx_controls_blocked = 0, 0, 0, 0, 0, 0
-  tx_lateral, tx_lateral_blocked = 0, 0
   safety_tick_rx_invalid = False
   blocked_addrs = Counter()
   invalid_addrs = set()
@@ -33,26 +36,20 @@ def replay_drive(msgs, safety_mode, param, alternative_experience):
 
     # skip start and end of route, warm up/down period
     if msg.logMonoTime - start_t > 1e9 and end_t - msg.logMonoTime > 1e9:
-      safety.safety_tick_current_safety_config()
+      safety.safety_tick()
       safety_tick_rx_invalid |= not safety.safety_config_valid() or safety_tick_rx_invalid
 
     if msg.which() == 'sendcan':
       for canmsg in msg.sendcan:
         _msg = package_can_msg(canmsg)
-        # TX hooks can revoke permission on a violation. Count the permission
-        # before checking the message, including lateral-only AOL operation.
-        controls_allowed = safety.get_controls_allowed()
-        lateral_allowed = controls_allowed or safety.get_aol_allowed()
         sent = safety.safety_tx_hook(_msg)
         if not sent:
           tx_blocked += 1
-          tx_controls_blocked += controls_allowed
-          tx_lateral_blocked += lateral_allowed
+          tx_controls_blocked += safety.get_controls_allowed()
           blocked_addrs[canmsg.address] += 1
 
           carlog.debug("blocked bus %d msg %d at %f" % (canmsg.src, canmsg.address, (msg.logMonoTime - start_t) / 1e9))
-        tx_controls += controls_allowed
-        tx_lateral += lateral_allowed
+        tx_controls += safety.get_controls_allowed()
         tx_tot += 1
     elif msg.which() == 'can':
       # ignore msgs we sent
@@ -75,11 +72,9 @@ def replay_drive(msgs, safety_mode, param, alternative_experience):
   print("total msgs with controls allowed:", tx_controls)
   print("blocked msgs:", tx_blocked)
   print("blocked with controls allowed:", tx_controls_blocked)
-  print("total msgs with lateral allowed:", tx_lateral)
-  print("blocked with lateral allowed:", tx_lateral_blocked)
   print("blocked addrs:", blocked_addrs)
 
-  return tx_lateral_blocked == 0 and rx_invalid == 0 and not safety_tick_rx_invalid
+  return tx_controls_blocked == 0 and rx_invalid == 0 and not safety_tick_rx_invalid
 
 
 if __name__ == "__main__":

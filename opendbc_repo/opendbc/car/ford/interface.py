@@ -1,5 +1,4 @@
-# Ford-specific additions first imported in StarPilot 3f6ccd104e substantially adapt BluePilot
-# bp-7.0 interface work. See the repository root CREDITS.md and THIRD_PARTY_NOTICES.md.
+from opendbc.car import ACCEL_MAX_TAKEOFF
 import numpy as np
 from opendbc.car import Bus, get_safety_config, structs
 from opendbc.car.carlog import carlog
@@ -8,7 +7,7 @@ from opendbc.car.ford.carcontroller import CarController
 from opendbc.car.ford.carstate import CarState
 from opendbc.car.ford.fordcan import CanBus
 from opendbc.car.ford.radar_interface import RadarInterface
-from opendbc.car.ford.values import CAR, CarControllerParams, DBC, Ecu, FordFlags, RADAR, FordSafetyFlags
+from opendbc.car.ford.values import CarControllerParams, DBC, Ecu, FordFlags, RADAR, FordSafetyFlags, CAR, FORD_CANFD_CARS, FORD_CLASSIC_CARS
 from opendbc.car.interfaces import CarInterfaceBase
 
 TransmissionType = structs.CarParams.TransmissionType
@@ -19,11 +18,13 @@ class CarInterface(CarInterfaceBase):
   CarController = CarController
   RadarInterface = RadarInterface
 
+  DRIVABLE_GEARS = (structs.CarState.GearShifter.low, structs.CarState.GearShifter.manumatic)
+
   @staticmethod
-  def get_pid_accel_limits(CP, current_speed, cruise_speed):
+  def get_pid_accel_limits(CP, current_speed, cruise_speed, *, faster_takeoffs=False):
     # PCM doesn't allow acceleration near cruise_speed,
     # so limit limits of pid to prevent windup
-    ACCEL_MAX_VALS = [CarControllerParams.ACCEL_MAX, 0.2]
+    ACCEL_MAX_VALS = [ACCEL_MAX_TAKEOFF if faster_takeoffs else CarControllerParams.ACCEL_MAX, 0.2]
     ACCEL_MAX_BP = [cruise_speed - 2., cruise_speed - .4]
     return CarControllerParams.ACCEL_MIN, np.interp(current_speed, ACCEL_MAX_BP, ACCEL_MAX_VALS)
 
@@ -38,10 +39,7 @@ class CarInterface(CarInterfaceBase):
     ret.steerAtStandstill = True
 
     ret.longitudinalTuning.kiBP = [0.]
-    ret.longitudinalTuning.kiV = [0.5]
-    ret.longitudinalTuning.kpV = [0.]
-    if candidate == CAR.FORD_MUSTANG_MACH_E_MK1:
-      ret.longitudinalTuning.kiV = [0.3]
+    ret.longitudinalTuning.kiV = [0.3] if candidate == CAR.FORD_MUSTANG_MACH_E_MK1 else [0.5]
 
     if not ret.radarUnavailable and DBC[candidate][Bus.radar] == RADAR.DELPHI_MRR:
       # average of 33.3 Hz radar timestep / 4 scan modes = 60 ms
@@ -49,24 +47,27 @@ class CarInterface(CarInterfaceBase):
       ret.radarDelay = 0.06
 
     CAN = CanBus(fingerprint=fingerprint)
-    if 0x365 in fingerprint[CAN.main]:
-      ret.flags |= int(FordFlags.HEV_CLUSTER_DATA)
-    if all(address in fingerprint[CAN.main] for address in (0x07A, 0x24B, 0x24C)):
-      ret.flags |= int(FordFlags.HEV_BATTERY_DATA)
     cfgs = [get_safety_config(structs.CarParams.SafetyModel.ford)]
     if CAN.main >= 4:
       cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
     ret.safetyConfigs = cfgs
 
-    ret.alphaLongitudinalAvailable = True
-    ret.openpilotLongitudinalControl = bool(alpha_long)
-    if ret.openpilotLongitudinalControl:
+    new_port = bool(ret.flags & FordFlags.NEW_PORT)
+    if candidate in FORD_CANFD_CARS | FORD_CLASSIC_CARS:
+      # Explicit stock/OP-long selection on these families
+      ret.alphaLongitudinalAvailable = True
+      longitudinal_requested = bool(alpha_long)
+    else:
+      ret.alphaLongitudinalAvailable = True if new_port else ret.radarUnavailable
+      longitudinal_requested = bool(alpha_long and ret.alphaLongitudinalAvailable) if new_port else alpha_long or not ret.radarUnavailable
+    if longitudinal_requested:
       ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.LONG_CONTROL.value
+      ret.openpilotLongitudinalControl = True
+    if new_port:
+      ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.NEW_PORT.value
 
     if ret.flags & FordFlags.CANFD:
       ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.CANFD.value
-      if candidate == CAR.FORD_MUSTANG_MACH_E_MK1:
-        ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.MACH_E_CURVATURE.value
 
       # TRON (SecOC) platforms are not supported
       # LateralMotionControl2, ACCDATA are 16 bytes on these platforms
@@ -101,11 +102,13 @@ class CarInterface(CarInterfaceBase):
 
     # BSM: Side_Detect_L_Stat, Side_Detect_R_Stat
     # TODO: detect bsm in car_fw?
-    ret.enableBsm = 0x3A6 in fingerprint[CAN.main] and 0x3A7 in fingerprint[CAN.main]
+    if 0x3A6 in fingerprint[CAN.main] and 0x3A7 in fingerprint[CAN.main]:
+      ret.flags |= FordFlags.HAS_BSM.value
 
     # LCA can steer down to zero
     ret.minSteerSpeed = 0.
 
     ret.autoResumeSng = ret.minEnableSpeed == -1.
     ret.centerToFront = ret.wheelbase * 0.44
+
     return ret

@@ -416,6 +416,7 @@ decomps = [
   # this needs copy_strided
   #aten.lerp,
   aten.norm,
+  aten.count_nonzero,
 ]
 for k,v in get_decompositions(decomps).items():
   key = str(k._schema).split("(")[0]
@@ -604,7 +605,7 @@ tiny_backend = {**tiny_backend_out, **{
   "aten.topk": Tensor.topk,
   "aten.constant_pad_nd": lambda self, padding, value=0.0: self.pad(padding, mode="constant", value=value).contiguous(),
   "aten.cumsum": lambda self, dim: self.cumsum(dim),
-  "aten.logsumexp": lambda self, axis, keepdim=False: self.logsumexp(axis[0], keepdim=keepdim),
+  "aten.logsumexp": lambda self, axis, keepdim=False: self.logsumexp(axis, keepdim=keepdim),
   "aten.roll": Tensor.roll,
   "aten.logcumsumexp": Tensor.logcumsumexp,
   "aten.lerp.Tensor": Tensor.lerp,

@@ -2,10 +2,11 @@ from dataclasses import replace
 from tinygrad.dtype import dtypes, DType, AddrSpace, Invalid, least_upper_dtype, strong_dtype, weak_dtype
 
 from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher, GroupOp, dtype_from_uop, promo_dtype
+from tinygrad.helpers import is_image_shape
 
 # the decomps and float emulation commit bare consts at a dtype another src already states
-def commit_weak_consts(u:UOp, dt:DType|None) -> UOp|None:
-  return None if dt is None else u.replace(src=tuple(s.ccast(dt) if s.op is Ops.CONST and s.dtype in dtypes.weaks else s for s in u.src))
+def commit_weak_consts(u:UOp, dt:DType|None) -> UOp:
+  return u if dt is None else u.replace(src=tuple(s.ccast(dt) if s.op is Ops.CONST and s.dtype in dtypes.weaks else s for s in u.src))
 
 # the concrete dtypes u commits its srcs at: the operands' meet and u's own derived dtype, None if either is weak
 def derived_dtypes(u:UOp, src:tuple[UOp, ...]) -> tuple[DType, DType]|None:
@@ -43,9 +44,16 @@ pm_commit_weak = PatternMatcher([
 # consumers absorb the weak CAST off their srcs and default underivable consts; dtype-producing ops settle here.
 # a weakfloat Unary (sin/exp2/...) must resolve before the transcendental decomposition.
 _lower_weak_ops = GroupOp.Binary|GroupOp.Unary|{Ops.WHERE, Ops.RANGE, Ops.STACK, Ops.SPECIAL}
+
+# a weak CAST states a width, which the consumer restates. a weakint over a bool or float is a conversion, it commits here
+def absorb_weak_src(s:UOp) -> UOp:
+  if s.op is not Ops.CAST or s.dtype not in dtypes.weaks: return s
+  if s.dtype is dtypes.weakint and not dtypes.is_int(s.src[0].dtype): return s.src[0].cast(s.commit_dtype(dtypes.int))
+  return s.src[0]
+
 def lower_weak_node(u:UOp) -> UOp|None:
   if u.op is Ops.CAST and u.src[0].op is Ops.CONST: return None  # a committed const, not a consumer
-  src = tuple(s.src[0] if s.op is Ops.CAST and s.dtype in dtypes.weaks else s for s in u.src)
+  src = tuple(absorb_weak_src(s) for s in u.src)
   if derived_dtypes(u, src) is None:
     src = tuple(s.ccast(s.commit_dtype(dtypes.int)) if s.op is Ops.CONST and s.dtype in dtypes.weaks else s for s in src)
   if src == u.src: return None
@@ -57,7 +65,14 @@ def lower_weak_node(u:UOp) -> UOp|None:
   src = src[:start]+tuple(s if s.base.is_invalid or s.dtype in dtypes.weaks else s.ccast(dt) for s in src[start:])
   return u.replace(src=src).cast(u.dtype)
 
+def narrow_image_coord(c:UOp) -> UOp:
+  if (idx:=c.get_idx()).dtype is not dtypes.long: return c
+  return idx.cast(dtypes.int) if idx is c else idx.cast(dtypes.int).valid(c.get_valid())
+
 pm_lower_weak = PatternMatcher([
+  # a long image coordinate narrows, image reads and writes take int coordinates
+  (UPat(Ops.INDEX, src=(UPat.var("buf"), UPat.var("y"), UPat.var("x")), name="u"), lambda u,buf,y,x:
+   u.replace(src=(buf, narrow_image_coord(y), narrow_image_coord(x))) if is_image_shape(buf._shape) else None),
   # a gated long index into a small buffer narrows; its out-of-gate value is discarded
   (UPat((Ops.INDEX, Ops.SHRINK), src=(UPat.var("buf"), UPat.var("gate").where(UPat.var("idx", dtypes.long), UPat(Ops.CONST, arg=Invalid))),
         allow_any_len=True, name="u"),
@@ -65,9 +80,9 @@ pm_lower_weak = PatternMatcher([
   # two stacked weak casts are two kind conversions: each resolves at its own kind's default
   (UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("x"),)),), name="u"),
    lambda u,x: x.cast(u.src[0].commit_dtype(dtypes.int)).cast(u.commit_dtype(dtypes.int)).cast(u.dtype) if x.dtype not in dtypes.weaks else None),
-  (UPat((Ops.PARAM, Ops.BUFFER), dtype=dtypes.weakint, name="u"),
+  (UPat(Ops.PARAM, dtype=dtypes.weakint, name="u"),
     lambda u: u.replace(arg=replace(u.arg, dtype=u.commit_dtype(dtypes.int))).cast(dtypes.weakint) if u.addrspace == AddrSpace.ALU else None),
-  (UPat(GroupOp.All, name="u"), lower_weak_node),
+  (UPat(GroupOp.All-GroupOp.Defines, name="u"), lower_weak_node),
 ])
 
 # drop the CAST off a committed const where the consumer re-derives it anyway, so bare-CONST rules keep matching.
@@ -81,16 +96,11 @@ def uncast_const(u:UOp) -> UOp|None:
 
 pm_uncast_const = PatternMatcher([(UPat(GroupOp.Broadcastable, name="u"), uncast_const)])
 
-def cast_const(u:UOp, s:UOp) -> UOp:
-  if s.op is not Ops.CONST or s.is_invalid: return s  # Invalid never commits
-  # bool is the one strong bare dtype: cconst, since .cast(bool) would fold at construction
-  if s.dtype is dtypes.bool: return UOp.cconst(s.val, s.dtype)
-  # commit at the dtype its consumer derives
-  return s.ccast(dts[0]) if (dts:=derived_dtypes(u, u.src)) is not None else s
-
 # commit every remaining bare const, keyed on the consumer: "bare" is a property of the edge
 def cast_consts(u:UOp) -> UOp|None:
   if u.op is Ops.CAST and u.src[0].op is Ops.CONST: return None  # a committed const's CONST is its value, not an edge
-  return None if (src:=tuple(cast_const(u, s) for s in u.src)) == u.src else u.replace(src=src)
+  if (dts:=derived_dtypes(u, u.src)) is not None: u = commit_weak_consts(u, dts[0])
+  # .cast folds at the dtypes a bare CONST derives, so the width is forced. Invalid never commits.
+  return u.replace(src=tuple(UOp.cconst(s.val, s.commit_dtype(dtypes.int)) if s.op is Ops.CONST and not s.is_invalid else s for s in u.src))
 
-pm_cast_const = PatternMatcher([(UPat(GroupOp.All, name="u"), cast_consts)])
+pm_cast_const = PatternMatcher([(UPat(GroupOp.All-GroupOp.Defines, name="u", custom_early_reject={Ops.CONST}), cast_consts)])

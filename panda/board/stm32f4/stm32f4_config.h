@@ -40,8 +40,8 @@
 #endif
 
 #include "board/libc.h"
-#include "board/critical.h"
-#include "board/faults.h"
+#include "board/sys/critical.h"
+#include "board/sys/faults.h"
 #include "board/utils.h"
 
 #include "board/drivers/registers.h"
@@ -54,8 +54,7 @@
 #include "board/stm32f4/clock.h"
 
 #if !defined(BOOTSTUB)
-  #include "board/drivers/uart.h"
-  #include "board/stm32f4/lluart.h"
+  #include "board/drivers/debug.h"
 #endif
 
 #ifdef BOOTSTUB
@@ -67,7 +66,8 @@
 #include "board/stm32f4/llusb.h"
 
 // unused
-void spi_init(void) {};
+uint16_t spi_error_count = 0U;
+void spi_init(void) {}
 void sound_tick(void) {};
 void can_tx_comms_resume_spi(void) {};
 

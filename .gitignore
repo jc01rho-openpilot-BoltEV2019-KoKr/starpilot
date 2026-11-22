@@ -16,15 +16,23 @@ a.out
 .host_runtime/
 .comma_sysroot/
 .venv-linux-arm64/
-compiledmodels/
+bin/
+!openpilot/starpilot/galaxy/bin/
+!openpilot/starpilot/soloist/pulseaudio/bin/
 
-/docs_site/
+# created at launch for comma hardware PYTHONPATH (PC uses editable installs via pyproject.toml)
+/msgq
+/opendbc
+/rednose
+/teleoprtc
+/tinygrad
+/jetlink
 
 *.mp4
-!docs/assets/speed-limit-vision-demo*.mp4
 *.dylib
 *.DSYM
 *.d
+*.pem
 *.pyc
 *.pyo
 .*.swp
@@ -36,7 +44,14 @@ compiledmodels/
 *.os
 *.os-*
 *.so
+!openpilot/tools/replay/libmedia_mux.so
+!openpilot/starpilot/soloist/pulseaudio/lib/*.so
+!openpilot/starpilot/soloist/pulseaudio/modules/*.so
 *.a
+st[0-9A-Za-z][0-9A-Za-z][0-9A-Za-z][0-9A-Za-z][0-9A-Za-z][0-9A-Za-z]
+!/openpilot/starpilot/system/starport/
+!/openpilot/tools/starport/
+*.unchunked
 *.clb
 *.class
 *.pyxbldc
@@ -44,93 +59,88 @@ compiledmodels/
 *.mo
 *_pyx.cpp
 *.stats
+*.pkl
+*.pkl*
 config.json
-clcache
 compile_commands.json
 compare_runtime*.html
+openpilot/selfdrive/modeld/models/tg_input_devices.json
 
-cereal/services.h
-cereal/gen
-selfdrive/ui/translations/tmp
-selfdrive/car/tests/cars_dump
-system/camerad/test/ae_gray_test
+# build artifacts
+docs/_site/
+openpilot/selfdrive/pandad/pandad
+openpilot/selfdrive/pandad/tests/test_aol_protocol
+openpilot/selfdrive/pandad/tests/test_aol_wire
+openpilot/selfdrive/pandad/tests/test_panda_usb
+openpilot/cereal/services.h
+openpilot/cereal/gen
+openpilot/selfdrive/ui/translations/tmp
+openpilot/selfdrive/car/tests/cars_dump
+openpilot/system/camerad/camerad
+openpilot/system/camerad/test/ae_gray_test
+
 .coverage*
 coverage.xml
 htmlcov
-pandaextra
-
-.mypy_cache/
-flycheck_*
-
-cppcheck_report.txt
-comma*.sh
-
-selfdrive/modeld/models/*.pkl
-!selfdrive/modeld/models/driving_tinygrad.pkl
-!selfdrive/modeld/models/driving_vision_tinygrad.pkl
-!selfdrive/modeld/models/driving_policy_tinygrad.pkl
-!selfdrive/modeld/models/driving_vision_metadata.pkl
-!selfdrive/modeld/models/driving_policy_metadata.pkl
-!selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl
-!selfdrive/modeld/models/dmonitoring_model_metadata.pkl
-!selfdrive/modeld/models/warp_1928x1208_tinygrad.pkl
-!selfdrive/modeld/models/warp_1344x760_tinygrad.pkl
-!selfdrive/modeld/models/dm_warp_1928x1208_tinygrad.pkl
-!selfdrive/modeld/models/dm_warp_1344x760_tinygrad.pkl
 
 # openpilot log files
 *.bz2
 *.zst
-!selfdrive/modeld/firmware/amdgpu/*.zst
+*.rlog
 
 build/
 
 !**/.gitkeep
 
-poetry.toml
-Pipfile
 
 ### VisualStudioCode ###
+*.vsix
+.history
+.ionide
 .vscode/*
+.history/
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
 !.vscode/*.code-snippets
 
-# Local History for Visual Studio Code
-.history/
+# agents
+.claude/
+.context/
+PLAN.md
+TASK.md
 
-# Built Visual Studio Code Extensions
-*.vsix
+# Disk-backed model cache reconstructed from published numbered parts.
+openpilot/selfdrive/modeld/models/*.unchunked
 
-### VisualStudioCode Patch ###
-# Ignore all local history of files
-.history
-.ionide
+# Publish only small compiled model packages, never raw pickles or caches.
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunk[0-9][0-9]of[0-9][0-9]
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunk[0-9][0-9]of[0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunk[0-9][0-9]of[0-9][0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunk[0-9][0-9][0-9]of[0-9][0-9]
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunk[0-9][0-9][0-9]of[0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunk[0-9][0-9][0-9]of[0-9][0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunk[0-9][0-9][0-9][0-9]of[0-9][0-9]
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunk[0-9][0-9][0-9][0-9]of[0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunk[0-9][0-9][0-9][0-9]of[0-9][0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunkmanifest
+!openpilot/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl.chunksha256
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunk[0-9][0-9]of[0-9][0-9]
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunk[0-9][0-9]of[0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunk[0-9][0-9]of[0-9][0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunk[0-9][0-9][0-9]of[0-9][0-9]
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunk[0-9][0-9][0-9]of[0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunk[0-9][0-9][0-9]of[0-9][0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunk[0-9][0-9][0-9][0-9]of[0-9][0-9]
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunk[0-9][0-9][0-9][0-9]of[0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunk[0-9][0-9][0-9][0-9]of[0-9][0-9][0-9][0-9]
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunkmanifest
+!openpilot/selfdrive/modeld/models/cheddar_driving_tinygrad.pkl.chunksha256
 
-# Keep prebuilt runtime artifacts trackable
-!cereal/messaging/bridge
-!system/camerad/camerad
-!system/loggerd/loggerd
-!system/loggerd/encoderd
-!system/loggerd/bootlog
-!selfdrive/pandad/pandad
-!cereal/services.h
-!cereal/libcereal.a
-!cereal/libsocketmaster.a
-!common/params_pyx.so
-!common/params_pyx.cpp
-!common/transformations/transformations.so
-!selfdrive/modeld/models/commonmodel_pyx.so
-!selfdrive/pandad/pandad_api_impl.so
-!selfdrive/controls/lib/lateral_mpc_lib/c_generated_code/acados_ocp_solver_pyx.so
-!selfdrive/controls/lib/lateral_mpc_lib/c_generated_code/libacados_ocp_solver_lat.so
-!selfdrive/controls/lib/longitudinal_mpc_lib/c_generated_code/acados_ocp_solver_pyx.so
-!selfdrive/controls/lib/longitudinal_mpc_lib/c_generated_code/libacados_ocp_solver_long.so
-!common/libcommon.a
-!msgq_repo/msgq/ipc_pyx.so
-!msgq_repo/msgq/visionipc/visionipc_pyx.so
-!rednose_repo/rednose/helpers/ekf_sym_pyx.so
-!panda/board/obj/
-!panda/board/obj/**
+# Jetlink editable-install metadata.
+/jetlink_repo/jetlink.egg-info/
+
+# Local Google Play resolver build output (source and lockfile are versioned).
+
+openpilot/starpilot/flm/_primitive_walk.cpp

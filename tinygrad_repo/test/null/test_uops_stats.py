@@ -1,14 +1,15 @@
 import unittest
 from tinygrad import Tensor
-from tinygrad.helpers import GlobalCounters
+from tinygrad.helpers import GlobalCounters, Target
 from tinygrad.engine.realize import compile_linear, estimate_uop
 from tinygrad.codegen import to_program
 from tinygrad.renderer import Estimates
-from tinygrad.uop.ops import Ops, UOp
+from tinygrad.uop.ops import Ops, UOp, AxisType, KernelInfo
 from tinygrad.dtype import dtypes
 from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
 from tinygrad.device import Device
 from tinygrad.renderer.ptx import PTXRenderer
+from tinygrad.renderer.x86 import X86Renderer
 from test.helpers import replace_opts
 
 def flops_mem(uops, ignore_indexing=False):
@@ -70,12 +71,11 @@ class TestMemoryCount(unittest.TestCase):
     _, mem = get_stats(a.assign(a+a))
     self.assertEqual(mem, 1024*1024*2)  # 1 read + 1 write
 
-  @unittest.skipIf(Device.DEFAULT == "CPU", "test copy to CPU from other device")
   def test_copyout(self):
-    a = Tensor.empty(32, dtype=dtypes.uint8).to("CPU")
+    a = Tensor.empty(32, dtype=dtypes.uint8, device="NULL").to("NULL:1")
     _, mem = get_stats(a)
     self.assertEqual(mem, 32*1)
-    a = Tensor.empty(32, dtype=dtypes.uint32).to("CPU")
+    a = Tensor.empty(32, dtype=dtypes.uint32, device="NULL").to("NULL:1")
     _, mem = get_stats(a)
     self.assertEqual(mem, 32*4)
 
@@ -101,6 +101,19 @@ class TestUOpsStatsMatmulHalf(unittest.TestCase):
     self.assertEqual(expected_ops, GlobalCounters.global_ops)
 
 class TestUOpsStats(unittest.TestCase):
+  def test_isa_store_estimate(self):
+    buf = UOp.param(0, dtypes.int32, 4)
+    prg = to_program(buf.index(1).store(5).sink(arg=KernelInfo()), X86Renderer(Target("CPU", arch="x86_64")))
+    self.assertEqual(prg.src[0].arg.estimates.mem, 4)
+    self.assertEqual(prg.src[0].arg.estimates.lds, 4)
+
+  def test_triangular_loop_estimate(self):
+    buf = UOp.param(0, dtypes.int32, 6)
+    i = UOp.range(3, 0)
+    j = UOp.range(i+1, 1)
+    prg = to_program(buf.index(i*(i+1)//2+j).store(j).end(j, i).sink(arg=KernelInfo()), X86Renderer(Target("CPU", arch="x86_64")))
+    self.assertEqual(prg.src[0].arg.estimates.lds, 3*3*4)
+
   def test_simple_add(self):
     a = Tensor.empty(100,100)
     b = Tensor.empty(100,100)
@@ -130,6 +143,9 @@ class TestUOpsStats(unittest.TestCase):
     # a mismatched piece falls back to pad+usum, which sums N zero-padded copies and pays their adds
     unequal = equal[:3] + [Tensor.empty(256, 129)]
     self.assertGreater(get_stats(Tensor.cat(*unequal, dim=1))[0], 0)
+
+  def test_xor_gather(self):
+    self.assertEqual(get_stats(Tensor.empty(32)[Tensor.arange(32) ^ 16])[0], 0)
 
   def test_simple_matmul(self, M=1024, N=1024, K=1024):
     a = Tensor.empty(M,N)
@@ -178,7 +194,7 @@ class TestStatsOptimized(unittest.TestCase):
 
   def check_gemm(self, p:UOp, extra_flops=0, half=False):
     est = p.src[0].arg.estimates
-    print(p.arg.name, est.ops, est.mem, est.lds)
+    print(p.src[0].arg.name, est.ops, est.mem, est.lds)
     self.assertEqual(est.ops, 2*N*N*N + extra_flops)  # N**3 mulaccs
     self.assertEqual(est.mem, 3*N*N*(2 if half else 4)) # 3 NxN mats with floats
 
@@ -190,7 +206,7 @@ class TestStatsOptimized(unittest.TestCase):
   @unittest.skip("fails locally on AMD")
   def test_gemm_tc_unroll_half(self):
     try:
-      p = to_program(replace_opts(self.ast_gemm_half, [Opt(OptOps.TC, 0, (-1, 0, 1)), Opt(OptOps.UPCAST, 4, 2)]),
+      p = to_program(replace_opts(self.ast_gemm_half, [Opt(OptOps.TC, 0, (-1, 0, 1)), Opt(OptOps.SPLIT, 4, (2, AxisType.UPCAST))]),
                       renderer=Device[Device.DEFAULT].renderer)
     except KernelOptError:
       raise unittest.SkipTest("no tensor cores")
@@ -199,7 +215,7 @@ class TestStatsOptimized(unittest.TestCase):
 
   def test_gemm_tc_unroll(self):
     try:
-      p = to_program(replace_opts(self.ast_gemm, [Opt(OptOps.TC, 0, (-1, 0, 1)), Opt(OptOps.UPCAST, 4, 2)]),
+      p = to_program(replace_opts(self.ast_gemm, [Opt(OptOps.TC, 0, (-1, 0, 1)), Opt(OptOps.SPLIT, 4, (2, AxisType.UPCAST))]),
                       renderer=Device[Device.DEFAULT].renderer)
     except KernelOptError:
       raise unittest.SkipTest("no tensor cores")
@@ -209,20 +225,22 @@ class TestStatsOptimized(unittest.TestCase):
   # this is a good lesson about why UPCASTing is a good idea
 
   def test_gemm_one_upcasted(self):
-    p = to_program(replace_opts(self.ast_gemm, [Opt(OptOps.UPCAST, 0, 4)]), renderer=Device[Device.DEFAULT].renderer)
+    p = to_program(replace_opts(self.ast_gemm, [Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST))]), renderer=Device[Device.DEFAULT].renderer)
     self.check_gemm(p)
     self.assertEqual(p.src[0].arg.estimates.lds, N*N*N*4 + N*N*N*4//4 + 4*N*N)
 
   def test_gemm_upcasted(self):
-    p = to_program(replace_opts(self.ast_gemm, [Opt(OptOps.UPCAST, 0, 4), Opt(OptOps.UPCAST, 1, 4), Opt(OptOps.UPCAST, 4, 4)]),
+    p = to_program(replace_opts(self.ast_gemm, [Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST)), Opt(OptOps.SPLIT, 1, (4, AxisType.UPCAST)),
+                                                Opt(OptOps.SPLIT, 4, (4, AxisType.UPCAST))]),
                     renderer=Device[Device.DEFAULT].renderer)
     self.check_gemm(p)
     self.assertEqual(p.src[0].arg.estimates.lds, 2*N*N*N*4//4 + 4*N*N)
 
   def test_gemm_upcasted_locals(self):
     try:
-      p = to_program(replace_opts(self.ast_gemm, [Opt(OptOps.UPCAST, 0, 4), Opt(OptOps.UPCAST, 1, 4), Opt(OptOps.LOCAL, 0, 4),
-                                                   Opt(OptOps.LOCAL, 1, 4)]), renderer=Device[Device.DEFAULT].renderer)
+      p = to_program(replace_opts(self.ast_gemm, [Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST)), Opt(OptOps.SPLIT, 1, (4, AxisType.UPCAST)),
+                                                  Opt(OptOps.SPLIT, 0, (4, AxisType.LOCAL)), Opt(OptOps.SPLIT, 1, (4, AxisType.LOCAL))]),
+                     renderer=Device[Device.DEFAULT].renderer)
     except KernelOptError:
       raise unittest.SkipTest("no locals")
     self.check_gemm(p)
@@ -230,7 +248,7 @@ class TestStatsOptimized(unittest.TestCase):
 
   def test_gemm_group(self):
     try:
-      p = to_program(replace_opts(self.ast_gemm, [Opt(OptOps.LOCAL, 2, 4)]), renderer=Device[Device.DEFAULT].renderer)
+      p = to_program(replace_opts(self.ast_gemm, [Opt(OptOps.SPLIT, 2, (4, AxisType.LOCAL))]), renderer=Device[Device.DEFAULT].renderer)
     except KernelOptError:
       raise unittest.SkipTest("no locals")
     SZ = N*N*4
@@ -241,7 +259,7 @@ class TestStatsOptimized(unittest.TestCase):
   def test_reduce(self):
     p = to_program(replace_opts(self.ast_reduce, []), renderer=Device[Device.DEFAULT].renderer)
     est = p.src[0].arg.estimates
-    print(p.arg.name, est.ops, est.mem, est.lds)
+    print(p.src[0].arg.name, est.ops, est.mem, est.lds)
     self.assertEqual(est.ops, N*N)
     self.assertEqual(est.mem, N*N*4 + 4)
 

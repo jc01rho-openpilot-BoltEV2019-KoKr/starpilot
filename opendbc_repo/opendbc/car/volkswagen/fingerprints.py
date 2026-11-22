@@ -21,24 +21,6 @@ FW_VERSIONS = {
       b'\xf1\x871EA907567D \xf1\x890250',
     ],
   },
-  CAR.VOLKSWAGEN_ID4_MK1: {
-    (Ecu.srs, 0x715, None): [
-      b'\xf1\x871EA959655EA\xf1\x890376',
-      b'\xf1\x875WA959655R \xf1\x890717',
-    ],
-    (Ecu.eps, 0x712, None): [
-      b'\xf1\x871EA907144AQ\xf1\x895033\xf1\x82\x000_BH0A0_ON',
-    ],
-    (Ecu.fwdRadar, 0x757, None): [
-      b'\xf1\x871EA907572H \xf1\x890234',
-    ],
-  },
-  CAR.VOLKSWAGEN_ID4_MK2: {
-    (Ecu.fwdRadar, 0x757, None): [
-      b'\xf1\x871EA907567D \xf1\x890250',
-      b'\xf1\x871EA907567C \xf1\x890099',
-    ],
-  },
   CAR.AUDI_Q4_MK1: {
     (Ecu.fwdRadar, 0x757, None): [
       b'\xf1\x871EA907572H \xf1\x890234',
@@ -47,17 +29,6 @@ FW_VERSIONS = {
   CAR.AUDI_Q4_MK2: {
     (Ecu.fwdRadar, 0x757, None): [
       b'\xf1\x871EA907567B \xf1\x890232',
-    ],
-  },
-  CAR.CUPRA_BORN_MK1: {
-    (Ecu.srs, 0x715, None): [
-      b'\xf1\x871EA959655EH\xf1\x890381',
-    ],
-    (Ecu.eps, 0x712, None): [
-      b'\xf1\x871EA907144AQ\xf1\x895033',
-    ],
-    (Ecu.fwdRadar, 0x757, None): [
-      b'\xf1\x871EA907572H \xf1\x890234',
     ],
   },
   CAR.SKODA_ENYAQ_MK1: {
@@ -431,6 +402,24 @@ FW_VERSIONS = {
       b'\xf1\x875Q0907572S \xf1\x890780',
     ],
   },
+  CAR.VOLKSWAGEN_ID4_MK1: {
+    (Ecu.srs, 0x715, None): [
+      b'\xf1\x871EA959655EA\xf1\x890376',
+      b'\xf1\x875WA959655R \xf1\x890717',
+    ],
+    (Ecu.eps, 0x712, None): [
+      b'\xf1\x871EA907144AQ\xf1\x895033\xf1\x82\x000_BH0A0_ON',
+    ],
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907572H \xf1\x890234',
+    ],
+  },
+  CAR.VOLKSWAGEN_ID4_MK2: {
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907567C \xf1\x890099',
+      b'\xf1\x871EA907567D \xf1\x890250',
+    ],
+  },
   CAR.VOLKSWAGEN_JETTA_MK6: {
     (Ecu.srs, 0x715, None): [
       b'\xf1\x875C0959655M \xf1\x890726\xf1\x82\t00NB1108--------24',
@@ -529,6 +518,7 @@ FW_VERSIONS = {
       b'\xf1\x870D9300014L \xf1\x895002',
       b'\xf1\x870D9300018C \xf1\x895297',
       b'\xf1\x870D9300041A \xf1\x894801',
+      b'\xf1\x870D9300041H \xf1\x894905',
       b'\xf1\x870D9300042H \xf1\x894901',
       b'\xf1\x870DD300045T \xf1\x891601',
       b'\xf1\x870DD300046B \xf1\x891601',
@@ -736,6 +726,7 @@ FW_VERSIONS = {
       b'\xf1\x870DL300013A \xf1\x893005',
       b'\xf1\x870DL300013G \xf1\x892119',
       b'\xf1\x870DL300013G \xf1\x892120',
+      b'\xf1\x870DL300013G \xf1\x892620',
       b'\xf1\x870DL300014C \xf1\x893703',
       b'\xf1\x870GC300013P \xf1\x892401',
       b'\xf1\x870GC300018R \xf1\x892802',
@@ -751,6 +742,7 @@ FW_VERSIONS = {
       b'\xf1\x875Q0959655BK\xf1\x890339\xf1\x82\x1331310031333334313132573732379333423100',
       b'\xf1\x875Q0959655BM\xf1\x890403\xf1\x82\x1316143231313500314641011750179333423100',
       b'\xf1\x875Q0959655BS\xf1\x890403\xf1\x82\x1312110031333300314240013750379333423100',
+      b'\xf1\x875Q0959655BR\xf1\x890403\xf1\x82\x1312110031333300314240013750379333423100',
       b'\xf1\x875Q0959655BT\xf1\x890403\xf1\x82\x1312110031333300314240583752379333423100',
       b'\xf1\x875Q0959655BT\xf1\x890403\xf1\x82\x1331310031333334313140013750379333423100',
       b'\xf1\x875Q0959655BT\xf1\x890403\xf1\x82\x1331310031333334313140573752379333423100',
@@ -785,6 +777,7 @@ FW_VERSIONS = {
       b'\xf1\x872Q0907567B \xf1\x890534',
       b'\xf1\x872Q0907572AA\xf1\x890396',
       b'\xf1\x872Q0907572AB\xf1\x890397',
+      b'\xf1\x872Q0907572AC\xf1\x890401',
       b'\xf1\x872Q0907572J \xf1\x890156',
       b'\xf1\x872Q0907572M \xf1\x890233',
       b'\xf1\x872Q0907572Q \xf1\x890342',
@@ -992,6 +985,7 @@ FW_VERSIONS = {
     (Ecu.engine, 0x7e0, None): [
       b'\xf1\x8705E906018N \xf1\x899970',
       b'\xf1\x8705L906022M \xf1\x890901',
+      b'\xf1\x875NA906259C \xf1\x890003',
       b'\xf1\x8783A906259  \xf1\x890001',
       b'\xf1\x8783A906259  \xf1\x890005',
       b'\xf1\x8783A906259C \xf1\x890002',
@@ -1007,6 +1001,7 @@ FW_VERSIONS = {
       b'\xf1\x8709G927158GP\xf1\x893937',
       b'\xf1\x8709G927158HC\xf1\x894070',
       b'\xf1\x8709G927158HG\xf1\x894168',
+      b'\xf1\x870DW300011C \xf1\x892401',
       b'\xf1\x870GC300045D \xf1\x892802',
       b'\xf1\x870GC300046F \xf1\x892701',
     ],
@@ -1016,6 +1011,7 @@ FW_VERSIONS = {
       b'\xf1\x875Q0959655BQ\xf1\x890421\xf1\x82\x132121111121120031112124218C219321532111',
       b'\xf1\x875Q0959655CC\xf1\x890421\xf1\x82\x131111111111120031111224118A119321532111',
       b'\xf1\x875Q0959655CC\xf1\x890421\xf1\x82\x131111111111120031111237116A119321532111',
+      b'\xf1\x875QD959655AH\xf1\x890403\xf1\x82\x1311110011311100313131013150319321422100',
     ],
     (Ecu.eps, 0x712, None): [
       b'\xf1\x875Q0910143C \xf1\x892211\xf1\x82\x0567G6000300',
@@ -1029,27 +1025,53 @@ FW_VERSIONS = {
     (Ecu.fwdRadar, 0x757, None): [
       b'\xf1\x872Q0907567C \xf1\x890541',
       b'\xf1\x872Q0907572AA\xf1\x890396',
+      b'\xf1\x872Q0907572AB\xf1\x890397',
       b'\xf1\x872Q0907572R \xf1\x890372',
       b'\xf1\x872Q0907572T \xf1\x890383',
+    ],
+  },
+  CAR.AUDI_Q5_MK1: {
+    (Ecu.engine, 0x7e0, None): [
+      b'\xf1\x878R0907115N \xf1\x890006',
+      b'\xf1\x878R0907551F \xf1\x890007',
+    ],
+    (Ecu.transmission, 0x7e1, None): [
+      b'\xf1\x878R0927158D \xf1\x891010',
+      b'\xf1\x878R0927158AM\xf1\x891003',
+    ],
+    (Ecu.srs, 0x715, None): [
+      b'\xf1\x878R0959655F \xf1\x890610\xf1\x82\x050304010402',
+    ],
+    (Ecu.eps, 0x712, None): [
+      b'\xf1\x878R0909144R \xf1\x890511\xf1\x82\x01\n\x1a',
+      b'\xf1\x878R0909144F \xf1\x890507\xf1\x82\x01\t\xe6',
+    ],
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x878R0907561A\x00\xf1\x890410\xf1\x80100',
     ],
   },
   CAR.PORSCHE_MACAN_MK1: {
     (Ecu.engine, 0x7e0, None): [
       b'\xf1\x8795B906259BJ\xf1\x890001',
+      b'\xf1\x8795B906259BM\xf1\x890001',
       b'\xf1\x8795B90652013\xf1\x893485',
       b'\xf1\x8795B90654002\xf1\x893495',
+      b'\xf1\x8795B907551AD\xf1\x890001',
       b'\xf1\x8795B907551D \xf1\x890006',
     ],
     (Ecu.transmission, 0x7e1, None): [
       b'\xf1\x8795B927156CE\xf1\x890022',
       b'\xf1\x8795B927156JH\xf1\x890001',
+      b'\xf1\x8795B927156KD\xf1\x890001',
       b'\xf1\x8795B927156KK\xf1\x890001',
+      b'\xf1\x8795B927156KP\xf1\x890001',
       b'\xf1\x8795B927156R \xf1\x890021',
     ],
     (Ecu.srs, 0x715, None): [
       b'\xf1\x8795B959655F \xf1\x890130\xf1\x82\x05065Q033513',
       b'\xf1\x8795B959655F \xf1\x890130\xf1\x82\x050682033514',
       b'\xf1\x8795B959655G \xf1\x890150\xf1\x82\x0506B1033514',
+      b'\xf1\x8795B959655G \xf1\x890150\xf1\x82\x0506CG033517',
       b'\xf1\x8795B959655G \xf1\x890150\xf1\x82\x0506CJ02D417',
     ],
     (Ecu.eps, 0x712, None): [
@@ -1059,6 +1081,7 @@ FW_VERSIONS = {
     (Ecu.fwdRadar, 0x757, None): [
       b'\xf1\x8795B907567B\x00\xf1\x890800\xf1\x82108',
       b'\xf1\x8795B907567G\x00\xf1\x890410\xf1\x82104',
+      b'\xf1\x8795B907567H\x00\xf1\x890430\xf1\x82104',
       b'\xf1\x8795B907567J \xf1\x890440\xf1\x82104',
     ],
   },
@@ -1111,6 +1134,14 @@ FW_VERSIONS = {
       b'\xf1\x875Q0907572K \xf1\x890402\xf1\x82\x0101',
       b'\xf1\x875Q0907572P \xf1\x890682',
       b'\xf1\x875Q0907572R \xf1\x890771',
+    ],
+  },
+  CAR.CUPRA_BORN_MK1: {
+    (Ecu.srs, 0x715, None): [
+      b'\xf1\x871EA959655EH\xf1\x890381',
+    ],
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907572H \xf1\x890234',
     ],
   },
   CAR.SKODA_FABIA_MK4: {
@@ -1323,6 +1354,7 @@ FW_VERSIONS = {
     (Ecu.engine, 0x7e0, None): [
       b'\xf1\x8704E906027BS\xf1\x892887',
       b'\xf1\x8704E906027BT\xf1\x899042',
+      b'\xf1\x8704E906027EA\xf1\x892929',
       b'\xf1\x8704L906026ET\xf1\x891343',
       b'\xf1\x8704L906026ET\xf1\x891990',
       b'\xf1\x8704L906026FP\xf1\x891196',
@@ -1337,6 +1369,7 @@ FW_VERSIONS = {
       b'\xf1\x873G0906264A \xf1\x890002',
     ],
     (Ecu.transmission, 0x7e1, None): [
+      b'\xf1\x870CW300041H \xf1\x891009',
       b'\xf1\x870CW300042H \xf1\x891601',
       b'\xf1\x870CW300043B \xf1\x891603',
       b'\xf1\x870CW300049Q \xf1\x890906',
@@ -1366,6 +1399,7 @@ FW_VERSIONS = {
       b'\xf1\x875Q0959655CA\xf1\x890403\xf1\x82\x1331310031313100313151823143319331423100',
       b'\xf1\x875Q0959655CH\xf1\x890421\xf1\x82\x1333310031313100313152025350539331463100',
       b'\xf1\x875Q0959655CH\xf1\x890421\xf1\x82\x1333310031313100313152855372539331463100',
+      b'\xf1\x875QD959655L \xf1\x890318\xf1\x82\x1331310031413100313131014131419331313100',
     ],
     (Ecu.eps, 0x712, None): [
       b'\xf1\x875Q0909143K \xf1\x892033\xf1\x820514UZ070203',
@@ -1378,8 +1412,10 @@ FW_VERSIONS = {
       b'\xf1\x875Q0910143C \xf1\x892211\xf1\x82\x0567UZ070500',
       b'\xf1\x875Q0910143C \xf1\x892211\xf1\x82\x0567UZ070600',
       b'\xf1\x875Q0910143C \xf1\x892211\xf1\x82\x0567UZ070700',
+      b'\xf1\x875QD909144B \xf1\x891072\xf1\x82\x0521B00503A1',
     ],
     (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x872Q0907572T \xf1\x89X383',
       b'\xf1\x873Q0907572B \xf1\x890192',
       b'\xf1\x873Q0907572B \xf1\x890194',
       b'\xf1\x873Q0907572C \xf1\x890195',

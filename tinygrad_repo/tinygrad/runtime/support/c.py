@@ -1,12 +1,11 @@
 from __future__ import annotations
 import ctypes, functools, os, pathlib, re, sys, sysconfig
-from tinygrad.helpers import ceildiv, getenv, DEBUG, OSX, WIN
+from tinygrad.helpers import ceildiv, getenv, DEBUG, OSX
 from typing import TYPE_CHECKING, get_args, Generic, ParamSpec, TypeVar
 
 def _do_ioctl(__idir, __base, __nr, __struct, __fd, *args, __payload=None, **kwargs):
-  assert not WIN, "ioctl not supported"
-  import tinygrad.runtime.support.hcq as hcq, fcntl
-  ioctl = __fd.ioctl if isinstance(__fd, hcq.FileIOInterface) else functools.partial(fcntl.ioctl, __fd)
+  import tinygrad.runtime.support.system as system, fcntl
+  ioctl = __fd.ioctl if isinstance(__fd, system.FileIOInterface) else functools.partial(fcntl.ioctl, __fd)
   if __struct is None: return ioctl((__base<<8)|__nr, __payload or (args[0] if args else 0))
   if (rc:=ioctl((__idir<<30)|(ctypes.sizeof(out:=(__payload or __struct(*args, **kwargs)))<<16)|(__base<<8)|__nr, out)):
     raise RuntimeError(f"ioctl returned {rc}")
@@ -39,6 +38,7 @@ class Array(Generic[T, U], ctypes.Array):
 
 class Struct(ctypes.Structure):
   SIZE = 0
+  _real_fields_:list[tuple[str, type, int]|tuple[str, type, int, int, int]] # (name, type, offset[, bit width, bit offset])
 
   def __init__(self, *args, **kwargs):
     ctypes.Structure.__init__(self)
@@ -87,7 +87,7 @@ def init_c_struct_t(sz:int, fields: tuple[tuple, ...]):
 def init_c_var(ty, creat_cb): return (creat_cb(v:=ty()), v)[1]
 
 class DLL(ctypes.CDLL):
-  _loaded_: set[str] = set()
+  _loaded_: dict[str, ctypes.CDLL] = {}
 
   @staticmethod
   def findlib(nm:str, paths:list[str], extra_paths=[]):
@@ -103,11 +103,11 @@ class DLL(ctypes.CDLL):
         else: continue
       for pre in (pathlib.Path(pre) for pre in ([path] if path else []) + libpaths.get(os.name, []) + libpaths.get(sys.platform, []) + extra_paths):
         if not pre.is_dir(): continue
-        if WIN or OSX:
-          for base in ([f"lib{p}.dylib", f"{p}.dylib", str(p)] if OSX else [f"{p}.dll"]):
+        if OSX:
+          for base in [f"lib{p}.dylib", f"{p}.dylib", str(p)]:
             if (l:=pre / base).is_file() or (OSX and 'framework' in str(l) and l.is_symlink()): return str(l)
         else:
-          for l in (l for l in pre.iterdir() if l.is_file() and re.fullmatch(f"lib{p}\\.so\\.?[0-9]*", l.name)):
+          for l in (l for l in pre.iterdir() if l.is_file() and re.fullmatch(f"lib{p}\\.so[.0-9]*", l.name)):
             # filter out linker scripts
             with open(l, 'rb') as f:
               if f.read(4) == b'\x7FELF': return str(l)
@@ -118,7 +118,7 @@ class DLL(ctypes.CDLL):
       if DEBUG >= 3: print(f"loading {nm} from {path}")
       try:
         super().__init__(path, **kwargs)
-        self._loaded_.add(self.nm)
+        self._loaded_[self.nm] = self
       except OSError as e:
         self.emsg = str(e)
         if DEBUG >= 3: print(f"loading {nm} failed: {e}")
@@ -138,4 +138,5 @@ class DLL(ctypes.CDLL):
 
   def __getattr__(self, nm):
     if self.nm not in self._loaded_: raise AttributeError(f"failed to load library {self.nm}: {self.emsg}")
-    return super().__getattr__(nm)
+    (fn:=super().__getattr__(nm)).__module__ = f"tinygrad.runtime.autogen.{self.nm}"
+    return fn

@@ -1,3 +1,0 @@
-visionipc_pyx.cpp
-*.so
-!visionipc_pyx.so
