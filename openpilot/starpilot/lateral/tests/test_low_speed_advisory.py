@@ -78,10 +78,10 @@ class TestLowSpeedAdvisory(unittest.TestCase):
         drive.CS_prev = structs.CarState.new_message(**state.to_dict())
         return set(drive.events.names)
 
-      for speed, expected in ((0., False), (cp.minSteerSpeed, False), (1., True),
-                              (0., True), (cp.minSteerSpeed, False), (1., False)):
-        with self.subTest(speed=speed, expected=expected):
-          self.assertEqual(EventName.belowSteerSpeed in sample(speed), expected)
+      # This fork disables the low-speed steering warning (paddle5 63c721a824): never shown.
+      for speed in (0., cp.minSteerSpeed, 1., 0., cp.minSteerSpeed, 1.):
+        with self.subTest(speed=speed):
+          self.assertNotIn(EventName.belowSteerSpeed, sample(speed))
       # Actual CarEvents severity is retained, regardless of advisory suppression.
       temporary = sample(4., temporary=True)
       self.assertIn(EventName.steerTempUnavailableSilent, temporary)
@@ -98,7 +98,7 @@ class TestLowSpeedAdvisory(unittest.TestCase):
       drive.sm.update_msgs(2., [device.as_reader()])
       self.assertNotIn(EventName.belowSteerSpeed, sample(1.))
       self.assertNotIn(EventName.belowSteerSpeed, sample(cp.minSteerSpeed))
-      self.assertIn(EventName.belowSteerSpeed, sample(1.))
+      self.assertNotIn(EventName.belowSteerSpeed, sample(1.))
 
   def test_disarmed_crossings_do_not_spend_the_advisory(self):
     owner = LowSpeedAdvisory()
@@ -174,8 +174,9 @@ class TestLowSpeedAdvisory(unittest.TestCase):
       drive.aol_last_intent = SimpleNamespace(allowedLatch=True, lateralArmed=True, pauseLateral=False)
       sample(4.)
       sample(1.)
-      self.assertIn(EventName.belowSteerSpeed, drive.events.names)
-      self.assertEqual(drive.AM.current_alert.alert_type, 'belowSteerSpeed/warning')
+      # This fork disables the low-speed steering warning even when eligible (paddle5 63c721a824).
+      self.assertNotIn(EventName.belowSteerSpeed, drive.events.names)
+      self.assertNotIn('belowSteerSpeed/warning', drive.AM.alerts)
       # Main can turn off after the event sample but before alert selection.
       state.cruiseState.available = False
       drive.update_alerts(state)
