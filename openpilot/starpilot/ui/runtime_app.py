@@ -200,7 +200,12 @@ class StarShellSession:
         self.view.onroad.stock_confidence_reset = camera_owner.reset_stock_confidence_layer
         self.view.onroad.extra_overlays = lambda rect, state: camera_owner.render_model_source_layer(rect, show_long_indicator=None)
       else:
-        self.view.onroad.extra_overlays = lambda rect, state: camera_owner.render_model_source_layer(rect)
+        from openpilot.starpilot.ui.onroad_traffic_signal import render_traffic_signal
+
+        def large_overlays(rect, state):
+          camera_owner.render_model_source_layer(rect)
+          render_traffic_signal(self.fonts, rect, ui_state.sm)
+        self.view.onroad.extra_overlays = large_overlays
     except Exception:
       self.fonts.close()
       raise
