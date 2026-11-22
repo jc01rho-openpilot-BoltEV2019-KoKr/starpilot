@@ -1,22 +1,12 @@
-from types import SimpleNamespace
-
-import pytest
+import unittest
 from opendbc.car.can_definitions import CanData
-from opendbc.car.car_helpers import FRAME_FINGERPRINT, _apply_starpilot_access_policy, _get_gm_stored_candidate_fallback, _normalize_gm_suburban_camera_candidate, can_fingerprint
+from opendbc.car.car_helpers import FRAME_FINGERPRINT, can_fingerprint
 from opendbc.car.fingerprints import _FINGERPRINTS as FINGERPRINTS
-from opendbc.car.gm.values import CAR as GM
-from opendbc.car.toyota.values import CAR as TOYOTA
+from opendbc.testing import parameterized
 
 
-class TestCanFingerprint:
-  @staticmethod
-  def _fingerprint_from_can(fingerprint):
-    can = [CanData(address=address, dat=b'\x00' * length, src=src)
-           for address, length in fingerprint.items() for src in (0, 1)]
-    fingerprint_iter = iter([can])
-    return can_fingerprint(lambda **kwargs: [next(fingerprint_iter, [])])
-
-  @pytest.mark.parametrize("car_model, fingerprints", FINGERPRINTS.items())
+class TestCanFingerprint(unittest.TestCase):
+  @parameterized("car_model, fingerprints", FINGERPRINTS.items())
   def test_can_fingerprint(self, car_model, fingerprints):
     """Tests online fingerprinting function on offline fingerprints"""
 
@@ -27,26 +17,31 @@ class TestCanFingerprint:
       fingerprint_iter = iter([can])
       car_fingerprint, finger = can_fingerprint(lambda **kwargs: [next(fingerprint_iter, [])])  # noqa: B023
 
-      if car_model in (TOYOTA.TOYOTA_MATRIX_RETROFIT, TOYOTA.TOYOTA_PRIUS_RETROFIT):
-        assert fingerprint == {}
-        assert car_fingerprint is None
-      elif car_fingerprint is None and str(car_model).startswith(("BUICK_", "CADILLAC_", "CHEVROLET_", "GMC_", "HOLDEN_")):
-        assert _get_gm_stored_candidate_fallback(finger, str(car_model), None) is not None
-      else:
-        assert car_fingerprint == car_model
+      # Legacy tables alias Gen2 hardware to old or broad Bolt identities.
+      # Zero payloads provide no affirmative camera ACC evidence.
+      ambiguous_bolt = (car_model in ("CHEVROLET_BOLT_EUV", "CHEVROLET_BOLT_CC_2017", "CHEVROLET_BOLT_CC_2018_2021") and
+                        fingerprint.get(0xD3) == 3)
+      ambiguous_hybrid = car_model == "CHEVROLET_MALIBU_HYBRID_CC"
+      ambiguous_trax = car_model == "CHEVROLET_TRAX"
+      if ambiguous_hybrid:
+        # This existing 33-message table is also a complete subset of the
+        # conventional Malibu table: CAN-only input cannot choose between them.
+        assert len(fingerprints) == 1 and len(fingerprint) == 33
+        assert fingerprint.items() <= FINGERPRINTS["CHEVROLET_MALIBU_CC"][1].items()
+      assert car_fingerprint == (None if ambiguous_bolt or ambiguous_hybrid or ambiguous_trax else car_model)
       assert finger[0] == fingerprint
       assert finger[1] == fingerprint
       assert finger[2] == {}
 
-  def test_gm_sascm_superset_fingerprint_matches_ascm_variant(self):
-    car_fingerprint, finger = self._fingerprint_from_can(FINGERPRINTS[GM.CADILLAC_ESCALADE_ESV_2019_ASCM][0])
+  def test_automatic_candidates_require_observed_messages(self):
+    for candidate, variants in FINGERPRINTS.items():
+      with self.subTest(candidate=candidate):
+        self.assertTrue(variants)
+        self.assertTrue(all(variants))
 
-    assert car_fingerprint == GM.CADILLAC_ESCALADE_ESV_2019_ASCM
-    assert finger[0][0x2FF] == 8
-
-  def test_timing(self, subtests):
+  def test_timing(self):
     # just pick any CAN fingerprinting car
-    car_model = "COMMA_BODY"
+    car_model = "CHEVROLET_BOLT_CC_2018_2021"
     fingerprint = FINGERPRINTS[car_model][0]
 
     cases = []
@@ -65,7 +60,7 @@ class TestCanFingerprint:
     cases.append((FRAME_FINGERPRINT * 2, None, can))
 
     for expected_frames, car_model, can in cases:
-      with subtests.test(expected_frames=expected_frames, car_model=car_model):
+      with self.subTest(expected_frames=expected_frames, car_model=car_model):
         frames = 0
 
         def can_recv(**kwargs):
@@ -76,54 +71,3 @@ class TestCanFingerprint:
         car_fingerprint, _ = can_fingerprint(can_recv)
         assert car_fingerprint == car_model
         assert frames == expected_frames + 2  # TODO: fix extra frames
-
-  def test_gm_stored_candidate_fallback_prefers_persisted_model(self):
-    fingerprints = {0: {190: 6, 201: 8, 209: 7, 211: 2, 241: 6}}
-
-    candidate = _get_gm_stored_candidate_fallback(fingerprints, "CHEVROLET_VOLT_CC", None)
-
-    assert candidate == "CHEVROLET_VOLT_CC"
-
-  def test_gm_stored_candidate_fallback_uses_cached_model(self):
-    fingerprints = {0: {190: 6, 201: 8, 209: 7, 211: 2, 241: 6}}
-
-    candidate = _get_gm_stored_candidate_fallback(fingerprints, "MOCK", "CHEVROLET_VOLT_CC")
-
-    assert candidate == "CHEVROLET_VOLT_CC"
-
-  def test_gm_stored_candidate_fallback_demotes_volt_camera_without_live_camera_msg(self):
-    fingerprints = {0: {190: 6, 201: 8, 209: 7, 211: 2, 241: 6}, 2: {}}
-
-    candidate = _get_gm_stored_candidate_fallback(fingerprints, "CHEVROLET_VOLT_CAMERA", None)
-
-    assert candidate == "CHEVROLET_VOLT"
-
-  def test_gm_stored_candidate_fallback_promotes_volt_when_live_camera_msg_present(self):
-    fingerprints = {0: {190: 6, 201: 8, 209: 7, 211: 2, 241: 6}, 2: {0x320: 3}}
-
-    candidate = _get_gm_stored_candidate_fallback(fingerprints, "CHEVROLET_VOLT", None)
-
-    assert candidate == "CHEVROLET_VOLT_CAMERA"
-
-  def test_gm_stored_candidate_fallback_ignores_non_gm_fingerprint(self):
-    fingerprints = {0: {1: 1, 2: 2, 3: 3, 4: 4}}
-
-    candidate = _get_gm_stored_candidate_fallback(fingerprints, "CHEVROLET_VOLT_CC", "CHEVROLET_VOLT_CC")
-
-    assert candidate is None
-
-  def test_starpilot_access_policy_ignores_stale_block_user_toggle(self):
-    candidate = _apply_starpilot_access_policy("CHEVROLET_VOLT_CC", SimpleNamespace(block_user=True))
-
-    assert candidate == "CHEVROLET_VOLT_CC"
-
-  def test_gm_suburban_camera_variant_uses_vin_and_camera_bus_signature(self):
-    fingerprints = {
-      0: {190: 6, 201: 8, 209: 7, 211: 2, 241: 6, 304: 1, 320: 3},
-      2: {0x24b: 8, 0x64b: 8},
-    }
-
-    assert _normalize_gm_suburban_camera_candidate(None, fingerprints, "1GNSKJKJXKR148371") == "CHEVROLET_SUBURBAN_CAMERA"
-    assert _normalize_gm_suburban_camera_candidate("GMC_YUKON", fingerprints, "1GNSKJKJXKR148371") == "CHEVROLET_SUBURBAN_CAMERA"
-    assert _normalize_gm_suburban_camera_candidate(None, fingerprints, "1GNSKCKC5KR255194") is None
-    assert _normalize_gm_suburban_camera_candidate(None, {0: fingerprints[0], 2: {0x320: 3}}, "1GNSKJKJXKR148371") is None

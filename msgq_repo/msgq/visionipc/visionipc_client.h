@@ -10,19 +10,15 @@
 class VisionIpcClient {
 private:
   std::string name;
-  Context * msg_ctx;
   SubSocket * sock;
   Poller * poller;
-
-  cl_device_id device_id = nullptr;
-  cl_context ctx = nullptr;
 
 public:
   bool connected = false;
   VisionStreamType type;
   int num_buffers = 0;
   VisionBuf buffers[VISIONIPC_MAX_FDS];
-  VisionIpcClient(std::string name, VisionStreamType type, bool conflate, cl_device_id device_id=nullptr, cl_context ctx=nullptr);
+  VisionIpcClient(std::string name, VisionStreamType type, bool conflate);
   ~VisionIpcClient();
   VisionBuf * recv(VisionIpcBufExtra * extra=nullptr, const int timeout_ms=100);
   bool connect(bool blocking=true);

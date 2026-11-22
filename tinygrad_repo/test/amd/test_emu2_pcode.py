@@ -17,6 +17,34 @@ def _srcs():
 class TestBasicParsing(unittest.TestCase):
   """Test basic pcode parsing for common instruction patterns."""
 
+  def test_c_style_blocks_and_array_access(self):
+    code = """
+      for (i = 0; i < 4; i+=2) {
+        if (mode == 0) {
+          out[i+0] = input[i+1];
+          out[i+1] = input[i+0];
+        } elsif (mode == 1) {
+          out[i+0] = 7;
+          out[i+1] = 8;
+        } else { // identity
+          out[i+0] = input[i+0];
+          out[i+1] = input[i+1];
+        }
+      }
+    """
+    for mode, expected in enumerate(([11, 10, 13, 12], [7, 8, 7, 8], [10, 11, 12, 13])):
+      with self.subTest(mode=mode):
+        result, _ = parse_pcode(code, {'mode': UOp.const(mode, dtypes.uint32)}, {'input': lambda i: i + 10})
+        self.assertEqual([result[f'out@{i}'].simplify().val for i in range(4)], expected)
+
+  def test_colon_concatenation(self):
+    result, _ = parse_pcode('offset = hi:lo;', {'hi': UOp.const(0x12, dtypes.uint8), 'lo': UOp.const(0x34, dtypes.uint8)})
+    self.assertEqual(result['offset'].simplify().val, 0x1234)
+
+  def test_unclosed_c_block(self):
+    with self.assertRaisesRegex(AssertionError, 'unclosed pcode block'):
+      parse_pcode('if (1) {\nvalue = 2;')
+
   def test_v_add_f32(self):
     """Test parsing V_ADD_F32 pcode."""
     _, assigns = parse_pcode(PCODE[VOP2Op.V_ADD_F32_E32], _srcs())
@@ -82,6 +110,13 @@ class TestParseExpr(unittest.TestCase):
   def test_hex_literals(self):
     """Test parsing hex literals."""
     self.assertIs(parse_expr('0xFF', {}), UOp.const(255, dtypes.uint32))
+
+  def test_24bit_operands(self):
+    for value, signed, unsigned in ((0x3FFFFFFF, -1, 0xFFFFFF), (0xFF800000, -8388608, 0x800000), (0xAB000001, 1, 1)):
+      with self.subTest(value=value):
+        src = {'S0': UOp.const(value, dtypes.uint32)}
+        self.assertEqual(parse_expr('S0.i24', src).ssimplify(), signed)
+        self.assertEqual(parse_expr('S0.u24', src).ssimplify(), unsigned)
 
   def test_variable_lookup(self):
     """Test variable lookup in parse_expr."""

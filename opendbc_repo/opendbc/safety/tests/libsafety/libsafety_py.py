@@ -1,98 +1,120 @@
 import os
+import re
+import subprocess
+import tempfile
+from pathlib import Path
+
 from cffi import FFI
 
 from opendbc.safety import LEN_TO_DLC
 
 libsafety_dir = os.path.dirname(os.path.abspath(__file__))
-libsafety_fn = os.path.join(libsafety_dir, "libsafety_mutation.so" if "MUTATION" in os.environ else "libsafety.so")
+
+
+def _build_libsafety(release: bool = False, output_dir: str | Path | None = None) -> str:
+  """Compile libsafety.so to a temp file and return its path."""
+  root = str(Path(libsafety_dir).parents[3])
+  safety_c = os.path.join(libsafety_dir, "safety.c")
+
+  cflags = [
+    '-Wall', '-Wextra', '-Werror', '-nostdlib', '-fno-builtin',
+    '-std=gnu11', '-Wfatal-errors', '-Wno-pointer-to-int-cast',
+    '-g', '-O0', '-fno-omit-frame-pointer',
+  ]
+  # Coverage must exclude the branches inserted by UBSan.
+  if os.environ.get("SAFETY_COVERAGE") == "1":
+    ldflags = ['-fprofile-arcs', '-ftest-coverage']
+  else:
+    ldflags = ['-fsanitize=undefined', '-fno-sanitize-recover=undefined']
+  cflags += ldflags
+  if not release:
+    cflags += ['-DALLOW_DEBUG']
+
+  fd, safety_os = tempfile.mkstemp(suffix='.os', dir=output_dir or libsafety_dir)
+  os.close(fd)
+  libsafety_so = None
+  try:
+    fd, libsafety_so = tempfile.mkstemp(suffix='.so', dir=output_dir)
+    os.close(fd)
+    subprocess.check_call(['cc', '-fPIC', *cflags, '-I', root, '-c', safety_c, '-o', safety_os])
+    subprocess.check_call(['cc', '-shared', safety_os, '-o', libsafety_so, *ldflags])
+  except BaseException:
+    if libsafety_so is not None:
+      Path(libsafety_so).unlink(missing_ok=True)
+    raise
+  finally:
+    Path(safety_os).unlink(missing_ok=True)
+  return libsafety_so
+
+
+def cdef_from_file(path: Path) -> str:
+  source = path.read_text()
+  source = re.sub(r"//[^\n]*|/\*.*?\*/", "", source, flags=re.DOTALL)
+  source = re.sub(r"__attribute__\(\(.*\)\)", "", source)
+
+  # Keep integer constants, type declarations, and function signatures, including definitions.
+  constants = re.findall(r"^#define \w+ \d+[UuLl]*[ \t]*$", source, re.MULTILINE)
+  types = re.findall(r"^(?:typedef|struct|enum)\b(?:[^;{]|\{[^}]*\})+;", source, re.MULTILINE)
+  functions = re.findall(r"^((?!typedef\b)\w[\w *]*\b\w+\([^;{}]*\))\s*[;{]", source, re.MULTILINE)
+  return "\n".join([*constants, *types, *(f"{signature};" for signature in dict.fromkeys(functions))])
+
 
 ffi = FFI()
+safety_dir = Path(libsafety_dir).parents[1]
+ffi.cdef(cdef_from_file(safety_dir / "can.h"), packed=True)
+for path in (safety_dir / "declarations.h", safety_dir / "ignition.h", Path(libsafety_dir) / "safety.c"):
+  ffi.cdef(cdef_from_file(path))
+ffi.cdef("extern RxStatus rx_status[MAX_RX_CHECKS];")
 
-ffi.cdef("""
-typedef struct {
-  unsigned char fd : 1;
-  unsigned char bus : 3;
-  unsigned char data_len_code : 4;
-  unsigned char rejected : 1;
-  unsigned char returned : 1;
-  unsigned char extended : 1;
-  unsigned int addr : 29;
-  unsigned char checksum;
-  unsigned char data[64];
-} CANPacket_t;
-""", packed=True)
+def _can_packet_alignment() -> int:
+  source = (safety_dir / "can.h").read_text()
+  match = re.search(r"__attribute__\(\(\s*packed\s*,\s*aligned\((\d+)\)\s*\)\)\s*CANPacket_t\s*;", source)
+  if match is None or int(match[1]) != ffi.alignof("unsigned int"):
+    raise RuntimeError("Unsupported native CANPacket_t alignment")
+  return int(match[1])
+
+
+CAN_PACKET_ALIGNMENT = _can_packet_alignment()
+
+
+def _allocate_can_packet(size: int):
+  # CFFI keeps the packed field layout but cannot express packed + aligned.
+  # Its allocator retains this owning buffer until the packet is released.
+  words = (size + CAN_PACKET_ALIGNMENT - 1) // CAN_PACKET_ALIGNMENT
+  return ffi.new("unsigned int[]", words)
+
+
+_can_packet_allocator = ffi.new_allocator(alloc=_allocate_can_packet)
+
+
+def new_CANPacket():
+  """Allocate native-sized/aligned storage while preserving packed field offsets."""
+  return _can_packet_allocator("CANPacket_t *")
+
+
 class CANPacket:
   pass
 
-ffi.cdef("""
-bool safety_rx_hook(CANPacket_t *msg);
-bool safety_tx_hook(CANPacket_t *msg);
-int safety_fwd_hook(int bus_num, int addr);
-int set_safety_hooks(uint16_t mode, uint16_t param);
-
-void set_controls_allowed(bool c);
-bool get_controls_allowed(void);
-bool get_longitudinal_allowed(void);
-void set_alternative_experience(int mode);
-int get_alternative_experience(void);
-void set_relay_malfunction(bool c);
-bool get_relay_malfunction(void);
-bool get_gas_pressed_prev(void);
-void set_gas_pressed_prev(bool);
-bool get_brake_pressed_prev(void);
-bool get_regen_braking_prev(void);
-bool get_steering_disengage_prev(void);
-bool get_acc_main_on(void);
-bool get_aol_allowed(void);
-bool get_lkas_on(void);
-uint32_t get_acc_main_on_mismatches(void);
-float get_vehicle_speed_min(void);
-float get_vehicle_speed_max(void);
-int get_current_safety_mode(void);
-int get_current_safety_param(void);
-
-void set_torque_meas(int min, int max);
-int get_torque_meas_min(void);
-int get_torque_meas_max(void);
-void set_torque_driver(int min, int max);
-int get_torque_driver_min(void);
-int get_torque_driver_max(void);
-void set_desired_torque_last(int t);
-void set_rt_torque_last(int t);
-void set_desired_angle_last(int t);
-int get_desired_angle_last();
-void set_angle_meas(int min, int max);
-int get_angle_meas_min(void);
-int get_angle_meas_max(void);
-void set_desired_curvature_last(int t);
-int get_desired_curvature_last(void);
-void set_curvature_meas(int min, int max);
-int get_curvature_meas_min(void);
-int get_curvature_meas_max(void);
-
-bool get_cruise_engaged_prev(void);
-void set_cruise_engaged_prev(bool engaged);
-bool get_vehicle_moving(void);
-void set_timer(uint32_t t);
-
-void safety_tick_current_safety_config();
-bool safety_config_valid();
-
-void init_tests(void);
-
-void set_honda_fwd_brake(bool c);
-bool get_honda_fwd_brake(void);
-void set_honda_alt_brake_msg(bool c);
-void set_honda_bosch_long(bool c);
-int get_honda_hw(void);
-""")
+ffi.cdef("void mutation_set_active_mutant(int id); int mutation_get_active_mutant(void);")
 
 class LibSafety:
   pass
-libsafety: LibSafety = ffi.dlopen(libsafety_fn)
+libsafety: LibSafety
+libpath: str
+
+def load(path):
+  global libsafety, libpath
+  libsafety = ffi.dlopen(str(path))
+  libpath = str(Path(path).resolve())
+
+def __getattr__(name):
+  if name == "libsafety":
+    load(_build_libsafety())
+    return libsafety
+  raise AttributeError(name)
 
 def make_CANPacket(addr: int, bus: int, dat):
-  ret = ffi.new('CANPacket_t *')
+  ret = new_CANPacket()
   ret[0].extended = 1 if addr >= 0x800 else 0
   ret[0].addr = addr
   ret[0].data_len_code = LEN_TO_DLC[len(dat)]

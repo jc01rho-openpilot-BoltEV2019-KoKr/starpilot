@@ -5,7 +5,7 @@ on:
   pull_request_target:
     types: [opened]
   push:
-    branches: [StarPilot, testing]
+    branches: [stable, testing]
     paths: [.github/workflows/pr_discord_reminder.yaml]
   workflow_dispatch:
 
@@ -21,7 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      issues: write
+      issues: read
+      pull-requests: write
     steps:
       - name: Validate and send one reminder for a newly opened PR
         env:
@@ -34,8 +35,9 @@ jobs:
 
           REPO = "StarPilotHQ/StarPilot"
           MARKER = "<!-- starpilot-pr-discord-reminder-v1 -->"
-          BODY = ("In order to review this PR, please open a ticket in the "
-                  "StarPilot Discord at https://firestar.link/discord.\n\n" + MARKER)
+          BODY = ("Thank you for your PR! To increase communication and responsiveness, "
+                  "please open a ticket describing your PR in the StarPilot discord at "
+                  "[https://firestar.link/discord](https://firestar.link/discord)\n\n" + MARKER)
 
           def remind(event, request):
               if event.get("action") != "opened" or "pull_request" not in event:

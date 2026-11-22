@@ -1,6 +1,5 @@
 import copy
 from collections import deque
-from cereal import custom
 from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
@@ -13,8 +12,8 @@ TORQUE_SAMPLES = 12
 
 
 class CarState(CarStateBase):
-  def __init__(self, CP, FPCP):
-    super().__init__(CP, FPCP)
+  def __init__(self, CP):
+    super().__init__(CP)
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
 
     self.lkas_hud_msg = {}
@@ -24,13 +23,9 @@ class CarState(CarStateBase):
     self.shifter_values = can_define.dv["GEARBOX"]["GEAR_SHIFTER"]
 
     self.distance_button = 0
+    self.lkas_setting = None
 
-    self.lkas_button = 0
-    self.set_button = 0
-    self.res_button = 0
-    self.cancel_button = 0
-
-  def update(self, can_parsers, starpilot_toggles) -> structs.CarState:
+  def update(self, can_parsers) -> structs.CarState:
     cp = can_parsers[Bus.pt]
     cp_cam = can_parsers[Bus.cam]
     cp_adas = can_parsers[Bus.adas]
@@ -92,16 +87,20 @@ class CarState(CarStateBase):
       ret.cruiseState.speed = speed * conversion
       ret.cruiseState.speedCluster = (speed - 1) * conversion  # Speed on HUD is always 1 lower than actually sent on can bus
 
+    # Altima EPS faults when user overrides above a certain torque.
+    # It also faults on sharp curves, although the threshold is unknown at this time
     if self.CP.carFingerprint == CAR.NISSAN_ALTIMA:
       ret.steeringTorque = cp_cam.vl["STEER_TORQUE_SENSOR"]["STEER_TORQUE_DRIVER"]
+      ret.steerFaultTemporary = cp_cam.vl["STEER_TORQUE_SENSOR"]["LKAS_STATUS"] == 9
+      ret.steeringAngleDeg = cp_cam.vl["STEER_TORQUE_SENSOR"]["STEER_ANGLE"]
     else:
       ret.steeringTorque = cp.vl["STEER_TORQUE_SENSOR"]["STEER_TORQUE_DRIVER"]
+      ret.steerFaultTemporary = cp.vl["STEER_TORQUE_SENSOR"]["LKAS_STATUS"] == 9
+      ret.steeringAngleDeg = cp.vl["STEER_TORQUE_SENSOR"]["STEER_ANGLE"]
 
     self.steeringTorqueSamples.append(ret.steeringTorque)
     # Filtering driver torque to prevent steeringPressed false positives
     ret.steeringPressed = bool(abs(sum(self.steeringTorqueSamples) / TORQUE_SAMPLES) > CarControllerParams.STEER_THRESHOLD)
-
-    ret.steeringAngleDeg = cp.vl["STEER_ANGLE_SENSOR"]["STEER_ANGLE"]
 
     ret.leftBlinker = bool(cp.vl["LIGHTS"]["LEFT_BLINKER"])
     ret.rightBlinker = bool(cp.vl["LIGHTS"]["RIGHT_BLINKER"])
@@ -132,31 +131,18 @@ class CarState(CarStateBase):
       self.lkas_hud_msg = copy.copy(cp_adas.vl["PROPILOT_HUD"])
       self.lkas_hud_info_msg = copy.copy(cp_adas.vl["PROPILOT_HUD_INFO_MSG"])
 
-    buttonEvents = create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
+    button_events = create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
 
-    if self.CP.openpilotLongitudinalControl and self.CP.carFingerprint == CAR.NISSAN_LEAF:
-      prev_set_button = self.set_button
-      prev_res_button = self.res_button
-      prev_cancel_button = self.cancel_button
-      self.set_button = int(cp.vl["CRUISE_THROTTLE"]["SET_BUTTON"])
-      self.res_button = int(cp.vl["CRUISE_THROTTLE"]["RES_BUTTON"])
-      self.cancel_button = int(cp.vl["CRUISE_THROTTLE"]["CANCEL_BUTTON"])
-      buttonEvents += create_button_events(self.set_button, prev_set_button, {1: ButtonType.decelCruise})
-      buttonEvents += create_button_events(self.res_button, prev_res_button, {1: ButtonType.accelCruise})
-      buttonEvents += create_button_events(self.cancel_button, prev_cancel_button, {1: ButtonType.cancel})
+    # LKAS setting transitions are Dom's wheel input, not a separate physical switch.
+    # Seed only a received value; startup/absent defaults cannot synthesize a press.
+    source = cp if self.CP.carFingerprint == CAR.NISSAN_ALTIMA else cp_adas
+    if source.ts_nanos["LKAS_SETTINGS"]["LKAS_ENABLED"] > 0:
+      if self.lkas_setting is not None:
+        button_events += create_button_events(ret.invalidLkasSetting, self.lkas_setting, {1: ButtonType.lkas})
+      self.lkas_setting = ret.invalidLkasSetting
 
-    fp_ret = custom.StarPilotCarState.new_message()
-
-    self.prev_lkas_button = self.lkas_button
-    self.lkas_button = ret.invalidLkasSetting
-
-    buttonEvents += [
-      *create_button_events(self.lkas_button, self.prev_lkas_button, {1: ButtonType.lkas, 0: ButtonType.lkas}),
-    ]
-
-    ret.buttonEvents = buttonEvents
-
-    return ret, fp_ret
+    ret.buttonEvents = button_events
+    return ret
 
   @staticmethod
   def get_can_parsers(CP):

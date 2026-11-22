@@ -1,1 +1,0 @@
-"""Offroad sentry-mode daemon."""

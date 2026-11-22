@@ -3,9 +3,9 @@ import unittest, pickle, functools, math
 import z3
 
 from tinygrad.dtype import dtypes, ConstType, DType, Invalid
-from tinygrad.uop.ops import UOp, Ops, graph_rewrite, sym_infer
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, graph_rewrite, sym_infer
 from tinygrad.uop.spec import spec_shared, type_verify
-from tinygrad.uop.symbolic import sym, commutative, pm_simplify_valid, pm_move_where_on_load, symbolic_simple
+from tinygrad.uop.symbolic import sym, symbolic, commutative, pm_simplify_valid, pm_move_where_on_load, symbolic_simple
 from tinygrad.uop.validate import uops_to_z3
 
 def check_uop_against_string(self, v:UOp, s:str):
@@ -16,7 +16,7 @@ def check_uop_against_string(self, v:UOp, s:str):
   self.assertIs(s_eval, v, f"eval did not match simplified: {s_eval} != {v.render()} for {s}")
 
 def Variable(name: str, min_val: ConstType, max_val: ConstType, dtype: DType=dtypes.weakint):
-  return UOp.variable(name, min_val, max_val, dtype, param=True)
+  return UOp.variable(name, min_val, max_val, dtype)
 def uconst(val): return UOp.const(val)
 def usum(ops): return functools.reduce(lambda x,y: x+y, ops)
 def uand(ops): return functools.reduce(lambda x,y: x*y, ops)
@@ -45,13 +45,13 @@ class TestSymbolic(unittest.TestCase):
 
   def test_cmp_simple(self):
     self.helper_test_variable(Variable("a", 3, 8) < 4, 0, 1, "(a<4)")
-    self.helper_test_variable(Variable("a", 3, 8) >= 8, 0, 1, "((a<8)!=True)")
+    self.helper_test_variable(Variable("a", 3, 8) >= 8, 0, 1, "(a<8).eq(False)")
 
   def test_ge(self):
     self.helper_test_variable(Variable("a", 3, 8) >= 77, 0, 0, "False")
     self.helper_test_variable(Variable("a", 3, 8) >= 9, 0, 0, "False")
-    self.helper_test_variable(Variable("a", 3, 8) >= 8, 0, 1, "((a<8)!=True)")
-    self.helper_test_variable(Variable("a", 3, 8) >= 4, 0, 1, "((a<4)!=True)")
+    self.helper_test_variable(Variable("a", 3, 8) >= 8, 0, 1, "(a<8).eq(False)")
+    self.helper_test_variable(Variable("a", 3, 8) >= 4, 0, 1, "(a<4).eq(False)")
     self.helper_test_variable(Variable("a", 3, 8) >= 3, 1, 1, "True")
     self.helper_test_variable(Variable("a", 3, 8) >= 2, 1, 1, "True")
 
@@ -105,6 +105,17 @@ class TestSymbolic(unittest.TestCase):
     self.assertEqual(UOp.gcd(a*a*10, b*a*5, a*a*5).simplify(), a*5)
     self.assertEqual(UOp.gcd(a*10, b*5, a*5).simplify(), uconst(5))
     self.assertEqual(UOp.gcd(a, b*5, a*5).simplify(), uconst(1))
+
+  def test_multiple_of_cancellation(self):
+    for multiple in (1, 2, 3, 4, 8):
+      var = UOp.variable("n", multiple, 8*multiple)
+      for n in (var, var.bind(2*multiple)):
+        for factor in (-multiple, -1, 2, multiple, multiple+1):
+          with self.subTest(multiple=multiple, bound=n.is_bound_var, factor=factor):
+            self.assertEqual((n*factor//n).ssimplify(), factor)
+            self.assertEqual((n*factor%n).ssimplify(), 0)
+            self.assertEqual(((-n*factor)//(-n)).ssimplify(), factor)
+            self.assertIs(UOp.gcd(n*factor, n).simplify(), n)
 
   def test_divides_exact(self):
     a = Variable("a", 1, 8)
@@ -354,14 +365,14 @@ class TestSymbolic(unittest.TestCase):
     self.helper_test_variable(Variable("a", 0, 5)*4 < 13, 0, 1, "(a<4)")
     self.helper_test_variable(Variable("a", 0, 5)*4 < 16, 0, 1, "(a<4)")
     self.helper_test_variable(Variable("a", -5, 5)*4 < -13, 0, 1, "(a<-3)")
-    self.helper_test_variable(Variable("a", -5, 5)*-4 < 13, 0, 1, "((a*-1)<4)")
+    self.helper_test_variable(Variable("a", -5, 5)*-4 < 13, 0, 1, "(-4<a)")
     c0, c1 = 2, 2**54+1
     self.helper_test_variable(Variable("a", 0, c1)*c0 < c1, 0, 1, f"(a<{2**53+1})")
     c0, c1 = -2, -(2**54-1)
-    self.helper_test_variable(Variable("a", 0, -c1)*c0 < c1, 0, 1, f"((a*-1)<{-(2**53-1)})")
-    self.helper_test_variable(Variable("a", 0, 5)*(-2) < 0, 0, 1, "((a*-1)<0)")
-    self.helper_test_variable(Variable("a", 0, 5)*4 >= 12, 0, 1, "((a<3)!=True)")
-    self.helper_test_variable(Variable("a", 0, 5)*4 >= 13, 0, 1, "((a<4)!=True)")
+    self.helper_test_variable(Variable("a", 0, -c1)*c0 < c1, 0, 1, f"({2**53-1}<a)")
+    self.helper_test_variable(Variable("a", 0, 5)*(-2) < 0, 0, 1, "(0<a)")
+    self.helper_test_variable(Variable("a", 0, 5)*4 >= 12, 0, 1, "(a<3).eq(False)")
+    self.helper_test_variable(Variable("a", 0, 5)*4 >= 13, 0, 1, "(a<4).eq(False)")
 
   def test_div_div(self):
     self.helper_test_variable((Variable("a", 0, 1800)//10)//9, 0, 20, "(a//90)")
@@ -432,7 +443,10 @@ class TestSymbolic(unittest.TestCase):
     self.helper_test_variable(Variable("a", 0, 6) + 2 < 3, 0, 1, "(a<1)")
 
   def test_lt_simple_factor(self):
-    self.helper_test_variable((Variable("a", 0, 6)*6+Variable("b", 0, 6)*6) < 8, 0, 1, "(((a*3)+(b*3))<4)")
+    self.helper_test_variable((Variable("a", 0, 6)*6+Variable("b", 0, 6)*6) < 8, 0, 1, "((a+b)<2)")
+    self.helper_test_variable((Variable("g", 0, 1)*128+Variable("l", 0, 31)*4) < 101, 0, 1, "((l+(g*32))<26)")
+    self.helper_test_variable((Variable("a", -6, 6)*4+Variable("b", -6, 6)*8) < -3, 0, 1, "((a+(b*2))<0)")
+    self.helper_test_variable((Variable("a", 0, 6)*4+Variable("b", -1, 0)) < 3, 0, 1, "(a<1)")
 
   def test_lt_sum_factor_rhs_partial(self):
     self.helper_test_variable((Variable("a", 0, 6)*6 + Variable("b", 0, 6)*4 + Variable("c", 0, 6)*8) < 4, 0, 1,
@@ -454,13 +468,26 @@ class TestSymbolic(unittest.TestCase):
     z = UOp.const(0.0)
     self.assertTrue(math.isnan(graph_rewrite(z/z, symbolic_simple, bottom_up=True).arg))
 
+  def test_two_stage_const_folding(self):
+    x = UOp.variable("x", 0, 10)
+    self.assertIs(graph_rewrite((x+1)+2, symbolic_simple), x+3)
+
+  def test_unpack_uint64_high(self):
+    x, y = UOp.variable("x", 0, 2**32-1, dtypes.uint64), UOp.variable("y", 0, 2**32-1, dtypes.uint32)
+    self.assertIs(graph_rewrite((((x<<32) | y.cast(dtypes.uint64)) >> 32).cast(dtypes.uint32), symbolic_simple), x.cast(dtypes.uint32))
+
   def test_masked_shr_fold(self):
-    x = UOp.variable('x', 0, 255, dtype=dtypes.uint32, param=True)
+    x = UOp.variable('x', 0, 255, dtype=dtypes.uint32)
     self.helper_test_variable((x & -4) >> 2, 0, 63, "(x>>2)")
 
-  def test_masked_idiv_fold(self):
-    x = UOp.variable('x', 0, 255, dtype=dtypes.uint32, param=True)
-    self.helper_test_variable((x & -4) // 4, 0, 63, "(x//4)")
+  def test_masked_shr_fold_committed_mask(self):
+    x = UOp.variable('x', 0, 255, dtype=dtypes.uint32)
+    self.helper_test_variable((x & UOp.const(-4, dtypes.uint32)) >> 2, 0, 63, "(x>>2)")
+
+  def test_signed_const_wraps(self):
+    c = UOp.const(2**31, dtypes.int32)
+    self.assertEqual(c.val, -2**31)
+    self.assertIs((UOp.const(1, dtypes.int32) < c).simplify().arg, False)
 
   def test_bool_or_not_tautology(self):
     a = Variable("a", 0, 10)
@@ -500,12 +527,12 @@ class TestSymbolic(unittest.TestCase):
 
   def test_div_drop_small_terms(self):
     # from openpilot, shouldnt simplify
-    gidx0 = UOp.variable("gidx0", 0, 10, param=True)
-    gidx1 = UOp.variable("gidx1", 0, 10, param=True)
-    lidx0 = UOp.variable("lidx0", 0, 1, param=True)
-    lidx1 = UOp.variable("lidx1", 0, 1, param=True)
-    ridx1005 = UOp.variable("ridx1005", 0, 2, param=True)
-    ridx1006 = UOp.variable("ridx1006", 0, 2, param=True)
+    gidx0 = UOp.variable("gidx0", 0, 10)
+    gidx1 = UOp.variable("gidx1", 0, 10)
+    lidx0 = UOp.variable("lidx0", 0, 1)
+    lidx1 = UOp.variable("lidx1", 0, 1)
+    ridx1005 = UOp.variable("ridx1005", 0, 2)
+    ridx1006 = UOp.variable("ridx1006", 0, 2)
     self.helper_test_variable((lidx1+((gidx1*18)+(ridx1005*18)+(lidx0*162))+(gidx0*2)+(ridx1006*2)+-40)//18, -3, 20,
       "(gidx1+ridx1005+lidx0*9+(gidx0+ridx1006+7)//9+-3)")
 
@@ -750,14 +777,14 @@ class TestSymbolic(unittest.TestCase):
     self.helper_test_variable((30 * b + 1) % 18 + ((30 * b + 1) // 18) * 18, 1, 3001, "((b*30)+1)")
 
   def test_div_partial_quotient(self):
-    # FLOORDIV should extract partial quotients when const_factor > divisor, matching what FLOORMOD already does
+    # DIV should extract partial quotients when const_factor > divisor, matching what MOD already does
     # (f*x+c)//d -> (f%d*x+c)//d + (f//d)*x  when f >= d
     b = Variable("b", 0, 100)
     self.helper_test_variable((31*b+1)//18, 0, 172, "(((b*13)+1)//18+b)")
     self.helper_test_variable((19*b+3)//7, 0, 271, "(((b*5)+3)//7+(b*2))")
 
   def test_gcd_with_remainder(self):
-    # gcd_with_remainder: factor GCD out of non-constant terms and denominator
+    # nest_by_factor on the GCD of non-constant terms and denominator
     a = Variable("a", 0, 2)
     self.helper_test_variable((a*4)//6, 0, 1, "(a*2//3)")
     self.helper_test_variable((a*4+1)//6, 0, 1, "(a*2//3)")
@@ -767,6 +794,11 @@ class TestSymbolic(unittest.TestCase):
     self.helper_test_variable((a*4+1)%6, 1, 5, "(a*2%3*2+1)")
     self.helper_test_variable((a*4+2)%6, 0, 4, "((a*2+1)%3*2)")
     self.helper_test_variable((a*4+3)%6, 1, 5, "((a*2+1)%3*2+1)")
+
+  def test_gcd_with_remainder_negative(self):
+    a, b = Variable("a", -3, 5), Variable("b", 0, 7)
+    self.helper_test_variable((a*18+1)//4, -14, 22, "(a*9//2)")
+    self.helper_test_variable((a*12+b*18+5)//12, -3, 15, "((a*2+b*3)//2)")
 
   def test_div_by_factor_tie_break(self):
     a = Variable("a", 0, 1)
@@ -795,7 +827,7 @@ class TestSymbolic(unittest.TestCase):
     self.helper_test_variable((x%4)*-2 + ((x//4)%2)*-8, -14, 0, "(x%8*-2)")
 
   def test_mod_nest_by_factor(self):
-    # (a*f+b) % (f*k) = (a%k)*f + b when 0<=b<f — mirrors nest_div_by_factor for FLOORMOD
+    # (a*f+b) % (f*k) = (a%k)*f + b when 0<=b<f — mirrors nest_div_by_factor for MOD
     gidx0 = Variable("gidx0", 0, 15)
     lidx0 = Variable("lidx0", 0, 3)
     # f=4, k=2, c=8: (gidx0*4+lidx0)%8 = (gidx0%2)*4 + lidx0
@@ -809,7 +841,7 @@ class TestSymbolic(unittest.TestCase):
     self.helper_test_variable((a*3+b)%9, 0, 8, "(b+a%3*3)")
 
   def test_mod_nest_by_factor_with_const(self):
-    # nest_by_factor FLOORMOD with non-zero constant offset: (a*f+b+const) % (f*k) = (a%k)*f + b + const when 0<=b+const<f
+    # nest_by_factor MOD with non-zero constant offset: (a*f+b+const) % (f*k) = (a%k)*f + b + const when 0<=b+const<f
     a = Variable("a", 0, 7)
     b = Variable("b", 0, 1)
     # f=4, k=2, const=2: (a*4+b+2)%8 = (a%2)*4 + b + 2
@@ -821,7 +853,7 @@ class TestSymbolic(unittest.TestCase):
     self.helper_test_variable((a*3+b+1)%6, 1, 5, "(b+a%2*3+1)")
 
   def test_div_nest_by_factor_with_const(self):
-    # nest_by_factor FLOORDIV: (160*a + 5*b + 4*c + K) // 60 should pick div=5 (clean) over div=4 (dirty)
+    # nest_by_factor DIV: (160*a + 5*b + 4*c + K) // 60 should pick div=5 (clean) over div=4 (dirty)
     a = Variable("a", 0, 2)
     b = Variable("b", 0, 31)
     c = Variable("c", 0, 1)
@@ -902,22 +934,23 @@ class TestSymbolic(unittest.TestCase):
     self.helper_test_variable((idx<4).where(idx//4, uconst(-1)), -1, 6, "(idx<4).where((idx//4), -1)")
 
   def test_floordiv_lt(self):
-    # x//d<c <=> x<c*d for d>0, and <=> c*d<x for d<0
+    # x//d<c <=> x<c*d for d>0
     idx = Variable("idx", 0, 24)
     self.helper_test_variable((idx//4<3), 0, 1, "(idx<12)")
     self.helper_test_variable(((idx-20)//4<-3), 0, 1, "(idx<8)")
     self.helper_test_variable(((idx-10)//4<0), 0, 1, "(idx<10)")
-    self.helper_test_variable((idx//-4<-3), 0, 1, "(12<idx)")
-    self.helper_test_variable((idx//-4<-5), 0, 1, "(20<idx)")
     self.helper_test_variable((idx//-4<-6), 0, 0, "False")
-    self.helper_test_variable(((idx-10)//-4<0), 0, 1, "(8<(idx+-2))")
-    self.helper_test_variable(((idx-20)//-4<2), 0, 1, "(12<idx)")
 
   def test_nested_div_mod_negative_inner_divisor(self):
     # (x % (k*c)) // c -> (x // c) % k requires k>0; (x % (k*c)) % c -> x % c is unconditional for c>0
     a = Variable("a", 0, 100)
     self.helper_test_variable((a % -8) // 2, -4, 0, "(a%-8//2)")
     self.helper_test_variable((a % -8) % 2, 0, 1, "(a%2)")
+
+  def test_nested_div_mod_symbolic_inner_divisor(self):
+    a = Variable("a", 0, 100)
+    self.helper_test_variable((a % (Variable("n", 1, 10)*4)) // 2, 0, 19, "(a//2%(n*2))")
+    check_uop_against_string(self, (a % (Variable("n", 0, 10)*4) // 2).simplify(), "(a%(n*4)//2)")
 
   def test_floordiv_lt_negative_c(self):
     # x//d<c with negative c also reduces to x<c*d for d>0
@@ -932,29 +965,34 @@ class TestSymbolic(unittest.TestCase):
     c = Variable("c", 0, 3)
     d = Variable("d", -3, 3)
     self.helper_test_variable((a<2), 0, 1, "(a<2)")
-    self.helper_test_variable((a<=2), 0, 1, "((2<a)!=True)")
+    self.helper_test_variable((a<=2), 0, 1, "(2<a).eq(False)")
     self.helper_test_variable((a>1), 0, 1, "(1<a)")
-    self.helper_test_variable((a>=1), 0, 1, "((a<1)!=True)")
-    self.helper_test_variable((a<1).ne(True), 0, 1, "((a<1)!=True)")
-    self.helper_test_variable((a+b<1).ne(True), 0, 1, "(((a+b)<1)!=True)")
-    self.helper_test_variable((a*3+b*4<1).ne(True), 0, 1, "(((a+b)<1)!=True)")
-    self.helper_test_variable((a*(-3)+b*4<1).ne(True), 0, 1, "((((a*-3)+(b*4))<1)!=True)")  # negative coeff, should not be simplified
-    self.helper_test_variable((a*3+d*4<1).ne(True), 0, 1, "((((a*3)+(d*4))<1)!=True)")  # var can be negative, should not be simplified
-    self.helper_test_variable((a+b+c*2<1).ne(True), 0, 1, "((((a+b)+c)<1)!=True)")
-    self.helper_test_variable((a+b*2+c*4<1).ne(True), 0, 1, "((((a+b)+c)<1)!=True)")
+    self.helper_test_variable((a>=1), 0, 1, "(a<1).eq(False)")
+    self.helper_test_variable((a<1).ne(True), 0, 1, "(a<1).eq(False)")
+    self.helper_test_variable((a+b<1).ne(True), 0, 1, "((a+b)<1).eq(False)")
+    self.helper_test_variable((a*3+b*4<1).ne(True), 0, 1, "((a+b)<1).eq(False)")
+    self.helper_test_variable((a*(-3)+b*4<1).ne(True), 0, 1, "(((a*-3)+(b*4))<1).eq(False)")  # negative coeff, should not be simplified
+    self.helper_test_variable((a*3+d*4<1).ne(True), 0, 1, "(((a*3)+(d*4))<1).eq(False)")  # var can be negative, should not be simplified
+    self.helper_test_variable((a+b+c*2<1).ne(True), 0, 1, "(((a+b)+c)<1).eq(False)")
+    self.helper_test_variable((a+b*2+c*4<1).ne(True), 0, 1, "(((a+b)+c)<1).eq(False)")
+
+  def test_mul_by_zero_casted_to_emulated_dtype(self):
+    # a float zero cast to bfloat16 is one committed const, so the mul-by-zero fold still sees it
+    x = Variable("x", 0, 3, dtypes.bfloat16)
+    self.assertIs(graph_rewrite(x*uconst(0.0).cast(dtypes.float).cast(dtypes.bfloat16), sym), UOp.const(0.0, dtypes.bfloat16))
 
   def test_cast_bool_to_int_ne_const(self):
     cond = Variable("a", 0, 3) < 2
     # CAST(bool -> int) != 0  ->  cond
     self.helper_test_variable(cond.cast(dtypes.int).ne(0), 0, 1, "(a<2)")
     # CAST(bool -> int) != 1  ->  !cond
-    self.helper_test_variable(cond.cast(dtypes.int).ne(1), 0, 1, "((a<2)!=True)")
+    self.helper_test_variable(cond.cast(dtypes.int).ne(1), 0, 1, "(a<2).eq(False)")
     # CAST(bool -> int) != c (c not in {0,1})  ->  always True (CAST is 0 or 1)
     self.helper_test_variable(cond.cast(dtypes.int).ne(2), 1, 1, "True")
     self.helper_test_variable(cond.cast(dtypes.int).ne(-1), 1, 1, "True")
     # CAST(bool -> index) folds too
     self.helper_test_variable(cond.cast(dtypes.weakint).ne(0), 0, 1, "(a<2)")
-    self.helper_test_variable(cond.cast(dtypes.weakint).ne(1), 0, 1, "((a<2)!=True)")
+    self.helper_test_variable(cond.cast(dtypes.weakint).ne(1), 0, 1, "(a<2).eq(False)")
 
   def test_where_removal(self):
     cond = Variable("a", 0, 3) < 2
@@ -962,13 +1000,15 @@ class TestSymbolic(unittest.TestCase):
     self.helper_test_variable(cond, 0, 1, "(a<2)")
     self.helper_test_variable(cond.where(u1, u0), 0, 1, "(a<2)")
     self.helper_test_variable(cond.where(u1, u0).where(u1, u0), 0, 1, "(a<2)")
-    self.helper_test_variable(cond.where(u0, u1), 0, 1, "((a<2)!=True)")
+    self.helper_test_variable(cond.where(u0, u1), 0, 1, "(a<2).eq(False)")
     self.helper_test_variable(cond.where(u0, u1).where(u0, u1), 0, 1, "(a<2)")
 
   def test_equivalent_const_max(self):
     x = Variable("x", -10, 10)
     self.helper_test_variable((x < 0).where(0, x), 0, 10, "x.maximum(0)")
     self.helper_test_variable((0 < x).where(x, 0), 0, 10, "x.maximum(0)")
+    self.helper_test_variable(((x+3) < 0).where(0, x+3), 0, 13, "(x+3).maximum(0)")
+    self.helper_test_variable((5 < x).where(5, x), -10, 5, "(5<x).where(5, x)")
 
   def test_where_combine(self):
     cond = Variable("x", 0, 3) < 2
@@ -1014,8 +1054,12 @@ class TestSymbolic(unittest.TestCase):
     self.helper_test_variable(cond.ne(False), 0, 1, "(x<2)")
 
   def test_bitcast_chain(self):
-    a = UOp.variable("a", 0, 3, dtype=dtypes.int32, param=True)
+    a = UOp.variable("a", 0, 3, dtype=dtypes.int32)
     self.assertIs(graph_rewrite(a.bitcast(dtypes.float32).bitcast(a.dtype), sym), a)
+    # a const of an emulated float dtype bitcasts to its storage bits and back
+    for dt, sdt, bits in ((dtypes.bfloat16, dtypes.ushort, 16256), (dtypes.fp8e4m3, dtypes.uchar, 56), (dtypes.fp8e5m2, dtypes.uchar, 60)):
+      self.assertIs(graph_rewrite(UOp.const(1.0, dt).bitcast(sdt), sym), UOp.const(bits, sdt))
+      self.assertIs(graph_rewrite(UOp.const(bits, sdt).bitcast(dt), sym), UOp.const(1.0, dt))
 
   def test_negation_in_where(self):
     cond = Variable("x", 0, 3) < 2
@@ -1032,8 +1076,8 @@ class TestSymbolic(unittest.TestCase):
   def test_where_cast(self):
     cond = Variable("s", 0, 3, dtypes.int) < 2
     a = Variable("a", 0, 3, dtypes.int)
-    self.assertIs(graph_rewrite(cond.where(a, a+1).cast(dtypes.half), sym), cond.where(a.cast(dtypes.half), (a+1).cast(dtypes.half)))
-    self.assertIs(graph_rewrite(cond.where(a, uconst(2)).cast(dtypes.half), sym), cond.where(a.cast(dtypes.half), uconst(2.0)))
+    self.assertIs(graph_rewrite(w:=cond.where(a, a+1).cast(dtypes.half), sym), w)
+    self.assertIs(graph_rewrite(w:=cond.where(a, uconst(2)).cast(dtypes.half), sym), w)
     self.assertIs(graph_rewrite(cond.where(a, UOp.invalid()).cast(dtypes.half), sym), cond.where(a.cast(dtypes.half), UOp.invalid()))
 
   def test_where_const_gate_keeps_stated_width(self):
@@ -1094,6 +1138,13 @@ class TestSymbolic(unittest.TestCase):
     expr = (x<5).where((x<5).logical_not().where(a, b)*2, c)
     self.helper_test_variable(expr, 0, 6, "(x<5).where((b*2), c)")
 
+  def test_where_closure_folding_before_gate_merge(self):
+    # the outer cond folds inside the inner gate before the two gates merge, so the merged gate carries no redundant conjunct
+    x = Variable("x", 0, 10)
+    a = Variable("a", 0, 3)
+    cond, gate = x < 5, Variable("y", 0, 10) < 7
+    check_uop_against_string(self, graph_rewrite(cond.where((cond & gate).where(a, 0), 0), symbolic), "((x<5)&(y<7)).where(a, 0)")
+
   def test_where_closure_folding_valid(self):
     # a valid gate on the same cond folds in the true branch, the live else value is kept
     x = Variable("x", 0, 10)
@@ -1118,12 +1169,6 @@ class TestSymbolic(unittest.TestCase):
     r0 = UOp.range((Variable("a", 1, 10)<5).cast(dtypes.weakint), 0)
     self.helper_test_variable(r0, 0, 0, "r0")
 
-  def test_const_reciprocal(self):
-    a = Variable("a", 1, 10, dtypes.float)
-    # TODO: bounds for reciprocal
-    # TODO: should z3 work?
-    self.helper_test_variable(2*(2*a).reciprocal(), -math.inf, math.inf, "a.reciprocal()", test_z3=False)
-
   def test_trunc_noop(self):
     a = Variable("a", 1, 10, dtypes.int)
     self.helper_test_variable(a.trunc(), 1, 10, "a", test_z3=False)
@@ -1131,8 +1176,8 @@ class TestSymbolic(unittest.TestCase):
   def test_do_math_in_int32(self):
     a = Variable("a", 1, 10, dtypes.int)
     b = Variable("b", 1, 10, dtypes.int)
-    self.assertIn((a.cast(dtypes.long)+b.cast(dtypes.long)).render(), "(long)((a+b))")
-    self.assertIn((a.cast(dtypes.long)*b.cast(dtypes.long)).render(), "(long)((a*b))")
+    self.assertIn((a.cast(dtypes.long)+b.cast(dtypes.long)).render(), "(i64)((a+b))")
+    self.assertIn((a.cast(dtypes.long)*b.cast(dtypes.long)).render(), "(i64)((a*b))")
 
   def test_nested_mod_negative_range(self):
     # (x%(k*c))%c = x%c for positive c
@@ -1223,6 +1268,13 @@ class TestSymInfer(unittest.TestCase):
     # floor: 1 % -1000 = -999, 1 // -1000 = -1
     assert sym_infer(a%b, var_vals) == -999
     assert sym_infer(a//b, var_vals) == -1
+  def test_sym_infer_truncdiv_truncmod(self):
+    a = Variable("a", -10, 10)
+    b = Variable("b", -10, 10)
+    for av, bv, div, mod in ((7, -3, -2, 1), (-7, 3, -2, -1), (7, 0, 0, 7)):
+      var_vals = {a.expr: av, b.expr: bv}
+      assert sym_infer(a.alu(Ops.TRUNCDIV, b), var_vals) == div
+      assert sym_infer(a.alu(Ops.TRUNCMOD, b), var_vals) == mod
   def test_sym_infer_with_cast(self):
     a = Variable("a", 0, 100, dtypes.int)
     assert sym_infer(a.cast(dtypes.long) + 1, {a.expr: 5}) == 6
@@ -1241,7 +1293,6 @@ class TestSymInfer(unittest.TestCase):
     assert sym_infer(c.bitcast(dtypes.int), {c.expr: 0xFFFFFFFF}) == -1
 
     assert sym_infer(UOp.const(1.5).cast(dtypes.float).bitcast(dtypes.uint), {}) == 1069547520
-
   def test_sym_infer_deeply_nested(self):
     # build an expression that exceeds Python's nested parentheses limit for eval
     # max(x, negative_const) can't be simplified when x can be negative, so nesting compounds
@@ -1452,6 +1503,7 @@ class TestGatedUopGivenValid(unittest.TestCase):
     idx = graph_rewrite(idx, pm_simplify_valid)
     # (r0-1)//3 = (r0+2)//3 - 1 (constant offset split)
     self.assertEqual(idx, (r0 < 3).where((r0 + uconst(2)) // uconst(3) + uconst(-1), UOp.invalid()))
+    self.assertEqual(graph_rewrite((r0 <= 1).where(r0//2, UOp.invalid()), pm_simplify_valid), (r0 <= 1).where(uconst(0), UOp.invalid()))
 
   def test_invalid_gate_simplifies_vectorize(self):
     r0 = Variable("r0", 0, 2)
@@ -1465,10 +1517,11 @@ class TestGatedUopGivenValid(unittest.TestCase):
     self.assertEqual(idx, (r0 < 3).where(expected_vec, UOp.invalid()))
 
 class TestRangeSplitting(unittest.TestCase):
-  def test_end_preserves_constant_backedge(self):
-    loop, backedge = UOp.loop(0), UOp.const(False)
-    end = graph_rewrite(UOp(Ops.NOOP).end(loop, backedge), sym)
-    self.assertEqual(end.src, (UOp(Ops.NOOP), loop, backedge))
+  def test_backedge_preserves_constant_condition(self):
+    loop, cond = UOp.loop(0), UOp.const(False)
+    end = graph_rewrite(UOp(Ops.NOOP).backedge(loop, cond), sym)
+    self.assertEqual(end.op, Ops.BACKEDGE)
+    self.assertEqual(end.src, (UOp(Ops.NOOP), loop, cond))
 
   def test_range_split_on_mod(self):
     # test that mark_range_mod splits RANGE(8) into RANGE(4)*2 + RANGE(2) when used with %2
@@ -1478,7 +1531,7 @@ class TestRangeSplitting(unittest.TestCase):
     buf = UOp.param(0, dtypes.int, 1)
     val = (r0 % uconst(2)).cast(dtypes.int)
     store = UOp(Ops.STORE, src=(buf.index(uconst(0)), val))
-    sink = UOp(Ops.SINK, src=(UOp(Ops.END, src=(store, r0)),))
+    sink = store.sink().end(r0).sink(arg=KernelInfo())  # nested SINK must not split the range independently of END
     # count RANGEs before
     ranges_before = len([u for u in sink.toposort() if u.op is Ops.RANGE])
     # apply the range splitting optimization
@@ -1486,6 +1539,7 @@ class TestRangeSplitting(unittest.TestCase):
     # count RANGEs after - should have more due to splitting
     ranges_after = len([u for u in sink_after.toposort() if u.op is Ops.RANGE])
     self.assertGreater(ranges_after, ranges_before, "RANGE should be split when used with mod of divisible constant")
+    self.assertFalse(sink_after.ranges, "split ranges must still be closed by END")
 
 class TestBounds(unittest.TestCase):
   def test_unrolled_arange(self):
@@ -1507,6 +1561,17 @@ class TestBounds(unittest.TestCase):
     assert (alu0+2559).vmin == 0 and (alu0+2559).vmax == 2559
     assert ((alu0+2559)//-4).vmin == -640 and ((alu0+2559)//-4).vmax == 0
     assert (((alu0+2559)//-4)*(-1)).vmin == 0 and (((alu0+2559)//-4)*(-1)).vmax == 640
+
+  def test_where_float_consts(self):
+    cond = Variable("s", 0, 3) < 2
+    w = cond.where(uconst(0.0), cond.where(uconst(1.0), uconst(3.0)))
+    self.assertEqual((w.vmin, w.vmax), (0.0, 3.0))
+    self.assertEqual((w.cast(dtypes.int).vmin, w.cast(dtypes.int).vmax), (0, 3))
+    n = cond.where(uconst(math.nan), uconst(1.0))
+    self.assertEqual((n.vmin, n.vmax), (-math.inf, math.inf))
+    # an infinite bound passes through the cast, the finite one still rounds
+    i = cond.where(uconst(-math.inf), uconst(2.7)).cast(dtypes.int)
+    self.assertEqual((i.vmin, i.vmax), (dtypes.int.min, 2))
 
 class TestFuzzFailure(unittest.TestCase):
   def test_fuzz_failure1(self):

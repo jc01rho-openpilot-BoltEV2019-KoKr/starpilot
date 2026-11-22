@@ -89,6 +89,7 @@ class MebLongStateMachine:
 
   def __init__(self, CP, CCP):
     self.CCP = CCP
+    self.CP = CP
     self.RAMP_FRAMES = 10 // CCP.ACC_CONTROL_STEP  # 100 ms
 
     self.disengage_ramp_counter = 0  # always ramp when disengaging
@@ -100,27 +101,41 @@ class MebLongStateMachine:
     self.prev_acc_hold_type = self.acc_hold_type_vals['KEINE_ANFORDERUNG']  # no request
     self.acc_status = self.acc_status_vals['ACC_OFF_HAUPTSCHALTER_AUS']  # last acc status, read by HUD msg
 
-  def _get_acc_status(self, CS, CC) -> int:
+  def _independent_axes(self):
+    from opendbc.car.volkswagen.meb_modes import qualified
+    return qualified(self.CP, marked_only=True)
+
+  def _long_active(self, CS, CC, *, independent_axes=None):
+    if independent_axes is None:
+      independent_axes = self._independent_axes()
+    return (CC.longActive and not CS.out.gasPressed and not CS.out.brakePressed
+            if independent_axes else CC.enabled)
+
+  def _get_acc_status(self, CS, CC, *, independent_axes=None) -> int:
     # stateless
     # NOTE: stock TSK and camera goes to 5 on disengage independently which we don't model, but hasn't been shown to fault without it
     if CS.out.accFaulted:
       return self.acc_status_vals['REVERSIBLER_FEHLER_IM_ACC_SYSTEM']
-    elif CC.enabled:
+    elif self._long_active(CS, CC, independent_axes=independent_axes):
       return self.acc_status_vals['ACC_OVERRIDE' if CC.cruiseControl.override else 'ACC_AKTIV_REGELT']
     elif CS.out.cruiseState.available:
       return self.acc_status_vals['ACC_STANDBY']
     else:
       return self.acc_status_vals['ACC_OFF_HAUPTSCHALTER_AUS']  # disabled
 
-  def _get_hold_type(self, CS, CC) -> int:
+  def _get_hold_type(self, CS, CC, *, independent_axes=None) -> int:
+    if independent_axes is None:
+      independent_axes = self._independent_axes()
     # warning: car is reacting to hold mechanic even with long control off
     # HALTEN -> KEINE_ANFORDERUNG causes the car to fault into park, so both branches below put a ramp in
     # between: disengaging always ramps, and while engaged a release ramps until 5 kph
-    # NOTE: this allows KEINE_ANFORDERUNG -> ANFAHREN, but we haven't observed a fault due to this yet
+    # NOTE: ANFAHREN faults TSK if the hold manager isn't holding
     # TODO: camera can send 7 on disengage at a stop which we don't fully understand yet
     stopping = CC.actuators.longControlState == LongCtrlState.stopping
-    starting = CC.actuators.longControlState == LongCtrlState.pid and CS.esp_hold_confirmation
-    long_active = CC.longActive and not CS.out.accFaulted  # catches it one frame earlier, not sure if needed
+    # HMS_Status leaves holding as soon as we send anfahren, so keep driving off until we leave standstill
+    driving_off = self.prev_acc_hold_type == self.acc_hold_type_vals['ANFAHREN'] and CS.esp_standstill
+    starting = CC.actuators.longControlState == LongCtrlState.pid and (CS.esp_hold_confirmation or driving_off)
+    long_active = (self._long_active(CS, CC, independent_axes=independent_axes) if independent_axes else CC.longActive) and not CS.out.accFaulted
 
     if not long_active:
       # Stock goes to RAMP for as long as TSK_Status is 5 usually, 100ms seems fine to mimic that behavior.
@@ -153,26 +168,30 @@ class MebLongStateMachine:
 
     return acc_hold_type
 
-  def update(self, CS, CC, accel) -> tuple[float, int, int, bool]:
-    acc_status = self._get_acc_status(CS, CC)
-    acc_hold_type = self._get_hold_type(CS, CC)
+  def update(self, CS, CC, accel) -> tuple[float, int, int, bool, bool]:
+    independent_axes = self._independent_axes()
+    acc_status = self._get_acc_status(CS, CC, independent_axes=independent_axes)
+    acc_hold_type = self._get_hold_type(CS, CC, independent_axes=independent_axes)
 
     # transition to inactive accel and jerks as soon as we enter ESP standstill
     requesting_hold = acc_hold_type == self.acc_hold_type_vals['HALTEN']
     held = requesting_hold and CS.esp_hold_confirmation
-    if not CC.enabled or held:
+    if not self._long_active(CS, CC, independent_axes=independent_axes) or held:
       accel = self.CCP.ACCEL_INACTIVE
 
     # hold requested but the car hasn't reached standstill yet
     braking_to_stop = requesting_hold and not CS.esp_hold_confirmation
 
+    # driving off from a hold
+    leaving_standstill = acc_hold_type == self.acc_hold_type_vals['ANFAHREN']
+
     self.prev_acc_hold_type = acc_hold_type
     self.acc_status = acc_status
-    return accel, acc_status, acc_hold_type, braking_to_stop
+    return accel, acc_status, acc_hold_type, braking_to_stop, leaving_standstill
 
 
 def create_acc_accel_control(packer, bus, CCP, acc_type, acc_enabled, accel, acc_status, acc_hold_type,
-                             braking_to_stop, speed, travel_assist_available):
+                             braking_to_stop, leaving_standstill, speed, travel_assist_available):
   # active longitudinal control disables one pedal driving (regen mode) while using overriding mechanism
   # error mitigation when stopping or stopped: (newer gen cars can be very sensitive)
   # - send 0 m stopping distance for cars in kind of parameterized stopping mode (stopping accel -0.2 seen for those cars)
@@ -194,7 +213,8 @@ def create_acc_accel_control(packer, bus, CCP, acc_type, acc_enabled, accel, acc
     "ACC_zul_Regelabw_oben":      0,
     "ACC_neg_Sollbeschl_Grad_02": CCP.JERK_LIMIT if accel != CCP.ACCEL_INACTIVE else 0,
     "ACC_pos_Sollbeschl_Grad_02": CCP.JERK_LIMIT if accel != CCP.ACCEL_INACTIVE else 0,
-    "ACC_Anfahren":               0,  # always zero, stock uses ACC_Anforderung_HMS
+    # NOTE: gen1 stock sets this while launching, gen2 stock never does
+    "ACC_Anfahren":               1 if leaving_standstill else 0,
     "ACC_Anhalten":               1 if braking_to_stop else 0,
     "ACC_Anhalteweg":             terminal_rollout if braking_to_stop else 20.46,
     "ACC_Anforderung_HMS":        acc_hold_type,

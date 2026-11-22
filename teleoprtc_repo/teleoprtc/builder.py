@@ -45,6 +45,7 @@ class WebRTCOfferBuilder(WebRTCStreamBuilder):
       bind_address=self.bind_address,
     )
 
+
 class WebRTCAnswerBuilder(WebRTCStreamBuilder):
   def __init__(self, offer_sdp: str, bind_address: Optional[str] = None):
     self.offer_sdp = offer_sdp

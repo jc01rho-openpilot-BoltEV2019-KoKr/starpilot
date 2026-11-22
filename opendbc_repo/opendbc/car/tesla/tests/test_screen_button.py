@@ -1,155 +1,115 @@
-from types import SimpleNamespace
-
+"""Physical harness capability and optional gesture parser are separate."""
 import pytest
-
-from cereal import custom
 from opendbc.can import CANPacker
-from opendbc.car import Bus, gen_empty_fingerprint
-from opendbc.car.tesla.carstate import ButtonType, CarState
+from opendbc.car import gen_empty_fingerprint, structs
 from opendbc.car.tesla.interface import CarInterface
-from opendbc.car.tesla.values import CANBUS, CAR, TeslaFlags, TeslaSafetyFlags
+from opendbc.car.tesla.carstate import CarState, TeslaScreenCANParser
+from opendbc.car.tesla.screen_button import apply_screen_button, screen_tap_supported, screen_qualified
+from opendbc.car.tesla.values import CAR, CANBUS, TeslaFlags
 
 
-def screen_params(candidate=CAR.TESLA_MODEL_3, enabled=True, bus=CANBUS.vehicle, length=8, alpha_long=False):
+def screen_params(candidate=CAR.TESLA_MODEL_3, *, harness=True, modern=True, long=False):
   fingerprint = gen_empty_fingerprint()
-  if bus is not None:
-    fingerprint[bus][0x3DF] = length
-  toggles = SimpleNamespace(tesla_aol_screen_tap_requested=enabled, trailer_load_kg=0.0)
-  return CarInterface.get_params(candidate, fingerprint, [], alpha_long, False, False, toggles)
+  if harness:
+    fingerprint[CANBUS.vehicle][0x3DF] = 8
+  if modern:
+    fingerprint[CANBUS.party][0x054] = 8
+  return CarInterface.get_params(candidate, fingerprint, [], long, False, False)
 
 
-@pytest.mark.parametrize("candidate", tuple(CAR))
-@pytest.mark.parametrize("enabled", (False, True))
-def test_detection_and_safety_flags_are_model_3_y_only(candidate, enabled):
-  cp = screen_params(candidate, enabled)
-  detected = candidate in (CAR.TESLA_MODEL_3, CAR.TESLA_MODEL_Y)
-  assert bool(cp.flags & TeslaFlags.HAS_VEHICLE_BUS) == detected
-  assert bool(cp.flags & TeslaFlags.AOL_SCREEN_BUTTON) == (detected and enabled)
-  assert any(config.safetyParam & TeslaSafetyFlags.AOL_SCREEN_BUTTON for config in cp.safetyConfigs) == (detected and enabled)
+@pytest.mark.parametrize('candidate', [CAR.TESLA_MODEL_3, CAR.TESLA_MODEL_Y])
+@pytest.mark.parametrize('long', [False, True])
+@pytest.mark.parametrize('brake', [False, True])
+def test_exact_factory_harness_frozen_words_and_capability_off(candidate, long, brake):
+  cp = screen_params(candidate, long=long)
+  assert screen_tap_supported(cp)
+  assert cp.flags & TeslaFlags.HAS_VEHICLE_BUS
+  assert not screen_qualified(cp)
+  apply_screen_button(cp, True, brake)
+  assert cp.safetyConfigs[0].safetyParam == 512 + 1024 * brake + long
+  assert screen_qualified(cp)
+  assert screen_tap_supported(cp)
+  assert cp.flags & TeslaFlags.AOL_SCREEN_BUTTON
+  apply_screen_button(cp, False, brake)
+  assert cp.safetyConfigs[0].safetyParam == int(long)
+  assert screen_tap_supported(cp)
+  assert not cp.flags & TeslaFlags.AOL_SCREEN_BUTTON
 
 
-@pytest.mark.parametrize(("bus", "length"), ((None, 8), (0, 8), (2, 8), (1, 7), (1, 4)))
-def test_harness_requires_correct_bus_and_length(bus, length):
-  cp = screen_params(bus=bus, length=length)
-  assert not cp.flags & (TeslaFlags.HAS_VEHICLE_BUS | TeslaFlags.AOL_SCREEN_BUTTON)
-  assert not cp.safetyConfigs[0].safetyParam & TeslaSafetyFlags.AOL_SCREEN_BUTTON
-  assert Bus.adas not in CarState.get_can_parsers(cp)
+@pytest.mark.parametrize('candidate', [CAR.TESLA_MODEL_S_PREAP, CAR.TESLA_MODEL_S_HW1, CAR.TESLA_MODEL_X])
+def test_no_legacy_or_model_x_screen_permission(candidate):
+  cp = screen_params(candidate)
+  before = cp.to_bytes()
+  assert not screen_tap_supported(cp)
+  apply_screen_button(cp, True, True)
+  assert cp.to_bytes() == before
 
 
-@pytest.mark.parametrize("alpha_long", (False, True))
-def test_gesture_does_not_select_longitudinal(alpha_long):
-  baseline = screen_params(enabled=False, alpha_long=alpha_long)
-  enabled = screen_params(alpha_long=alpha_long)
-  assert enabled.openpilotLongitudinalControl == baseline.openpilotLongitudinalControl
-  assert enabled.pcmCruise == baseline.pcmCruise
-  assert enabled.safetyConfigs[0].safetyParam == baseline.safetyConfigs[0].safetyParam | TeslaSafetyFlags.AOL_SCREEN_BUTTON
-
-
-@pytest.mark.parametrize("enabled", (False, True))
-def test_screen_brake_safety_flag_requires_the_gesture_feature(enabled):
+def test_no_harness_old_encoding_malformed_cp_or_reused_flags():
+  for harness, modern in ((False, True), (True, False)):
+    cp = screen_params(harness=harness, modern=modern)
+    assert not screen_tap_supported(cp)
+    before = cp.to_bytes()
+    apply_screen_button(cp, True, True)
+    assert cp.to_bytes() == before
+  for word in (2, 3, 16, 258, 1024, 514, 1538):
+    cp = screen_params()
+    cp.safetyConfigs[0].safetyParam = word
+    assert not screen_tap_supported(cp)
+  cp = screen_params()
   fingerprint = gen_empty_fingerprint()
-  fingerprint[1][0x3DF] = 8
-  toggles = SimpleNamespace(tesla_aol_screen_tap_requested=enabled, tesla_aol_screen_brake_disengage_requested=True,
-                           trailer_load_kg=0.0)
-  cp = CarInterface.get_params(CAR.TESLA_MODEL_3, fingerprint, [], False, False, False, toggles)
-  assert bool(cp.safetyConfigs[0].safetyParam & TeslaSafetyFlags.AOL_SCREEN_DISENGAGE_ON_BRAKE) == enabled
+  fingerprint[CANBUS.party][0x054] = 8
+  rebuilt = CarInterface._get_params(cp, CAR.TESLA_MODEL_3, fingerprint, [], False, False, False)
+  assert not rebuilt.flags & TeslaFlags.HAS_VEHICLE_BUS
 
 
-def test_parser_only_added_with_setting_and_detected_addon():
-  assert Bus.adas not in CarState.get_can_parsers(screen_params(enabled=False))
-  parser = CarState.get_can_parsers(screen_params())[Bus.adas]
-  assert parser.bus == CANBUS.vehicle
-  assert parser.message_states[0x3DF].ignore_alive
-
-
-@pytest.mark.parametrize(("counts", "expected"), (
-  ([0, 3, 3, 3, 0, 0, 3, 0], [True, False, True, False]),
-  ([3, 3, 0, 3, 0], [False, True, False]),
-  ([0, 1, 2, 4, 5, 0], []),
-))
-def test_touch_edges_and_startup_baseline(counts, expected):
+def test_literal_optional_screen_frames_baseline_edge_and_exact_dlc():
   cp = screen_params()
-  fp_cp = custom.StarPilotCarParams.new_message()
-  cs = CarState(cp, fp_cp)
-  parser = CarState.get_can_parsers(cp)[Bus.adas]
-  packer = CANPacker("tesla_model3_vehicle")
-  events = []
-  for i, count in enumerate(counts):
-    parser.update([[int((i + 1) * 0.5e9), [packer.make_can_msg("UI_status2", CANBUS.vehicle, {"UI_activeTouchPoints": count})]]])
-    events.extend(cs.update_screen_button(parser))
-  assert [event.pressed for event in events if event.type == ButtonType.lkas] == expected
-  parser.update([[60_000_000_000, []]])
+  apply_screen_button(cp, True, False)
+  cs = CarState(cp)
+  parser = TeslaScreenCANParser()
+  packer = CANPacker('tesla_model3_vehicle')
+  frame = packer.make_can_msg('UI_status2', 1, {'UI_activeTouchPoints': 3})
+  assert frame[0] == 0x3DF and len(frame[1]) == 8 and frame[1][3] == 3
+  parser.update([(1_000_000_000, [frame])])
   assert cs.update_screen_button(parser) == []
-  assert parser.can_valid
-  assert not parser.bus_timeout
-
-
-def test_multiple_touch_edges_in_one_update_are_not_lost():
-  cp = screen_params()
-  fp_cp = custom.StarPilotCarParams.new_message()
-  cs = CarState(cp, fp_cp)
-  parser = CarState.get_can_parsers(cp)[Bus.adas]
-  packer = CANPacker("tesla_model3_vehicle")
-  parser.update([[i * 10_000_000, [packer.make_can_msg("UI_status2", 1, {"UI_activeTouchPoints": count})]]
-                 for i, count in enumerate((0, 3, 0, 3, 0), 1)])
-  assert [event.pressed for event in cs.update_screen_button(parser) if event.type == ButtonType.lkas] == [True, False, True, False]
-
-
-@pytest.mark.parametrize("length", (0, 3, 4, 5, 6, 7, 9, 12))
-def test_malformed_touch_frames_do_not_produce_button_events(length):
-  cp = screen_params()
-  cs = CarState(cp, custom.StarPilotCarParams.new_message())
-  parser = CarState.get_can_parsers(cp)[Bus.adas]
-  packer = CANPacker("tesla_model3_vehicle")
-  parser.update([[1_000_000_000, [packer.make_can_msg("UI_status2", 1, {"UI_activeTouchPoints": 0})]]])
-  cs.update_screen_button(parser)
-  address, data, bus = packer.make_can_msg("UI_status2", 1, {"UI_activeTouchPoints": 3})
-  parser.update([[2_000_000_000, [(address, data[:length].ljust(length, b"\x00"), bus)]]])
+  neutral = packer.make_can_msg('UI_status2', 1, {'UI_activeTouchPoints': 0})
+  parser.update([(1_020_000_000, [neutral, frame])])
+  events = cs.update_screen_button(parser)
+  assert [(event.type, event.pressed) for event in events] == [(structs.CarState.ButtonEvent.Type.lkas, False),
+                                                              (structs.CarState.ButtonEvent.Type.lkas, True)]
+  parser.update([(1_030_000_000, [(frame[0], frame[1][:-1], 1), (frame[0], frame[1], 0)])])
   assert cs.update_screen_button(parser) == []
-  assert cs.active_touch_points == 0
-  parser.update([[3_000_000_000, [(address, data, bus)]]])
-  assert any(event.type == ButtonType.lkas and event.pressed for event in cs.update_screen_button(parser))
 
 
-def test_button_is_appended_without_changing_cruise_state():
+@pytest.mark.parametrize('screen_seen', [False, True])
+def test_optional_screen_silence_does_not_report_vehicle_bus_loss(screen_seen):
+  parser = TeslaScreenCANParser()
+  if screen_seen:
+    parser.update([(1_000_000_000, [(0x3DF, bytes(8), CANBUS.vehicle)])])
+  for stamp in (1_500_000_001, 12_000_000_000):
+    parser.update([(stamp, [(0x111, bytes(8), CANBUS.vehicle)])])
+    assert not parser.bus_timeout
+    assert parser.can_valid
+    assert parser.vl_all['UI_status2']['UI_activeTouchPoints'] == []
+
+
+@pytest.mark.parametrize('missing_bus', [None, CANBUS.party, CANBUS.autopilot_party])
+def test_screen_silence_keeps_required_vehicle_bus_timeouts(missing_bus):
   cp = screen_params()
-  fp_cp = custom.StarPilotCarParams.new_message()
-  cs = CarState(cp, fp_cp)
-  parsers = CarState.get_can_parsers(cp)
-  parsers[Bus.party].vl["DI_state"]["DI_cruiseState"] = 0
-  packer = CANPacker("tesla_model3_vehicle")
-  for count in (0, 3):
-    parsers[Bus.adas].update([[1_000_000_000, [packer.make_can_msg("UI_status2", 1, {"UI_activeTouchPoints": count})]]])
-    ret, _ = cs.update(parsers, SimpleNamespace())
-  assert any(event.type == ButtonType.lkas and event.pressed for event in ret.buttonEvents)
-  assert not ret.cruiseState.enabled
-  assert not ret.cruiseState.available
-
-
-def test_addon_stalk_cancel_events_and_held_state():
-  cp = screen_params()
-  cs = CarState(cp, custom.StarPilotCarParams.new_message())
-  parsers = CarState.get_can_parsers(cp)
-  packer = CANPacker("tesla_model3_vehicle")
-  events = []
-  for i, status in enumerate((0, 1, 1, 2, 0, 3, 4, 0, 2, 0), 1):
-    parsers[Bus.adas].update([[i * 10_000_000, [packer.make_can_msg("SCCM_rightStalk", 1, {"SCCM_rightStalkStatus": status})]]])
-    ret, fp_ret = cs.update(parsers, SimpleNamespace())
-    assert fp_ret.cancelPressed == (status in (1, 2))
-    events.extend(ret.buttonEvents)
-  assert [event.pressed for event in events if event.type == ButtonType.cancel] == [True, False, True, False]
-  parsers[Bus.adas].update([[60_000_000_000, []]])
-  assert parsers[Bus.adas].can_valid
-  assert not parsers[Bus.adas].bus_timeout
-
-
-@pytest.mark.parametrize(("bus", "length"), ((0, 3), (2, 3), (1, 2), (1, 4), (1, 8)))
-def test_wrong_bus_or_length_stalk_frames_do_not_cancel(bus, length):
-  cp = screen_params()
-  cs = CarState(cp, custom.StarPilotCarParams.new_message())
-  parser = CarState.get_can_parsers(cp)[Bus.adas]
-  packer = CANPacker("tesla_model3_vehicle")
-  address, data, _ = packer.make_can_msg("SCCM_rightStalk", bus, {"SCCM_rightStalkStatus": 1})
-  parser.update([[1_000_000_000, [(address, data[:length].ljust(length, b"\x00"), bus)]]])
-  assert cs.update_screen_button(parser) == []
-  assert not cs.screen_cancel_pressed
+  apply_screen_button(cp, True, False)
+  ci = CarInterface(cp)
+  packer = CANPacker('tesla_model3_party')
+  messages = {
+    CANBUS.party: ['DI_speed', 'DI_systemStatus', 'ESP_B', 'EPAS3S_sysStatus', 'ESP_status', 'UI_warning', 'DI_state'],
+    CANBUS.autopilot_party: ['SCCM_steeringAngleSensor', 'DAS_status', 'DAS_control', 'DAS_steeringControl', 'DAS_settings'],
+  }
+  for index in range(150):
+    frames = [packer.make_can_msg(name, bus, {}) for bus, names in messages.items()
+              if index < 50 or bus != missing_bus for name in names]
+    if index == 0:
+      frames.append((0x3DF, bytes(8), CANBUS.vehicle))
+    result = ci.update([(1_000_000_000 + index * 10_000_000, frames)])
+  assert result.canTimeout is (missing_bus is not None)
+  if missing_bus is None:
+    assert result.canValid

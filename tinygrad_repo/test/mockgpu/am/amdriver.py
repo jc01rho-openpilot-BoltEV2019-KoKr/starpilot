@@ -81,6 +81,7 @@ class AMDriver(VirtDriver):
       VirtFile("/sys/bus/pci/devices", functools.partial(DirFileDesc, child_names=[PCIBUS])),
       VirtFile(f"{p}/vendor", functools.partial(TextFileDesc, text="0x1002\n")),
       VirtFile(f"{p}/device", functools.partial(TextFileDesc, text="0x74a1\n")),
+      VirtFile(f"{p}/class", functools.partial(TextFileDesc, text="0x030000\n")),
       VirtFile(f"{p}/enable", PCIEnableFileDesc),
       VirtFile(f"{p}/config", PCIConfigFileDesc),
       VirtFile(f"{p}/resource", functools.partial(TextFileDesc, text="\n".join(_resource_lines) + "\n")),
@@ -96,6 +97,7 @@ class AMDriver(VirtDriver):
 
   def open(self, name, flags, mode, virtfile): return virtfile.fdcls(self._alloc_fd())
 
+  def progress(self): self._emulate_execute()
   def _emulate_execute(self):
     if self._executing: return
     self._executing = True

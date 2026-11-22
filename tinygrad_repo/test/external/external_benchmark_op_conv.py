@@ -9,17 +9,17 @@ from tinygrad.helpers import dedup, getenv
 from tinygrad.device import Buffer
 from tinygrad.dtype import Invalid
 
-# PYTHONPATH="." DEV=QCOM FLOAT16=1 IMAGE=2 NOLOCALS=1 taskset -c 4-7 python3 examples/openpilot/compile3.py https://github.com/commaai/openpilot/raw/720392c9a5b986981fdbed1bb8c47a6c5573a50e/selfdrive/modeld/models/driving_vision.onnx
+# PYTHONPATH="." DEV=QCOM FLOAT16=1 IMAGE=2 taskset -c 4-7 python3 examples/openpilot/compile3.py https://github.com/commaai/openpilot/raw/720392c9a5b986981fdbed1bb8c47a6c5573a50e/selfdrive/modeld/models/driving_vision.onnx
 
 def vision_conv_143():
   c0 = UOp.param(0, dtypes.half, shape=(16, 1024, 4))
   c2 = UOp.range(32, 3)
   c5 = UOp.range(128, 4)
   c8 = UOp.range(16, 2)
-  c16 = UOp.range(7, 0, AxisType.REDUCE)
+  c16 = UOp.range(7, 0)
   c17 = c8*2+c16
   c24 = ((c17<3)!=True)&(c17<35)
-  c26 = UOp.range(7, 1, AxisType.REDUCE)
+  c26 = UOp.range(7, 1)
   c27 = c2*2+c26
   c32 = ((c27<3)!=True)&(c27<67)
   c34 = UOp.param(1, dtypes.half, shape=(32, 1024, 4))
@@ -34,7 +34,6 @@ def vision_conv_143():
 
   opts = None
   # JITBEAM=2
-  # (Opt(op=OptOps.UPCAST, axis=2, arg=4), Opt(op=OptOps.NOLOCALS, axis=None, arg=None), Opt(op=OptOps.UPCAST, axis=2, arg=2), Opt(op=OptOps.UPCAST, axis=1, arg=4), Opt(op=OptOps.SWAP, axis=1, arg=2))
   return c67.sink(arg=KernelInfo(name="conv", opts_to_apply=opts))
 
 def vision_conv_153():
@@ -42,10 +41,10 @@ def vision_conv_153():
   c2 = UOp.range(16, 3)
   c5 = UOp.range(256, 4)
   c8 = UOp.range(8, 2)
-  c16 = UOp.range(7, 0, AxisType.REDUCE)
+  c16 = UOp.range(7, 0)
   c17 = c8*2+c16
   c24 = ((c17<3)!=True)&(c17<19)
-  c26 = UOp.range(7, 1, AxisType.REDUCE)
+  c26 = UOp.range(7, 1)
   c27 = c2*2+c26
   c32 = ((c27<3)!=True)&(c27<35)
   c34 = UOp.param(1, dtypes.half, shape=(16, 1024, 4))
@@ -60,17 +59,16 @@ def vision_conv_153():
 
   opts = None
   # JITBEAM=2
-  # (Opt(op=OptOps.UPCAST, axis=2, arg=4), Opt(op=OptOps.NOLOCALS, axis=None, arg=None), Opt(op=OptOps.UPCAST, axis=2, arg=2), Opt(op=OptOps.SWAP, axis=1, arg=2))
   return c67.sink(arg=KernelInfo(name="conv", opts_to_apply=opts))
 
 def dm_conv_172():
   c0 = UOp.param(0, dtypes.half, shape=(1, 240, 4))
   c2 = UOp.range(960, 4)
   c5 = UOp.param(1, dtypes.half, shape=(8, 384, 4))
-  c7 = UOp.range(32, 0, AxisType.REDUCE)
-  c10 = UOp.range(4, 1, AxisType.REDUCE)
-  c13 = UOp.range(12, 3, AxisType.REDUCE)
-  c18 = UOp.range(8, 2, AxisType.REDUCE)
+  c7 = UOp.range(32, 0)
+  c10 = UOp.range(4, 1)
+  c13 = UOp.range(12, 3)
+  c18 = UOp.range(8, 2)
   c23 = UOp.param(2, dtypes.half, shape=(240, 128, 4))
   c35 = c5.index((c7*4+c10+c13*128+c18*1536))*c23.index((c10*4+c2%4+c7*16+c2//4*512))
   c37 = UOp.param(3, dtypes.float, 960)
@@ -94,8 +92,8 @@ rt = get_runtime(Device.DEFAULT, ps)
 gs = sorted(dedup([u for u in ast.toposort() if u.op is Ops.PARAM]), key=lambda u: u.arg)
 # print(len(gs))
 # print([g.dtype for g in gs])
-bufs = [Buffer(ps.arg.device, g.max_numel(), g.dtype).ensure_allocated() for g in gs]
+bufs = [Buffer(ps.arg.device, g.max_numel() * g.dtype.itemsize).ensure_allocated() for g in gs]
 
 gsize, lsize = ps.arg.launch_dims({})
-t = rt(*[b._buf for b in bufs], global_size=gsize, local_size=lsize, vals=ps.arg.vals({}), wait=True)
+t = rt(*[b._buf for b in bufs], global_size=gsize, local_size=lsize, wait=True)
 print(f"{t*1e6:.2f} us")

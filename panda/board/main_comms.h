@@ -1,7 +1,26 @@
+#pragma once
+#include "opendbc/safety/modes/tesla_preap_pedal_transport.h"
+
+static bool panda_ignition_line(void) {
+  #ifdef PANDA_IGNORE_IGNITION_LINE
+  return false;
+  #else
+  return harness_check_ignition();
+  #endif
+}
+
+
+#ifdef STM32H7
+extern int _app_start[0x38000];
+#else
 extern int _app_start[0xc000]; // Only first 3 sectors of size 0x4000 are used
+#endif
 
 // Prototypes
 void set_safety_mode(uint16_t mode, uint16_t param);
+#if defined(ALLOW_DEBUG) && defined(PANDA_FAULT_INJECTION)
+void self_test_inject(uint8_t test);
+#endif
 bool is_car_safety_mode(uint16_t mode);
 
 static int get_health_pkt(void *dat) {
@@ -9,13 +28,20 @@ static int get_health_pkt(void *dat) {
   struct health_t * health = (struct health_t*)dat;
 
   health->uptime_pkt = uptime_cnt;
-  health->voltage_pkt = current_board->read_voltage_mV();
-  health->current_pkt = current_board->read_current_mA();
+  health->voltage_pkt = (uint16_t)MIN(current_board->read_voltage_mV(), 0xFFFFU);
+  health->current_pkt = (uint16_t)MIN(current_board->read_current_mA(), 0xFFFFU);
 
-  health->ignition_line_pkt = (uint8_t)(panda_ignition_line());
-  health->ignition_can_pkt = ignition_can;
+  health->flags_pkt = 0U;
+  health->flags_pkt |= panda_ignition_line() ? HEALTH_FLAG_IGNITION_LINE : 0U;
+  health->flags_pkt |= ignition_can ? HEALTH_FLAG_IGNITION_CAN : 0U;
+  health->flags_pkt |= controls_allowed ? HEALTH_FLAG_CONTROLS_ALLOWED : 0U;
+  health->flags_pkt |= power_save_enabled ? HEALTH_FLAG_POWER_SAVE_ENABLED : 0U;
+  health->flags_pkt |= heartbeat_lost ? HEALTH_FLAG_HEARTBEAT_LOST : 0U;
+  health->flags_pkt |= safety_rx_checks_invalid ? HEALTH_FLAG_SAFETY_RX_CHECKS_INVALID : 0U;
+  health->flags_pkt |= bootkick_reset_triggered ? HEALTH_FLAG_SOM_RESET_TRIGGERED : 0U;
+  health->flags_pkt |= heartbeat_disabled ? HEALTH_FLAG_HEARTBEAT_DISABLED : 0U;
+  health->flags_pkt |= reset_flags;
 
-  health->controls_allowed_pkt = controls_allowed;
   health->safety_tx_blocked_pkt = safety_tx_blocked;
   health->safety_rx_invalid_pkt = safety_rx_invalid;
   health->tx_buffer_overflow_pkt = tx_buffer_overflow;
@@ -24,57 +50,84 @@ static int get_health_pkt(void *dat) {
   health->safety_mode_pkt = (uint8_t)(current_safety_mode);
   health->safety_param_pkt = current_safety_param;
   health->alternative_experience_pkt = alternative_experience;
-  health->power_save_enabled_pkt = power_save_status == POWER_SAVE_STATUS_ENABLED;
-  health->heartbeat_lost_pkt = heartbeat_lost;
-  health->safety_rx_checks_invalid_pkt = safety_rx_checks_invalid;
 
-  #ifndef STM32F4
   health->spi_error_count_pkt = spi_error_count;
-  #endif
 
   health->fault_status_pkt = fault_status;
   health->faults_pkt = faults;
 
-  health->interrupt_load_pkt = interrupt_load;
+  float interrupt_load_scaled = (CLAMP(interrupt_load, 0.0f, 1.0f) * 255.0f) + 0.5f;
+  health->interrupt_load_pkt = (uint8_t)interrupt_load_scaled;
 
   health->fan_power = fan_state.power;
-  health->fan_stall_count = fan_state.total_stall_count;
 
   health->sbu1_voltage_mV = harness.sbu1_voltage_mV;
   health->sbu2_voltage_mV = harness.sbu2_voltage_mV;
 
-  health->som_reset_triggered = bootkick_reset_triggered;
+  health->sound_output_level_pkt = sound_output_level;
+
+#ifdef STM32H7
+  float temperature_encoded = (CLAMP(dts_get_temperature(), -40.0f, 214.5f) + 40.0f) + 0.5f;
+  health->temperature_pkt = (uint8_t)temperature_encoded;
+#else
+  health->temperature_pkt = 0U;
+#endif
 
   return sizeof(*health);
 }
 
-// send on serial, first byte to select the ring
+// Endpoint 2 is only used by the bootstub for flashing.
 void comms_endpoint2_write(const uint8_t *data, uint32_t len) {
-  uart_ring *ur = get_ring_by_number(data[0]);
-  if ((len != 0U) && (ur != NULL)) {
-    if ((data[0] < 2U) || (data[0] >= 4U)) {
-      for (uint32_t i = 1; i < len; i++) {
-        while (!put_char(ur, data[i])) {
-          // wait
-        }
-      }
-    }
-  }
+  UNUSED(data);
+  UNUSED(len);
 }
+
+#if defined(ALLOW_DEBUG) && defined(STM32H7) && defined(PANDA_FAULT_INJECTION)
+static void __attribute__((noinline)) stack_guard_hit(void) {
+  volatile uint32_t frame[4];
+  frame[0] = 0U;
+  UNUSED(frame);
+}
+#endif
 
 int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
   unsigned int resp_len = 0;
-  uart_ring *ur = NULL;
   uint32_t time;
 
-#ifdef DEBUG_COMMS
-  print("raw control request: "); hexdump(req, sizeof(ControlPacket_t)); print("\n");
-  print("- request "); puth(req->request); print("\n");
-  print("- param1 "); puth(req->param1); print("\n");
-  print("- param2 "); puth(req->param2); print("\n");
-#endif
-
   switch (req->request) {
+    // Fork-local frozen Dom Pre-AP calibration. Configuration is never CAN TX.
+    case 0xb7:
+      (void)tesla_preap_pedal_config_word(req->param1, req->param2,
+        !is_car_safety_mode(current_safety_mode) && !controls_allowed && !heartbeat_engaged);
+      break;
+    case 0xb8:
+      resp_len = tesla_preap_pedal_config_read(resp);
+      break;
+    // Fork-local read-only AOL capability and actual native permissions.
+    // Older firmware returns no matching packet, so the host fails closed.
+    case 0xd5:
+      {
+        #ifdef STM32H7
+        mpu_safety_open();
+        #endif
+        aol_safety_health_t status = {
+          .magic = AOL_SAFETY_PROTOCOL_MAGIC,
+          .version = AOL_SAFETY_PROTOCOL_VERSION,
+          .request_mask = aol_get_request_mask(),
+          .permission_mask = aol_get_permission_mask(),
+          .safety_mode = (uint8_t)current_safety_mode,
+          .safety_param = current_safety_param,
+          .capability_flags = (aol_policy != NULL) ? (0x1U | (aol_optional_release_capable ? 0x2U : 0U)) : 0U,
+        };
+        #ifdef STM32H7
+        mpu_safety_close();
+        #endif
+        for (unsigned int i = 0U; i < sizeof(status); i++) {
+          resp[i] = ((uint8_t *)&status)[i];
+        }
+        resp_len = sizeof(status);
+      }
+      break;
     // **** 0xa8: get microsecond timer
     case 0xa8:
       time = microsecond_timer_get();
@@ -97,6 +150,20 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       resp[0] = (fan_state.rpm & 0x00FFU);
       resp[1] = ((fan_state.rpm & 0xFF00U) >> 8U);
       resp_len = 2;
+      break;
+    // **** 0xb5: request deep sleep, wakes on CAN or SBU
+    #if defined(ALLOW_DEBUG) && defined(STM32H7)
+    case 0xb5:
+      set_safety_mode(SAFETY_SILENT, 0U);
+      set_power_save_state(true);
+      stop_mode_requested = true;
+      break;
+    #endif
+    // **** 0xb6: read debug logs
+    case 0xb6:
+      while ((resp_len < req->length) && (resp_len < USBPACKET_MAX_SIZE) && debug_get_char((char*)&resp[resp_len])) {
+        ++resp_len;
+      }
       break;
     // **** 0xc0: reset communications state
     case 0xc0:
@@ -219,21 +286,13 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case 0xdc:
       set_safety_mode(req->param1, (uint16_t)req->param2);
       break;
-    // **** 0xdd: get healthpacket and CANPacket versions
-    case 0xdd:
-#ifdef STM32H7
-      if (req->param1 == SPI_CAN_REPLAY_CAPABILITY) {
-        if (req->param2 == 1U) spi_can_replay_reset();
-        resp[0] = 1U;
-        resp_len = 1;
-        break;
-      }
-#endif
-      resp[0] = HEALTH_PACKET_VERSION;
-      resp[1] = CAN_PACKET_VERSION;
-      resp[2] = CAN_HEALTH_PACKET_VERSION;
-      resp_len = 3;
+    // **** 0xdd: get health and CAN packet versions
+    case 0xdd: {
+      uint32_t versions[2] = {HEALTH_PACKET_VERSION, CAN_PACKET_VERSION_HASH};
+      (void)memcpy(resp, (uint8_t *)versions, sizeof(versions));
+      resp_len = sizeof(versions);
       break;
+    }
     // **** 0xde: set can bitrate
     case 0xde:
       if ((req->param1 < PANDA_CAN_CNT) && is_speed_valid(req->param2, speeds, sizeof(speeds)/sizeof(speeds[0]))) {
@@ -249,20 +308,6 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
         alternative_experience = req->param1;
       }
       break;
-    // **** 0xe0: uart read
-    case 0xe0:
-      ur = get_ring_by_number(req->param1);
-      if (!ur) {
-        break;
-      }
-
-      // read
-      uint16_t req_length = MIN(req->length, USBPACKET_MAX_SIZE);
-      while ((resp_len < req_length) &&
-                         get_char(ur, (char*)&resp[resp_len])) {
-        ++resp_len;
-      }
-      break;
     // **** 0xe5: set CAN loopback (for testing)
     case 0xe5:
       can_loopback = req->param1 > 0U;
@@ -274,12 +319,93 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       break;
     // **** 0xe7: set power save state
     case 0xe7:
-      set_power_save_state(req->param1);
+      set_power_save_state(req->param1 != 0U);
       break;
     // **** 0xe8: set can-fd auto swithing mode
     case 0xe8:
-      bus_config[req->param1].canfd_auto = req->param2 > 0U;
+      if (req->param1 < PANDA_CAN_CNT) {
+        bus_config[req->param1].canfd_auto = req->param2 > 0U;
+      }
       break;
+    #if defined(ALLOW_DEBUG) && defined(PANDA_FAULT_INJECTION)
+    // **** 0xea: inject fault, for testing
+    case 0xea:
+      if (req->param1 < 32U) {
+        fault_occurred(1UL << req->param1);
+      }
+      break;
+    // **** 0xeb: inject HardFault, for testing
+    case 0xeb:
+      __builtin_trap();
+      break;
+    // **** 0xec: inject NMI, for testing
+    case 0xec:
+      SCB->ICSR = SCB_ICSR_NMIPENDSET_Msk;
+      break;
+    #ifdef STM32H7
+    // **** 0xee: write controls_allowed outside safety, for testing
+    case 0xee:
+      controls_allowed = !controls_allowed;
+      break;
+    // **** 0xf0: run the stack into its MPU guard, for testing
+    case 0xf0:
+      __set_MSP((uint32_t)&_stack_guard + 32U);
+      stack_guard_hit();
+      break;
+    // **** 0xed: inject self-test failure, for testing
+    case 0xed:
+      self_test_inject((uint8_t)req->param1);
+      break;
+    // **** 0xef: break an interrupt or the clock check, for testing
+    case 0xef:
+      if (req->param1 == 0U) {
+        nvic_disable(TICK_TIMER_IRQ);
+      } else if (req->param1 == 1U) {
+        nvic_disable(INTERRUPT_TIMER_IRQ);
+      } else if (req->param1 == 2U) {
+        // the tick handler runs without its flag
+        NVIC_SetPendingIRQ(TICK_TIMER_IRQ);
+      } else if (req->param1 == 3U) {
+        // halves the counts per LSI capture
+        register_set(&(TIM16->PSC), 1U, 0xFFFFU);
+      } else if (req->param1 == 4U) {
+        // an unused IRQ, outside nvic_enable
+        NVIC_EnableIRQ(WWDG_IRQn);
+      } else if (req->param1 == 5U) {
+        NVIC_SetPriority(WWDG_IRQn, 1U);
+      } else if (req->param1 == 6U) {
+        // the interrupt timer handler runs without its flag
+        NVIC_SetPendingIRQ(INTERRUPT_TIMER_IRQ);
+      } else {
+      }
+      break;
+    // **** 0xe9: break a read-back or cross-check, for testing
+    case 0xe9:
+      if (req->param1 == 0U) {
+        relay_readback_inject = true;
+      } else if (req->param1 == 1U) {
+        register_set(&(INTERRUPT_TIMER->PSC), (INTERRUPT_TIMER->PSC * 23U) / 20U, 0xFFFFU);
+      } else if (req->param1 == 2U) {
+        ADC3_COMMON->CCR &= ~ADC_CCR_VREFEN;
+      } else if (req->param1 == 3U) {
+        register_set(&(TICK_TIMER->PSC), (TICK_TIMER->PSC * 23U) / 20U, 0xFFFFU);
+      } else if (req->param1 == 4U) {
+        // raw writes, outside the register map
+        FDCAN1->IE ^= FDCAN_IE_TCFE;
+      } else if (req->param1 == 5U) {
+        RCC->APB1LENR |= RCC_APB1LENR_TIM13EN;
+      } else if (req->param1 == 6U) {
+        harness_adc2_offset_mV = 500U;
+      } else if (req->param1 == 7U) {
+        // a third MPU region, on unused FMC space
+        MPU->RNR = MPU_REGION_STACK_GUARD + 1U;
+        MPU->RBAR = 0x60000000U;
+        MPU->RASR = mpu_rasr(ARM_MPU_AP_FULL, ARM_MPU_REGION_SIZE_32B);
+      } else {
+      }
+      break;
+    #endif
+    #endif
     // **** 0xf1: Clear CAN ring buffer.
     case 0xf1:
       if (req->param1 == 0xFFFFU) {
@@ -296,6 +422,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case 0xf3:
       {
         heartbeat_counter = 0U;
+        heartbeat_tick_counter = 0U;
         heartbeat_lost = false;
         heartbeat_disabled = false;
         heartbeat_engaged = (req->param1 == 1U);
@@ -310,6 +437,17 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       if (!is_car_safety_mode(current_safety_mode)) {
         heartbeat_disabled = true;
       }
+      break;
+    // A separate short-lived axis request leaves the legacy heartbeat protocol
+    // unchanged for every car without the exact Honda AOL safety parameter.
+    case 0xf5:
+      #ifdef STM32H7
+      mpu_safety_open();
+      #endif
+      aol_set_host_request((uint8_t)req->param1);
+      #ifdef STM32H7
+      mpu_safety_close();
+      #endif
       break;
     // **** 0xf9: set CAN FD data bitrate
     case 0xf9:

@@ -5,6 +5,7 @@ from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, struc
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.docs_definitions import CarFootnote, CarHarness, CarDocs, CarParts, Column
 from opendbc.car.fw_query_definitions import FwQueryConfig, Request, StdQueries, p16
+from opendbc.car.honda.firmware_validation import validate_fw_match
 
 Ecu = structs.CarParams.Ecu
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
@@ -41,25 +42,60 @@ class CarControllerParams:
   STEER_GLOBAL_MIN_SPEED = 3 * CV.MPH_TO_MS
 
   def __init__(self, CP):
-    self.STEER_MAX = CP.lateralParams.torqueBP[-1]
-    # mirror of list (assuming first item is zero) for interp of signed request
-    # values and verify that both arrays begin at zero
-    assert CP.lateralParams.torqueBP[0] == 0
-    assert CP.lateralParams.torqueV[0] == 0
-    self.STEER_LOOKUP_BP = [v * -1 for v in CP.lateralParams.torqueBP][1:][::-1] + list(CP.lateralParams.torqueBP)
-    self.STEER_LOOKUP_V = [v * -1 for v in CP.lateralParams.torqueV][1:][::-1] + list(CP.lateralParams.torqueV)
+    self.BOSCH_GAS_LOOKUP_BP = list(type(self).BOSCH_GAS_LOOKUP_BP)
+    gas_max = {CAR.HONDA_CIVIC_BOSCH: 750, CAR.HONDA_ODYSSEY_5G_MMR: 2000,
+               CAR.ACURA_RDX_3G_MMR: 2000, CAR.ACURA_RDX_3G: 2200}.get(CP.carFingerprint, 1600)
+    self.BOSCH_GAS_LOOKUP_V = [0, gas_max]
+    if CP.carFingerprint == CAR.HONDA_ACCORD_11G:
+      self.BOSCH_GAS_LOOKUP_BP = [0.0, 2.0]
+    if CP.carFingerprint in (CAR.HONDA_CRV, CAR.HONDA_CRV_EU, CAR.HONDA_CRV_SA, CAR.ACURA_RDX):
+      self.STEER_MAX = 1000  # TODO: determine if there is a dead zone at the top end
+    elif CP.carFingerprint in (CAR.ACURA_ILX, CAR.HONDA_CRV_5G, CAR.ACURA_RDX_3G, CAR.ACURA_TLX_2G_MMR, CAR.ACURA_MDX_4G):
+      self.STEER_MAX = 3840  # TODO: determine if there is a dead zone at the top end (ACURA_ILX)
+    elif CP.carFingerprint in (CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CIVIC_BOSCH_DIESEL, CAR.HONDA_CIVIC_2022, CAR.HONDA_ACCORD,
+                               CAR.HONDA_CRV_HYBRID, CAR.HONDA_FIT, CAR.HONDA_FREED, CAR.HONDA_HRV, CAR.HONDA_HRV_3G,
+                               CAR.HONDA_ODYSSEY, CAR.HONDA_PILOT, CAR.HONDA_RIDGELINE, CAR.HONDA_INSIGHT, CAR.HONDA_NBOX_2G,
+                               CAR.HONDA_E, CAR.HONDA_E_ADVANCE, CAR.HONDA_PRELUDE_6G, CAR.HONDA_FIT_4G, CAR.ACURA_INTEGRA):
+      # TODO: determine if there is a dead zone at the top end (except HONDA_FREED, HONDA_HRV, HONDA_HRV_3G)
+      self.STEER_MAX = 4096
+    elif CP.carFingerprint == CAR.ACURA_ADX:
+      self.STEER_MAX = 5000
+    elif CP.carFingerprint == CAR.HONDA_ODYSSEY_TWN:
+      self.STEER_MAX = 32767  # TODO: determine if there is a dead zone at the top end
+    elif CP.carFingerprint == CAR.HONDA_PILOT_4G_MMR:
+      self.STEER_MAX = 3628
+    else:
+      # Odyssey MMR uses up to 2560 for LKA; higher RDM commands are nonlinear and also apply brake drag.
+      self.STEER_MAX = 2560
+    self.STEER_LOOKUP = [-self.STEER_MAX, 0, self.STEER_MAX]
+    self.STEER_LOOKUP_V = list(self.STEER_LOOKUP)
+    from opendbc.car.honda.parameter_profiles import apply_steering_profile
+    apply_steering_profile(self, CP)
+    if CP.flags & HondaFlags.EPS_MODIFIED:
+      if CP.carFingerprint == CAR.HONDA_CIVIC:
+        self.STEER_MAX = 8000
+        self.STEER_LOOKUP = [-8000, -2560, 0, 2560, 8000]
+        self.STEER_LOOKUP_V = [-3840, -2560, 0, 2560, 3840]
+      elif CP.carFingerprint == CAR.HONDA_CRV_5G:
+        self.STEER_MAX = 10000
+        self.STEER_LOOKUP = [-10000, -2560, 0, 2560, 10000]
+        self.STEER_LOOKUP_V = [-3840, -2560, 0, 2560, 3840]
 
 
 class HondaSafetyFlags(IntFlag):
   ALT_BRAKE = 1
   BOSCH_LONG = 2
+  AOL_BOSCH_LONG = 32
+  RDX_HIGH_GAS = 128
+  GAS_INTERCEPTOR = 32
   NIDEC_ALT = 4
   RADARLESS = 8
   BOSCH_CANFD = 16
-  GAS_INTERCEPTOR = 32
-  # Accord 11G MVL radar/camera handover messages. Keep the generic CAN-FD
-  # safety profile unchanged for other Honda CAN-FD platforms (for example CR-V 6G).
   BOSCH_CANFD_MVL = 64
+  CLASSIC_LONG_AOL = 2048  # Exact marked DEBUG classic Bosch alpha owner.
+  ALT_RADAR_AOL = 1024  # Exact marked DEBUG alpha owner; physical EPS/gear token.
+  NIDEC_PEDAL_AOL = 512  # Model1 only; distinct from model20 STOCK_TJA.
+  STOCK_TJA = 512  # Marked MDX4G AOL; EPS status1 is healthy TJA lockout.
 
 
 class HondaFlags(IntFlag):
@@ -80,10 +116,11 @@ class HondaFlags(IntFlag):
 
   HAS_ALL_DOOR_STATES = 256  # Some Hondas have all door states, others only driver door
   BOSCH_ALT_RADAR = 512
-  ALLOW_MANUAL_TRANS = 1024
+  HAS_BSM = 1024  # blind spot monitoring
   HYBRID = 2048
   BOSCH_TJA_CONTROL = 4096
   EPS_MODIFIED = 8192
+  GAS_INTERCEPTOR = 16384
 
 
 # Car button codes
@@ -97,10 +134,6 @@ class CruiseButtons:
 class CruiseSettings:
   DISTANCE = 3
   LKAS = 1
-
-
-class HondaStarPilotFlags(IntFlag):
-  HAS_CAMERA_MESSAGES = 8
 
 
 @dataclass
@@ -121,14 +154,13 @@ class HondaCarDocs(CarDocs):
     self.car_parts = CarParts.common([harness])
 
     if CP.alphaLongitudinalAvailable:
-      self.footnotes.append(Footnote.EXP_LONG)
-
+      self.footnotes.append(Footnote.HONDA_ALPHALONG)
 
 class Footnote(Enum):
   CIVIC_DIESEL = CarFootnote(
     "2019 Honda Civic 1.6L Diesel Sedan does not have ALC below 12mph.",
     Column.FSR_STEERING)
-  EXP_LONG = CarFootnote(
+  HONDA_ALPHALONG = CarFootnote(
     "Enabling longitudinal control (alpha) will disable all CMBS functionality, including AEB and FCW.",
     Column.LONGITUDINAL)
 
@@ -171,12 +203,7 @@ class CAR(Platforms):
       HondaCarDocs("Honda N-Box 2018", "All", min_steer_speed=5.),
     ],
     CarSpecs(mass=890., wheelbase=2.520, steerRatio=18.64),
-    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
-    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
-    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
-    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
-    {Bus.pt: 'acura_rdx_2020_can_generated', Bus.radar: 'honda_bosch_a_radar'},
+    {Bus.pt: 'acura_rdx_2020_can_generated'},
   )
   HONDA_ACCORD = HondaBoschPlatformConfig(
     [
@@ -186,21 +213,14 @@ class CAR(Platforms):
     ],
     # steerRatio: 11.82 is spec end-to-end
     CarSpecs(mass=3279 * CV.LB_TO_KG, wheelbase=2.83, steerRatio=16.33, centerToFrontRatio=0.39, tireStiffnessFactor=0.8467),
-    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
-    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
-    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
-    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
-    {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.radar: 'honda_bosch_a_radar'},
-    flags=HondaFlags.ALLOW_MANUAL_TRANS,
+    {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated'},
   )
   HONDA_ACCORD_11G = HondaBoschCANFDPlatformConfig(
     [
       HondaCarDocs("Honda Accord 2023-25", "All"),
-      HondaCarDocs("Honda Accord Hybrid 2023-25", "All"),
-    ],
+      HondaCarDocs("Honda Accord Hybrid 2023-26", "All"),
+  ],
     CarSpecs(mass=3477 * CV.LB_TO_KG, wheelbase=2.83, steerRatio=16.7, centerToFrontRatio=0.39),
-    {Bus.pt: 'honda_common_canfd_generated', Bus.radar: 'honda_common_canfd_generated'},
   )
   HONDA_CIVIC_BOSCH = HondaBoschPlatformConfig(
     [
@@ -210,52 +230,37 @@ class CAR(Platforms):
       HondaCarDocs("Honda Civic Hatchback 2019-21", "All", min_steer_speed=12. * CV.MPH_TO_MS),
     ],
     CarSpecs(mass=1326, wheelbase=2.7, steerRatio=15.38, centerToFrontRatio=0.4),  # steerRatio: 10.93 is end-to-end spec
-    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
-    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
-    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
-    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.radar: 'honda_bosch_a_radar'},
   )
   HONDA_CIVIC_BOSCH_DIESEL = HondaBoschPlatformConfig(
     [],  # don't show in docs
     HONDA_CIVIC_BOSCH.specs,
-    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
-    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
-    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
-    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
-    {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.radar: 'honda_bosch_a_radar'},
+    {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated'},
   )
   HONDA_CIVIC_2022 = HondaBoschPlatformConfig(
     [
-      HondaCarDocs("Honda Civic 2022-24", "All", video="https://youtu.be/ytiOT5lcp6Q"),
+      HondaCarDocs("Honda Civic 2022-26", "All", video="https://youtu.be/ytiOT5lcp6Q"),
       HondaCarDocs("Honda Civic Hybrid 2025-26", "All"),
-      HondaCarDocs("Honda Civic Hatchback 2022-24", "All", video="https://youtu.be/ytiOT5lcp6Q"),
+      HondaCarDocs("Honda Civic Hatchback 2022-26", "All", video="https://youtu.be/ytiOT5lcp6Q"),
       HondaCarDocs("Honda Civic Hatchback Hybrid (Europe only) 2023", "All"),
       # TODO: Confirm 2024
       HondaCarDocs("Honda Civic Hatchback Hybrid 2025-26", "All"),
     ],
     HONDA_CIVIC_BOSCH.specs,
     {Bus.pt: 'honda_bosch_radarless_generated'},
-    flags=HondaFlags.BOSCH_RADARLESS | HondaFlags.ALLOW_MANUAL_TRANS
+    flags=HondaFlags.BOSCH_RADARLESS
   )
   HONDA_CRV_5G = HondaBoschPlatformConfig(
     [HondaCarDocs("Honda CR-V 2017-22", min_steer_speed=15. * CV.MPH_TO_MS)],
     # steerRatio: 12.3 is spec end-to-end
     CarSpecs(mass=3410 * CV.LB_TO_KG, wheelbase=2.66, steerRatio=16.0, centerToFrontRatio=0.41, tireStiffnessFactor=0.677),
-    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
-    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
-    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
-    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
-    {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.body: 'honda_crv_ex_2017_body_generated', Bus.radar: 'honda_bosch_a_radar'},
+    {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.radar: 'honda_bosch_a_radar', Bus.body: 'honda_crv_ex_2017_body_generated'},
     flags=HondaFlags.BOSCH_ALT_BRAKE,
   )
   HONDA_CRV_6G = HondaBoschCANFDPlatformConfig(
     [
       HondaCarDocs("Honda CR-V 2023-26", "All"),
-      HondaCarDocs("Honda CR-V Hybrid 2023-25", "All"),
+      HondaCarDocs("Honda CR-V Hybrid 2023-27", "All"),
     ],
     CarSpecs(mass=1703, wheelbase=2.7, steerRatio=16.2, centerToFrontRatio=0.42),
   )
@@ -263,21 +268,16 @@ class CAR(Platforms):
     [HondaCarDocs("Honda CR-V Hybrid 2017-22", min_steer_speed=12. * CV.MPH_TO_MS)],
     # mass: mean of 4 models in kg, steerRatio: 12.3 is spec end-to-end
     CarSpecs(mass=1667, wheelbase=2.66, steerRatio=16, centerToFrontRatio=0.41, tireStiffnessFactor=0.677),
-    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
-    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
-    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
-    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
-    {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.radar: 'honda_bosch_a_radar'},
+    {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated'},
   )
   HONDA_HRV_3G = HondaBoschPlatformConfig(
-    [HondaCarDocs("Honda HR-V 2023-25", "All")],
+    [HondaCarDocs("Honda HR-V 2023-27", "All")],
     CarSpecs(mass=3125 * CV.LB_TO_KG, wheelbase=2.61, steerRatio=15.2, centerToFrontRatio=0.41, tireStiffnessFactor=0.5),
     {Bus.pt: 'honda_bosch_radarless_generated'},
     flags=HondaFlags.BOSCH_RADARLESS,
   )
   HONDA_CITY_7G = HondaBoschPlatformConfig(
-    [HondaCarDocs("Honda City (Brazil only) 2023-25", "All")],
+    [HondaCarDocs("Honda City (Brazil only) 2023", "All")],
     CarSpecs(mass=3125 * CV.LB_TO_KG, wheelbase=2.6, steerRatio=19.0, centerToFrontRatio=0.41, minSteerSpeed=23. * CV.KPH_TO_MS),
     {Bus.pt: 'honda_bosch_radarless_generated'},
     flags=HondaFlags.BOSCH_RADARLESS,
@@ -285,16 +285,11 @@ class CAR(Platforms):
   ACURA_RDX_3G = HondaBoschPlatformConfig(
     [HondaCarDocs("Acura RDX 2019-21", "All", min_steer_speed=3. * CV.MPH_TO_MS)],
     CarSpecs(mass=4068 * CV.LB_TO_KG, wheelbase=2.75, steerRatio=11.95, centerToFrontRatio=0.41, tireStiffnessFactor=0.677),  # as spec
-    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
-    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
-    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
-    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
-    {Bus.pt: 'acura_rdx_2020_can_generated', Bus.radar: 'honda_bosch_a_radar'},
+    {Bus.pt: 'acura_rdx_2020_can_generated'},
     flags=HondaFlags.BOSCH_ALT_BRAKE,
   )
   ACURA_RDX_3G_MMR = HondaBoschPlatformConfig(
-    [HondaCarDocs("Acura RDX 2022-26", "All", min_steer_speed=70. * CV.KPH_TO_MS)],
+    [HondaCarDocs("Acura RDX 2022-24", "All", min_steer_speed=70. * CV.KPH_TO_MS)],
     CarSpecs(mass=4079 * CV.LB_TO_KG, wheelbase=2.75, centerToFrontRatio=0.41, steerRatio=16.2),
     {Bus.pt: 'acura_rdx_2020_can_generated'},
     flags=HondaFlags.BOSCH_ALT_BRAKE | HondaFlags.BOSCH_ALT_RADAR,
@@ -302,50 +297,46 @@ class CAR(Platforms):
   HONDA_INSIGHT = HondaBoschPlatformConfig(
     [HondaCarDocs("Honda Insight 2019-22", "All", min_steer_speed=3. * CV.MPH_TO_MS)],
     CarSpecs(mass=2987 * CV.LB_TO_KG, wheelbase=2.7, steerRatio=15.0, centerToFrontRatio=0.39, tireStiffnessFactor=0.82),  # as spec
-    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
-    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
-    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
-    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
-    {Bus.pt: 'honda_insight_ex_2019_can_generated', Bus.radar: 'honda_bosch_a_radar'},
+    {Bus.pt: 'honda_insight_ex_2019_can_generated'},
   )
   HONDA_E = HondaBoschPlatformConfig(
     [HondaCarDocs("Honda e 2020", "All", min_steer_speed=3. * CV.MPH_TO_MS)],
     CarSpecs(mass=3338.8 * CV.LB_TO_KG, wheelbase=2.5, centerToFrontRatio=0.5, steerRatio=16.71, tireStiffnessFactor=0.82),
-    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
-    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
-    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
-    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
-    {Bus.pt: 'acura_rdx_2020_can_generated', Bus.radar: 'honda_bosch_a_radar'},
+    {Bus.pt: 'acura_rdx_2020_can_generated'},
   )
   HONDA_E_ADVANCE = HondaBoschPlatformConfig(
     [],  # don't show in docs, base trim already in docs
     CarSpecs(mass=1527, wheelbase=2.5, centerToFrontRatio=0.5, steerRatio=16.71, tireStiffnessFactor=0.82),
-    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
-    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
-    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
-    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
-    {Bus.pt: 'honda_e_advance_2020_can_generated', Bus.radar: 'honda_bosch_a_radar'},
+    {Bus.pt: 'honda_e_advance_2020_can_generated'}, # 8 bit LKAS_HUD in Advance trim
   )
   HONDA_PILOT_4G = HondaBoschCANFDPlatformConfig(
     [HondaCarDocs("Honda Pilot 2023-25", "All")],
     CarSpecs(mass=4660 * CV.LB_TO_KG, wheelbase=2.89, centerToFrontRatio=0.442, steerRatio=17.5),
   )
+  # Mid-Model Refresh has more powerful EPS
+  HONDA_PILOT_4G_MMR = HondaBoschCANFDPlatformConfig(
+    [HondaCarDocs("Honda Pilot 2026", "All")],
+    CarSpecs(mass=4528 * CV.LB_TO_KG, wheelbase=2.89, centerToFrontRatio=0.442, steerRatio=19.2),
+  )
   HONDA_PASSPORT_4G = HondaBoschCANFDPlatformConfig(
     [HondaCarDocs("Honda Passport 2026", "All")],
     CarSpecs(mass=4620 * CV.LB_TO_KG, wheelbase=2.89, centerToFrontRatio=0.442, steerRatio=18.5),
   )
+  HONDA_PRELUDE_6G = HondaBoschPlatformConfig(
+    [HondaCarDocs("Honda Prelude 2026", "All")],
+    CarSpecs(mass=1480, wheelbase=2.605, steerRatio=13.65, centerToFrontRatio=0.37),
+    {Bus.pt: 'honda_bosch_radarless_generated'},
+    flags=HondaFlags.BOSCH_RADARLESS,
+  )
   ACURA_MDX_4G = HondaBoschPlatformConfig(
     [HondaCarDocs("Acura MDX 2022-24", "All", min_steer_speed=70. * CV.KPH_TO_MS)],
-    CarSpecs(mass=4788 * CV.LB_TO_KG, wheelbase=2.89, steerRatio=15.8, centerToFrontRatio=0.428),
-    {Bus.pt: 'honda_common_canfd_generated'},
+    CarSpecs(mass=4788 * CV.LB_TO_KG, wheelbase=2.89, steerRatio=15.8, centerToFrontRatio=0.428),  # as spec
+    {Bus.pt: 'honda_common_canfd_generated'}, # not CANFD car but shares same dbc
     flags=HondaFlags.BOSCH_ALT_RADAR | HondaFlags.BOSCH_TJA_CONTROL,
   )
   # mid-model refresh
   ACURA_MDX_4G_MMR = HondaBoschCANFDPlatformConfig(
-    [HondaCarDocs("Acura MDX 2025", "All except Type S")],
+    [HondaCarDocs("Acura MDX 2025-26", "All except Type S")],
     CarSpecs(mass=4544 * CV.LB_TO_KG, wheelbase=2.89, centerToFrontRatio=0.428, steerRatio=16.2),
   )
   HONDA_ODYSSEY_5G_MMR = HondaBoschPlatformConfig(
@@ -355,29 +346,24 @@ class CAR(Platforms):
     flags=HondaFlags.BOSCH_ALT_BRAKE | HondaFlags.BOSCH_ALT_RADAR,
   )
   ACURA_TLX_2G = HondaBoschPlatformConfig(
-    [HondaCarDocs("Acura TLX 2021", "All")],
+    [HondaCarDocs("Acura TLX 2021-22", "All")],
     CarSpecs(mass=3982 * CV.LB_TO_KG, wheelbase=2.87, steerRatio=14.0, centerToFrontRatio=0.43),
     {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated'},
     flags=HondaFlags.BOSCH_ALT_RADAR,
   )
+  # mid-model refresh
   ACURA_TLX_2G_MMR = HondaBoschCANFDPlatformConfig(
-    [HondaCarDocs("Acura TLX 2024-25", "All")],
+    [HondaCarDocs("Acura TLX 2025", "All")],
     CarSpecs(mass=3990 * CV.LB_TO_KG, wheelbase=2.87, centerToFrontRatio=0.43, steerRatio=13.7),
   )
   HONDA_FIT_4G = HondaBoschPlatformConfig(
-    [
-      HondaCarDocs("Honda Fit (Taiwan) 2021", "All"),
-      HondaCarDocs("Honda Fit (Taiwan) 2024-25", "All"),
-    ],
+    [HondaCarDocs("Honda Fit (Taiwan) 2021", "All"), HondaCarDocs("Honda Fit (Taiwan) 2024-25", "All")],
     CarSpecs(mass=1229, wheelbase=2.53, steerRatio=19.7, centerToFrontRatio=0.39, minSteerSpeed=23. * CV.KPH_TO_MS),
     {Bus.pt: 'honda_bosch_radarless_generated'},
     flags=HondaFlags.BOSCH_RADARLESS,
   )
   ACURA_INTEGRA = HondaBoschPlatformConfig(
-    [
-      HondaCarDocs("Acura Integra 2023-26", "All"),
-      HondaCarDocs("Honda Prelude 2026", "All"),
-    ],
+    [HondaCarDocs("Acura Integra 2023-26", "All")],
     CarSpecs(mass=3338.8 * CV.LB_TO_KG, wheelbase=2.5, centerToFrontRatio=0.5, steerRatio=16.71, tireStiffnessFactor=0.82),
     {Bus.pt: 'honda_bosch_radarless_generated'},
     flags=HondaFlags.BOSCH_RADARLESS,
@@ -450,7 +436,7 @@ class CAR(Platforms):
   HONDA_ODYSSEY_TWN = HondaNidecPlatformConfig(
     [
       HondaCarDocs("Honda Odyssey (Taiwan) 2018-19"),
-      HondaCarDocs("Honda Odyssey (Singapore) 2021"),
+      HondaCarDocs("Honda Odyssey (Singapore) 2021")
     ],
     CarSpecs(mass=1865, wheelbase=2.9, steerRatio=14.35, centerToFrontRatio=0.44, tireStiffnessFactor=0.82),
     radar_dbc_dict('honda_odyssey_twn_2018_generated'),
@@ -472,7 +458,7 @@ class CAR(Platforms):
     flags=HondaFlags.NIDEC_ALT_SCM_MESSAGES | HondaFlags.HAS_ALL_DOOR_STATES,
   )
   HONDA_RIDGELINE = HondaNidecPlatformConfig(
-    [HondaCarDocs("Honda Ridgeline 2017-25", min_steer_speed=12. * CV.MPH_TO_MS)],
+    [HondaCarDocs("Honda Ridgeline 2017-26", min_steer_speed=12. * CV.MPH_TO_MS)],
     CarSpecs(mass=4515 * CV.LB_TO_KG, wheelbase=3.18, centerToFrontRatio=0.41, steerRatio=15.59, tireStiffnessFactor=0.444),  # as spec
     radar_dbc_dict('acura_ilx_2016_can_generated'),
     flags=HondaFlags.NIDEC_ALT_SCM_MESSAGES | HondaFlags.HAS_ALL_DOOR_STATES,
@@ -484,67 +470,41 @@ class CAR(Platforms):
     flags=HondaFlags.HAS_ALL_DOOR_STATES
   )
   HONDA_ACCORD_9G = HondaNidecPlatformConfig(
-    [
-      HondaCarDocs("Honda Accord 2016-17"),
-      HondaCarDocs("Honda Accord Hybrid 2017", "All"),
-    ],
+    [HondaCarDocs("Honda Accord 2016-17"), HondaCarDocs("Honda Accord Hybrid 2017", "All")],
     CarSpecs(mass=3343 * CV.LB_TO_KG, wheelbase=2.78, steerRatio=17.5, centerToFrontRatio=0.37),
     radar_dbc_dict('honda_accord_2017_can_ext_generated'),
     flags=HondaFlags.NIDEC_ALT_SCM_MESSAGES | HondaFlags.HAS_ALL_DOOR_STATES,
   )
   ACURA_MDX_3G = HondaNidecPlatformConfig(
-    [
-      HondaCarDocs("Acura MDX 2014-16", "Advance Package"),
-      HondaCarDocs("Acura MDX 2017-19", "All"),
-      HondaCarDocs("Acura MDX Hybrid 2017-19", "All"),
-    ],
+    [HondaCarDocs("Acura MDX 2014-16", "Advance Package"), HondaCarDocs("Acura MDX 2017-19", "All"),
+     HondaCarDocs("Acura MDX Hybrid 2017-19", "All")],
     CarSpecs(mass=4215 * CV.LB_TO_KG, wheelbase=2.82, steerRatio=16.8, centerToFrontRatio=0.428),
     radar_dbc_dict('acura_mdx_2017_can_ext_generated'),
     flags=HondaFlags.NIDEC_ALT_SCM_MESSAGES,
   )
   ACURA_MDX_3G_MMR = HondaNidecPlatformConfig(
-    [
-      HondaCarDocs("Acura MDX 2020", "All"),
-      HondaCarDocs("Acura MDX Hybrid 2020", "All"),
-    ],
+    [HondaCarDocs("Acura MDX 2020", "All"), HondaCarDocs("Acura MDX Hybrid 2020", "All")],
     CarSpecs(mass=4215 * CV.LB_TO_KG, wheelbase=2.82, steerRatio=16.8, centerToFrontRatio=0.428),
     radar_dbc_dict('acura_ilx_2016_can_generated'),
     flags=HondaFlags.NIDEC_ALT_SCM_MESSAGES,
   )
   ACURA_TLX_1G = HondaNidecPlatformConfig(
-    [
-      HondaCarDocs("Acura TLX 2015-17", "Advance Package"),
-      HondaCarDocs("Acura TLX 2018-20", "All"),
-    ],
+    [HondaCarDocs("Acura TLX 2015-17", "Advance Package"), HondaCarDocs("Acura TLX 2018-20", "All")],
     CarSpecs(mass=3680 * CV.LB_TO_KG, wheelbase=2.78, steerRatio=17.0, centerToFrontRatio=0.40, tireStiffnessFactor=0.18),
     radar_dbc_dict('acura_mdx_2017_can_ext_generated'),
     flags=HondaFlags.NIDEC_ALT_SCM_MESSAGES | HondaFlags.HAS_ALL_DOOR_STATES,
   )
 
 
-HONDA_NIDEC_ALT_PCM_ACCEL = CAR.with_flags(HondaFlags.NIDEC_ALT_PCM_ACCEL)
-HONDA_NIDEC_ALT_SCM_MESSAGES = CAR.with_flags(HondaFlags.NIDEC_ALT_SCM_MESSAGES)
-HONDA_BOSCH = CAR.with_flags(HondaFlags.BOSCH)
-HONDA_BOSCH_RADARLESS = CAR.with_flags(HondaFlags.BOSCH_RADARLESS)
-HONDA_BOSCH_CANFD = CAR.with_flags(HondaFlags.BOSCH_CANFD)
-HONDA_BOSCH_ALT_RADAR = CAR.with_flags(HondaFlags.BOSCH_ALT_RADAR)
-# Plain bosch_a harness: not CANFD, not radarless, not alt-radar. These platforms have a firmware-correct
-# RadarInterface (16-slot Bosch-A object bank, RX-only, see radar_interface.py) available behind
-# HondaBoschARadar. This describes hardware compatibility only; it is deliberately separate from the
-# verified set below so a newly supported model cannot start using unvalidated radar data by accident.
-HONDA_BOSCH_A = HONDA_BOSCH - HONDA_BOSCH_RADARLESS - HONDA_BOSCH_CANFD - HONDA_BOSCH_ALT_RADAR
-HONDA_BOSCH_A_RADAR_VERIFIED = frozenset({CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CRV_5G})
-HONDA_BOSCH_TJA_CONTROL = CAR.with_flags(HondaFlags.BOSCH_TJA_CONTROL)
-HONDA_CAMERA_MESSAGE_CARS = {
-  CAR.HONDA_ACCORD,
-  CAR.HONDA_CIVIC_BOSCH,
-  CAR.HONDA_CIVIC_2022,
-  CAR.HONDA_CRV_5G,
-  CAR.HONDA_CRV_HYBRID,
-  CAR.HONDA_HRV_3G,
-  CAR.HONDA_INSIGHT,
+MODIFIED_EPS_FW = {
+  CAR.HONDA_CLARITY: (b'39990-TRW,A020\x00\x00',),
+  CAR.HONDA_CIVIC: (b'39990-TBA,A030\x00\x00',),
+  CAR.HONDA_ACCORD: (b'39990-TVA,A150\x00\x00',),
+  CAR.HONDA_CIVIC_BOSCH: (b'39990-TGG,A020\x00\x00', b'39990-TGG,A120\x00\x00'),
+  CAR.HONDA_CRV_5G: (b'39990-TLA,A040\x00\x00',),
 }
 
+MANUAL_TRANS_CARS = frozenset((CAR.HONDA_ACCORD, CAR.HONDA_CIVIC_2022))
 
 DBC = CAR.create_dbc_map()
 
@@ -553,18 +513,18 @@ STEER_THRESHOLD = {
   # default is 1200, overrides go here
   CAR.ACURA_RDX: 400,
   CAR.HONDA_CRV_EU: 400,
+  CAR.HONDA_ACCORD_9G: 30,
+  CAR.ACURA_MDX_3G: 30,
+  CAR.ACURA_MDX_3G_MMR: 30,
+  CAR.ACURA_TLX_1G: 30,
   CAR.HONDA_ACCORD_11G: 600,
   CAR.HONDA_PILOT_4G: 600,
+  CAR.HONDA_PILOT_4G_MMR: 600,
   CAR.HONDA_PASSPORT_4G: 600,
   CAR.ACURA_MDX_4G_MMR: 600,
   CAR.HONDA_CRV_6G: 600,
   CAR.HONDA_CITY_7G: 600,
   CAR.HONDA_NBOX_2G: 600,
-  CAR.HONDA_ODYSSEY_5G_MMR: 600,
-  CAR.HONDA_ACCORD_9G: 30,
-  CAR.ACURA_MDX_3G: 30,
-  CAR.ACURA_MDX_3G_MMR: 30,
-  CAR.ACURA_TLX_1G: 30,
 }
 
 
@@ -575,6 +535,8 @@ HONDA_ALT_VERSION_RESPONSE = bytes([uds.SERVICE_TYPE.READ_DATA_BY_IDENTIFIER + 0
 
 
 FW_QUERY_CONFIG = FwQueryConfig(
+  validate_fw_match=validate_fw_match,
+  fw_version_regex=br"[A-Z0-9]{5}-[A-Z0-9]{3}(-|,)[A-Z0-9]{4}(\x00){2}$",
   requests=[
     # Currently used to fingerprint
     Request(
@@ -609,11 +571,11 @@ FW_QUERY_CONFIG = FwQueryConfig(
   # Note that we still attempt to match with them when they are present
   # This is or'd with (ALL_ECUS - ESSENTIAL_ECUS) from fw_versions.py
   non_essential_ecus={
-    Ecu.eps: [CAR.ACURA_RDX_3G, CAR.HONDA_ACCORD, CAR.HONDA_E, CAR.HONDA_E_ADVANCE, CAR.ACURA_MDX_4G, CAR.HONDA_CRV_SA,
-              CAR.ACURA_MDX_3G, CAR.HONDA_ACCORD_9G, *HONDA_BOSCH_ALT_RADAR, *HONDA_BOSCH_RADARLESS, *HONDA_BOSCH_CANFD],
-    Ecu.vsa: [CAR.ACURA_RDX_3G, CAR.HONDA_ACCORD, CAR.HONDA_CIVIC, CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CRV_5G, CAR.HONDA_CRV_HYBRID,
-              CAR.HONDA_E, CAR.HONDA_E_ADVANCE, CAR.HONDA_INSIGHT, CAR.HONDA_NBOX_2G, CAR.ACURA_MDX_4G, CAR.HONDA_ACCORD_9G,
-              *HONDA_BOSCH_ALT_RADAR, *HONDA_BOSCH_RADARLESS, *HONDA_BOSCH_CANFD],
+    Ecu.eps: [CAR.ACURA_RDX_3G, CAR.HONDA_ACCORD, CAR.HONDA_E, CAR.HONDA_E_ADVANCE, CAR.ACURA_MDX_4G,
+              *[c for c in CAR if c.config.flags & (HondaFlags.BOSCH_ALT_RADAR | HondaFlags.BOSCH_RADARLESS | HondaFlags.BOSCH_CANFD)]],
+    Ecu.vsa: [CAR.ACURA_RDX_3G, CAR.HONDA_ACCORD, CAR.HONDA_CIVIC, CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CRV_5G, CAR.HONDA_CRV_HYBRID, CAR.HONDA_E,
+              CAR.HONDA_E_ADVANCE, CAR.HONDA_INSIGHT, CAR.HONDA_NBOX_2G, CAR.ACURA_MDX_4G,
+              *[c for c in CAR if c.config.flags & (HondaFlags.BOSCH_ALT_RADAR | HondaFlags.BOSCH_RADARLESS | HondaFlags.BOSCH_CANFD)]],
   },
   extra_ecus=[
     (Ecu.combinationMeter, 0x18da60f1, None),

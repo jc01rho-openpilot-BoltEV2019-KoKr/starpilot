@@ -1,10 +1,11 @@
-"""Test infrastructure for hardware-validated RDNA3 emulator tests.
+"""Test infrastructure for hardware-validated RDNA emulator tests.
 
 Uses run_asm() with memory output, so tests can run on both emulator and real hardware.
 Set USE_HW=1 to run on both emulator and hardware, comparing results.
 """
-import ctypes, math, os, struct
+import ctypes, math, os, struct, unittest
 from tinygrad.runtime.autogen.amd.rdna3.ins import *
+import tinygrad.runtime.autogen.amd.rdna4.ins as r4
 
 from test.mockgpu.amd.emu import run_asm
 from tinygrad.renderer.amd.dsl import NULL, SCC, VCC_LO, VCC_HI, EXEC_LO, EXEC_HI, M0
@@ -76,6 +77,45 @@ def i642f(i: int) -> float: return struct.unpack('<d', struct.pack('<Q', i))[0]
 def assemble(instructions: list) -> bytes:
   return b''.join(inst.to_bytes() for inst in instructions)
 
+def run_rdna4(instructions: list, out_reg: int = 2) -> list[int]:
+  instructions = [
+    r4.s_mov_b32(r4.s[80], r4.s[0]),
+    r4.s_mov_b32(r4.s[81], r4.s[1]),
+    r4.v_mov_b32_e32(r4.v[255], r4.v[0]),
+    *instructions,
+    r4.s_load_b64(r4.s[92:93], r4.s[80:81], soffset=NULL),
+    r4.s_wait_kmcnt(simm16=0),
+    r4.v_lshlrev_b32_e32(r4.v[240], 2, r4.v[255]),
+    r4.v_mov_b32_e32(r4.v[241], 0),
+    r4.global_store_b32(vaddr=r4.v[240:241], saddr=r4.s[92:93], vsrc=r4.v[out_reg]),
+    r4.s_endpgm(),
+  ]
+  out_buf = (ctypes.c_uint32 * WAVE_SIZE)()
+  args = (ctypes.c_uint64 * 1)(ctypes.addressof(out_buf))
+  code = assemble(instructions)
+  kernel_buf = (ctypes.c_char * len(code)).from_buffer_copy(code)
+  result = run_asm(ctypes.addressof(kernel_buf), len(code), 1, 1, 1, WAVE_SIZE, 1, 1, ctypes.addressof(args), arch='rdna4')
+  assert result == 0, f"run_asm failed with {result}"
+  emu = list(out_buf)
+  if not USE_HW: return emu
+
+  from tinygrad.device import Device, Buffer
+  from tinygrad.dtype import dtypes
+  from tinygrad.uop.ops import UOp, Ops, KernelInfo
+  from tinygrad.engine.realize import run_linear
+
+  dev = Device['AMD']
+  if not dev.renderer.target.arch.startswith('gfx12'): raise unittest.SkipTest('requires RDNA4 hardware')
+  out_gpu = Buffer(dev.device, WAVE_SIZE * 4).ensure_allocated()
+  sink = UOp.sink(UOp.param(0, dtypes.uint32, (WAVE_SIZE,)), UOp.special(WAVE_SIZE, 'lidx0'), arg=KernelInfo('test'))
+  prg = UOp(Ops.PROGRAM, src=(sink, UOp(Ops.LINEAR, src=tuple(UOp(Ops.INS, arg=(x, dtypes.void)) for x in instructions))))
+  run_linear(UOp(Ops.LINEAR, src=(prg.call(UOp.from_buffer(out_gpu, dtypes.uint32)),)), wait=True)
+  hw = list(out_gpu.as_memoryview().cast('I'))
+  if emu != hw:
+    diffs = [f"lane {i}: emu=0x{e:08x} hw=0x{h:08x}" for i, (e, h) in enumerate(zip(emu, hw)) if e != h]
+    raise AssertionError("Emulator vs Hardware mismatch:\n" + '\n'.join(diffs[:16]))
+  return hw
+
 # Simple WaveState class for test output parsing (mirrors test/mockgpu/amd/emu.py interface for tests)
 class WaveState:
   def __init__(self, n_lanes: int = 32):
@@ -96,6 +136,7 @@ def get_prologue_epilogue(n_lanes: int) -> tuple[list, list]:
   for i in range(N_SGPRS):
     prologue.append(s_mov_b32(s[i], 0))
   prologue.append(s_mov_b32(VCC_LO, 0))
+  prologue.append(s_cmp_eq_u32(0, 1))  # initialize SCC independently of the emulator/runtime's entry state
 
   epilogue = [
     s_mov_b32(s[90], VCC_LO),
@@ -170,67 +211,24 @@ def run_program_emu(instructions: list, n_lanes: int = 1) -> WaveState:
 
 def run_program_hw(instructions: list, n_lanes: int = 1) -> WaveState:
   """Run instructions on real AMD hardware via HIPCompiler and the AMD runtime."""
-  from tinygrad.device import Device, TinyELF
-  from tinygrad.runtime.support.compiler_amd import HIPCompiler
-  from tinygrad.helpers import Target, flat_mv
+  from tinygrad.device import Device, Buffer
+  from tinygrad.dtype import dtypes, AddrSpace
+  from tinygrad.uop.ops import UOp, Ops, KernelInfo
+  from tinygrad.engine.realize import run_linear
 
   dev = Device["AMD"]
-  compiler = HIPCompiler(dev.arch)  # type: ignore[attr-defined]
-
   prologue, epilogue = get_prologue_epilogue(n_lanes)
-  code = assemble(prologue + instructions + epilogue)
-
-  byte_str = ', '.join(f'0x{b:02x}' for b in code)
-  asm_src = f""".text
-.globl test
-.p2align 8
-.type test,@function
-test:
-.byte {byte_str}
-
-.rodata
-.p2align 6
-.amdhsa_kernel test
-  .amdhsa_next_free_vgpr 256
-  .amdhsa_next_free_sgpr 96
-  .amdhsa_wavefront_size32 1
-  .amdhsa_user_sgpr_kernarg_segment_ptr 1
-  .amdhsa_kernarg_size 8
-  .amdhsa_group_segment_fixed_size 65536
-  .amdhsa_private_segment_fixed_size 65536
-  .amdhsa_enable_private_segment 1
-.end_amdhsa_kernel
-
-.amdgpu_metadata
----
-amdhsa.version:
-  - 1
-  - 0
-amdhsa.kernels:
-  - .name: test
-    .symbol: test.kd
-    .kernarg_segment_size: 8
-    .group_segment_fixed_size: 65536
-    .private_segment_fixed_size: 65536
-    .kernarg_segment_align: 8
-    .wavefront_size: 32
-    .sgpr_count: 96
-    .vgpr_count: 256
-    .max_flat_workgroup_size: 1024
-...
-.end_amdgpu_metadata
-"""
-
-  lib = compiler.compile(asm_src)
-  prg = dev.runtime(TinyELF(lib, "test", Target("AMD", arch=dev.arch), ()))
-
   buf_sz = _out_bytes(n_lanes)
-  out_gpu = dev.allocator.alloc(buf_sz)
-  assert out_gpu.va_addr % 16 == 0, f"buffer not 16-byte aligned: 0x{out_gpu.va_addr:x}"
-  prg(out_gpu, global_size=(1, 1, 1), local_size=(n_lanes, 1, 1), wait=True)
+  out_gpu = Buffer(dev.device, buf_sz, preallocate=True)
+  assert out_gpu._buf % 16 == 0, f"buffer not 16-byte aligned: 0x{out_gpu._buf:x}"
+  lds = UOp.placeholder((65536,), dtypes.uint8, 0, AddrSpace.LOCAL)
+  scratch = UOp.alloc((512,), dtypes.uint8, name="scratch", addrspace=AddrSpace.GLOBAL)
+  sink = UOp.sink(UOp.param(0, dtypes.uint32, (buf_sz // 4,)), UOp.special(n_lanes, "lidx0"), lds, scratch, arg=KernelInfo("test"))
+  body = UOp(Ops.LINEAR, src=tuple(UOp(Ops.INS, arg=(x, dtypes.void)) for x in prologue + instructions + epilogue))
+  prg = UOp(Ops.PROGRAM, src=(sink, body))
+  run_linear(UOp(Ops.LINEAR, src=(prg.call(UOp.from_buffer(out_gpu, dtypes.uint32)),)), wait=True)
 
-  out_buf = bytearray(buf_sz)
-  dev.allocator._copyout(flat_mv(memoryview(out_buf)), out_gpu)
+  out_buf = out_gpu.as_memoryview()
 
   return parse_output(bytes(out_buf), n_lanes)
 

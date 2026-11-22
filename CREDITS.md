@@ -1,162 +1,51 @@
-# Credits and Code Provenance
+# Source provenance
 
-StarPilot stands on work by comma.ai, FrogPilot, and many other open-source contributors. This
-document records provenance that is not adequately represented by StarPilot's historical commit
-authorship. It is not an assertion that an upstream contributor endorses, maintains, or is
-responsible for StarPilot's adaptation.
+## Phone companions and Galaxy contributions
+
+[dirwin31](https://github.com/dirwin31/StarPilotAndroid) developed the Android companion and contributed StarPort setup, wireless adapter compatibility, connectivity fixes and diagnostics ([PR #273](https://github.com/StarPilotHQ/StarPilot/pull/273)). [natehuby76](https://github.com/natehuby76/StarPilotBT) developed the iOS companion and contributed Galaxy Bluetooth pairing, local Wi-Fi discovery and UI fixes, including the C4 menu reset ([PR #246](https://github.com/StarPilotHQ/StarPilot/pull/246)). Their work helped make phone integration and everyday use more reliable. The apps are maintained separately under their respective licenses.
+
+## Jetlink external inference
+
+The comma-side Jetlink client and USB transport in `jetlink_repo` are by Zeph Leggett and the [Jetlink contributors](https://github.com/zoompilot/jetlink). They are vendored from revision `9cfde98eec1d7cc714d800504944cf1a3944513d` under the MIT license, retained in [jetlink_repo/LICENSE](jetlink_repo/LICENSE). StarPilot's adapter (`openpilot/starpilot/models/jetlink_adapter.py`) builds on Jetlink's openpilot layer and owns its param names, Always On Lateral rule, model runner reset, settings and alerts. Companion applications and inference servers remain distributed by Jetlink.
+
+## MRR35 Hyundai angle and radar
+
+The four MRR35 angle platforms (2026 Genesis GV70, second-generation electrified GV70, 2025 Genesis GV80, and Hyundai Ioniq 9) adapt Hyundai CAN FD angle-control design and the MRR35 radar DBC generator from the locally frozen StarPilot source snapshot `678af783`. That snapshot traces its Hyundai extension work to sunnypilot/opendbc `hkg-angle-steering-2025` at `cc4b08625a98e94b318cab15e45e05dad58042bd`; its historical import revision is not established. The relevant upstream contributors include Haibin (Jason) Wen, Shane Smiskol, and DevTekVE. Their authorship remains attributable to the upstream history; they do not maintain or endorse this port.
+
+The copied MRR35 generator source and DBC definition are at `opendbc_repo/opendbc/dbc/generator/hyundai/hyundai_mrr35_radar.py` and `.dbc`. The host angle adapter and native safety profile are adaptations, not copies of a generic DBC or of unrelated vehicle support. Applicable upstream notices are preserved in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Ford support adapted from BluePilot
 
-StarPilot commit [`3f6ccd104e826643887930b41ad3b4086b833d32`](https://github.com/firestar5683/StarPilot/commit/3f6ccd104e826643887930b41ad3b4086b833d32)
-introduced a substantial adaptation of Ford work from BluePilot's `bp-7.0` branch. That commit's
-message thanked the project, but it did not record a source revision or preserve the upstream
-authors in the code. This file corrects that provenance gap without rewriting published history.
+Ford lateral control vendors [BluePilot lateral](https://github.com/BluePilotDev/bluepilot-lateral) v0.2.1 (`2b9dc6cc784faac47a1885d0bda0561f7b76f74d`), developed by Alan Polk (`alan-polk`) and the BluePilot contributors. Alan provided the [StarPilot integration in PR #269](https://github.com/StarPilotHQ/StarPilot/pull/269); his commits and authorship are retained. BluePilot maintains the library and its integration; StarPilot keeps its settings, AOL policy, packaging and integration tests separate. Complete contributor and license notices remain in [the library credits](opendbc_repo/opendbc/bluepilot_lateral/CREDITS.md) and [license](opendbc_repo/opendbc/bluepilot_lateral/LICENSE).
 
-The exact checkout used for the original port was not recorded and therefore cannot now be proven.
-At the time of the import,
-[`3a838bba6d3d280592c2fd0496b3378977ae25f1`](https://github.com/BluePilotDev/bluepilot/commit/3a838bba6d3d280592c2fd0496b3378977ae25f1),
-was the tip of the public `bp-7.0` line. Some imported platform lines instead trace to the
-contemporaneous development line at
-[`59e3f2f16a38ff0c16d173b0ccddded23aaa1cd8`](https://github.com/BluePilotDev/bluepilot/commit/59e3f2f16a38ff0c16d173b0ccddded23aaa1cd8).
-Those histories were merged the next day as
-[`e1d051d7ba270261b4455068bd68f1a58db15a4a`](https://github.com/BluePilotDev/bluepilot/commit/e1d051d7ba270261b4455068bd68f1a58db15a4a),
-which is the complete `bp-7.0` snapshot used for this audit. This reconstruction is deliberately
-recorded as a range rather than pretending that the missing original source SHA can be recovered.
+The Ford CAN FD camera-lead radar filtering is adapted from StarPilot `2efe6017bfe14cee4807833e05f9a7f6ba255cdb`. Its lineage includes BluePilot's `bp-7.0` Ford work, principally by Alan Polk, with contributions from John Christman, Jacob Neulight, tonesto7, Haibin Wen and other sunnypilot and BluePilot contributors. The reference snapshot is [`e1d051d7ba270261b4455068bd68f1a58db15a4a`](https://github.com/BluePilotDev/bluepilot/commit/e1d051d7ba270261b4455068bd68f1a58db15a4a); the exact checkout used for the earlier StarPilot import was not recorded.
 
-### Upstream authors and work
+The radar interface preserves that attribution while adapting to the current interfaces. Upstream contributors do not maintain or endorse this adaptation. Applicable notices are retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-- **Alan Polk (`alan-polk`)** is the principal upstream author of the Ford curvature controller,
-  angle-primary controller, manual-turn behavior, controller integration, and related panda safety
-  work. Important lineage commits include
-  [`db2bdff05`](https://github.com/BluePilotDev/bluepilot/commit/db2bdff05df103d71df62f45c2a3cb5211aba6e6),
-  [`d0aac605f`](https://github.com/BluePilotDev/bluepilot/commit/d0aac605f99d37e9da205e419f7989c1e9eaa386),
-  [`8f8d6d15f`](https://github.com/BluePilotDev/bluepilot/commit/8f8d6d15f0a590f42b78de964ffb0d0af7f5d63d), and
-  [`97867c1eb`](https://github.com/BluePilotDev/bluepilot/commit/97867c1eb57b7472f6fc3de62f0fef576e5a5497).
-- **John Christman** contributed `bp-7.0` lateral integration, platform data, and the upstream
-  anti-stall work referenced by StarPilot's recovery logic, including
-  [`ec0ab181c`](https://github.com/BluePilotDev/bluepilot/commit/ec0ab181c344dccaae053e763bc6ce269551a2d8) and
-  [`9012f7666`](https://github.com/BluePilotDev/bluepilot/commit/9012f76666a5c90764fcaec40832b9a607488c27),
-  with additional vehicle data in
-  [`f0c6bf51f`](https://github.com/BluePilotDev/bluepilot/commit/f0c6bf51f19bb7b74226ead622cabef56e602125).
-- **Jacob Neulight** contributed measured shadow-curvature and steering-pinion curvature/safety
-  work, including
-  [`699c17d9f`](https://github.com/BluePilotDev/bluepilot/commit/699c17d9fde62c690eed9d68eed7d731744d5137) and
-  [`26030f3cb`](https://github.com/BluePilotDev/bluepilot/commit/26030f3cb56a169ab0cf2b5a5ad15fa9af391b10).
-- **Nathan Ingraham** contributed the separate high-speed damping adjustment in
-  [`1db52bc79`](https://github.com/BluePilotDev/bluepilot/commit/1db52bc79e607ddb00214254dd4d732615e27fe4) and
-  [`3610e3f18`](https://github.com/BluePilotDev/bluepilot/commit/3610e3f18a0ad37d793d7ada61dbc739ab1077a3).
-- **Praeuner** contributed the damping-range update in
-  [`b600a8fdb`](https://github.com/BluePilotDev/bluepilot/commit/b600a8fdb985a2219fad4006ce9444b7071b52da).
-- **tonesto7** contributed to the Ford integration and CAN-message history represented in the
-  imported branch, including
-  [`7f9212f7f`](https://github.com/BluePilotDev/bluepilot/commit/7f9212f7f8dc22c4a0a22443158554f4d3652a3c).
-- **Haibin Wen and sunnypilot contributors** are named in file-level notices on upstream Ford
-  extension files that informed StarPilot's vehicle-state and lateral-limit integration. Their
-  published copyright and license notices are retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-- **Dirk Petersen, Alex Troxel, Kacer Aleks, and other BluePilot contributors** supplied Ford
-  fingerprints, VIN/platform data, tests, and integration changes that are represented in the
-  imported vehicle-support set. Examples include
-  [`3706b5645`](https://github.com/BluePilotDev/bluepilot/commit/3706b5645c270ad83cfecc3e92618924f0963166),
-  [`694bdbb7a`](https://github.com/BluePilotDev/bluepilot/commit/694bdbb7a9cc70af04d0118e891df96e47ded7c7), and
-  [`a02c06ef3`](https://github.com/BluePilotDev/bluepilot/commit/a02c06ef37acff518a511ba0a88a4dc65f506353).
+## RAV4 Continental ARS510 receiver
 
-This list identifies contributors whose work was found during the repository and blame audit. The
-BluePilot repository and its Git history remain the authoritative record and may identify further
-contributors.
+The optional ACC-target and fused-track receivers and DBC preserve firestar5683's Dom integration from `b220a37f4bd119e402225a7aa16a7cd84878d0af` (Sea Turtles, 2026-10-13) and its ARS510 source attribution to ds-sebastian/ars510-radar `fb5b29c2b5999f34afeb6f7ac494a73949d66c67`, copyright 2026 ARS510 radar contributors. The complete MIT permission and warranty notice is retained in THIRD_PARTY_NOTICES.md. Startup/settings ownership is adapted to the current StarPilot architecture; no original firmware binaries or safety permissions are copied.
 
-### Local-to-upstream map
+## Spotify Bluetooth output
 
-| StarPilot area | Upstream lineage | What StarPilot changed |
-| --- | --- | --- |
-| `starpilot/car/ford/lateral.py` | `human_turn.py`, `lateral_curv_ext.py`, and `values_ext.py` at the reference snapshot above; earlier StarPilot revisions also adapted `lateral_angle_ext.py` | Consolidated the runtime implementation on the extended-curvature strategy, integrated StarPilot Params, and added live-delay curvature lookahead and local tuning behavior. |
-| `starpilot/car/ford/fordcan.py` | `fordcan_ext.py` and the extended-lateral protocol, especially `8f8d6d15f` | Reduced the extension to the curvature CAN constructors used by StarPilot and adapted it to the local controller interface. |
-| `opendbc_repo/opendbc/car/ford/` | Ford controller/state/interface/radar/platform changes in the `bp-7.0` snapshot | Integrated the changes directly into StarPilot's opendbc layout instead of retaining sunnypilot mixins; subsequent fixes and behavior differ by file. |
-| `opendbc_repo/opendbc/safety/modes/ford.h` and Ford safety tests | BluePilot panda enforcement for four-signal curvature and angle-primary control, especially `8f8d6d15f`, plus shadow-curvature work | Retained the extended-curvature checks, removed runtime path-angle selection, and continued adding local regression coverage. |
-| Ford Params and settings surfaces | BluePilot's curvature tuning concepts | Renamed and implemented in StarPilot's native Params/Galaxy architecture; no BluePilot or sunnypilot UI classes were retained. |
+Spotify's Bluetooth output binds the comma's BlueALSA A2DP source to the selected speaker through a process-local ALSA configuration, leaving the system ALSA default, soundd and the warning speaker untouched. That approach is adapted from firestar5683's RoadScore Bluetooth output (`roadscore/prototype/bluetooth_output.py`, firestar5683/StarPilot `RoadScore` at `249eb88b3a397db847e4a595d7e23b7e85d329e5`). The Soloist player itself is never included: each user downloads it from Spotify, and the PulseAudio server that carries its audio is vendored unmodified from Ubuntu (see THIRD_PARTY_NOTICES.md).
 
-The local code has materially diverged, but the first four rows remain derivative in design and in
-parts of their implementation. Future ports should cite the exact upstream commit in the importing
-commit and at the relevant source boundary; when history can be retained cleanly, use a merge,
-subtree, or cherry-pick with origin metadata rather than a single squashed attribution.
+## Tesla Pre-AP pedal control
 
-## Hyundai, Kia, and Genesis support adapted from sunnypilot
+The Pre-AP configuration, pedal codec/feedback, VirtualDAS feedforward table, grade compensation, torque-zero estimator and vehicle-specific gains preserve firestar5683's intentional Dom work, including `7837a3c1aab`, `aed0b7fdb9e9` and pinned `b220a37f4bd119e402225a7aa16a7cd84878d0af`. Original author attribution: firestar5683 <168790843+firestar5683@users.noreply.github.com>. Startup/calibration ownership, current upstream button/PID interfaces and native command bounds are adapted to the current StarPilot architecture; the old permissive native gateway is not transplanted. Existing source/license notices remain intact.
 
-Portions of StarPilot's HKG angle steering, CAN integration, panda safety enforcement, safety tests,
-firmware fingerprints, and cruise-button management are adapted from sunnypilot. Some upstream HKG
-authorship is retained in StarPilot's Git history, and StarPilot commit
-[`e33305151`](https://github.com/firestar5683/StarPilot/commit/e33305151ba852ea3350aa9f7a12d1c8bd137c43)
-identified its ICBM/CSLC work as a sunnypilot port. Other substantial imports were committed locally
-without recording an exact source revision, so this section documents the reconstructed lineage.
+## Subaru angle steering from Jacob Waller's fork
 
-The exact checkout used for each historical import cannot now be proven. The reference snapshots
-used for this audit are:
+Subaru angle support includes implementation maintained and integrated by **Jacob Waller (jacobw)** in [jacobwaller/openpilot, jul-angle-based](https://github.com/jacobwaller/openpilot/tree/542816196a18dba5f6f0af093c1ece4f415b5a22), with its [opendbc implementation at 8acbeccdab45a47aa7af170d2d17b61f0eb5e4f0](https://github.com/jacobwaller/opendbc/tree/8acbeccdab45a47aa7af170d2d17b61f0eb5e4f0). Jacob authored the VehicleModel angle-limit type correction and integrated the Crosstrek support. The branch also retains the original angle implementation and follow-up work by **lukasloetkolben and elkoled**, alongside comma contributors; their authorship remains theirs.
 
-- [`sunnypilot/sunnypilot` `hkg-angle-steering-2025`](https://github.com/sunnypilot/sunnypilot/tree/hkg-angle-steering-2025)
-  at [`cfb38312d`](https://github.com/sunnypilot/sunnypilot/commit/cfb38312db33779f4727c983d372474a56ccb5d8),
-  whose opendbc submodule points to the next snapshot.
-- [`sunnypilot/opendbc` `hkg-angle-steering-2025`](https://github.com/sunnypilot/opendbc/tree/hkg-angle-steering-2025)
-  at [`cc4b08625`](https://github.com/sunnypilot/opendbc/commit/cc4b08625a98e94b318cab15e45e05dad58042bd).
-- [`sunnypilot/opendbc` `master`](https://github.com/sunnypilot/opendbc)
-  at [`f95f996f5`](https://github.com/sunnypilot/opendbc/commit/f95f996f5917dcbbf2e32fe51b606a24cf836af6),
-  used to audit later HKG fingerprints and extension history.
+The inherited source covers Subaru angle platform/firmware definitions, `ES_Status` cruise state, angle controller/CAN integration, vehicle-model limits and native angle enforcement. StarPilot has additional platform-specific limits, driver handoff, discovery and AOL safety guards; this attribution does not claim identical tuning or complete parity with the reference fork. Original source commits, author names, emails and titles are recorded in [the Subaru origin history](opendbc_repo/opendbc/car/subaru/ORIGIN_HISTORY.tsv).
 
-### Upstream authors and work
+The preferred Crosstrek/2024+ Impreza angle controller is adapted from **Jacob Waller (jacobw)**'s [hackathon-crosstrek branch](https://github.com/jacobwaller/openpilot/tree/118bb0409520433c3e09119ee61c8a57546272e0), pinned to [opendbc 753fdd383a18c3f9e86af801f1e0e9db2a168e72](https://github.com/jacobwaller/opendbc/tree/753fdd383a18c3f9e86af801f1e0e9db2a168e72). Jacob authored its 100 Hz speed-dependent angle filter and 13:1 safety model.
 
-- **Haibin (Jason) Wen** contributed the original Kia EV9 HDA2/LFA2 angle-steering port, Hyundai
-  angle integration and signals, non-SCC platform support, and Intelligent Cruise Button Management.
-  Important lineage commits include
-  [`abe78de2c`](https://github.com/sunnypilot/opendbc/commit/abe78de2c2f9d8774d343c35c181d27e9d944392),
-  [`333de6f1a`](https://github.com/sunnypilot/opendbc/commit/333de6f1a2097a27709a652d5862bad05d83ed1f),
-  [`559a37426`](https://github.com/sunnypilot/opendbc/commit/559a37426976171ceb56c541bec9362abd8b8bd2), and
-  [`862828ad6`](https://github.com/sunnypilot/opendbc/commit/862828ad6f870fb23dd8670fe2a18dc19313217b).
-- **Shane Smiskol** contributed foundational angle-command limiting, driver-override behavior, and
-  EPS-fault avoidance, including
-  [`228a397a3`](https://github.com/sunnypilot/opendbc/commit/228a397a37618de1ecbaf06b70efe3e0e0a8eec6) and
-  [`42d84ff6c`](https://github.com/sunnypilot/opendbc/commit/42d84ff6ca3d48529b195395d652ad777ad397ca).
-- **DevTekVE** contributed substantial angle-controller integration, tuning, platform support, panda
-  safety logic, and tests, including
-  [`c77c7ec2e`](https://github.com/sunnypilot/opendbc/commit/c77c7ec2e39959b65c42e2d70aa943fccd606361),
-  [`7ded99dba`](https://github.com/sunnypilot/opendbc/commit/7ded99dba145c56754e8bbe47217eb174ec03396),
-  [`3819ca7f0`](https://github.com/sunnypilot/opendbc/commit/3819ca7f0d2576771924bd60f47d3e8676b5d583), and
-  [`8d134e98f`](https://github.com/sunnypilot/opendbc/commit/8d134e98f3151a1aec354f93e81c3a4269788991).
-- **Nicholas Evans, dany7915, janpoo6427, Tinkerpet, royjr, Taylor Hoshino, Intelli, Joshua Mack,
-  Mark McCallister, Discountchubbs, and other sunnypilot contributors** supplied vehicle ports,
-  fingerprints, firmware data, safety-limit updates, and related integration represented in the
-  adapted HKG support.
+The explicit StarPilot [jacobw Subaru adapter](opendbc_repo/opendbc/car/subaru/JACOBW.md) additionally integrates that branch's low-speed filter, target-first limiting and Crosstrek EPS envelope. Its preserved stricter guards and platform scope are documented alongside the code.
 
-This list identifies contributors found during the repository, commit, and blame audit. The
-sunnypilot repositories and their Git histories remain the authoritative record and may identify
-additional contributors.
+## StarPilot Ford demand tuning
 
-### Local-to-upstream map
+The previous optional StarPilot Controller, formerly in `openpilot/starpilot/car/ford/starpilot_tuning.py`, restored demand tuning from StarPilot `8da0c9d916^`, descended from BluePilot bp-7.0 `e1d051d7ba270261b4455068bd68f1a58db15a4a` through StarPilot `2efe6017bfe14cee4807833e05f9a7f6ba255cdb`. Contributors to that lineage include Alan Polk, John Christman, Jacob Neulight, tonesto7 and Haibin Wen. The current protocol adapter is maintained by StarPilot separately from the pinned BluePilot library; this attribution does not imply BluePilot maintains or endorses the adapted tune.
 
-| StarPilot area | Upstream lineage | What StarPilot changed |
-| --- | --- | --- |
-| `opendbc_repo/opendbc/car/hyundai/carcontroller.py` | Angle controller and driver-override work in `sunnypilot/opendbc` `hkg-angle-steering-2025` | Integrated the controller into StarPilot's opendbc layout and added substantial local longitudinal, smoothing, recovery, and platform behavior. |
-| `opendbc_repo/opendbc/car/hyundai/hyundaicanfd.py`, `interface.py`, and `values.py` | Angle commands, signal selection, safety flags, limits, and platform integration from the angle branch | Combined later upstream changes with StarPilot flags, Params, platform tuning, and local CAN/CAN-FD behavior. |
-| `opendbc_repo/opendbc/safety/modes/hyundai_canfd.h` and its tests | Angle-command safety enforcement and regression tests from the angle branch | Extended and reorganized the safety mode and tests for StarPilot's current supported modes. |
-| `opendbc_repo/opendbc/car/hyundai/fingerprints.py` and HKG platform data | sunnypilot HKG extension/fingerprint history on `master` plus angle-branch vehicle ports | Flattened extension data into the local opendbc tree and continued adding and updating platforms. |
-| HKG cruise-button management and settings integration | sunnypilot ICBM/CSLC concepts and implementation history, including `862828ad6` and `2277e3d49` | Adapted the feature to StarPilot/FrogPilot controls and settings; later revisions changed or removed portions of the original integration. |
-
-The current implementation is not a wholesale copy of either reference snapshot and has diverged
-substantially. Its HKG angle-control and supporting safety architecture nevertheless remain
-derivative in design and in identifiable portions of the implementation. The applicable upstream
-notices are preserved in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-## Policy for future third-party ports
-
-Before publishing a third-party port:
-
-1. Read every repository-level and file-level license that may cover the source. Stop and ask the
-   rightsholder when the terms or their scope conflict.
-2. Record the repository URL, exact commit SHA, source paths/symbols, authors found in the relevant
-   history, and the local destination in the importing commit and this file.
-3. Preserve required copyright and license notices verbatim. Reorganization, translation, and
-   AI-assisted rewriting do not remove source provenance.
-4. Retain authorship/history with a merge, subtree, or `cherry-pick -x` when practical. For a true
-   adaptation, keep the local adapter as commit author and use an `Adapted-from:` trailer and source
-   comments; do not add `Co-authored-by:` for a person without their agreement.
-5. Describe material local deviations and make clear that upstream contributors do not support or
-   endorse the downstream version.
-
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for licensing notices.
+The current StarPilot Controller replaces that historical curvature-primary tune with a separately maintained adaptation of BluePilot v0.2.1's angle strategy (`2b9dc6cc784faac47a1885d0bda0561f7b76f74d`, `core/lateral_angle_ext.py`). Alan Polk is the principal controller author; John Christman contributed angle-mode anti-stall work, Jacob Neulight the pinion/shadow measurement, Nathan Ingraham and Praeuner high-speed damping, and other contributors are retained in the pinned library's `CREDITS.md`. StarPilot adds bounded small-signal conditioning ahead of the unchanged angle limit chain. This adaptation is not maintained or endorsed by BluePilot; the pinned library and its imported hooks are unchanged.

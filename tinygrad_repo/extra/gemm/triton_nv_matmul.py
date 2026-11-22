@@ -90,8 +90,7 @@ if __name__ == "__main__":
   # remove debug sections
   src = src.split("\t.file")[0]
   assert '.extern .shared' not in src
-  info = ProgramInfo(name="matmul_kernel",
-                     global_size=(M//BLOCK_SIZE_M, N//BLOCK_SIZE_N, 1), local_size=(32*compiled.metadata.num_warps, 1, 1))
+  info = ProgramInfo(global_size=(M//BLOCK_SIZE_M, N//BLOCK_SIZE_N, 1), local_size=(32*compiled.metadata.num_warps, 1, 1))
   sink = UOp.sink(arg=KernelInfo(name="matmul_kernel"))
   prg_uop = to_program(UOp(Ops.PROGRAM, src=(sink, UOp(Ops.LINEAR), UOp(Ops.SOURCE, arg=src)), arg=info),
                        Device.default.renderer)
@@ -101,7 +100,7 @@ if __name__ == "__main__":
   gsize, lsize = info.launch_dims({})
   tflops = []
   for i in range(5):
-    tm = rt(*[b._buf for b in prg_bufs], global_size=gsize, local_size=lsize, vals=info.vals({}), wait=True)
+    tm = rt(*[b._buf for b in prg_bufs], global_size=gsize, local_size=lsize, wait=True)
     tflops.append((2*M*K*N/tm)*1e-12)
   print(f"TFLOPS: {max(tflops):.2f}")
 

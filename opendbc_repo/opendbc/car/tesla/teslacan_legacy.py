@@ -3,42 +3,43 @@ from opendbc.car.interfaces import V_CRUISE_MAX
 from opendbc.car.tesla.values import CANBUS, CarControllerParams
 
 
-class TeslaCANRaven:
-  """CAN commands used by the legacy Model S/X powertrain and EPAS buses."""
+class ModelSHW1CAN:
+  """Legacy Model S command encoding, separate from modern FSD protocols."""
 
-  def __init__(self, packers):
-    self.packers = packers
-    self.CCP = CarControllerParams
-    self.jerk_upper = self.CCP.JERK_LIMIT_MAX
-    self.jerk_lower = self.CCP.JERK_LIMIT_MIN
+  def __init__(self, packer):
+    self.packer = packer
+    self.jerk_upper = CarControllerParams.JERK_LIMIT_MAX
+    self.jerk_lower = CarControllerParams.JERK_LIMIT_MIN
 
   @staticmethod
-  def checksum(msg_id, dat):
-    return ((msg_id & 0xFF) + ((msg_id >> 8) & 0xFF) + sum(dat)) & 0xFF
+  def checksum(address, data):
+    return ((address & 0xFF) + ((address >> 8) & 0xFF) + sum(data)) & 0xFF
+
+  def _command(self, name, values, checksum_signal):
+    address, data, _ = self.packer.make_can_msg(name, CANBUS.party, values)
+    values[checksum_signal] = self.checksum(address, data[:-1])
+    return self.packer.make_can_msg(name, CANBUS.party, values)
 
   def create_steering_control(self, counter, angle, enabled):
-    values = {
-      "DAS_steeringControlCounter": counter,
+    return self._command("DAS_steeringControl", {
+      "DAS_steeringControlCounter": counter % 16,
       "DAS_steeringAngleRequest": -angle,
       "DAS_steeringHapticRequest": 0,
       "DAS_steeringControlType": 1 if enabled else 0,
-    }
-    data = self.packers[CANBUS.party].make_can_msg("DAS_steeringControl", CANBUS.party, values)[1]
-    values["DAS_steeringControlChecksum"] = self.checksum(0x488, data[:3])
-    return self.packers[CANBUS.party].make_can_msg("DAS_steeringControl", CANBUS.party, values)
+    }, "DAS_steeringControlChecksum")
 
   def create_longitudinal_command(self, acc_state, accel, counter, v_ego, active, gas_pressed):
-    set_speed = max(v_ego * CV.MS_TO_KPH, 0)
-    if active:
-      set_speed = 0 if accel < 0 else V_CRUISE_MAX
-
+    active = active and acc_state != 13
+    accel = min(max(accel, CarControllerParams.ACCEL_MIN), CarControllerParams.ACCEL_MAX) if active else 0.0
+    set_speed = (0 if accel < 0 else V_CRUISE_MAX) if active else max(v_ego * CV.MS_TO_KPH, 0)
     if gas_pressed:
       self.jerk_upper = self.jerk_lower = 0.0
     else:
-      self.jerk_lower = max(self.jerk_lower - self.CCP.JERK_RAMP_RATE, self.CCP.JERK_LIMIT_MIN)
-      self.jerk_upper = min(self.jerk_upper + self.CCP.JERK_RAMP_RATE, self.CCP.JERK_LIMIT_MAX)
-
-    values = {
+      # The legacy ramp advances once per 25 Hz command, including after gas release.
+      step = CarControllerParams.JERK_LIMIT_MAX * 0.002
+      self.jerk_lower = max(self.jerk_lower - step, CarControllerParams.JERK_LIMIT_MIN)
+      self.jerk_upper = min(self.jerk_upper + step, CarControllerParams.JERK_LIMIT_MAX)
+    return self._command("DAS_control", {
       "DAS_setSpeed": set_speed,
       "DAS_accState": acc_state,
       "DAS_aebEvent": 0,
@@ -46,8 +47,5 @@ class TeslaCANRaven:
       "DAS_jerkMax": self.jerk_upper,
       "DAS_accelMin": accel,
       "DAS_accelMax": max(accel, 0),
-      "DAS_controlCounter": counter,
-    }
-    data = self.packers[CANBUS.party].make_can_msg("DAS_control", CANBUS.party, values)[1]
-    values["DAS_controlChecksum"] = self.checksum(0x2b9, data[:7])
-    return self.packers[CANBUS.party].make_can_msg("DAS_control", CANBUS.party, values)
+      "DAS_controlCounter": counter % 8,
+    }, "DAS_controlChecksum")

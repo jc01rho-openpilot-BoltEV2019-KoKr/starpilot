@@ -2,14 +2,15 @@
 import unittest
 
 from opendbc.car.structs import CarParams
-from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
-from opendbc.safety.tests.common import CANPackerSafety
 
 LANE_KEEP_ASSIST = 0x3F2
 
 
 class TestPsaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest):
+  DBC = "psa_aee2010_r3"
+  SAFETY_MODEL = CarParams.SafetyModel.psa
+
   RELAY_MALFUNCTION_ADDRS = {0: (LANE_KEEP_ASSIST,)}
   FWD_BLACKLISTED_ADDRS = {2: [LANE_KEEP_ASSIST]}
   TX_MSGS = [[1010, 0]]
@@ -25,12 +26,6 @@ class TestPsaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest):
   ANGLE_RATE_UP = [2.5, 1.5, .2]
   ANGLE_RATE_DOWN = [5., 2., .3]
 
-  def setUp(self):
-    self.packer = CANPackerSafety("psa_aee2010_r3")
-    self.safety = libsafety_py.libsafety
-    self.safety.set_safety_hooks(CarParams.SafetyModel.psa, 0)
-    self.safety.init_tests()
-
   def _angle_cmd_msg(self, angle: float, enabled: bool):
     values = {"SET_ANGLE": angle, "TORQUE_FACTOR": 100 if enabled else 0}
     return self.packer.make_can_msg_safety("LANE_KEEP_ASSIST", self.MAIN_BUS, values)
@@ -42,18 +37,6 @@ class TestPsaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest):
   def _pcm_status_msg(self, enable):
     values = {"RVV_ACC_ACTIVATION_REQ": enable}
     return self.packer.make_can_msg_safety("HS2_DAT_MDD_CMD_452", self.ADAS_BUS, values)
-
-  def test_acc_main_state(self):
-    for counter, main_on in enumerate((False, True)):
-      msg = self.packer.make_can_msg_safety("HS2_DYN1_MDD_ETAT_2B6", self.ADAS_BUS, {
-        "ACC_STATUS": 3 if main_on else 2,
-        "DYN_ACC_PROCESS_COUNTER": counter,
-      })
-      msg[0].data[7] &= 0xF0
-      nibble_sum = sum((msg[0].data[i] >> 4) + (msg[0].data[i] & 0xF) for i in range(8))
-      msg[0].data[7] |= (3 - nibble_sum) & 0xF
-      self.assertTrue(self._rx(msg))
-      self.assertEqual(main_on, self.safety.get_acc_main_on())
 
   def _speed_msg(self, speed):
     values = {"VITESSE_VEHICULE_ROUES": speed * 3.6}
@@ -90,12 +73,7 @@ class TestPsaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest):
 
 
 class TestPsaStockSafety(TestPsaSafetyBase):
-
-  def setUp(self):
-    self.packer = CANPackerSafety("psa_aee2010_r3")
-    self.safety = libsafety_py.libsafety
-    self.safety.set_safety_hooks(CarParams.SafetyModel.psa, 0)
-    self.safety.init_tests()
+  pass
 
 
 if __name__ == "__main__":

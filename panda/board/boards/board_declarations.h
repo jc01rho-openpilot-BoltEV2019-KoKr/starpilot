@@ -11,7 +11,6 @@ typedef enum {
 } BootState;
 
 typedef void (*board_init)(void);
-typedef void (*board_init_bootloader)(void);
 typedef void (*board_enable_can_transceiver)(uint8_t transceiver, bool enabled);
 typedef void (*board_set_can_mode)(uint8_t mode);
 typedef uint32_t (*board_read_voltage_mV)(void);
@@ -34,7 +33,6 @@ struct board {
   const bool fan_stall_recovery;
   const uint8_t fan_enable_cooldown_time;
   board_init init;
-  board_init_bootloader init_bootloader;
   board_enable_can_transceiver enable_can_transceiver;
   board_set_can_mode set_can_mode;
   board_read_voltage_mV read_voltage_mV;
@@ -52,7 +50,6 @@ struct board {
 #define HW_TYPE_UNKNOWN 0U
 #define HW_TYPE_DOS 6U
 #define HW_TYPE_RED_PANDA 7U
-#define HW_TYPE_RED_PANDA_V2 8U
 #define HW_TYPE_TRES 9U
 #define HW_TYPE_CUATRO 10U
 

@@ -1,21 +1,39 @@
-name: Testing galaxy-phone-bridge (manual)
+name: Galaxy phone bridge
 
 on:
+  push:
+    branches: [Dom, StarPilot, stable, testing, dev, secretgood-ios-integration]
+    paths:
+      - 'openpilot/starpilot/galaxy_bluetooth/**'
+      - '.github/workflows/galaxy-phone-bridge.yaml'
+  pull_request:
+    paths:
+      - 'openpilot/starpilot/galaxy_bluetooth/**'
+      - '.github/workflows/galaxy-phone-bridge.yaml'
   workflow_dispatch:
 
 permissions:
   contents: read
-  actions: write
+
+concurrency:
+  group: galaxy-phone-bridge-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  dispatch:
-    name: Queue Testing qualification
+  bridge:
+    name: Comma Bluetooth bridge tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/checkout@v4
         with:
-          script: |
-            const branch = await github.rest.repos.getBranch({...context.repo, branch: 'testing'});
-            await github.rest.actions.createWorkflowDispatch({...context.repo, workflow_id: 'galaxy-phone-bridge.yaml', ref: 'testing'});
-            core.notice('Queued galaxy-phone-bridge.yaml on Testing (observed head ' + branch.data.commit.sha + '). Check that workflow for qualification results; this job only dispatches it.');
+          submodules: false
+          lfs: false
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install bridge test dependencies
+        run: python -m pip install pycryptodome
+      - name: Run bridge regressions
+        run: python -m unittest discover -s openpilot/starpilot/galaxy_bluetooth/tests -v

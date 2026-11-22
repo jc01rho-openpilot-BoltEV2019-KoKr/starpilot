@@ -1,4 +1,5 @@
 import numpy as np
+from opendbc.car import ACCEL_MAX_TAKEOFF
 from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, structs
 from opendbc.car.lateral import apply_driver_steer_torque_limits
@@ -9,6 +10,28 @@ from opendbc.car.volkswagen.values import CanBus, CarControllerParams, Volkswage
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
+
+
+class HCAMitigation:
+  """
+  Manages HCA fault mitigations for VW/Audi EPS racks:
+    * Reduces torque by 1 for a single frame after commanding the same torque value for too long
+  """
+
+  def __init__(self, CCP):
+    self._max_same_torque_frames = CCP.STEER_TIME_STUCK_TORQUE / (DT_CTRL * CCP.STEER_STEP)
+    self._same_torque_frames = 0
+
+  def update(self, apply_torque, apply_torque_last):
+    if apply_torque != 0 and apply_torque_last == apply_torque:
+      self._same_torque_frames += 1
+      if self._same_torque_frames > self._max_same_torque_frames:
+        apply_torque -= (1, -1)[apply_torque < 0]
+        self._same_torque_frames = 0
+    else:
+      self._same_torque_frames = 0
+
+    return apply_torque
 
 
 class CarController(CarControllerBase):
@@ -36,11 +59,12 @@ class CarController(CarControllerBase):
     self.lead_distance_bars_last = None
     self.distance_bar_frame = 0
     self.gra_acc_counter_last = None
-    self.eps_timer_soft_disable_alert = False
-    self.hca_frame_timer_running = 0
-    self.hca_frame_same_torque = 0
+    self.hca_mitigation = HCAMitigation(self.CCP)
 
-  def update(self, CC, CS, now_nanos, starpilot_toggles):
+  def update(self, CC, CS, now_nanos):
+    _projection = self.learning_projection_observer
+    if _projection is not None:
+      _projection.begin(CC.actuators.torque, self.frame)
     actuators = CC.actuators
     hud_control = CC.hudControl
     can_sends = []
@@ -50,64 +74,52 @@ class CarController(CarControllerBase):
     if self.frame % self.CCP.STEER_STEP == 0:
       apply_torque = 0
       if self.CP.flags & VolkswagenFlags.MEB:
+        # Logic to avoid HCA refused state:
+        #   * steering power as counter and near zero before OP lane assist deactivation
+        # MEB rack can be used continuously without time limits
+        # maximum real steering angle change ~ 120-130 deg/s
+
         if CC.latActive:
           hca_enabled = True
+          # compensate the gap between measured and current curvature
           apply_curvature = actuators.curvature + (CS.curvature_meas - CC.currentCurvature)
-          apply_curvature = self.CCP.CURVATURE_LIMITS.apply_limits(apply_curvature, self.apply_curvature_last, CS.out.vEgoRaw,
-                                                                   CS.curvature_meas, CC.latActive, self.CCP.STEER_STEP)
+          apply_curvature = self.CCP.CURVATURE_LIMITS.apply_limits(apply_curvature, self.apply_curvature_last, CS.out.vEgoRaw, CS.curvature_meas,
+                                                                   CC.latActive, self.CCP.STEER_STEP)
 
           min_power = max(self.steering_power_last - self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MIN)
           max_power = min(self.steering_power_last + self.CCP.STEERING_POWER_STEP, self.CCP.STEERING_POWER_MAX)
-          target_power_driver = int(np.interp(CS.out.steeringTorque, [self.CCP.STEER_DRIVER_ALLOWANCE, self.CCP.STEER_DRIVER_MAX],
-                                                                     [self.CCP.STEERING_POWER_MAX, self.CCP.STEERING_POWER_MIN]))
+          target_power_driver = int(np.interp(abs(CS.out.steeringTorque), [self.CCP.STEER_DRIVER_ALLOWANCE, self.CCP.STEER_DRIVER_MAX],
+                                                                          [self.CCP.STEERING_POWER_MAX, self.CCP.STEERING_POWER_MIN]))
           target_power = int(np.interp(CS.out.vEgo, [0., 0.5], [self.CCP.STEERING_POWER_MIN, target_power_driver]))
           steering_power = min(max(target_power, min_power), max_power)
-        elif self.steering_power_last > 0:
-          # Wind steering authority down instead of abruptly faulting the EPS at disengagement.
-          hca_enabled = True
-          apply_curvature = float(np.clip(CS.curvature_meas, -self.CCP.CURVATURE_MAX, self.CCP.CURVATURE_MAX))
-          steering_power = max(self.steering_power_last - self.CCP.STEERING_POWER_STEP, 0)
+
         else:
-          hca_enabled = False
-          apply_curvature = 0.
-          steering_power = 0
+          if self.steering_power_last > 0:  # keep HCA alive until steering power has reduced to zero
+            hca_enabled = True
+            apply_curvature = float(np.clip(CS.curvature_meas, -self.CCP.CURVATURE_MAX, self.CCP.CURVATURE_MAX))
+            steering_power = max(self.steering_power_last - self.CCP.STEERING_POWER_STEP, 0)
+          else:
+            hca_enabled = False
+            apply_curvature = 0.  # inactive curvature
+            steering_power = 0
 
         can_sends.append(mebcan.create_steering_control(self.packer_pt, self.CAN.pt, apply_curvature, hca_enabled, steering_power))
         self.apply_curvature_last = apply_curvature
         self.steering_power_last = steering_power
 
       else:
-        # Logic to avoid HCA state 4 "refused":
-        #   * Don't steer unless HCA is in state 3 "ready" or 5 "active"
-        #   * Don't steer at standstill
-        #   * Don't send > 3.00 Newton-meters torque
-        #   * Don't send the same torque for > 6 seconds
-        #   * Don't send uninterrupted steering for > 360 seconds
-        # MQB racks reset the uninterrupted steering timer after a single frame
-        # of HCA disabled; this is done whenever output happens to be zero.
-
         if CC.latActive:
           new_torque = int(round(actuators.torque * self.CCP.STEER_MAX))
+          if _projection is not None:
+            _projection.input(new_torque, self.CCP.STEER_MAX, self.apply_torque_last, CS.out.steeringTorque, self.CCP, limiter='driver')
           apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.CCP)
-          self.hca_frame_timer_running += self.CCP.STEER_STEP
-          if self.apply_torque_last == apply_torque:
-            self.hca_frame_same_torque += self.CCP.STEER_STEP
-            if self.hca_frame_same_torque > self.CCP.STEER_TIME_STUCK_TORQUE / DT_CTRL:
-              apply_torque -= (1, -1)[apply_torque < 0]
-              self.hca_frame_same_torque = 0
-          else:
-            self.hca_frame_same_torque = 0
-          hca_enabled = abs(apply_torque) > 0
-        else:
-          hca_enabled = False
-          apply_torque = 0
 
-        if not hca_enabled:
-          self.hca_frame_timer_running = 0
-
-        self.eps_timer_soft_disable_alert = self.hca_frame_timer_running > self.CCP.STEER_TIME_ALERT / DT_CTRL
+        apply_torque = self.hca_mitigation.update(apply_torque, self.apply_torque_last)
+        hca_enabled = apply_torque != 0
         self.apply_torque_last = apply_torque
         can_sends.append(self.CCS.create_steering_control(self.packer_pt, self.CAN.pt, apply_torque, hca_enabled))
+        if _projection is not None:
+          _projection.emit('volkswagen.HCA_TORQUE', apply_torque, hca_enabled, can_sends[-1])
 
       if self.CP.flags & VolkswagenFlags.STOCK_HCA_PRESENT:
         # Pacify VW Emergency Assist driver inactivity detection by changing its view of driver steering input torque
@@ -118,28 +130,36 @@ class CarController(CarControllerBase):
           ea_simulated_torque = CS.out.steeringTorque
         can_sends.append(self.CCS.create_eps_update(self.packer_pt, self.CAN.cam, CS.eps_stock_values, ea_simulated_torque))
 
+    # Emergency Assist intervention
     if self.CP.flags & VolkswagenFlags.MEB and self.CP.flags & VolkswagenFlags.STOCK_KLR_PRESENT:
+      # send capacitive steering wheel hands-on message to keep ACC resume active and control Emergency Assist
+      # MEB Emergency Assist brake jerks after 30s of continued hands-off time.
+      # We send the stock wheeltouch message to start the stock DM timer when openpilot latches the critical driver monitoring alert
       if self.frame % self.CCP.KLR_01_STEP == 0:
-        can_sends.append(mebcan.create_capacitive_wheel_touch(self.packer_pt, self.CAN.cam, CC.latActive, CS.klr_stock_values))
-        can_sends.append(mebcan.create_capacitive_wheel_touch(self.packer_pt, self.CAN.pt, CC.latActive, CS.klr_stock_values))
+        lat_active = CC.latActive and not CC.driverMonitoringEscalation
+        can_sends.append(mebcan.create_capacitive_wheel_touch(self.packer_pt, self.CAN.cam, lat_active, CS.klr_stock_values))
+        can_sends.append(mebcan.create_capacitive_wheel_touch(self.packer_pt, self.CAN.pt, lat_active, CS.klr_stock_values))
 
     # **** Acceleration Controls ******************************************** #
 
     if self.CP.openpilotLongitudinalControl:
       if self.frame % self.CCP.ACC_CONTROL_STEP == 0:
         if self.CP.flags & VolkswagenFlags.MEB:
-          accel = float(np.clip(actuators.accel, self.CCP.ACCEL_MIN, self.CCP.ACCEL_MAX))
-          accel, acc_status, acc_hold_type, braking_to_stop = self.meb_long_state.update(CS, CC, accel)
-          can_sends.extend(mebcan.create_acc_accel_control(self.packer_pt, self.CAN.pt, self.CCP, CS.acc_type, CC.enabled,
-                                                           accel, acc_status, acc_hold_type, braking_to_stop,
+          accel = float(np.clip(actuators.accel, self.CCP.ACCEL_MIN, min(ACCEL_MAX_TAKEOFF, 3.0)))
+          accel, acc_status, acc_hold_type, braking_to_stop, leaving_standstill = self.meb_long_state.update(CS, CC, accel)
+          acc_enabled = self.meb_long_state._long_active(CS, CC)
+          can_sends.extend(mebcan.create_acc_accel_control(self.packer_pt, self.CAN.pt, self.CCP, CS.acc_type, acc_enabled,
+                                                           accel, acc_status, acc_hold_type, braking_to_stop, leaving_standstill,
                                                            CS.out.vEgoRaw * CV.MS_TO_KPH, CS.travel_assist_available))
+
         else:
-          acc_control = self.CCS.acc_control_value(CS.out.cruiseState.available, CS.out.accFaulted, CC.longActive)
-          accel = float(np.clip(actuators.accel, self.CCP.ACCEL_MIN, self.CCP.ACCEL_MAX) if CC.longActive else 0)
           stopping = actuators.longControlState == LongCtrlState.stopping
-          starting = actuators.longControlState == LongCtrlState.pid and (CS.esp_hold_confirmation or CS.out.vEgo < starpilot_toggles.vEgoStopping)
+          acc_control = self.CCS.acc_control_value(CS.out.cruiseState.available, CS.out.accFaulted, CC.longActive)
+          accel = float(np.clip(actuators.accel, self.CCP.ACCEL_MIN, min(ACCEL_MAX_TAKEOFF, 3.0)) if CC.longActive else 0)
+          starting = actuators.longControlState == LongCtrlState.pid and (CS.esp_hold_confirmation or CS.out.vEgo < 0.25)
           can_sends.extend(self.CCS.create_acc_accel_control(self.packer_pt, self.CAN.pt, CS.acc_type, CC.longActive, accel,
                                                              acc_control, stopping, starting, CS.esp_hold_confirmation))
+
         self.accel_last = accel
 
       #if self.aeb_available:
@@ -164,10 +184,13 @@ class CarController(CarControllerBase):
       if self.CP.flags & VolkswagenFlags.MEB:
         fcw_alert = hud_control.visualAlert == VisualAlert.fcw
         show_distance_bars = self.frame - self.distance_bar_frame < 400
-        lead_distance = 8 if hud_control.leadVisible and self.frame * DT_CTRL > 1.0 else 0
-        can_sends.append(mebcan.create_acc_hud_control(self.packer_pt, self.CAN.pt, self.meb_long_state.acc_status,
-                                                       hud_control.setSpeed * CV.MS_TO_KPH, hud_control.leadVisible,
-                                                       hud_control.leadDistanceBars, show_distance_bars, lead_distance, fcw_alert))
+        lead_distance = 0
+        if hud_control.leadVisible and self.frame * DT_CTRL > 1.0:
+          lead_distance = 8
+        can_sends.append(mebcan.create_acc_hud_control(self.packer_pt, self.CAN.pt, self.meb_long_state.acc_status, hud_control.setSpeed * CV.MS_TO_KPH,
+                                                       hud_control.leadVisible, hud_control.leadDistanceBars, show_distance_bars,
+                                                       lead_distance, fcw_alert))
+
       else:
         lead_distance = 0
         if hud_control.leadVisible and self.frame * DT_CTRL > 1.0:  # Don't display lead until we know the scaling factor
@@ -183,17 +206,19 @@ class CarController(CarControllerBase):
 
     gra_send_ready = self.CP.pcmCruise and CS.gra_stock_values["COUNTER"] != self.gra_acc_counter_last
     if gra_send_ready and (CC.cruiseControl.cancel or CC.cruiseControl.resume):
-      can_sends.append(self.CCS.create_acc_buttons_control(self.packer_pt, self.CAN.ext, CS.gra_stock_values,
+      button_control = mebcan.create_acc_buttons_control if self.CP.flags & VolkswagenFlags.MEB else self.CCS.create_acc_buttons_control
+      can_sends.append(button_control(self.packer_pt, self.CAN.ext, CS.gra_stock_values,
                                                            cancel=CC.cruiseControl.cancel, resume=CC.cruiseControl.resume))
 
     new_actuators = actuators.as_builder()
     new_actuators.torque = self.apply_torque_last / self.CCP.STEER_MAX
     new_actuators.torqueOutputCan = self.apply_torque_last
-    if self.CP.flags & VolkswagenFlags.MEB:
-      new_actuators.curvature = self.apply_curvature_last
-      new_actuators.accel = self.accel_last
+    new_actuators.curvature = self.apply_curvature_last
+    new_actuators.accel = self.accel_last
 
     self.lead_distance_bars_last = hud_control.leadDistanceBars
     self.gra_acc_counter_last = CS.gra_stock_values["COUNTER"]
     self.frame += 1
+    if _projection is not None:
+      _projection.finish(new_actuators.torque)
     return new_actuators, can_sends

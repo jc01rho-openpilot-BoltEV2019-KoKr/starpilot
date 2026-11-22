@@ -36,7 +36,7 @@ class CarControllerParams:
   MAX_LTA_DRIVER_TORQUE_ALLOWANCE = 150  # slightly above steering pressed allows some resistance when changing lanes
 
   def __init__(self, CP):
-    if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT:
+    if CP.flags & (ToyotaFlags.RAISED_ACCEL_LIMIT | ToyotaFlags.GAS_INTERCEPTOR):
       self.ACCEL_MAX = 2.0
     else:
       self.ACCEL_MAX = 1.5  # m/s2, lower than allowed 2.0 m/s^2 for tuning reasons
@@ -57,18 +57,20 @@ class ToyotaSafetyFlags(IntFlag):
   LTA = (4 << 8)
   SECOC = (8 << 8)
   LONG_FILTER = (16 << 8)
+  SECOC_RADAR_LONG = SECOC | LONG_FILTER  # Exact radar-disable SecOC profile; separates its keepalive permission.
   GAS_INTERCEPTOR = (32 << 8)
-  ALT_CRUISE = (64 << 8)
+  ALT_CRUISE = (64 << 8)  # Exact Lexus IS DSU MAIN profile
+  RAV4H_FILTER_PROFILE = (128 << 8)  # Exact smartDSU owner; bit14 remains reserved for ALT_CRUISE
 
 
 class ToyotaFlags(IntFlag):
   # Detected flags
   HYBRID = 1
-  DISABLE_RADAR = 4
-  # The DSU's ACC messages are rerouted through the camera bus by an adapter.
-  DSU_BYPASS = 8192
+  HAS_BSM = 2  # blind spot monitoring
+  LONG_FILTER = 8192
   ARS510_RADAR = 16384
   ARS510_FUSED = 32768
+  DISABLE_RADAR = 4
 
   # Static flags
   TSS2 = 8
@@ -77,21 +79,21 @@ class ToyotaFlags(IntFlag):
   RADAR_ACC = 64
   # these cars use the Lane Tracing Assist (LTA) message for lateral control
   ANGLE_CONTROL = 128
-  NO_STOP_TIMER = 256
   # these cars can utilize 2.0 m/s^2
   RAISED_ACCEL_LIMIT = 1024
   SECOC = 2048
   AUTO_BRAKE_HOLD = 4096
+  FILTER_BUTTONS = 1 << 20  # Auxiliary inputs from a discovered primary four-byte radar filter
+  RADAR_CAN_FILTER = 1 << 18  # Exact radar adapter; includes four-byte 2FF, distinct from legacy SDSU status
+  GAS_INTERCEPTOR = 1 << 17  # Exact paired pedal owner
+  DSU_BYPASS = 1 << 19  # Camera-bus DSU adapter; independent of smartDSU/filter
+  ZSS = 1 << 16  # Detected Prius secondary steering sensor; host-only, no safetyParam allocation
 
   # deprecated flags
   # these cars are speculated to allow stop and go when the DSU is unplugged
   SNG_WITHOUT_DSU_DEPRECATED = 512
-
-
-class ToyotaStarPilotFlags(IntFlag):
-  RADAR_CAN_FILTER = 1
-  SMART_DSU = 2
-  ZSS = 4
+  # no resume button press required
+  NO_STOP_TIMER_DEPRECATED = 256
 
 
 def dbc_dict(pt, radar):
@@ -117,11 +119,17 @@ class ToyotaCommunityCarDocs(ToyotaCarDocs):
 
 
 @dataclass
+class ToyotaSecOcCarDocs(ToyotaCarDocs):
+  support_type: SupportType = SupportType.CUSTOM
+  support_link: str = "#secoc-cars-with-recoverable-keys"
+
+
+@dataclass
 class ToyotaTSS2PlatformConfig(PlatformConfig):
   dbc_dict: dict = field(default_factory=lambda: dbc_dict('toyota_nodsu_pt_generated', 'toyota_tss2_adas'))
 
   def init(self):
-    self.flags |= ToyotaFlags.TSS2 | ToyotaFlags.NO_STOP_TIMER | ToyotaFlags.NO_DSU
+    self.flags |= ToyotaFlags.TSS2 | ToyotaFlags.NO_DSU
 
     if self.flags & ToyotaFlags.RADAR_ACC:
       self.dbc_dict = {Bus.pt: 'toyota_nodsu_pt_generated'}
@@ -132,7 +140,7 @@ class ToyotaSecOCPlatformConfig(PlatformConfig):
   dbc_dict: dict = field(default_factory=lambda: dbc_dict('toyota_secoc_pt_generated', 'toyota_tss2_adas'))
 
   def init(self):
-    self.flags |= ToyotaFlags.TSS2 | ToyotaFlags.NO_STOP_TIMER | ToyotaFlags.NO_DSU | ToyotaFlags.SECOC
+    self.flags |= ToyotaFlags.TSS2 | ToyotaFlags.NO_DSU | ToyotaFlags.SECOC
 
     if self.flags & ToyotaFlags.RADAR_ACC:
       self.dbc_dict = {Bus.pt: 'toyota_secoc_pt_generated'}
@@ -170,13 +178,14 @@ class CAR(Platforms):
     ],
     TOYOTA_AVALON.specs,
   )
+  # TODO: determine if TSS-P NO_DSU cars can work with toyota_adas radar DBC and re-enable
   TOYOTA_CAMRY = PlatformConfig(
     [
       ToyotaCarDocs("Toyota Camry 2018-20", video="https://www.youtube.com/watch?v=fkcjviZY9CM", footnotes=[Footnote.CAMRY]),
       ToyotaCarDocs("Toyota Camry Hybrid 2018-20", video="https://www.youtube.com/watch?v=Q2DYY0AWKgk"),
     ],
     CarSpecs(mass=3400. * CV.LB_TO_KG, wheelbase=2.82448, steerRatio=13.7, tireStiffnessFactor=0.7933),
-    dbc_dict('toyota_nodsu_pt_generated', 'toyota_radar_dsu_tssp'),
+    {Bus.pt: 'toyota_nodsu_pt_generated', Bus.radar: 'toyota_radar_dsu_tssp'},
     flags=ToyotaFlags.NO_DSU,
   )
   TOYOTA_CAMRY_TSS2 = ToyotaTSS2PlatformConfig( # TSS 2.5
@@ -192,7 +201,7 @@ class CAR(Platforms):
       ToyotaCarDocs("Toyota C-HR Hybrid 2017-20"),
     ],
     CarSpecs(mass=3300. * CV.LB_TO_KG, wheelbase=2.63906, steerRatio=13.6, tireStiffnessFactor=0.7933),
-    dbc_dict('toyota_nodsu_pt_generated', 'toyota_adas'),
+    {Bus.pt: 'toyota_nodsu_pt_generated'},
     flags=ToyotaFlags.NO_DSU,
   )
   TOYOTA_CHR_TSS2 = ToyotaTSS2PlatformConfig(
@@ -209,9 +218,9 @@ class CAR(Platforms):
     dbc_dict('toyota_new_mc_pt_generated', 'toyota_adas'),
   )
   TOYOTA_MATRIX_RETROFIT = PlatformConfig(
-    [ToyotaCommunityCarDocs("Toyota Matrix Retrofit 2005", package="Custom retrofit")],
+    [ToyotaCommunityCarDocs("Toyota Matrix Retrofit 2005", package="Custom retrofit; stock longitudinal")],
     TOYOTA_COROLLA.specs,
-    dbc_dict('toyota_new_mc_pt_generated', 'toyota_adas'),
+    dbc_dict("toyota_new_mc_pt_generated", "toyota_adas"),
   )
   # LSS2 Lexus UX Hybrid is same as a TSS2 Corolla Hybrid
   TOYOTA_COROLLA_TSS2 = ToyotaTSS2PlatformConfig(
@@ -234,7 +243,6 @@ class CAR(Platforms):
     ],
     CarSpecs(mass=4516. * CV.LB_TO_KG, wheelbase=2.8194, steerRatio=16.0, tireStiffnessFactor=0.8),
     dbc_dict('toyota_tnga_k_pt_generated', 'toyota_adas'),
-    flags=ToyotaFlags.NO_STOP_TIMER,
   )
   TOYOTA_HIGHLANDER_TSS2 = ToyotaTSS2PlatformConfig(
     [
@@ -253,15 +261,14 @@ class CAR(Platforms):
     dbc_dict('toyota_nodsu_pt_generated', 'toyota_adas'),
   )
   TOYOTA_PRIUS_RETROFIT = PlatformConfig(
-    [ToyotaCommunityCarDocs("Toyota Prius 2016-20 with TSS2 EPS retrofit", package="Custom retrofit")],
+    [ToyotaCommunityCarDocs("Toyota Prius 2016-20", package="TSS2 EPS retrofit; smartDSU required for openpilot longitudinal")],
     TOYOTA_PRIUS.specs,
-    dbc_dict('toyota_nodsu_pt_generated', 'toyota_adas'),
+    dbc_dict("toyota_nodsu_pt_generated", "toyota_adas"),
   )
   TOYOTA_PRIUS_V = PlatformConfig(
     [ToyotaCarDocs("Toyota Prius v 2017", "Toyota Safety Sense P", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=3340. * CV.LB_TO_KG, wheelbase=2.78, steerRatio=17.4, tireStiffnessFactor=0.5533),
     dbc_dict('toyota_new_mc_pt_generated', 'toyota_adas'),
-    flags=ToyotaFlags.NO_STOP_TIMER,
   )
   TOYOTA_PRIUS_TSS2 = ToyotaTSS2PlatformConfig(
     [
@@ -285,8 +292,6 @@ class CAR(Platforms):
     ],
     TOYOTA_RAV4.specs,
     dbc_dict('toyota_tnga_k_pt_generated', 'toyota_adas'),
-    # Note that the ICE RAV4 does not respect positive acceleration commands under 19 mph
-    flags=ToyotaFlags.NO_STOP_TIMER,
   )
   TOYOTA_RAV4_TSS2 = ToyotaTSS2PlatformConfig(
     [
@@ -312,11 +317,11 @@ class CAR(Platforms):
     flags=ToyotaFlags.RADAR_ACC | ToyotaFlags.ANGLE_CONTROL,
   )
   TOYOTA_RAV4_PRIME = ToyotaSecOCPlatformConfig(
-    [ToyotaCommunityCarDocs("Toyota RAV4 Prime 2021-23", min_enable_speed=MIN_ACC_SPEED)],
+    [ToyotaSecOcCarDocs("Toyota RAV4 Prime 2021-23", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4372. * CV.LB_TO_KG, wheelbase=2.68, steerRatio=16.88, tireStiffnessFactor=0.5533),
   )
   TOYOTA_YARIS = ToyotaSecOCPlatformConfig(
-    [ToyotaCommunityCarDocs("Toyota Yaris (Non-US only) 2020, 2023", min_enable_speed=MIN_ACC_SPEED)],
+    [ToyotaSecOcCarDocs("Toyota Yaris (Non-US only) 2020, 2023", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=1170, wheelbase=2.55, steerRatio=14.80, tireStiffnessFactor=0.5533),
     flags=ToyotaFlags.RADAR_ACC,
   )
@@ -328,10 +333,9 @@ class CAR(Platforms):
     [ToyotaCarDocs("Toyota Sienna 2018-20", video="https://www.youtube.com/watch?v=q1UPOo4Sh68", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4590. * CV.LB_TO_KG, wheelbase=3.03, steerRatio=15.5, tireStiffnessFactor=0.444),
     dbc_dict('toyota_tnga_k_pt_generated', 'toyota_adas'),
-    flags=ToyotaFlags.NO_STOP_TIMER,
   )
   TOYOTA_SIENNA_4TH_GEN = ToyotaSecOCPlatformConfig(
-    [ToyotaCommunityCarDocs("Toyota Sienna 2021-25", min_enable_speed=MIN_ACC_SPEED)],
+    [ToyotaSecOcCarDocs("Toyota Sienna 2021-25", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4625. * CV.LB_TO_KG, wheelbase=3.06, steerRatio=17.8, tireStiffnessFactor=0.444),
   )
 
@@ -421,6 +425,11 @@ class CAR(Platforms):
     dbc_dict('toyota_new_mc_pt_generated', 'toyota_adas'),
     flags=ToyotaFlags.UNSUPPORTED_DSU,
   )
+  LEXUS_LS = PlatformConfig(
+    [ToyotaCarDocs("Lexus LS 2018", "All except Lexus Safety System+ A")],
+    CarSpecs(mass=4905. * CV.LB_TO_KG, wheelbase=3.125, steerRatio=15.0, tireStiffnessFactor=0.444),
+    dbc_dict('toyota_nodsu_pt_generated', 'toyota_adas'),
+  )
 
 
 def get_platform_codes(fw_versions: list[bytes]) -> dict[bytes, set[bytes]]:
@@ -465,6 +474,16 @@ def get_platform_codes(fw_versions: list[bytes]) -> dict[bytes, set[bytes]]:
         codes[b'-'.join((part, platform, major_version))].add(sub_version)
 
   return dict(codes)
+
+
+def automatic_prius_candidate(candidate, car_fw):
+  if candidate != CAR.TOYOTA_PRIUS:
+    return candidate
+  eps = [fw for fw in car_fw if fw.ecu == Ecu.eps]
+  if eps and all(not fw.logging and fw.bus == 0 and fw.brand == 'toyota' and fw.address == 0x7A1 and
+                 not fw.subAddress and bytes(fw.fwVersion) == b'8965B47070' + bytes(6) for fw in eps):
+    return CAR.TOYOTA_PRIUS_RETROFIT
+  return candidate
 
 
 def match_fw_to_car_fuzzy(live_fw_versions, vin, offline_fw_versions) -> set[str]:
@@ -541,6 +560,7 @@ TOYOTA_VERSION_REQUEST_KWP = b'\x1a\x88\x01'
 TOYOTA_VERSION_RESPONSE_KWP = b'\x5a\x88\x01'
 
 FW_QUERY_CONFIG = FwQueryConfig(
+  fw_version_regex=br"[\x00-\x03A-Z0-9 ]{16,49}",
   # TODO: look at data to whitelist new ECUs effectively
   requests=[
     Request(
@@ -565,7 +585,7 @@ FW_QUERY_CONFIG = FwQueryConfig(
   ],
   non_essential_ecus={
     # FIXME: On some models, abs can sometimes be missing
-    Ecu.abs: [CAR.TOYOTA_RAV4, CAR.TOYOTA_COROLLA, CAR.TOYOTA_MATRIX_RETROFIT, CAR.TOYOTA_HIGHLANDER, CAR.TOYOTA_SIENNA, CAR.LEXUS_IS, CAR.TOYOTA_ALPHARD_TSS2],
+    Ecu.abs: [CAR.TOYOTA_RAV4, CAR.TOYOTA_COROLLA, CAR.TOYOTA_HIGHLANDER, CAR.TOYOTA_SIENNA, CAR.LEXUS_IS, CAR.TOYOTA_ALPHARD_TSS2],
     # On some models, the engine can show on two different addresses
     Ecu.engine: [CAR.TOYOTA_HIGHLANDER, CAR.TOYOTA_CAMRY, CAR.TOYOTA_COROLLA_TSS2, CAR.TOYOTA_CHR, CAR.TOYOTA_CHR_TSS2, CAR.LEXUS_IS,
                  CAR.LEXUS_IS_TSS2, CAR.LEXUS_RC, CAR.LEXUS_NX, CAR.LEXUS_NX_TSS2, CAR.LEXUS_RX, CAR.LEXUS_RX_TSS2],
@@ -606,43 +626,30 @@ STEER_THRESHOLD = 100
 
 # These cars have non-standard EPS torque scale factors. All others are 73
 EPS_SCALE = defaultdict(lambda: 73,
-                        {CAR.TOYOTA_PRIUS: 66, CAR.TOYOTA_PRIUS_RETROFIT: 73, CAR.TOYOTA_COROLLA: 88, CAR.TOYOTA_MATRIX_RETROFIT: 88,
+                        {CAR.TOYOTA_PRIUS: 66, CAR.TOYOTA_COROLLA: 88, CAR.TOYOTA_MATRIX_RETROFIT: 88,
                          CAR.LEXUS_IS: 77, CAR.LEXUS_RC: 77, CAR.LEXUS_CTH: 100, CAR.TOYOTA_PRIUS_V: 100})
 
-LEGACY_PRIUS_CAR = frozenset((CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT))
+DBC = CAR.create_dbc_map()
 
-# Toyota/Lexus Safety Sense 2.0 and 2.5
-TSS2_CAR = CAR.with_flags(ToyotaFlags.TSS2)
-
-NO_DSU_CAR = CAR.with_flags(ToyotaFlags.NO_DSU)
-
-# the DSU uses the AEB message for longitudinal on these cars
-UNSUPPORTED_DSU_CAR = CAR.with_flags(ToyotaFlags.UNSUPPORTED_DSU)
-
-# these cars have a radar which sends ACC messages instead of the camera
-RADAR_ACC_CAR = CAR.with_flags(ToyotaFlags.RADAR_ACC)
-ARS510_RADAR_CAR = {CAR.TOYOTA_RAV4_TSS2_2022, CAR.TOYOTA_RAV4_TSS2_2023}
-
-ANGLE_CONTROL_CAR = CAR.with_flags(ToyotaFlags.ANGLE_CONTROL)
-
-SECOC_CAR = CAR.with_flags(ToyotaFlags.SECOC)
-
-TOYOTA_AUTO_HOLD_CARS = (TSS2_CAR - RADAR_ACC_CAR - SECOC_CAR) | {
-  CAR.TOYOTA_RAV4,
-  CAR.TOYOTA_RAV4H,
+TOYOTA_AUTO_HOLD_CARS = {car for car in CAR if car.config.flags & ToyotaFlags.TSS2 and
+                         not car.config.flags & (ToyotaFlags.RADAR_ACC | ToyotaFlags.SECOC)} | {
+  CAR.TOYOTA_RAV4, CAR.TOYOTA_RAV4H,
 }
-
-# The Camry uses the legacy camera AEB replacement for Auto Hold. The
-# 2019-2021 RAV4 uses it only with the detected hybrid powertrain.
 TOYOTA_AUTO_HOLD_AEB_CARS = {CAR.TOYOTA_CAMRY_TSS2}
 
 
-def uses_toyota_auto_hold_aeb(CP: CarParams) -> bool:
+def uses_toyota_auto_hold_aeb(CP) -> bool:
   return (CP.carFingerprint in TOYOTA_AUTO_HOLD_AEB_CARS or
-          (CP.carFingerprint == CAR.TOYOTA_RAV4_TSS2 and bool(CP.flags & ToyotaFlags.HYBRID.value)))
+          (CP.carFingerprint == CAR.TOYOTA_RAV4_TSS2 and bool(CP.flags & ToyotaFlags.HYBRID)))
 
 
-# no resume button press required
-NO_STOP_TIMER_CAR = CAR.with_flags(ToyotaFlags.NO_STOP_TIMER)
+def stopping_decel_rate(CP):
+  if (CP.brand == "toyota" and CP.carFingerprint in CAR and
+      CAR[CP.carFingerprint].config.flags & ToyotaFlags.TSS2 and CP.flags & ToyotaFlags.TSS2 and
+      len(CP.safetyConfigs) == 1 and CP.safetyConfigs[0].safetyModel == CarParams.SafetyModel.toyota and
+      CP.openpilotLongitudinalControl and not CP.passive and not CP.dashcamOnly and not CP.notCar):
+    return 0.3
+  from opendbc.car.toyota.dom_defaults import stopping_decel_rate as legacy_stopping_rate
+  return legacy_stopping_rate(CP)
 
-DBC = CAR.create_dbc_map()
+ARS510_RADAR_CAR = {CAR.TOYOTA_RAV4_TSS2_2022, CAR.TOYOTA_RAV4_TSS2_2023}
