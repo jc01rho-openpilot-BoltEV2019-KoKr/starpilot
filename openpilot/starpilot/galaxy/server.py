@@ -101,7 +101,8 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                 starport_client=None, navigation=None, offline_maps=None, drive_state=None, cloud_provider=None, cloud_offroad=None, projection_layout=None,
                 local_access=None, tmux_live=None, starport_logs=None, starport_log_sender=None, hotspot=None, toyota_tools=None,
                 replay_client=None, replay_root=None,
-                spotify_setup=None, companion=None, phone_location=None, reverse_proxy=None, local_hostnames=None, sound_preview=None):
+                spotify_setup=None, companion=None, phone_location=None, reverse_proxy=None, local_hostnames=None, sound_preview=None,
+                discord_report_params=None):
   from openpilot.starpilot.galaxy.local_hostnames import LocalHostnames
   hostname_source = local_hostnames if local_hostnames is not None else LocalHostnames(clock=clock)
   from openpilot.starpilot.galaxy.companion import CompanionRegistry, APK_PATH
@@ -192,6 +193,12 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
   access = owner if owner is not None else default_owner()
   from openpilot.starpilot.galaxy.reverse_proxy import ReverseProxySettings
   proxy_settings = ReverseProxySettings(access.root)
+
+  def discord_params():
+    if discord_report_params is not None:
+      return discord_report_params
+    from openpilot.common.params import Params
+    return Params()
   pairing = remote_pairing if remote_pairing is not None else default_remote_pairing()
   pairing_authority = None
   device_name = DeviceName(pairing.root)
@@ -784,6 +791,12 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                           'passwordConfigured': access.status().status == AccessStatus.CONFIGURED_LOCAL})
         except (OSError, ValueError):
           self.json(503, {'error': 'Reverse proxy configuration is unavailable'})
+        return
+      if path == '/api/settings/discord-report':
+        if not self.require_session():
+          return
+        from openpilot.starpilot.power.discord_report import webhook_status
+        self.json(200, webhook_status(discord_params()))
         return
       if path == '/api/connect/provider':
         if not self.require_session():
@@ -1726,7 +1739,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                       '/api/settings/recovery/preview', '/api/settings/recovery/confirm',
                       '/api/settings/flm-backup/preview', '/api/settings/flm-backup/confirm',
                       '/api/settings/flm-finding/accept',
-                      '/api/settings/reset-default', '/api/settings/restore', '/api/recordings/action',
+                      '/api/settings/reset-default', '/api/settings/restore', '/api/settings/discord-report', '/api/recordings/action',
                       '/api/replay/start', '/api/replay/control', '/api/replay/stop',
                       '/api/replay/export-start',
                       '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot', '/api/galaxy/networks',
@@ -1970,6 +1983,23 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         else:
           self.json(200, {**result, 'canEdit': cloud_allowed(),
                           'passwordConfigured': access.status().status == AccessStatus.CONFIGURED_LOCAL})
+        return
+      if path == '/api/settings/discord-report':
+        from openpilot.starpilot.power.discord_report import configure_webhook, owner_is_allowed, remove_webhook, webhook_status
+        params = discord_params()
+        if not owner_is_allowed(params):
+          self.json(403, {'error': 'Discord battery reports are not available on this device'})
+          return
+        if type(payload) is not dict or payload.get('action') not in ('save', 'remove') or \
+           set(payload) - {'action', 'webhook'} or (payload['action'] == 'save') != ('webhook' in payload):
+          self.json(400, {'error': 'Invalid request'})
+          return
+        if payload['action'] == 'remove':
+          remove_webhook(params)
+        elif not configure_webhook(params, payload['webhook']):
+          self.json(409, {'error': 'Enter a Discord webhook URL (https://discord.com/api/webhooks/...)'})
+          return
+        self.json(200, webhook_status(params))
         return
       if path == '/api/connect/provider':
         identity = self.settings_session()

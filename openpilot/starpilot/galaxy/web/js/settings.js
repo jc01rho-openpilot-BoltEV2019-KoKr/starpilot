@@ -7,6 +7,7 @@ import { connectionError } from "./polling.js"
 import { reactive, nextTick, defineAsyncComponent } from "../vendor/vue/vue.esm-browser.js"
 import { GalaxySettingRow, settingControl } from "./galaxy-setting-row.js"
 import { ReverseProxySettings } from "./reverse-proxy.js"
+import { DiscordReportSettings } from "./discord-report.js"
 import { AppReminderSettings } from "./app-reminder.js"
 import { OnroadLayoutPage } from "./onroad-layout.js"
 import { FavoritesPage } from "./favorites.js"
@@ -296,7 +297,7 @@ export class SettingsFeed {
 
 export const SettingsPage = {
   emits: ["nested"],
-  components: { WikiHelp, GxCollapse, AppReminderSettings, GxDialog, GxState, GalaxySettingRow, OnroadLayoutPage, FavoritesPage, SoundPacks, CloudProviderPage, ReverseProxySettings, GxNotice, VehicleControlsPage },
+  components: { WikiHelp, GxCollapse, AppReminderSettings, GxDialog, GxState, GalaxySettingRow, OnroadLayoutPage, FavoritesPage, SoundPacks, CloudProviderPage, ReverseProxySettings, DiscordReportSettings, GxNotice, VehicleControlsPage },
   props: {
     mode: { type: String, required: true }, unauthorized: { type: Function, required: true },
     initialPage: { type: String, default: "hub" }, title: { type: String, default: "Toggles" },
@@ -512,6 +513,7 @@ export const SettingsPage = {
             <VehicleControlsPage ref="vehicleEditor" v-if="vehicleSection" :mode="mode" :unauthorized="unauthorized" />
             <CloudProviderPage ref="cloudProvider" v-if="state.data?.page === 'data'" :mode="mode" :unauthorized="unauthorized" />
             <ReverseProxySettings v-if="state.data?.page === 'data'" :mode="mode" :unauthorized="unauthorized" />
+            <DiscordReportSettings v-if="state.data?.page === 'power'" :unauthorized="unauthorized" @changed="feed.load()" />
             <AppReminderSettings v-if="state.data?.page === 'browser_preferences'" />
             <template v-if="!vehicleSection && state.data && state.data.page !== 'browser_preferences'">
             <div v-if="state.data.page === 'pip'" class="gx-settings__actions gx-actions">
