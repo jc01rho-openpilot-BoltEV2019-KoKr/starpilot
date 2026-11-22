@@ -168,6 +168,7 @@ procs = [
   ModeldProcess("modeld", "openpilot.selfdrive.modeld.modeld", only_onroad),
   PythonProcess("navd", "openpilot.selfdrive.navigation.navd", navigation),
   PythonProcess("mapsd", "openpilot.selfdrive.navigation.mapsd", navigation),
+  PythonProcess("road_speed_limiter", "openpilot.selfdrive.road_speed_limiter", only_onroad),
   PythonProcess("vision_slc", "openpilot.starpilot.speed_limits.vision.producer", vision_slc_development),
   PythonProcess("dmonitoringmodeld", "openpilot.selfdrive.modeld.dmonitoringmodeld", driverview, enabled=(WEBCAM or not PC)),
   PythonProcess("sensord", "openpilot.system.sensord.sensord", sensord_run, enabled=not PC, restart_on_exit=True),
