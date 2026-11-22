@@ -24,6 +24,7 @@ EXPECTED = {
  AudibleAlert.preAlert: ('pre_alert.wav', 1, 1.0),
  AudibleAlert.warningSoft: ('critical.wav', None, 1.0),
  AudibleAlert.warningImmediate: ('dm_critical.wav', None, 1.0),
+ AudibleAlert.speedDown: ('speeddown.wav', 3, 1.0),
  CRITICAL_MAX: ('dm_critical_max.wav', None, 1.0),
 }
 

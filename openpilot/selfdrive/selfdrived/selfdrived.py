@@ -26,7 +26,9 @@ from openpilot.starpilot.gps.source import observation as gps_observation
 
 from openpilot.selfdrive.car.car_events import CarEvents
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
-from openpilot.selfdrive.selfdrived.events import Events, ET, Alert, Priority as AlertPriority
+from openpilot.selfdrive.selfdrived.events import Events, ET, Alert, Priority as AlertPriority, get_nda_camera_warning_policy
+from openpilot.selfdrive.road_speed_limiter import SpeedLimiter
+from openpilot.common.constants import CV
 from openpilot.selfdrive.selfdrived.bookmarks import BookmarkCounter
 from openpilot.starpilot.bookmark_state import BookmarkCheckpoint
 from openpilot.starpilot.longitudinal.force_stop_alert import HoldAlertState, EVENT_TYPE as FORCE_STOP_HOLD
@@ -179,7 +181,8 @@ class SelfdriveD:
     self.car_state_poller = messaging.Poller() if self.aol_replay and self.axis_transport_required else None
     self.car_state_sock = messaging.sub_sock('carState', poller=self.car_state_poller, timeout=20)
 
-    ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'lateralManeuverPlan', 'laneChangeAssistWire', 'starpilotLongitudinalPlan']
+    ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'lateralManeuverPlan', 'laneChangeAssistWire', 'starpilotLongitudinalPlan',
+                                                       'naviData']  # optional phone NDA receiver
     if self.aol_replay:
       ignore += ['aolIntentWire']
     if self.axis_transport_required:
@@ -200,7 +203,7 @@ class SelfdriveD:
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'deviceMotion', 'lateralDelay',
                                    'managerState', 'vehicleParameters', 'radarState', 'lateralTorqueParameters',
                                    'controlsState', 'carControl', 'driverAssistance', 'alertDebug',
-                                   'lateralManeuverPlan', 'laneChangeAssistWire', 'starpilotLongitudinalPlan'] +
+                                   'lateralManeuverPlan', 'laneChangeAssistWire', 'starpilotLongitudinalPlan', 'naviData'] +
                                   (['aolIntentWire'] if self.aol_replay else []) +
                                    (['aolSafetyWire'] if self.axis_transport_required else []) +
                                    (['slcState'] if self.conditional_replay or self.switchback_capable else []) + \
@@ -230,6 +233,7 @@ class SelfdriveD:
     from openpilot.starpilot.car.events import event_rules
     self.bookmarks = BookmarkCounter(BookmarkCheckpoint())
     self.events = Events(event_rules(self.CP) | self.bookmarks.event_rules())
+    self.last_nda_camera_warn_time = -float("inf")
 
     self.initialized = False
     self.enabled = False
@@ -376,6 +380,23 @@ class SelfdriveD:
         (CS.regenBraking and (not previous.regenBraking or not CS.standstill)):
         self.events.add(EventName.pedalPressed)
 
+  def update_nda_camera_warning(self, CS: car.CarState) -> None:
+    """Warn while approaching an NDA enforcement camera faster than 85% of its limit. Display/sound only."""
+    navi_recent = self.sm.recv_frame['naviData'] > 0 and (self.sm.frame - self.sm.recv_frame['naviData']) * DT_CTRL < 2.0
+    if not navi_recent:
+      return
+
+    apply_limit_speed, _, left_dist, _, _ = SpeedLimiter.instance().get_max_speed(CS, float(CS.vCruise))
+    current_speed_kph = max(float(CS.vEgo), 0.0) * CV.MS_TO_KPH
+    if apply_limit_speed <= 0 or left_dist <= 2.0 or left_dist >= 1000.0 or current_speed_kph <= 5.0:
+      return
+
+    _, alert_interval, _, _ = get_nda_camera_warning_policy(current_speed_kph, apply_limit_speed)
+    if current_speed_kph > apply_limit_speed * 0.85:
+      now = time.monotonic()
+      if now - self.last_nda_camera_warn_time >= alert_interval:
+        self.events.add(EventName.ndaCameraWarn)
+        self.last_nda_camera_warn_time = now
 
   def _update_bookmarks(self):
     # Run before initialization/dashcam early returns and independently of UI rendering.
@@ -741,6 +762,8 @@ class SelfdriveD:
     planner_fcw = self.sm['longitudinalPlan'].fcw and self.enabled
     if (planner_fcw or model_fcw) and not self.CP.notCar:
       self.events.add(EventName.fcw)
+
+    self.update_nda_camera_warning(CS)
 
     # GPS checks
     gps_ok = self.sm.recv_frame[self.gps_location_service] > 0 and (self.sm.frame - self.sm.recv_frame[self.gps_location_service]) * DT_CTRL < 2.0

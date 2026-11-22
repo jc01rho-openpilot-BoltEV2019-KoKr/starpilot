@@ -255,6 +255,62 @@ def below_steer_speed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.S
     Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 0.4)
 
 
+def get_nda_camera_warning_context(sm: messaging.SubMaster) -> tuple[float, float]:
+  """Return (limit_kph, distance_m) of the enforcement camera or section reported by NDA naviData."""
+  navi = sm['naviData']
+  if int(navi.active) <= 0:
+    return 0.0, 0.0
+
+  # Keep in sync with SpeedLimiter.get_max_speed.
+  min_limit, max_limit = (40, 120) if navi.isHighway else (20, 100)
+  if int(navi.camType) == 22:
+    min_limit = 10
+
+  cam_limit, cam_distance = float(navi.camLimitSpeed), float(navi.camLimitSpeedLeftDist)
+  if cam_limit > 0 and cam_distance > 2.0 and min_limit <= cam_limit <= max_limit:
+    return cam_limit, cam_distance
+
+  section_limit, section_distance = float(navi.sectionLimitSpeed), float(navi.sectionLeftDist)
+  if section_limit > 0 and section_distance > 10.0 and min_limit <= section_limit <= max_limit:
+    return section_limit, section_distance
+  return 0.0, 0.0
+
+
+def get_nda_camera_warning_policy(current_speed: float, limit_speed: float) -> tuple[float, float, float, int]:
+  """Return (speed_ratio, repeat_interval_s, alert_duration_s, alert_status); both speeds share one unit."""
+  speed_ratio = max(current_speed, 0.0) / limit_speed if limit_speed > 0 else 0.0
+
+  clamped_ratio = min(max(speed_ratio, 0.0), 2.0)
+  if clamped_ratio >= 1.0:
+    interval = 1.2 - (min(clamped_ratio, 1.5) - 1.0) * 0.8
+  elif clamped_ratio >= 0.5:
+    interval = 2.5 - ((clamped_ratio - 0.5) / 0.5) * 1.3
+  else:
+    interval = 2.0
+
+  interval = max(0.8, min(interval, 2.5))
+  alert_status = AlertStatus.userPrompt if limit_speed > 0 and speed_ratio < 0.7 else AlertStatus.critical
+  return speed_ratio, interval, interval * 0.4, alert_status
+
+
+def nda_camera_warning_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
+  limit_speed_kph, distance_m = get_nda_camera_warning_context(sm)
+  current_speed_kph = max(float(CS.vEgo), 0.0) * CV.MS_TO_KPH
+  _, _, duration, alert_status = get_nda_camera_warning_policy(current_speed_kph, limit_speed_kph)
+
+  distance_text = f"{max(int(round(distance_m)), 0)} m"
+  if int(sm['naviData'].active) > 0 and sm['naviData'].camRearPassed:
+    distance_text = f"hold {distance_text}"
+  limit_text = f"{max(int(round(limit_speed_kph)), 0)} kph" if limit_speed_kph > 0 else "Camera"
+
+  audible_alert = AudibleAlert.speedDown if alert_status == AlertStatus.critical else AudibleAlert.none
+  return Alert(
+    f"{limit_text} 📸 {distance_text}",
+    "",
+    alert_status, AlertSize.small,
+    Priority.HIGH, VisualAlert.none, audible_alert, duration)
+
+
 def calibration_incomplete_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
   first_word = 'Recalibrating' if sm['extrinsicsCalibration'].calStatus == log.ExtrinsicsCalibration.Status.recalibrating else 'Calibrating'
   return Alert(
@@ -1013,6 +1069,10 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
 
   EventName.userBookmarkNotPaired: {
     ET.PERMANENT: NormalPermanentAlert("Bookmark Saved", "pair to connect\nto view", duration=1.5),
+  },
+
+  EventName.ndaCameraWarn: {
+    ET.WARNING: nda_camera_warning_alert,
   },
 }
 
