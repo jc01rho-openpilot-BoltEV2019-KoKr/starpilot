@@ -2,6 +2,7 @@ import unittest
 from opendbc.can import CANPacker
 from opendbc.car import Bus, gen_empty_fingerprint, structs
 from opendbc.car.gm.interface import CarInterface
+from opendbc.car.interfaces import SPEED_CORRECTION
 from opendbc.car.gm.values import CAR, DBC, BOLT_CC_WORDS, GMFlags, is_bolt_cc_profile
 from opendbc.car.gm.bolt_cc import button_bytes
 from opendbc.safety.tests.libsafety import libsafety_py
@@ -53,8 +54,8 @@ def feed(ci, packer, now, counter=0, gas=False, active=True, speed=20, stock=15,
     'ECMEngineStatus': {'CruiseMainOn': 1, 'BrakePressed': int(brake)},
     'AcceleratorPedal2': {'AcceleratorPedal2': 30 if gas else 0},
     'ECMPRDNL2': {'PRNDL2': 4},
-    'EBCMWheelSpdRear': {'RLWheelSpd': speed * 3.6, 'RRWheelSpd': speed * 3.6, 'RLWheelDir': 1, 'RRWheelDir': 1},
-    'EBCMWheelSpdFront': {'FLWheelSpd': speed * 3.6, 'FRWheelSpd': speed * 3.6},
+    'EBCMWheelSpdRear': {'RLWheelSpd': speed * 3.6 / SPEED_CORRECTION, 'RRWheelSpd': speed * 3.6 / SPEED_CORRECTION, 'RLWheelDir': 1, 'RRWheelDir': 1},
+    'EBCMWheelSpdFront': {'FLWheelSpd': speed * 3.6 / SPEED_CORRECTION, 'FRWheelSpd': speed * 3.6 / SPEED_CORRECTION},
     'ESPStatus': {'TractionControlOn': 1},
     'BCMDoorBeltStatus': {'LeftSeatBelt': 1},
     'BCMGeneralPlatformStatus': {},

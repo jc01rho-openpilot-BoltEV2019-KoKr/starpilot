@@ -203,7 +203,8 @@ let driverLog = '', port, session, lastCommand = '', browserVersion = null
 const browserStartedAt = Date.now()
 driver.on('error', error => { driverLog += error.stack })
 for (const stream of [driver.stdout, driver.stderr]) stream.on('data', data => { driverLog += data })
-const deadline = Date.now() + 45_000
+// One budget bounds the whole browser session; the shared CI runner runs the parallel unit suite at the same time.
+const deadline = Date.now() + 120_000
 async function until(fn) {
   while (Date.now() < deadline) { const value = await fn();if (value) return value;await new Promise(resolve => setTimeout(resolve, 50)) }
   throw new Error('FLM browser check deadline exceeded\n' + driverLog.slice(-3000))

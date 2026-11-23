@@ -9,6 +9,7 @@ from opendbc.car.hyundai.carstate import CarState
 from opendbc.car.hyundai.fingerprints import FW_VERSIONS
 from opendbc.car.hyundai.hyundaicanfd import CanBus, hkg_can_fd_checksum
 from opendbc.car.hyundai.interface import CarInterface
+from opendbc.car.interfaces import SPEED_CORRECTION
 from opendbc.car.hyundai.values import (CANFD_ANGLE_CCNC_MODEL_BANK_BIT, CANFD_ANGLE_MODEL_BITS,
                                         CANFD_ANGLE_OBSERVED_ADAS_BIT, CAR, DBC, HyundaiFlags,
                                         HyundaiSafetyFlags)
@@ -306,7 +307,7 @@ class TestHyundaiCcncAngleTwo(unittest.TestCase):
             self.assertTrue(safety.safety_rx_hook(self.packet(wheel_frame)))
           measured_speed = safety.get_vehicle_speed_min()
           self.assertAlmostEqual(measured_speed, speed_mps, delta=0.02)
-          self.assertAlmostEqual(state.out.vEgoRaw, measured_speed, delta=0.02)
+          self.assertAlmostEqual(state.out.vEgoRaw, measured_speed * SPEED_CORRECTION, delta=0.02 * SPEED_CORRECTION)
           effective_speed = max(measured_speed - 1.0, 1.0)
           max_ticks = int(get_max_angle_vm(effective_speed, controller.angle_vm, controller.params) * 10 + 1)
           delta_ticks = int(get_max_angle_delta_vm(effective_speed, controller.angle_vm, controller.params) * 10 + 1)

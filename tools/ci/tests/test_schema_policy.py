@@ -21,6 +21,17 @@ class SchemaPolicyTest(unittest.TestCase):
     self.schemas[name] = self.schemas[name].replace(b'struct CarState {', b'struct CarState {\n  forkValue @62 :Float32;')
     self.assertTrue(any('car.capnp' in error for error in validate(self.schemas, self.policy, self.sync)))
 
+  def test_fork_log_additions_are_pinned_to_exact_reviewed_lines(self):
+    path = 'openpilot/cereal/log.capnp'
+    for original, replacement in ((b'naviData @154 :NaviData;', b'naviData @155 :NaviData;'),
+                                  (b'    speedDown @11;', b'    speedDown @11;\n    unreviewedAlert @12;'),
+                                  (b'    ndaCameraWarn @105;\n', b'')):
+      with self.subTest(replacement=replacement):
+        schemas = self.schemas.copy()
+        self.assertIn(original, schemas[path])
+        schemas[path] = schemas[path].replace(original, replacement)
+        self.assertTrue(validate(schemas, self.policy, self.sync))
+
   def test_other_opendbc_schemas_are_pinned(self):
     for name in ('opendbc_repo/opendbc/car/rlog.capnp', 'opendbc_repo/opendbc/car/include/c++.capnp'):
       with self.subTest(name=name):
