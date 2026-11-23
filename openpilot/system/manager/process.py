@@ -1,3 +1,4 @@
+import importlib  # noqa: F401  # patched by openpilot/system/tests/test_sentry.py via process.importlib
 import os
 import signal
 import time
