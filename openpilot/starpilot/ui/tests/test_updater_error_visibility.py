@@ -41,3 +41,18 @@ def test_native_error_log_preserves_crash_log_fallback():
     software.SoftwareLayout._on_error_log(software.SoftwareLayout.__new__(software.SoftwareLayout))
     assert dialog.call_args.args[0] == "Existing crash log"
     assert dialog.call_args.kwargs["rich"] is True
+
+
+def test_native_error_log_reads_crash_storage_not_legacy_path(tmp_path):
+  from openpilot.selfdrive.ui.layouts.settings import software
+  (tmp_path / "crash").mkdir()
+  (tmp_path / "crash" / "error.txt").write_text("fresh crash trace")
+  (tmp_path / "error_logs").mkdir()
+  (tmp_path / "error_logs" / "error.txt").write_text("stale legacy crash")
+  with (patch.object(software, "ui_state", NS(params=NS(get=lambda key: None))),
+        patch.object(software, "gui_app") as app, patch.object(software, "ConfirmDialog") as dialog,
+        patch.object(software.Paths, "log_root", staticmethod(lambda: str(tmp_path)))):
+    software.SoftwareLayout._on_error_log(software.SoftwareLayout.__new__(software.SoftwareLayout))
+    assert dialog.call_args.args[0] == "fresh crash trace"
+    assert dialog.call_args.kwargs["rich"] is True
+    app.push_widget.assert_called_once()
