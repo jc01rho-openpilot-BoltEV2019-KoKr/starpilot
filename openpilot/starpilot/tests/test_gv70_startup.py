@@ -8,6 +8,7 @@ from opendbc.car.hyundai.ev6_template import EV6Template
 from opendbc.car.hyundai.gv70_startup import eligible
 from opendbc.car.hyundai.gv70_template import GV70Template
 from opendbc.car.hyundai.interface import CarInterface
+from opendbc.car.interfaces import SPEED_CORRECTION
 from opendbc.car.hyundai.values import CAR, DBC
 from openpilot.starpilot.tests import test_ev6_startup as fixture
 from openpilot.starpilot.vehicle_startup import VehicleStartupOwner
@@ -80,7 +81,7 @@ class TestGV70Startup(unittest.TestCase):
                                         CanData(*packer.make_can_msg('CAM_0x2a4', 2, {}))])])
         _, frames = ci.apply(command.as_reader(), (tick+1)*10_000_000)
         outputs.extend(CanData(*frame) for frame in frames if frame[0] == 0x51)
-      self.assertAlmostEqual(ci.CS.out.vEgoRaw, 10.*cp.wheelSpeedFactor)
+      self.assertAlmostEqual(ci.CS.out.vEgoRaw, 10.*cp.wheelSpeedFactor*SPEED_CORRECTION, places=5)
       self.assertEqual(len(outputs), 4)
       if car == CAR_ID:
         self.assertEqual(int.from_bytes(outputs[-1].dat[8:10], 'little'), round(ci.CS.out.vEgoRaw*100))

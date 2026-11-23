@@ -182,7 +182,7 @@ def make_session(monkeypatch, request, profile, camera):
     monkeypatch.setattr(runtime_app, name, Mock())
   monkeypatch.setattr(runtime_app, '_galaxy_access_owner', Mock())
   monkeypatch.setattr(runtime_app, 'slc_action_transport_enabled', lambda *_: False)
-  monkeypatch.setattr(runtime_app, 'ui_state', NS(params=object(), CP=None, sm={}))
+  monkeypatch.setattr(runtime_app, 'ui_state', NS(params=object(), CP=None, sm=NS(data={}, recv_time={})))
   monkeypatch.delenv('SP_ONROAD_VISUAL_PREVIEW', raising=False)
   def view(*_, camera_layer, **__):
     return NS(camera_layer=camera_layer, onroad=NS(unified_speed=NS(source_bounds=Mock()), compact_sidebar=NS(), jetlink_status=Mock()))

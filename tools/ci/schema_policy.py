@@ -6,7 +6,8 @@ update schema-policy.json alongside upstream-sync.json. Custom fields belong
 inside reserved custom.capnp structs or the exact reviewed payload children
 already shipped by this fork; those children grant no Event slots and their
 existing bodies and reserved-carrier references are immutable. log.capnp may rename only their event
-aliases and the reserved raw-data aliases, preserving ordinals and type IDs.
+aliases and the reserved raw-data aliases, preserving ordinals and type IDs. The
+only other log.capnp edits are the exact reviewed lines in fork_log_additions.
 """
 
 import hashlib
@@ -323,6 +324,15 @@ def validate(schemas, policy, sync):
       errors.append(f'log.capnp: reserved raw event @{ordinal} changed type or ordinal')
   if policy.get('reviewed_log_additions') or policy.get('reviewed_log_ordinal_remaps'):
     errors.append('log.capnp: core schema exceptions are not permitted; use custom.capnp reserved structs')
+  # Reviewed fork-only additions to log.capnp are pinned as exact source text:
+  # each must appear exactly once and is removed before the upstream hash check,
+  # so any other log.capnp drift still fails.
+  for addition in policy.get('fork_log_additions', []):
+    text = '\n'.join(addition['lines']) + '\n'
+    if log.count(text) != 1:
+      errors.append(f'log.capnp: reviewed fork addition is missing or ambiguous: {addition["lines"][0]}')
+    else:
+      log = log.replace(text, '')
   if sha256(log.encode()) != policy['log_sha256']:
     errors.append('log.capnp: changes outside the permitted reserved-event aliases')
   return errors
