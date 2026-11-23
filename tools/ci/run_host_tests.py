@@ -16,6 +16,8 @@ EXTRA_PYTEST_FILES = (
   'openpilot/selfdrive/pandad/tests/test_spi_retry.py',
   'msgq_repo/msgq/tests/test_receive_gil.py',
   'openpilot/selfdrive/car/tests/test_ford_settings_worker.py',
+  'openpilot/cereal/tests/test_service_schema.py',
+  'openpilot/system/tests/test_import_integrity.py',
   'openpilot/system/tests/test_sentry.py',
   'openpilot/system/ui/lib/tests/test_text_caches.py',
   'openpilot/system/ui/widgets/tests/test_label_cache.py',
