@@ -9,6 +9,7 @@ from opendbc.car.gm.longitudinal import volt_policy_for
 from opendbc.car.gm.profiles import profiles_supported
 from opendbc.car.gm.tests.test_bolt_volt_configurations import controller_messages, ordinary_params
 from opendbc.car.gm.values import CAR, DBC, GMSafetyFlags, is_volt_gateway_alternate_brake
+from opendbc.car.interfaces import SPEED_CORRECTION
 
 
 def one_pedal_profiles(*, release=False):
@@ -195,7 +196,7 @@ class TestVoltAlternateBrake(unittest.TestCase):
             live_withdrawn = 1305 <= tick < 1320 or 1745 <= tick < 1760 or 2185 <= tick < 2200 or tick >= 2625
             gas = 310 <= tick < 320
             speed = 0. if stopped else .15 if 420 <= tick < 440 else .5 if tick >= 310 else 2.
-            _, rx = feed(SimpleNamespace(update=lambda _: None), packer, now, speed=speed, gas=gas, regen=regen,
+            _, rx = feed(SimpleNamespace(update=lambda _: None), packer, now, speed=speed * SPEED_CORRECTION, gas=gas, regen=regen,
                          camera=cp.networkLocation == structs.CarParams.NetworkLocation.fwdCamera and not removed)
             rx = [message for message in rx if message[0] not in (0xBE, 0xF1, 0x1C4, 0xC9, 0x1F5, 0x232)]
             brake_name, signal = ('ECMAcceleratorPos', 'BrakePedalPos') if be else ('EBCMBrakePedalPosition', 'BrakePedalPosition')
@@ -445,7 +446,7 @@ class TestVoltAlternateBrake(unittest.TestCase):
         raw_wheel = 28 if sdgm and tick == 348 else 29 if sdgm and tick == 352 else (
           20 if sdgm and (349 <= tick < 352 or 353 <= tick < 360 or 900 <= tick < 910) else None)
         speed = raw_wheel * .0311 / 3.6 if raw_wheel is not None else 2. if moving else 0.
-        _, rx = feed(SimpleNamespace(update=lambda _: None), packer, now, speed=speed,
+        _, rx = feed(SimpleNamespace(update=lambda _: None), packer, now, speed=speed * SPEED_CORRECTION,
                      brake=not moving and not 880 <= tick < 900, gas=gas, regen=regen,
                      camera=cp.networkLocation == structs.CarParams.NetworkLocation.fwdCamera and not removed and not camera_missing)
         rx = [message for message in rx if message[0] not in (0xBE, 0xF1, 0x1C4, 0x232, 0x1E1, 0x1F5, 0xC9)]
