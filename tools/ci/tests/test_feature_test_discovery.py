@@ -39,6 +39,9 @@ class TestFeatureTestDiscovery(unittest.TestCase):
     selected = pytest_files()
     self.assertIn('openpilot/system/tests/test_sentry.py', selected)
     self.assertIn('openpilot/system/tests/test_sentry.py', UI_PYTEST_FILES)
+    # Port integrity guards live outside openpilot/starpilot, so they must be listed explicitly or CI never runs them.
+    self.assertIn('openpilot/system/tests/test_import_integrity.py', selected)
+    self.assertIn('openpilot/cereal/tests/test_service_schema.py', selected)
     self.assertTrue(selected)
     for package in ('flm', 'spot_monitor', 'sentry_mode', 'galaxy', 'ui'):
       self.assertTrue(any(path.startswith(f'openpilot/starpilot/{package}/') for path in selected), package)
