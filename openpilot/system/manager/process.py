@@ -1,4 +1,4 @@
-import importlib
+import importlib  # noqa: F401  # patched by openpilot/system/tests/test_sentry.py via process.importlib
 import os
 import signal
 import time
@@ -14,6 +14,7 @@ from opendbc.car.structs import car
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
+from openpilot.system.manager.module_alias import import_process_module
 from openpilot.system import sentry
 
 
@@ -22,7 +23,7 @@ def launcher(proc: str, name: str) -> None:
   sentry.set_tag("daemon", name)
   try:
     # import the process
-    mod = importlib.import_module(proc)
+    mod = import_process_module(proc)
 
     # rename the process
     setproctitle(proc)
