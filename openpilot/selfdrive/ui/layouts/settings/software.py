@@ -4,6 +4,7 @@ import datetime
 from pathlib import Path
 from collections.abc import Callable
 from openpilot.common.time_helpers import system_time_valid
+from openpilot.common.hardware.hw import Paths
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.starpilot.software.preferences import AUTOMATIC_DOWNLOADS, automatic_downloads
 from openpilot.system.ui.lib.application import gui_app
@@ -239,7 +240,7 @@ class SoftwareLayout(Widget):
       text = error[:4096]
     else:
       try:
-        text = Path("/data/error_logs/error.txt").read_text(encoding="utf-8", errors="replace")
+        text = (Path(Paths.log_root()) / "crash" / "error.txt").read_text(encoding="utf-8", errors="replace")
       except OSError:
         text = tr("No error log found.")
     gui_app.push_widget(ConfirmDialog(text, tr("OK"), cancel_text="", rich=not bool(error)))
