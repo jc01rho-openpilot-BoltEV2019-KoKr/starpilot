@@ -13,11 +13,14 @@ PYTHON_PROCESS_CLASSES = ('PythonProcess', 'DaemonProcess', 'ModeldProcess', 'Je
 
 def _registered_modules() -> list[tuple[str, str]]:
   tree = ast.parse(PROCESS_CONFIG.read_text(encoding='utf-8'))
-  found = []
+  found: list[tuple[str, str]] = []
   for node in ast.walk(tree):
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in PYTHON_PROCESS_CLASSES:
       name, module = node.args[0], node.args[1]
-      assert isinstance(name, ast.Constant) and isinstance(module, ast.Constant), f'process_config.py:{node.lineno} is not a literal registration'
+      if not (isinstance(name, ast.Constant) and isinstance(module, ast.Constant)):
+        raise AssertionError(f'process_config.py:{node.lineno} is not a literal registration')
+      if not (isinstance(name.value, str) and isinstance(module.value, str)):
+        raise AssertionError(f'process_config.py:{node.lineno} is not a string registration')
       found.append((name.value, module.value))
   return found
 
