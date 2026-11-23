@@ -9,6 +9,7 @@ from opendbc.car.hyundai.ioniq6_bsm import BlindspotStatus
 from opendbc.car.hyundai.canfd_dash_icons import CanFDDashIcons
 from opendbc.car.hyundai.ioniq6_handoff import build_ioniq6_hda2_long_candidate
 from opendbc.car.hyundai.interface import CarInterface
+from opendbc.car.interfaces import SPEED_CORRECTION
 from opendbc.car.hyundai.values import CAR, DBC
 from opendbc.safety.tests.libsafety import libsafety_py
 from opendbc.car.hyundai.tests.test_ioniq6_longitudinal import controller_fixture, LongState
@@ -505,7 +506,7 @@ class TestHyundaiIoniq6Long(unittest.TestCase):
               control.leftBlinker = queued
               _, sent = controller.update(control.as_reader(), ci.CS, 1_000_000_000)
               pair = [frame for frame in sent if frame[0] in (0x1BA, 0x1E5)]
-              expected = BlindspotStatus(0, 0) if not queued or sum(raw_speeds) < 1030 else BlindspotStatus(2, 1)
+              expected = BlindspotStatus(0, 0) if not queued or sum(raw_speeds) * SPEED_CORRECTION < 1030 else BlindspotStatus(2, 1)
               self.assertEqual(pair, create_ioniq6_blindspot_status(0, expected))
               for frame in pair:
                 self.assertTrue(self.safety.safety_tx_hook(self.packet(frame)), (topology, aol, hex(frame[0])))

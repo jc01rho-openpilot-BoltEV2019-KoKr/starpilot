@@ -21,6 +21,10 @@ from openpilot.tools.lib.url_file import URLFile
 from tools.ci.process_replay_coverage import replay_coverage, write_coverage
 from tools.ci.run_vehicle_tests import targets_for
 from tools.ci.replay_references import reviewed_reference
+import opendbc.car.interfaces as car_interfaces
+
+# Reference logs were recorded with the stock tire fit, so replay must not apply this branch's wheel-speed scale.
+car_interfaces.SPEED_CORRECTION = 1.0
 
 source_segments = [
   ("HYUNDAI", "02c45f73a2e5c6e9|2021-01-01--19-08-22--1"),     # HYUNDAI.HYUNDAI_SONATA

@@ -179,13 +179,13 @@ class TestVoltSdgmAcceptedEnvelope(unittest.TestCase):
       for speed in (0., 5., 10., 25., 40.):
         for pitch in (-.08, 0., .08):
           for accel in (-3., -.5, 0., .3, .8, 1.4, 2.):
-            original_gas, original_brake = volt_demands(
-              accel, speed, [0., pitch, 0.], .25, cp.mass, cp.wheelbase,
-              -4., 2., 400, min_gas=-540, max_gas=2698, inactive_gas=-500)
             for counter in range(4):
               ci = CarInterface(cp)
               packer = CANPacker(DBC[cp.carFingerprint][Bus.pt])
-              feed_camera(ci, packer, 1_000_000_000, speed=speed)
+              out, _ = feed_camera(ci, packer, 1_000_000_000, speed=speed)
+              original_gas, original_brake = volt_demands(
+                accel, out.vEgo, [0., pitch, 0.], .25, cp.mass, cp.wheelbase,
+                -4., 2., 400, min_gas=-540, max_gas=2698, inactive_gas=-500)
               control = structs.CarControl(enabled=True, longActive=True)
               control.actuators.accel = accel
               control.orientationNED = [0., pitch, 0.]

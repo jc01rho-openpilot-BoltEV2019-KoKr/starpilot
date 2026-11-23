@@ -13,6 +13,7 @@ import pytest
 from opendbc.can import CANPacker
 from opendbc.can.dbc import DBC as ParsedDBC
 from opendbc.car import structs
+from opendbc.car.interfaces import SPEED_CORRECTION
 from opendbc.car.volkswagen.interface import CarInterface
 from opendbc.car.volkswagen.values import CAR
 from opendbc.safety.tests.common import make_msg
@@ -200,7 +201,7 @@ def test_mqb_full_engagement_brake_reverse_drive_actual_callers(gearbox, alpha, 
         'ESP_19': dict.fromkeys(('ESP_VL_Radgeschw_02', 'ESP_VR_Radgeschw_02', 'ESP_HL_Radgeschw_02', 'ESP_HR_Radgeschw_02'),
                                       (72 if tick < 12 else 0 if tick < 20 else 1 if tick < 24 else 2 if tick < 46 else 72) if creep_start else
                                       0 if (stop_and_resume and 45 <= tick < 56) or (brake_held_engagement and tick < 30) else
-                                      0 if parked_boot and tick < 30 else 2 if cold_creep else 16 if manual_speed_withdrawal and 45 <= tick < 65 else 72),
+                                      0 if parked_boot and tick < 30 else 2 if cold_creep else 16 / SPEED_CORRECTION if manual_speed_withdrawal and 45 <= tick < 65 else 72),
         'Airbag_02': {'AB_Gurtschloss_FA': 0 if 105 <= tick < 111 else 3},
         'GRA_ACC_01': {'GRA_Abbrechen': int(cruise_cancel and tick == 55), 'GRA_Hauptschalter': int(not main_cycle or not 45 <= tick < 50),
                        'GRA_Tip_Setzen': int(engage_on_set and (tick in (20, 50) if creep_start else tick == 20))},
