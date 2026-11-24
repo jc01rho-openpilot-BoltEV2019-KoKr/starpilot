@@ -7,7 +7,8 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import Priority, config_realtime_process, set_core_affinity
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.controls.lib.ldw import LaneDepartureWarning
-from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, NATIVE_PLAN_INPUTS
+from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, NATIVE_PLAN_INPUTS, NDA_PLAN_INPUT
+from openpilot.selfdrive.navi_camera import nda_cruise_limit
 import openpilot.cereal.messaging as messaging
 from openpilot.cereal.services import SERVICE_LIST
 from openpilot.starpilot.speed_limits.planner_host import (
@@ -227,19 +228,28 @@ def lead_approach_for_frame(preferences: LeadApproachPreferences | None, sm, CP,
     return None
 
 
+def nda_plan_limit(sm, now_ns: int) -> float:
+  """Speed cap in kph from the NDA naviData frame, or 0.0 when it is absent, stale or caps nothing."""
+  if not sm.valid.get(NDA_PLAN_INPUT, False):
+    return 0.0
+  return nda_cruise_limit(sm['naviData'], now_ns, int(sm.logMonoTime.get(NDA_PLAN_INPUT, 0)))
+
+
 def update_curve_frame(planner: LongitudinalPlanner, sm, CP, now_ns: int, *, host: CurveHost | None = None,
                        cruise_ceiling=None, profile_tuning=None, traffic_mode: bool | None = False, drive_id: int = 0,
                        event: CurveDriverEvent | None = None, lane_change_policy=None,
                        global_braking_response: str | None = None, selected_profiles=None, conditional_handoff: ConditionalHandoff | None = None,
                        lead_approach_key: LeadApproachKey | None = None, force_stop_provider=None,
-                       faster_lead_takeoff: bool = False, wheel_coast=None, experimental_speed_nudge: bool = True):
+                       faster_lead_takeoff: bool = False, wheel_coast=None, experimental_speed_nudge: bool = True,
+                       nda_limit_kph: float | None = None):
   """One model cycle: MPC chooses follow time, then Curve samples and receives winner feedback."""
   if host is None:
     planner.update(sm, cruise_ceiling=cruise_ceiling, profile_tuning=profile_tuning, traffic_mode=traffic_mode,
                    lane_change_policy=lane_change_policy, global_braking_response=global_braking_response, selected_profiles=selected_profiles,
                    conditional_handoff=conditional_handoff, lead_approach_key=lead_approach_key,
                    force_stop_provider=force_stop_provider, faster_lead_takeoff=faster_lead_takeoff, wheel_coast=wheel_coast,
-                   takeoff_drive_id=drive_id, now_ns=now_ns, drive_id=drive_id, experimental_speed_nudge=experimental_speed_nudge)
+                   takeoff_drive_id=drive_id, now_ns=now_ns, drive_id=drive_id, experimental_speed_nudge=experimental_speed_nudge,
+                   nda_limit_kph=nda_limit_kph)
     return None
   results = []
   def provider(follow_time_s: float | None):
@@ -252,7 +262,8 @@ def update_curve_frame(planner: LongitudinalPlanner, sm, CP, now_ns: int, *, hos
                  curve_provider=provider, traffic_mode=traffic_mode, lane_change_policy=lane_change_policy,
                  global_braking_response=global_braking_response, selected_profiles=selected_profiles, conditional_handoff=conditional_handoff,
                  lead_approach_key=lead_approach_key, force_stop_provider=force_stop_provider, faster_lead_takeoff=faster_lead_takeoff, wheel_coast=wheel_coast,
-                   takeoff_drive_id=drive_id, now_ns=now_ns, drive_id=drive_id, experimental_speed_nudge=experimental_speed_nudge)
+                   takeoff_drive_id=drive_id, now_ns=now_ns, drive_id=drive_id, experimental_speed_nudge=experimental_speed_nudge,
+                   nda_limit_kph=nda_limit_kph)
   confirm_curve_frame(host, planner, now_ns)
   return results[0] if results else None
 
@@ -387,7 +398,8 @@ def starpilot_main():
     optional_slc.append('slcVisionObservation')
   subscribed_services.extend(optional_slc)
   subscribed_services.append('starpilotNavigation')
-  optional_conditional = ['starpilotNavigation'] + (['starpilotRadarState'] if conditional_host is not None else []) + optional_slc
+  subscribed_services.append('naviData')
+  optional_conditional = ['starpilotNavigation', 'naviData'] + (['starpilotRadarState'] if conditional_host is not None else []) + optional_slc
   sm = messaging.SubMaster(subscribed_services, poll='modelV2',
                            ignore_alive=optional_conditional, ignore_valid=optional_conditional,
                            ignore_avg_freq=optional_conditional)
@@ -535,8 +547,9 @@ def starpilot_main():
               return force_stop_owner.sample(sm, CP, now_ns=clock_pair[0], now_boot_ns=clock_pair[1],
                                               drive_id=current_start_ns, follow_seconds=follow_seconds,
                                               traffic_mode=traffic_mode, takeoff_enabled=faster_lead_takeoff)
+        nda_limit_kph = nda_plan_limit(sm, now_ns)
         curve_result = update_curve_frame(longitudinal_planner, sm, CP, now_ns, host=curve_host,
-                                          cruise_ceiling=cruise_ceiling,
+                                          cruise_ceiling=cruise_ceiling, nda_limit_kph=nda_limit_kph,
                                           profile_tuning=profile_tuning,
                                           traffic_mode=traffic_mode, lane_change_policy=lane_change_policy,
                                           global_braking_response=global_braking_response, selected_profiles=selected_profiles,
