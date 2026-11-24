@@ -11,8 +11,13 @@ import pytest
 
 from openpilot.selfdrive.navi_camera import (
   INT16_MAX,
+  NDA_DATA_MAX_AGE_NS,
+  NDA_SPEED_DOWN_MARGIN_KPH,
   RearCameraMotion,
   camera_distance,
+  nda_cruise_limit,
+  nda_enforced_limit,
+  nda_speed_down_audible,
   traffic_signal_display,
   traffic_signal_fields,
 )
@@ -217,6 +222,39 @@ def _sm(**navi):
   return {"naviData": SimpleNamespace(**{**defaults, **navi})}
 
 
+class TestNdaCruiseLimit:
+  NOW = 10_000_000_000
+
+  def test_camera_wins_over_section_and_reported_distance_is_kept(self):
+    navi = _sm(camLimitSpeed=60, camLimitSpeedLeftDist=150, sectionLimitSpeed=80, sectionLeftDist=900)["naviData"]
+    assert nda_enforced_limit(navi) == (60.0, 150.0)
+
+  def test_section_is_used_when_no_camera_is_in_range(self):
+    navi = _sm(sectionLimitSpeed=80, sectionLeftDist=900)["naviData"]
+    assert nda_enforced_limit(navi) == (80.0, 900.0)
+
+  def test_nothing_is_enforced_when_inactive_or_out_of_range(self):
+    assert nda_enforced_limit(_sm(active=0, camLimitSpeed=60, camLimitSpeedLeftDist=300)["naviData"]) == (0.0, 0.0)
+    assert nda_enforced_limit(_sm(camLimitSpeed=110, camLimitSpeedLeftDist=300)["naviData"]) == (0.0, 0.0)
+    assert nda_enforced_limit(_sm(isHighway=True, camLimitSpeed=30, camLimitSpeedLeftDist=300)["naviData"]) == (0.0, 0.0)
+    # camType 22 (section average) accepts 10 kph, the same range SpeedLimiter.get_max_speed uses.
+    assert nda_enforced_limit(_sm(camType=22, camLimitSpeed=15, camLimitSpeedLeftDist=300)["naviData"]) == (15.0, 300.0)
+
+  def test_fresh_data_caps_and_stale_data_does_not(self):
+    navi = _sm(camLimitSpeed=60, camLimitSpeedLeftDist=150)["naviData"]
+    assert nda_cruise_limit(navi, self.NOW, self.NOW) == 60.0
+    assert nda_cruise_limit(navi, self.NOW, self.NOW - NDA_DATA_MAX_AGE_NS) == 60.0
+    assert nda_cruise_limit(navi, self.NOW, self.NOW - NDA_DATA_MAX_AGE_NS - 1) == 0.0
+    assert nda_cruise_limit(None, self.NOW, self.NOW) == 0.0
+
+  def test_speed_down_is_audible_only_beyond_the_margin(self):
+    assert NDA_SPEED_DOWN_MARGIN_KPH == 8.0
+    assert nda_speed_down_audible(60.0 + NDA_SPEED_DOWN_MARGIN_KPH + 0.1, 60.0)
+    assert not nda_speed_down_audible(60.0 + NDA_SPEED_DOWN_MARGIN_KPH, 60.0)
+    assert not nda_speed_down_audible(65.0, 60.0)
+    assert not nda_speed_down_audible(120.0, 0.0)
+
+
 class TestNdaCameraWarning:
   @pytest.fixture
   def events(self):
@@ -246,6 +284,17 @@ class TestNdaCameraWarning:
     alert = events.nda_camera_warning_alert(None, SimpleNamespace(vEgo=25.0), sm, True, 0, None)
     assert alert.audible_alert == events.AudibleAlert.speedDown
     assert alert.alert_text_1.startswith("60 kph") and alert.alert_text_1.endswith("hold 150 m")
+
+  def test_critical_alert_is_silent_within_the_speed_down_margin(self, events):
+    # 65 kph against a 60 kph limit is past the 0.7 critical ratio, so the screen warning stays
+    # critical while the spoken prompt waits for the 8 kph margin.
+    sm = _sm(camLimitSpeed=60, camLimitSpeedLeftDist=150)
+    assert events.get_nda_camera_warning_policy(65.0, 60.0)[3] == events.AlertStatus.critical
+    vEgo = 65.0 / 3.6
+    alert = events.nda_camera_warning_alert(None, SimpleNamespace(vEgo=vEgo), sm, True, 0, None)
+    assert alert.alert_status == events.AlertStatus.critical
+    assert alert.audible_alert == events.AudibleAlert.none
+    assert alert.alert_text_1 == "60 kph 📸 150 m"
 
   def test_event_is_registered_as_warning(self, events):
     assert events.ET.WARNING in events.EVENTS[events.EventName.ndaCameraWarn]

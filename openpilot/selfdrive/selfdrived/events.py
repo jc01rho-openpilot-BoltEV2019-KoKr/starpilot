@@ -12,6 +12,7 @@ from openpilot.common.constants import CV
 from openpilot.common.git import get_short_branch
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.locationd.calibrationd import MIN_SPEED_FILTER
+from openpilot.selfdrive.navi_camera import nda_enforced_limit, nda_speed_down_audible
 from openpilot.common.hardware import HARDWARE
 
 AlertSize = log.SelfdriveState.AlertSize
@@ -257,23 +258,7 @@ def below_steer_speed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.S
 
 def get_nda_camera_warning_context(sm: messaging.SubMaster) -> tuple[float, float]:
   """Return (limit_kph, distance_m) of the enforcement camera or section reported by NDA naviData."""
-  navi = sm['naviData']
-  if int(navi.active) <= 0:
-    return 0.0, 0.0
-
-  # Keep in sync with SpeedLimiter.get_max_speed.
-  min_limit, max_limit = (40, 120) if navi.isHighway else (20, 100)
-  if int(navi.camType) == 22:
-    min_limit = 10
-
-  cam_limit, cam_distance = float(navi.camLimitSpeed), float(navi.camLimitSpeedLeftDist)
-  if cam_limit > 0 and cam_distance > 2.0 and min_limit <= cam_limit <= max_limit:
-    return cam_limit, cam_distance
-
-  section_limit, section_distance = float(navi.sectionLimitSpeed), float(navi.sectionLeftDist)
-  if section_limit > 0 and section_distance > 10.0 and min_limit <= section_limit <= max_limit:
-    return section_limit, section_distance
-  return 0.0, 0.0
+  return nda_enforced_limit(sm['naviData'])
 
 
 def get_nda_camera_warning_policy(current_speed: float, limit_speed: float) -> tuple[float, float, float, int]:
@@ -303,7 +288,9 @@ def nda_camera_warning_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.
     distance_text = f"hold {distance_text}"
   limit_text = f"{max(int(round(limit_speed_kph)), 0)} kph" if limit_speed_kph > 0 else "Camera"
 
-  audible_alert = AudibleAlert.speedDown if alert_status == AlertStatus.critical else AudibleAlert.none
+  # The on-screen warning keeps its own thresholds; the spoken "slow down" waits for the 8 kph margin.
+  audible_alert = AudibleAlert.speedDown if (alert_status == AlertStatus.critical and
+                                             nda_speed_down_audible(current_speed_kph, limit_speed_kph)) else AudibleAlert.none
   return Alert(
     f"{limit_text} 📸 {distance_text}",
     "",

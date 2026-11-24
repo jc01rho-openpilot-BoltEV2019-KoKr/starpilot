@@ -103,3 +103,50 @@ def traffic_signal_display(ts):
   if not any(on or remaining > 0 for _, on, remaining in lights):
     return None
   return lights
+
+
+NDA_DATA_MAX_AGE_NS = 3_000_000_000  # naviData publishes at 3 Hz; older than this is treated as absent
+NDA_SECTION_MIN_DISTANCE_M = 10.0
+NDA_SPEED_DOWN_MARGIN_KPH = 8.0
+
+
+def nda_speed_bounds(cam_type: int, is_highway: object) -> tuple[int, int]:
+  """Return the (min, max) enforced limit in kph for one camera type and road class."""
+  min_limit, max_limit = (40, 120) if is_highway else (20, 100)
+  if cam_type == 22:
+    min_limit = 10
+  return min_limit, max_limit
+
+
+def nda_enforced_limit(navi, cam_min_distance_m: float = 2.0) -> tuple[float, float]:
+  """Return (limit_kph, distance_m) of the enforcement camera or section naviData reports, else (0, 0).
+
+  A camera in range wins over a section. The distance is what the sender reports, so a passed rear
+  camera keeps reporting its remaining hold zone.
+  """
+  if int(navi.active) <= 0:
+    return 0.0, 0.0
+  min_limit, max_limit = nda_speed_bounds(int(navi.camType), navi.isHighway)
+  cam_limit, cam_distance = float(navi.camLimitSpeed), float(navi.camLimitSpeedLeftDist)
+  if cam_limit > 0 and cam_distance > cam_min_distance_m and min_limit <= cam_limit <= max_limit:
+    return cam_limit, cam_distance
+  section_limit, section_distance = float(navi.sectionLimitSpeed), float(navi.sectionLeftDist)
+  if section_limit > 0 and section_distance > NDA_SECTION_MIN_DISTANCE_M and min_limit <= section_limit <= max_limit:
+    return section_limit, section_distance
+  return 0.0, 0.0
+
+
+def nda_cruise_limit(navi, now_ns: int, mono_ns: int) -> float:
+  """Return the speed cap in kph the NDA camera or section enforces, or 0.0 when it caps nothing.
+
+  The cap is a hard limit in kph: the planner lowers the cruise target to it, and the approach
+  smoothing that starts the slowdown earlier than the camera stays with SpeedLimiter.get_max_speed.
+  """
+  if navi is None or now_ns - mono_ns > NDA_DATA_MAX_AGE_NS:
+    return 0.0
+  return nda_enforced_limit(navi)[0]
+
+
+def nda_speed_down_audible(current_speed_kph: float, limit_kph: float) -> bool:
+  """The speed-down prompt only plays once the car runs NDA_SPEED_DOWN_MARGIN_KPH over the limit."""
+  return limit_kph > 0 and current_speed_kph > limit_kph + NDA_SPEED_DOWN_MARGIN_KPH
