@@ -57,6 +57,7 @@ MIN_ALLOW_THROTTLE_SPEED = 2.5
 NATIVE_ALLOW_THROTTLE_PROBABILITY = 0.4
 NATIVE_PLAN_INPUTS = ('carControl', 'carState', 'controlsState', 'vehicleParameters',
                       'radarState', 'modelV2', 'selfdriveState')
+NDA_PLAN_INPUT = 'naviData'  # optional input: present only while the NDA navi sender is running
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
@@ -141,6 +142,7 @@ class LongitudinalPlanner:
     self.a_desired_trajectory = np.zeros(CONTROL_N)
     self.j_desired_trajectory = np.zeros(CONTROL_N)
     self.last_cruise_ceiling_status = "absent"
+    self.last_nda_limit_kph = 0.0
     self.last_curve_ceiling_status = "absent"
     self.last_curve_ceiling_applied = False
     self.profile_smoother = ProfileSmoother()
@@ -166,7 +168,8 @@ class LongitudinalPlanner:
              lead_approach_key: LeadApproachKey | None = None,
              force_stop_provider: Callable[[float], StopPlan] | None = None,
              faster_lead_takeoff: bool = False, takeoff_drive_id: int = 0,
-             now_ns: int | None = None, drive_id: int = 0, wheel_coast=None, experimental_speed_nudge: bool = True):
+             now_ns: int | None = None, drive_id: int = 0, wheel_coast=None, experimental_speed_nudge: bool = True,
+             nda_limit_kph: float | None = None):
     if curve_ceiling is not None and curve_provider is not None:
       raise ValueError('choose explicit Curve ceiling or same-cycle provider')
     if self.plan_drive_id != drive_id:
@@ -323,6 +326,9 @@ class LongitudinalPlanner:
     navigation_target = navigation_ceiling(sm, self.CP, sample_now_ns, v_cruise) if profile_eligible else None
     if navigation_target is not None:
       v_cruise = min(v_cruise, navigation_target)
+    self.last_nda_limit_kph = nda_limit_kph if nda_limit_kph is not None else 0.0
+    if profile_eligible and nda_limit_kph is not None and nda_limit_kph > 0.0:
+      v_cruise = min(v_cruise, nda_limit_kph * CV.KPH_TO_MS)
     coast_plan = None
     if wheel_coast is not None:
       owner, wheel_params = wheel_coast
