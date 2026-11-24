@@ -115,6 +115,42 @@ def test_native_planner_navigation_cap_and_default_equivalence():
   assert changed
 
 
+def test_native_planner_nda_cap_lowers_target_only_when_given():
+  import numpy as np
+  from opendbc.car.hyundai.interface import CarInterface
+  from opendbc.car.hyundai.values import CAR
+  from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+  from openpilot.starpilot.longitudinal.tests.test_conditional_handoff import Frame, NOW as FRAME_NOW
+
+  cp = CarInterface.get_non_essential_params(CAR.HYUNDAI_IONIQ_6)
+  cp.openpilotLongitudinalControl = True
+  baseline, no_cap, zero_cap, capped, released = (LongitudinalPlanner(cp, init_v=20.) for _ in range(5))
+  changed = False
+  for tick in range(40):
+    frame = Frame()
+    now = FRAME_NOW + tick * 50_000_000
+    frame['carState'].vEgo = 20.
+    frame['carState'].gearShifter = 'drive'
+    frame.logMonoTime = dict.fromkeys(frame, now)
+    baseline.update(frame, now_ns=now)
+    # Leaving the cap out and passing "nothing enforced" are the same as the old planner.
+    no_cap.update(frame, now_ns=now, nda_limit_kph=None)
+    assert baseline.output_a_target == no_cap.output_a_target
+    assert baseline.last_nda_limit_kph == no_cap.last_nda_limit_kph == 0.0
+    zero_cap.update(frame, now_ns=now, nda_limit_kph=0.0)
+    assert baseline.output_a_target == zero_cap.output_a_target
+    np.testing.assert_array_equal(baseline.mpc.params, zero_cap.mpc.params)
+    # A camera above the car's speed changes nothing; one below it makes the planner slow down.
+    released.update(frame, now_ns=now, nda_limit_kph=100.0)
+    assert released.output_a_target == baseline.output_a_target
+    capped.update(frame, now_ns=now, nda_limit_kph=60.0)
+    assert capped.last_nda_limit_kph == 60.0
+    assert capped.a_cruise < 0.0 < baseline.a_cruise
+    assert capped.output_a_target < baseline.output_a_target
+    changed |= capped.output_a_target < baseline.output_a_target
+  assert changed
+
+
 def test_turn_stop_hold_reuses_planner_stop_until_standstill(sm, tmp_path):
   from openpilot.common.params import Params
   from openpilot.starpilot.navigation.intent import TurnIntent
