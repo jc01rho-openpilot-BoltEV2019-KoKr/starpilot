@@ -108,6 +108,8 @@ def traffic_signal_display(ts):
 NDA_DATA_MAX_AGE_NS = 3_000_000_000  # naviData publishes at 3 Hz; older than this is treated as absent
 NDA_SECTION_MIN_DISTANCE_M = 10.0
 NDA_SPEED_DOWN_MARGIN_KPH = 8.0
+NDA_CAMERA_LOOKAHEAD_S = 30.0  # SpeedLimiter starts slowing this many seconds before a camera
+NDA_SIGNAL_CAMERA_LOOKAHEAD_S = 8.0  # camType 22 (signal enforcement) starts later
 
 
 def nda_speed_bounds(cam_type: int, is_highway: object) -> tuple[int, int]:
@@ -118,17 +120,18 @@ def nda_speed_bounds(cam_type: int, is_highway: object) -> tuple[int, int]:
   return min_limit, max_limit
 
 
-def nda_enforced_limit(navi, cam_min_distance_m: float = 2.0) -> tuple[float, float]:
+def nda_enforced_limit(navi, cam_min_distance_m: float = 2.0, cam_max_distance_m: float = float('inf')) -> tuple[float, float]:
   """Return (limit_kph, distance_m) of the enforcement camera or section naviData reports, else (0, 0).
 
   A camera in range wins over a section. The distance is what the sender reports, so a passed rear
-  camera keeps reporting its remaining hold zone.
+  camera keeps reporting its remaining hold zone. A camera farther than cam_max_distance_m is not yet
+  in range, so a running section can still apply.
   """
   if int(navi.active) <= 0:
     return 0.0, 0.0
   min_limit, max_limit = nda_speed_bounds(int(navi.camType), navi.isHighway)
   cam_limit, cam_distance = float(navi.camLimitSpeed), float(navi.camLimitSpeedLeftDist)
-  if cam_limit > 0 and cam_distance > cam_min_distance_m and min_limit <= cam_limit <= max_limit:
+  if cam_limit > 0 and cam_min_distance_m < cam_distance <= cam_max_distance_m and min_limit <= cam_limit <= max_limit:
     return cam_limit, cam_distance
   section_limit, section_distance = float(navi.sectionLimitSpeed), float(navi.sectionLeftDist)
   if section_limit > 0 and section_distance > NDA_SECTION_MIN_DISTANCE_M and min_limit <= section_limit <= max_limit:
@@ -150,3 +153,12 @@ def nda_cruise_limit(navi, now_ns: int, mono_ns: int) -> float:
 def nda_speed_down_audible(current_speed_kph: float, limit_kph: float) -> bool:
   """The speed-down prompt only plays once the car runs NDA_SPEED_DOWN_MARGIN_KPH over the limit."""
   return limit_kph > 0 and current_speed_kph > limit_kph + NDA_SPEED_DOWN_MARGIN_KPH
+
+
+def nda_slc_limit(navi, v_ego_mps: float) -> float:
+  """Return the kph limit offered to the Speed Limit Controller, or 0.0 while nothing is in range.
+
+  A camera counts once the car is within its lookahead time of it, a running section counts throughout.
+  """
+  lookahead_s = NDA_SIGNAL_CAMERA_LOOKAHEAD_S if int(navi.camType) == 22 else NDA_CAMERA_LOOKAHEAD_S
+  return nda_enforced_limit(navi, cam_max_distance_m=max(float(v_ego_mps), 0.0) * lookahead_s)[0]

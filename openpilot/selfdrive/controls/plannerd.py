@@ -9,6 +9,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.controls.lib.ldw import LaneDepartureWarning
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, NATIVE_PLAN_INPUTS, NDA_PLAN_INPUT
 from openpilot.selfdrive.navi_camera import nda_cruise_limit
+from openpilot.starpilot.speed_limits.navi_dashboard import slc_takes_dashboard
 import openpilot.cereal.messaging as messaging
 from openpilot.cereal.services import SERVICE_LIST
 from openpilot.starpilot.speed_limits.planner_host import (
@@ -547,7 +548,7 @@ def starpilot_main():
               return force_stop_owner.sample(sm, CP, now_ns=clock_pair[0], now_boot_ns=clock_pair[1],
                                               drive_id=current_start_ns, follow_seconds=follow_seconds,
                                               traffic_mode=traffic_mode, takeoff_enabled=faster_lead_takeoff)
-        nda_limit_kph = nda_plan_limit(sm, now_ns)
+        nda_limit_kph = 0.0 if slc_takes_dashboard(slc_lifecycle.runtime) else nda_plan_limit(sm, now_ns)
         curve_result = update_curve_frame(longitudinal_planner, sm, CP, now_ns, host=curve_host,
                                           cruise_ceiling=cruise_ceiling, nda_limit_kph=nda_limit_kph,
                                           profile_tuning=profile_tuning,
