@@ -17,6 +17,7 @@ from openpilot.selfdrive.navi_camera import (
   camera_distance,
   nda_cruise_limit,
   nda_enforced_limit,
+  nda_slc_limit,
   nda_speed_down_audible,
   traffic_signal_display,
   traffic_signal_fields,
@@ -246,6 +247,21 @@ class TestNdaCruiseLimit:
     assert nda_cruise_limit(navi, self.NOW, self.NOW - NDA_DATA_MAX_AGE_NS) == 60.0
     assert nda_cruise_limit(navi, self.NOW, self.NOW - NDA_DATA_MAX_AGE_NS - 1) == 0.0
     assert nda_cruise_limit(None, self.NOW, self.NOW) == 0.0
+
+  def test_slc_limit_waits_for_the_camera_lookahead(self):
+    navi = _sm(camLimitSpeed=80, camLimitSpeedLeftDist=600)["naviData"]
+    assert nda_slc_limit(navi, 20.0) == 80.0
+    assert nda_slc_limit(navi, 19.9) == 0.0
+    assert nda_slc_limit(navi, 0.0) == 0.0
+
+  def test_slc_limit_signal_camera_has_a_short_lookahead(self):
+    navi = _sm(camType=22, camLimitSpeed=60, camLimitSpeedLeftDist=160)["naviData"]
+    assert nda_slc_limit(navi, 20.0) == 60.0
+    assert nda_slc_limit(_sm(camType=22, camLimitSpeed=60, camLimitSpeedLeftDist=161)["naviData"], 20.0) == 0.0
+
+  def test_slc_limit_falls_back_to_a_running_section_while_the_camera_is_far(self):
+    navi = _sm(camLimitSpeed=60, camLimitSpeedLeftDist=5000, sectionLimitSpeed=80, sectionLeftDist=900)["naviData"]
+    assert nda_slc_limit(navi, 20.0) == 80.0
 
   def test_speed_down_is_audible_only_beyond_the_margin(self):
     assert NDA_SPEED_DOWN_MARGIN_KPH == 8.0
