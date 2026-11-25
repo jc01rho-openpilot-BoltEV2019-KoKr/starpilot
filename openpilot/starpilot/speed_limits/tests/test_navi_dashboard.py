@@ -5,7 +5,13 @@ import pytest
 from opendbc.car.dashboard_speed_limit import Observation, Status
 from openpilot.selfdrive.navi_camera import NDA_DATA_MAX_AGE_NS
 from openpilot.starpilot.speed_limits import selection as sel
-from openpilot.starpilot.speed_limits.navi_dashboard import EPISODE_BASE, SERVICE, NaviDashboardSource, slc_takes_dashboard
+from openpilot.starpilot.speed_limits.navi_dashboard import (
+  EPISODE_BASE,
+  SERVICE,
+  NaviDashboardSource,
+  dashboard_observation,
+  slc_takes_dashboard,
+)
 
 T0 = 100_000_000_000
 V_EGO = 20.0
@@ -34,6 +40,12 @@ def camera(sm, frame, mono_ns, limit=80, distance=400):
   sm.receive(frame, mono_ns, camLimitSpeed=limit, camLimitSpeedLeftDist=distance)
 
 
+def live(source, sign, now_ns):
+  observation = source.merge(sign, now_ns)
+  assert observation is not None
+  return observation
+
+
 def oem(speed_mps, *, expiry=T0 + 10 * NDA_DATA_MAX_AGE_NS, episode=3):
   return Observation(Status.VALID, speed_mps, T0 - 1, expiry, episode)
 
@@ -50,7 +62,7 @@ def test_camera_in_range_becomes_a_valid_observation_with_the_frame_timing():
   source, sm = NaviDashboardSource(), FakeSm()
   camera(sm, 1, T0)
   source.update(sm, V_EGO)
-  observation = source.merge(None, T0 + 1)
+  observation = live(source, None, T0 + 1)
   assert observation.status is Status.VALID
   assert observation.speed_mps == pytest.approx(80 / 3.6)
   assert (observation.observed_ns, observation.valid_until_ns) == (T0, T0 + NDA_DATA_MAX_AGE_NS)
@@ -85,13 +97,13 @@ def test_episode_changes_with_the_limit_and_holds_while_it_stays():
   source, sm = NaviDashboardSource(), FakeSm()
   camera(sm, 1, T0, limit=80, distance=400)
   source.update(sm, V_EGO)
-  first = source.merge(None, T0)
+  first = live(source, None, T0)
   camera(sm, 2, T0 + 1, limit=80, distance=380)
   source.update(sm, V_EGO)
-  assert source.merge(None, T0 + 1).episode == first.episode
+  assert live(source, None, T0 + 1).episode == first.episode
   camera(sm, 3, T0 + 2, limit=60, distance=100)
   source.update(sm, V_EGO)
-  assert source.merge(None, T0 + 2).episode > first.episode
+  assert live(source, None, T0 + 2).episode > first.episode
 
 
 def test_a_repeated_frame_is_not_read_twice():
@@ -116,9 +128,9 @@ def test_the_lower_of_a_live_oem_sign_and_the_camera_wins():
   camera(sm, 1, T0, limit=80)
   source.update(sm, V_EGO)
   higher_sign, lower_sign = oem(100 / 3.6), oem(60 / 3.6)
-  assert source.merge(higher_sign, T0).speed_mps == pytest.approx(80 / 3.6)
+  assert live(source, higher_sign, T0).speed_mps == pytest.approx(80 / 3.6)
   assert source.merge(lower_sign, T0) is lower_sign
-  assert source.merge(oem(80 / 3.6), T0).episode == 3
+  assert live(source, oem(80 / 3.6), T0).episode == 3
 
 
 def test_an_expired_oem_sign_does_not_block_the_camera():
@@ -126,7 +138,29 @@ def test_an_expired_oem_sign_does_not_block_the_camera():
   camera(sm, 1, T0, limit=80)
   source.update(sm, V_EGO)
   expired = oem(60 / 3.6, expiry=T0)
-  assert source.merge(expired, T0).speed_mps == pytest.approx(80 / 3.6)
+  assert live(source, expired, T0).speed_mps == pytest.approx(80 / 3.6)
+
+
+def _card(source, sign=None):
+  evidence = SimpleNamespace(observation=sign) if sign is not None else None
+  return SimpleNamespace(CI=SimpleNamespace(CS=SimpleNamespace(dashboard_limit=evidence)), sm=None, navi_dashboard=source)
+
+
+def test_card_without_a_navi_source_keeps_the_oem_observation():
+  sign = oem(20.0)
+  assert dashboard_observation(_card(None, sign), T0) is sign
+  assert dashboard_observation(_card(None), T0) is None
+
+
+def test_card_feeds_the_frame_and_merges_the_camera():
+  source, sm = NaviDashboardSource(), FakeSm()
+  camera(sm, 1, T0)
+  card = _card(source)
+  card.sm = sm
+  assert dashboard_observation(card, T0) is None
+  observation = dashboard_observation(card, T0 + 1, V_EGO)
+  assert observation is not None and observation.speed_mps == pytest.approx(80 / 3.6)
+  assert dashboard_observation(card, T0 + 2) is not None
 
 
 def _runtime(**selection):

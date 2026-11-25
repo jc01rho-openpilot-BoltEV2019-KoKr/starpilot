@@ -41,6 +41,18 @@ class NaviDashboardSource:
     return replace(navi, episode=navi.episode + EPISODE_BASE)
 
 
+def dashboard_observation(card, now_ns: int, v_ego_mps: float | None = None) -> Observation | None:
+  """The card's OEM sign, or the NDA camera limit when it is lower, as the SLC dashboard source."""
+  evidence = getattr(card.CI.CS, 'dashboard_limit', None)
+  observation = evidence.observation if evidence is not None else None
+  source = getattr(card, 'navi_dashboard', None)
+  if source is None:
+    return observation
+  if v_ego_mps is not None:
+    source.update(card.sm, v_ego_mps)
+  return source.merge(observation, now_ns)
+
+
 def slc_takes_dashboard(runtime) -> bool:
   """True when the SLC runtime controls speed and reads the dashboard source, so it owns the NDA limit."""
   settings = getattr(runtime, 'settings', None)
