@@ -35,7 +35,7 @@ from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.selfdrive.car.cruise import LOW_SPEED_CRUISE_ON_SET, SlcWheelContext, VCruiseHelper, slc_target_kph
 from openpilot.starpilot.speed_limits import physical_actions as slc_physical
-from openpilot.starpilot.speed_limits.navi_dashboard import SERVICE as NAVI_SERVICE, NaviDashboardSource
+from openpilot.starpilot.speed_limits.navi_dashboard import SERVICE as NAVI_SERVICE, NaviDashboardSource, dashboard_observation
 from openpilot.starpilot.aol.intent import AolProcessFaultContext, independent_axis_requested, read_settings
 from openpilot.starpilot.aol.transport_pause import TransportPauseFeedback, cp_identity
 from opendbc.car.honda.stock_aol import (
@@ -165,7 +165,7 @@ class Car:
     self.curve_replay = os.getenv('CURVE_REPLAY_RUNTIME') == '1' or feature_requested(self.params, 'curve')
     self.aol_replay = os.getenv('AOL_REPLAY_RUNTIME') == '1' or feature_requested(self.params, 'aol')
     self.conditional_replay = os.getenv('CONDITIONAL_MODE_REPLAY_RUNTIME') == '1' or feature_requested(self.params, 'conditional')
-    subscribed_services = ['pandaStates', 'carControl', 'onroadEvents', 'deviceState', 'autoSteeringLearning', NAVI_SERVICE]
+    subscribed_services = ['pandaStates', 'carControl', 'onroadEvents', 'deviceState', 'autoSteeringLearning']
     if self.params.get_bool('SubaruRedneckCruise') or self.params.get_bool('SubaruSNG'):
       subscribed_services.extend(('longitudinalPlan', 'selfdriveState'))
     if self.aol_replay:
@@ -174,9 +174,8 @@ class Car:
     if self.slc_replay:
       subscribed_services.append('slcState')
     self.navi_dashboard = NaviDashboardSource()
-    self.sm = messaging.SubMaster(subscribed_services, ignore_alive=['autoSteeringLearning', NAVI_SERVICE],
-                                  ignore_valid=['autoSteeringLearning', NAVI_SERVICE],
-                                  ignore_avg_freq=['autoSteeringLearning', NAVI_SERVICE])
+    self.sm = messaging.SubMaster(subscribed_services, ignore_alive=['autoSteeringLearning'],
+                                  ignore_valid=['autoSteeringLearning'], ignore_avg_freq=['autoSteeringLearning'])
     self.slc_cruise_event_id = 0
     self.slc_producer_session = uuid.uuid4().hex
     self.slc_receipts: list[tuple[str, object, float, float, int]] = []
@@ -439,13 +438,14 @@ class Car:
     # Reserve optional transport from finalized capability, not saved admission.
     self.slc_transport_available = slc_transport_capable(self.CP, os.environ)
     if self.slc_transport_available:
-      if 'slcState' not in subscribed_services:
-        subscribed_services.append('slcState')
+      wanted = ('slcState', NAVI_SERVICE)
+      if any(service not in subscribed_services for service in wanted):
+        subscribed_services.extend(service for service in wanted if service not in subscribed_services)
         self.sm = messaging.SubMaster(subscribed_services)
       for ignored in (self.sm.ignore_alive, self.sm.ignore_valid, self.sm.ignore_average_freq):
-        for ignored_service in ('slcState', NAVI_SERVICE):
-          if ignored_service not in ignored:
-            ignored.append(ignored_service)
+        for service in wanted:
+          if service not in ignored:
+            ignored.append(service)
       if 'slcDashboardObservation' not in self.pm.sock:
         self.pm.sock['slcDashboardObservation'] = messaging.pub_sock('slcDashboardObservation')
     self.slc_requested_configuration = self.read_slc_configuration()
@@ -577,7 +577,7 @@ class Car:
     self._aol_can_observation = (CS, can_received_ns,
                                  max((stamp for stamp, _ in can_list), default=0), cancel_boot_ns)
     self.refresh_slc_configuration(now_ns)
-    observation = self.slc_dashboard_observation(now_ns, v_ego_mps=CS.vEgo) if self.slc_replay else None
+    observation = dashboard_observation(self, now_ns, CS.vEgo) if self.slc_replay else None
     floor_ns = getattr(self, 'slc_source_floor_ns', 0)
     if (observation is not None and floor_ns and
         (observation.observed_ns <= floor_ns or int(self.sm.logMonoTime['slcState']) <= floor_ns or
@@ -849,17 +849,6 @@ class Car:
 
     return CS, RD
 
-  def slc_dashboard_observation(self, now_ns: int, *, v_ego_mps: float | None = None):
-    """The OEM sign, or the NDA camera limit when it is lower, as the SLC dashboard source."""
-    evidence = getattr(self.CI.CS, 'dashboard_limit', None)
-    observation = evidence.observation if evidence is not None else None
-    navi = getattr(self, 'navi_dashboard', None)
-    if navi is None:
-      return observation
-    if v_ego_mps is not None:
-      navi.update(self.sm, v_ego_mps)
-    return navi.merge(observation, now_ns)
-
   def apply_slc_adopt(self, now_ns: int, *, host_control_enabled: bool, after_ns: int = 0) -> None:
     pending = getattr(self, 'slc_wheel_adopt', None)
     if pending is None:
@@ -896,7 +885,7 @@ class Car:
           long_requested = axis is not None and axis.nativeAcknowledged and axis.desiredLongitudinal
         if long_requested:
           target, initial = slc_physical.engagement_target(
-            self.sm, self.slc_dashboard_observation(now_ns), self.slc_producer_session,
+            self.sm, dashboard_observation(self, now_ns), self.slc_producer_session,
             now_ns, after_ns=getattr(self, 'slc_source_floor_ns', 0))
       adopted = self.v_cruise_helper.initialize_v_cruise(
         self.CS_prev, self.experimental_mode, resume=self.vehicle_startup.consume_cruise_resume(), initial_speed=self.initial_cruise_speed,
@@ -1217,7 +1206,7 @@ class Car:
       source = messaging.new_message('slcDashboardObservation')
       source.logMonoTime = int(cs_send.logMonoTime)
       source.valid = bool(cs_send.valid)
-      observation = self.slc_dashboard_observation(int(cs_send.logMonoTime))
+      observation = dashboard_observation(self, int(cs_send.logMonoTime))
       source.slcDashboardObservation.producerSessionId = self.slc_producer_session
       source.slcDashboardObservation.carStateLogMonoTime = int(cs_send.logMonoTime)
       if observation is not None:
