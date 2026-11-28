@@ -272,18 +272,26 @@ def test_translated_cjk_and_long_words_wrap_within_alert_width():
 def test_camera_warning_text_is_not_translated(text, translated):
   from pathlib import Path
 
-  from openpilot.system.ui.lib import multilang
+  from openpilot.system.ui.lib.display_translation import display_templates, translate_display
 
   po = Path(__file__).resolve().parents[3] / 'selfdrive/ui/translations/app_ko.po'
-  messages, plurals = multilang.load_translations(po)
-  templates = multilang.display_templates(messages)
+  messages = {}
+  msgid = msgstr = None
+  for line in po.read_text(encoding='utf-8').splitlines():
+    if line.startswith('msgid "'):
+      msgid = line[len('msgid "'):-1]
+    elif line.startswith('msgstr "'):
+      msgstr = line[len('msgstr "'):-1]
+      if msgid and msgstr:
+        messages[msgid] = msgstr
+  templates = display_templates(messages)
   if translated is not None:
-    assert str(multilang.translate_display(text, messages, templates)) == translated
+    assert str(translate_display(text, messages, templates)) == translated
 
   fonts = Mock(profile=Profile.COMPACT)
   fonts.measure.return_value = NS(width=100, height=30)
   renderer = onroad_alerts.AlertRenderer(fonts)
-  with patch.object(onroad_alerts, 'tr', side_effect=lambda value: multilang.translate_display(value, messages, templates)), \
+  with patch.object(onroad_alerts, 'tr', side_effect=lambda value: translate_display(value, messages, templates)), \
        patch.object(rl, "draw_rectangle"), patch.object(rl, "draw_rectangle_gradient_v"):
     renderer.render(rl.Rectangle(0, 0, 476, 240), OnroadAlert(AlertSize.FULL, text, alert_type="ndaCameraWarn/critical"))
   assert fonts.draw.call_args_list[0].args[0] == text
