@@ -266,3 +266,32 @@ def test_translated_cjk_and_long_words_wrap_within_alert_width():
     lines = onroad_alerts._wrap_display(DisplayText(text), len, 8)
     assert all(len(line) <= 8 and isinstance(line, DisplayText) for line in lines)
     assert ''.join(lines).replace(' ', '') == text.replace(' ', '')
+
+
+@pytest.mark.parametrize("text, translated", [("60 kph 📸 150 m", "60 kp시간 📸 150 분"), ("Camera 📸 hold 150 m", None)])
+def test_camera_warning_text_is_not_translated(text, translated):
+  from pathlib import Path
+
+  from openpilot.system.ui.lib.display_translation import display_templates, translate_display
+
+  po = Path(__file__).resolve().parents[3] / 'selfdrive/ui/translations/app_ko.po'
+  messages = {}
+  msgid = msgstr = None
+  for line in po.read_text(encoding='utf-8').splitlines():
+    if line.startswith('msgid "'):
+      msgid = line[len('msgid "'):-1]
+    elif line.startswith('msgstr "'):
+      msgstr = line[len('msgstr "'):-1]
+      if msgid and msgstr:
+        messages[msgid] = msgstr
+  templates = display_templates(messages)
+  if translated is not None:
+    assert str(translate_display(text, messages, templates)) == translated
+
+  fonts = Mock(profile=Profile.COMPACT)
+  fonts.measure.return_value = NS(width=100, height=30)
+  renderer = onroad_alerts.AlertRenderer(fonts)
+  with patch.object(onroad_alerts, 'tr', side_effect=lambda value: translate_display(value, messages, templates)), \
+       patch.object(rl, "draw_rectangle"), patch.object(rl, "draw_rectangle_gradient_v"):
+    renderer.render(rl.Rectangle(0, 0, 476, 240), OnroadAlert(AlertSize.FULL, text, alert_type="ndaCameraWarn/critical"))
+  assert str(fonts.draw.call_args_list[0].args[0]).lower() == text.lower()

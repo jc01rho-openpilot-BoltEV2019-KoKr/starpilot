@@ -64,7 +64,11 @@ class AlertRenderer:
     text1, text2 = alert.text1, alert.text2
     if event_name == 'personalityChanged' and text1.lower().startswith('driving personality: '):
       text1, text2 = text1[len('driving personality: '):], 'Driving Personality'
-    alert = replace(alert, text1=DisplayText(tr(text1)), text2=DisplayText(tr(text2)))
+    if event_name == 'ndaCameraWarn':
+      # Already final: a limit in kph, an icon and a distance in m. Template matching would turn its h and m into hours and minutes.
+      alert = replace(alert, text1=DisplayText(text1), text2=DisplayText(text2))
+    else:
+      alert = replace(alert, text1=DisplayText(tr(text1)), text2=DisplayText(tr(text2)))
     if self.fonts.profile == Profile.COMPACT:
       lane_event = event_name in ('preLaneChangeLeft', 'preLaneChangeRight', 'laneChangeBlocked', 'laneChange',
                                                                     'steerTempUnavailable', 'steerTempUnavailableSilent')
