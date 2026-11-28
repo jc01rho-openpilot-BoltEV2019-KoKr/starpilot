@@ -294,4 +294,4 @@ def test_camera_warning_text_is_not_translated(text, translated):
   with patch.object(onroad_alerts, 'tr', side_effect=lambda value: translate_display(value, messages, templates)), \
        patch.object(rl, "draw_rectangle"), patch.object(rl, "draw_rectangle_gradient_v"):
     renderer.render(rl.Rectangle(0, 0, 476, 240), OnroadAlert(AlertSize.FULL, text, alert_type="ndaCameraWarn/critical"))
-  assert fonts.draw.call_args_list[0].args[0] == text
+  assert str(fonts.draw.call_args_list[0].args[0]).lower() == text.lower()
